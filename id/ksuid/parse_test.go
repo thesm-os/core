@@ -197,3 +197,58 @@ func TestParse(t *testing.T) {
 		}
 	})
 }
+
+// FuzzParse asserts [ksuid.Parse] never panics on arbitrary
+// input, and that successful parses round-trip exactly through
+// Format. KSUID's base62 encoding is bytewise-stable, so
+// Format(Parse(s)) == s for every parseable s.
+func FuzzParse(f *testing.F) {
+	f.Add("0ujtsYcgvSTl8PAuR7PHXnl95SE")
+	f.Add("000000000000000000000000000")
+
+	f.Fuzz(func(t *testing.T, s string) {
+		got, err := ksuid.Parse(s)
+		if err != nil {
+			return
+		}
+		formatted := ksuid.Format(got)
+		if formatted != s {
+			t.Fatalf("round-trip:\n  in  = %q\n  out = %q", s, formatted)
+		}
+	})
+}
+
+// FuzzRoundTrip asserts the Format → Parse round-trip on
+// arbitrary 160-bit payloads: any [id.ID] produced from 20
+// bytes must Format to a string that Parse decodes back to the
+// original ID. This exercises the base62 big-int divide-by-62
+// encode loop and the multiply-by-62 decode loop end-to-end.
+func FuzzRoundTrip(f *testing.F) {
+	f.Add(make([]byte, id.Size160))
+	f.Add([]byte{
+		0x06, 0x69, 0xf7, 0xef,
+		0xb5, 0xa1, 0xcd, 0x34, 0xb5, 0xf9, 0x9d, 0x12,
+		0x14, 0xe5, 0xb9, 0x16, 0x9d, 0xa6, 0x9c, 0x32,
+	})
+	f.Add([]byte{
+		0xff, 0xff, 0xff, 0xff,
+		0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+		0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+	})
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		var raw [id.Size160]byte
+		copy(raw[:], data)
+		u := id.New160(raw)
+
+		formatted := ksuid.Format(u)
+		parsed, err := ksuid.Parse(formatted)
+		if err != nil {
+			t.Fatalf("Format(%x)=%q; Parse: %v", raw, formatted, err)
+		}
+		if parsed != u {
+			t.Fatalf("round-trip failed:\n  in   = %x\n  fmt  = %q\n  out  = %x",
+				raw, formatted, parsed.Bytes())
+		}
+	})
+}

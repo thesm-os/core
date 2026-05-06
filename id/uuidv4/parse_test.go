@@ -186,3 +186,56 @@ func TestParse(t *testing.T) {
 		}
 	})
 }
+
+// FuzzParse asserts [uuidv4.Parse] never panics on arbitrary
+// input, and that successful parses round-trip case-insensitively
+// through Format. The stdlib hex decoder accepts both upper and
+// lower case; Format always emits lowercase. The case-insensitive
+// equality is the right round-trip shape.
+func FuzzParse(f *testing.F) {
+	f.Add("12345678-9abc-4def-8012-3456789abcde")
+	f.Add("00000000-0000-0000-0000-000000000000")
+	f.Add("12345678-9ABC-4DEF-8012-3456789ABCDE")
+
+	f.Fuzz(func(t *testing.T, s string) {
+		got, err := uuidv4.Parse(s)
+		if err != nil {
+			return
+		}
+		formatted := uuidv4.Format(got)
+		if !strings.EqualFold(formatted, s) {
+			t.Fatalf("round-trip:\n  in  = %q\n  out = %q", s, formatted)
+		}
+	})
+}
+
+// FuzzRoundTrip asserts the Format → Parse round-trip on
+// arbitrary 128-bit payloads: any [id.ID] produced from 16
+// bytes must Format to a string that Parse decodes back to the
+// original ID.
+func FuzzRoundTrip(f *testing.F) {
+	f.Add(make([]byte, id.Size128))
+	f.Add([]byte{
+		0x12, 0x34, 0x56, 0x78,
+		0x9a, 0xbc,
+		0x4d, 0xef,
+		0x80, 0x12,
+		0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde,
+	})
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		var raw [id.Size128]byte
+		copy(raw[:], data)
+		u := id.New128(raw)
+
+		formatted := uuidv4.Format(u)
+		parsed, err := uuidv4.Parse(formatted)
+		if err != nil {
+			t.Fatalf("Format(%x)=%q; Parse: %v", raw, formatted, err)
+		}
+		if parsed != u {
+			t.Fatalf("round-trip failed:\n  in   = %x\n  fmt  = %q\n  out  = %x",
+				raw, formatted, parsed.Bytes())
+		}
+	})
+}

@@ -343,3 +343,69 @@ func TestParseULID(t *testing.T) {
 		}
 	})
 }
+
+// FuzzParseULID asserts [ulid.ParseULID] never panics on
+// arbitrary input, and that successful parses are idempotent —
+// Parse(Format(Parse(s))) == Parse(s). Idempotency is the right
+// shape for ULID: the parser is case-insensitive and applies
+// I/L→1, O→0 substitutions, so the input string is not bytewise
+// recovered, but the parsed [id.ID] is.
+func FuzzParseULID(f *testing.F) {
+	f.Add("01ARZ3NDEKTSV4RRFFQ69G5FAV")
+	f.Add("00000000000000000000000000")
+	f.Add("7ZZZZZZZZZZZZZZZZZZZZZZZZZ")
+	f.Add("0iIlLoO" + strings.Repeat("0", 19))
+
+	f.Fuzz(func(t *testing.T, s string) {
+		got, err := ulid.ParseULID(s)
+		if err != nil {
+			return
+		}
+		formatted := ulid.Format(got)
+		again, err := ulid.ParseULID(formatted)
+		if err != nil {
+			t.Fatalf("re-parse of Format(%q)=%q: %v", s, formatted, err)
+		}
+		if got != again {
+			t.Fatalf("idempotency broken:\n  Parse(%q)        = %v\n  Format -> Parse  = %v",
+				s, got, again)
+		}
+	})
+}
+
+// FuzzULIDRoundTrip asserts the Format → Parse round-trip on
+// arbitrary 128-bit payloads: any [id.ID] produced from 16 bytes
+// must Format to a string that Parse decodes back to the
+// original ID.
+func FuzzULIDRoundTrip(f *testing.F) {
+	f.Add(make([]byte, id.Size128))
+	f.Add([]byte{
+		0x01, 0x23, 0x45, 0x67, 0x89, 0xAB,
+		0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0xFE, 0xDC,
+	})
+	f.Add([]byte{
+		0x3F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+		0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+	})
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		var raw [id.Size128]byte
+		copy(raw[:], data)
+		// Mask the top 2 bits of byte 0: [ParseULID] rejects
+		// first Crockford char > 7, which translates to the
+		// 48-bit timestamp value being < 2^46. Bits 47..46 of
+		// the timestamp are bits 7..6 of byte 0.
+		raw[0] &= 0x3F
+		u := id.New128(raw)
+
+		formatted := ulid.Format(u)
+		parsed, err := ulid.ParseULID(formatted)
+		if err != nil {
+			t.Fatalf("Format(%x)=%q; Parse: %v", raw, formatted, err)
+		}
+		if parsed != u {
+			t.Fatalf("round-trip failed:\n  in   = %x\n  fmt  = %q\n  out  = %x",
+				raw, formatted, parsed.Bytes())
+		}
+	})
+}
