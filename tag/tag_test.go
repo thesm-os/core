@@ -44,3 +44,11 @@ func TestTagZeroAlloc(t *testing.T) {
 		t.Fatalf("IsZero: %v allocs/op, want 0", got)
 	}
 }
+
+func BenchmarkIsZero(b *testing.B) {
+	tt := tag.Tag{Key: "k", Value: "v"}
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = tt.IsZero()
+	}
+}

@@ -68,3 +68,13 @@ func TestCounterZeroAlloc(t *testing.T) {
 		t.Fatalf("Counter.Add: %v allocs/op, want 0", got)
 	}
 }
+
+func BenchmarkCounterAdd(b *testing.B) {
+	c := noop.New().Counter(telemetry.InstrumentSpec{Name: "n"}).
+		With([]telemetry.Attr{telemetry.AttrString("k", "v")})
+	ctx := b.Context()
+	b.ReportAllocs()
+	for b.Loop() {
+		c.Add(ctx, 1)
+	}
+}

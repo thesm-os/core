@@ -130,3 +130,24 @@ func TestGeneratorZeroAlloc(t *testing.T) {
 		t.Fatalf("TimestampSeconds: %v allocs/op, want 0", got)
 	}
 }
+
+func BenchmarkGenerate(b *testing.B) {
+	origin := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	g := ksuid.New(fake.New(origin), seeded.New(rand.Seed(1)))
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = g.Generate()
+	}
+}
+
+func BenchmarkTimestampSeconds(b *testing.B) {
+	var raw [id.Size160]byte
+	for i := range raw {
+		raw[i] = byte(i)
+	}
+	u := id.New160(raw)
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = ksuid.TimestampSeconds(u)
+	}
+}

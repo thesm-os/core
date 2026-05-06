@@ -64,3 +64,11 @@ func TestApplySpanOptions(t *testing.T) {
 		}
 	})
 }
+
+func BenchmarkApplySpanOptions(b *testing.B) {
+	opts := []telemetry.SpanOption{telemetry.WithSpanKind(telemetry.SpanKindServer)}
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = telemetry.ApplySpanOptions(opts)
+	}
+}

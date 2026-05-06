@@ -61,3 +61,19 @@ func TestVersionZeroAlloc(t *testing.T) {
 		})
 	}
 }
+
+func BenchmarkIsZero(b *testing.B) {
+	v := version.Version("opaque-token")
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = v.IsZero()
+	}
+}
+
+func BenchmarkIsWildcard(b *testing.B) {
+	v := version.Wildcard
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = v.IsWildcard()
+	}
+}

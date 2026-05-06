@@ -150,3 +150,41 @@ func TestZeroAlloc(t *testing.T) {
 		})
 	}
 }
+
+func BenchmarkAttrString(b *testing.B) {
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = telemetry.AttrString("user_id", "abc123")
+	}
+}
+
+func BenchmarkAttrInt(b *testing.B) {
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = telemetry.AttrInt("retry", 42)
+	}
+}
+
+func BenchmarkSlogAttr(b *testing.B) {
+	b.Run("string", func(b *testing.B) {
+		a := telemetry.AttrString("k", "v")
+		b.ReportAllocs()
+		for b.Loop() {
+			_ = a.SlogAttr()
+		}
+	})
+	b.Run("int", func(b *testing.B) {
+		a := telemetry.AttrInt("k", 1)
+		b.ReportAllocs()
+		for b.Loop() {
+			_ = a.SlogAttr()
+		}
+	})
+	b.Run("bytes", func(b *testing.B) {
+		a := telemetry.AttrBytes("k", []byte("payload"))
+		b.ReportAllocs()
+		for b.Loop() {
+			_ = a.SlogAttr()
+		}
+	})
+}

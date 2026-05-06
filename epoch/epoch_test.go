@@ -132,3 +132,28 @@ func TestEpochZeroAlloc(t *testing.T) {
 		})
 	}
 }
+
+func BenchmarkCompare(b *testing.B) {
+	e := epoch.Epoch(42)
+	other := epoch.Epoch(43)
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = e.Compare(other)
+	}
+}
+
+func BenchmarkSuccessor(b *testing.B) {
+	e := epoch.Epoch(42)
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = e.Successor()
+	}
+}
+
+func BenchmarkString(b *testing.B) {
+	e := epoch.Epoch(123456789)
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = e.String()
+	}
+}

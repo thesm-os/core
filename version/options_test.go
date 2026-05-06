@@ -38,3 +38,11 @@ func TestWriteOptionsIsConditional(t *testing.T) {
 		})
 	}
 }
+
+func BenchmarkIsConditional(b *testing.B) {
+	opts := version.WriteOptions{IfMatch: "v1"}
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = opts.IsConditional()
+	}
+}

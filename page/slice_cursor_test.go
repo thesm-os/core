@@ -114,3 +114,29 @@ func TestSliceCursor(t *testing.T) {
 		}
 	})
 }
+
+func BenchmarkSliceCursor(b *testing.B) {
+	for _, sz := range []struct {
+		name string
+		n    int
+	}{
+		{"16", 16},
+		{"256", 256},
+		{"4K", 4096},
+	} {
+		b.Run(sz.name, func(b *testing.B) {
+			items := make([]int, sz.n)
+			ctx := b.Context()
+			b.ReportAllocs()
+			for b.Loop() {
+				c := page.NewSliceCursor(items, "")
+				for _, err := range c.Seq(ctx) {
+					if err != nil {
+						b.Fatal(err)
+					}
+				}
+				_ = c.Close()
+			}
+		})
+	}
+}

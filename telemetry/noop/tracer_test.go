@@ -73,3 +73,13 @@ func TestSpan(t *testing.T) {
 		}
 	})
 }
+
+func BenchmarkTracerStart(b *testing.B) {
+	tr := noop.New().Tracer("bench")
+	ctx := b.Context()
+	b.ReportAllocs()
+	for b.Loop() {
+		_, span := tr.Start(ctx, "op")
+		span.End(nil)
+	}
+}

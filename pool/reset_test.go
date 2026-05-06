@@ -113,3 +113,14 @@ func TestResetPoolZeroAlloc(t *testing.T) {
 		t.Fatalf("Get+Put cycle: %v allocs/op, want 0", got)
 	}
 }
+
+func BenchmarkResetPool(b *testing.B) {
+	p := pool.NewResetPool(func() *resettable { return new(resettable) })
+	p.Put(p.Get()) // warm
+	b.ReportAllocs()
+	for b.Loop() {
+		v := p.Get()
+		v.value = 42
+		p.Put(v)
+	}
+}

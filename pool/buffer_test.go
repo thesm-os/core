@@ -68,3 +68,26 @@ func TestNewBufferPool(t *testing.T) {
 		_ = b.Cap()
 	})
 }
+
+func BenchmarkBufferPool(b *testing.B) {
+	p := pool.NewBufferPool()
+	p.Put(p.Get()) // warm
+	b.ReportAllocs()
+	for b.Loop() {
+		buf := p.Get()
+		buf.WriteString("hello, world")
+		p.Put(buf)
+	}
+}
+
+func BenchmarkBufferPoolParallel(b *testing.B) {
+	p := pool.NewBufferPool()
+	b.ReportAllocs()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			buf := p.Get()
+			buf.WriteString("payload")
+			p.Put(buf)
+		}
+	})
+}

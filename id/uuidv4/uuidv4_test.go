@@ -81,3 +81,11 @@ func TestGeneratorZeroAlloc(t *testing.T) {
 		t.Fatalf("Generator.Generate: %v allocs/op, want 0", got)
 	}
 }
+
+func BenchmarkGenerate(b *testing.B) {
+	g := uuidv4.New(seeded.New(rand.Seed(1)))
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = g.Generate()
+	}
+}

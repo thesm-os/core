@@ -125,3 +125,28 @@ func TestLifecycleZeroAlloc(t *testing.T) {
 		}
 	})
 }
+
+func BenchmarkReset(b *testing.B) {
+	a := arena.NewWithCapacity(4096)
+	a.Append(make([]byte, 1024))
+	b.ReportAllocs()
+	for b.Loop() {
+		a.Reset()
+	}
+}
+
+func BenchmarkCapExceeds(b *testing.B) {
+	a := arena.NewWithCapacity(4096)
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = a.CapExceeds(8192)
+	}
+}
+
+func BenchmarkShrink(b *testing.B) {
+	a := arena.NewWithCapacity(4096)
+	b.ReportAllocs()
+	for b.Loop() {
+		a.Shrink()
+	}
+}

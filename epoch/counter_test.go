@@ -124,3 +124,29 @@ func TestCounterZeroAlloc(t *testing.T) {
 		}
 	})
 }
+
+func BenchmarkNext(b *testing.B) {
+	c := epoch.NewCounter(epoch.Zero)
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = c.Next()
+	}
+}
+
+func BenchmarkCurrent(b *testing.B) {
+	c := epoch.NewCounter(epoch.Epoch(1))
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = c.Current()
+	}
+}
+
+func BenchmarkNextParallel(b *testing.B) {
+	c := epoch.NewCounter(epoch.Zero)
+	b.ReportAllocs()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			_ = c.Next()
+		}
+	})
+}

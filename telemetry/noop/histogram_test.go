@@ -50,3 +50,13 @@ func TestHistogramZeroAlloc(t *testing.T) {
 		t.Fatalf("Histogram.Record: %v allocs/op, want 0", got)
 	}
 }
+
+func BenchmarkHistogramRecord(b *testing.B) {
+	h := noop.New().Histogram(telemetry.InstrumentSpec{Name: "n"}).
+		With([]telemetry.Attr{telemetry.AttrFloat("k", 1.5)})
+	ctx := b.Context()
+	b.ReportAllocs()
+	for b.Loop() {
+		h.Record(ctx, 1.0)
+	}
+}

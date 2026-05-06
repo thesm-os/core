@@ -86,9 +86,32 @@ func (k KeyID) String() string {
 // arithmetic. Implementations document their own allocation
 // behaviour.
 type Verifier interface {
+	// KeyID returns the canonical key identifier for this
+	// Verifier's public key. Persist alongside signatures so
+	// verifiers dispatch through KeyID to look up the matching
+	// public key in their trust store.
 	KeyID() KeyID
+
+	// PublicKey returns the public-key bytes in the algorithm's
+	// canonical encoding. Format is documented per
+	// implementation: Ed25519 returns the raw 32 bytes; ECDSA
+	// P-384 returns PKIX (X.509 SubjectPublicKeyInfo) DER bytes.
+	// The returned slice aliases internal storage; callers must
+	// treat it as immutable.
 	PublicKey() []byte
+
+	// Algorithm returns the long-term cross-build algorithm
+	// name (for example [crypto.AlgEd25519]). Persist it in
+	// artefacts that may outlive the producing build.
 	Algorithm() crypto.Algorithm
+
+	// Verify reports whether signature is a valid signature
+	// over message under this Verifier's public key. Returns
+	// false for any reason verification cannot succeed —
+	// wrong public key, malformed signature bytes, signature
+	// length mismatch, cryptographic invalidity. The single
+	// bool collapses these by design: distinguishing them
+	// risks timing-side-channel oracles.
 	Verify(message, signature []byte) bool
 }
 
@@ -131,6 +154,21 @@ type Verifier interface {
 // "Streaming" section.
 type Signer interface {
 	Verifier
+
+	// Sign returns a freshly-allocated signature over message.
+	// The stdlib's underlying primitives ([crypto/ed25519.Sign],
+	// [crypto/ecdsa.SignASN1]) do not expose buffer-passing
+	// APIs, so per-call allocation is unavoidable. Hot-path
+	// consumers amortise this by signing once per batch
+	// (batch-root mode) rather than per entry.
+	//
+	// Sign signs the bytes passed in as-is. Ed25519 signs the
+	// raw message per RFC 8032 §5.1.6 (PureEdDSA, not Ed25519ph);
+	// ECDSA P-384 internally hashes with SHA-384 per FIPS 186-5
+	// before signing. Messages too large to buffer should be
+	// hashed externally to a Merkle root via
+	// [crypto.Hasher.NewStream] and the root signed as a normal
+	// small message.
 	Sign(message []byte) ([]byte, error)
 }
 
@@ -148,6 +186,11 @@ type Signer interface {
 // buffering.
 type StreamingSigner interface {
 	Signer
+
+	// NewSignStream returns a fresh [SignStream] that absorbs
+	// bytes via Write and finalises to a signature via
+	// [SignStream.SignAndReset]. The returned stream is
+	// single-goroutine; one stream per goroutine that streams.
 	NewSignStream() SignStream
 }
 
@@ -195,6 +238,11 @@ type SignStream interface {
 // PQ-signature implementations will, Ed25519 does not.
 type StreamingVerifier interface {
 	Verifier
+
+	// NewVerifyStream returns a fresh [VerifyStream] that
+	// absorbs bytes via Write and finalises to a verification
+	// outcome via [VerifyStream.Verify]. The returned stream
+	// is single-use and single-goroutine.
 	NewVerifyStream() VerifyStream
 }
 

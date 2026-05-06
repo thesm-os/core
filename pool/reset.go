@@ -15,6 +15,11 @@ import "sync"
 // every Get) do not need to satisfy [Resettable] and should
 // use the plain [Pool] instead.
 type Resettable interface {
+	// Reset clears v's tenant-specific or request-specific
+	// state, returning it to a usable post-zero state. Called
+	// by [ResetPool.Put] before caching, and by
+	// [NewResetPool] on freshly-allocated values. Must not
+	// allocate on a pool that promises zero-allocation Put.
 	Reset()
 }
 

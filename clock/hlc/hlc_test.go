@@ -218,3 +218,38 @@ func TestZeroAlloc(t *testing.T) {
 		})
 	}
 }
+
+func BenchmarkNow(b *testing.B) {
+	c := hlc.New(clock.NodeID(1))
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = c.Now()
+	}
+}
+
+func BenchmarkTime(b *testing.B) {
+	c := hlc.New(clock.NodeID(1))
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = c.Time()
+	}
+}
+
+func BenchmarkUpdate(b *testing.B) {
+	c := hlc.New(clock.NodeID(1))
+	observed := clock.Instant{Wall: time.Now().UnixNano(), Logical: 1, Node: 99}
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = c.Update(observed)
+	}
+}
+
+func BenchmarkNowParallel(b *testing.B) {
+	c := hlc.New(clock.NodeID(1))
+	b.ReportAllocs()
+	b.RunParallel(func(pb *testing.PB) {
+		for pb.Next() {
+			_ = c.Now()
+		}
+	})
+}

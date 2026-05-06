@@ -252,3 +252,23 @@ func FuzzRoundTrip(f *testing.F) {
 		}
 	})
 }
+
+func BenchmarkFormat(b *testing.B) {
+	u := id.New160([id.Size160]byte{
+		0x06, 0x69, 0xf7, 0xef, 0xb5, 0xa1, 0xcd, 0x34,
+		0xb5, 0xf9, 0x9d, 0x12, 0x14, 0xe5, 0xb9, 0x16,
+		0x9d, 0xa6, 0x9c, 0x32,
+	})
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = ksuid.Format(u)
+	}
+}
+
+func BenchmarkParse(b *testing.B) {
+	encoded := "0ujtsYcgvSTl8PAuR7PHXnl95SE"
+	b.ReportAllocs()
+	for b.Loop() {
+		_, _ = ksuid.Parse(encoded)
+	}
+}

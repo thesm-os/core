@@ -131,3 +131,33 @@ func TestZeroAlloc(t *testing.T) {
 		})
 	}
 }
+
+func BenchmarkUint64(b *testing.B) {
+	r := fixed.New(0xdeadbeef)
+	b.ReportAllocs()
+	b.SetBytes(8)
+	for b.Loop() {
+		_ = r.Uint64()
+	}
+}
+
+func BenchmarkRead(b *testing.B) {
+	r := fixed.New(0xdeadbeef)
+	for _, sz := range []struct {
+		name string
+		n    int
+	}{
+		{"8B", 8},
+		{"64B", 64},
+		{"4K", 4096},
+	} {
+		b.Run(sz.name, func(b *testing.B) {
+			buf := make([]byte, sz.n)
+			b.ReportAllocs()
+			b.SetBytes(int64(sz.n))
+			for b.Loop() {
+				_, _ = r.Read(buf)
+			}
+		})
+	}
+}

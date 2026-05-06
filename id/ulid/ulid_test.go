@@ -122,3 +122,19 @@ func TestGeneratorZeroAlloc(t *testing.T) {
 		t.Fatalf("TimestampMillis: %v allocs/op, want 0", got)
 	}
 }
+
+func BenchmarkGenerate(b *testing.B) {
+	g := ulid.New(fake.New(time.Now()), seeded.New(rand.Seed(1)))
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = g.Generate()
+	}
+}
+
+func BenchmarkTimestampMillis(b *testing.B) {
+	u := idFromBytes(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16)
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = ulid.TimestampMillis(u)
+	}
+}

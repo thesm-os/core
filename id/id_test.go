@@ -225,6 +225,40 @@ func TestIDZeroAlloc(t *testing.T) {
 	}
 }
 
+func BenchmarkEqual(b *testing.B) {
+	a := id.New128(fill128(0x42))
+	other := id.New128(fill128(0x43))
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = a.Equal(other)
+	}
+}
+
+func BenchmarkCompare(b *testing.B) {
+	a := id.New128(fill128(0x42))
+	other := id.New128(fill128(0x43))
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = a.Compare(other)
+	}
+}
+
+func BenchmarkBytes(b *testing.B) {
+	a := id.New128(fill128(0x42))
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = a.Bytes()
+	}
+}
+
+func BenchmarkString(b *testing.B) {
+	a := id.New128(fill128(0x42))
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = a.String()
+	}
+}
+
 func fill128(b byte) [id.Size128]byte {
 	var out [id.Size128]byte
 	for i := range out {

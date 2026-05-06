@@ -184,7 +184,7 @@ linters:
       # design (see docs/adr/0006 and rand/pcg/doc.go), and the
       # int64 → uint64 seed conversion is a deliberate bit-pattern
       # reinterpretation supported by the PCG construction.
-      - path: 'rand/pcg/'
+      - path: "rand/pcg/"
         linters: [gosec]
         text: "G404:|G115:"
 
@@ -192,14 +192,14 @@ linters:
       # int. The result is mathematically guaranteed to fit; G115
       # cannot prove it. Same logic applies in helpers_test.go's
       # reference implementation.
-      - path: 'rand/helpers'
+      - path: "rand/helpers"
         linters: [gosec]
         text: "G115:"
 
       # rand/seeded uses int64 → uint64 as a bit-pattern
       # reinterpretation when keying HMAC; safe by construction.
       # Same logic in seeded_test.go.
-      - path: 'rand/seeded'
+      - path: "rand/seeded"
         linters: [gosec]
         text: "G115:"
 
@@ -218,7 +218,7 @@ linters:
       - source: "func TestZeroAlloc"
         linters: [paralleltest]
       - path: '_test\.go'
-        text: 'TestZeroAlloc'
+        text: "TestZeroAlloc"
         linters: [paralleltest]
 
       # Ad-hoc {name, fn} subtest table struct in TestZeroAlloc.
@@ -228,6 +228,9 @@ linters:
         linters: [govet]
         text: "fieldalignment.*could be 16"
 
+      # Goconst
+      - path: '_test\.go'
+        linters: [goconst]
 
 formatters:
   enable:

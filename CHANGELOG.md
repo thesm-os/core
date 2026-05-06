@@ -46,14 +46,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   8032 §5.1.6, backed by `crypto/ed25519`. Signer / Verifier;
   no streaming (the algorithm cannot stream — RFC 8032 §5.1.6
   needs the message in two SHA-512 computations). Zero-alloc
-  Verify. `KeyIDFromPub` derives SHA-256(pub)[:16];
+  Verify. `KeyIDFromPub` derives SHA-256[pub](:16);
   `TestKeyIDStability` locks the encoding via a hardcoded
   vector.
 - `crypto/sign/ecdsap384` package: ECDSA over NIST P-384 with
   SHA-384 hashing per FIPS 186-5, ASN.1 DER signatures, backed
   by `crypto/ecdsa`. Implements both Signer + StreamingSigner
   and Verifier + StreamingVerifier. `KeyIDFromPub` derives
-  SHA-256(SEC 1 uncompressed point)[:16]; `TestKeyIDStability`
+  SHA-256[SEC 1 uncompressed point](:16); `TestKeyIDStability`
   locks the encoding (X=1, Y=2 vector).
 - `crypto.AlgEd25519`, `crypto.AlgECDSAP384` Algorithm
   constants.

@@ -120,3 +120,13 @@ func TestPoolZeroAlloc(t *testing.T) {
 		}
 	})
 }
+
+func BenchmarkPool(b *testing.B) {
+	p := pool.NewPool(func() *resettable { return new(resettable) })
+	p.Put(p.Get()) // warm
+	b.ReportAllocs()
+	for b.Loop() {
+		v := p.Get()
+		p.Put(v)
+	}
+}

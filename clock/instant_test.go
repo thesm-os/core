@@ -238,3 +238,58 @@ func TestZeroAlloc(t *testing.T) {
 		})
 	}
 }
+
+func BenchmarkInstantCompare(b *testing.B) {
+	a := clock.Instant{Wall: 1_000_000_000, Logical: 1, Node: 1}
+	c := clock.Instant{Wall: 1_000_000_000, Logical: 2, Node: 1}
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = a.Compare(c)
+	}
+}
+
+func BenchmarkInstantHappensBefore(b *testing.B) {
+	a := clock.Instant{Wall: 1_000_000_000, Logical: 1}
+	c := clock.Instant{Wall: 2_000_000_000}
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = a.HappensBefore(c)
+	}
+}
+
+func BenchmarkInstantSub(b *testing.B) {
+	now := clock.Instant{Wall: time.Now().UnixNano()}
+	earlier := clock.Instant{Wall: now.Wall - int64(time.Second)}
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = now.Sub(earlier)
+	}
+}
+
+func BenchmarkInstantAdd(b *testing.B) {
+	i := clock.Instant{Wall: time.Now().UnixNano()}
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = i.Add(time.Second)
+	}
+}
+
+func BenchmarkInstantTime(b *testing.B) {
+	i := clock.Instant{Wall: time.Now().UnixNano()}
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = i.Time()
+	}
+}
+
+func BenchmarkInstantRangeContains(b *testing.B) {
+	r := clock.InstantRange{
+		Since: clock.Instant{Wall: 1_000_000_000},
+		Until: clock.Instant{Wall: 2_000_000_000},
+	}
+	i := clock.Instant{Wall: 1_500_000_000}
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = r.Contains(i)
+	}
+}

@@ -399,3 +399,78 @@ func TestZeroAlloc(t *testing.T) {
 		}
 	})
 }
+
+func BenchmarkAppend(b *testing.B) {
+	for _, sz := range []struct {
+		name string
+		n    int
+	}{
+		{"16B", 16},
+		{"64B", 64},
+		{"256B", 256},
+		{"4K", 4096},
+		{"64K", 65536},
+	} {
+		b.Run(sz.name, func(b *testing.B) {
+			a := arena.NewWithCapacity(sz.n * 2)
+			data := make([]byte, sz.n)
+			b.ReportAllocs()
+			b.SetBytes(int64(sz.n))
+			for b.Loop() {
+				a.Reset()
+				_ = a.Append(data)
+			}
+		})
+	}
+}
+
+func BenchmarkAlloc(b *testing.B) {
+	for _, sz := range []struct {
+		name string
+		n    int
+	}{
+		{"16B", 16},
+		{"64B", 64},
+		{"256B", 256},
+		{"4K", 4096},
+		{"64K", 65536},
+	} {
+		b.Run(sz.name, func(b *testing.B) {
+			a := arena.NewWithCapacity(sz.n * 2)
+			b.ReportAllocs()
+			b.SetBytes(int64(sz.n))
+			for b.Loop() {
+				a.Reset()
+				_ = a.Alloc(sz.n)
+			}
+		})
+	}
+}
+
+func BenchmarkMark(b *testing.B) {
+	a := arena.NewWithCapacity(4096)
+	a.Append(make([]byte, 256))
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = a.Mark()
+	}
+}
+
+func BenchmarkSliceSince(b *testing.B) {
+	a := arena.NewWithCapacity(4096)
+	m := a.Mark()
+	a.Append(make([]byte, 128))
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = a.SliceSince(m)
+	}
+}
+
+func BenchmarkBytes(b *testing.B) {
+	a := arena.NewWithCapacity(4096)
+	a.Append(make([]byte, 1024))
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = a.Bytes()
+	}
+}

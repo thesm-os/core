@@ -225,3 +225,93 @@ func TestCopyZeroAlloc(t *testing.T) {
 		}
 	})
 }
+
+func BenchmarkCopyOut(b *testing.B) {
+	for _, sz := range []struct {
+		name string
+		n    int
+	}{
+		{"16B", 16},
+		{"64B", 64},
+		{"256B", 256},
+		{"4K", 4096},
+		{"64K", 65536},
+	} {
+		b.Run(sz.name, func(b *testing.B) {
+			a := arena.NewWithCapacity(sz.n * 2)
+			a.Append(make([]byte, sz.n))
+			b.ReportAllocs()
+			b.SetBytes(int64(sz.n))
+			for b.Loop() {
+				_ = a.CopyOut()
+			}
+		})
+	}
+}
+
+func BenchmarkCopyOutTo(b *testing.B) {
+	for _, sz := range []struct {
+		name string
+		n    int
+	}{
+		{"16B", 16},
+		{"64B", 64},
+		{"256B", 256},
+		{"4K", 4096},
+		{"64K", 65536},
+	} {
+		b.Run(sz.name, func(b *testing.B) {
+			a := arena.NewWithCapacity(sz.n * 2)
+			a.Append(make([]byte, sz.n))
+			dst := make([]byte, 0, sz.n)
+			b.ReportAllocs()
+			b.SetBytes(int64(sz.n))
+			for b.Loop() {
+				dst = a.CopyOutTo(dst[:0])
+			}
+		})
+	}
+}
+
+func BenchmarkRebaseSlices(b *testing.B) {
+	a := arena.NewWithCapacity(64 * 1024)
+	const items = 32
+	const itemSize = 256
+	for range items {
+		a.Append(make([]byte, itemSize))
+	}
+	b.ReportAllocs()
+	b.SetBytes(int64(items * itemSize))
+	for b.Loop() {
+		entries := make([][]byte, 0, items)
+		off := 0
+		all := a.Bytes()
+		for range items {
+			entries = append(entries, all[off:off+itemSize])
+			off += itemSize
+		}
+		_ = arena.RebaseSlices(entries)
+	}
+}
+
+func BenchmarkRebaseSlicesTo(b *testing.B) {
+	a := arena.NewWithCapacity(64 * 1024)
+	const items = 32
+	const itemSize = 256
+	for range items {
+		a.Append(make([]byte, itemSize))
+	}
+	dst := make([]byte, 0, items*itemSize)
+	b.ReportAllocs()
+	b.SetBytes(int64(items * itemSize))
+	for b.Loop() {
+		entries := make([][]byte, 0, items)
+		off := 0
+		all := a.Bytes()
+		for range items {
+			entries = append(entries, all[off:off+itemSize])
+			off += itemSize
+		}
+		dst = arena.RebaseSlicesTo(dst[:0], entries)
+	}
+}

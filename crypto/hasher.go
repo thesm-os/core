@@ -75,10 +75,33 @@ func (id ID) String() string {
 // in this module. [Hasher.NewStream] allocates the underlying
 // hash state once.
 type Hasher interface {
+	// ID returns the implementation's stable build-local
+	// identifier.
 	ID() ID
+
+	// Algorithm returns the long-term cross-build algorithm
+	// name (for example [AlgSHA256]). Persist it in artefacts
+	// that may outlive the producing build.
 	Algorithm() Algorithm
+
+	// Hash returns the [Digest] of data. Hot path for leaf
+	// commitments. Zero-allocation on every implementation in
+	// this module.
 	Hash(data []byte) Digest
+
+	// Combine returns the [Digest] of left || right. Hot path
+	// for chain extension and Merkle accumulator construction.
+	// left and right must have [Digest.Size] equal to this
+	// Hasher's output size; a mismatch panics with a diagnostic
+	// message rather than silently producing a truncated digest.
+	// See the package "Failure semantics" section.
 	Combine(left, right Digest) Digest
+
+	// NewStream returns a fresh [Stream] for streaming inputs
+	// that don't fit in memory or that compose multiple fields
+	// without per-field concatenation. Allocates the underlying
+	// hash state once; [Stream.Write] / [Stream.Sum] /
+	// [Stream.Reset] are zero-allocation thereafter.
 	NewStream() Stream
 }
 

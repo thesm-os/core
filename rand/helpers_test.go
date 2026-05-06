@@ -254,3 +254,39 @@ func TestZeroAlloc(t *testing.T) {
 		})
 	}
 }
+
+func BenchmarkFloat64(b *testing.B) {
+	r := pcg.New(rand.Seed(1))
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = rand.Float64(r)
+	}
+}
+
+func BenchmarkUint64N(b *testing.B) {
+	r := pcg.New(rand.Seed(1))
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = rand.Uint64N(r, 1024)
+	}
+}
+
+func BenchmarkShuffle(b *testing.B) {
+	for _, sz := range []struct {
+		name string
+		n    int
+	}{
+		{"16", 16},
+		{"256", 256},
+		{"4K", 4096},
+	} {
+		b.Run(sz.name, func(b *testing.B) {
+			r := pcg.New(rand.Seed(1))
+			swap := func(_, _ int) {}
+			b.ReportAllocs()
+			for b.Loop() {
+				rand.Shuffle(r, sz.n, swap)
+			}
+		})
+	}
+}

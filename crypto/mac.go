@@ -86,10 +86,42 @@ package crypto
 // are NOT constant-time and must not be used to compare a MAC
 // against untrusted input.
 type MAC interface {
+	// ID returns the implementation's stable build-local
+	// identifier. Persisted alongside MAC outputs so the same
+	// implementation that produced a digest can be re-selected
+	// when verifying.
 	ID() ID
+
+	// Algorithm returns the long-term cross-build algorithm
+	// name (for example [AlgHMACSHA256]). Persist it in
+	// artefacts that may outlive the producing build.
 	Algorithm() Algorithm
+
+	// Size returns the output size in bytes — one of
+	// [DigestSize256], [DigestSize384], [DigestSize512].
+	// Hot-path callers preallocate fixed-size buffers
+	// (signature header, fixed-width column) without consulting
+	// an algorithm-table dispatch.
 	Size() int
+
+	// Sign returns the [Digest] of data under the instance's
+	// key. Hot path for one-shot signatures. Allocates the
+	// underlying HMAC state once per call (stdlib constraint);
+	// for sustained throughput, use [MAC.NewStream] with
+	// [Stream.Reset] between messages.
 	Sign(data []byte) Digest
+
+	// Verify reports whether expected is the MAC of data under
+	// the instance's key. The comparison is performed in
+	// constant time over the active byte prefix; size mismatch
+	// short-circuits to false. Use this in preference to
+	// [MAC.Sign] followed by [Digest.Equal] when expected is
+	// supplied by an untrusted party.
 	Verify(data, expected []byte) bool
+
+	// NewStream returns a fresh [Stream] for streaming inputs
+	// that don't fit in memory. Streaming verification is
+	// [Stream.Sum] followed by [Digest.ConstantTimeEqual]
+	// against the expected digest.
 	NewStream() Stream
 }

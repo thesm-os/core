@@ -149,3 +149,32 @@ func TestMapCursor(t *testing.T) {
 		}
 	})
 }
+
+func BenchmarkMapCursor(b *testing.B) {
+	for _, sz := range []struct {
+		name string
+		n    int
+	}{
+		{"16", 16},
+		{"256", 256},
+		{"4K", 4096},
+	} {
+		b.Run(sz.name, func(b *testing.B) {
+			entries := make([]page.Entry[string, int], sz.n)
+			for i := range entries {
+				entries[i] = page.Entry[string, int]{Key: "k", Value: i}
+			}
+			ctx := b.Context()
+			b.ReportAllocs()
+			for b.Loop() {
+				c := page.NewMapCursor(entries, "")
+				for _, err := range c.Seq(ctx) {
+					if err != nil {
+						b.Fatal(err)
+					}
+				}
+				_ = c.Close()
+			}
+		})
+	}
+}

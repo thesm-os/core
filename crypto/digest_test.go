@@ -286,6 +286,41 @@ func TestZeroAlloc(t *testing.T) {
 	}
 }
 
+func BenchmarkEqual(b *testing.B) {
+	d := crypto.NewDigest256(fill256(0x42))
+	other := crypto.NewDigest256(fill256(0x43))
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = d.Equal(other)
+	}
+}
+
+func BenchmarkConstantTimeEqual(b *testing.B) {
+	d := crypto.NewDigest256(fill256(0x42))
+	other := crypto.NewDigest256(fill256(0x42))
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = d.ConstantTimeEqual(other)
+	}
+}
+
+func BenchmarkCompare(b *testing.B) {
+	d := crypto.NewDigest256(fill256(0x42))
+	other := crypto.NewDigest256(fill256(0x43))
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = d.Compare(other)
+	}
+}
+
+func BenchmarkString(b *testing.B) {
+	d := crypto.NewDigest256(fill256(0x42))
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = d.String()
+	}
+}
+
 func fill256(b byte) [crypto.DigestSize256]byte {
 	var out [crypto.DigestSize256]byte
 	for i := range out {

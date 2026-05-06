@@ -64,3 +64,23 @@ func TestGaugeZeroAlloc(t *testing.T) {
 		}
 	})
 }
+
+func BenchmarkGaugeSet(b *testing.B) {
+	g := noop.New().Gauge(telemetry.InstrumentSpec{Name: "n"}).
+		With([]telemetry.Attr{telemetry.AttrInt("k", 1)})
+	ctx := b.Context()
+	b.ReportAllocs()
+	for b.Loop() {
+		g.Set(ctx, 1.0)
+	}
+}
+
+func BenchmarkGaugeAdd(b *testing.B) {
+	g := noop.New().Gauge(telemetry.InstrumentSpec{Name: "n"}).
+		With([]telemetry.Attr{telemetry.AttrInt("k", 1)})
+	ctx := b.Context()
+	b.ReportAllocs()
+	for b.Loop() {
+		g.Add(ctx, 0.1)
+	}
+}

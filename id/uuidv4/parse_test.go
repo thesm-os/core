@@ -239,3 +239,22 @@ func FuzzRoundTrip(f *testing.F) {
 		}
 	})
 }
+
+func BenchmarkFormat(b *testing.B) {
+	u := id.New128([id.Size128]byte{
+		0x55, 0x0e, 0x84, 0x00, 0xe2, 0x9b, 0x41, 0xd4,
+		0xa7, 0x16, 0x44, 0x66, 0x55, 0x44, 0x00, 0x00,
+	})
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = uuidv4.Format(u)
+	}
+}
+
+func BenchmarkParse(b *testing.B) {
+	encoded := "550e8400-e29b-41d4-a716-446655440000"
+	b.ReportAllocs()
+	for b.Loop() {
+		_, _ = uuidv4.Parse(encoded)
+	}
+}

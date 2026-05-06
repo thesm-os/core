@@ -111,7 +111,7 @@ Each implementation ships `KeyIDFromPub` deriving
 `SHA-256(canonical-public-key-bytes)[:16]` from a fixed-width
 canonical encoding:
 
-- **Ed25519**: SHA-256(raw 32 public-key bytes)[:16].
+- **Ed25519**: SHA-256[raw 32 public-key bytes](:16).
 - **ECDSA P-384**: SHA-256(SEC 1 uncompressed point,
   `0x04 || X(48 BE) || Y(48 BE)`, 97 bytes)[:16].
 

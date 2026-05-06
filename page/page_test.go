@@ -69,3 +69,19 @@ func TestPageWithDefault(t *testing.T) {
 		}
 	})
 }
+
+func BenchmarkIsFirst(b *testing.B) {
+	p := page.Page{Token: "page-2"}
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = p.IsFirst()
+	}
+}
+
+func BenchmarkWithDefault(b *testing.B) {
+	p := page.Page{}
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = p.WithDefault(50)
+	}
+}

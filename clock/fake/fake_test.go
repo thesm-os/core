@@ -263,3 +263,36 @@ func TestZeroAlloc(t *testing.T) {
 		})
 	}
 }
+
+func BenchmarkNow(b *testing.B) {
+	c := fake.New(origin)
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = c.Now()
+	}
+}
+
+func BenchmarkTime(b *testing.B) {
+	c := fake.New(origin)
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = c.Time()
+	}
+}
+
+func BenchmarkUpdate(b *testing.B) {
+	c := fake.New(origin)
+	observed := clock.Instant{Wall: origin.UnixNano(), Logical: 1, Node: 99}
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = c.Update(observed)
+	}
+}
+
+func BenchmarkAdvance(b *testing.B) {
+	c := fake.New(origin)
+	b.ReportAllocs()
+	for b.Loop() {
+		c.Advance(time.Nanosecond)
+	}
+}

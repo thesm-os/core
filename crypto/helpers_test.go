@@ -185,3 +185,34 @@ func FuzzStreamReset(f *testing.F) {
 		}
 	})
 }
+
+func BenchmarkHashDomain(b *testing.B) {
+	h := sha256.New()
+	domain := []byte("thesmos.audit.v1")
+	parts := [][]byte{[]byte("entry"), []byte("payload")}
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = crypto.HashDomain(h, domain, parts...)
+	}
+}
+
+func BenchmarkHashReader(b *testing.B) {
+	h := sha256.New()
+	for _, sz := range []struct {
+		name string
+		n    int
+	}{
+		{"4K", 4 * 1024},
+		{"64K", 64 * 1024},
+		{"1M", 1024 * 1024},
+	} {
+		b.Run(sz.name, func(b *testing.B) {
+			data := make([]byte, sz.n)
+			b.ReportAllocs()
+			b.SetBytes(int64(sz.n))
+			for b.Loop() {
+				_, _ = crypto.HashReader(h, bytes.NewReader(data))
+			}
+		})
+	}
+}

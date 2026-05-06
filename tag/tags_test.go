@@ -204,3 +204,59 @@ func TestTagsZeroAlloc(t *testing.T) {
 		})
 	}
 }
+
+func BenchmarkFind(b *testing.B) {
+	ts := sample()
+	b.Run("hit", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			_, _ = ts.Find("service")
+		}
+	})
+	b.Run("miss", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			_, _ = ts.Find("missing")
+		}
+	})
+}
+
+func BenchmarkHas(b *testing.B) {
+	ts := sample()
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = ts.Has("service")
+	}
+}
+
+func BenchmarkGet(b *testing.B) {
+	ts := sample()
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = ts.Get("service")
+	}
+}
+
+func BenchmarkWith(b *testing.B) {
+	ts := sample()
+	b.Run("replace", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			_ = ts.With(tag.Tag{Key: "service", Value: "new"})
+		}
+	})
+	b.Run("append", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			_ = ts.With(tag.Tag{Key: "fresh", Value: "added"})
+		}
+	})
+}
+
+func BenchmarkWithout(b *testing.B) {
+	ts := sample()
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = ts.Without("service")
+	}
+}
