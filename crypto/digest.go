@@ -160,5 +160,11 @@ func (d Digest) Compare(other Digest) int {
 // result string; intended for diagnostic output, not the hot
 // path.
 func (d Digest) String() string {
-	return hex.EncodeToString(d.bytes[:d.size])
+	// Encode into a stack-resident buffer sized for the largest
+	// digest, then convert to string. One alloc total — the
+	// string copy. [hex.EncodeToString] would do two (a make
+	// for the hex bytes plus the string conversion).
+	var buf [DigestSize512 * 2]byte
+	hex.Encode(buf[:d.size*2], d.bytes[:d.size])
+	return string(buf[:d.size*2])
 }

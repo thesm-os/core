@@ -169,6 +169,17 @@ type Signer interface {
 	// hashed externally to a Merkle root via
 	// [crypto.Hasher.NewStream] and the root signed as a normal
 	// small message.
+	//
+	// A future `AppendSigner` capability interface — a
+	// `SignTo(dst, msg []byte) ([]byte, error)` shape that
+	// writes into a caller-supplied buffer — is reserved for if
+	// stdlib gains an append-style sign primitive. Adding it
+	// would be additive (new optional interface, type-asserted
+	// at the call site, same pattern as [StreamingSigner]) and
+	// non-breaking. We do not ship it today because wrapping
+	// the current allocating-stdlib path under a `SignTo` name
+	// would mislead consumers expecting parity with
+	// [hash.Hash.Sum].
 	Sign(message []byte) ([]byte, error)
 }
 

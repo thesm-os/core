@@ -10,6 +10,7 @@ import (
 	"hash"
 
 	"go.thesmos.sh/core/crypto"
+	"go.thesmos.sh/core/pool"
 )
 
 // id is this implementation's stable build-local identifier. The
@@ -20,22 +21,36 @@ var id = crypto.ID{'h', 'm', 'a', 'c', '-', 's', 'h', 'a', '2', '5', '6', '/', '
 // MAC implements [crypto.MAC] as HMAC-SHA-256 over a fixed key.
 //
 // The key is copied at construction; the source buffer may be
-// reused or zeroed immediately. MAC is safe for concurrent use —
-// each [MAC.Sign] / [MAC.Verify] call constructs its own
-// [hash.Hash] state from the stored key, so callers share one
-// MAC across goroutines without coordination.
+// reused or zeroed immediately. MAC is safe for concurrent use:
+// the underlying [hash.Hash] instances are pooled in a per-MAC
+// [pool.Pool] and shared across goroutines via Get / Put.
 //
 // # Allocation contract
 //
-// [MAC.ID], [MAC.Algorithm], and [MAC.Size] are zero-alloc.
-// [MAC.Sign] and [MAC.Verify] each allocate the underlying HMAC
-// state once per call ([hmac.New] returns a heap-allocated
-// [hash.Hash]; the stdlib offers no zero-allocation HMAC
-// primitive). [MAC.NewStream] allocates the wrapper plus the
-// underlying stdlib HMAC state; [crypto.Stream] methods are
-// zero-alloc thereafter.
+// [MAC.ID], [MAC.Algorithm], [MAC.Size], [MAC.Sign], and
+// [MAC.Verify] are zero-allocation on the success path after
+// the first warm-up call. The pool caches pre-keyed
+// [hash.Hash] instances; [hash.Hash.Reset] preserves the HMAC
+// key state per stdlib documented behaviour. The first call
+// after construction or after GC pool eviction allocates one
+// underlying stdlib HMAC state via [hmac.New].
+//
+// [MAC.NewStream] allocates the wrapper plus the underlying
+// stdlib HMAC state; [crypto.Stream] methods are zero-alloc
+// thereafter.
 type MAC struct {
-	key []byte
+	key  []byte
+	pool *pool.Pool[*macEntry]
+}
+
+// macEntry is one pooled HMAC instance. Holding the output
+// buffer on the entry alongside the hash keeps both heap-
+// resident across Get / Put — passing [macEntry.out][:0]
+// through [hash.Hash.Sum]'s interface boundary therefore does
+// not force a per-call escape of a stack-local buffer.
+type macEntry struct {
+	h   hash.Hash
+	out [crypto.DigestSize256]byte
 }
 
 // Compile-time interface check.
@@ -51,7 +66,11 @@ var _ crypto.MAC = (*MAC)(nil)
 func New(key []byte) *MAC {
 	keyCopy := make([]byte, len(key))
 	copy(keyCopy, key)
-	return &MAC{key: keyCopy}
+	m := &MAC{key: keyCopy}
+	m.pool = pool.NewPool(func() *macEntry {
+		return &macEntry{h: hmac.New(sha256.New, m.key)}
+	})
+	return m
 }
 
 // ID returns the stable build-local identifier.
@@ -67,16 +86,19 @@ func (*MAC) Size() int { return crypto.DigestSize256 }
 //
 // # Allocation contract
 //
-// One allocation per call for the underlying HMAC state. Hot
-// paths should use [MAC.NewStream] + [crypto.Stream.Reset].
+// Zero-allocation steady state. The first call after
+// construction (or after GC pool eviction) allocates one
+// underlying stdlib HMAC state.
 func (m *MAC) Sign(data []byte) crypto.Digest {
-	h := hmac.New(sha256.New, m.key)
+	e := m.pool.Get()
+	e.h.Reset()
 	// hash.Hash.Write never returns a non-nil error per the
 	// stdlib contract; ignoring is safe.
-	_, _ = h.Write(data)
-	var out [crypto.DigestSize256]byte
-	h.Sum(out[:0])
-	return crypto.NewDigest256(out)
+	_, _ = e.h.Write(data)
+	e.h.Sum(e.out[:0])
+	digest := crypto.NewDigest256(e.out)
+	m.pool.Put(e)
+	return digest
 }
 
 // Verify reports whether expected is HMAC-SHA-256(key, data).
@@ -88,18 +110,20 @@ func (m *MAC) Sign(data []byte) crypto.Digest {
 //
 // # Allocation contract
 //
-// One allocation per call for the underlying HMAC state.
+// Zero-allocation steady state, same as [MAC.Sign].
 func (m *MAC) Verify(data, expected []byte) bool {
 	if len(expected) != crypto.DigestSize256 {
 		return false
 	}
-	h := hmac.New(sha256.New, m.key)
+	e := m.pool.Get()
+	e.h.Reset()
 	// hash.Hash.Write never returns a non-nil error per the
 	// stdlib contract; ignoring is safe.
-	_, _ = h.Write(data)
-	var got [crypto.DigestSize256]byte
-	h.Sum(got[:0])
-	return subtle.ConstantTimeCompare(got[:], expected) == 1
+	_, _ = e.h.Write(data)
+	e.h.Sum(e.out[:0])
+	ok := subtle.ConstantTimeCompare(e.out[:], expected) == 1
+	m.pool.Put(e)
+	return ok
 }
 
 // NewStream returns a fresh streaming [crypto.Stream] backed by

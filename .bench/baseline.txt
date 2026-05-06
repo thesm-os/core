@@ -1,0 +1,514 @@
+?   	go.thesmos.sh/core	[no test files]
+goos: linux
+goarch: amd64
+pkg: go.thesmos.sh/core/arena
+cpu: AMD Ryzen 9 9950X3D 16-Core Processor
+BenchmarkAppend/16B-32        	729836305	         1.656 ns/op	9660.68 MB/s	       0 B/op	       0 allocs/op
+BenchmarkAppend/64B-32        	627293718	         1.905 ns/op	33587.86 MB/s	       0 B/op	       0 allocs/op
+BenchmarkAppend/256B-32       	335313237	         3.583 ns/op	71446.67 MB/s	       0 B/op	       0 allocs/op
+BenchmarkAppend/4K-32         	58110616	        19.96 ns/op	205218.71 MB/s	       0 B/op	       0 allocs/op
+BenchmarkAppend/64K-32        	 2299828	       521.5 ns/op	125665.82 MB/s	       0 B/op	       0 allocs/op
+BenchmarkAlloc/16B-32         	697817474	         1.785 ns/op	8963.25 MB/s	       0 B/op	       0 allocs/op
+BenchmarkAlloc/64B-32         	722708820	         1.600 ns/op	39992.34 MB/s	       0 B/op	       0 allocs/op
+BenchmarkAlloc/256B-32        	522419203	         2.282 ns/op	112175.50 MB/s	       0 B/op	       0 allocs/op
+BenchmarkAlloc/4K-32          	71604612	        16.30 ns/op	251226.76 MB/s	       0 B/op	       0 allocs/op
+BenchmarkAlloc/64K-32         	 5974065	       198.0 ns/op	330946.63 MB/s	       0 B/op	       0 allocs/op
+BenchmarkMark-32              	1000000000	         0.1818 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSliceSince-32        	1000000000	         0.1774 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBytes-32             	1000000000	         0.1771 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCopyOut/16B-32       	100000000	        10.17 ns/op	1573.61 MB/s	      16 B/op	       1 allocs/op
+BenchmarkCopyOut/64B-32       	92024157	        12.72 ns/op	5030.72 MB/s	      64 B/op	       1 allocs/op
+BenchmarkCopyOut/256B-32      	47790921	        32.77 ns/op	7811.54 MB/s	     256 B/op	       1 allocs/op
+BenchmarkCopyOut/4K-32        	 2374448	       462.5 ns/op	8856.34 MB/s	    4096 B/op	       1 allocs/op
+BenchmarkCopyOut/64K-32       	  316616	      4875 ns/op	13443.93 MB/s	   65536 B/op	       1 allocs/op
+BenchmarkCopyOutTo/16B-32     	906560239	         1.258 ns/op	12721.92 MB/s	       0 B/op	       0 allocs/op
+BenchmarkCopyOutTo/64B-32     	857755924	         1.399 ns/op	45745.35 MB/s	       0 B/op	       0 allocs/op
+BenchmarkCopyOutTo/256B-32    	382249251	         3.123 ns/op	81964.94 MB/s	       0 B/op	       0 allocs/op
+BenchmarkCopyOutTo/4K-32      	57401079	        20.18 ns/op	202939.87 MB/s	       0 B/op	       0 allocs/op
+BenchmarkCopyOutTo/64K-32     	 2397031	       499.8 ns/op	131122.56 MB/s	       0 B/op	       0 allocs/op
+BenchmarkRebaseSlices-32      	 1359217	       837.3 ns/op	9784.40 MB/s	    8192 B/op	       1 allocs/op
+BenchmarkRebaseSlicesTo-32    	 8197354	       146.4 ns/op	55974.77 MB/s	       0 B/op	       0 allocs/op
+BenchmarkReset-32             	1000000000	         0.3209 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCapExceeds-32        	1000000000	         0.1771 ns/op	       0 B/op	       0 allocs/op
+BenchmarkShrink-32            	1000000000	         0.4273 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	go.thesmos.sh/core/arena	28.006s
+goos: linux
+goarch: amd64
+pkg: go.thesmos.sh/core/clock
+cpu: AMD Ryzen 9 9950X3D 16-Core Processor
+BenchmarkInstantCompare-32          	880459028	         1.212 ns/op	       0 B/op	       0 allocs/op
+BenchmarkInstantHappensBefore-32    	1000000000	         1.066 ns/op	       0 B/op	       0 allocs/op
+BenchmarkInstantSub-32              	1000000000	         0.1768 ns/op	       0 B/op	       0 allocs/op
+BenchmarkInstantAdd-32              	1000000000	         0.1768 ns/op	       0 B/op	       0 allocs/op
+BenchmarkInstantTime-32             	832776535	         1.431 ns/op	       0 B/op	       0 allocs/op
+BenchmarkInstantRangeContains-32    	390303093	         3.024 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	go.thesmos.sh/core/clock	4.862s
+goos: linux
+goarch: amd64
+pkg: go.thesmos.sh/core/clock/fake
+cpu: AMD Ryzen 9 9950X3D 16-Core Processor
+BenchmarkNow-32        	131260666	         9.142 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTime-32       	100000000	        10.57 ns/op	       0 B/op	       0 allocs/op
+BenchmarkUpdate-32     	124003074	         9.700 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAdvance-32    	100000000	        11.77 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	go.thesmos.sh/core/clock/fake	4.640s
+goos: linux
+goarch: amd64
+pkg: go.thesmos.sh/core/clock/hlc
+cpu: AMD Ryzen 9 9950X3D 16-Core Processor
+BenchmarkNow-32            	28900507	        40.57 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTime-32           	27921732	        42.34 ns/op	       0 B/op	       0 allocs/op
+BenchmarkUpdate-32         	29599688	        40.45 ns/op	       0 B/op	       0 allocs/op
+BenchmarkNowParallel-32    	15040965	        68.06 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	go.thesmos.sh/core/clock/hlc	4.661s
+goos: linux
+goarch: amd64
+pkg: go.thesmos.sh/core/crypto
+cpu: AMD Ryzen 9 9950X3D 16-Core Processor
+BenchmarkEqual-32                	209572688	         5.737 ns/op	       0 B/op	       0 allocs/op
+BenchmarkConstantTimeEqual-32    	165863022	         7.194 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCompare-32              	597342943	         2.006 ns/op	       0 B/op	       0 allocs/op
+BenchmarkString-32               	39939423	        29.84 ns/op	      64 B/op	       1 allocs/op
+BenchmarkHashDomain-32           	11622260	        99.67 ns/op	     176 B/op	       2 allocs/op
+BenchmarkHashReader/4K-32        	  742639	      1599 ns/op	2561.99 MB/s	     176 B/op	       2 allocs/op
+BenchmarkHashReader/64K-32       	   49665	     23854 ns/op	2747.36 MB/s	     176 B/op	       2 allocs/op
+BenchmarkHashReader/1M-32        	    3115	    376069 ns/op	2788.25 MB/s	     176 B/op	       2 allocs/op
+PASS
+ok  	go.thesmos.sh/core/crypto	9.493s
+goos: linux
+goarch: amd64
+pkg: go.thesmos.sh/core/crypto/hmac/sha256
+cpu: AMD Ryzen 9 9950X3D 16-Core Processor
+BenchmarkSign/8B-32         	10697196	       111.4 ns/op	  71.84 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSign/64B-32        	 9139086	       129.1 ns/op	 495.91 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSign/256B-32       	 6017541	       199.3 ns/op	1284.44 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSign/4K-32         	  750864	      1575 ns/op	2599.98 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSign/64K-32        	   50678	     23670 ns/op	2768.68 MB/s	       0 B/op	       0 allocs/op
+BenchmarkVerify/8B-32       	10495944	       111.6 ns/op	  71.68 MB/s	       0 B/op	       0 allocs/op
+BenchmarkVerify/64B-32      	 8915275	       131.5 ns/op	 486.76 MB/s	       0 B/op	       0 allocs/op
+BenchmarkVerify/256B-32     	 5860393	       204.7 ns/op	1250.59 MB/s	       0 B/op	       0 allocs/op
+BenchmarkVerify/4K-32       	  753342	      1577 ns/op	2597.64 MB/s	       0 B/op	       0 allocs/op
+BenchmarkVerify/64K-32      	   51049	     23498 ns/op	2789.03 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sequential/8B-32      	11447413	       105.4 ns/op	  75.89 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sequential/64B-32     	 9427695	       126.8 ns/op	 504.70 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sequential/256B-32    	 6067689	       197.4 ns/op	1296.84 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sequential/4K-32      	  741615	      1572 ns/op	2605.02 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sequential/64K-32     	   51014	     23500 ns/op	2788.78 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/parallel/8B-32        	310304198	         3.945 ns/op	2027.88 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/parallel/64B-32       	244405334	         4.808 ns/op	13310.30 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/parallel/256B-32      	154496304	         7.738 ns/op	33082.13 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/parallel/4K-32        	16990614	        68.00 ns/op	60235.37 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/parallel/64K-32       	 1000000	      1035 ns/op	63335.97 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSignParallel/8B-32           	230110621	         5.202 ns/op	1537.78 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSignParallel/64B-32          	100000000	        10.04 ns/op	6377.66 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSignParallel/4K-32           	15605762	        69.98 ns/op	58532.26 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSignParallel/64K-32          	 1148448	      1039 ns/op	63088.60 MB/s	       0 B/op	       0 allocs/op
+PASS
+ok  	go.thesmos.sh/core/crypto/hmac/sha256	31.435s
+goos: linux
+goarch: amd64
+pkg: go.thesmos.sh/core/crypto/hmac/sha3
+cpu: AMD Ryzen 9 9950X3D 16-Core Processor
+BenchmarkSign/sha3-256/8B-32         	 2241687	       534.3 ns/op	  14.97 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSign/sha3-256/64B-32        	 2228944	       534.9 ns/op	 119.64 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSign/sha3-256/256B-32       	 1548020	       772.9 ns/op	 331.21 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSign/sha3-256/4K-32         	  220399	      5427 ns/op	 754.81 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSign/sha3-256/64K-32        	   15073	     78969 ns/op	 829.90 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSign/sha3-384/8B-32         	 2240608	       532.2 ns/op	  15.03 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSign/sha3-384/64B-32        	 2216934	       535.9 ns/op	 119.42 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSign/sha3-384/256B-32       	 1284824	       933.7 ns/op	 274.19 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSign/sha3-384/4K-32         	  174332	      6951 ns/op	 589.23 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSign/sha3-384/64K-32        	   10000	    101339 ns/op	 646.70 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSign/sha3-512/8B-32         	 2243913	       534.8 ns/op	  14.96 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSign/sha3-512/64B-32        	 2234829	       537.1 ns/op	 119.17 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSign/sha3-512/256B-32       	 1000000	      1103 ns/op	 232.18 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSign/sha3-512/4K-32         	  125696	      9546 ns/op	 429.08 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSign/sha3-512/64K-32        	    8214	    145834 ns/op	 449.39 MB/s	       0 B/op	       0 allocs/op
+BenchmarkVerify/sha3-256/8B-32       	 2199162	       543.6 ns/op	  14.72 MB/s	       0 B/op	       0 allocs/op
+BenchmarkVerify/sha3-256/64B-32      	 2138680	       551.0 ns/op	 116.15 MB/s	       0 B/op	       0 allocs/op
+BenchmarkVerify/sha3-256/256B-32     	 1537564	       778.7 ns/op	 328.74 MB/s	       0 B/op	       0 allocs/op
+BenchmarkVerify/sha3-256/4K-32       	  218971	      5448 ns/op	 751.90 MB/s	       0 B/op	       0 allocs/op
+BenchmarkVerify/sha3-256/64K-32      	   15302	     78162 ns/op	 838.47 MB/s	       0 B/op	       0 allocs/op
+BenchmarkVerify/sha3-384/8B-32       	 2187000	       545.6 ns/op	  14.66 MB/s	       0 B/op	       0 allocs/op
+BenchmarkVerify/sha3-384/64B-32      	 2202916	       544.8 ns/op	 117.48 MB/s	       0 B/op	       0 allocs/op
+BenchmarkVerify/sha3-384/256B-32     	 1267294	       946.6 ns/op	 270.44 MB/s	       0 B/op	       0 allocs/op
+BenchmarkVerify/sha3-384/4K-32       	  173408	      6863 ns/op	 596.86 MB/s	       0 B/op	       0 allocs/op
+BenchmarkVerify/sha3-384/64K-32      	   10000	    102137 ns/op	 641.65 MB/s	       0 B/op	       0 allocs/op
+BenchmarkVerify/sha3-512/8B-32       	 2185897	       549.7 ns/op	  14.55 MB/s	       0 B/op	       0 allocs/op
+BenchmarkVerify/sha3-512/64B-32      	 2181846	       549.6 ns/op	 116.44 MB/s	       0 B/op	       0 allocs/op
+BenchmarkVerify/sha3-512/256B-32     	 1000000	      1108 ns/op	 231.03 MB/s	       0 B/op	       0 allocs/op
+BenchmarkVerify/sha3-512/4K-32       	  120942	      9631 ns/op	 425.28 MB/s	       0 B/op	       0 allocs/op
+BenchmarkVerify/sha3-512/64K-32      	    7966	    146213 ns/op	 448.22 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sha3-256/sequential/8B-32      	 2302110	       521.0 ns/op	  15.35 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sha3-256/sequential/64B-32     	 2300515	       521.5 ns/op	 122.73 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sha3-256/sequential/256B-32    	 1572825	       760.8 ns/op	 336.50 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sha3-256/sequential/4K-32      	  221740	      5402 ns/op	 758.25 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sha3-256/sequential/64K-32     	   15448	     77664 ns/op	 843.84 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sha3-256/parallel/8B-32        	49783924	        24.49 ns/op	 326.63 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sha3-256/parallel/64B-32       	42509072	        25.41 ns/op	2518.49 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sha3-256/parallel/256B-32      	30640233	        36.66 ns/op	6982.22 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sha3-256/parallel/4K-32        	 3325357	       354.6 ns/op	11552.10 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sha3-256/parallel/64K-32       	  218560	      5332 ns/op	12291.64 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sha3-384/sequential/8B-32      	 2231426	       533.7 ns/op	  14.99 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sha3-384/sequential/64B-32     	 2266900	       527.0 ns/op	 121.43 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sha3-384/sequential/256B-32    	 1216323	       988.6 ns/op	 258.95 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sha3-384/sequential/4K-32      	  170578	      7005 ns/op	 584.76 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sha3-384/sequential/64K-32     	   10000	    102599 ns/op	 638.76 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sha3-384/parallel/8B-32        	44999799	        24.93 ns/op	 320.88 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sha3-384/parallel/64B-32       	43795441	        26.00 ns/op	2461.91 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sha3-384/parallel/256B-32      	25256710	        48.07 ns/op	5325.36 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sha3-384/parallel/4K-32        	 2646579	       450.2 ns/op	9098.70 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sha3-384/parallel/64K-32       	  172038	      6946 ns/op	9434.83 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sha3-512/sequential/8B-32      	 2283114	       522.4 ns/op	  15.31 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sha3-512/sequential/64B-32     	 2313260	       518.7 ns/op	 123.38 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sha3-512/sequential/256B-32    	 1000000	      1136 ns/op	 225.30 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sha3-512/sequential/4K-32      	  123585	      9634 ns/op	 425.15 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sha3-512/sequential/64K-32     	    8155	    148229 ns/op	 442.13 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sha3-512/parallel/8B-32        	48400497	        25.26 ns/op	 316.76 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sha3-512/parallel/64B-32       	44327938	        25.51 ns/op	2509.28 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sha3-512/parallel/256B-32      	19744542	        58.92 ns/op	4344.52 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sha3-512/parallel/4K-32        	 1882687	       641.4 ns/op	6386.47 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sha3-512/parallel/64K-32       	  118806	     10049 ns/op	6521.88 MB/s	       1 B/op	       0 allocs/op
+BenchmarkSignParallel/sha3-256/8B-32           	40694031	        26.29 ns/op	 304.27 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSignParallel/sha3-256/64B-32          	40057146	        27.13 ns/op	2359.27 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSignParallel/sha3-256/4K-32           	 3338601	       356.8 ns/op	11478.60 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSignParallel/sha3-256/64K-32          	  210684	      5302 ns/op	12360.36 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSignParallel/sha3-384/8B-32           	41420151	        26.38 ns/op	 303.29 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSignParallel/sha3-384/64B-32          	39106626	        26.08 ns/op	2453.85 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSignParallel/sha3-384/4K-32           	 2638598	       452.0 ns/op	9062.00 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSignParallel/sha3-384/64K-32          	  166885	      6931 ns/op	9455.15 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSignParallel/sha3-512/8B-32           	37966712	        27.51 ns/op	 290.84 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSignParallel/sha3-512/64B-32          	41189052	        28.28 ns/op	2263.18 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSignParallel/sha3-512/4K-32           	 1883466	       642.0 ns/op	6379.85 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSignParallel/sha3-512/64K-32          	  115149	      9993 ns/op	6558.43 MB/s	       0 B/op	       0 allocs/op
+PASS
+ok  	go.thesmos.sh/core/crypto/hmac/sha3	89.043s
+goos: linux
+goarch: amd64
+pkg: go.thesmos.sh/core/crypto/hmac/sha512
+cpu: AMD Ryzen 9 9950X3D 16-Core Processor
+BenchmarkSign/sha384/8B-32  	 4603507	       256.0 ns/op	  31.25 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSign/sha384/64B-32 	 4614195	       260.0 ns/op	 246.13 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSign/sha384/256B-32         	 2744734	       435.0 ns/op	 588.56 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSign/sha384/4K-32           	  379352	      3163 ns/op	1294.87 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSign/sha384/64K-32          	   25906	     46482 ns/op	1409.92 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSign/sha512/8B-32           	 4717980	       252.5 ns/op	  31.68 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSign/sha512/64B-32          	 4663206	       254.6 ns/op	 251.38 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSign/sha512/256B-32         	 2721746	       437.6 ns/op	 585.03 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSign/sha512/4K-32           	  375514	      3156 ns/op	1297.82 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSign/sha512/64K-32          	   25550	     46920 ns/op	1396.75 MB/s	       0 B/op	       0 allocs/op
+BenchmarkVerify/sha384/8B-32         	 4592697	       261.2 ns/op	  30.63 MB/s	       0 B/op	       0 allocs/op
+BenchmarkVerify/sha384/64B-32        	 4452259	       266.3 ns/op	 240.35 MB/s	       0 B/op	       0 allocs/op
+BenchmarkVerify/sha384/256B-32       	 2690426	       444.4 ns/op	 576.04 MB/s	       0 B/op	       0 allocs/op
+BenchmarkVerify/sha384/4K-32         	  381312	      3144 ns/op	1302.82 MB/s	       0 B/op	       0 allocs/op
+BenchmarkVerify/sha384/64K-32        	   25420	     47105 ns/op	1391.29 MB/s	       0 B/op	       0 allocs/op
+BenchmarkVerify/sha512/8B-32         	 4465276	       266.5 ns/op	  30.02 MB/s	       0 B/op	       0 allocs/op
+BenchmarkVerify/sha512/64B-32        	 4473586	       267.3 ns/op	 239.47 MB/s	       0 B/op	       0 allocs/op
+BenchmarkVerify/sha512/256B-32       	 2643178	       453.8 ns/op	 564.11 MB/s	       0 B/op	       0 allocs/op
+BenchmarkVerify/sha512/4K-32         	  379882	      3166 ns/op	1293.58 MB/s	       0 B/op	       0 allocs/op
+BenchmarkVerify/sha512/64K-32        	   25616	     46691 ns/op	1403.60 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sha384/sequential/8B-32         	 4812464	       248.2 ns/op	  32.24 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sha384/sequential/64B-32        	 4771620	       251.8 ns/op	 254.12 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sha384/sequential/256B-32       	 2774856	       429.4 ns/op	 596.11 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sha384/sequential/4K-32         	  379038	      3148 ns/op	1301.00 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sha384/sequential/64K-32        	   25774	     46386 ns/op	1412.83 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sha384/parallel/8B-32           	88175833	        13.18 ns/op	 606.81 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sha384/parallel/64B-32          	86301381	        13.28 ns/op	4820.03 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sha384/parallel/256B-32         	45970622	        23.51 ns/op	10887.50 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sha384/parallel/4K-32           	 6530668	       180.0 ns/op	22756.87 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sha384/parallel/64K-32          	  404314	      2671 ns/op	24536.39 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sha512/sequential/8B-32         	 4682085	       251.7 ns/op	  31.79 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sha512/sequential/64B-32        	 4758177	       251.3 ns/op	 254.64 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sha512/sequential/256B-32       	 2783125	       429.4 ns/op	 596.21 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sha512/sequential/4K-32         	  332520	      3232 ns/op	1267.37 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sha512/sequential/64K-32        	   25524	     46886 ns/op	1397.76 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sha512/parallel/8B-32           	87365422	        13.37 ns/op	 598.49 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sha512/parallel/64B-32          	90304032	        13.40 ns/op	4776.39 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sha512/parallel/256B-32         	44746942	        23.77 ns/op	10770.90 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sha512/parallel/4K-32           	 6564043	       180.9 ns/op	22641.58 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/sha512/parallel/64K-32          	  430198	      2684 ns/op	24413.93 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSignParallel/sha384/8B-32              	74505511	        13.79 ns/op	 580.16 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSignParallel/sha384/64B-32             	77679188	        13.75 ns/op	4656.10 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSignParallel/sha384/4K-32              	 6568498	       180.8 ns/op	22656.57 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSignParallel/sha384/64K-32             	  431061	      2657 ns/op	24668.90 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSignParallel/sha512/8B-32              	82231498	        14.15 ns/op	 565.57 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSignParallel/sha512/64B-32             	80160882	        13.88 ns/op	4611.94 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSignParallel/sha512/4K-32              	 6434985	       180.8 ns/op	22658.39 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSignParallel/sha512/64K-32             	  427953	      2662 ns/op	24616.50 MB/s	       0 B/op	       0 allocs/op
+PASS
+ok  	go.thesmos.sh/core/crypto/hmac/sha512	57.992s
+goos: linux
+goarch: amd64
+pkg: go.thesmos.sh/core/crypto/sha256
+cpu: AMD Ryzen 9 9950X3D 16-Core Processor
+BenchmarkHash/8B-32    	24229831	        48.30 ns/op	 165.63 MB/s	       0 B/op	       0 allocs/op
+BenchmarkHash/64B-32   	16125394	        72.80 ns/op	 879.10 MB/s	       0 B/op	       0 allocs/op
+BenchmarkHash/128B-32  	12543720	        94.30 ns/op	1357.32 MB/s	       0 B/op	       0 allocs/op
+BenchmarkHash/512B-32  	 5168217	       231.5 ns/op	2211.99 MB/s	       0 B/op	       0 allocs/op
+BenchmarkHash/4K-32    	  709269	      1513 ns/op	2706.87 MB/s	       0 B/op	       0 allocs/op
+BenchmarkHash/64K-32   	   50278	     23778 ns/op	2756.17 MB/s	       0 B/op	       0 allocs/op
+BenchmarkCombine-32    	14190320	        83.43 ns/op	 767.13 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/8B-32  	22745631	        52.82 ns/op	 151.47 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/64B-32 	15926253	        74.47 ns/op	 859.46 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/4K-32  	  783259	      1513 ns/op	2706.41 MB/s	       0 B/op	       0 allocs/op
+BenchmarkStream/64K-32 	   51044	     23452 ns/op	2794.49 MB/s	       0 B/op	       0 allocs/op
+PASS
+ok  	go.thesmos.sh/core/crypto/sha256	12.952s
+goos: linux
+goarch: amd64
+pkg: go.thesmos.sh/core/crypto/sha3
+cpu: AMD Ryzen 9 9950X3D 16-Core Processor
+BenchmarkSHA3_256Hash/8B-32 	 4919259	       243.6 ns/op	  32.84 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSHA3_256Hash/64B-32         	 4908355	       244.3 ns/op	 261.98 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSHA3_256Hash/512B-32        	 1425646	       830.6 ns/op	 616.42 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSHA3_256Hash/4K-32          	  233754	      5151 ns/op	 795.20 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSHA3_256Hash/64K-32         	   15380	     78312 ns/op	 836.86 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSHA3_384Hash/512B-32        	 1000000	      1005 ns/op	 509.39 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSHA3_384Hash/64K-32         	   10000	    101580 ns/op	 645.16 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSHA3_512Hash/512B-32        	  833412	      1448 ns/op	 353.71 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSHA3_512Hash/64K-32         	    8115	    145889 ns/op	 449.22 MB/s	       0 B/op	       0 allocs/op
+PASS
+ok  	go.thesmos.sh/core/crypto/sha3	10.407s
+goos: linux
+goarch: amd64
+pkg: go.thesmos.sh/core/crypto/sha512
+cpu: AMD Ryzen 9 9950X3D 16-Core Processor
+BenchmarkSHA384Hash/8B-32 	10066392	       118.5 ns/op	  67.49 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSHA384Hash/64B-32         	 9717518	       122.9 ns/op	 520.57 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSHA384Hash/512B-32        	 2509159	       477.8 ns/op	1071.48 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSHA384Hash/4K-32          	  390393	      3004 ns/op	1363.40 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSHA384Hash/64K-32         	   25917	     46189 ns/op	1418.85 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSHA512Hash/8B-32          	 9866980	       119.3 ns/op	  67.06 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSHA512Hash/64B-32         	 9763638	       122.3 ns/op	 523.37 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSHA512Hash/512B-32        	 2541646	       471.2 ns/op	1086.52 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSHA512Hash/4K-32          	  395740	      2999 ns/op	1365.57 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSHA512Hash/64K-32         	   25881	     46291 ns/op	1415.73 MB/s	       0 B/op	       0 allocs/op
+PASS
+ok  	go.thesmos.sh/core/crypto/sha512	11.916s
+PASS
+ok  	go.thesmos.sh/core/crypto/sign	0.002s
+goos: linux
+goarch: amd64
+pkg: go.thesmos.sh/core/crypto/sign/ecdsap384
+cpu: AMD Ryzen 9 9950X3D 16-Core Processor
+BenchmarkSign/64B-32        	   10000	    107593 ns/op	   0.59 MB/s	    6200 B/op	      60 allocs/op
+BenchmarkSign/1K-32         	   10000	    108127 ns/op	   9.47 MB/s	    6200 B/op	      60 allocs/op
+BenchmarkSign/64K-32        	    7880	    155064 ns/op	 422.64 MB/s	    6200 B/op	      60 allocs/op
+BenchmarkVerify/64B-32      	    3937	    303938 ns/op	   0.21 MB/s	     808 B/op	      17 allocs/op
+BenchmarkVerify/1K-32       	    3741	    308264 ns/op	   3.32 MB/s	     808 B/op	      17 allocs/op
+BenchmarkVerify/64K-32      	    3421	    350309 ns/op	 187.08 MB/s	     808 B/op	      17 allocs/op
+BenchmarkGenerate-32        	   17858	     66813 ns/op	    2768 B/op	      55 allocs/op
+BenchmarkKeyIDFromPub-32    	 2096884	       573.7 ns/op	     328 B/op	       6 allocs/op
+PASS
+ok  	go.thesmos.sh/core/crypto/sign/ecdsap384	9.332s
+goos: linux
+goarch: amd64
+pkg: go.thesmos.sh/core/crypto/sign/ed25519
+cpu: AMD Ryzen 9 9950X3D 16-Core Processor
+BenchmarkSign/64B-32          	  107565	     11024 ns/op	   5.81 MB/s	      64 B/op	       1 allocs/op
+BenchmarkSign/1K-32           	   95130	     12554 ns/op	  81.57 MB/s	      64 B/op	       1 allocs/op
+BenchmarkSign/64K-32          	   10000	    103678 ns/op	 632.11 MB/s	      64 B/op	       1 allocs/op
+BenchmarkVerify/64B-32        	   45336	     26287 ns/op	   2.43 MB/s	       0 B/op	       0 allocs/op
+BenchmarkVerify/1K-32         	   44731	     26806 ns/op	  38.20 MB/s	       0 B/op	       0 allocs/op
+BenchmarkVerify/64K-32        	   16665	     71988 ns/op	 910.38 MB/s	       0 B/op	       0 allocs/op
+BenchmarkSignParallel/64B-32  	 1691866	       733.5 ns/op	  87.26 MB/s	      64 B/op	       1 allocs/op
+BenchmarkSignParallel/1K-32   	 1460642	       845.7 ns/op	1210.82 MB/s	      64 B/op	       1 allocs/op
+BenchmarkSignParallel/64K-32  	  192097	      6099 ns/op	10745.09 MB/s	      64 B/op	       1 allocs/op
+BenchmarkVerifyParallel/64B-32         	  717139	      1662 ns/op	  38.51 MB/s	       0 B/op	       0 allocs/op
+BenchmarkVerifyParallel/1K-32          	  686323	      1717 ns/op	 596.49 MB/s	       0 B/op	       0 allocs/op
+BenchmarkVerifyParallel/64K-32         	  260132	      4297 ns/op	15249.90 MB/s	       0 B/op	       0 allocs/op
+BenchmarkGenerate-32                   	  123722	      9314 ns/op	     224 B/op	       6 allocs/op
+BenchmarkKeyIDFromPub-32               	25297612	        46.81 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	go.thesmos.sh/core/crypto/sign/ed25519	19.165s
+goos: linux
+goarch: amd64
+pkg: go.thesmos.sh/core/epoch
+cpu: AMD Ryzen 9 9950X3D 16-Core Processor
+BenchmarkNext-32            	337078711	         3.539 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCurrent-32         	1000000000	         0.2170 ns/op	       0 B/op	       0 allocs/op
+BenchmarkNextParallel-32    	125518004	         9.627 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCompare-32         	1000000000	         0.1950 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSuccessor-32       	1000000000	         0.1792 ns/op	       0 B/op	       0 allocs/op
+BenchmarkString-32          	79379647	        13.53 ns/op	      16 B/op	       1 allocs/op
+PASS
+ok  	go.thesmos.sh/core/epoch	5.038s
+goos: linux
+goarch: amd64
+pkg: go.thesmos.sh/core/id
+cpu: AMD Ryzen 9 9950X3D 16-Core Processor
+BenchmarkEqual/128-32  	858793224	         1.351 ns/op	       0 B/op	       0 allocs/op
+BenchmarkEqual/160-32  	890513250	         1.346 ns/op	       0 B/op	       0 allocs/op
+BenchmarkEqual/256-32  	863879562	         1.351 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCompare/128-32         	319631688	         3.746 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCompare/160-32         	316711162	         3.743 ns/op	       0 B/op	       0 allocs/op
+BenchmarkCompare/256-32         	317389516	         3.744 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBytes-32               	1000000000	         0.5341 ns/op	       0 B/op	       0 allocs/op
+BenchmarkString-32              	43092303	        26.52 ns/op	      48 B/op	       1 allocs/op
+PASS
+ok  	go.thesmos.sh/core/id	8.779s
+goos: linux
+goarch: amd64
+pkg: go.thesmos.sh/core/id/fixed
+cpu: AMD Ryzen 9 9950X3D 16-Core Processor
+BenchmarkGenerate-32    	1000000000	         0.2354 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	go.thesmos.sh/core/id/fixed	0.238s
+goos: linux
+goarch: amd64
+pkg: go.thesmos.sh/core/id/ksuid
+cpu: AMD Ryzen 9 9950X3D 16-Core Processor
+BenchmarkGenerate-32            	12928840	        92.43 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTimestampSeconds-32    	1000000000	         0.8787 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFormat-32              	 7782348	       155.2 ns/op	      32 B/op	       1 allocs/op
+BenchmarkParse-32               	16910738	        69.73 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	go.thesmos.sh/core/id/ksuid	4.464s
+goos: linux
+goarch: amd64
+pkg: go.thesmos.sh/core/id/ulid
+cpu: AMD Ryzen 9 9950X3D 16-Core Processor
+BenchmarkFormat-32             	46286174	        28.14 ns/op	      32 B/op	       1 allocs/op
+BenchmarkParseULID-32          	62693281	        18.85 ns/op	       0 B/op	       0 allocs/op
+BenchmarkGenerate-32           	12900384	        91.52 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTimestampMillis-32    	815414508	         1.436 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	go.thesmos.sh/core/id/ulid	4.839s
+goos: linux
+goarch: amd64
+pkg: go.thesmos.sh/core/id/uuidv4
+cpu: AMD Ryzen 9 9950X3D 16-Core Processor
+BenchmarkFormat-32      	54096126	        23.25 ns/op	      48 B/op	       1 allocs/op
+BenchmarkParse-32       	71497992	        16.58 ns/op	       0 B/op	       0 allocs/op
+BenchmarkGenerate-32    	14486046	        82.08 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	go.thesmos.sh/core/id/uuidv4	3.636s
+goos: linux
+goarch: amd64
+pkg: go.thesmos.sh/core/page
+cpu: AMD Ryzen 9 9950X3D 16-Core Processor
+BenchmarkMapCursor/16-32   	28816899	        41.16 ns/op	       0 B/op	       0 allocs/op
+BenchmarkMapCursor/256-32  	 1856002	       646.7 ns/op	       0 B/op	       0 allocs/op
+BenchmarkMapCursor/4K-32   	  115342	     10349 ns/op	       0 B/op	       0 allocs/op
+BenchmarkIsFirst-32        	1000000000	         0.1783 ns/op	       0 B/op	       0 allocs/op
+BenchmarkWithDefault-32    	1000000000	         0.1797 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSliceCursor/16-32 	33469512	        35.76 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSliceCursor/256-32         	 2106466	       567.6 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSliceCursor/4K-32          	  133378	      8951 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	go.thesmos.sh/core/page	7.529s
+goos: linux
+goarch: amd64
+pkg: go.thesmos.sh/core/pool
+cpu: AMD Ryzen 9 9950X3D 16-Core Processor
+BenchmarkBufferPool-32            	123355785	         9.765 ns/op	       0 B/op	       0 allocs/op
+BenchmarkBufferPoolParallel-32    	1000000000	         0.5298 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPool/sequential-32       	182255588	         6.530 ns/op	       0 B/op	       0 allocs/op
+BenchmarkPool/parallel-32         	1000000000	         0.3501 ns/op	       0 B/op	       0 allocs/op
+BenchmarkResetPool-32             	148757654	         8.019 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	go.thesmos.sh/core/pool	4.561s
+goos: linux
+goarch: amd64
+pkg: go.thesmos.sh/core/rand
+cpu: AMD Ryzen 9 9950X3D 16-Core Processor
+BenchmarkFloat64-32    	838763428	         1.406 ns/op	       0 B/op	       0 allocs/op
+BenchmarkUint64N-32    	476733488	         2.516 ns/op	       0 B/op	       0 allocs/op
+BenchmarkShuffle/16-32 	22755322	        52.22 ns/op	       0 B/op	       0 allocs/op
+BenchmarkShuffle/256-32         	 1533096	       781.5 ns/op	       0 B/op	       0 allocs/op
+BenchmarkShuffle/4K-32          	   95246	     12465 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	go.thesmos.sh/core/rand	5.957s
+goos: linux
+goarch: amd64
+pkg: go.thesmos.sh/core/rand/crypto
+cpu: AMD Ryzen 9 9950X3D 16-Core Processor
+BenchmarkUint64-32    	31096014	        38.59 ns/op	 207.32 MB/s	       0 B/op	       0 allocs/op
+BenchmarkRead/8B-32   	36289432	        32.76 ns/op	 244.22 MB/s	       0 B/op	       0 allocs/op
+BenchmarkRead/64B-32  	 7881567	       151.8 ns/op	 421.55 MB/s	       0 B/op	       0 allocs/op
+BenchmarkRead/4K-32   	  177068	      6766 ns/op	 605.40 MB/s	       0 B/op	       0 allocs/op
+BenchmarkRead/64K-32  	   10000	    107816 ns/op	 607.85 MB/s	       0 B/op	       0 allocs/op
+PASS
+ok  	go.thesmos.sh/core/rand/crypto	5.865s
+goos: linux
+goarch: amd64
+pkg: go.thesmos.sh/core/rand/fixed
+cpu: AMD Ryzen 9 9950X3D 16-Core Processor
+BenchmarkUint64-32    	1000000000	         0.1780 ns/op	44937.22 MB/s	       0 B/op	       0 allocs/op
+BenchmarkRead/8B-32   	833114588	         1.452 ns/op	5508.97 MB/s	       0 B/op	       0 allocs/op
+BenchmarkRead/64B-32  	134582046	         8.917 ns/op	7177.63 MB/s	       0 B/op	       0 allocs/op
+BenchmarkRead/4K-32   	 2135568	       559.9 ns/op	7315.34 MB/s	       0 B/op	       0 allocs/op
+PASS
+ok  	go.thesmos.sh/core/rand/fixed	3.787s
+goos: linux
+goarch: amd64
+pkg: go.thesmos.sh/core/rand/pcg
+cpu: AMD Ryzen 9 9950X3D 16-Core Processor
+BenchmarkUint64-32    	963074108	         1.215 ns/op	6585.15 MB/s	       0 B/op	       0 allocs/op
+BenchmarkRead/8B-32   	500484286	         2.400 ns/op	3333.98 MB/s	       0 B/op	       0 allocs/op
+BenchmarkRead/64B-32  	90512528	        12.54 ns/op	5105.63 MB/s	       0 B/op	       0 allocs/op
+BenchmarkRead/4K-32   	 1549003	       769.4 ns/op	5323.80 MB/s	       0 B/op	       0 allocs/op
+BenchmarkRead/64K-32  	   98979	     12044 ns/op	5441.18 MB/s	       0 B/op	       0 allocs/op
+PASS
+ok  	go.thesmos.sh/core/rand/pcg	5.893s
+goos: linux
+goarch: amd64
+pkg: go.thesmos.sh/core/rand/seeded
+cpu: AMD Ryzen 9 9950X3D 16-Core Processor
+BenchmarkUint64-32    	30988795	        37.02 ns/op	 216.07 MB/s	       0 B/op	       0 allocs/op
+BenchmarkRead/8B-32   	32581531	        36.77 ns/op	 217.58 MB/s	       0 B/op	       0 allocs/op
+BenchmarkRead/64B-32  	 4856126	       247.8 ns/op	 258.24 MB/s	       0 B/op	       0 allocs/op
+BenchmarkRead/4K-32   	   78852	     15143 ns/op	 270.49 MB/s	       0 B/op	       0 allocs/op
+BenchmarkRead/64K-32  	    4704	    247668 ns/op	 264.61 MB/s	       0 B/op	       0 allocs/op
+PASS
+ok  	go.thesmos.sh/core/rand/seeded	5.912s
+goos: linux
+goarch: amd64
+pkg: go.thesmos.sh/core/tag
+cpu: AMD Ryzen 9 9950X3D 16-Core Processor
+BenchmarkIsZero-32     	1000000000	         0.1787 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFind/hit-32   	1000000000	         0.7089 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFind/miss-32  	1000000000	         1.046 ns/op	       0 B/op	       0 allocs/op
+BenchmarkHas-32        	1000000000	         0.7578 ns/op	       0 B/op	       0 allocs/op
+BenchmarkGet-32        	1000000000	         0.7488 ns/op	       0 B/op	       0 allocs/op
+BenchmarkWith/replace-32         	48411999	        22.66 ns/op	      96 B/op	       1 allocs/op
+BenchmarkWith/append-32          	60596160	        20.68 ns/op	     128 B/op	       1 allocs/op
+BenchmarkWithout-32              	518738761	         2.242 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	go.thesmos.sh/core/tag	6.958s
+goos: linux
+goarch: amd64
+pkg: go.thesmos.sh/core/telemetry
+cpu: AMD Ryzen 9 9950X3D 16-Core Processor
+BenchmarkAttrString-32          	1000000000	         0.1772 ns/op	       0 B/op	       0 allocs/op
+BenchmarkAttrInt-32             	1000000000	         0.1799 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSlogAttr/string-32     	205105408	         5.815 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSlogAttr/int-32        	203365833	         5.877 ns/op	       0 B/op	       0 allocs/op
+BenchmarkSlogAttr/bytes-32      	100000000	        11.24 ns/op	       8 B/op	       1 allocs/op
+BenchmarkApplySpanOptions-32    	1000000000	         0.8797 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	go.thesmos.sh/core/telemetry	4.756s
+goos: linux
+goarch: amd64
+pkg: go.thesmos.sh/core/telemetry/noop
+cpu: AMD Ryzen 9 9950X3D 16-Core Processor
+BenchmarkCounterAdd-32         	1000000000	         0.1808 ns/op	       0 B/op	       0 allocs/op
+BenchmarkGaugeSet-32           	1000000000	         0.2065 ns/op	       0 B/op	       0 allocs/op
+BenchmarkGaugeAdd-32           	1000000000	         0.3538 ns/op	       0 B/op	       0 allocs/op
+BenchmarkHistogramRecord-32    	1000000000	         0.2007 ns/op	       0 B/op	       0 allocs/op
+BenchmarkTracerStart-32        	1000000000	         0.8814 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	go.thesmos.sh/core/telemetry/noop	1.826s
+goos: linux
+goarch: amd64
+pkg: go.thesmos.sh/core/version
+cpu: AMD Ryzen 9 9950X3D 16-Core Processor
+BenchmarkIsConditional-32    	1000000000	         0.1793 ns/op	       0 B/op	       0 allocs/op
+BenchmarkIsZero-32           	1000000000	         0.1791 ns/op	       0 B/op	       0 allocs/op
+BenchmarkIsWildcard-32       	1000000000	         0.2412 ns/op	       0 B/op	       0 allocs/op
+PASS
+ok  	go.thesmos.sh/core/version	0.602s

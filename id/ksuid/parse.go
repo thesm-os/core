@@ -4,6 +4,8 @@
 package ksuid
 
 import (
+	"encoding/binary"
+
 	"go.thesmos.sh/core/id"
 )
 
@@ -15,6 +17,12 @@ const alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz
 // 62^27 > 2^160 > 62^26, so 27 base62 chars cover every 160-bit
 // value with leading-zero padding for shorter values.
 const encodedLen = 27
+
+// chunks splits the 20-byte 160-bit value into 5 big-endian
+// uint32 chunks, halving the per-iteration work versus
+// byte-level long division (5 vs 20 inner iterations per
+// extracted base62 digit).
+const chunks = 5
 
 // Format returns the canonical 27-character base62 encoding of
 // u. Diagnostic and serialization use; allocates the result
@@ -31,23 +39,28 @@ func Format(u id.ID) string {
 	if len(b) < id.Size160 {
 		return ""
 	}
-	// Work on a copy of the 20 bytes — the divide-by-62 loop
-	// mutates the buffer.
-	var src [id.Size160]byte
-	copy(src[:], b[:id.Size160])
+
+	// Pack the 20 bytes as 5 big-endian uint32 chunks, then
+	// divide-by-62 across the chunks. 62^27 > 2^160, so 27
+	// extracted digits cover every 160-bit value with
+	// leading-zero padding.
+	var num [chunks]uint32
+	for i := range chunks {
+		num[i] = binary.BigEndian.Uint32(b[i*4:])
+	}
 
 	var out [encodedLen]byte
 	for i := encodedLen - 1; i >= 0; i-- {
-		// Divide src (treated as big-endian 160-bit unsigned)
-		// by 62. Last remainder is the lowest base62 digit.
-		var carry uint16
-		for j := range src {
-			combined := carry*256 + uint16(src[j])
-			//#nosec G115 -- combined/62 ≤ 1056, low byte fits
-			src[j] = byte(combined / 62)
-			carry = combined % 62
+		// Long division across the 5 chunks: walk MSB→LSB,
+		// folding the running remainder into the next chunk's
+		// 32-bit value before dividing by 62.
+		var rem uint64
+		for j := range chunks {
+			x := rem<<32 | uint64(num[j])
+			num[j] = uint32(x / 62)
+			rem = x % 62
 		}
-		out[i] = alphabet[carry]
+		out[i] = alphabet[rem]
 	}
 	return string(out[:])
 }
@@ -66,25 +79,35 @@ func Parse(s string) (id.ID, error) {
 	if len(s) != encodedLen {
 		return id.Zero, ErrInvalidLength
 	}
-	var dst [id.Size160]byte
+
+	// Multiply-and-add across 5 uint32 chunks: for each input
+	// digit, num = num*62 + digit, propagating carry across
+	// chunks. After 27 digits, num holds the decoded 160-bit
+	// value; a non-zero carry past chunk 0 means the input
+	// encoded a value > 2^160.
+	var num [chunks]uint32
 	for i := range encodedLen {
 		v := decodeChar(s[i])
 		if v < 0 {
 			return id.Zero, ErrInvalidChar
 		}
-		// dst = dst * 62 + v, as a big-endian 160-bit unsigned.
-		// v is guaranteed 0..61 by decodeChar; safe to widen.
-		//#nosec G115 -- v ∈ [0, 61], well within uint16
-		carry := uint16(v)
-		for j := len(dst) - 1; j >= 0; j-- {
-			combined := uint16(dst[j])*62 + carry
-			//#nosec G115 -- low byte of combined; remainder is in carry
-			dst[j] = byte(combined)
-			carry = combined >> 8
+		// v ∈ [0, 61] by decodeChar; widen to uint64 for the
+		// multiply.
+		//#nosec G115 -- v is constrained to [0, 61]
+		carry := uint64(v)
+		for j := chunks - 1; j >= 0; j-- {
+			x := uint64(num[j])*62 + carry
+			num[j] = uint32(x)
+			carry = x >> 32
 		}
 		if carry != 0 {
 			return id.Zero, ErrOverflow
 		}
+	}
+
+	var dst [id.Size160]byte
+	for i := range chunks {
+		binary.BigEndian.PutUint32(dst[i*4:], num[i])
 	}
 	return id.New160(dst), nil
 }

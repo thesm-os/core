@@ -121,12 +121,30 @@ func TestPoolZeroAlloc(t *testing.T) {
 	})
 }
 
+// BenchmarkPool exercises the typed [pool.Pool] Get/Put cycle —
+// the same pattern HMAC, [rand/crypto.Rand.Uint64], and other
+// hot-path consumers in core use. Sub-benchmarks: sequential is
+// the steady-state single-goroutine cost; parallel exercises
+// per-P caching under fan-out.
 func BenchmarkPool(b *testing.B) {
 	p := pool.NewPool(func() *resettable { return new(resettable) })
 	p.Put(p.Get()) // warm
-	b.ReportAllocs()
-	for b.Loop() {
-		v := p.Get()
-		p.Put(v)
-	}
+
+	b.Run("sequential", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			v := p.Get()
+			p.Put(v)
+		}
+	})
+
+	b.Run("parallel", func(b *testing.B) {
+		b.ReportAllocs()
+		b.RunParallel(func(pb *testing.PB) {
+			for pb.Next() {
+				v := p.Get()
+				p.Put(v)
+			}
+		})
+	})
 }

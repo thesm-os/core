@@ -10,6 +10,7 @@ import (
 	"hash"
 
 	"go.thesmos.sh/core/crypto"
+	"go.thesmos.sh/core/pool"
 )
 
 // Stable build-local IDs.
@@ -36,9 +37,17 @@ var (
 )
 
 // MAC256 implements [crypto.MAC] as HMAC-SHA3-256 over a fixed
-// key.
+// key. Allocation contract and concurrency mirror
+// [go.thesmos.sh/core/crypto/hmac/sha256.MAC].
 type MAC256 struct {
-	key []byte
+	key  []byte
+	pool *pool.Pool[*entry256]
+}
+
+// entry256 is one pooled HMAC-SHA3-256 instance.
+type entry256 struct {
+	h   hash.Hash
+	out [crypto.DigestSize256]byte
 }
 
 var _ crypto.MAC = (*MAC256)(nil)
@@ -48,7 +57,11 @@ var _ crypto.MAC = (*MAC256)(nil)
 func NewSHA3_256(key []byte) *MAC256 {
 	keyCopy := make([]byte, len(key))
 	copy(keyCopy, key)
-	return &MAC256{key: keyCopy}
+	m := &MAC256{key: keyCopy}
+	m.pool = pool.NewPool(func() *entry256 {
+		return &entry256{h: stdhmac.New(new256, m.key)}
+	})
+	return m
 }
 
 // ID returns the stable build-local identifier.
@@ -62,13 +75,15 @@ func (*MAC256) Size() int { return crypto.DigestSize256 }
 
 // Sign returns HMAC-SHA3-256(key, data).
 func (m *MAC256) Sign(data []byte) crypto.Digest {
-	h := stdhmac.New(new256, m.key)
+	e := m.pool.Get()
+	e.h.Reset()
 	// hash.Hash.Write never returns a non-nil error per the
 	// stdlib contract; ignoring is safe.
-	_, _ = h.Write(data)
-	var out [crypto.DigestSize256]byte
-	h.Sum(out[:0])
-	return crypto.NewDigest256(out)
+	_, _ = e.h.Write(data)
+	e.h.Sum(e.out[:0])
+	digest := crypto.NewDigest256(e.out)
+	m.pool.Put(e)
+	return digest
 }
 
 // Verify reports whether expected is HMAC-SHA3-256(key, data).
@@ -78,13 +93,15 @@ func (m *MAC256) Verify(data, expected []byte) bool {
 	if len(expected) != crypto.DigestSize256 {
 		return false
 	}
-	h := stdhmac.New(new256, m.key)
+	e := m.pool.Get()
+	e.h.Reset()
 	// hash.Hash.Write never returns a non-nil error per the
 	// stdlib contract; ignoring is safe.
-	_, _ = h.Write(data)
-	var got [crypto.DigestSize256]byte
-	h.Sum(got[:0])
-	return subtle.ConstantTimeCompare(got[:], expected) == 1
+	_, _ = e.h.Write(data)
+	e.h.Sum(e.out[:0])
+	ok := subtle.ConstantTimeCompare(e.out[:], expected) == 1
+	m.pool.Put(e)
+	return ok
 }
 
 // NewStream returns a fresh streaming HMAC-SHA3-256
@@ -96,7 +113,14 @@ func (m *MAC256) NewStream() crypto.Stream {
 // MAC384 implements [crypto.MAC] as HMAC-SHA3-384 over a fixed
 // key.
 type MAC384 struct {
-	key []byte
+	key  []byte
+	pool *pool.Pool[*entry384]
+}
+
+// entry384 is one pooled HMAC-SHA3-384 instance.
+type entry384 struct {
+	h   hash.Hash
+	out [crypto.DigestSize384]byte
 }
 
 var _ crypto.MAC = (*MAC384)(nil)
@@ -106,7 +130,11 @@ var _ crypto.MAC = (*MAC384)(nil)
 func NewSHA3_384(key []byte) *MAC384 {
 	keyCopy := make([]byte, len(key))
 	copy(keyCopy, key)
-	return &MAC384{key: keyCopy}
+	m := &MAC384{key: keyCopy}
+	m.pool = pool.NewPool(func() *entry384 {
+		return &entry384{h: stdhmac.New(new384, m.key)}
+	})
+	return m
 }
 
 // ID returns the stable build-local identifier.
@@ -120,13 +148,15 @@ func (*MAC384) Size() int { return crypto.DigestSize384 }
 
 // Sign returns HMAC-SHA3-384(key, data).
 func (m *MAC384) Sign(data []byte) crypto.Digest {
-	h := stdhmac.New(new384, m.key)
+	e := m.pool.Get()
+	e.h.Reset()
 	// hash.Hash.Write never returns a non-nil error per the
 	// stdlib contract; ignoring is safe.
-	_, _ = h.Write(data)
-	var out [crypto.DigestSize384]byte
-	h.Sum(out[:0])
-	return crypto.NewDigest384(out)
+	_, _ = e.h.Write(data)
+	e.h.Sum(e.out[:0])
+	digest := crypto.NewDigest384(e.out)
+	m.pool.Put(e)
+	return digest
 }
 
 // Verify reports whether expected is HMAC-SHA3-384(key, data).
@@ -134,13 +164,15 @@ func (m *MAC384) Verify(data, expected []byte) bool {
 	if len(expected) != crypto.DigestSize384 {
 		return false
 	}
-	h := stdhmac.New(new384, m.key)
+	e := m.pool.Get()
+	e.h.Reset()
 	// hash.Hash.Write never returns a non-nil error per the
 	// stdlib contract; ignoring is safe.
-	_, _ = h.Write(data)
-	var got [crypto.DigestSize384]byte
-	h.Sum(got[:0])
-	return subtle.ConstantTimeCompare(got[:], expected) == 1
+	_, _ = e.h.Write(data)
+	e.h.Sum(e.out[:0])
+	ok := subtle.ConstantTimeCompare(e.out[:], expected) == 1
+	m.pool.Put(e)
+	return ok
 }
 
 // NewStream returns a fresh streaming HMAC-SHA3-384
@@ -152,7 +184,14 @@ func (m *MAC384) NewStream() crypto.Stream {
 // MAC512 implements [crypto.MAC] as HMAC-SHA3-512 over a fixed
 // key.
 type MAC512 struct {
-	key []byte
+	key  []byte
+	pool *pool.Pool[*entry512]
+}
+
+// entry512 is one pooled HMAC-SHA3-512 instance.
+type entry512 struct {
+	h   hash.Hash
+	out [crypto.DigestSize512]byte
 }
 
 var _ crypto.MAC = (*MAC512)(nil)
@@ -162,7 +201,11 @@ var _ crypto.MAC = (*MAC512)(nil)
 func NewSHA3_512(key []byte) *MAC512 {
 	keyCopy := make([]byte, len(key))
 	copy(keyCopy, key)
-	return &MAC512{key: keyCopy}
+	m := &MAC512{key: keyCopy}
+	m.pool = pool.NewPool(func() *entry512 {
+		return &entry512{h: stdhmac.New(new512, m.key)}
+	})
+	return m
 }
 
 // ID returns the stable build-local identifier.
@@ -176,13 +219,15 @@ func (*MAC512) Size() int { return crypto.DigestSize512 }
 
 // Sign returns HMAC-SHA3-512(key, data).
 func (m *MAC512) Sign(data []byte) crypto.Digest {
-	h := stdhmac.New(new512, m.key)
+	e := m.pool.Get()
+	e.h.Reset()
 	// hash.Hash.Write never returns a non-nil error per the
 	// stdlib contract; ignoring is safe.
-	_, _ = h.Write(data)
-	var out [crypto.DigestSize512]byte
-	h.Sum(out[:0])
-	return crypto.NewDigest512(out)
+	_, _ = e.h.Write(data)
+	e.h.Sum(e.out[:0])
+	digest := crypto.NewDigest512(e.out)
+	m.pool.Put(e)
+	return digest
 }
 
 // Verify reports whether expected is HMAC-SHA3-512(key, data).
@@ -190,13 +235,15 @@ func (m *MAC512) Verify(data, expected []byte) bool {
 	if len(expected) != crypto.DigestSize512 {
 		return false
 	}
-	h := stdhmac.New(new512, m.key)
+	e := m.pool.Get()
+	e.h.Reset()
 	// hash.Hash.Write never returns a non-nil error per the
 	// stdlib contract; ignoring is safe.
-	_, _ = h.Write(data)
-	var got [crypto.DigestSize512]byte
-	h.Sum(got[:0])
-	return subtle.ConstantTimeCompare(got[:], expected) == 1
+	_, _ = e.h.Write(data)
+	e.h.Sum(e.out[:0])
+	ok := subtle.ConstantTimeCompare(e.out[:], expected) == 1
+	m.pool.Put(e)
+	return ok
 }
 
 // NewStream returns a fresh streaming HMAC-SHA3-512

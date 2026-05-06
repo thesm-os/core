@@ -350,15 +350,27 @@ func BenchmarkCombine(b *testing.B) {
 	}
 }
 
-func BenchmarkStream_64K(b *testing.B) {
+func BenchmarkStream(b *testing.B) {
 	h := cryptosha256.New()
-	s := h.NewStream()
-	data := make([]byte, 65536)
-	b.ReportAllocs()
-	b.SetBytes(int64(len(data)))
-	for b.Loop() {
-		s.Reset()
-		_, _ = s.Write(data)
-		_ = s.Sum()
+	for _, sz := range []struct {
+		name string
+		n    int
+	}{
+		{"8B", 8},
+		{"64B", 64},
+		{"4K", 4096},
+		{"64K", 65536},
+	} {
+		b.Run(sz.name, func(b *testing.B) {
+			s := h.NewStream()
+			data := make([]byte, sz.n)
+			b.ReportAllocs()
+			b.SetBytes(int64(sz.n))
+			for b.Loop() {
+				s.Reset()
+				_, _ = s.Write(data)
+				_ = s.Sum()
+			}
+		})
 	}
 }

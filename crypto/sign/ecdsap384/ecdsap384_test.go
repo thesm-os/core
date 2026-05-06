@@ -617,11 +617,18 @@ func BenchmarkSign(b *testing.B) {
 		{"64K", 65536},
 	} {
 		b.Run(sz.name, func(b *testing.B) {
+			// sink read past the loop forces the signature
+			// slice to escape; matches production reality
+			// where the DER bytes are persisted or sent.
+			var sink []byte
 			data := make([]byte, sz.n)
 			b.ReportAllocs()
 			b.SetBytes(int64(sz.n))
 			for b.Loop() {
-				_, _ = s.Sign(data)
+				sink, _ = s.Sign(data)
+			}
+			if len(sink) == 0 {
+				b.Fatal("sink unexpectedly empty after loop")
 			}
 		})
 	}
@@ -649,6 +656,48 @@ func BenchmarkVerify(b *testing.B) {
 				_ = s.Verify(data, sig)
 			}
 		})
+	}
+}
+
+// BenchmarkGenerate measures keypair-generation cost. Setup-
+// path benchmark — every consumer pays this once per Signer
+// before any signing happens. ECDSA P-384 generation is
+// substantially heavier than [crypto/sign/ed25519.Generate]
+// because the P-384 base-point operation is expensive.
+func BenchmarkGenerate(b *testing.B) {
+	b.ReportAllocs()
+	for b.Loop() {
+		s, err := signecdsa.Generate()
+		if err != nil {
+			b.Fatalf("Generate: %v", err)
+		}
+		_ = s
+	}
+}
+
+// BenchmarkKeyIDFromPub measures the KeyID-derivation cost over
+// the SEC 1 uncompressed point encoding. Hot for verifier
+// services that route receipts through a trust store keyed by
+// [sign.KeyID].
+func BenchmarkKeyIDFromPub(b *testing.B) {
+	s, err := signecdsa.Generate()
+	if err != nil {
+		b.Fatalf("Generate: %v", err)
+	}
+	parsed, err := x509.ParsePKIXPublicKey(s.PublicKey())
+	if err != nil {
+		b.Fatalf("ParsePKIXPublicKey: %v", err)
+	}
+	pub, ok := parsed.(*ecdsa.PublicKey)
+	if !ok {
+		b.Fatalf("parsed key is %T, want *ecdsa.PublicKey", parsed)
+	}
+	b.ReportAllocs()
+	for b.Loop() {
+		_, err := signecdsa.KeyIDFromPub(pub)
+		if err != nil {
+			b.Fatalf("KeyIDFromPub: %v", err)
+		}
 	}
 }
 

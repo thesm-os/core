@@ -5,11 +5,18 @@ package telemetry
 
 // SpanOption configures a [Span] at creation time. Use
 // [WithSpanKind] to override the default [SpanKindInternal].
-type SpanOption func(*spanConfig)
-
-// spanConfig collects [SpanOption] values for delivery to a
-// [Tracer.Start] implementation.
-type spanConfig struct {
+//
+// SpanOption is a value type rather than a function-typed
+// closure so [Tracer.Start] / [ApplySpanOptions] can iterate
+// the slice without forcing the loop's accumulator to escape
+// to the heap. Future options add fields to this struct
+// directly; the kind field's zero value ([SpanKindUnspecified])
+// means "this option does not set kind" and is ignored by
+// [ApplySpanOptions].
+type SpanOption struct {
+	// kind, when non-zero, sets the [SpanKind] for the new
+	// [Span]. [SpanKindUnspecified] (the zero value) means the
+	// option does not set kind.
 	kind SpanKind
 }
 
@@ -17,22 +24,33 @@ type spanConfig struct {
 // kind option is supplied, [Tracer.Start] treats the kind as
 // [SpanKindInternal].
 func WithSpanKind(kind SpanKind) SpanOption {
-	return func(c *spanConfig) { c.kind = kind }
+	return SpanOption{kind: kind}
 }
 
-// ApplySpanOptions reduces a slice of [SpanOption] values to the
-// configured [SpanKind]. Exposed for [Tracer] implementations to
-// share a single canonical option-resolution path.
+// ApplySpanOptions reduces a slice of [SpanOption] values to
+// the configured [SpanKind]. Exposed for [Tracer]
+// implementations to share a single canonical option-resolution
+// path.
 //
-// Returns [SpanKindInternal] when no kind option is supplied —
-// the default per [WithSpanKind].
+// Returns [SpanKindInternal] when no kind option is supplied,
+// or when every supplied option carries [SpanKindUnspecified]
+// (the per-option sentinel for "does not set kind"). When
+// multiple options set kind, the last one wins.
+//
+// # Allocation contract
+//
+// Zero-allocation: the loop reads each option's value-type
+// fields without taking pointers, so escape analysis keeps
+// the local accumulator on the stack.
 func ApplySpanOptions(opts []SpanOption) SpanKind {
-	var cfg spanConfig
+	kind := SpanKindUnspecified
 	for _, o := range opts {
-		o(&cfg)
+		if o.kind != SpanKindUnspecified {
+			kind = o.kind
+		}
 	}
-	if cfg.kind == SpanKindUnspecified {
+	if kind == SpanKindUnspecified {
 		return SpanKindInternal
 	}
-	return cfg.kind
+	return kind
 }

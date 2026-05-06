@@ -225,21 +225,46 @@ func TestIDZeroAlloc(t *testing.T) {
 	}
 }
 
+// BenchmarkEqual exercises [ID.Equal] across every supported
+// width. Sub-benches: 128 (ULID, UUIDv4), 160 (KSUID), 256
+// (cryptographic wide-IDs).
 func BenchmarkEqual(b *testing.B) {
-	a := id.New128(fill128(0x42))
-	other := id.New128(fill128(0x43))
-	b.ReportAllocs()
-	for b.Loop() {
-		_ = a.Equal(other)
+	cases := []struct {
+		name string
+		a, c id.ID
+	}{
+		{"128", id.New128(fill128(0x42)), id.New128(fill128(0x43))},
+		{"160", id.New160(fill160(0x42)), id.New160(fill160(0x43))},
+		{"256", id.New256(fill256(0x42)), id.New256(fill256(0x43))},
+	}
+	for _, tc := range cases {
+		b.Run(tc.name, func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				_ = tc.a.Equal(tc.c)
+			}
+		})
 	}
 }
 
+// BenchmarkCompare exercises [ID.Compare] across every
+// supported width.
 func BenchmarkCompare(b *testing.B) {
-	a := id.New128(fill128(0x42))
-	other := id.New128(fill128(0x43))
-	b.ReportAllocs()
-	for b.Loop() {
-		_ = a.Compare(other)
+	cases := []struct {
+		name string
+		a, c id.ID
+	}{
+		{"128", id.New128(fill128(0x42)), id.New128(fill128(0x43))},
+		{"160", id.New160(fill160(0x42)), id.New160(fill160(0x43))},
+		{"256", id.New256(fill256(0x42)), id.New256(fill256(0x43))},
+	}
+	for _, tc := range cases {
+		b.Run(tc.name, func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				_ = tc.a.Compare(tc.c)
+			}
+		})
 	}
 }
 
@@ -269,6 +294,14 @@ func fill128(b byte) [id.Size128]byte {
 
 func fill160(b byte) [id.Size160]byte {
 	var out [id.Size160]byte
+	for i := range out {
+		out[i] = b
+	}
+	return out
+}
+
+func fill256(b byte) [id.Size256]byte {
+	var out [id.Size256]byte
 	for i := range out {
 		out[i] = b
 	}

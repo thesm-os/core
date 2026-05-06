@@ -9,8 +9,17 @@ import (
 	"fmt"
 	"io"
 
+	"go.thesmos.sh/core/pool"
 	"go.thesmos.sh/core/rand"
 )
+
+// uint64BufPool holds 8-byte scratch buffers for [Rand.Uint64].
+// The interface boundary into [io.Reader.Read] forces the buffer
+// to escape; routing through a package-level pool keeps the
+// allocation amortised across calls (zero-alloc on the warm
+// path) while preserving concurrency safety — every Uint64 call
+// gets its own buffer for the duration of the read.
+var uint64BufPool = pool.NewPool(func() *[8]byte { return new([8]byte) })
 
 // Rand implements [rand.Rand] over a CSPRNG-grade [io.Reader]
 // source. The default source is [crypto/rand.Reader] — the
@@ -39,13 +48,14 @@ import (
 // supplied and the underlying [crypto/rand.Read] is zero-alloc
 // on supported platforms.
 //
-// [Rand.Uint64] allocates a heap-local 8-byte buffer per call:
-// supporting [NewWithReader] requires routing the buffer through
-// an [io.Reader] interface boundary, and Go's escape analysis
-// conservatively heap-allocates any slice that could flow through
-// such a boundary even when the runtime path does not. Callers in
-// alloc-sensitive code should use [Rand.Read] with a caller-owned
-// buffer.
+// [Rand.Uint64] is zero-alloc on the warm path: an 8-byte
+// buffer is borrowed from a package-level [pool.Pool] for the
+// duration of the read and returned afterwards. The interface
+// boundary into [io.Reader.Read] would otherwise heap-allocate
+// the buffer per call (stdlib's [crypto/rand.Read] /
+// [io.ReadFull] take an [io.Reader], not a pointer to a
+// fixed-size array). Cold-path callers may still observe an
+// allocation when the pool is empty.
 type Rand struct {
 	src io.Reader
 }
@@ -55,10 +65,7 @@ var _ rand.Rand = Rand{}
 
 // New returns a [Rand] backed by [crypto/rand.Reader]. Equivalent
 // to the zero-value Rand; offered as a constructor for use sites
-// that prefer one. Leaves the internal source field nil so that
-// [Rand.Uint64] takes the allocation-free fast path through
-// [crypto/rand.Read] rather than dispatching through an
-// [io.Reader] interface boundary.
+// that prefer one.
 func New() Rand { return Rand{} }
 
 // NewWithReader returns a [Rand] backed by src. Used to inject a
@@ -83,15 +90,20 @@ func (r Rand) reader() io.Reader {
 // the configured reader. Panics with a wrapped error if the
 // reader fails — see package-level "Failure semantics".
 //
-// Allocates a heap-local 8-byte buffer per call; see the
-// package-level "Allocation contract".
+// Zero-alloc on the warm path; see package-level "Allocation
+// contract".
 func (r Rand) Uint64() uint64 {
-	var b [8]byte
+	b := uint64BufPool.Get()
 	_, err := io.ReadFull(r.reader(), b[:])
 	if err != nil {
+		// Don't return b to the pool on failure — the buffer
+		// state may be partially-filled, and Uint64 is panicking
+		// anyway, so pool hygiene is irrelevant.
 		panic(fmt.Errorf("rand/crypto: entropy source unavailable: %w", err))
 	}
-	return binary.LittleEndian.Uint64(b[:])
+	v := binary.LittleEndian.Uint64(b[:])
+	uint64BufPool.Put(b)
+	return v
 }
 
 // Read fills p with random bytes from the configured reader.

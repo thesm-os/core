@@ -103,6 +103,32 @@
 // — these are runtime input, not programmer error, and panic
 // would conflict with the no-panic-in-production policy.
 //
+// # Generate API asymmetry (Ed25519 vs ECDSA P-384)
+//
+// The two implementations have intentionally different
+// constructors:
+//
+//   - [crypto/sign/ed25519.Generate] takes a [rand.Rand].
+//     Stdlib's [crypto/ed25519.GenerateKey] honours its
+//     [io.Reader] argument, so a deterministic [rand.Rand]
+//     (e.g. [rand/seeded.Rand]) produces deterministic keys
+//     for tests.
+//   - [crypto/sign/ecdsap384.Generate] takes no argument.
+//     Stdlib's [crypto/ecdsa.GenerateKey] in Go 1.26+ ignores
+//     any supplied [io.Reader] and draws from the runtime's
+//     internal entropy unless `GODEBUG=cryptocustomrand=1` is
+//     set. Accepting a [rand.Rand] that the stdlib silently
+//     ignores would be a misleading API shape — symmetry that's
+//     a lie. Tests requiring deterministic ECDSA key generation
+//     use [testing/cryptotest.SetGlobalRandom], which seeds the
+//     runtime's internal RNG.
+//
+// The asymmetry is deliberate: each constructor's signature
+// reflects what the underlying stdlib actually honours. If a
+// future Go release restores reader-honouring behaviour for
+// ECDSA, the ECDSA `Generate` signature can grow a [rand.Rand]
+// parameter non-breakingly via a separate constructor.
+//
 // # Allocation contract
 //
 // [Verifier.KeyID], [Verifier.PublicKey], [Verifier.Algorithm]

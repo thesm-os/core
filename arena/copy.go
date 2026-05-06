@@ -11,7 +11,8 @@ package arena
 // # Allocation contract
 //
 // Exactly one allocation, sized to [Arena.Len]. Returns nil
-// when the arena is empty.
+// when the arena is empty. Sustained-throughput callers should
+// prefer [Arena.CopyOutTo] with a reused destination buffer.
 func (a *Arena) CopyOut() []byte {
 	if len(a.buf) == 0 {
 		return nil
@@ -70,6 +71,12 @@ func (a *Arena) CopyOutTo(dst []byte) []byte {
 // every entry, when at least one entry is non-empty. Returns
 // nil and performs no allocation when slices is empty or
 // every entry is empty.
+//
+// Sustained-throughput callers that already own a destination
+// buffer should prefer [RebaseSlicesTo] (zero-alloc), which
+// writes into a caller-supplied buffer instead of allocating
+// — the same relationship as [Arena.CopyOut] vs
+// [Arena.CopyOutTo].
 func RebaseSlices(slices [][]byte) []byte {
 	if len(slices) == 0 {
 		return nil

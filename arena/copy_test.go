@@ -238,12 +238,21 @@ func BenchmarkCopyOut(b *testing.B) {
 		{"64K", 65536},
 	} {
 		b.Run(sz.name, func(b *testing.B) {
+			// sink read past the loop forces CopyOut's slice
+			// to escape uniformly across sizes. Without it,
+			// escape analysis stack-promotes small returns
+			// and the bench under-reports the "always
+			// allocates" contract on small input.
+			var sink []byte
 			a := arena.NewWithCapacity(sz.n * 2)
 			a.Append(make([]byte, sz.n))
 			b.ReportAllocs()
 			b.SetBytes(int64(sz.n))
 			for b.Loop() {
-				_ = a.CopyOut()
+				sink = a.CopyOut()
+			}
+			if len(sink) == 0 {
+				b.Fatal("sink unexpectedly empty after loop")
 			}
 		})
 	}

@@ -535,24 +535,144 @@ func FuzzCrossStdlib(f *testing.F) {
 	})
 }
 
-func BenchmarkSHA3_256Sign(b *testing.B) {
-	m := hmacsha3.NewSHA3_256([]byte("benchmark-key"))
-	for _, sz := range []struct {
+// macSigner is the minimal Sign / Verify / NewStream surface
+// shared by the SHA3 MAC variants. Letting the benchmarks
+// dispatch over an interface keeps the matrix (algorithm × size
+// × mode) in one place while still exercising the concrete
+// pooled-hash code path.
+type macSigner interface {
+	Sign(data []byte) crypto.Digest
+	Verify(data, mac []byte) bool
+	NewStream() crypto.Stream
+}
+
+var benchSizes = []struct {
+	name string
+	n    int
+}{
+	{"8B", 8},
+	{"64B", 64},
+	{"256B", 256},
+	{"4K", 4096},
+	{"64K", 65536},
+}
+
+func benchAlgs() []struct {
+	name string
+	m    macSigner
+} {
+	key := []byte("benchmark-key")
+	return []struct {
 		name string
-		n    int
+		m    macSigner
 	}{
-		{"8B", 8},
-		{"64B", 64},
-		{"256B", 256},
-		{"4K", 4096},
-		{"64K", 65536},
-	} {
-		b.Run(sz.name, func(b *testing.B) {
-			data := make([]byte, sz.n)
-			b.ReportAllocs()
-			b.SetBytes(int64(sz.n))
-			for b.Loop() {
-				_ = m.Sign(data)
+		{"sha3-256", hmacsha3.NewSHA3_256(key)},
+		{"sha3-384", hmacsha3.NewSHA3_384(key)},
+		{"sha3-512", hmacsha3.NewSHA3_512(key)},
+	}
+}
+
+func BenchmarkSign(b *testing.B) {
+	for _, alg := range benchAlgs() {
+		b.Run(alg.name, func(b *testing.B) {
+			for _, sz := range benchSizes {
+				b.Run(sz.name, func(b *testing.B) {
+					data := make([]byte, sz.n)
+					b.ReportAllocs()
+					b.SetBytes(int64(sz.n))
+					for b.Loop() {
+						_ = alg.m.Sign(data)
+					}
+				})
+			}
+		})
+	}
+}
+
+func BenchmarkVerify(b *testing.B) {
+	for _, alg := range benchAlgs() {
+		b.Run(alg.name, func(b *testing.B) {
+			for _, sz := range benchSizes {
+				b.Run(sz.name, func(b *testing.B) {
+					data := make([]byte, sz.n)
+					expected := alg.m.Sign(data).Bytes()
+					b.ReportAllocs()
+					b.SetBytes(int64(sz.n))
+					for b.Loop() {
+						_ = alg.m.Verify(data, expected)
+					}
+				})
+			}
+		})
+	}
+}
+
+// BenchmarkStream covers the canonical hot-path pattern: one
+// [crypto.Stream] reused across many messages via Reset.
+func BenchmarkStream(b *testing.B) {
+	for _, alg := range benchAlgs() {
+		b.Run(alg.name, func(b *testing.B) {
+			b.Run("sequential", func(b *testing.B) {
+				for _, sz := range benchSizes {
+					b.Run(sz.name, func(b *testing.B) {
+						s := alg.m.NewStream()
+						data := make([]byte, sz.n)
+						b.ReportAllocs()
+						b.SetBytes(int64(sz.n))
+						for b.Loop() {
+							s.Reset()
+							_, _ = s.Write(data)
+							_ = s.Sum()
+						}
+					})
+				}
+			})
+			b.Run("parallel", func(b *testing.B) {
+				for _, sz := range benchSizes {
+					b.Run(sz.name, func(b *testing.B) {
+						data := make([]byte, sz.n)
+						b.ReportAllocs()
+						b.SetBytes(int64(sz.n))
+						b.RunParallel(func(pb *testing.PB) {
+							s := alg.m.NewStream()
+							for pb.Next() {
+								s.Reset()
+								_, _ = s.Write(data)
+								_ = s.Sum()
+							}
+						})
+					})
+				}
+			})
+		})
+	}
+}
+
+// BenchmarkSignParallel exercises [MAC.Sign] under fan-out
+// across cores — validates the per-MAC [pool.Pool] of pre-keyed
+// [hash.Hash] instances scales without lock contention.
+func BenchmarkSignParallel(b *testing.B) {
+	for _, alg := range benchAlgs() {
+		b.Run(alg.name, func(b *testing.B) {
+			for _, sz := range []struct {
+				name string
+				n    int
+			}{
+				{"8B", 8},
+				{"64B", 64},
+				{"4K", 4096},
+				{"64K", 65536},
+			} {
+				b.Run(sz.name, func(b *testing.B) {
+					data := make([]byte, sz.n)
+					b.ReportAllocs()
+					b.SetBytes(int64(sz.n))
+					b.RunParallel(func(pb *testing.PB) {
+						for pb.Next() {
+							_ = alg.m.Sign(data)
+						}
+					})
+				})
 			}
 		})
 	}

@@ -10,6 +10,7 @@ import (
 	"hash"
 
 	"go.thesmos.sh/core/crypto"
+	"go.thesmos.sh/core/pool"
 )
 
 // Stable build-local IDs.
@@ -25,17 +26,30 @@ var (
 // MAC384 implements [crypto.MAC] as HMAC-SHA-384 over a fixed
 // key. The key is copied at construction; the source buffer may
 // be reused or zeroed immediately. MAC384 is safe for concurrent
-// use.
+// use: the underlying [hash.Hash] instances are pooled in a
+// per-MAC [pool.Pool] and shared across goroutines.
 //
 // # Allocation contract
 //
-// [MAC384.ID], [MAC384.Algorithm], and [MAC384.Size] are
-// zero-alloc. [MAC384.Sign] and [MAC384.Verify] each allocate
-// the underlying HMAC state once per call. [MAC384.NewStream]
-// allocates the wrapper plus the underlying stdlib HMAC state;
-// [crypto.Stream] methods are zero-alloc thereafter.
+// [MAC384.ID], [MAC384.Algorithm], [MAC384.Size], [MAC384.Sign],
+// and [MAC384.Verify] are zero-alloc on the success path after
+// pool warm-up. The first call after construction or after GC
+// pool eviction allocates one underlying stdlib HMAC state.
+// [MAC384.NewStream] allocates the wrapper plus the underlying
+// stdlib HMAC state; [crypto.Stream] methods are zero-alloc
+// thereafter.
 type MAC384 struct {
-	key []byte
+	key  []byte
+	pool *pool.Pool[*entry384]
+}
+
+// entry384 is one pooled HMAC-SHA-384 instance with its output
+// buffer co-located so [hash.Hash.Sum] does not force a
+// per-call escape. See [crypto/hmac/sha256.macEntry] for the
+// rationale.
+type entry384 struct {
+	h   hash.Hash
+	out [crypto.DigestSize384]byte
 }
 
 // Compile-time interface check.
@@ -46,7 +60,11 @@ var _ crypto.MAC = (*MAC384)(nil)
 func NewSHA384(key []byte) *MAC384 {
 	keyCopy := make([]byte, len(key))
 	copy(keyCopy, key)
-	return &MAC384{key: keyCopy}
+	m := &MAC384{key: keyCopy}
+	m.pool = pool.NewPool(func() *entry384 {
+		return &entry384{h: stdhmac.New(stdsha512.New384, m.key)}
+	})
+	return m
 }
 
 // ID returns the stable build-local identifier.
@@ -60,13 +78,15 @@ func (*MAC384) Size() int { return crypto.DigestSize384 }
 
 // Sign returns HMAC-SHA-384(key, data).
 func (m *MAC384) Sign(data []byte) crypto.Digest {
-	h := stdhmac.New(stdsha512.New384, m.key)
+	e := m.pool.Get()
+	e.h.Reset()
 	// hash.Hash.Write never returns a non-nil error per the
 	// stdlib contract; ignoring is safe.
-	_, _ = h.Write(data)
-	var out [crypto.DigestSize384]byte
-	h.Sum(out[:0])
-	return crypto.NewDigest384(out)
+	_, _ = e.h.Write(data)
+	e.h.Sum(e.out[:0])
+	digest := crypto.NewDigest384(e.out)
+	m.pool.Put(e)
+	return digest
 }
 
 // Verify reports whether expected is HMAC-SHA-384(key, data).
@@ -76,13 +96,15 @@ func (m *MAC384) Verify(data, expected []byte) bool {
 	if len(expected) != crypto.DigestSize384 {
 		return false
 	}
-	h := stdhmac.New(stdsha512.New384, m.key)
+	e := m.pool.Get()
+	e.h.Reset()
 	// hash.Hash.Write never returns a non-nil error per the
 	// stdlib contract; ignoring is safe.
-	_, _ = h.Write(data)
-	var got [crypto.DigestSize384]byte
-	h.Sum(got[:0])
-	return subtle.ConstantTimeCompare(got[:], expected) == 1
+	_, _ = e.h.Write(data)
+	e.h.Sum(e.out[:0])
+	ok := subtle.ConstantTimeCompare(e.out[:], expected) == 1
+	m.pool.Put(e)
+	return ok
 }
 
 // NewStream returns a fresh streaming [crypto.Stream] backed by
@@ -92,9 +114,16 @@ func (m *MAC384) NewStream() crypto.Stream {
 }
 
 // MAC512 implements [crypto.MAC] as HMAC-SHA-512 over a fixed
-// key.
+// key. Allocation contract and concurrency mirror [MAC384].
 type MAC512 struct {
-	key []byte
+	key  []byte
+	pool *pool.Pool[*entry512]
+}
+
+// entry512 is one pooled HMAC-SHA-512 instance.
+type entry512 struct {
+	h   hash.Hash
+	out [crypto.DigestSize512]byte
 }
 
 // Compile-time interface check.
@@ -105,7 +134,11 @@ var _ crypto.MAC = (*MAC512)(nil)
 func NewSHA512(key []byte) *MAC512 {
 	keyCopy := make([]byte, len(key))
 	copy(keyCopy, key)
-	return &MAC512{key: keyCopy}
+	m := &MAC512{key: keyCopy}
+	m.pool = pool.NewPool(func() *entry512 {
+		return &entry512{h: stdhmac.New(stdsha512.New, m.key)}
+	})
+	return m
 }
 
 // ID returns the stable build-local identifier.
@@ -119,13 +152,15 @@ func (*MAC512) Size() int { return crypto.DigestSize512 }
 
 // Sign returns HMAC-SHA-512(key, data).
 func (m *MAC512) Sign(data []byte) crypto.Digest {
-	h := stdhmac.New(stdsha512.New, m.key)
+	e := m.pool.Get()
+	e.h.Reset()
 	// hash.Hash.Write never returns a non-nil error per the
 	// stdlib contract; ignoring is safe.
-	_, _ = h.Write(data)
-	var out [crypto.DigestSize512]byte
-	h.Sum(out[:0])
-	return crypto.NewDigest512(out)
+	_, _ = e.h.Write(data)
+	e.h.Sum(e.out[:0])
+	digest := crypto.NewDigest512(e.out)
+	m.pool.Put(e)
+	return digest
 }
 
 // Verify reports whether expected is HMAC-SHA-512(key, data).
@@ -135,13 +170,15 @@ func (m *MAC512) Verify(data, expected []byte) bool {
 	if len(expected) != crypto.DigestSize512 {
 		return false
 	}
-	h := stdhmac.New(stdsha512.New, m.key)
+	e := m.pool.Get()
+	e.h.Reset()
 	// hash.Hash.Write never returns a non-nil error per the
 	// stdlib contract; ignoring is safe.
-	_, _ = h.Write(data)
-	var got [crypto.DigestSize512]byte
-	h.Sum(got[:0])
-	return subtle.ConstantTimeCompare(got[:], expected) == 1
+	_, _ = e.h.Write(data)
+	e.h.Sum(e.out[:0])
+	ok := subtle.ConstantTimeCompare(e.out[:], expected) == 1
+	m.pool.Put(e)
+	return ok
 }
 
 // NewStream returns a fresh streaming [crypto.Stream] backed by

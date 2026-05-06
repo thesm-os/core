@@ -460,16 +460,86 @@ func BenchmarkVerify(b *testing.B) {
 	}
 }
 
-func BenchmarkStreamReuse_64K(b *testing.B) {
+// BenchmarkStream covers the canonical hot-path pattern: one
+// [crypto.Stream] reused across many messages via Reset.
+// Sub-benchmarks: sequential is the steady-state single-
+// goroutine cost; parallel exercises one-stream-per-goroutine
+// fan-out, the ceiling consumers hit when they spread MAC work
+// across cores.
+func BenchmarkStream(b *testing.B) {
 	m := hmacsha256.New([]byte("benchmark-key"))
-	s := m.NewStream()
-	data := make([]byte, 65536)
-	b.ReportAllocs()
-	b.SetBytes(int64(len(data)))
-	for b.Loop() {
-		s.Reset()
-		_, _ = s.Write(data)
-		_ = s.Sum()
+	sizes := []struct {
+		name string
+		n    int
+	}{
+		{"8B", 8},
+		{"64B", 64},
+		{"256B", 256},
+		{"4K", 4096},
+		{"64K", 65536},
+	}
+
+	b.Run("sequential", func(b *testing.B) {
+		for _, sz := range sizes {
+			b.Run(sz.name, func(b *testing.B) {
+				s := m.NewStream()
+				data := make([]byte, sz.n)
+				b.ReportAllocs()
+				b.SetBytes(int64(sz.n))
+				for b.Loop() {
+					s.Reset()
+					_, _ = s.Write(data)
+					_ = s.Sum()
+				}
+			})
+		}
+	})
+
+	b.Run("parallel", func(b *testing.B) {
+		for _, sz := range sizes {
+			b.Run(sz.name, func(b *testing.B) {
+				data := make([]byte, sz.n)
+				b.ReportAllocs()
+				b.SetBytes(int64(sz.n))
+				b.RunParallel(func(pb *testing.PB) {
+					s := m.NewStream()
+					for pb.Next() {
+						s.Reset()
+						_, _ = s.Write(data)
+						_ = s.Sum()
+					}
+				})
+			})
+		}
+	})
+}
+
+// BenchmarkSignParallel exercises [MAC.Sign] under fan-out
+// across cores — validates that the per-MAC [pool.Pool] of
+// pre-keyed [hash.Hash] instances scales without lock
+// contention. Compare against [BenchmarkSign] for the
+// single-thread-vs-parallel ratio.
+func BenchmarkSignParallel(b *testing.B) {
+	m := hmacsha256.New([]byte("benchmark-key"))
+	for _, sz := range []struct {
+		name string
+		n    int
+	}{
+		{"8B", 8},
+		{"64B", 64},
+		{"4K", 4096},
+		{"64K", 65536},
+	} {
+		b.Run(sz.name, func(b *testing.B) {
+			data := make([]byte, sz.n)
+			b.ReportAllocs()
+			b.SetBytes(int64(sz.n))
+			b.RunParallel(func(pb *testing.PB) {
+				for pb.Next() {
+					_ = m.Sign(data)
+				}
+			})
+		})
 	}
 }
 

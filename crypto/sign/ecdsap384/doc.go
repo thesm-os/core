@@ -25,6 +25,33 @@
 // modification. FIPS-gated wrappers (hard-refusal-outside-FIPS-
 // mode) live in consumer modules, not here.
 //
+// # Cost vs Ed25519: prefer BatchRoot for ECDSA P-384
+//
+// ECDSA P-384 [Signer.Sign] is approximately 10× slower than
+// [crypto/sign/ed25519.Signer.Sign] and allocates ~60 times per
+// call (~6 KiB of garbage). Both costs are structural: stdlib's
+// [crypto/ecdsa.SignASN1] uses [math/big] arithmetic that
+// allocates per-operation, and the verification path
+// [crypto/ecdsa.VerifyASN1] is similarly allocation-heavy
+// (~17 allocs / call). These are not addressable from this
+// package.
+//
+// Hot-path consumers signing many records under ECDSA P-384
+// MUST use a batch-root pattern instead of per-record signing:
+//
+//   - Compute a Merkle root over the records via
+//     [crypto.Hasher.NewStream] / [crypto.Hasher.Combine].
+//   - Sign the root once.
+//   - Verifiers re-derive the root from the records and verify
+//     the single signature.
+//
+// At 10⁵-10⁶ records/sec a per-record ECDSA Sign is the
+// dominant CPU cost in the request path; per-batch signing
+// amortises it to one signature per batch. Ed25519 has the same
+// per-call cost characteristics for completeness but is fast
+// enough (~11 µs / 64 B, zero alloc) that PerEntry signing is
+// also feasible.
+//
 // # KeyID derivation
 //
 // [KeyIDFromPub] hashes the SEC 1 uncompressed point encoding

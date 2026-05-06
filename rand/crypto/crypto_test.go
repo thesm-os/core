@@ -139,9 +139,10 @@ func TestNewWithReaderUsesProvidedSource(t *testing.T) {
 }
 
 // TestZeroAlloc enforces the documented "Zero alloc" contract on
-// crypto.Rand.Read. Uint64 is intentionally excluded — supporting
-// NewWithReader forces an 8-byte heap allocation per Uint64 call
-// (see the package's "Allocation contract" docstring).
+// [crypto.Rand.Read] and the warm-path zero-alloc behaviour of
+// [crypto.Rand.Uint64]. The Uint64 path borrows an 8-byte buffer
+// from a package-level [pool.Pool], so callers see zero allocs
+// after the pool warms up.
 // testing.AllocsPerRun uses a process-global malloc counter, so
 // this test does not call t.Parallel.
 func TestZeroAlloc(t *testing.T) {
@@ -150,6 +151,13 @@ func TestZeroAlloc(t *testing.T) {
 
 	if got := testing.AllocsPerRun(100, func() { _, _ = r.Read(buf) }); got != 0 {
 		t.Fatalf("Read: %v allocs/op, want 0", got)
+	}
+
+	// Warm the pool so the first Uint64 call doesn't count
+	// the buffer-creation alloc.
+	_ = r.Uint64()
+	if got := testing.AllocsPerRun(100, func() { _ = r.Uint64() }); got != 0 {
+		t.Fatalf("Uint64: %v allocs/op, want 0", got)
 	}
 }
 

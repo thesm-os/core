@@ -345,6 +345,110 @@ func TestKeyIDStability(t *testing.T) {
 	})
 }
 
+// TestRFC8032Vectors verifies our Ed25519 implementation
+// against the official Known-Answer-Test vectors in RFC 8032
+// §7.1. Round-trip tests prove our implementation is internally
+// consistent; KAT vectors prove byte-for-byte interop with every
+// other RFC-8032-conformant implementation in any language.
+// This guarantee survives a stdlib swap.
+func TestRFC8032Vectors(t *testing.T) {
+	t.Parallel()
+
+	// Vectors from RFC 8032 §7.1 ("Test Vectors for Ed25519").
+	// Each TEST gives (secret, public, message, signature). We
+	// use Sign with a private key built from the secret seed,
+	// and check the produced signature byte-equals the vector.
+	cases := []struct {
+		name      string
+		secretHex string
+		publicHex string
+		msgHex    string
+		sigHex    string
+	}{
+		{
+			name:      "TEST 1 (empty message)",
+			secretHex: "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+			publicHex: "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+			msgHex:    "",
+			sigHex: "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e06522490155" +
+				"5fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b",
+		},
+		{
+			name:      "TEST 2 (single-byte message)",
+			secretHex: "4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb",
+			publicHex: "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c",
+			msgHex:    "72",
+			sigHex: "92a009a9f0d4cab8720e820b5f642540a2b27b5416503f8fb3762223ebdb69da085ac1" +
+				"e43e15996e458f3613d0f11d8c387b2eaeb4302aeeb00d291612bb0c00",
+		},
+		{
+			name:      "TEST 3 (two-byte message)",
+			secretHex: "c5aa8df43f9f837bedb7442f31dcb7b166d38535076f094b85ce3a2e0b4458f7",
+			publicHex: "fc51cd8e6218a1a38da47ed00230f0580816ed13ba3303ac5deb911548908025",
+			msgHex:    "af82",
+			sigHex: "6291d657deec24024827e69c3abe01a30ce548a284743a445e3680d7db5ac3ac18ff9b" +
+				"538d16f290ae67f760984dc6594a7c15e9716ed28dc027beceea1ec40a",
+		},
+		// TEST 1024 (1023-byte message) and TEST SHA(abc) are
+		// in RFC 8032 §7.1 but their inputs are too large to
+		// inline cleanly without external testdata files. The
+		// three vectors above cover the empty / single-byte /
+		// two-byte message cases that exercise every code path.
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			seed := mustDecodeHex(t, tc.secretHex)
+			pub := mustDecodeHex(t, tc.publicHex)
+			msg := mustDecodeHex(t, tc.msgHex)
+			wantSig := mustDecodeHex(t, tc.sigHex)
+
+			// Build the 64-byte stdlib private-key form from the
+			// 32-byte seed.
+			priv := stded25519.NewKeyFromSeed(seed)
+
+			// Construct our Signer from the stdlib private key.
+			s, err := signed25519.New(priv)
+			if err != nil {
+				t.Fatalf("New: %v", err)
+			}
+
+			// Public-key derivation must match the vector.
+			if !bytes.Equal(s.PublicKey(), pub) {
+				t.Fatalf("derived pubkey:\n got=%x\nwant=%x",
+					s.PublicKey(), pub)
+			}
+
+			// Sign(msg) must produce byte-equal signature to vector.
+			gotSig, err := s.Sign(msg)
+			if err != nil {
+				t.Fatalf("Sign: %v", err)
+			}
+			if !bytes.Equal(gotSig, wantSig) {
+				t.Fatalf("Sign:\n got=%x\nwant=%x", gotSig, wantSig)
+			}
+
+			// Verify the canonical signature.
+			v, err := signed25519.NewVerifier(stded25519.PublicKey(pub))
+			if err != nil {
+				t.Fatalf("NewVerifier: %v", err)
+			}
+			if !v.Verify(msg, wantSig) {
+				t.Fatal("Verify rejected the canonical signature")
+			}
+		})
+	}
+}
+
+func mustDecodeHex(t *testing.T, s string) []byte {
+	t.Helper()
+	b, err := hex.DecodeString(s)
+	if err != nil {
+		t.Fatalf("invalid hex fixture: %v", err)
+	}
+	return b
+}
+
 func TestCrossCheckStdlib(t *testing.T) {
 	t.Parallel()
 
@@ -461,11 +565,20 @@ func BenchmarkSign(b *testing.B) {
 		{"64K", 65536},
 	} {
 		b.Run(sz.name, func(b *testing.B) {
+			// sink is captured by this closure and read past
+			// the loop, forcing the per-iteration signature
+			// allocation to escape to the heap. Production
+			// callers store / transmit the signature; the
+			// bench reflects that.
+			var sink []byte
 			data := make([]byte, sz.n)
 			b.ReportAllocs()
 			b.SetBytes(int64(sz.n))
 			for b.Loop() {
-				_, _ = s.Sign(data)
+				sink, _ = s.Sign(data)
+			}
+			if len(sink) == 0 {
+				b.Fatal("sink unexpectedly empty after loop")
 			}
 		})
 	}
@@ -493,6 +606,108 @@ func BenchmarkVerify(b *testing.B) {
 				_ = s.Verify(data, sig)
 			}
 		})
+	}
+}
+
+// BenchmarkSignParallel exercises [Signer.Sign] under fan-out
+// across cores. Ed25519 Sign is allocating-by-stdlib (one
+// signature per call); RunParallel measures the per-P throughput
+// ceiling distributed-systems consumers hit when N goroutines
+// sign concurrently.
+func BenchmarkSignParallel(b *testing.B) {
+	s, err := signed25519.Generate(seeded.New(rand.Seed(1)))
+	if err != nil {
+		b.Fatalf("Generate: %v", err)
+	}
+	for _, sz := range []struct {
+		name string
+		n    int
+	}{
+		{"64B", 64},
+		{"1K", 1024},
+		{"64K", 65536},
+	} {
+		b.Run(sz.name, func(b *testing.B) {
+			data := make([]byte, sz.n)
+			b.ReportAllocs()
+			b.SetBytes(int64(sz.n))
+			b.RunParallel(func(pb *testing.PB) {
+				// sink is captured by this goroutine's closure;
+				// assigning to it across iterations forces the
+				// per-iteration signature slice to escape to the
+				// heap. No post-loop length check — RunParallel
+				// can spawn goroutines that observe zero
+				// iterations when the framework converges on the
+				// per-op count, so an empty sink is legitimate.
+				var sink []byte
+				for pb.Next() {
+					sink, _ = s.Sign(data)
+				}
+				_ = sink
+			})
+		})
+	}
+}
+
+// BenchmarkVerifyParallel exercises [Verifier.Verify] under
+// fan-out across cores. Verifiers commonly run at higher
+// fan-out than signers (one signer in the producer; many
+// verifiers in the consumers).
+func BenchmarkVerifyParallel(b *testing.B) {
+	s, err := signed25519.Generate(seeded.New(rand.Seed(1)))
+	if err != nil {
+		b.Fatalf("Generate: %v", err)
+	}
+	for _, sz := range []struct {
+		name string
+		n    int
+	}{
+		{"64B", 64},
+		{"1K", 1024},
+		{"64K", 65536},
+	} {
+		b.Run(sz.name, func(b *testing.B) {
+			data := make([]byte, sz.n)
+			sig, _ := s.Sign(data)
+			b.ReportAllocs()
+			b.SetBytes(int64(sz.n))
+			b.RunParallel(func(pb *testing.PB) {
+				for pb.Next() {
+					_ = s.Verify(data, sig)
+				}
+			})
+		})
+	}
+}
+
+// BenchmarkGenerate measures keypair-generation cost. Setup-
+// path benchmark — every consumer pays this once per Signer
+// before any signing happens.
+func BenchmarkGenerate(b *testing.B) {
+	r := seeded.New(rand.Seed(1))
+	b.ReportAllocs()
+	for b.Loop() {
+		s, err := signed25519.Generate(r)
+		if err != nil {
+			b.Fatalf("Generate: %v", err)
+		}
+		_ = s
+	}
+}
+
+// BenchmarkKeyIDFromPub measures the KeyID-derivation cost. Hot
+// for any consumer that routes incoming receipts through a
+// trust store keyed by [sign.KeyID]: the public key arrives,
+// KeyID is derived, lookup happens.
+func BenchmarkKeyIDFromPub(b *testing.B) {
+	s, err := signed25519.Generate(seeded.New(rand.Seed(1)))
+	if err != nil {
+		b.Fatalf("Generate: %v", err)
+	}
+	pub := stded25519.PublicKey(s.PublicKey())
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = signed25519.KeyIDFromPub(pub)
 	}
 }
 

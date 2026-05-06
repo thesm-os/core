@@ -208,10 +208,12 @@ func BenchmarkHashReader(b *testing.B) {
 	} {
 		b.Run(sz.name, func(b *testing.B) {
 			data := make([]byte, sz.n)
+			r := bytes.NewReader(data)
 			b.ReportAllocs()
 			b.SetBytes(int64(sz.n))
 			for b.Loop() {
-				_, _ = crypto.HashReader(h, bytes.NewReader(data))
+				r.Reset(data)
+				_, _ = crypto.HashReader(h, r)
 			}
 		})
 	}
