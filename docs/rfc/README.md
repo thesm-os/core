@@ -67,6 +67,11 @@ Start from [`docs/templates/RFC.md`](../templates/RFC.md).
 | [0002](0002-rand-seam.md) | Randomness Seam | Accepted |
 | [0003](0003-crypto-seam.md) | Cryptographic Hash Seam | Accepted |
 | [0004](0004-telemetry-seam.md) | Telemetry Seam | Accepted |
+| [0005](0005-epoch.md) | Epoch — In-Process Monotonic Counter | Accepted |
+| [0006](0006-tag.md) | Tag — Snapshot-Immutable Key/Value Pairs | Accepted |
+| [0007](0007-version.md) | Version — Opaque CAS Token | Accepted |
+| [0008](0008-page.md) | Page — Pagination Request and Cursor Iteration | Accepted |
+| [0009](0009-id.md) | ID — 128-bit Identifier Seam | Accepted |
 
 ## Canonical first RFC
 
