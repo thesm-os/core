@@ -5,6 +5,7 @@ package crypto
 
 import (
 	"bytes"
+	"crypto/subtle"
 	"encoding/hex"
 )
 
@@ -119,8 +120,30 @@ func (d Digest) IsZero() bool {
 // same active bytes. Equivalent to `d == other` but the explicit
 // method is clearer at call sites that compare digests
 // programmatically.
+//
+// Equal is NOT constant-time. Use [Digest.ConstantTimeEqual] to
+// compare a [MAC] or signature digest against a value supplied
+// by an untrusted party — equality timing leaks the position of
+// the first differing byte and converts into a forgery oracle.
 func (d Digest) Equal(other Digest) bool {
 	return d == other
+}
+
+// ConstantTimeEqual reports whether d and other have the same
+// size and the same active bytes, in time independent of where
+// the bytes first differ. Use this for [MAC] and signature
+// comparisons against values supplied by untrusted parties;
+// [Digest.Equal] (and `==`) leak the first-differing-byte
+// position via timing and must not be used in that setting.
+//
+// Size is public information determined by the producing
+// algorithm, so the size short-circuit is not itself a timing
+// hazard.
+func (d Digest) ConstantTimeEqual(other Digest) bool {
+	if d.size != other.size {
+		return false
+	}
+	return subtle.ConstantTimeCompare(d.bytes[:d.size], other.bytes[:other.size]) == 1
 }
 
 // Compare returns -1, 0, or +1 by lexicographic ordering of the

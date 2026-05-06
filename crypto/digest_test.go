@@ -118,6 +118,71 @@ func TestDigestEqual(t *testing.T) {
 	}
 }
 
+func TestDigestConstantTimeEqual(t *testing.T) {
+	t.Parallel()
+
+	t.Run("identical digests compare equal", func(t *testing.T) {
+		t.Parallel()
+		a := crypto.NewDigest256(fill256(0x42))
+		b := crypto.NewDigest256(fill256(0x42))
+		if !a.ConstantTimeEqual(b) {
+			t.Fatal("identical 256-bit digests must compare equal")
+		}
+	})
+
+	t.Run("differing single byte returns false", func(t *testing.T) {
+		t.Parallel()
+		a256 := fill256(0x42)
+		b256 := fill256(0x42)
+		b256[31] ^= 0x01
+		a := crypto.NewDigest256(a256)
+		b := crypto.NewDigest256(b256)
+		if a.ConstantTimeEqual(b) {
+			t.Fatal("digests differing in one byte must not compare equal")
+		}
+	})
+
+	t.Run("different sizes return false", func(t *testing.T) {
+		t.Parallel()
+		a := crypto.NewDigest256(fill256(0x00))
+		b := crypto.NewDigest384(fill384(0x00))
+		if a.ConstantTimeEqual(b) {
+			t.Fatal("digests of different sizes must not compare equal")
+		}
+		if b.ConstantTimeEqual(a) {
+			t.Fatal("ConstantTimeEqual must be symmetric on size mismatch")
+		}
+	})
+
+	t.Run("both zero-Digest values compare equal", func(t *testing.T) {
+		t.Parallel()
+		var a, b crypto.Digest
+		if !a.ConstantTimeEqual(b) {
+			t.Fatal("zero Digest values must compare equal to themselves")
+		}
+	})
+
+	t.Run("agrees with Equal on same-size inputs", func(t *testing.T) {
+		t.Parallel()
+		// ConstantTimeEqual must be a strict drop-in for Equal
+		// when both inputs are the same size. Differential check
+		// across a small corpus.
+		corpus := [][2][crypto.DigestSize256]byte{
+			{fill256(0x00), fill256(0x00)},
+			{fill256(0x01), fill256(0x02)},
+			{fill256(0xff), fill256(0xff)},
+		}
+		for _, pair := range corpus {
+			a := crypto.NewDigest256(pair[0])
+			b := crypto.NewDigest256(pair[1])
+			if a.Equal(b) != a.ConstantTimeEqual(b) {
+				t.Fatalf("disagreement: Equal=%v ConstantTimeEqual=%v",
+					a.Equal(b), a.ConstantTimeEqual(b))
+			}
+		}
+	})
+}
+
 func TestDigestCompare(t *testing.T) {
 	t.Parallel()
 
@@ -207,6 +272,7 @@ func TestZeroAlloc(t *testing.T) {
 		{"NewDigest512", func() { _ = crypto.NewDigest512(raw512) }},
 		{"IsZero", func() { _ = d.IsZero() }},
 		{"Equal", func() { _ = d.Equal(other) }},
+		{"ConstantTimeEqual", func() { _ = d.ConstantTimeEqual(other) }},
 		{"Compare", func() { _ = d.Compare(other) }},
 		{"Size", func() { _ = d.Size() }},
 		{"Bytes", func() { _ = d.Bytes() }},

@@ -4,12 +4,12 @@
 package seeded
 
 import (
-	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/binary"
-	"hash"
 	"sync"
 
+	"go.thesmos.sh/core/crypto"
+	cryptohmacsha256 "go.thesmos.sh/core/crypto/hmac/sha256"
 	"go.thesmos.sh/core/rand"
 )
 
@@ -32,9 +32,8 @@ const blockSize = 32
 // the receiver, so [Rand.Read] and [Rand.Uint64] are zero-alloc
 // after construction.
 type Rand struct {
-	mac     hash.Hash
+	stream  crypto.Stream
 	seed    rand.Seed
-	key     [blockSize]byte
 	counter uint64
 	ctr     [8]byte
 	buf     [blockSize]byte
@@ -48,17 +47,22 @@ var _ rand.Rand = (*Rand)(nil)
 
 // New returns a Rand keyed by seed. Two instances with the same
 // seed produce bit-identical byte streams.
+//
+// The HMAC key is the 8-byte big-endian encoding of seed. The
+// remaining keying material is empty; HMAC tolerates short keys
+// per RFC 2104. The construction is part of the public contract
+// — changing the key derivation would change the output stream
+// and break the cross-version determinism guarantee.
 func New(seed rand.Seed) *Rand {
-	r := &Rand{seed: seed}
+	var key [8]byte
 	// int64 → uint64 is a bit-pattern reinterpretation; the
 	// resulting key uses the entire 64-bit value range as the
 	// HMAC key seed material.
-	binary.BigEndian.PutUint64(r.key[:8], uint64(seed))
-	// Remaining 24 bytes of key stay zero — the seed is the
-	// entire keying material and the construction is HMAC, which
-	// tolerates short keys.
-	r.mac = hmac.New(sha256.New, r.key[:8])
-	return r
+	binary.BigEndian.PutUint64(key[:], uint64(seed))
+	return &Rand{
+		stream: cryptohmacsha256.New(key[:]).NewStream(),
+		seed:   seed,
+	}
 }
 
 // NewFromBytes returns a Rand keyed by an arbitrary-length byte
@@ -69,11 +73,11 @@ func New(seed rand.Seed) *Rand {
 // The returned Rand's Seed reports [rand.SeedUnspecified] — there
 // is no single int64 that recovers a byte-string seed.
 func NewFromBytes(seed []byte) *Rand {
-	r := &Rand{seed: rand.SeedUnspecified}
 	digest := sha256.Sum256(seed)
-	r.key = digest
-	r.mac = hmac.New(sha256.New, r.key[:])
-	return r
+	return &Rand{
+		stream: cryptohmacsha256.New(digest[:]).NewStream(),
+		seed:   rand.SeedUnspecified,
+	}
 }
 
 // Uint64 returns the next 64 bits of the keyed-counter stream as
@@ -131,9 +135,12 @@ func (r *Rand) readLocked(p []byte) {
 func (r *Rand) refillLocked() {
 	binary.BigEndian.PutUint64(r.ctr[:], r.counter)
 	r.counter++
-	r.mac.Reset()
-	_, _ = r.mac.Write(r.ctr[:])
-	r.mac.Sum(r.buf[:0])
+	r.stream.Reset()
+	// crypto.Stream.Write never returns a non-nil error
+	// (HMAC-SHA-256 has no IO failure path); ignoring is safe.
+	_, _ = r.stream.Write(r.ctr[:])
+	digest := r.stream.Sum()
+	copy(r.buf[:], digest.Bytes())
 	r.bufHead = 0
 	r.bufLen = blockSize
 }

@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `crypto.MAC` interface — keyed-authentication peer of
+  `crypto.Hasher` with `ID`, `Algorithm`, `Size`, `Sign`,
+  `Verify`, `NewStream`. Verify runs in constant time over the
+  active byte prefix; size mismatch short-circuits to false.
+- `Digest.ConstantTimeEqual` — constant-time comparison for
+  comparing locally-computed MAC / signature digests against
+  values supplied by untrusted parties. `Digest.Equal` stays as
+  the fast path for hash comparisons; cross-doc steers MAC and
+  signature use cases to the new method.
+- `crypto/hmac/sha256` package: HMAC-SHA-256 implementation,
+  RFC 4231 §4.2 / §4.3 / §4.4 / §4.6 / §4.7 vectors, fuzz +
+  cross-stdlib equivalence, benchmarks at 8 B / 64 B / 256 B /
+  4 KiB / 64 KiB.
+- `crypto/hmac/sha512` package: HMAC-SHA-384 and HMAC-SHA-512
+  implementations, RFC 4231 vectors for both, fuzz +
+  cross-stdlib equivalence, benchmarks.
+- `crypto/hmac/sha3` package: HMAC-SHA3-256, HMAC-SHA3-384,
+  HMAC-SHA3-512 implementations. NIST CAVP-equivalent vectors
+  computed from the stdlib and frozen to detect regressions,
+  fuzz + cross-stdlib equivalence, benchmarks.
+- `crypto.AlgHMACSHA256`, `AlgHMACSHA384`, `AlgHMACSHA512`,
+  `AlgHMACSHA3_256`, `AlgHMACSHA3_384`, `AlgHMACSHA3_512`
+  Algorithm constants — RFC 4231 / IETF / NIST registry
+  spellings (`hmac-sha-256`, `hmac-sha3-256`).
+- `docs/rfc/0012-crypto-hmac-seam.md` documenting the HMAC seam
+  rationale.
+
+### Changed
+
+- `rand/seeded` now constructs its HMAC-SHA-256 stream via
+  `crypto/hmac/sha256.New(key).NewStream()` rather than
+  inlining `crypto/hmac` + `crypto/sha256`. Byte-level
+  determinism preserved (the construction is part of the
+  public contract, fixture test unchanged); zero-alloc contract
+  preserved.
+
 ## [0.5.0] - 2026-05-06
 
 ### Added

@@ -35,6 +35,14 @@ seams every other thesmos library and framework depends on:
   hashing. Implementations: `crypto/sha256`, `crypto/sha512`
   (SHA-384, SHA-512), `crypto/sha3` (SHA3-256, SHA3-384,
   SHA3-512). See [RFC-0003][rfc-0003].
+- **HMAC** — keyed-authentication peer of the hash seam.
+  `crypto.MAC` mirrors `crypto.Hasher`'s shape (same `Digest`
+  output, same `ID` + `Algorithm` model, same `Stream`) with
+  first-class constant-time `Verify` and a `Digest.ConstantTimeEqual`
+  helper for streaming verification. Implementations:
+  `crypto/hmac/sha256`, `crypto/hmac/sha512` (HMAC-SHA-384,
+  HMAC-SHA-512), `crypto/hmac/sha3` (HMAC-SHA3-{256,384,512}).
+  See [RFC-0012][rfc-0012].
 - **Telemetry** — metric and trace seams for hot-path
   observability emission, with attribute pre-binding via
   `.With([]Attr)` keeping the emit path zero-allocation while
@@ -135,5 +143,6 @@ Apache 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 [rfc-0009]: docs/rfc/0009-id.md
 [rfc-0010]: docs/rfc/0010-pool.md
 [rfc-0011]: docs/rfc/0011-arena.md
+[rfc-0012]: docs/rfc/0012-crypto-hmac-seam.md
 [contrib]: CONTRIBUTING.md
 [sec]: SECURITY.md

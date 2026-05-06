@@ -72,3 +72,43 @@ const (
 	// audit chains.
 	AlgSHA3_512 Algorithm = "sha3-512"
 )
+
+// Keyed-MAC algorithms. Each names HMAC (RFC 2104) over the
+// indicated underlying hash. The wire encoding follows the same
+// family-spelling convention as the bare hashes:
+//
+//   - SHA-2 family keeps the size hyphen
+//     ("hmac-sha-256", "hmac-sha-384", "hmac-sha-512").
+//   - SHA-3 family does not
+//     ("hmac-sha3-256", "hmac-sha3-384", "hmac-sha3-512").
+//
+// Spellings match RFC 4231 and the IETF / NIST registry
+// conventions consumers will encounter in receipts produced
+// elsewhere. Identifier names follow Go's no-underscore rule
+// for SHA-2 ([AlgHMACSHA256] etc.) and use one underscore to
+// disambiguate the size suffix in SHA-3 names
+// ([AlgHMACSHA3_256] etc.) — exactly mirroring [AlgSHA256] vs
+// [AlgSHA3_256].
+const (
+	// AlgHMACSHA256 is HMAC-SHA-256 per RFC 2104 / RFC 4231.
+	// Default keyed-authentication choice for webhook and
+	// request-signing flows.
+	AlgHMACSHA256 Algorithm = "hmac-sha-256"
+	// AlgHMACSHA384 is HMAC-SHA-384 per RFC 2104. The CNSA 2.0
+	// minimum-strength keyed-MAC for U.S. federal traffic.
+	AlgHMACSHA384 Algorithm = "hmac-sha-384"
+	// AlgHMACSHA512 is HMAC-SHA-512 per RFC 2104. Preferred on
+	// 64-bit hosts for long inputs where the SHA-512 throughput
+	// advantage dominates the per-call HMAC overhead.
+	AlgHMACSHA512 Algorithm = "hmac-sha-512"
+	// AlgHMACSHA3_256 is HMAC-SHA3-256 per RFC 2104 over the
+	// FIPS 202 sponge. Selected where Keccak diversity from the
+	// SHA-2 family is required.
+	AlgHMACSHA3_256 Algorithm = "hmac-sha3-256"
+	// AlgHMACSHA3_384 is HMAC-SHA3-384 per RFC 2104 over the
+	// FIPS 202 sponge.
+	AlgHMACSHA3_384 Algorithm = "hmac-sha3-384"
+	// AlgHMACSHA3_512 is HMAC-SHA3-512 per RFC 2104 over the
+	// FIPS 202 sponge. High-margin audit-chain authentication.
+	AlgHMACSHA3_512 Algorithm = "hmac-sha3-512"
+)
