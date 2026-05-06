@@ -29,11 +29,9 @@ func TestRead(t *testing.T) {
 	t.Run("default source fills the entire slice", func(t *testing.T) {
 		t.Parallel()
 		buf := make([]byte, 64)
-		n, err := crypto.New().Read(buf)
-		if err != nil {
+		if n, err := crypto.New().Read(buf); err != nil {
 			t.Fatalf("Read: unexpected error %v", err)
-		}
-		if n != 64 {
+		} else if n != 64 {
 			t.Fatalf("Read: filled %d, want 64", n)
 		}
 	})
@@ -65,11 +63,9 @@ func TestRead(t *testing.T) {
 		t.Parallel()
 		sentinel := errors.New("entropy depleted")
 		r := crypto.NewWithReader(failingReader{err: sentinel})
-		_, err := r.Read(make([]byte, 8))
-		if err == nil {
+		if _, err := r.Read(make([]byte, 8)); err == nil {
 			t.Fatal("expected error from failing reader, got nil")
-		}
-		if !errors.Is(err, sentinel) {
+		} else if !errors.Is(err, sentinel) {
 			t.Fatalf("expected wrapped sentinel, got %v", err)
 		}
 	})
@@ -102,11 +98,9 @@ func TestUint64(t *testing.T) {
 			if rec == nil {
 				t.Fatal("expected panic, got nil")
 			}
-			err, ok := rec.(error)
-			if !ok {
+			if err, ok := rec.(error); !ok {
 				t.Fatalf("expected panic with error, got %T(%v)", rec, rec)
-			}
-			if !errors.Is(err, sentinel) {
+			} else if !errors.Is(err, sentinel) {
 				t.Fatalf("panic error did not wrap sentinel: %v", err)
 			}
 		}()
@@ -120,11 +114,9 @@ func TestZeroValueIsUsable(t *testing.T) {
 	// Documented contract: zero-value Rand uses crypto/rand.Reader.
 	var r crypto.Rand
 	buf := make([]byte, 8)
-	n, err := r.Read(buf)
-	if err != nil {
+	if n, err := r.Read(buf); err != nil {
 		t.Fatalf("zero-value Read: unexpected error %v", err)
-	}
-	if n != 8 {
+	} else if n != 8 {
 		t.Fatalf("zero-value Read: filled %d, want 8", n)
 	}
 }
@@ -136,11 +128,9 @@ func TestNewWithReaderUsesProvidedSource(t *testing.T) {
 	const want = "deterministic-bytes-for-test"
 	r := crypto.NewWithReader(bytes.NewReader([]byte(want)))
 	got := make([]byte, len(want))
-	n, err := r.Read(got)
-	if err != nil {
+	if n, err := r.Read(got); err != nil {
 		t.Fatalf("Read: unexpected error %v", err)
-	}
-	if n != len(want) {
+	} else if n != len(want) {
 		t.Fatalf("Read: filled %d, want %d", n, len(want))
 	}
 	if string(got) != want {

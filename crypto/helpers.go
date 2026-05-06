@@ -43,8 +43,7 @@ func HashDomain(h Hasher, domain []byte, parts ...[]byte) Digest {
 // plus the [io.Copy] internal buffer.
 func HashReader(h Hasher, r io.Reader) (Digest, error) {
 	s := h.NewStream()
-	_, err := io.Copy(s, r)
-	if err != nil {
+	if _, err := io.Copy(s, r); err != nil {
 		return Digest{}, fmt.Errorf("crypto: hash reader: %w", err)
 	}
 	return s.Sum(), nil

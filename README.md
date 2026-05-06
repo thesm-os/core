@@ -33,6 +33,33 @@ seams every other thesmos library and framework depends on:
   baggage, and trace-stitching. Kind-tagged `Attr` bridges to
   stdlib `log/slog`. Implementations: `telemetry/noop`.
   See [RFC-0004][rfc-0004].
+- **Epoch** — in-process strictly-monotonic 64-bit counter for
+  leader generations, schema versions, optimistic-concurrency
+  tokens. `epoch.Epoch` value type plus thread-safe
+  `epoch.Counter`. See [RFC-0005][rfc-0005].
+- **Tag** — snapshot-immutable string key/value pairs used in
+  place of `map[string]string` on value-type structs that cross
+  async-buffered, cached, or cross-goroutine boundaries.
+  See [RFC-0006][rfc-0006].
+- **Version** — opaque CAS token (`Version`), `WriteOptions`
+  with IfMatch / IfNoneMatch preconditions, and `Versioned[T]`
+  for read-your-writes optimistic-concurrency loops.
+  See [RFC-0007][rfc-0007].
+- **Page** — pagination request (`Page` with `WithDefault`
+  helper) and response (`Cursor[T]`) shape with
+  `SliceCursor[T]` and `MapCursor[K, V]` generic helpers.
+  Range-over-func iteration makes "forgot to check err"
+  syntactically impossible. See [RFC-0008][rfc-0008].
+- **ID** — fixed-max-size identifier value type (`id.ID`)
+  covering 128-, 160-, and 256-bit shapes in one comparable
+  type, with four generator subpackages: `id/ulid`
+  (128-bit time-sortable Crockford base32), `id/uuidv4`
+  (128-bit random RFC 4122), `id/ksuid` (160-bit K-sortable
+  base62 — alphanumeric encoding and 128-bit entropy floor
+  for gov / defense / fintech / health consumers), `id/fixed`
+  (constant for fixtures). Every subpackage ships `Format`
+  and `Parse` for canonical serialization.
+  See [RFC-0009][rfc-0009].
 
 These interfaces — and the others added over time — share three
 properties:
@@ -80,5 +107,10 @@ Apache 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 [rfc-0002]: docs/rfc/0002-rand-seam.md
 [rfc-0003]: docs/rfc/0003-crypto-seam.md
 [rfc-0004]: docs/rfc/0004-telemetry-seam.md
+[rfc-0005]: docs/rfc/0005-epoch.md
+[rfc-0006]: docs/rfc/0006-tag.md
+[rfc-0007]: docs/rfc/0007-version.md
+[rfc-0008]: docs/rfc/0008-page.md
+[rfc-0009]: docs/rfc/0009-id.md
 [contrib]: CONTRIBUTING.md
 [sec]: SECURITY.md

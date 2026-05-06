@@ -27,7 +27,6 @@ linters:
     - gosec
     - govet
     - nilerr
-    - noinlineerr
     - predeclared
     - staticcheck
     - unused

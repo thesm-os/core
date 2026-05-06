@@ -67,5 +67,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   signal — empty-struct receivers, zero-allocation by inspection.
 - `docs/rfc/0004-telemetry-seam.md` documenting the telemetry
   contract rationale.
+- `epoch` package: `Epoch` strictly-monotonic 64-bit value type
+  with `Compare`, `Successor`, `IsZero`, `String` methods, plus
+  thread-safe `Counter` for in-process advancement.
+- `tag` package: `Tag` key/value value type and `Tags` slice
+  with `Find`, `Has`, `Get`, `With`, `Without` helpers —
+  snapshot-immutable replacement for `map[string]string` across
+  async-buffered, cached, and cross-goroutine boundaries.
+- `version` package: `Version` opaque CAS token with
+  `Unspecified` and `Wildcard` constants, `WriteOptions` with
+  `IfMatch` / `IfNoneMatch` preconditions, and generic
+  `Versioned[T]` wrapper for state-bearing reads.
+- `page` package: `Page` pagination request with `IsFirst` and
+  `WithDefault(n int)` helpers, `Cursor[T]` response interface
+  with range-over-func iteration, the `SliceCursor[T]` generic
+  concrete helper for tests and in-memory adapters, and the
+  `Entry[K, V]` / `MapCursor[K, V]` pair for adapters that page
+  over key-value stores.
+- `id` package: fixed-max-size `ID` value type covering 128-,
+  160-, and 256-bit identifier shapes in one kind-tagged
+  comparable type with `Size`, `Bytes`, `IsZero`, `Equal`,
+  `Compare`, `String` methods and `New128` / `New160` /
+  `New256` constructors, plus the `Generator` interface
+  (`Generate() ID`). Four generator subpackages:
+  `id/ulid` (128-bit Crockford-base32 ULID, 48-bit ms
+  timestamp + 80 random bits, depends on `clock.Clock` +
+  `rand.Rand`); `id/uuidv4` (128-bit RFC 4122 UUID v4,
+  depends on `rand.Rand`); `id/ksuid` (160-bit K-sortable UID,
+  32-bit Unix-second timestamp + 128 random bits, base62
+  encoded — selected by gov / defense / fintech / health
+  consumers); `id/fixed` (constant for fixtures). Every
+  subpackage ships `Format` and `Parse` for canonical
+  serialization with sentinel errors (`ErrInvalidLength`,
+  `ErrInvalidChar`, plus algorithm-specific overflow / format
+  errors).
+- `docs/rfc/0005-epoch.md`, `0006-tag.md`, `0007-version.md`,
+  `0008-page.md`, `0009-id.md` documenting each base-type
+  contract rationale.
 
 [Unreleased]: https://github.com/thesmos-ai/core/compare/HEAD
