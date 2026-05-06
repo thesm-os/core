@@ -1,0 +1,209 @@
+version: "2"
+
+run:
+  timeout: 5m
+  modules-download-mode: readonly
+  allow-parallel-runners: true
+  tests: true
+  go: "1.26"
+  relative-path-mode: gomod
+
+output:
+  show-stats: true
+  path-mode: "abs"
+  sort-order:
+    - linter
+    - severity
+    - file
+
+linters:
+  default: none
+  enable:
+    # Bugs & safety
+    - copyloopvar
+    - errcheck
+    - errorlint
+    - exhaustive
+    - gosec
+    - govet
+    - nilerr
+    - noinlineerr
+    - predeclared
+    - staticcheck
+    - unused
+    - wastedassign
+    # Modernization / BC
+    - modernize
+    - unparam
+    # Performance
+    - bodyclose
+    - gocritic
+    - noctx
+    - perfsprint
+    - prealloc
+    # Architecture & style
+    - decorder
+    - depguard
+    - dupword
+    - forbidigo
+    - interfacebloat
+    - misspell
+    - revive
+    - wrapcheck
+    - musttag
+    - sloglint
+    - usestdlibvars
+    - nilnil
+    - goconst
+    # Concurrency
+    - asasalint
+    - containedctx
+    - contextcheck
+    - errname
+    - fatcontext
+    - spancheck
+    - whitespace
+    # Test hygiene
+    - testifylint
+    - thelper
+    - tparallel
+    - paralleltest
+    - usetesting
+
+  settings:
+    decorder:
+      disable-dec-order-check: true
+      disable-init-func-first-check: false
+
+    # Stdlib-only enforcement. core has zero non-stdlib dependencies
+    # by design (see ADR-0001). Any new import outside the stdlib or
+    # this module fails lint.
+    depguard:
+      rules:
+        main:
+          list-mode: strict
+          files:
+            - "$all"
+          allow:
+            - $gostd
+            - go.thesmos.sh/core
+
+    forbidigo:
+      analyze-types: true
+      forbid:
+        - pattern: ^panic$
+          msg: "panic() is forbidden in library code; return errors explicitly."
+        - pattern: ^fmt\.(Print|Printf|Println|Fprint|Fprintf|Fprintln)$
+          msg: "Use structured logging, not fmt.Print*."
+
+    exhaustive:
+      default-signifies-exhaustive: true
+      check:
+        - switch
+
+    usetesting:
+      context-background: true
+      context-todo: true
+      os-setenv: true
+      os-mkdir-temp: true
+      os-temp-dir: true
+
+    gocritic:
+      enabled-tags:
+        - performance
+        - diagnostic
+      disabled-checks:
+        - ifElseChain
+        - commentedOutCode
+      settings:
+        hugeParam:
+          sizeThreshold: 256
+        rangeValCopy:
+          sizeThreshold: 256
+
+    wrapcheck:
+      ignore-sig-regexps:
+        - \.New.*Error\(
+        - \.(Wrap|Wrapf)\(
+        - errors\.(Join|Unwrap)\(
+        - \.Err\(
+      ignore-package-globs:
+        - go.thesmos.sh/core/*
+
+    revive:
+      severity: error
+      confidence: 0.1
+      rules:
+        - name: context-as-argument
+        - name: var-naming
+        - name: package-comments
+        - name: receiver-naming
+        - name: exported
+          severity: warning
+        - name: error-return
+        - name: error-naming
+        - name: error-strings
+        - name: errorf
+        - name: if-return
+        - name: indent-error-flow
+        - name: early-return
+        - name: unexported-return
+        - name: redundant-import-alias
+        - name: range
+        - name: empty-block
+        - name: unnecessary-stmt
+        - name: modifies-value-receiver
+        - name: time-naming
+        - name: unused-receiver
+
+    govet:
+      enable-all: true
+
+    interfacebloat:
+      max: 10
+
+    asasalint:
+      use-builtin-exclusions: true
+
+    copyloopvar:
+      check-alias: true
+
+    whitespace:
+      multi-if: true
+      multi-func: false
+
+  exclusions:
+    generated: lax
+    paths:
+      - docs
+    presets:
+      - std-error-handling
+      - common-false-positives
+
+formatters:
+  enable:
+    - gci
+    - gofmt
+    - gofumpt
+    - goimports
+    - golines
+
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+        - prefix(go.thesmos.sh/core)
+      custom-order: true
+    golines:
+      max-len: 120
+    gofumpt:
+      extra-rules: true
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  fix: false
+
+severity:
+  default: error

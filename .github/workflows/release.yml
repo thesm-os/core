@@ -1,0 +1,79 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  validate-tag:
+    name: Validate tag is on main
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Verify tag commit is reachable from main
+        run: |
+          git fetch origin main
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
+            echo "::error::Tag ${GITHUB_REF_NAME} (commit ${GITHUB_SHA}) is not on main."
+            exit 1
+          fi
+          echo "Tag is on main."
+
+  reverify:
+    name: Re-run CI gate
+    needs: validate-tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: make bootstrap
+      - run: make check
+
+  release:
+    name: GitHub release
+    needs: reverify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Extract changelog section for ${{ github.ref_name }}
+        id: changelog
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          # Extract the section between [tag] and the next [version] heading.
+          body=$(awk -v tag="$tag" '
+            $0 ~ "^## \\[" tag "\\]" { found=1; next }
+            found && /^## \[/         { exit }
+            found                     { print }
+          ' CHANGELOG.md)
+          if [ -z "$body" ]; then
+            body="See [CHANGELOG.md](CHANGELOG.md)."
+          fi
+          {
+            echo "body<<EOF"
+            echo "$body"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "${GITHUB_REF_NAME}" \
+            --notes "${{ steps.changelog.outputs.body }}" \
+            --verify-tag

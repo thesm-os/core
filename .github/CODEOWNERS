@@ -1,0 +1,15 @@
+# CODEOWNERS for go.thesmos.sh/core
+#
+# Lines are file-pattern + owners. Last matching line wins.
+# Owners listed here are auto-requested as reviewers on every PR
+# touching the matching paths.
+
+# Default: every file requires maintainer review.
+*       @thesmos-ai/core-maintainers
+
+# Documentation can be reviewed by docs maintainers.
+/docs/  @thesmos-ai/core-maintainers @thesmos-ai/docs
+
+# CI / repo configuration.
+/.github/    @thesmos-ai/core-maintainers
+/Makefile    @thesmos-ai/core-maintainers

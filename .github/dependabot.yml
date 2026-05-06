@@ -1,0 +1,13 @@
+version: 2
+
+updates:
+  # GitHub Actions only — core has zero non-stdlib Go dependencies.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    commit-message:
+      prefix: "ci"
+    labels:
+      - "ci"

@@ -1,0 +1,86 @@
+# rfc/
+
+Request for Comments for `core`. Design proposals under discussion,
+plus the durable record of proposals that were accepted, rejected, or
+withdrawn.
+
+Where ADRs record the decisions `core` has enacted, RFCs record the
+debates that produced them.
+
+## Format
+
+```
+NNNN-short-name.md
+```
+
+- `NNNN` is a zero-padded monotonic counter. Never reused, never
+  renumbered, even if the RFC is withdrawn.
+- `short-name` is lowercase kebab, ~40 chars max.
+
+## Status values
+
+- `Draft` — author is still writing; not ready for review. PR may not
+  be open yet.
+- `Review` — open for comment. PR describing the RFC is open;
+  reviewers are expected to read and comment.
+- `Accepted` — merged as the agreed direction. One or more ADRs
+  should follow (or the RFC itself doubles as the ADR for
+  single-decision proposals).
+- `Rejected` — merged with `status: Rejected`. The decision to reject
+  is itself searchable; prevents re-litigating the same bad idea.
+- `Withdrawn` — author pulled it before a decision was reached. Stays
+  on disk with `status: Withdrawn` and a brief note on why.
+- `Superseded` — a newer RFC obsoletes this one. Both stay on disk;
+  cross-referenced via frontmatter.
+
+## When to write an RFC
+
+Write an RFC when:
+
+- The proposal changes the contract shape (new interface, breaking
+  method signature, new package).
+- Multiple plausible approaches deserve side-by-side comparison.
+- The change has cross-consumer implications (testkit + thesmos +
+  space all have to agree).
+- The motivation is load-bearing and will outlive the implementation
+  (future contributors need to understand the WHY).
+
+DO NOT write an RFC for:
+
+- Implementation-detail choices inside one package.
+- Bug fixes (PR description is enough).
+- Naming / typo cleanups.
+- Single-decision architectural calls with no credible alternatives
+  (write an ADR directly).
+- Repository hygiene and tooling changes (just PR them).
+
+## Template
+
+Start from [`docs/templates/RFC.md`](../templates/RFC.md).
+
+## Canonical first RFC
+
+[RFC-0000](0000-rfc-process.md) is the meta-RFC that establishes the
+RFC process itself.
+
+## Lifecycle diagram
+
+```
+         ┌─────────┐
+         │  Draft  │
+         └────┬────┘
+              │ author opens PR
+              ▼
+         ┌─────────┐
+         │ Review  │
+         └────┬────┘
+     ┌────────┼────────┬───────────────┐
+     ▼        ▼        ▼               ▼
+┌─────────┐┌─────────┐┌───────────┐┌────────────┐
+│Accepted ││Rejected ││Withdrawn  ││ Superseded │
+└─────────┘└─────────┘└───────────┘│  (later)   │
+                                   └────────────┘
+```
+
+Terminal statuses (Accepted / Rejected / Withdrawn / Superseded) all
+stay on disk as the durable record.
