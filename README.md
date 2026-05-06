@@ -16,6 +16,12 @@ seams every other thesmos library and framework depends on:
   `rand/crypto` (CSPRNG over `crypto/rand`), `rand/seeded`
   (HMAC-SHA-256 deterministic CSPRNG), `rand/fixed` (constant for
   tests). See [RFC-0002][rfc-0002].
+- **Hash** — hash-function seam producing fixed-size digests with
+  a stable per-implementation `ID` so receipts and audit chains
+  survive algorithm rotation. `Hash(data)` and `Combine(left,
+  right)` cover leaf commitments and Merkle / chain construction.
+  Implementations: `hash/sha256` (SHA-256 backed by
+  `crypto/sha256`).
 
 These interfaces — and the others added over time — share three
 properties:

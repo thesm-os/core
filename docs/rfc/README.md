@@ -65,6 +65,7 @@ Start from [`docs/templates/RFC.md`](../templates/RFC.md).
 | [0000](0000-rfc-process.md) | RFC Process | Accepted |
 | [0001](0001-clock-seam.md) | Clock Seam | Accepted |
 | [0002](0002-rand-seam.md) | Randomness Seam | Accepted |
+| [0003](0003-crypto-seam.md) | Cryptographic Hash Seam | Accepted |
 
 ## Canonical first RFC
 

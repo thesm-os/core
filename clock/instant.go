@@ -159,7 +159,13 @@ func (i Instant) IsZero() bool {
 //
 // Value type; pass by value. Zero alloc.
 type InstantRange struct {
+	// Since is the inclusive lower bound of the range. The zero
+	// [Instant] disables the lower bound (matches everything
+	// before [InstantRange.Until]).
 	Since Instant
+	// Until is the exclusive upper bound of the range. The zero
+	// [Instant] disables the upper bound (matches everything from
+	// [InstantRange.Since] onward).
 	Until Instant
 }
 

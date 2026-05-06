@@ -219,7 +219,7 @@ linters:
       - source: "func TestZeroAlloc"
         linters: [paralleltest]
       - path: '_test\.go'
-        text: "Range statement for test TestZeroAlloc"
+        text: 'TestZeroAlloc'
         linters: [paralleltest]
 
       # Ad-hoc {name, fn} subtest table struct in TestZeroAlloc.

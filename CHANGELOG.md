@@ -40,5 +40,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rationale.
 - `TestZeroAlloc` enforcement of every documented zero-allocation
   method in the clock and rand packages.
+- `hash` package: the `Hasher` interface (`ID`, `Hash`, `Combine`),
+  the `Digest` and `ID` value types with `IsZero` and `String`
+  helpers, plus `DigestSize` and `IDSize` constants.
+- `hash/sha256` package: SHA-256 implementation backed by
+  `crypto/sha256`; stateless value-type `Hasher` (zero value
+  usable); `Hash` and `Combine` are zero-allocation. NIST FIPS
+  180-4 fixtures and benchmarks from 8 B to 64 KiB.
 
 [Unreleased]: https://github.com/thesmos-ai/core/compare/HEAD
