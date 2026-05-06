@@ -179,6 +179,56 @@ linters:
     presets:
       - std-error-handling
       - common-false-positives
+    rules:
+      # rand/pcg is a deliberately non-cryptographic PRNG. The G404
+      # warning ("use crypto/rand") is wrong for this package by
+      # design (see docs/adr/0006 and rand/pcg/doc.go), and the
+      # int64 → uint64 seed conversion is a deliberate bit-pattern
+      # reinterpretation supported by the PCG construction.
+      - path: 'rand/pcg/'
+        linters: [gosec]
+        text: "G404:|G115:"
+
+      # rand/helpers Shuffle converts uint64n's bounded result to
+      # int. The result is mathematically guaranteed to fit; G115
+      # cannot prove it. Same logic applies in helpers_test.go's
+      # reference implementation.
+      - path: 'rand/helpers'
+        linters: [gosec]
+        text: "G115:"
+
+      # rand/seeded uses int64 → uint64 as a bit-pattern
+      # reinterpretation when keying HMAC; safe by construction.
+      # Same logic in seeded_test.go.
+      - path: 'rand/seeded'
+        linters: [gosec]
+        text: "G115:"
+
+      # rand/crypto.Rand.Uint64 panics on entropy-source failure
+      # by deliberate design — see the Failure semantics section
+      # in rand/crypto/crypto.go. Returning a sentinel from a
+      # CSPRNG is the worst possible failure mode for a security
+      # primitive.
+      - path: 'rand/crypto/crypto\.go'
+        linters: [forbidigo]
+        text: "panic"
+
+      # TestZeroAlloc tests use testing.AllocsPerRun which relies
+      # on a process-global malloc counter; running them in
+      # parallel with other tests produces flaky alloc counts.
+      - source: "func TestZeroAlloc"
+        linters: [paralleltest]
+      - path: '_test\.go'
+        text: "Range statement for test TestZeroAlloc"
+        linters: [paralleltest]
+
+      # Ad-hoc {name, fn} subtest table struct in TestZeroAlloc.
+      # Reordering fields does not change the ptr-byte count — the
+      # linter's suggested arrangement matches the current one.
+      - path: '_test\.go'
+        linters: [govet]
+        text: "fieldalignment.*could be 16"
+
 
 formatters:
   enable:
