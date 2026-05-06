@@ -24,3 +24,10 @@ jobs:
         uses: wagoid/commitlint-github-action@v6
         with:
           configFile: .commitlintrc.yml
+          # On push events the action computes the range between
+          # `before` and `after` shas. Force-pushes (e.g. amended
+          # commits) leave those shas with no common ancestor, which
+          # crashes the GitHub API enumeration. Capping at the latest
+          # commit avoids that failure mode without weakening PR-side
+          # validation, which uses pull_request commits directly.
+          commitDepth: 1
