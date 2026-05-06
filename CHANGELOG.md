@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-05-06
+
 ### Added
 
 - Repository scaffolding: build tooling, CI, governance docs, and the
@@ -104,5 +106,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `docs/rfc/0005-epoch.md`, `0006-tag.md`, `0007-version.md`,
   `0008-page.md`, `0009-id.md` documenting each base-type
   contract rationale.
+- `pool` package: typed `sync.Pool` wrappers with `Pool[T any]`
+  for arbitrary values and `ResetPool[T Resettable]` that
+  auto-Resets on `Put` (preventing cross-tenant data leaks
+  at the type level). Plus `NewBufferPool()` convenience
+  for the `*bytes.Buffer` case.
+- `arena` package: bump allocator for hot-path
+  variable-length output. `Append` / `Alloc` return
+  three-index-capped sub-slices into a contiguous backing
+  buffer; epoch-tagged `Marker` + `SliceSince` capture
+  multi-call regions across lifecycle boundaries safely.
+  `CopyOut` / `CopyOutTo` / `RebaseSlices` /
+  `RebaseSlicesTo` consolidate sub-slices into caller-owned
+  memory at the ownership boundary. `(*Arena).Reset`
+  satisfies `pool.Resettable` for one-line pool integration;
+  `CapExceeds` / `Shrink` let a pool wrapper release
+  oversized arenas after anomalous load.
+- `docs/rfc/0010-pool.md` documenting the pool seam
+  rationale.
+- `docs/rfc/0011-arena.md` documenting the arena seam
+  rationale.
 
-[Unreleased]: https://github.com/thesmos-ai/core/compare/HEAD
+[Unreleased]: https://github.com/thesmos-ai/core/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/thesmos-ai/core/releases/tag/v0.5.0

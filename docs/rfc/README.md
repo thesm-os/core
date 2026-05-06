@@ -72,6 +72,8 @@ Start from [`docs/templates/RFC.md`](../templates/RFC.md).
 | [0007](0007-version.md) | Version — Opaque CAS Token | Accepted |
 | [0008](0008-page.md) | Page — Pagination Request and Cursor Iteration | Accepted |
 | [0009](0009-id.md) | ID — 128-bit Identifier Seam | Accepted |
+| [0010](0010-pool.md) | Pool — Typed sync.Pool Wrappers | Accepted |
+| [0011](0011-arena.md) | Arena — Bump-Allocator for Hot-Path Variable-Length Output | Accepted |
 
 ## Canonical first RFC
 

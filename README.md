@@ -1,5 +1,14 @@
 # core
 
+[![CI](https://github.com/thesmos-ai/core/actions/workflows/ci.yml/badge.svg)](https://github.com/thesmos-ai/core/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/thesmos-ai/core)](https://github.com/thesmos-ai/core/releases/latest)
+[![Go Reference](https://pkg.go.dev/badge/go.thesmos.sh/core.svg)](https://pkg.go.dev/go.thesmos.sh/core)
+[![Go Report Card](https://goreportcard.com/badge/go.thesmos.sh/core)](https://goreportcard.com/report/go.thesmos.sh/core)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/thesmos-ai/core)](go.mod)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+[![codecov](https://codecov.io/gh/thesmos-ai/core/graph/badge.svg)](https://codecov.io/gh/thesmos-ai/core)
+[![Mutation](https://img.shields.io/badge/mutation-100%25%20effective-brightgreen.svg)](README.md)
+
 Foundational interfaces for the [thesmos][thesmos] ecosystem.
 
 `core` is a [stdlib-only][adr-0001] Go module that defines the contract
@@ -60,6 +69,18 @@ seams every other thesmos library and framework depends on:
   (constant for fixtures). Every subpackage ships `Format`
   and `Parse` for canonical serialization.
   See [RFC-0009][rfc-0009].
+- **Pool** — typed `sync.Pool` wrappers: `Pool[T any]` for
+  arbitrary values, `ResetPool[T Resettable]` that
+  auto-clears state on `Put` (preventing cross-tenant data
+  leaks at the type level), and `NewBufferPool` for the
+  `*bytes.Buffer` case. See [RFC-0010][rfc-0010].
+- **Arena** — bump allocator for hot-path variable-length
+  output. `Append` / `Alloc` return three-index-capped
+  sub-slices into a contiguous backing buffer; epoch-tagged
+  `Marker` + `SliceSince` capture multi-call regions
+  safely. Pool integration via `Reset` (satisfies
+  `pool.Resettable`) keeps the backing buffer warm across
+  requests. See [RFC-0011][rfc-0011].
 
 These interfaces — and the others added over time — share three
 properties:
@@ -112,5 +133,7 @@ Apache 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 [rfc-0007]: docs/rfc/0007-version.md
 [rfc-0008]: docs/rfc/0008-page.md
 [rfc-0009]: docs/rfc/0009-id.md
+[rfc-0010]: docs/rfc/0010-pool.md
+[rfc-0011]: docs/rfc/0011-arena.md
 [contrib]: CONTRIBUTING.md
 [sec]: SECURITY.md
