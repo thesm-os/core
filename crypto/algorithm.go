@@ -112,3 +112,19 @@ const (
 	// FIPS 202 sponge. High-margin audit-chain authentication.
 	AlgHMACSHA3_512 Algorithm = "hmac-sha3-512"
 )
+
+// Public-key signature algorithms. The wire encoding follows the
+// usual lowercase-hyphenated convention. PQ-signature constants
+// (ML-DSA per FIPS 204, SLH-DSA per FIPS 205) land additively
+// when the Go stdlib promotes them out of internal/fips140.
+const (
+	// AlgEd25519 is Ed25519 PureEdDSA per RFC 8032 §5.1.6 (also
+	// FIPS 186-5 since 2023). The fixed 64-byte signature is
+	// produced over the raw message, not a pre-hash.
+	AlgEd25519 Algorithm = "ed25519"
+	// AlgECDSAP384 is ECDSA over NIST P-384 per FIPS 186-5,
+	// hashing the message with SHA-384 (matched curve / hash
+	// strength). Signatures are ASN.1 DER (the FIPS-friendly
+	// encoding produced by [crypto/ecdsa.SignASN1]).
+	AlgECDSAP384 Algorithm = "ecdsa-p384"
+)

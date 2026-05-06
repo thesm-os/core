@@ -35,6 +35,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   spellings (`hmac-sha-256`, `hmac-sha3-256`).
 - `docs/rfc/0012-crypto-hmac-seam.md` documenting the HMAC seam
   rationale.
+- `crypto/sign` package: `Signer` / `Verifier` interface split
+  (every Signer is-a Verifier; verifier-only consumers
+  construct a Verifier from raw public-key bytes without
+  holding a private key), `KeyID` 16-byte value type with
+  per-algorithm canonical derivation, optional
+  `StreamingSigner` / `StreamingVerifier` capability
+  interfaces for hash-then-sign algorithms.
+- `crypto/sign/ed25519` package: Ed25519 PureEdDSA per RFC
+  8032 §5.1.6, backed by `crypto/ed25519`. Signer / Verifier;
+  no streaming (the algorithm cannot stream — RFC 8032 §5.1.6
+  needs the message in two SHA-512 computations). Zero-alloc
+  Verify. `KeyIDFromPub` derives SHA-256(pub)[:16];
+  `TestKeyIDStability` locks the encoding via a hardcoded
+  vector.
+- `crypto/sign/ecdsap384` package: ECDSA over NIST P-384 with
+  SHA-384 hashing per FIPS 186-5, ASN.1 DER signatures, backed
+  by `crypto/ecdsa`. Implements both Signer + StreamingSigner
+  and Verifier + StreamingVerifier. `KeyIDFromPub` derives
+  SHA-256(SEC 1 uncompressed point)[:16]; `TestKeyIDStability`
+  locks the encoding (X=1, Y=2 vector).
+- `crypto.AlgEd25519`, `crypto.AlgECDSAP384` Algorithm
+  constants.
+- `docs/rfc/0013-crypto-sign-seam.md` documenting the signing
+  seam — including the load-bearing decision to split Signer
+  and Verifier (deferred from RFC-0012), the rationale for not
+  shipping `SignTo` (stdlib constraint) and not shipping
+  streaming on Ed25519 (PureEdDSA cannot stream), EU
+  compliance posture, and what's deferred to future rounds (PQ
+  signatures, threshold, KEM).
 
 ### Changed
 

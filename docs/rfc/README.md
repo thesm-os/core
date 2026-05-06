@@ -75,6 +75,7 @@ Start from [`docs/templates/RFC.md`](../templates/RFC.md).
 | [0010](0010-pool.md) | Pool — Typed sync.Pool Wrappers | Accepted |
 | [0011](0011-arena.md) | Arena — Bump-Allocator for Hot-Path Variable-Length Output | Accepted |
 | [0012](0012-crypto-hmac-seam.md) | Cryptographic HMAC Seam | Accepted |
+| [0013](0013-crypto-sign-seam.md) | Public-Key Signing Seam | Accepted |
 
 ## Canonical first RFC
 

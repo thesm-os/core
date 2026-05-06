@@ -43,6 +43,15 @@ seams every other thesmos library and framework depends on:
   `crypto/hmac/sha256`, `crypto/hmac/sha512` (HMAC-SHA-384,
   HMAC-SHA-512), `crypto/hmac/sha3` (HMAC-SHA3-{256,384,512}).
   See [RFC-0012][rfc-0012].
+- **Sign** — asymmetric-signing seam. `crypto/sign.Signer` /
+  `Verifier` split (verifier-only consumers don't construct a
+  signer), `KeyID` value type with canonical per-algorithm
+  derivation, optional `StreamingSigner` / `StreamingVerifier`
+  capability interfaces for hash-then-sign algorithms.
+  Implementations: `crypto/sign/ed25519` (Ed25519 PureEdDSA per
+  RFC 8032 §5.1.6), `crypto/sign/ecdsap384` (ECDSA P-384 +
+  SHA-384 per FIPS 186-5, ASN.1 DER signatures, also satisfies
+  the streaming interfaces). See [RFC-0013][rfc-0013].
 - **Telemetry** — metric and trace seams for hot-path
   observability emission, with attribute pre-binding via
   `.With([]Attr)` keeping the emit path zero-allocation while
@@ -144,5 +153,6 @@ Apache 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 [rfc-0010]: docs/rfc/0010-pool.md
 [rfc-0011]: docs/rfc/0011-arena.md
 [rfc-0012]: docs/rfc/0012-crypto-hmac-seam.md
+[rfc-0013]: docs/rfc/0013-crypto-sign-seam.md
 [contrib]: CONTRIBUTING.md
 [sec]: SECURITY.md
