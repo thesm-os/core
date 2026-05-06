@@ -16,12 +16,23 @@ seams every other thesmos library and framework depends on:
   `rand/crypto` (CSPRNG over `crypto/rand`), `rand/seeded`
   (HMAC-SHA-256 deterministic CSPRNG), `rand/fixed` (constant for
   tests). See [RFC-0002][rfc-0002].
-- **Hash** — hash-function seam producing fixed-size digests with
-  a stable per-implementation `ID` so receipts and audit chains
-  survive algorithm rotation. `Hash(data)` and `Combine(left,
-  right)` cover leaf commitments and Merkle / chain construction.
-  Implementations: `hash/sha256` (SHA-256 backed by
-  `crypto/sha256`).
+- **Crypto** — cryptographic-hash seam producing comparable
+  fixed-shape digests covering 256/384/512-bit outputs in one
+  type, with a stable per-implementation `ID` and long-term
+  `Algorithm` identifier so receipts and audit chains survive
+  algorithm rotation. `Hash(data)`, `Combine(left, right)`, and
+  `Stream` (for inputs that don't fit in memory) cover leaf
+  commitments, Merkle / chain construction, and large-payload
+  hashing. Implementations: `crypto/sha256`, `crypto/sha512`
+  (SHA-384, SHA-512), `crypto/sha3` (SHA3-256, SHA3-384,
+  SHA3-512). See [RFC-0003][rfc-0003].
+- **Telemetry** — metric and trace seams for hot-path
+  observability emission, with attribute pre-binding via
+  `.With([]Attr)` keeping the emit path zero-allocation while
+  preserving `context.Context` for OTel exemplar correlation,
+  baggage, and trace-stitching. Kind-tagged `Attr` bridges to
+  stdlib `log/slog`. Implementations: `telemetry/noop`.
+  See [RFC-0004][rfc-0004].
 
 These interfaces — and the others added over time — share three
 properties:
@@ -67,5 +78,7 @@ Apache 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 [adr-0003]: docs/adr/0003-apache-2-0-with-spdx-headers.md
 [rfc-0001]: docs/rfc/0001-clock-seam.md
 [rfc-0002]: docs/rfc/0002-rand-seam.md
+[rfc-0003]: docs/rfc/0003-crypto-seam.md
+[rfc-0004]: docs/rfc/0004-telemetry-seam.md
 [contrib]: CONTRIBUTING.md
 [sec]: SECURITY.md

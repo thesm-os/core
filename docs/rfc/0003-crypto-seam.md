@@ -179,6 +179,7 @@ namespace into the wire format produced by core.
 | SHA3-512 | `crypto/sha3` | FIPS 202; PQC parameter expansion |
 
 Every implementation:
+
 - Returns a value-type `Hasher` (zero value usable, no pointer
   ceremony).
 - Reports a stable `ID` (`"sha256/v1"`, `"sha3-512/v1"`, …) and

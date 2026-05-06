@@ -40,12 +40,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rationale.
 - `TestZeroAlloc` enforcement of every documented zero-allocation
   method in the clock and rand packages.
-- `hash` package: the `Hasher` interface (`ID`, `Hash`, `Combine`),
-  the `Digest` and `ID` value types with `IsZero` and `String`
-  helpers, plus `DigestSize` and `IDSize` constants.
-- `hash/sha256` package: SHA-256 implementation backed by
-  `crypto/sha256`; stateless value-type `Hasher` (zero value
-  usable); `Hash` and `Combine` are zero-allocation. NIST FIPS
-  180-4 fixtures and benchmarks from 8 B to 64 KiB.
+- `crypto` package: the `Hasher` interface (`ID`, `Algorithm`,
+  `Hash`, `Combine`, `NewStream`), the unified `Digest` value type
+  covering 256/384/512-bit outputs in one comparable shape, the
+  `Stream` interface for inputs that don't fit in memory, the
+  `Algorithm` open-string vocabulary type with constants for
+  SHA-2 and SHA-3 families, plus `HashDomain` and `HashReader`
+  helpers. Combine panics on size mismatch — programmer-error
+  precondition, not a runtime condition.
+- `crypto/sha256`, `crypto/sha512`, `crypto/sha3` packages:
+  SHA-256, SHA-384, SHA-512, SHA3-256, SHA3-384, SHA3-512
+  implementations. Hash, Combine, and the Stream hot path are
+  zero-allocation; NewStream allocates the underlying hash state
+  once. NIST FIPS 180-4 / 202 vectors and per-algorithm
+  benchmarks from 8 B to 64 KiB.
+- `docs/rfc/0003-crypto-seam.md` documenting the cryptographic
+  hash contract rationale.
+- `telemetry` package: the `Reporter` interface, `Counter`,
+  `Gauge`, `Histogram`, and `Tracer` instrument interfaces with
+  attribute pre-binding via `.With([]Attr)`, the kind-tagged
+  `Attr` and `Value` types with constructors for primitives,
+  the `SlogAttr` bridge to stdlib `log/slog`, the `Span` /
+  `SpanContext` / `SpanKind` types, plus `WithSpanKind` and
+  `ApplySpanOptions`.
+- `telemetry/noop` package: a `Reporter` that discards every
+  signal — empty-struct receivers, zero-allocation by inspection.
+- `docs/rfc/0004-telemetry-seam.md` documenting the telemetry
+  contract rationale.
 
 [Unreleased]: https://github.com/thesmos-ai/core/compare/HEAD
