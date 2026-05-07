@@ -83,9 +83,20 @@ linters:
           list-mode: strict
           files:
             - "$all"
+            - "!$test"
           allow:
             - $gostd
             - go.thesmos.sh/core
+        test:
+          list-mode: strict
+          files:
+            - "$test"
+          allow:
+            - $gostd
+            - go.thesmos.sh/core
+            - go.thesmos.sh/testkit
+            - go.thesmos.sh/testkit/model
+            - pgregory.net/rapid
 
     forbidigo:
       analyze-types: true
@@ -203,6 +214,17 @@ linters:
         linters: [gosec]
         text: "G115:"
 
+      # id/ksuid base62 long division uses uint64 → uint32 as
+      # multi-precision arithmetic. Format: dividend x = rem<<32 |
+      # num[j] where rem ∈ [0,61], so x/62 < 2^32 and the
+      # truncation is provably exact. Parse: x = num[j]*62 + carry
+      # is split into the new num[j] (low 32) and the next carry
+      # (x>>32), so uint32(x) is the intentional bit-pattern
+      # split for multi-precision multiply-and-add.
+      - path: 'id/ksuid/parse\.go'
+        linters: [gosec]
+        text: "G115:"
+
       # rand/crypto.Rand.Uint64 panics on entropy-source failure
       # by deliberate design — see the Failure semantics section
       # in rand/crypto/crypto.go. Returning a sentinel from a
@@ -231,6 +253,16 @@ linters:
       # Goconst
       - path: '_test\.go'
         linters: [goconst, gosec]
+
+      # testkit suite ClockCustom / TimerCustom callbacks accept a
+      # *testing.T as their first argument, but they are NOT test
+      # helpers — each closure runs as the body of a t.Run subtest
+      # set up by AssertClockContract / AssertTimerContract.
+      # t.Helper() would mis-attribute failures to the registration
+      # line in clock_assertions.go instead of the failing line in
+      # the closure. Suppress thelper for the assertion bundles.
+      - path: 'coretest/clocktest/(clock|timer)_assertions\.go'
+        linters: [thelper]
 
 formatters:
   enable:

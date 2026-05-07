@@ -8,51 +8,57 @@ import (
 	"testing"
 	"time"
 
+	"go.thesmos.sh/testkit/bench"
+
 	"go.thesmos.sh/core/clock"
 	"go.thesmos.sh/core/clock/fake"
 	"go.thesmos.sh/core/coretest/clocktest"
-	"go.thesmos.sh/testkit/bench"
-	"go.thesmos.sh/testkit/model/action"
 )
 
+// origin is the wall-time anchor for fake.Clock instances in
+// these tests. 2026-01-01 UTC matches the project's reference
+// year so failure messages line up visually with the codebase.
 var origin = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+// newClock is the SUT factory shared by every testkit-driven
+// entry point: contract suite, model, fuzz target, bench.
+func newClock() clock.Clock { return fake.New(origin) }
+
+// --- testkit-driven contract layer ---
 
 func TestFakeClockContract(t *testing.T) {
 	t.Parallel()
-	clocktest.AssertClockContract(t,
-		func() clock.Clock { return fake.New(origin) },
-		clocktest.ClockContractAssertions()...,
+	clocktest.AssertClockContract(t, newClock, clocktest.ClockContractAssertions()...)
+}
+
+// TestFakeClockModel — see TestHLCClockModel (clock/hlc); auto-
+// emitted action.Stress via //testkit:nondeterministic directives
+// on Clock.Now/Time/Update.
+func TestFakeClockModel(t *testing.T) {
+	t.Parallel()
+	clocktest.ClockModelTest(t, newClock)
+}
+
+// FuzzFakeClockModel — same property as [TestFakeClockModel]
+// via coverage-guided fuzzing.
+func FuzzFakeClockModel(f *testing.F) {
+	clocktest.ClockModelFuzz(f, newClock)
+}
+
+// BenchmarkFakeClock runs the standard Clock bench contract:
+// auto hot-path measurement for Now/Time/Update/NewTimer plus
+// PureAllocsWithin(0) gates for the documented zero-alloc
+// methods.
+func BenchmarkFakeClock(b *testing.B) {
+	clocktest.BenchmarkClockContract(b,
+		newClock,
+		clocktest.ClockBenchOnNow(bench.PureAllocsWithin[clock.Clock, clock.Instant](0)),
+		clocktest.ClockBenchOnTime(bench.PureAllocsWithin[clock.Clock, time.Time](0)),
+		clocktest.ClockBenchOnUpdate(bench.PureAllocsWithin[clock.Clock, clock.Instant](0)),
 	)
 }
 
-// TestFakeClockModel runs the property-based state-machine model
-// against [fake.Clock]. Ref-less SUT-only mode via action.Stress;
-// see TestHLCClockModel for rationale.
-func TestFakeClockModel(t *testing.T) {
-	t.Parallel()
-	clocktest.AssertClockModel(t, factoryFake(), modelActionsFake()...)
-}
-
-// FuzzFakeClock — coverage-guided fuzz wrapper around the model
-// property.
-func FuzzFakeClock(f *testing.F) {
-	clocktest.FuzzClockModel(f, factoryFake(), modelActionsFake()...)
-}
-
-func factoryFake() func() clock.Clock {
-	return func() clock.Clock { return fake.New(origin) }
-}
-
-func modelActionsFake() []clocktest.ClockModelOption {
-	return []clocktest.ClockModelOption{
-		clocktest.ClockModelActions(
-			action.Stress("Now", func(c clock.Clock) { _ = c.Now() }),
-			action.Stress("Time", func(c clock.Clock) { _ = c.Time() }),
-			action.Stress("Update", func(c clock.Clock) { _ = c.Update(clock.Instant{}) }),
-			action.Stress("NewTimer", func(c clock.Clock) { _ = c.NewTimer(0) }),
-		),
-	}
-}
+// --- fake-specific tests ---
 
 func TestNow(t *testing.T) {
 	t.Parallel()
@@ -231,7 +237,6 @@ func TestUpdate(t *testing.T) {
 			t.Fatalf("Logical: got %d, want 11", got.Logical)
 		}
 	})
-
 }
 
 func TestAwaitWaiters(t *testing.T) {
@@ -254,23 +259,9 @@ func TestAwaitWaiters(t *testing.T) {
 	c.AwaitWaiters(n)
 }
 
-// BenchmarkFakeClock runs the standard Clock bench contract:
-// auto hot-path measurement for Now/Time/Update/NewTimer plus
-// PureAllocsWithin(0) gates for the documented zero-alloc methods.
-// Replaces the prior hand-rolled BenchmarkNow/Time/Update +
-// TestZeroAlloc.
-func BenchmarkFakeClock(b *testing.B) {
-	clocktest.BenchmarkClockContract(b,
-		func() clock.Clock { return fake.New(origin) },
-		clocktest.ClockBenchOnNow(bench.PureAllocsWithin[clock.Clock, clock.Instant](0)),
-		clocktest.ClockBenchOnTime(bench.PureAllocsWithin[clock.Clock, time.Time](0)),
-		clocktest.ClockBenchOnUpdate(bench.PureAllocsWithin[clock.Clock, clock.Instant](0)),
-	)
-}
-
-// BenchmarkFakeAdvance is fake-specific (Advance is not part of
-// the [clock.Clock] interface) so it stays here rather than in the
-// generated contract.
+// BenchmarkFakeAdvance is fake-specific — Advance is not part of
+// the [clock.Clock] interface, so it stays here rather than in
+// the generated bench contract.
 func BenchmarkFakeAdvance(b *testing.B) {
 	c := fake.New(origin)
 	b.ReportAllocs()

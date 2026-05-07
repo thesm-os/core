@@ -6,10 +6,6 @@ package clocktest
 import (
 	"testing"
 
-	"pgregory.net/rapid"
-
-	"time"
-
 	"go.thesmos.sh/core/clock"
 	"go.thesmos.sh/testkit/model"
 	"go.thesmos.sh/testkit/model/action"
@@ -29,7 +25,7 @@ import (
 //	Concurrent:    not emitted (interface lacks Reader+Writer/Deleter for Porcupine; use manual model.WithConcurrent + StressActions)
 //	Plug-in:       ClockModelReference, ClockModelActions, ClockModelLaw, ClockModelSkipLaw
 func AssertClockModel(
-	t rapid.TB,
+	t model.TB,
 	sutFactory func() clock.Clock,
 	opts ...ClockModelOption,
 ) {
@@ -38,11 +34,39 @@ func AssertClockModel(
 	if cfg.leakCheck {
 		artifactDir := model.ResolveArtifactDir(cfg.artifactDir)
 		model.CheckGoroutineLeaks(t, artifactDir, func() {
-			rapid.Check(t, clockModelProperty(sutFactory, opts...))
+			model.Check(t, ClockModelProperty(sutFactory, opts...))
 		})
 		return
 	}
-	rapid.Check(t, clockModelProperty(sutFactory, opts...))
+	model.Check(t, ClockModelProperty(sutFactory, opts...))
+}
+
+// TestClockModel runs the model property as a standalone test.
+// Equivalent to AssertClockModel but takes *testing.T directly
+// and skips leak checking and concurrent dispatch. Use when you need
+// the property function for both Test and Fuzz targets with shared options:
+//
+//	opts := []ClockModelOption{...}
+//	func TestFoo(t *testing.T)  { ClockModelTest(t, factory, opts...) }
+//	func FuzzFoo(f *testing.F)  { ClockModelFuzz(f, factory, opts...) }
+func ClockModelTest(
+	t *testing.T,
+	sutFactory func() clock.Clock,
+	opts ...ClockModelOption,
+) {
+	t.Helper()
+	model.Check(t, ClockModelProperty(sutFactory, opts...))
+}
+
+// ClockModelFuzz is the fuzz counterpart of [ClockModelTest].
+// Same property, coverage-guided via go test -fuzz.
+func ClockModelFuzz(
+	f *testing.F,
+	sutFactory func() clock.Clock,
+	opts ...ClockModelOption,
+) {
+	f.Helper()
+	f.Fuzz(model.MakeFuzz(ClockModelProperty(sutFactory, opts...)))
 }
 
 // FuzzClockModel is a fuzz target for coverage-guided testing
@@ -53,13 +77,19 @@ func FuzzClockModel(
 	opts ...ClockModelOption,
 ) {
 	f.Helper()
-	f.Fuzz(rapid.MakeFuzz(clockModelProperty(sutFactory, opts...)))
+	f.Fuzz(model.MakeFuzz(ClockModelProperty(sutFactory, opts...)))
 }
 
-func clockModelProperty(
+// ClockModelProperty builds the rapid property function.
+// Use directly for shared model.Check / model.MakeFuzz targets:
+//
+//	prop := ClockModelProperty(factory, opts...)
+//	model.Check(t, prop)                    // test
+//	f.Fuzz(model.MakeFuzz(prop))            // fuzz
+func ClockModelProperty(
 	sutFactory func() clock.Clock,
 	opts ...ClockModelOption,
-) func(*rapid.T) {
+) func(*model.T) {
 	cfg := newClockModelConfig(opts...)
 
 	// Generators — local to this function, not package-level.
@@ -71,16 +101,8 @@ func clockModelProperty(
 	actions := cfg.actions
 	if len(actions) == 0 {
 		actions = []model.Action[clock.Clock]{
-			action.Pure("Now",
-				func(impl clock.Clock) clock.Instant {
-					return impl.Now()
-				},
-			),
-			action.Pure("Time",
-				func(impl clock.Clock) time.Time {
-					return impl.Time()
-				},
-			),
+			action.Stress("Now", func(impl clock.Clock) { impl.Now() }),
+			action.Stress("Time", func(impl clock.Clock) { impl.Time() }),
 		}
 	}
 	actions = append(actions, cfg.extraActions...)

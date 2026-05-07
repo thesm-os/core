@@ -7,9 +7,28 @@ import (
 	"testing"
 	"time"
 
+	"go.thesmos.sh/core/clock"
 	"go.thesmos.sh/core/clock/fake"
+	"go.thesmos.sh/core/coretest/clocktest"
 )
 
+// newPendingTimer returns a fresh pending [clock.Timer] from a
+// fake.Clock — the factory shape required by
+// [clocktest.AssertTimerContract].
+func newPendingTimer() clock.Timer { return fake.New(origin).NewTimer(time.Hour) }
+
+// --- testkit-driven contract layer ---
+
+func TestFakeTimer(t *testing.T) {
+	t.Parallel()
+	clocktest.AssertTimerContract(t, newPendingTimer, clocktest.TimerContractAssertions()...)
+}
+
+// --- fake-specific tests ---
+
+// TestNewTimer covers the virtual-time fire mechanism specific
+// to fake.Clock — Timer state transitions are covered by
+// [TestFakeTimer].
 func TestNewTimer(t *testing.T) {
 	t.Parallel()
 
@@ -25,19 +44,6 @@ func TestNewTimer(t *testing.T) {
 		}
 	})
 
-	t.Run("non-positive duration fires immediately", func(t *testing.T) {
-		t.Parallel()
-		c := fake.New(origin)
-		for _, d := range []time.Duration{0, -time.Second} {
-			tm := c.NewTimer(d)
-			select {
-			case <-tm.C():
-			case <-time.After(time.Second):
-				t.Fatalf("NewTimer(%v) did not fire immediately", d)
-			}
-		}
-	})
-
 	t.Run("does not fire before deadline", func(t *testing.T) {
 		t.Parallel()
 		c := fake.New(origin)
@@ -47,29 +53,6 @@ func TestNewTimer(t *testing.T) {
 		case <-tm.C():
 			t.Fatal("timer fired before deadline")
 		default:
-		}
-	})
-
-	t.Run("Stop returns true once on a pending timer", func(t *testing.T) {
-		t.Parallel()
-		c := fake.New(origin)
-		tm := c.NewTimer(time.Hour)
-		if !tm.Stop() {
-			t.Fatal("first Stop on pending timer must return true")
-		}
-		if tm.Stop() {
-			t.Fatal("second Stop must return false")
-		}
-	})
-
-	t.Run("Stop returns false on a fired timer", func(t *testing.T) {
-		t.Parallel()
-		c := fake.New(origin)
-		tm := c.NewTimer(time.Second)
-		c.Advance(2 * time.Second)
-		<-tm.C()
-		if tm.Stop() {
-			t.Fatal("Stop on fired timer must return false")
 		}
 	})
 
@@ -114,13 +97,13 @@ func TestNewTimer(t *testing.T) {
 	})
 }
 
+// TestFireWaiters verifies the partial-firing branch of
+// [fake.Clock.Advance]: only waiters whose deadlines fall within
+// the new time fire; later waiters stay pending. Internal-path
+// coverage; not part of the Timer contract.
 func TestFireWaiters(t *testing.T) {
 	t.Parallel()
 
-	// Verify that an Advance fires only waiters whose deadlines
-	// fall within the new time, leaving later waiters pending.
-	// This is the partial-firing branch of the internal
-	// fireWaiters path.
 	c := fake.New(origin)
 	due := c.NewTimer(time.Second)
 	later := c.NewTimer(time.Hour)

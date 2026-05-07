@@ -82,7 +82,8 @@ func ClockContractAssertions() []ClockOption {
 				Build()
 			got := c.Update(future)
 			if got.Wall < future.Wall {
-				t.Fatalf("Update must adopt future-Wall observation: got Wall=%d, observed Wall=%d", got.Wall, future.Wall)
+				t.Fatalf("Update must adopt future-Wall observation: got Wall=%d, observed Wall=%d",
+					got.Wall, future.Wall)
 			}
 			if !future.HappensBefore(got) {
 				t.Fatalf("Update result must be causally after a future-Wall observation: got=%+v obs=%+v", got, future)
@@ -121,53 +122,6 @@ func ClockContractAssertions() []ClockOption {
 			case <-tm.C():
 			case <-time.After(time.Second):
 				t.Fatal("negative-duration timer did not fire")
-			}
-		}),
-
-		ClockCustom("Timer Stop on pending returns true", func(t *testing.T, c clock.Clock) {
-			tm := c.NewTimer(time.Hour)
-			if !tm.Stop() {
-				t.Fatal("Stop on pending timer must return true")
-			}
-		}),
-
-		ClockCustom("Timer double Stop returns false", func(t *testing.T, c clock.Clock) {
-			tm := c.NewTimer(time.Hour)
-			tm.Stop()
-			if tm.Stop() {
-				t.Fatal("second Stop must return false")
-			}
-		}),
-
-		// --- Timer.Reset ---
-
-		ClockCustom("Timer Reset on pending returns true", func(t *testing.T, c clock.Clock) {
-			tm := c.NewTimer(time.Hour)
-			defer tm.Stop()
-			if !tm.Reset(time.Hour) {
-				t.Fatal("Reset on pending timer must return true")
-			}
-		}),
-
-		ClockCustom("Timer Reset after Stop returns false", func(t *testing.T, c clock.Clock) {
-			tm := c.NewTimer(time.Hour)
-			tm.Stop()
-			defer tm.Stop()
-			if tm.Reset(time.Hour) {
-				t.Fatal("Reset on stopped timer must return false")
-			}
-		}),
-
-		ClockCustom("Timer Reset after fire returns false", func(t *testing.T, c clock.Clock) {
-			tm := c.NewTimer(0)
-			defer tm.Stop()
-			select {
-			case <-tm.C():
-			case <-time.After(time.Second):
-				t.Fatal("zero-duration timer did not fire")
-			}
-			if tm.Reset(time.Hour) {
-				t.Fatal("Reset on already-fired timer must return false")
 			}
 		}),
 	}
