@@ -8,6 +8,8 @@ import (
 	"io"
 )
 
+//go:generate testkit suite -o cryptotest/hasher_spec.gen.go Hasher
+
 // IDSize is the byte size of every [ID].
 const IDSize = 16
 
@@ -130,10 +132,13 @@ type Hasher interface {
 //
 // # Allocation contract
 //
-// [Stream.Write], [Stream.Sum], and [Stream.Reset] are
-// zero-allocation. The hash state and the output buffer for
-// [Stream.Sum] are allocated once by [Hasher.NewStream] and
-// reused thereafter.
+// [Stream.Write], [Stream.Sum], [Stream.Reset], and
+// [Stream.Close] are zero-allocation. The hash state and the
+// output buffer for [Stream.Sum] are allocated once by
+// [Hasher.NewStream] and reused thereafter; on impls that pool
+// streams, [Stream.Close] returns the instance to the pool, and
+// the next [Hasher.NewStream] call is zero-allocation when the
+// pool is warm.
 type Stream interface {
 	io.Writer
 
@@ -147,4 +152,18 @@ type Stream interface {
 	// Stream is equivalent to a freshly-returned
 	// [Hasher.NewStream] result and can be reused.
 	Reset()
+
+	// Close releases the Stream back to its [Hasher]'s pool (or
+	// no-ops on impls that don't pool). The Stream MUST NOT be
+	// used after Close — subsequent Write/Sum/Reset calls have
+	// undefined behaviour.
+	//
+	// One-shot consumers ([HashDomain], [HashReader]) Close
+	// after Sum to recycle the stream. Long-lived consumers —
+	// per-message hot paths that construct a Stream once and
+	// reuse it via [Stream.Reset] — never need to Close. The
+	// [Hasher]'s pool tolerates streams permanently held outside
+	// it (sync.Pool's factory creates a fresh instance on the
+	// next [Hasher.NewStream] call).
+	Close()
 }

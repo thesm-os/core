@@ -442,6 +442,7 @@ func TestZeroAlloc(t *testing.T) {
 			t.Fatalf("SHA512 Stream: %v allocs/op, want 0", got)
 		}
 	})
+
 }
 
 func FuzzCrossStdlib(f *testing.F) {

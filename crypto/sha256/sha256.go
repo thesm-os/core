@@ -9,7 +9,15 @@ import (
 	"hash"
 
 	"go.thesmos.sh/core/crypto"
+	"go.thesmos.sh/core/pool"
 )
+
+// streamPool holds reusable SHA-256 stream instances. Hasher is
+// stateless (zero-value struct), so a single package-level pool
+// is shared across every [New] / zero-value caller.
+var streamPool = pool.NewPool(func() *stream {
+	return &stream{h: sha256.New()}
+})
 
 // id is this implementation's stable build-local identifier. The
 // bytes spell out "sha256/v1" left-aligned with zero padding to
@@ -81,10 +89,15 @@ func (Hasher) Combine(left, right crypto.Digest) crypto.Digest {
 	return crypto.NewDigest256(sha256.Sum256(buf[:]))
 }
 
-// NewStream returns a fresh [crypto.Stream] backed by
-// [crypto/sha256.New].
+// NewStream returns a [crypto.Stream] backed by
+// [crypto/sha256.New]. Streams are drawn from a package-level
+// pool; [Stream.Close] returns the instance for reuse — see the
+// [crypto.Stream] documentation. Zero-allocation on the warm
+// path.
 func (Hasher) NewStream() crypto.Stream {
-	return &stream{h: sha256.New()}
+	s := streamPool.Get()
+	s.h.Reset()
+	return s
 }
 
 // stream wraps a stdlib [hash.Hash] to satisfy [crypto.Stream].
@@ -127,4 +140,11 @@ func (s *stream) Sum() crypto.Digest {
 // output buffer is reused as-is; no allocation.
 func (s *stream) Reset() {
 	s.h.Reset()
+}
+
+// Close returns the stream to the package-level pool so the next
+// [Hasher.NewStream] caller can reuse it. The stream MUST NOT be
+// used after Close.
+func (s *stream) Close() {
+	streamPool.Put(s)
 }

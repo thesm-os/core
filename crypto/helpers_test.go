@@ -186,6 +186,31 @@ func FuzzStreamReset(f *testing.F) {
 	})
 }
 
+// TestHashDomainZeroAlloc locks in the warm-path zero-allocation
+// contract documented on [HashDomain]: the Stream is borrowed
+// from the [Hasher]'s pool and returned via [Stream.Close]
+// before the function returns.
+//
+// testing.AllocsPerRun uses a process-global malloc counter, so
+// this test does not call t.Parallel.
+//
+//nolint:paralleltest // see comment above
+func TestHashDomainZeroAlloc(t *testing.T) {
+	h := sha256.New()
+	domain := []byte("thesmos.audit.v1")
+	parts := [][]byte{[]byte("entry"), []byte("payload")}
+
+	// Warm the pool so the first measured iteration doesn't
+	// count the stream-construction alloc.
+	_ = crypto.HashDomain(h, domain, parts...)
+
+	if got := testing.AllocsPerRun(100, func() {
+		_ = crypto.HashDomain(h, domain, parts...)
+	}); got != 0 {
+		t.Fatalf("HashDomain: %v allocs/op, want 0", got)
+	}
+}
+
 func BenchmarkHashDomain(b *testing.B) {
 	h := sha256.New()
 	domain := []byte("thesmos.audit.v1")

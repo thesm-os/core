@@ -35,12 +35,13 @@ var id = crypto.ID{'h', 'm', 'a', 'c', '-', 's', 'h', 'a', '2', '5', '6', '/', '
 // after construction or after GC pool eviction allocates one
 // underlying stdlib HMAC state via [hmac.New].
 //
-// [MAC.NewStream] allocates the wrapper plus the underlying
-// stdlib HMAC state; [crypto.Stream] methods are zero-alloc
-// thereafter.
+// [MAC.NewStream] is zero-allocation on the warm path: streams
+// are drawn from a per-MAC [pool.Pool] of pre-keyed instances.
+// [crypto.Stream.Close] returns the stream to that pool.
 type MAC struct {
-	key  []byte
-	pool *pool.Pool[*macEntry]
+	pool       *pool.Pool[*macEntry]
+	streamPool *pool.Pool[*stream]
+	key        []byte
 }
 
 // macEntry is one pooled HMAC instance. Holding the output
@@ -69,6 +70,9 @@ func New(key []byte) *MAC {
 	m := &MAC{key: keyCopy}
 	m.pool = pool.NewPool(func() *macEntry {
 		return &macEntry{h: hmac.New(sha256.New, m.key)}
+	})
+	m.streamPool = pool.NewPool(func() *stream {
+		return &stream{h: hmac.New(sha256.New, m.key), mac: m}
 	})
 	return m
 }
@@ -126,8 +130,10 @@ func (m *MAC) Verify(data, expected []byte) bool {
 	return ok
 }
 
-// NewStream returns a fresh streaming [crypto.Stream] backed by
-// HMAC-SHA-256 over the instance's key.
+// NewStream returns a streaming [crypto.Stream] backed by
+// HMAC-SHA-256 over the instance's key. Streams are drawn from
+// a per-MAC pool; [crypto.Stream.Close] returns the instance for
+// reuse. Zero-allocation on the warm path.
 //
 // Verification of a streamed payload: write the bytes, finalise
 // with [crypto.Stream.Sum], and compare the resulting [crypto.Digest]
@@ -135,16 +141,21 @@ func (m *MAC) Verify(data, expected []byte) bool {
 // Plain `==` and [crypto.Digest.Equal] are NOT constant-time and
 // must not be used.
 func (m *MAC) NewStream() crypto.Stream {
-	return &stream{h: hmac.New(sha256.New, m.key)}
+	s := m.streamPool.Get()
+	s.h.Reset()
+	return s
 }
 
 // stream wraps a stdlib HMAC-keyed [hash.Hash] to satisfy
 // [crypto.Stream]. The output buffer lives on the receiver —
-// heap-allocated once by [MAC.NewStream] — so [stream.Sum]
-// reuses already-owned heap memory rather than escaping a
-// stack-local through the [hash.Hash] interface boundary.
+// heap-allocated once when the stream first enters the per-MAC
+// pool — so [stream.Sum] reuses already-owned heap memory
+// rather than escaping a stack-local through the [hash.Hash]
+// interface boundary. The back-reference to the parent [MAC]
+// lets [stream.Close] return the instance to its origin pool.
 type stream struct {
 	h   hash.Hash
+	mac *MAC
 	out [crypto.DigestSize256]byte
 }
 
@@ -176,4 +187,12 @@ func (s *stream) Sum() crypto.Digest {
 // stream can be reused for a fresh MAC under the same key.
 func (s *stream) Reset() {
 	s.h.Reset()
+}
+
+// Close returns the stream to its parent [MAC]'s stream pool so
+// the next [MAC.NewStream] caller can reuse it. The stream MUST
+// NOT be used after Close — and Close MUST be called at most
+// once per [MAC.NewStream] call.
+func (s *stream) Close() {
+	s.mac.streamPool.Put(s)
 }

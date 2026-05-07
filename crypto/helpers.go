@@ -20,16 +20,23 @@ import (
 //
 // # Allocation contract
 //
-// Allocates one [Stream] per call. Consumers on a hot path that
-// hash many values with the same domain should construct a
-// [Stream] once and reuse it via [Stream.Reset].
+// Zero-allocation on the warm path: the [Stream] is borrowed
+// from the [Hasher]'s pool and returned via [Stream.Close]
+// before HashDomain returns. Cold-path callers (first call after
+// process start, or after GC pool eviction) pay one Stream
+// allocation. Consumers hashing many values with the same
+// domain may still prefer to construct a [Stream] once and
+// reuse it via [Stream.Reset] to save the per-call Get/Put
+// overhead.
 func HashDomain(h Hasher, domain []byte, parts ...[]byte) Digest {
 	s := h.NewStream()
 	_, _ = s.Write(domain)
 	for _, p := range parts {
 		_, _ = s.Write(p)
 	}
-	return s.Sum()
+	d := s.Sum()
+	s.Close()
+	return d
 }
 
 // HashReader streams r through h and returns the digest of all
@@ -39,12 +46,18 @@ func HashDomain(h Hasher, domain []byte, parts ...[]byte) Digest {
 // HashReader returns the underlying [io.Reader] error wrapped
 // with package context if the reader fails; the partial digest
 // is discarded. Read-loop allocations come from the [io.Reader]
-// implementation; [HashReader] itself allocates one [Stream]
-// plus the [io.Copy] internal buffer.
+// implementation; [HashReader] itself is zero-allocation on the
+// warm path (Stream borrowed from the Hasher's pool, returned
+// before HashReader returns). The [io.Copy] internal buffer is
+// elided when the [io.Reader] implements [io.WriterTo] (as
+// [bytes.Reader] does).
 func HashReader(h Hasher, r io.Reader) (Digest, error) {
 	s := h.NewStream()
 	if _, err := io.Copy(s, r); err != nil {
+		s.Close()
 		return Digest{}, fmt.Errorf("crypto: hash reader: %w", err)
 	}
-	return s.Sum(), nil
+	d := s.Sum()
+	s.Close()
+	return d, nil
 }

@@ -1,5 +1,6 @@
 .PHONY: help bootstrap install fmt license vet lint lint-md \
         test test-race test-bench test-coverage \
+        bench-baseline bench-compare \
         tidy check-tidy \
         check check-coverage check-vuln \
         build clean
@@ -17,6 +18,7 @@ FLAGS ?=
 
 # ─── Paths ───────────────────────────────────────────────────────
 COVERAGE_DIR := coverage
+BENCH_DIR    := .bench
 
 # ─── Test tuning ─────────────────────────────────────────────────
 # TEST_TIMEOUT applies to test, test-race, and test-bench. Override
@@ -56,6 +58,8 @@ help:
 	@echo "  test-race          Run tests with race detector"
 	@echo "  test-bench         Run all benchmarks"
 	@echo "  test-coverage      Generate HTML coverage report"
+	@echo "  bench-baseline     Run benchmarks and save to .bench/baseline.txt"
+	@echo "  bench-compare      Run benchmarks and benchstat against the baseline"
 	@echo ""
 	@echo "$(GREEN)Quality gates:$(NC)"
 	@echo "  check              Full pre-merge gate (tidy + lint + test + coverage)"
@@ -147,6 +151,35 @@ test-bench:
 	@echo "$(BLUE)Running benchmarks (timeout=$(TEST_TIMEOUT))...$(NC)"
 	$(GO) test -bench=. -run=^$$ -benchmem -timeout=$(TEST_TIMEOUT) $(FLAGS) ./...
 
+# Save the current bench output as the new baseline. Overwrites
+# .bench/baseline.txt — commit it explicitly when the
+# regression-detection target should treat the new numbers as
+# authoritative.
+bench-baseline:
+	@echo "$(BLUE)Running benchmarks → $(BENCH_DIR)/baseline.txt (timeout=$(TEST_TIMEOUT))...$(NC)"
+	@mkdir -p $(BENCH_DIR)
+	$(GO) test -bench=. -run=^$$ -benchmem -timeout=$(TEST_TIMEOUT) $(FLAGS) ./... > $(BENCH_DIR)/baseline.txt
+	@echo "$(GREEN)Saved $(BENCH_DIR)/baseline.txt$(NC)"
+
+# Run benchmarks and benchstat against .bench/baseline.txt. Used
+# as an advisory regression gate before opening a PR; the output
+# flags any sub-benchmark that moved by more than benchstat's
+# default significance threshold.
+bench-compare:
+	@if [ ! -f $(BENCH_DIR)/baseline.txt ]; then \
+		echo "$(RED)No $(BENCH_DIR)/baseline.txt — run 'make bench-baseline' first$(NC)"; \
+		exit 1; \
+	fi
+	@command -v benchstat >/dev/null 2>&1 || { \
+		echo "$(RED)benchstat not on PATH — run 'make bootstrap'$(NC)"; \
+		exit 1; \
+	}
+	@echo "$(BLUE)Running benchmarks → $(BENCH_DIR)/current.txt (timeout=$(TEST_TIMEOUT))...$(NC)"
+	@mkdir -p $(BENCH_DIR)
+	@$(GO) test -bench=. -run=^$$ -benchmem -timeout=$(TEST_TIMEOUT) $(FLAGS) ./... > $(BENCH_DIR)/current.txt
+	@echo "$(BLUE)benchstat $(BENCH_DIR)/baseline.txt $(BENCH_DIR)/current.txt$(NC)"
+	@benchstat $(BENCH_DIR)/baseline.txt $(BENCH_DIR)/current.txt
+
 test-coverage: test
 	@echo "$(BLUE)Generating coverage report...$(NC)"
 	@if [ -f $(COVERAGE_DIR)/core.out ]; then \
@@ -181,7 +214,7 @@ build:
 
 clean:
 	@echo "$(BLUE)Cleaning...$(NC)"
-	rm -rf $(COVERAGE_DIR) dist/
+	rm -rf $(COVERAGE_DIR) dist/ $(BENCH_DIR)/current.txt
 	$(GO) clean -cache -testcache
 	@echo "$(GREEN)Clean$(NC)"
 

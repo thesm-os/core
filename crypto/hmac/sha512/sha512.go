@@ -35,12 +35,13 @@ var (
 // and [MAC384.Verify] are zero-alloc on the success path after
 // pool warm-up. The first call after construction or after GC
 // pool eviction allocates one underlying stdlib HMAC state.
-// [MAC384.NewStream] allocates the wrapper plus the underlying
-// stdlib HMAC state; [crypto.Stream] methods are zero-alloc
-// thereafter.
+// [MAC384.NewStream] is zero-alloc on the warm path; streams
+// are drawn from a per-MAC stream pool and returned via
+// [crypto.Stream.Close].
 type MAC384 struct {
-	key  []byte
-	pool *pool.Pool[*entry384]
+	pool       *pool.Pool[*entry384]
+	streamPool *pool.Pool[*stream384]
+	key        []byte
 }
 
 // entry384 is one pooled HMAC-SHA-384 instance with its output
@@ -63,6 +64,9 @@ func NewSHA384(key []byte) *MAC384 {
 	m := &MAC384{key: keyCopy}
 	m.pool = pool.NewPool(func() *entry384 {
 		return &entry384{h: stdhmac.New(stdsha512.New384, m.key)}
+	})
+	m.streamPool = pool.NewPool(func() *stream384 {
+		return &stream384{h: stdhmac.New(stdsha512.New384, m.key), mac: m}
 	})
 	return m
 }
@@ -107,17 +111,22 @@ func (m *MAC384) Verify(data, expected []byte) bool {
 	return ok
 }
 
-// NewStream returns a fresh streaming [crypto.Stream] backed by
-// HMAC-SHA-384 over the instance's key.
+// NewStream returns a streaming [crypto.Stream] backed by
+// HMAC-SHA-384 over the instance's key, drawn from a per-MAC
+// pool. Zero-allocation on the warm path; [crypto.Stream.Close]
+// returns the instance for reuse.
 func (m *MAC384) NewStream() crypto.Stream {
-	return &stream384{h: stdhmac.New(stdsha512.New384, m.key)}
+	s := m.streamPool.Get()
+	s.h.Reset()
+	return s
 }
 
 // MAC512 implements [crypto.MAC] as HMAC-SHA-512 over a fixed
 // key. Allocation contract and concurrency mirror [MAC384].
 type MAC512 struct {
-	key  []byte
-	pool *pool.Pool[*entry512]
+	pool       *pool.Pool[*entry512]
+	streamPool *pool.Pool[*stream512]
+	key        []byte
 }
 
 // entry512 is one pooled HMAC-SHA-512 instance.
@@ -137,6 +146,9 @@ func NewSHA512(key []byte) *MAC512 {
 	m := &MAC512{key: keyCopy}
 	m.pool = pool.NewPool(func() *entry512 {
 		return &entry512{h: stdhmac.New(stdsha512.New, m.key)}
+	})
+	m.streamPool = pool.NewPool(func() *stream512 {
+		return &stream512{h: stdhmac.New(stdsha512.New, m.key), mac: m}
 	})
 	return m
 }
@@ -181,17 +193,24 @@ func (m *MAC512) Verify(data, expected []byte) bool {
 	return ok
 }
 
-// NewStream returns a fresh streaming [crypto.Stream] backed by
-// HMAC-SHA-512 over the instance's key.
+// NewStream returns a streaming [crypto.Stream] backed by
+// HMAC-SHA-512 over the instance's key, drawn from a per-MAC
+// pool. Zero-allocation on the warm path; [crypto.Stream.Close]
+// returns the instance for reuse.
 func (m *MAC512) NewStream() crypto.Stream {
-	return &stream512{h: stdhmac.New(stdsha512.New, m.key)}
+	s := m.streamPool.Get()
+	s.h.Reset()
+	return s
 }
 
 // stream384 wraps a stdlib HMAC-SHA-384-keyed [hash.Hash] for
 // [crypto.Stream]. The output buffer lives on the receiver so
-// [Stream.Sum] reuses already-owned heap memory.
+// [Stream.Sum] reuses already-owned heap memory; the back-
+// reference to the parent [MAC384] lets [Close] return the
+// instance to its origin pool.
 type stream384 struct {
 	h   hash.Hash
+	mac *MAC384
 	out [crypto.DigestSize384]byte
 }
 
@@ -215,10 +234,15 @@ func (s *stream384) Sum() crypto.Digest {
 // stream can be reused for a fresh MAC under the same key.
 func (s *stream384) Reset() { s.h.Reset() }
 
+// Close returns the stream to the parent [MAC384]'s stream
+// pool. The stream MUST NOT be used after Close.
+func (s *stream384) Close() { s.mac.streamPool.Put(s) }
+
 // stream512 wraps a stdlib HMAC-SHA-512-keyed [hash.Hash] for
 // [crypto.Stream].
 type stream512 struct {
 	h   hash.Hash
+	mac *MAC512
 	out [crypto.DigestSize512]byte
 }
 
@@ -241,3 +265,7 @@ func (s *stream512) Sum() crypto.Digest {
 // post-construction state, not to an unkeyed state — so the
 // stream can be reused for a fresh MAC under the same key.
 func (s *stream512) Reset() { s.h.Reset() }
+
+// Close returns the stream to the parent [MAC512]'s stream
+// pool. The stream MUST NOT be used after Close.
+func (s *stream512) Close() { s.mac.streamPool.Put(s) }

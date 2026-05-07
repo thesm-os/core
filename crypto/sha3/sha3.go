@@ -9,6 +9,22 @@ import (
 	"hash"
 
 	"go.thesmos.sh/core/crypto"
+	"go.thesmos.sh/core/pool"
+)
+
+// Package-level stream pools — one per algorithm. Each Hasher
+// type is stateless, so a single pool per algorithm is shared
+// across all callers.
+var (
+	stream256Pool = pool.NewPool(func() *stream256 {
+		return &stream256{h: sha3.New256()}
+	})
+	stream384Pool = pool.NewPool(func() *stream384 {
+		return &stream384{h: sha3.New384()}
+	})
+	stream512Pool = pool.NewPool(func() *stream512 {
+		return &stream512{h: sha3.New512()}
+	})
 )
 
 // Stable build-local IDs. The bytes spell out the SHA-3 variant
@@ -69,9 +85,13 @@ func (Hasher256) Combine(left, right crypto.Digest) crypto.Digest {
 	return crypto.NewDigest256(sha3.Sum256(buf[:]))
 }
 
-// NewStream returns a fresh streaming SHA3-256 [crypto.Stream].
+// NewStream returns a streaming SHA3-256 [crypto.Stream] drawn
+// from a package-level pool; [Stream.Close] returns the
+// instance for reuse. Zero-allocation on the warm path.
 func (Hasher256) NewStream() crypto.Stream {
-	return &stream256{h: sha3.New256()}
+	s := stream256Pool.Get()
+	s.h.Reset()
+	return s
 }
 
 // Hasher384 implements [crypto.Hasher] using SHA3-384.
@@ -123,9 +143,13 @@ func (Hasher384) Combine(left, right crypto.Digest) crypto.Digest {
 	return crypto.NewDigest384(sha3.Sum384(buf[:]))
 }
 
-// NewStream returns a fresh streaming SHA3-384 [crypto.Stream].
+// NewStream returns a streaming SHA3-384 [crypto.Stream] drawn
+// from a package-level pool; [Stream.Close] returns the
+// instance for reuse. Zero-allocation on the warm path.
 func (Hasher384) NewStream() crypto.Stream {
-	return &stream384{h: sha3.New384()}
+	s := stream384Pool.Get()
+	s.h.Reset()
+	return s
 }
 
 // Hasher512 implements [crypto.Hasher] using SHA3-512.
@@ -177,9 +201,13 @@ func (Hasher512) Combine(left, right crypto.Digest) crypto.Digest {
 	return crypto.NewDigest512(sha3.Sum512(buf[:]))
 }
 
-// NewStream returns a fresh streaming SHA3-512 [crypto.Stream].
+// NewStream returns a streaming SHA3-512 [crypto.Stream] drawn
+// from a package-level pool; [Stream.Close] returns the
+// instance for reuse. Zero-allocation on the warm path.
 func (Hasher512) NewStream() crypto.Stream {
-	return &stream512{h: sha3.New512()}
+	s := stream512Pool.Get()
+	s.h.Reset()
+	return s
 }
 
 // stream256 / stream384 / stream512 wrap stdlib SHA-3 hash.Hash
@@ -221,6 +249,10 @@ func (s *stream256) Sum() crypto.Digest {
 // stream can be reused for a fresh digest.
 func (s *stream256) Reset() { s.h.Reset() }
 
+// Close returns the stream to the package-level pool. The
+// stream MUST NOT be used after Close.
+func (s *stream256) Close() { stream256Pool.Put(s) }
+
 type stream384 struct {
 	h   hash.Hash
 	out [crypto.DigestSize384]byte
@@ -252,6 +284,10 @@ func (s *stream384) Sum() crypto.Digest {
 // stream can be reused for a fresh digest.
 func (s *stream384) Reset() { s.h.Reset() }
 
+// Close returns the stream to the package-level pool. The
+// stream MUST NOT be used after Close.
+func (s *stream384) Close() { stream384Pool.Put(s) }
+
 type stream512 struct {
 	h   hash.Hash
 	out [crypto.DigestSize512]byte
@@ -282,3 +318,7 @@ func (s *stream512) Sum() crypto.Digest {
 // Reset clears the underlying SHA3-512 sponge state so the
 // stream can be reused for a fresh digest.
 func (s *stream512) Reset() { s.h.Reset() }
+
+// Close returns the stream to the package-level pool. The
+// stream MUST NOT be used after Close.
+func (s *stream512) Close() { stream512Pool.Put(s) }

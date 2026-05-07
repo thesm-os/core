@@ -9,6 +9,18 @@ import (
 	"hash"
 
 	"go.thesmos.sh/core/crypto"
+	"go.thesmos.sh/core/pool"
+)
+
+// Package-level stream pools. Each Hasher type is stateless, so a
+// single pool per algorithm is shared across all instances.
+var (
+	stream384Pool = pool.NewPool(func() *stream384 {
+		return &stream384{h: sha512.New384()}
+	})
+	stream512Pool = pool.NewPool(func() *stream512 {
+		return &stream512{h: sha512.New()}
+	})
 )
 
 // Stable build-local IDs.
@@ -71,9 +83,13 @@ func (Hasher384) Combine(left, right crypto.Digest) crypto.Digest {
 	return crypto.NewDigest384(sha512.Sum384(buf[:]))
 }
 
-// NewStream returns a fresh streaming SHA-384 [crypto.Stream].
+// NewStream returns a streaming SHA-384 [crypto.Stream] drawn
+// from a package-level pool; [Stream.Close] returns the
+// instance for reuse. Zero-allocation on the warm path.
 func (Hasher384) NewStream() crypto.Stream {
-	return &stream384{h: sha512.New384()}
+	s := stream384Pool.Get()
+	s.h.Reset()
+	return s
 }
 
 // Hasher512 implements [crypto.Hasher] using SHA-512 from
@@ -127,9 +143,13 @@ func (Hasher512) Combine(left, right crypto.Digest) crypto.Digest {
 	return crypto.NewDigest512(sha512.Sum512(buf[:]))
 }
 
-// NewStream returns a fresh streaming SHA-512 [crypto.Stream].
+// NewStream returns a streaming SHA-512 [crypto.Stream] drawn
+// from a package-level pool; [Stream.Close] returns the
+// instance for reuse. Zero-allocation on the warm path.
 func (Hasher512) NewStream() crypto.Stream {
-	return &stream512{h: sha512.New()}
+	s := stream512Pool.Get()
+	s.h.Reset()
+	return s
 }
 
 // stream384 wraps a stdlib SHA-384 [hash.Hash] for [crypto.Stream].
@@ -164,6 +184,10 @@ func (s *stream384) Sum() crypto.Digest {
 // can be reused for a fresh digest.
 func (s *stream384) Reset() { s.h.Reset() }
 
+// Close returns the stream to the package-level pool. The
+// stream MUST NOT be used after Close.
+func (s *stream384) Close() { stream384Pool.Put(s) }
+
 // stream512 wraps a stdlib SHA-512 [hash.Hash] for [crypto.Stream].
 type stream512 struct {
 	h   hash.Hash
@@ -195,3 +219,7 @@ func (s *stream512) Sum() crypto.Digest {
 // Reset clears the underlying SHA-512 state so the stream
 // can be reused for a fresh digest.
 func (s *stream512) Reset() { s.h.Reset() }
+
+// Close returns the stream to the package-level pool. The
+// stream MUST NOT be used after Close.
+func (s *stream512) Close() { stream512Pool.Put(s) }

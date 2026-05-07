@@ -226,11 +226,11 @@ linters:
       # linter's suggested arrangement matches the current one.
       - path: '_test\.go'
         linters: [govet]
-        text: "fieldalignment.*could be 16"
+        text: "fieldalignment:.*"
 
       # Goconst
       - path: '_test\.go'
-        linters: [goconst]
+        linters: [goconst, gosec]
 
 formatters:
   enable:

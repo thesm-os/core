@@ -65,14 +65,91 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   compliance posture, and what's deferred to future rounds (PQ
   signatures, threshold, KEM).
 
+- `crypto.Stream.Close()` method on the [crypto.Stream]
+  interface. One-shot consumers ([crypto.HashDomain],
+  [crypto.HashReader]) Close after Sum to release the stream
+  back to its pool; long-lived consumers (per-message hot paths
+  reusing via [crypto.Stream.Reset]) ignore Close. Adding a
+  method to a public interface is a breaking change for
+  external implementations; none exist outside this module.
+- `Makefile` targets: `bench-baseline` regenerates
+  `.bench/baseline.txt`; `bench-compare` runs benches into
+  `.bench/current.txt` and `benchstat`s against the baseline
+  (advisory regression gate).
+- Bench coverage:
+  - `crypto/sign/ed25519` — `Generate`, `KeyIDFromPub`,
+    `SignParallel`, `VerifyParallel`.
+  - `crypto/sign/ecdsap384` — `Generate`, `KeyIDFromPub`.
+  - `crypto/hmac/sha512` — `Verify`, `Stream`, `SignParallel`
+    in (algorithm × size × mode) sub-bench shape.
+  - `crypto/hmac/sha3` — full `Sign` / `Verify` / `Stream` /
+    `SignParallel` matrix for sha3-256 / sha3-384 / sha3-512.
+  - `id.BenchmarkEqual` and `BenchmarkCompare` extended to
+    Size128 / Size160 / Size256 (covers ULID / UUIDv4 / KSUID).
+  - `pool.BenchmarkPool` split into sequential + parallel
+    sub-benches (typed `Pool[*resettable]`).
+- RFC 8032 §7.1 known-answer test vectors for Ed25519 (TEST 1,
+  2, 3) — locks in interoperability with the published RFC.
+
 ### Changed
 
+- Hasher streams (`crypto/sha256`, `crypto/sha512`,
+  `crypto/sha3`) — pooled at package level. `NewStream` is
+  zero-allocation on the warm path; [crypto.Stream.Close]
+  returns the instance for reuse.
+- HMAC streams (`crypto/hmac/sha256`, `crypto/hmac/sha512`,
+  `crypto/hmac/sha3`) — pooled per-MAC. `NewStream` is
+  zero-allocation on the warm path.
+- `crypto.HashDomain` and `crypto.HashReader` are now
+  zero-allocation on the warm path (previously two allocs from
+  `NewStream` wrapper + hash state). Locked in by
+  `TestHashDomainZeroAlloc`. The cold path (first call after
+  process start, or after GC pool eviction) still pays one
+  Stream allocation.
+- `crypto.Digest.String()` — stack-buffer + [encoding/hex.Encode]
+  - string conversion: 1 alloc (was 2 from
+  `hex.EncodeToString`'s `make` + `string`).
+- `rand/crypto.Rand.Uint64()` — package-level `pool.Pool[*[8]byte]`
+  for the read buffer: zero-allocation on the warm path (was 1
+  alloc forced by the [io.Reader] interface boundary).
+  `TestZeroAlloc` extended.
+- `crypto/hmac/sha256` `MAC.Sign` / `MAC.Verify` —
+  zero-allocation on the warm path via a per-MAC pool of
+  pre-keyed [hash.Hash] instances. `crypto/hmac/sha512` and
+  `crypto/hmac/sha3` adopt the same pattern.
+- `id/ksuid.Format` and `id/ksuid.Parse` — base62 long division
+  via uint32 chunks: ~4× faster Format, ~2.4× faster Parse vs
+  the byte-level implementation.
+- `telemetry.SpanOption` — value-typed struct (was function-
+  typed closure). `telemetry.ApplySpanOptions` is now
+  zero-allocation.
+- `arena.RebaseSlices`, `arena.CopyOut` — docstrings nudge
+  sustained-throughput callers to `RebaseSlicesTo` /
+  `CopyOutTo` (zero-alloc destination-buffer variants).
+- `crypto.MAC`, `crypto.Hasher`, `crypto.Stream`, `sign.Signer`,
+  `sign.Verifier`, `sign.StreamingSigner`,
+  `sign.StreamingVerifier` — per-method godoc (was interface-
+  level only).
+- `crypto/sign/doc.go`, `crypto/sign/ecdsap384/doc.go`,
+  `crypto/sha3/doc.go` — added "Generate API asymmetry",
+  "Cost vs Ed25519: prefer BatchRoot for ECDSA P-384", and
+  "Performance vs SHA-2" sections.
 - `rand/seeded` now constructs its HMAC-SHA-256 stream via
   `crypto/hmac/sha256.New(key).NewStream()` rather than
   inlining `crypto/hmac` + `crypto/sha256`. Byte-level
   determinism preserved (the construction is part of the
   public contract, fixture test unchanged); zero-alloc contract
   preserved.
+
+### Fixed
+
+- `BenchmarkHashReader` test artifact — `bytes.NewReader(data)`
+  moved out of the `b.Loop` closure (one spurious alloc per
+  iteration that wasn't `HashReader`'s).
+- `BenchmarkSign` (ed25519, ecdsap384) — sink pattern in the
+  loop body forces the per-iteration signature slice to escape,
+  surfacing the true allocation cost (the prior bench
+  under-reported with `_, _ =` due to compiler stack-promotion).
 
 ## [0.5.0] - 2026-05-06
 

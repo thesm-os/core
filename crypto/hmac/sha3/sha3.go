@@ -40,8 +40,9 @@ var (
 // key. Allocation contract and concurrency mirror
 // [go.thesmos.sh/core/crypto/hmac/sha256.MAC].
 type MAC256 struct {
-	key  []byte
-	pool *pool.Pool[*entry256]
+	pool       *pool.Pool[*entry256]
+	streamPool *pool.Pool[*stream256]
+	key        []byte
 }
 
 // entry256 is one pooled HMAC-SHA3-256 instance.
@@ -60,6 +61,9 @@ func NewSHA3_256(key []byte) *MAC256 {
 	m := &MAC256{key: keyCopy}
 	m.pool = pool.NewPool(func() *entry256 {
 		return &entry256{h: stdhmac.New(new256, m.key)}
+	})
+	m.streamPool = pool.NewPool(func() *stream256 {
+		return &stream256{h: stdhmac.New(new256, m.key), mac: m}
 	})
 	return m
 }
@@ -104,17 +108,21 @@ func (m *MAC256) Verify(data, expected []byte) bool {
 	return ok
 }
 
-// NewStream returns a fresh streaming HMAC-SHA3-256
-// [crypto.Stream].
+// NewStream returns a streaming HMAC-SHA3-256 [crypto.Stream]
+// drawn from a per-MAC pool. Zero-allocation on the warm path;
+// [crypto.Stream.Close] returns the instance for reuse.
 func (m *MAC256) NewStream() crypto.Stream {
-	return &stream256{h: stdhmac.New(new256, m.key)}
+	s := m.streamPool.Get()
+	s.h.Reset()
+	return s
 }
 
 // MAC384 implements [crypto.MAC] as HMAC-SHA3-384 over a fixed
 // key.
 type MAC384 struct {
-	key  []byte
-	pool *pool.Pool[*entry384]
+	pool       *pool.Pool[*entry384]
+	streamPool *pool.Pool[*stream384]
+	key        []byte
 }
 
 // entry384 is one pooled HMAC-SHA3-384 instance.
@@ -133,6 +141,9 @@ func NewSHA3_384(key []byte) *MAC384 {
 	m := &MAC384{key: keyCopy}
 	m.pool = pool.NewPool(func() *entry384 {
 		return &entry384{h: stdhmac.New(new384, m.key)}
+	})
+	m.streamPool = pool.NewPool(func() *stream384 {
+		return &stream384{h: stdhmac.New(new384, m.key), mac: m}
 	})
 	return m
 }
@@ -175,17 +186,21 @@ func (m *MAC384) Verify(data, expected []byte) bool {
 	return ok
 }
 
-// NewStream returns a fresh streaming HMAC-SHA3-384
-// [crypto.Stream].
+// NewStream returns a streaming HMAC-SHA3-384 [crypto.Stream]
+// drawn from a per-MAC pool. Zero-allocation on the warm path;
+// [crypto.Stream.Close] returns the instance for reuse.
 func (m *MAC384) NewStream() crypto.Stream {
-	return &stream384{h: stdhmac.New(new384, m.key)}
+	s := m.streamPool.Get()
+	s.h.Reset()
+	return s
 }
 
 // MAC512 implements [crypto.MAC] as HMAC-SHA3-512 over a fixed
 // key.
 type MAC512 struct {
-	key  []byte
-	pool *pool.Pool[*entry512]
+	pool       *pool.Pool[*entry512]
+	streamPool *pool.Pool[*stream512]
+	key        []byte
 }
 
 // entry512 is one pooled HMAC-SHA3-512 instance.
@@ -204,6 +219,9 @@ func NewSHA3_512(key []byte) *MAC512 {
 	m := &MAC512{key: keyCopy}
 	m.pool = pool.NewPool(func() *entry512 {
 		return &entry512{h: stdhmac.New(new512, m.key)}
+	})
+	m.streamPool = pool.NewPool(func() *stream512 {
+		return &stream512{h: stdhmac.New(new512, m.key), mac: m}
 	})
 	return m
 }
@@ -246,18 +264,23 @@ func (m *MAC512) Verify(data, expected []byte) bool {
 	return ok
 }
 
-// NewStream returns a fresh streaming HMAC-SHA3-512
-// [crypto.Stream].
+// NewStream returns a streaming HMAC-SHA3-512 [crypto.Stream]
+// drawn from a per-MAC pool. Zero-allocation on the warm path;
+// [crypto.Stream.Close] returns the instance for reuse.
 func (m *MAC512) NewStream() crypto.Stream {
-	return &stream512{h: stdhmac.New(new512, m.key)}
+	s := m.streamPool.Get()
+	s.h.Reset()
+	return s
 }
 
 // stream256 / stream384 / stream512 wrap stdlib HMAC-keyed
 // [hash.Hash] states for [crypto.Stream]. The output buffer
 // lives on the receiver so [Stream.Sum] reuses already-owned
-// heap memory.
+// heap memory; the back-reference to the parent MAC lets
+// [Close] return the instance to its origin pool.
 type stream256 struct {
 	h   hash.Hash
+	mac *MAC256
 	out [crypto.DigestSize256]byte
 }
 
@@ -281,8 +304,13 @@ func (s *stream256) Sum() crypto.Digest {
 // stream can be reused for a fresh MAC under the same key.
 func (s *stream256) Reset() { s.h.Reset() }
 
+// Close returns the stream to the parent [MAC256]'s stream
+// pool. The stream MUST NOT be used after Close.
+func (s *stream256) Close() { s.mac.streamPool.Put(s) }
+
 type stream384 struct {
 	h   hash.Hash
+	mac *MAC384
 	out [crypto.DigestSize384]byte
 }
 
@@ -306,8 +334,13 @@ func (s *stream384) Sum() crypto.Digest {
 // stream can be reused for a fresh MAC under the same key.
 func (s *stream384) Reset() { s.h.Reset() }
 
+// Close returns the stream to the parent [MAC384]'s stream
+// pool. The stream MUST NOT be used after Close.
+func (s *stream384) Close() { s.mac.streamPool.Put(s) }
+
 type stream512 struct {
 	h   hash.Hash
+	mac *MAC512
 	out [crypto.DigestSize512]byte
 }
 
@@ -330,3 +363,7 @@ func (s *stream512) Sum() crypto.Digest {
 // post-construction state, not to an unkeyed state — so the
 // stream can be reused for a fresh MAC under the same key.
 func (s *stream512) Reset() { s.h.Reset() }
+
+// Close returns the stream to the parent [MAC512]'s stream
+// pool. The stream MUST NOT be used after Close.
+func (s *stream512) Close() { s.mac.streamPool.Put(s) }

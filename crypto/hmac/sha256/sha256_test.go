@@ -363,6 +363,7 @@ func TestZeroAlloc(t *testing.T) {
 			t.Fatalf("Stream loop: %v allocs/op, want 0", got)
 		}
 	})
+
 }
 
 // FuzzVerifyConsistency asserts the round-trip + tamper-rejection

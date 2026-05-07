@@ -511,6 +511,7 @@ func TestZeroAlloc(t *testing.T) {
 			}
 		})
 	}
+
 }
 
 func FuzzCrossStdlib(f *testing.F) {
