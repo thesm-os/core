@@ -4,8 +4,6 @@
 package hlc_test
 
 import (
-	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -13,17 +11,56 @@ import (
 	"go.thesmos.sh/core/clock/hlc"
 	"go.thesmos.sh/core/coretest/clocktest"
 	"go.thesmos.sh/testkit/bench"
+	"go.thesmos.sh/testkit/model/action"
 )
 
 // Clock methods are Pure-shaped (no ctx, no error) but NOT
 // deterministic — Now() advances HLC logical, Time() reads
-// wall clock. Use ClockCustom for domain-specific assertions.
+// wall clock. The //testkit:nondeterministic directive on the
+// source interface suppresses the auto-attached PureDeterminism
+// law; consumer-supplied laws on the SUT-only path (ref-less
+// model) cover behaviour.
 func TestHLCClockContract(t *testing.T) {
 	t.Parallel()
 	clocktest.AssertClockContract(t,
 		func() clock.Clock { return hlc.New(0) },
 		clocktest.ClockContractAssertions()...,
 	)
+}
+
+// TestHLCClockModel runs the property-based state-machine model
+// against [hlc.Clock] in ref-less SUT-only mode: action.Stress
+// drives random sequences of Now / Time / Update / NewTimer
+// without comparing against a reference implementation (the
+// Clock interface methods are non-deterministic, so SUT/ref
+// comparison fails by construction). Catches panics, races (with
+// -race), and shrinking-discoverable invariant breaks.
+func TestHLCClockModel(t *testing.T) {
+	t.Parallel()
+	clocktest.AssertClockModel(t, factoryHLC(), modelActionsHLC()...)
+}
+
+// FuzzHLCClock is the coverage-guided fuzz wrapper around the
+// model property — same actions as [TestHLCClockModel], driven
+// by `go test -fuzz=FuzzHLCClock` instead of rapid's random
+// sampler.
+func FuzzHLCClock(f *testing.F) {
+	clocktest.FuzzClockModel(f, factoryHLC(), modelActionsHLC()...)
+}
+
+func factoryHLC() func() clock.Clock {
+	return func() clock.Clock { return hlc.New(0) }
+}
+
+func modelActionsHLC() []clocktest.ClockModelOption {
+	return []clocktest.ClockModelOption{
+		clocktest.ClockModelActions(
+			action.Stress("Now", func(c clock.Clock) { _ = c.Now() }),
+			action.Stress("Time", func(c clock.Clock) { _ = c.Time() }),
+			action.Stress("Update", func(c clock.Clock) { _ = c.Update(clock.Instant{}) }),
+			action.Stress("NewTimer", func(c clock.Clock) { _ = c.NewTimer(0) }),
+		),
+	}
 }
 
 // fixedSource returns a wall-time source that returns *now until
@@ -158,56 +195,20 @@ func TestUpdate(t *testing.T) {
 	}
 }
 
-func TestConcurrentNow(t *testing.T) {
-	t.Parallel()
-
-	// Race-detector-validated invariant: under concurrent Now()
-	// across many goroutines, each call sees a unique HLC instant.
-	const goroutines, perGoroutine = 16, 1000
-
-	c := hlc.New(clock.NodeID(1))
-	var totalCalls atomic.Uint64
-	var wg sync.WaitGroup
-
-	wg.Add(goroutines)
-	for range goroutines {
-		go func() {
-			defer wg.Done()
-			for range perGoroutine {
-				c.Now()
-				totalCalls.Add(1)
-			}
-		}()
-	}
-	wg.Wait()
-	if got := totalCalls.Load(); got != goroutines*perGoroutine {
-		t.Fatalf("totalCalls: got %d, want %d", got, goroutines*perGoroutine)
-	}
-}
 
 // BenchmarkHLCClock runs the standard Clock bench contract:
-// auto hot-path measurement for Now/Time/Update/NewTimer plus
-// PureAllocsWithin(0) gates for the documented zero-alloc methods.
-// Replaces the prior hand-rolled BenchmarkNow/Time/Update +
-// TestZeroAlloc.
+// auto hot-path measurement for Now/Time/Update/NewTimer; per-
+// method PureAllocsWithin(0) gates for the documented zero-alloc
+// methods; PureConcurrentThroughput on Now (HLC's hottest path)
+// to surface contention regressions.
 func BenchmarkHLCClock(b *testing.B) {
 	clocktest.BenchmarkClockContract(b,
 		func() clock.Clock { return hlc.New(clock.NodeID(1)) },
-		clocktest.ClockBenchOnNow(bench.PureAllocsWithin[clock.Clock, clock.Instant](0)),
+		clocktest.ClockBenchOnNow(
+			bench.PureAllocsWithin[clock.Clock, clock.Instant](0),
+			bench.PureConcurrentThroughput[clock.Clock, clock.Instant](32),
+		),
 		clocktest.ClockBenchOnTime(bench.PureAllocsWithin[clock.Clock, time.Time](0)),
 		clocktest.ClockBenchOnUpdate(bench.PureAllocsWithin[clock.Clock, clock.Instant](0)),
 	)
-}
-
-// BenchmarkHLCNowParallel measures concurrent Now() throughput.
-// Pure-shape bench plug-ins don't yet ship a parallel primitive,
-// so this stays as a ClockBenchCustom-style hand-roll.
-func BenchmarkHLCNowParallel(b *testing.B) {
-	c := hlc.New(clock.NodeID(1))
-	b.ReportAllocs()
-	b.RunParallel(func(pb *testing.PB) {
-		for pb.Next() {
-			_ = c.Now()
-		}
-	})
 }

@@ -12,6 +12,7 @@ import (
 	"go.thesmos.sh/core/clock/fake"
 	"go.thesmos.sh/core/coretest/clocktest"
 	"go.thesmos.sh/testkit/bench"
+	"go.thesmos.sh/testkit/model/action"
 )
 
 var origin = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -22,6 +23,35 @@ func TestFakeClockContract(t *testing.T) {
 		func() clock.Clock { return fake.New(origin) },
 		clocktest.ClockContractAssertions()...,
 	)
+}
+
+// TestFakeClockModel runs the property-based state-machine model
+// against [fake.Clock]. Ref-less SUT-only mode via action.Stress;
+// see TestHLCClockModel for rationale.
+func TestFakeClockModel(t *testing.T) {
+	t.Parallel()
+	clocktest.AssertClockModel(t, factoryFake(), modelActionsFake()...)
+}
+
+// FuzzFakeClock — coverage-guided fuzz wrapper around the model
+// property.
+func FuzzFakeClock(f *testing.F) {
+	clocktest.FuzzClockModel(f, factoryFake(), modelActionsFake()...)
+}
+
+func factoryFake() func() clock.Clock {
+	return func() clock.Clock { return fake.New(origin) }
+}
+
+func modelActionsFake() []clocktest.ClockModelOption {
+	return []clocktest.ClockModelOption{
+		clocktest.ClockModelActions(
+			action.Stress("Now", func(c clock.Clock) { _ = c.Now() }),
+			action.Stress("Time", func(c clock.Clock) { _ = c.Time() }),
+			action.Stress("Update", func(c clock.Clock) { _ = c.Update(clock.Instant{}) }),
+			action.Stress("NewTimer", func(c clock.Clock) { _ = c.NewTimer(0) }),
+		),
+	}
 }
 
 func TestNow(t *testing.T) {

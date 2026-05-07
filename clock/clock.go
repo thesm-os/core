@@ -45,11 +45,15 @@ import "time"
 // permitted to allocate.
 type Clock interface {
 	// Now returns the current HLC instant.
+	//
+	//testkit:nondeterministic
 	Now() Instant
 
 	// Time returns the current wall time. Equivalent to
 	// Now().Time(); exists as a first-class method because most
 	// callers only want the stdlib representation.
+	//
+	//testkit:nondeterministic
 	Time() time.Time
 
 	// NewTimer creates a Timer that fires after at least d has
@@ -59,6 +63,8 @@ type Clock interface {
 	// Update merges an observed peer instant into the local clock
 	// and returns the resulting instant, which is guaranteed to be
 	// causally after the observed instant for HLC implementations.
+	//
+	//testkit:nondeterministic
 	Update(observed Instant) Instant
 }
 
