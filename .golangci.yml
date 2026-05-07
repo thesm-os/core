@@ -84,13 +84,19 @@ linters:
           files:
             - "$all"
             - "!$test"
+            - "!**/coretest/**"
           allow:
             - $gostd
             - go.thesmos.sh/core
         test:
+          # Files in coretest/ are non-_test.go but they are test
+          # infrastructure (hand-rolled spec / model / stub
+          # companions). Treat them as tests for import-allow
+          # purposes.
           list-mode: strict
           files:
             - "$test"
+            - "**/coretest/**"
           allow:
             - $gostd
             - go.thesmos.sh/core
@@ -254,15 +260,42 @@ linters:
       - path: '_test\.go'
         linters: [goconst, gosec]
 
-      # testkit suite ClockCustom / TimerCustom callbacks accept a
-      # *testing.T as their first argument, but they are NOT test
-      # helpers — each closure runs as the body of a t.Run subtest
-      # set up by AssertClockContract / AssertTimerContract.
-      # t.Helper() would mis-attribute failures to the registration
-      # line in clock_assertions.go instead of the failing line in
-      # the closure. Suppress thelper for the assertion bundles.
-      - path: 'coretest/clocktest/(clock|timer)_assertions\.go'
+      # testkit suite XxxCustom callbacks accept a *testing.T as
+      # their first argument, but they are NOT test helpers —
+      # each closure runs as the body of a t.Run subtest set up
+      # by AssertXxxContract. t.Helper() would mis-attribute
+      # failures to the registration line instead of the failing
+      # line inside the closure. Suppress thelper for hand-rolled
+      # spec / stub / fixture files in coretest/<pkg>test/.
+      - path: 'coretest/[a-z]+test/[a-z_]+\.(go)'
         linters: [thelper]
+
+      # cryptotest helpers panic on unsupported digest sizes (a
+      # programmer error — caller passed a Sum function with the
+      # wrong return shape). The package-level "Failure semantics"
+      # contract permits panic for caller-misuse paths.
+      - path: 'coretest/cryptotest/.*\.go'
+        linters: [forbidigo]
+        text: "panic"
+
+      # cryptotest stream companion delegates Write straight to a
+      # stdlib hash.Hash; nothing meaningful to wrap.
+      - path: 'coretest/cryptotest/stream_stub\.go'
+        linters: [wrapcheck]
+
+      # gocritic's unlambda flags `func() hash.Hash { return
+      # sha256.New() }` as replaceable with `sha256.New`. The
+      # explicit-lambda form is clearer when assigning to a
+      # struct field with a typed function shape.
+      - path: 'crypto/sha[0-9_]+/sha[0-9_]+_test\.go'
+        linters: [gocritic]
+        text: "unlambda"
+
+      # govet fieldalignment on a test-only Spec struct: pointer-
+      # byte savings don't matter for a one-per-test instance.
+      - path: 'coretest/cryptotest/hasher_model\.go'
+        linters: [govet]
+        text: "fieldalignment"
 
 formatters:
   enable:

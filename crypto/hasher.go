@@ -95,6 +95,9 @@ type Hasher interface {
 	// Hasher's output size; a mismatch panics with a diagnostic
 	// message rather than silently producing a truncated digest.
 	// See the package "Failure semantics" section.
+	//
+	//nolint:dupword // testkit directive: one builder per parameter, positional
+	//testkit:sample SampleDigest SampleDigest
 	Combine(left, right Digest) Digest
 
 	// NewStream returns a fresh [Stream] for streaming inputs
@@ -102,6 +105,8 @@ type Hasher interface {
 	// without per-field concatenation. Allocates the underlying
 	// hash state once; [Stream.Write] / [Stream.Sum] /
 	// [Stream.Reset] are zero-allocation thereafter.
+	//
+	//testkit:nondeterministic
 	NewStream() Stream
 }
 
