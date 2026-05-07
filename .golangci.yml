@@ -291,9 +291,10 @@ linters:
         linters: [gocritic]
         text: "unlambda"
 
-      # govet fieldalignment on test-only Spec structs: pointer-
-      # byte savings don't matter for a one-per-test instance.
-      - path: 'coretest/cryptotest/[a-z]+_model\.go'
+      # govet fieldalignment on test-only Spec / fixture structs:
+      # pointer-byte savings don't matter for a one-per-test
+      # instance.
+      - path: 'coretest/cryptotest/[a-z]+_(model|stub|fixtures)\.go'
         linters: [govet]
         text: "fieldalignment"
 

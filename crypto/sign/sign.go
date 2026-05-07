@@ -180,6 +180,8 @@ type Signer interface {
 	// the current allocating-stdlib path under a `SignTo` name
 	// would mislead consumers expecting parity with
 	// [hash.Hash.Sum].
+	//
+	//testkit:nondeterministic
 	Sign(message []byte) ([]byte, error)
 }
 
@@ -236,6 +238,8 @@ type SignStream interface {
 	// resulting digest, and returns the signature. After this
 	// call the stream is in the same state as a freshly-returned
 	// StreamingSigner.NewSignStream result and can be reused.
+	//
+	//testkit:nondeterministic
 	SignAndReset() ([]byte, error)
 }
 
