@@ -18,20 +18,6 @@ import (
 	"go.thesmos.sh/core/crypto/sign"
 )
 
-// ErrNilKey is returned when a constructor receives a nil
-// private or public key.
-var ErrNilKey = errors.New("crypto/sign/ecdsap384: nil key")
-
-// ErrWrongCurve is returned when a constructor receives a key
-// whose curve is not [elliptic.P384].
-var ErrWrongCurve = errors.New("crypto/sign/ecdsap384: key curve is not P-384")
-
-// ErrInvalidPublicKey is returned when public-key bytes cannot
-// be parsed as a PKIX-encoded ECDSA P-384 public key.
-var ErrInvalidPublicKey = errors.New(
-	"crypto/sign/ecdsap384: public-key bytes are not PKIX-encoded ECDSA P-384",
-)
-
 // Verifier verifies ECDSA P-384 + SHA-384 signatures against a
 // fixed public key. Safe for concurrent use.
 //
@@ -199,7 +185,7 @@ func Generate() (*Signer, error) {
 // synthetic input.
 func wrapGenerate(priv *ecdsa.PrivateKey, err error) (*Signer, error) {
 	if err != nil {
-		return nil, fmt.Errorf("crypto/sign/ecdsap384: generate: %w", err)
+		return nil, fmt.Errorf("ecdsap384: generate: %w", err)
 	}
 	return New(priv)
 }
@@ -224,7 +210,7 @@ func (s *Signer) Sign(msg []byte) ([]byte, error) {
 // directly with synthetic input.
 func wrapSign(sig []byte, err error) ([]byte, error) {
 	if err != nil {
-		return nil, fmt.Errorf("crypto/sign/ecdsap384: sign: %w", err)
+		return nil, fmt.Errorf("ecdsap384: sign: %w", err)
 	}
 	return sig, nil
 }
@@ -257,7 +243,10 @@ func (s *Signer) NewSignStream() sign.SignStream {
 func KeyIDFromPub(pub *ecdsa.PublicKey) (sign.KeyID, error) {
 	canonical, err := pub.Bytes()
 	if err != nil {
-		return sign.KeyID{}, fmt.Errorf("crypto/sign/ecdsap384: encode public key: %w", err)
+		// errors.Join preserves both the [ErrOffCurve] sentinel
+		// (so callers can `errors.Is(err, ErrOffCurve)`) and the
+		// underlying stdlib cause from [crypto/ecdsa.PublicKey.Bytes].
+		return sign.KeyID{}, errors.Join(ErrOffCurve, err)
 	}
 	h := sha256.Sum256(canonical)
 	var id sign.KeyID

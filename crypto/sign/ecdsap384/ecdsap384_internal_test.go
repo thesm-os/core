@@ -32,7 +32,7 @@ func TestWrapGenerate(t *testing.T) {
 		if !errors.Is(err, stdErr) {
 			t.Fatalf("wrap lost the stdlib cause: got %v, want errors.Is to match", err)
 		}
-		if !strings.Contains(err.Error(), "crypto/sign/ecdsap384: generate:") {
+		if !strings.Contains(err.Error(), "ecdsap384: generate:") {
 			t.Fatalf("wrap missing package context: %v", err)
 		}
 	})
@@ -70,7 +70,7 @@ func TestWrapSign(t *testing.T) {
 		if !errors.Is(err, stdErr) {
 			t.Fatalf("wrap lost the stdlib cause: got %v, want errors.Is to match", err)
 		}
-		if !strings.Contains(err.Error(), "crypto/sign/ecdsap384: sign:") {
+		if !strings.Contains(err.Error(), "ecdsap384: sign:") {
 			t.Fatalf("wrap missing package context: %v", err)
 		}
 	})

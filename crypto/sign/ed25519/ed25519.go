@@ -6,25 +6,11 @@ package ed25519
 import (
 	stded25519 "crypto/ed25519"
 	"crypto/sha256"
-	"errors"
 	"fmt"
 
 	"go.thesmos.sh/core/crypto"
 	"go.thesmos.sh/core/crypto/sign"
 	"go.thesmos.sh/core/rand"
-)
-
-// ErrInvalidPublicKeySize is returned when a verifier
-// constructor receives a public-key byte slice whose length is
-// not [crypto/ed25519.PublicKeySize] (32 bytes).
-var ErrInvalidPublicKeySize = errors.New("crypto/sign/ed25519: public key must be 32 bytes")
-
-// ErrInvalidPrivateKeySize is returned when a signer
-// constructor receives a private-key byte slice whose length is
-// not [crypto/ed25519.PrivateKeySize] (64 bytes — Go's expanded
-// representation including the public-key suffix).
-var ErrInvalidPrivateKeySize = errors.New(
-	"crypto/sign/ed25519: private key must be 64 bytes (Go expanded representation)",
 )
 
 // Verifier verifies Ed25519 signatures against a fixed public
@@ -126,7 +112,7 @@ func New(priv stded25519.PrivateKey) (*Signer, error) {
 func Generate(r rand.Rand) (*Signer, error) {
 	pub, priv, err := stded25519.GenerateKey(randReader{r: r})
 	if err != nil {
-		return nil, fmt.Errorf("crypto/sign/ed25519: generate: %w", err)
+		return nil, fmt.Errorf("ed25519: generate: %w", err)
 	}
 	// pub is always 32 bytes from a successful GenerateKey,
 	// so NewVerifier cannot fail.

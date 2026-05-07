@@ -204,8 +204,9 @@ func TestNewVerifier(t *testing.T) {
 			X:     big.NewInt(1),
 			Y:     big.NewInt(2),
 		}
-		if _, err := signecdsa.NewVerifier(pub); err == nil {
-			t.Fatal("NewVerifier accepted an off-curve point")
+		_, err := signecdsa.NewVerifier(pub)
+		if !errors.Is(err, signecdsa.ErrOffCurve) {
+			t.Fatalf("got %v, want ErrOffCurve", err)
 		}
 	})
 }
@@ -365,8 +366,9 @@ func TestKeyIDStability(t *testing.T) {
 			X:     big.NewInt(1),
 			Y:     big.NewInt(2),
 		}
-		if _, err := signecdsa.KeyIDFromPub(pub); err == nil {
-			t.Fatal("KeyIDFromPub accepted an off-curve point")
+		_, err := signecdsa.KeyIDFromPub(pub)
+		if !errors.Is(err, signecdsa.ErrOffCurve) {
+			t.Fatalf("got %v, want ErrOffCurve", err)
 		}
 	})
 }
