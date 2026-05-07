@@ -123,5 +123,7 @@ type MAC interface {
 	// that don't fit in memory. Streaming verification is
 	// [Stream.Sum] followed by [Digest.ConstantTimeEqual]
 	// against the expected digest.
+	//
+	//testkit:nondeterministic
 	NewStream() Stream
 }

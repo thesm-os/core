@@ -287,13 +287,13 @@ linters:
       # sha256.New() }` as replaceable with `sha256.New`. The
       # explicit-lambda form is clearer when assigning to a
       # struct field with a typed function shape.
-      - path: 'crypto/sha[0-9_]+/sha[0-9_]+_test\.go'
+      - path: 'crypto/(hmac/)?sha[0-9_]+/sha[0-9_]+_test\.go'
         linters: [gocritic]
         text: "unlambda"
 
-      # govet fieldalignment on a test-only Spec struct: pointer-
+      # govet fieldalignment on test-only Spec structs: pointer-
       # byte savings don't matter for a one-per-test instance.
-      - path: 'coretest/cryptotest/hasher_model\.go'
+      - path: 'coretest/cryptotest/[a-z]+_model\.go'
         linters: [govet]
         text: "fieldalignment"
 

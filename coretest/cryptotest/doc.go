@@ -23,3 +23,9 @@ package cryptotest
 // Stream
 //go:generate testkit stub -p go.thesmos.sh/core/crypto -o stream_stub.gen.go Stream
 //go:generate testkit suite -p go.thesmos.sh/core/crypto -o stream_spec.gen.go Stream
+
+// MAC
+//go:generate testkit stub -p go.thesmos.sh/core/crypto -o mac_stub.gen.go MAC
+//go:generate testkit suite -p go.thesmos.sh/core/crypto -o mac_spec.gen.go MAC
+//go:generate testkit bench -p go.thesmos.sh/core/crypto -o mac_bench.gen.go MAC
+//go:generate testkit model -p go.thesmos.sh/core/crypto -o mac_model.gen.go MAC

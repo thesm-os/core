@@ -8,11 +8,165 @@ import (
 	stdhmac "crypto/hmac"
 	stdsha512 "crypto/sha512"
 	"encoding/hex"
+	"hash"
 	"testing"
 
+	"go.thesmos.sh/testkit/bench"
+
+	"go.thesmos.sh/core/coretest/cryptotest"
 	"go.thesmos.sh/core/crypto"
 	hmacsha512 "go.thesmos.sh/core/crypto/hmac/sha512"
 )
+
+// Canonical build-local IDs.
+var (
+	hmacSHA384ID = crypto.ID{'h', 'm', 'a', 'c', '-', 's', 'h', 'a', '3', '8', '4', '/', 'v', '1'}
+	hmacSHA512ID = crypto.ID{'h', 'm', 'a', 'c', '-', 's', 'h', 'a', '5', '1', '2', '/', 'v', '1'}
+)
+
+// testKey is the shared HMAC key for SUT and reference. Both
+// sides must construct with the same key for byte-exact
+// equivalence.
+var testKey = []byte("contract-test-key")
+
+func newSHA384() crypto.MAC { return hmacsha512.NewSHA384(testKey) }
+func newSHA512() crypto.MAC { return hmacsha512.NewSHA512(testKey) }
+
+var sha384Spec = cryptotest.StdlibMACSpec{
+	Algorithm: crypto.AlgHMACSHA384,
+	ID:        hmacSHA384ID,
+	Size:      crypto.DigestSize384,
+	Key:       testKey,
+	NewHash:   func() hash.Hash { return stdsha512.New384() },
+}
+
+var sha512Spec = cryptotest.StdlibMACSpec{
+	Algorithm: crypto.AlgHMACSHA512,
+	ID:        hmacSHA512ID,
+	Size:      crypto.DigestSize512,
+	Key:       testKey,
+	NewHash:   func() hash.Hash { return stdsha512.New() },
+}
+
+// stdlibSign{384,512} return the stdlib HMAC of data under
+// testKey, used as the reference for MACCrossStdlibAssertion.
+func stdlibSign384(data []byte) []byte {
+	h := stdhmac.New(stdsha512.New384, testKey)
+	_, _ = h.Write(data)
+	return h.Sum(nil)
+}
+
+func stdlibSign512(data []byte) []byte {
+	h := stdhmac.New(stdsha512.New, testKey)
+	_, _ = h.Write(data)
+	return h.Sum(nil)
+}
+
+// --- testkit-driven contract layer (HMAC-SHA-384) ---
+
+func TestHMACSHA384Contract(t *testing.T) {
+	t.Parallel()
+	cryptotest.AssertMACContract(t, newSHA384,
+		append(cryptotest.MACContractAssertions(),
+			cryptotest.MACIDAssertion(hmacSHA384ID),
+			cryptotest.MACAlgorithmAssertion(crypto.AlgHMACSHA384),
+			cryptotest.MACSizeAssertion(crypto.DigestSize384),
+			cryptotest.MACCrossStdlibAssertion(stdlibSign384),
+		)...,
+	)
+}
+
+func TestHMACSHA384Model(t *testing.T) {
+	t.Parallel()
+	cryptotest.MACModelTest(t, newSHA384,
+		cryptotest.MACModelReference(func() crypto.MAC {
+			return cryptotest.NewStdlibMACStub(t, sha384Spec)
+		}),
+		cryptotest.MACModelExtraActions(
+			cryptotest.MACSignAction(),
+			cryptotest.MACVerifyAction(),
+		),
+	)
+}
+
+func FuzzHMACSHA384Model(f *testing.F) {
+	cryptotest.MACModelFuzz(f, newSHA384,
+		cryptotest.MACModelReference(func() crypto.MAC {
+			return cryptotest.NewStdlibMACStub(f, sha384Spec)
+		}),
+		cryptotest.MACModelExtraActions(
+			cryptotest.MACSignAction(),
+			cryptotest.MACVerifyAction(),
+		),
+	)
+}
+
+func BenchmarkHMACSHA384(b *testing.B) {
+	cryptotest.BenchmarkMACContract(b, newSHA384,
+		cryptotest.MACBenchOnAlgorithm(bench.PureAllocsWithin[crypto.MAC, crypto.Algorithm](0)),
+		cryptotest.MACBenchOnID(bench.PureAllocsWithin[crypto.MAC, crypto.ID](0)),
+		cryptotest.MACBenchOnSize(bench.PureAllocsWithin[crypto.MAC, int](0)),
+		cryptotest.MACBenchOnSign(
+			bench.PureAllocsWithin[crypto.MAC, crypto.Digest](0),
+			bench.PureConcurrentThroughput[crypto.MAC, crypto.Digest](32),
+		),
+		cryptotest.MACBenchOnVerify(bench.PredicateAllocsWithin[crypto.MAC](0)),
+	)
+}
+
+// --- testkit-driven contract layer (HMAC-SHA-512) ---
+
+func TestHMACSHA512Contract(t *testing.T) {
+	t.Parallel()
+	cryptotest.AssertMACContract(t, newSHA512,
+		append(cryptotest.MACContractAssertions(),
+			cryptotest.MACIDAssertion(hmacSHA512ID),
+			cryptotest.MACAlgorithmAssertion(crypto.AlgHMACSHA512),
+			cryptotest.MACSizeAssertion(crypto.DigestSize512),
+			cryptotest.MACCrossStdlibAssertion(stdlibSign512),
+		)...,
+	)
+}
+
+func TestHMACSHA512Model(t *testing.T) {
+	t.Parallel()
+	cryptotest.MACModelTest(t, newSHA512,
+		cryptotest.MACModelReference(func() crypto.MAC {
+			return cryptotest.NewStdlibMACStub(t, sha512Spec)
+		}),
+		cryptotest.MACModelExtraActions(
+			cryptotest.MACSignAction(),
+			cryptotest.MACVerifyAction(),
+		),
+	)
+}
+
+func FuzzHMACSHA512Model(f *testing.F) {
+	cryptotest.MACModelFuzz(f, newSHA512,
+		cryptotest.MACModelReference(func() crypto.MAC {
+			return cryptotest.NewStdlibMACStub(f, sha512Spec)
+		}),
+		cryptotest.MACModelExtraActions(
+			cryptotest.MACSignAction(),
+			cryptotest.MACVerifyAction(),
+		),
+	)
+}
+
+func BenchmarkHMACSHA512(b *testing.B) {
+	cryptotest.BenchmarkMACContract(b, newSHA512,
+		cryptotest.MACBenchOnAlgorithm(bench.PureAllocsWithin[crypto.MAC, crypto.Algorithm](0)),
+		cryptotest.MACBenchOnID(bench.PureAllocsWithin[crypto.MAC, crypto.ID](0)),
+		cryptotest.MACBenchOnSize(bench.PureAllocsWithin[crypto.MAC, int](0)),
+		cryptotest.MACBenchOnSign(
+			bench.PureAllocsWithin[crypto.MAC, crypto.Digest](0),
+			bench.PureConcurrentThroughput[crypto.MAC, crypto.Digest](32),
+		),
+		cryptotest.MACBenchOnVerify(bench.PredicateAllocsWithin[crypto.MAC](0)),
+	)
+}
+
+// --- impl-specific RFC 4231 known-answer vectors ---
 
 // rfc4231Vector carries the RFC 4231 §4.* keyed inputs along
 // with the per-algorithm expected outputs.
@@ -89,35 +243,11 @@ var rfc4231Vectors = []rfc4231Vector{
 	},
 }
 
-func mustDecodeHex(t *testing.T, s string) []byte {
-	t.Helper()
-	b, err := hex.DecodeString(s)
-	if err != nil {
-		t.Fatalf("invalid hex fixture: %v", err)
-	}
-	return b
-}
-
-func TestSHA384(t *testing.T) {
+// TestSHA384RFC4231Vectors locks HMAC-SHA-384 against RFC 4231.
+func TestSHA384RFC4231Vectors(t *testing.T) {
 	t.Parallel()
-
-	t.Run("ID/Algorithm/Size", func(t *testing.T) {
-		t.Parallel()
-		m := hmacsha512.NewSHA384([]byte("k"))
-		wantID := crypto.ID{'h', 'm', 'a', 'c', '-', 's', 'h', 'a', '3', '8', '4', '/', 'v', '1'}
-		if got := m.ID(); got != wantID {
-			t.Fatalf("ID: got %v, want %v", got, wantID)
-		}
-		if got := m.Algorithm(); got != crypto.AlgHMACSHA384 {
-			t.Fatalf("Algorithm: got %q, want %q", got, crypto.AlgHMACSHA384)
-		}
-		if got := m.Size(); got != crypto.DigestSize384 {
-			t.Fatalf("Size: got %d, want %d", got, crypto.DigestSize384)
-		}
-	})
-
 	for _, tc := range rfc4231Vectors {
-		t.Run("Sign/"+tc.name, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			key := mustDecodeHex(t, tc.keyHex)
 			data := mustDecodeHex(t, tc.dataHex)
@@ -127,122 +257,14 @@ func TestSHA384(t *testing.T) {
 				t.Fatalf("Sign:\n got=%x\nwant=%x", got.Bytes(), want)
 			}
 		})
-
-		t.Run("Verify accepts canonical/"+tc.name, func(t *testing.T) {
-			t.Parallel()
-			key := mustDecodeHex(t, tc.keyHex)
-			data := mustDecodeHex(t, tc.dataHex)
-			want := mustDecodeHex(t, tc.want384)
-			if !hmacsha512.NewSHA384(key).Verify(data, want) {
-				t.Fatal("Verify rejected the canonical MAC")
-			}
-		})
-
-		t.Run("Verify rejects flipped bit/"+tc.name, func(t *testing.T) {
-			t.Parallel()
-			key := mustDecodeHex(t, tc.keyHex)
-			data := mustDecodeHex(t, tc.dataHex)
-			want := mustDecodeHex(t, tc.want384)
-			want[0] ^= 0x01
-			if hmacsha512.NewSHA384(key).Verify(data, want) {
-				t.Fatal("Verify accepted a tampered MAC")
-			}
-		})
 	}
-
-	t.Run("Verify rejects expected of wrong length", func(t *testing.T) {
-		t.Parallel()
-		m := hmacsha512.NewSHA384([]byte("key"))
-		if m.Verify([]byte("data"), make([]byte, 32)) {
-			t.Fatal("Verify accepted an under-length expected slice")
-		}
-		if m.Verify([]byte("data"), make([]byte, 64)) {
-			t.Fatal("Verify accepted an over-length expected slice")
-		}
-		if m.Verify([]byte("data"), nil) {
-			t.Fatal("Verify accepted nil expected")
-		}
-	})
-
-	t.Run("New copies the key", func(t *testing.T) {
-		t.Parallel()
-		key := []byte{1, 2, 3, 4, 5, 6, 7, 8}
-		m := hmacsha512.NewSHA384(key)
-		want := m.Sign([]byte("data"))
-		for i := range key {
-			key[i] = 0xff
-		}
-		if !m.Sign([]byte("data")).Equal(want) {
-			t.Fatal("MAC depends on caller's mutable key buffer")
-		}
-	})
-
-	t.Run("Stream equals Sign over the same bytes", func(t *testing.T) {
-		t.Parallel()
-		m := hmacsha512.NewSHA384([]byte("streaming-key"))
-		full := []byte("agentic-context-payload-streamed-across-many-writes")
-		want := m.Sign(full)
-
-		s := m.NewStream()
-		_, _ = s.Write(full[:10])
-		_, _ = s.Write(full[10:])
-		if got := s.Sum(); !got.Equal(want) {
-			t.Fatalf("Stream != Sign:\n got=%s\nwant=%s", got, want)
-		}
-	})
-
-	t.Run("byte-by-byte writes equal a single write of length N", func(t *testing.T) {
-		t.Parallel()
-		// Locks the byte-additive contract at every write
-		// boundary.
-		m := hmacsha512.NewSHA384([]byte("additive-key"))
-		full := []byte("agentic-context-payload-streamed-across-many-writes")
-		want := m.Sign(full)
-		s := m.NewStream()
-		for i := range full {
-			_, _ = s.Write(full[i : i+1])
-		}
-		if got := s.Sum(); !got.Equal(want) {
-			t.Fatalf("byte-by-byte Stream != Sign:\n got=%s\nwant=%s", got, want)
-		}
-	})
-
-	t.Run("Stream Reset preserves the key", func(t *testing.T) {
-		t.Parallel()
-		m := hmacsha512.NewSHA384([]byte("reset-key"))
-		s := m.NewStream()
-		_, _ = s.Write([]byte("first"))
-		_ = s.Sum()
-
-		s.Reset()
-		_, _ = s.Write([]byte("second"))
-		got := s.Sum()
-		if want := m.Sign([]byte("second")); !got.Equal(want) {
-			t.Fatalf("Stream after Reset != Sign:\n got=%s\nwant=%s", got, want)
-		}
-	})
 }
 
-func TestSHA512(t *testing.T) {
+// TestSHA512RFC4231Vectors locks HMAC-SHA-512 against RFC 4231.
+func TestSHA512RFC4231Vectors(t *testing.T) {
 	t.Parallel()
-
-	t.Run("ID/Algorithm/Size", func(t *testing.T) {
-		t.Parallel()
-		m := hmacsha512.NewSHA512([]byte("k"))
-		wantID := crypto.ID{'h', 'm', 'a', 'c', '-', 's', 'h', 'a', '5', '1', '2', '/', 'v', '1'}
-		if got := m.ID(); got != wantID {
-			t.Fatalf("ID: got %v, want %v", got, wantID)
-		}
-		if got := m.Algorithm(); got != crypto.AlgHMACSHA512 {
-			t.Fatalf("Algorithm: got %q, want %q", got, crypto.AlgHMACSHA512)
-		}
-		if got := m.Size(); got != crypto.DigestSize512 {
-			t.Fatalf("Size: got %d, want %d", got, crypto.DigestSize512)
-		}
-	})
-
 	for _, tc := range rfc4231Vectors {
-		t.Run("Sign/"+tc.name, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			key := mustDecodeHex(t, tc.keyHex)
 			data := mustDecodeHex(t, tc.dataHex)
@@ -252,379 +274,16 @@ func TestSHA512(t *testing.T) {
 				t.Fatalf("Sign:\n got=%x\nwant=%x", got.Bytes(), want)
 			}
 		})
-
-		t.Run("Verify accepts canonical/"+tc.name, func(t *testing.T) {
-			t.Parallel()
-			key := mustDecodeHex(t, tc.keyHex)
-			data := mustDecodeHex(t, tc.dataHex)
-			want := mustDecodeHex(t, tc.want512)
-			if !hmacsha512.NewSHA512(key).Verify(data, want) {
-				t.Fatal("Verify rejected the canonical MAC")
-			}
-		})
-
-		t.Run("Verify rejects flipped bit/"+tc.name, func(t *testing.T) {
-			t.Parallel()
-			key := mustDecodeHex(t, tc.keyHex)
-			data := mustDecodeHex(t, tc.dataHex)
-			want := mustDecodeHex(t, tc.want512)
-			want[0] ^= 0x01
-			if hmacsha512.NewSHA512(key).Verify(data, want) {
-				t.Fatal("Verify accepted a tampered MAC")
-			}
-		})
-	}
-
-	t.Run("Verify rejects expected of wrong length", func(t *testing.T) {
-		t.Parallel()
-		m := hmacsha512.NewSHA512([]byte("key"))
-		if m.Verify([]byte("data"), make([]byte, 32)) {
-			t.Fatal("Verify accepted an under-length expected slice")
-		}
-		if m.Verify([]byte("data"), make([]byte, 96)) {
-			t.Fatal("Verify accepted an over-length expected slice")
-		}
-		if m.Verify([]byte("data"), nil) {
-			t.Fatal("Verify accepted nil expected")
-		}
-	})
-
-	t.Run("New copies the key", func(t *testing.T) {
-		t.Parallel()
-		key := []byte{1, 2, 3, 4, 5, 6, 7, 8}
-		m := hmacsha512.NewSHA512(key)
-		want := m.Sign([]byte("data"))
-		for i := range key {
-			key[i] = 0xff
-		}
-		if !m.Sign([]byte("data")).Equal(want) {
-			t.Fatal("MAC depends on caller's mutable key buffer")
-		}
-	})
-
-	t.Run("Stream equals Sign over the same bytes", func(t *testing.T) {
-		t.Parallel()
-		m := hmacsha512.NewSHA512([]byte("streaming-key"))
-		full := []byte("agentic-context-payload-streamed-across-many-writes")
-		want := m.Sign(full)
-
-		s := m.NewStream()
-		_, _ = s.Write(full[:20])
-		_, _ = s.Write(full[20:])
-		if got := s.Sum(); !got.Equal(want) {
-			t.Fatalf("Stream != Sign:\n got=%s\nwant=%s", got, want)
-		}
-	})
-
-	t.Run("byte-by-byte writes equal a single write of length N", func(t *testing.T) {
-		t.Parallel()
-		// Locks the byte-additive contract at every write
-		// boundary.
-		m := hmacsha512.NewSHA512([]byte("additive-key"))
-		full := []byte("agentic-context-payload-streamed-across-many-writes")
-		want := m.Sign(full)
-		s := m.NewStream()
-		for i := range full {
-			_, _ = s.Write(full[i : i+1])
-		}
-		if got := s.Sum(); !got.Equal(want) {
-			t.Fatalf("byte-by-byte Stream != Sign:\n got=%s\nwant=%s", got, want)
-		}
-	})
-
-	t.Run("Stream Reset preserves the key", func(t *testing.T) {
-		t.Parallel()
-		m := hmacsha512.NewSHA512([]byte("reset-key"))
-		s := m.NewStream()
-		_, _ = s.Write([]byte("first"))
-		_ = s.Sum()
-
-		s.Reset()
-		_, _ = s.Write([]byte("second"))
-		got := s.Sum()
-		if want := m.Sign([]byte("second")); !got.Equal(want) {
-			t.Fatalf("Stream after Reset != Sign:\n got=%s\nwant=%s", got, want)
-		}
-	})
-}
-
-func TestCrossCheckStdlib(t *testing.T) {
-	t.Parallel()
-
-	cases := []struct {
-		name    string
-		keyLen  int
-		dataLen int
-	}{
-		{"empty", 0, 0},
-		{"short", 8, 16},
-		{"block-size key SHA-512 (128B)", 128, 64},
-		{"long key, long data", 200, 8192},
-	}
-	for _, tc := range cases {
-		t.Run("SHA-384/"+tc.name, func(t *testing.T) {
-			t.Parallel()
-			key := bytesSeq(tc.keyLen, 1)
-			data := bytesSeq(tc.dataLen, 0xff)
-			ours := hmacsha512.NewSHA384(key).Sign(data)
-
-			h := stdhmac.New(stdsha512.New384, key)
-			_, _ = h.Write(data)
-			want := h.Sum(nil)
-			if !bytes.Equal(ours.Bytes(), want) {
-				t.Fatalf("diverged from stdlib HMAC-SHA-384:\n ours=%x\n std =%x",
-					ours.Bytes(), want)
-			}
-		})
-
-		t.Run("SHA-512/"+tc.name, func(t *testing.T) {
-			t.Parallel()
-			key := bytesSeq(tc.keyLen, 1)
-			data := bytesSeq(tc.dataLen, 0xff)
-			ours := hmacsha512.NewSHA512(key).Sign(data)
-
-			h := stdhmac.New(stdsha512.New, key)
-			_, _ = h.Write(data)
-			want := h.Sum(nil)
-			if !bytes.Equal(ours.Bytes(), want) {
-				t.Fatalf("diverged from stdlib HMAC-SHA-512:\n ours=%x\n std =%x",
-					ours.Bytes(), want)
-			}
-		})
 	}
 }
 
-func TestZeroAlloc(t *testing.T) {
-	m384 := hmacsha512.NewSHA384([]byte("zero-alloc-384"))
-	m512 := hmacsha512.NewSHA512([]byte("zero-alloc-512"))
+// --- helpers ---
 
-	cases := []struct {
-		name string
-		fn   func()
-	}{
-		{"SHA384 ID", func() { _ = m384.ID() }},
-		{"SHA384 Algorithm", func() { _ = m384.Algorithm() }},
-		{"SHA384 Size", func() { _ = m384.Size() }},
-		{"SHA512 ID", func() { _ = m512.ID() }},
-		{"SHA512 Algorithm", func() { _ = m512.Algorithm() }},
-		{"SHA512 Size", func() { _ = m512.Size() }},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := testing.AllocsPerRun(100, tc.fn); got != 0 {
-				t.Fatalf("%s: %v allocs/op, want 0", tc.name, got)
-			}
-		})
-	}
-
-	t.Run("SHA384 Stream loop is zero-alloc", func(t *testing.T) {
-		s := m384.NewStream()
-		buf := make([]byte, 256)
-		fn := func() {
-			s.Reset()
-			_, _ = s.Write(buf)
-			_ = s.Sum()
-		}
-		if got := testing.AllocsPerRun(100, fn); got != 0 {
-			t.Fatalf("SHA384 Stream: %v allocs/op, want 0", got)
-		}
-	})
-
-	t.Run("SHA512 Stream loop is zero-alloc", func(t *testing.T) {
-		s := m512.NewStream()
-		buf := make([]byte, 256)
-		fn := func() {
-			s.Reset()
-			_, _ = s.Write(buf)
-			_ = s.Sum()
-		}
-		if got := testing.AllocsPerRun(100, fn); got != 0 {
-			t.Fatalf("SHA512 Stream: %v allocs/op, want 0", got)
-		}
-	})
-}
-
-func FuzzCrossStdlib(f *testing.F) {
-	f.Add([]byte("k"), []byte("data"))
-	f.Add([]byte{}, []byte{})
-
-	f.Fuzz(func(t *testing.T, key, data []byte) {
-		ours384 := hmacsha512.NewSHA384(key).Sign(data)
-		h384 := stdhmac.New(stdsha512.New384, key)
-		_, _ = h384.Write(data)
-		if !bytes.Equal(ours384.Bytes(), h384.Sum(nil)) {
-			t.Fatal("SHA-384 diverged from stdlib")
-		}
-
-		ours512 := hmacsha512.NewSHA512(key).Sign(data)
-		h512 := stdhmac.New(stdsha512.New, key)
-		_, _ = h512.Write(data)
-		if !bytes.Equal(ours512.Bytes(), h512.Sum(nil)) {
-			t.Fatal("SHA-512 diverged from stdlib")
-		}
-	})
-}
-
-// macSigner is the minimal Sign / Verify / NewStream surface
-// shared by the SHA-384 and SHA-512 MAC variants. Letting the
-// benchmarks dispatch over an interface keeps the matrix
-// (algorithm × size × mode) in one place while still exercising
-// the concrete pooled-hash code path.
-type macSigner interface {
-	Sign(data []byte) crypto.Digest
-	Verify(data, mac []byte) bool
-	NewStream() crypto.Stream
-}
-
-var benchSizes = []struct {
-	name string
-	n    int
-}{
-	{"8B", 8},
-	{"64B", 64},
-	{"256B", 256},
-	{"4K", 4096},
-	{"64K", 65536},
-}
-
-func BenchmarkSign(b *testing.B) {
-	for _, alg := range []struct {
-		name string
-		m    macSigner
-	}{
-		{"sha384", hmacsha512.NewSHA384([]byte("benchmark-key"))},
-		{"sha512", hmacsha512.NewSHA512([]byte("benchmark-key"))},
-	} {
-		b.Run(alg.name, func(b *testing.B) {
-			for _, sz := range benchSizes {
-				b.Run(sz.name, func(b *testing.B) {
-					data := make([]byte, sz.n)
-					b.ReportAllocs()
-					b.SetBytes(int64(sz.n))
-					for b.Loop() {
-						_ = alg.m.Sign(data)
-					}
-				})
-			}
-		})
-	}
-}
-
-func BenchmarkVerify(b *testing.B) {
-	for _, alg := range []struct {
-		name string
-		m    macSigner
-	}{
-		{"sha384", hmacsha512.NewSHA384([]byte("benchmark-key"))},
-		{"sha512", hmacsha512.NewSHA512([]byte("benchmark-key"))},
-	} {
-		b.Run(alg.name, func(b *testing.B) {
-			for _, sz := range benchSizes {
-				b.Run(sz.name, func(b *testing.B) {
-					data := make([]byte, sz.n)
-					expected := alg.m.Sign(data).Bytes()
-					b.ReportAllocs()
-					b.SetBytes(int64(sz.n))
-					for b.Loop() {
-						_ = alg.m.Verify(data, expected)
-					}
-				})
-			}
-		})
-	}
-}
-
-// BenchmarkStream covers the canonical hot-path pattern: one
-// [crypto.Stream] reused across many messages via Reset.
-// Sub-benchmarks: sequential is the steady-state single-
-// goroutine cost; parallel exercises one-stream-per-goroutine
-// fan-out.
-func BenchmarkStream(b *testing.B) {
-	for _, alg := range []struct {
-		name string
-		m    macSigner
-	}{
-		{"sha384", hmacsha512.NewSHA384([]byte("benchmark-key"))},
-		{"sha512", hmacsha512.NewSHA512([]byte("benchmark-key"))},
-	} {
-		b.Run(alg.name, func(b *testing.B) {
-			b.Run("sequential", func(b *testing.B) {
-				for _, sz := range benchSizes {
-					b.Run(sz.name, func(b *testing.B) {
-						s := alg.m.NewStream()
-						data := make([]byte, sz.n)
-						b.ReportAllocs()
-						b.SetBytes(int64(sz.n))
-						for b.Loop() {
-							s.Reset()
-							_, _ = s.Write(data)
-							_ = s.Sum()
-						}
-					})
-				}
-			})
-			b.Run("parallel", func(b *testing.B) {
-				for _, sz := range benchSizes {
-					b.Run(sz.name, func(b *testing.B) {
-						data := make([]byte, sz.n)
-						b.ReportAllocs()
-						b.SetBytes(int64(sz.n))
-						b.RunParallel(func(pb *testing.PB) {
-							s := alg.m.NewStream()
-							for pb.Next() {
-								s.Reset()
-								_, _ = s.Write(data)
-								_ = s.Sum()
-							}
-						})
-					})
-				}
-			})
-		})
-	}
-}
-
-// BenchmarkSignParallel exercises [MAC.Sign] under fan-out
-// across cores — validates that the per-MAC [pool.Pool] of
-// pre-keyed [hash.Hash] instances scales without lock
-// contention.
-func BenchmarkSignParallel(b *testing.B) {
-	for _, alg := range []struct {
-		name string
-		m    macSigner
-	}{
-		{"sha384", hmacsha512.NewSHA384([]byte("benchmark-key"))},
-		{"sha512", hmacsha512.NewSHA512([]byte("benchmark-key"))},
-	} {
-		b.Run(alg.name, func(b *testing.B) {
-			for _, sz := range []struct {
-				name string
-				n    int
-			}{
-				{"8B", 8},
-				{"64B", 64},
-				{"4K", 4096},
-				{"64K", 65536},
-			} {
-				b.Run(sz.name, func(b *testing.B) {
-					data := make([]byte, sz.n)
-					b.ReportAllocs()
-					b.SetBytes(int64(sz.n))
-					b.RunParallel(func(pb *testing.PB) {
-						for pb.Next() {
-							_ = alg.m.Sign(data)
-						}
-					})
-				})
-			}
-		})
-	}
-}
-
-func bytesSeq(n int, start byte) []byte {
-	b := make([]byte, n)
-	for i := range b {
-		b[i] = start + byte(i)
+func mustDecodeHex(t *testing.T, s string) []byte {
+	t.Helper()
+	b, err := hex.DecodeString(s)
+	if err != nil {
+		t.Fatalf("invalid hex fixture: %v", err)
 	}
 	return b
 }
