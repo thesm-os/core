@@ -8,8 +8,6 @@ import (
 	"io"
 )
 
-//go:generate testkit suite -o cryptotest/hasher_spec.gen.go Hasher
-
 // IDSize is the byte size of every [ID].
 const IDSize = 16
 

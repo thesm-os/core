@@ -5,20 +5,47 @@
 
 ---
 
+## Layout convention
+
+Generated test infrastructure for package `<pkg>` lives under the
+umbrella `coretest/<pkg>test/` directory at the module root, NOT in a
+sibling-of-source `<pkg>/<pkg>test/` subdirectory. Rationale: a single
+tree of test infrastructure is easier to enumerate, decouples generated
+artefacts from production package directories, and gives `coretest` a
+meaningful purpose as the parent.
+
+Examples:
+
+- `clock.Clock` interface → `coretest/clocktest/`
+- `crypto.Hasher` interface → `coretest/cryptotest/`
+- `crypto.MAC` interface → `coretest/cryptotest/` (same package, different files)
+
+Sub-package interfaces collapse into the parent's testkit dir
+(`crypto/hmac/sha256.MAC` → `coretest/cryptotest/`). One dir per top-
+level package keeps the tree shallow.
+
+`//go:generate` directives live in `coretest/<pkg>test/doc.go`, NOT in
+the production source file. The directives use `-p
+go.thesmos.sh/core/<pkg>` to point testkit at the source package.
+
 ## Quick Reference
 
-| Generator | Target | Command |
+| Generator | Target | Command (run from `coretest/<pkg>test/`) |
 |-----------|--------|---------|
-| `stub` | interface | `testkit stub -o <pkg>test/<name>_stub.gen.go <Interface>` |
-| `suite` | interface | `testkit suite -o <pkg>test/<name>_spec.gen.go <Interface>` |
-| `model` | interface | `testkit model -o <pkg>test/<name>_model.gen.go <Interface>` |
-| `bench` | interface | `testkit bench -o <pkg>test/<name>_bench.gen.go <Interface>` |
-| `builder` | struct | `testkit builder -o <pkg>test/builders.gen.go <Struct>` |
-| `sentinel` | file | `testkit sentinel -o errors.gen_test.go` |
-| `enum` | int type | `testkit enum -o enum.gen_test.go <Type1> <Type2>` |
+| `stub` | interface | `testkit stub -p go.thesmos.sh/core/<pkg> -o <name>_stub.gen.go <Interface>` |
+| `suite` | interface | `testkit suite -p go.thesmos.sh/core/<pkg> -o <name>_spec.gen.go <Interface>` |
+| `model` | interface | `testkit model -p go.thesmos.sh/core/<pkg> -o <name>_model.gen.go <Interface>` |
+| `bench` | interface | `testkit bench -p go.thesmos.sh/core/<pkg> -o <name>_bench.gen.go <Interface>` |
+| `builder` | struct | `testkit builder -p go.thesmos.sh/core/<pkg> -o <name>_fixtures.gen.go <Struct>...` |
+| `sentinel` | file | `testkit sentinel -o errors.gen_test.go` (runs in source pkg) |
+| `enum` | int type | `testkit enum -o enum.gen_test.go <Type1> <Type2>` (runs in source pkg) |
 
-All commands are run via `//go:generate` directives in the source file
-that defines the type.
+All commands are run via `//go:generate` directives. For interface
+generators (`stub` / `suite` / `model` / `bench` / `builder`), put the
+directive in `coretest/<pkg>test/doc.go`. For per-source-file generators
+(`sentinel` / `enum`), put the directive in the source file declaring
+the errors / enum type — those generated files stay in the source
+package.
 
 ---
 
@@ -30,10 +57,10 @@ that defines the type.
 tests need to control its behavior (return values, errors, latency,
 faults).
 
-**Directive (in source file):**
+**Directive (in `coretest/<pkg>test/doc.go`):**
 
 ```go
-//go:generate testkit stub -o hashertest/hasher_stub.gen.go Hasher
+//go:generate testkit stub -p go.thesmos.sh/core/crypto -o hasher_stub.gen.go Hasher
 ```
 
 **No per-method directives needed.** Works from method signatures alone.
@@ -76,10 +103,10 @@ satisfies its interface contract.
 spec. Run it against in-memory fakes, production implementations,
 and any new backend.
 
-**Directive (in source file):**
+**Directive (in `coretest/<pkg>test/doc.go`):**
 
 ```go
-//go:generate testkit suite -o hashertest/hasher_spec.gen.go Hasher
+//go:generate testkit suite -p go.thesmos.sh/core/crypto -o hasher_spec.gen.go Hasher
 ```
 
 **Per-method directives (placed above method signatures):**
@@ -117,71 +144,39 @@ and consumer-provided assertion primitives run against it.
 // deterministic — Now() advances HLC logical, Time() reads
 // wall clock. The auto-generated smoke tests verify each method
 // is callable. ClockCustom adds domain-specific assertions.
+//
+// Standard contract assertions are packaged in
+// clocktest.ClockContractAssertions(); spread them via `...` and
+// add per-test custom assertions on top.
 func TestHLCClock(t *testing.T) {
-    coretest.AssertClockContract(t,
+    clocktest.AssertClockContract(t,
         func() clock.Clock { return hlc.New(0) },
-
-        // Now: HLC monotonicity — every instant is causally after the previous.
-        coretest.ClockCustom("Now is HLC-monotone", func(t *testing.T, c clock.Clock) {
-            prev := c.Now()
-            for range 100 {
-                next := c.Now()
-                if !prev.HappensBefore(next) {
-                    t.Fatalf("non-monotone: %+v then %+v", prev, next)
-                }
-                prev = next
-            }
-        }),
-
-        // Now: tags every instant with the configured node.
-        coretest.ClockCustom("Now tags node", func(t *testing.T, c clock.Clock) {
-            if got := c.Now().Node; got != 0 {
-                t.Fatalf("Node: got %d, want 0", got)
-            }
-        }),
-
-        // Time: returns UTC.
-        coretest.ClockCustom("Time returns UTC", func(t *testing.T, c clock.Clock) {
-            if got := c.Time().Location(); got != time.UTC {
-                t.Fatalf("Location: got %v, want UTC", got)
-            }
-        }),
-
-        // Update: result is causally after the observed instant.
-        coretest.ClockCustom("Update is causal", func(t *testing.T, c clock.Clock) {
-            observed := clock.Instant{Wall: time.Now().UnixNano(), Logical: 99, Node: 7}
-            got := c.Update(observed)
-            if !observed.HappensBefore(got) {
-                t.Fatalf("Update must be causally after observed: got=%+v obs=%+v", got, observed)
-            }
-        }),
-
-        // NewTimer: zero-duration timer fires immediately.
-        coretest.ClockCustom("NewTimer zero fires immediately", func(t *testing.T, c clock.Clock) {
-            tm := c.NewTimer(0)
-            select {
-            case <-tm.C():
-                // OK
-            case <-time.After(time.Second):
-                t.Fatal("zero-duration timer did not fire")
-            }
-        }),
-
-        // NewTimer: Stop prevents firing.
-        coretest.ClockCustom("NewTimer Stop prevents fire", func(t *testing.T, c clock.Clock) {
-            tm := c.NewTimer(time.Hour)
-            if !tm.Stop() {
-                t.Fatal("Stop on pending timer must return true")
-            }
-            if tm.Stop() {
-                t.Fatal("second Stop must return false")
-            }
-        }),
+        clocktest.ClockContractAssertions()...,
     )
 }
 ```
 
+The standard assertion bundle (`ClockContractAssertions`) is
+hand-written in `coretest/clocktest/clock_assertions.go` — see that
+file for the full list. Test-specific cases that don't belong in the
+shared bundle are added inline:
+
+```go
+clocktest.AssertClockContract(t,
+    factory,
+    append(
+        clocktest.ClockContractAssertions(),
+        clocktest.ClockCustom("HLC tags node 7", func(t *testing.T, c clock.Clock) {
+            if got := c.Now().Node; got != 7 {
+                t.Fatalf("Node: got %d, want 7", got)
+            }
+        }),
+    )...,
+)
+```
+
 The generated suite provides:
+
 - **Auto smoke tests** per method (`Now/smoke`, `Time/smoke`, etc.)
 - **ClockOnNow/ClockOnTime/ClockOnUpdate/ClockOnNewTimer** for
   PureAssertion plug-ins (use for methods that ARE deterministic)
@@ -193,7 +188,11 @@ Timer is tested through Clock's NewTimer — there is no separate
 Timer conformance suite. Timer assertions live in ClockCustom
 subtests that exercise the Timer returned by NewTimer.
 
-// Store has Reader/Writer/Deleter shapes.
+**Other shape examples** (the suite generator detects shapes from
+method signatures and emits matching plug-in points). For a
+hypothetical CRUD store with Reader, Writer, and Deleter methods:
+
+```go
 func TestInMemoryStore(t *testing.T) {
     storetest.AssertStoreContract(t, factory,
         storetest.StorePrePopulate(func(ctx context.Context, s Store) {
@@ -241,10 +240,10 @@ invariants.
 registries). Catches bugs that targeted unit tests miss: ordering
 violations, lost writes, stale reads under concurrency.
 
-**Directive (in source file):**
+**Directive (in `coretest/<pkg>test/doc.go`):**
 
 ```go
-//go:generate testkit model -o cursortest/cursor_model.gen.go Cursor
+//go:generate testkit model -p go.thesmos.sh/core/page -o cursor_model.gen.go Cursor
 ```
 
 **Per-method directives:**
@@ -313,10 +312,10 @@ allocation tracking and concurrency throughput.
 **When to use:** Any interface on a hot path. Establishes performance
 baselines and catches allocation regressions.
 
-**Directive (in source file):**
+**Directive (in `coretest/<pkg>test/doc.go`):**
 
 ```go
-//go:generate testkit bench -o hashertest/hasher_bench.gen.go Hasher
+//go:generate testkit bench -p go.thesmos.sh/core/crypto -o hasher_bench.gen.go Hasher
 ```
 
 **Uses the same per-method directives as `suite`.**
@@ -345,13 +344,11 @@ func BenchmarkHasher(b *testing.B) {
 **When to use:** Structs with many fields where tests need variations.
 Eliminates repetitive struct literals.
 
-**Directive (in source file):**
+**Directive (in `coretest/<pkg>test/doc.go`):**
 
 ```go
-//go:generate testkit builder -o clocktest/builders.gen.go Instant InstantRange
+//go:generate testkit builder -p go.thesmos.sh/core/clock -o clock_fixtures.gen.go Instant InstantRange
 ```
-
-**No per-field directives.** Works from exported struct fields.
 
 **Consumer pattern:**
 
@@ -363,6 +360,90 @@ func TestSomething(t *testing.T) {
         WithNode(1).
         Build()
 }
+```
+
+### Defaults
+
+`NewT()` returns an empty builder by default. Two opt-in mechanisms
+seed it with non-zero values:
+
+**1. Convention-based — `<Type>Defaults()` function.** Define
+`<Type>Defaults() <Type>` in either the source package or the test
+package (`coretest/<pkg>test/`). The generator auto-discovers it and
+makes `NewT()` return a builder seeded with the result:
+
+```go
+// coretest/clocktest/clock_fixtures.go (hand-written)
+
+func InstantDefaults() clock.Instant {
+    return clock.Instant{
+        Wall:    time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC).UnixNano(),
+        Logical: 0,
+        Node:    1,
+    }
+}
+```
+
+After this, `clocktest.NewInstant()` returns a builder pre-seeded with
+the 2026-01-01 / Node 1 baseline. `NewInstantFrom(clock.Instant{})`
+remains the explicit-zero escape hatch.
+
+**2. Per-field directive — `//testkit:default`.** Annotate the source
+struct field with a trailing comment carrying the literal default
+value (same-line, struct-tag-style):
+
+```go
+// clock/instant.go (production source)
+
+type Instant struct {
+    Wall    int64  //testkit:default "1735689600000000000"
+    Logical uint32
+    Node    NodeID //testkit:default "1"
+}
+```
+
+The generator emits `NewInstant()` returning a builder with those
+fields pre-populated; un-annotated fields stay zero. Doc-comment
+placement (the directive on its own line above the field) also
+works, but trailing is preferred — matches the visual weight of
+struct tags and keeps the field declaration compact.
+
+**When to pick which:**
+
+- **Convention** when defaults need runtime computation (e.g. a
+  `time.Now()`-based fixture, or values derived from other defaults).
+- **Directive** when literals suffice and you want defaults visible
+  at the type declaration in production source.
+
+Both produce the same surface API. Pick one per type.
+
+### Hand-rolled named variants
+
+Defaults centralise *one* baseline; tests with multiple equally-common
+shapes still benefit from named variants. Hand-rolled canonical
+fixtures live in `coretest/<pkg>test/<name>_fixtures.go` (no `.gen.`
+suffix), using the generated builder under the hood, following
+`New<Type><Variant>` naming:
+
+```go
+// coretest/clocktest/clock_fixtures.go (hand-written)
+
+func NewInstantOrigin() *InstantBuilder {
+    return NewInstant() // Wall=0, Logical=0, Node=0
+}
+
+func NewInstantSample() *InstantBuilder {
+    return NewInstant().
+        WithWall(referenceWall).
+        WithLogical(0).
+        WithNode(1)
+}
+```
+
+Tests then grab a baseline and tweak via further `With*` calls:
+
+```go
+inst := clocktest.NewInstantSample().WithLogical(5).Build()
 ```
 
 ---
@@ -425,26 +506,30 @@ block using `iota`.
 
 **Priority targets in `go.thesmos.sh/core`:**
 
-| Package | Interface/Type | Generators |
-|---------|---------------|------------|
-| `crypto` | `Hasher` | stub, suite, model, bench |
-| `crypto` | `MAC` | stub, suite, model, bench |
-| `crypto/sign` | `Signer`, `Verifier` | stub, suite, bench |
-| `clock` | `Clock` | stub, suite, model |
-| `telemetry` | `Reporter` | stub, suite |
-| `telemetry` | `Span` | stub, suite |
-| `page` | `Cursor[T]` | stub, suite, model |
-| `rand` | `Rand` | stub, suite, bench |
-| `id` | `Generator` | stub |
-| `telemetry` | `AttrKind`, `SpanKind` | enum |
-| `id/ksuid` | errors | sentinel |
-| `id/ulid` | errors | sentinel |
-| `id/uuidv4` | errors | sentinel |
-| `crypto/sign/ed25519` | errors | sentinel |
-| `crypto/sign/ecdsap384` | errors | sentinel |
-| `clock` | `Instant`, `InstantRange` | builder |
-| `page` | `Page` | builder |
-| `telemetry` | `InstrumentSpec`, `Attr` | builder |
+Interface generators (stub / suite / model / bench / builder) emit to
+`coretest/<pkg>test/`. Per-source-file generators (sentinel / enum)
+emit alongside the source.
+
+| Source pkg | Interface/Type | Generators | Output dir |
+|---|---|---|---|
+| `crypto` | `Hasher` | stub, suite, model, bench | `coretest/cryptotest/` |
+| `crypto` | `MAC` | stub, suite, model, bench | `coretest/cryptotest/` |
+| `crypto/sign` | `Signer`, `Verifier` | stub, suite, bench | `coretest/cryptotest/` |
+| `clock` | `Clock` | stub, suite, model, bench | `coretest/clocktest/` |
+| `telemetry` | `Reporter` | stub, suite | `coretest/telemetrytest/` |
+| `telemetry` | `Span` | stub, suite | `coretest/telemetrytest/` |
+| `page` | `Cursor[T]` | stub, suite, model | `coretest/pagetest/` |
+| `rand` | `Rand` | stub, suite, bench | `coretest/randtest/` |
+| `id` | `Generator` | stub | `coretest/idtest/` |
+| `clock` | `Instant`, `InstantRange` | builder | `coretest/clocktest/` |
+| `page` | `Page` | builder | `coretest/pagetest/` |
+| `telemetry` | `InstrumentSpec`, `Attr` | builder | `coretest/telemetrytest/` |
+| `telemetry` | `AttrKind`, `SpanKind` | enum | `telemetry/` (in-source) |
+| `id/ksuid` | errors | sentinel | `id/ksuid/` (in-source) |
+| `id/ulid` | errors | sentinel | `id/ulid/` (in-source) |
+| `id/uuidv4` | errors | sentinel | `id/uuidv4/` (in-source) |
+| `crypto/sign/ed25519` | errors | sentinel | `crypto/sign/ed25519/` (in-source) |
+| `crypto/sign/ecdsap384` | errors | sentinel | `crypto/sign/ecdsap384/` (in-source) |
 
 ---
 
@@ -461,7 +546,12 @@ block using `iota`.
    and missing parse cases.
 6. **Structs used in test fixtures get builder.** Eliminates struct
    literal noise in tests.
-7. **Generated files go in a `<pkg>test/` subdirectory.** External
-   test package (`_test` suffix) for clean dependency boundaries.
-8. **Run `make generate` after adding directives.** Then commit the
+7. **Generated files go in `coretest/<pkg>test/`.** Umbrella tree at
+   the module root, NOT in a sibling-of-source subdirectory. See
+   "Layout convention" at the top of this guide.
+8. **Hand-rolled fixtures live alongside generated builders.**
+   `coretest/<pkg>test/<name>_fixtures.go` (no `.gen.`) holds canonical
+   `New<Type><Variant>` factories that wrap the generated builder. See
+   the Builder section.
+9. **Run `make generate` after adding directives.** Then commit the
    generated files alongside the source.

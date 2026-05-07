@@ -11,7 +11,20 @@ import (
 
 	"go.thesmos.sh/core/clock"
 	"go.thesmos.sh/core/clock/hlc"
+	"go.thesmos.sh/core/coretest/clocktest"
+	"go.thesmos.sh/testkit/bench"
 )
+
+// Clock methods are Pure-shaped (no ctx, no error) but NOT
+// deterministic — Now() advances HLC logical, Time() reads
+// wall clock. Use ClockCustom for domain-specific assertions.
+func TestHLCClockContract(t *testing.T) {
+	t.Parallel()
+	clocktest.AssertClockContract(t,
+		func() clock.Clock { return hlc.New(0) },
+		clocktest.ClockContractAssertions()...,
+	)
+}
 
 // fixedSource returns a wall-time source that returns *now until
 // the test mutates it. Used to drive HLC branch tests
@@ -22,19 +35,6 @@ func fixedSource(now *int64) func() int64 {
 
 func TestNow(t *testing.T) {
 	t.Parallel()
-
-	t.Run("monotone in HLC order over many calls", func(t *testing.T) {
-		t.Parallel()
-		c := hlc.New(clock.NodeID(1))
-		prev := c.Now()
-		for range 1000 {
-			next := c.Now()
-			if !prev.HappensBefore(next) {
-				t.Fatalf("Now produced non-monotone instants: prev=%+v next=%+v", prev, next)
-			}
-			prev = next
-		}
-	})
 
 	t.Run("tags every instant with the configured node", func(t *testing.T) {
 		t.Parallel()
@@ -78,15 +78,6 @@ func TestNow(t *testing.T) {
 			t.Fatalf("Logical: got %d, want %d", second.Logical, first.Logical+1)
 		}
 	})
-}
-
-func TestTime(t *testing.T) {
-	t.Parallel()
-
-	c := hlc.New(0)
-	if got := c.Time().Location(); got != time.UTC {
-		t.Fatalf("Time location: got %v, want UTC", got)
-	}
 }
 
 func TestUpdate(t *testing.T) {
@@ -194,57 +185,24 @@ func TestConcurrentNow(t *testing.T) {
 	}
 }
 
-// TestZeroAlloc enforces the documented "Zero alloc" contracts on
-// hlc.Clock's hot-path methods. testing.AllocsPerRun uses a
-// process-global malloc counter, so this test does not call
-// t.Parallel.
-func TestZeroAlloc(t *testing.T) {
-	c := hlc.New(clock.NodeID(1))
-	observed := clock.Instant{Wall: 1_000_000_000, Logical: 1, Node: 99}
-
-	cases := []struct {
-		name string
-		fn   func()
-	}{
-		{"Now", func() { _ = c.Now() }},
-		{"Time", func() { _ = c.Time() }},
-		{"Update", func() { _ = c.Update(observed) }},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := testing.AllocsPerRun(100, tc.fn); got != 0 {
-				t.Fatalf("%s: %v allocs/op, want 0", tc.name, got)
-			}
-		})
-	}
+// BenchmarkHLCClock runs the standard Clock bench contract:
+// auto hot-path measurement for Now/Time/Update/NewTimer plus
+// PureAllocsWithin(0) gates for the documented zero-alloc methods.
+// Replaces the prior hand-rolled BenchmarkNow/Time/Update +
+// TestZeroAlloc.
+func BenchmarkHLCClock(b *testing.B) {
+	clocktest.BenchmarkClockContract(b,
+		func() clock.Clock { return hlc.New(clock.NodeID(1)) },
+		clocktest.ClockBenchOnNow(bench.PureAllocsWithin[clock.Clock, clock.Instant](0)),
+		clocktest.ClockBenchOnTime(bench.PureAllocsWithin[clock.Clock, time.Time](0)),
+		clocktest.ClockBenchOnUpdate(bench.PureAllocsWithin[clock.Clock, clock.Instant](0)),
+	)
 }
 
-func BenchmarkNow(b *testing.B) {
-	c := hlc.New(clock.NodeID(1))
-	b.ReportAllocs()
-	for b.Loop() {
-		_ = c.Now()
-	}
-}
-
-func BenchmarkTime(b *testing.B) {
-	c := hlc.New(clock.NodeID(1))
-	b.ReportAllocs()
-	for b.Loop() {
-		_ = c.Time()
-	}
-}
-
-func BenchmarkUpdate(b *testing.B) {
-	c := hlc.New(clock.NodeID(1))
-	observed := clock.Instant{Wall: time.Now().UnixNano(), Logical: 1, Node: 99}
-	b.ReportAllocs()
-	for b.Loop() {
-		_ = c.Update(observed)
-	}
-}
-
-func BenchmarkNowParallel(b *testing.B) {
+// BenchmarkHLCNowParallel measures concurrent Now() throughput.
+// Pure-shape bench plug-ins don't yet ship a parallel primitive,
+// so this stays as a ClockBenchCustom-style hand-roll.
+func BenchmarkHLCNowParallel(b *testing.B) {
 	c := hlc.New(clock.NodeID(1))
 	b.ReportAllocs()
 	b.RunParallel(func(pb *testing.PB) {

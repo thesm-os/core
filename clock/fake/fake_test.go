@@ -10,9 +10,19 @@ import (
 
 	"go.thesmos.sh/core/clock"
 	"go.thesmos.sh/core/clock/fake"
+	"go.thesmos.sh/core/coretest/clocktest"
+	"go.thesmos.sh/testkit/bench"
 )
 
 var origin = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+func TestFakeClockContract(t *testing.T) {
+	t.Parallel()
+	clocktest.AssertClockContract(t,
+		func() clock.Clock { return fake.New(origin) },
+		clocktest.ClockContractAssertions()...,
+	)
+}
 
 func TestNow(t *testing.T) {
 	t.Parallel()
@@ -32,19 +42,6 @@ func TestNow(t *testing.T) {
 		second := c.Now()
 		if second.Logical != first.Logical+1 {
 			t.Fatalf("Logical: got %d, want %d", second.Logical, first.Logical+1)
-		}
-	})
-
-	t.Run("instants are HLC-monotone", func(t *testing.T) {
-		t.Parallel()
-		c := fake.New(origin)
-		prev := c.Now()
-		for range 100 {
-			next := c.Now()
-			if !prev.HappensBefore(next) {
-				t.Fatalf("non-monotone: prev=%+v next=%+v", prev, next)
-			}
-			prev = next
 		}
 	})
 
@@ -205,18 +202,6 @@ func TestUpdate(t *testing.T) {
 		}
 	})
 
-	t.Run("returned instant is causally after observed", func(t *testing.T) {
-		t.Parallel()
-		// Property: regardless of the relative position of
-		// observed and local, Update's output must be causally
-		// after observed.
-		c := fake.New(origin)
-		observed := clock.Instant{Wall: origin.UnixNano() + int64(time.Hour), Logical: 99, Node: 7}
-		got := c.Update(observed)
-		if !observed.HappensBefore(got) {
-			t.Fatalf("Update result must be causally after observed: got=%+v observed=%+v", got, observed)
-		}
-	})
 }
 
 func TestAwaitWaiters(t *testing.T) {
@@ -239,57 +224,24 @@ func TestAwaitWaiters(t *testing.T) {
 	c.AwaitWaiters(n)
 }
 
-// TestZeroAlloc enforces the documented "Zero alloc" contracts on
-// fake.Clock's hot-path methods. testing.AllocsPerRun uses a
-// process-global malloc counter, so this test does not call
-// t.Parallel.
-func TestZeroAlloc(t *testing.T) {
-	c := fake.New(origin)
-	observed := clock.Instant{Wall: origin.UnixNano(), Logical: 1, Node: 99}
-
-	cases := []struct {
-		name string
-		fn   func()
-	}{
-		{"Now", func() { _ = c.Now() }},
-		{"Time", func() { _ = c.Time() }},
-		{"Update", func() { _ = c.Update(observed) }},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := testing.AllocsPerRun(100, tc.fn); got != 0 {
-				t.Fatalf("%s: %v allocs/op, want 0", tc.name, got)
-			}
-		})
-	}
+// BenchmarkFakeClock runs the standard Clock bench contract:
+// auto hot-path measurement for Now/Time/Update/NewTimer plus
+// PureAllocsWithin(0) gates for the documented zero-alloc methods.
+// Replaces the prior hand-rolled BenchmarkNow/Time/Update +
+// TestZeroAlloc.
+func BenchmarkFakeClock(b *testing.B) {
+	clocktest.BenchmarkClockContract(b,
+		func() clock.Clock { return fake.New(origin) },
+		clocktest.ClockBenchOnNow(bench.PureAllocsWithin[clock.Clock, clock.Instant](0)),
+		clocktest.ClockBenchOnTime(bench.PureAllocsWithin[clock.Clock, time.Time](0)),
+		clocktest.ClockBenchOnUpdate(bench.PureAllocsWithin[clock.Clock, clock.Instant](0)),
+	)
 }
 
-func BenchmarkNow(b *testing.B) {
-	c := fake.New(origin)
-	b.ReportAllocs()
-	for b.Loop() {
-		_ = c.Now()
-	}
-}
-
-func BenchmarkTime(b *testing.B) {
-	c := fake.New(origin)
-	b.ReportAllocs()
-	for b.Loop() {
-		_ = c.Time()
-	}
-}
-
-func BenchmarkUpdate(b *testing.B) {
-	c := fake.New(origin)
-	observed := clock.Instant{Wall: origin.UnixNano(), Logical: 1, Node: 99}
-	b.ReportAllocs()
-	for b.Loop() {
-		_ = c.Update(observed)
-	}
-}
-
-func BenchmarkAdvance(b *testing.B) {
+// BenchmarkFakeAdvance is fake-specific (Advance is not part of
+// the [clock.Clock] interface) so it stays here rather than in the
+// generated contract.
+func BenchmarkFakeAdvance(b *testing.B) {
 	c := fake.New(origin)
 	b.ReportAllocs()
 	for b.Loop() {
