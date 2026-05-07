@@ -4,7 +4,6 @@
 package ecdsap384_test
 
 import (
-	"bytes"
 	"crypto/ecdsa"
 	stded25519 "crypto/ed25519"
 	"crypto/elliptic"
@@ -12,10 +11,12 @@ import (
 	"crypto/sha512"
 	"crypto/x509"
 	"encoding/hex"
-	"errors"
+	"fmt"
 	"io"
 	"math/big"
 	"testing"
+
+	"go.thesmos.sh/testkit"
 
 	"go.thesmos.sh/core/coretest/cryptotest"
 	"go.thesmos.sh/core/crypto"
@@ -36,9 +37,7 @@ func stdlibSign(tb testing.TB, priv *ecdsa.PrivateKey) func([]byte) []byte {
 	return func(msg []byte) []byte {
 		digest := sha512.Sum384(msg)
 		sig, err := ecdsa.SignASN1(stdrand.Reader, priv, digest[:])
-		if err != nil {
-			tb.Fatalf("stdlib ecdsa.SignASN1: %v", err)
-		}
+		testkit.NoError(tb, err, "stdlib ecdsa.SignASN1")
 		return sig
 	}
 }
@@ -66,9 +65,7 @@ func stdlibVerify(pub, msg, sig []byte) bool {
 func mustSigner(tb testing.TB, fix cryptotest.ECDSAP384Fixture) *signecdsa.Signer {
 	tb.Helper()
 	s, err := signecdsa.New(fix.StdlibPriv)
-	if err != nil {
-		tb.Fatalf("ecdsap384.New from fixture: %v", err)
-	}
+	testkit.NoError(tb, err, "ecdsap384.New from fixture")
 	return s
 }
 
@@ -163,12 +160,11 @@ func TestStreamingImplemented(t *testing.T) {
 	t.Parallel()
 	signer := mustSigner(t, cryptotest.NewECDSAP384Sample())
 
-	if _, ok := any(signer).(sign.StreamingSigner); !ok {
-		t.Fatal("ECDSA P-384 Signer must implement sign.StreamingSigner")
-	}
-	if _, ok := any(signer.Verifier).(sign.StreamingVerifier); !ok {
-		t.Fatal("ECDSA P-384 Verifier must implement sign.StreamingVerifier")
-	}
+	_, isStreamSigner := any(signer).(sign.StreamingSigner)
+	testkit.True(t, isStreamSigner, "ECDSA P-384 Signer must implement sign.StreamingSigner")
+
+	_, isStreamVerifier := any(signer.Verifier).(sign.StreamingVerifier)
+	testkit.True(t, isStreamVerifier, "ECDSA P-384 Verifier must implement sign.StreamingVerifier")
 }
 
 func TestNewVerifier(t *testing.T) {
@@ -177,21 +173,15 @@ func TestNewVerifier(t *testing.T) {
 	t.Run("rejects nil public key", func(t *testing.T) {
 		t.Parallel()
 		_, err := signecdsa.NewVerifier(nil)
-		if !errors.Is(err, signecdsa.ErrNilKey) {
-			t.Fatalf("got %v, want ErrNilKey", err)
-		}
+		testkit.ErrorIs(t, err, signecdsa.ErrNilKey, "nil pub must return ErrNilKey")
 	})
 
 	t.Run("rejects non-P-384 curve", func(t *testing.T) {
 		t.Parallel()
 		priv, err := ecdsa.GenerateKey(elliptic.P256(), randReader{r: seeded.New(rand.Seed(1))})
-		if err != nil {
-			t.Fatalf("GenerateKey(P-256): %v", err)
-		}
+		testkit.NoError(t, err, "GenerateKey(P-256)")
 		_, verr := signecdsa.NewVerifier(&priv.PublicKey)
-		if !errors.Is(verr, signecdsa.ErrWrongCurve) {
-			t.Fatalf("got %v, want ErrWrongCurve", verr)
-		}
+		testkit.ErrorIs(t, verr, signecdsa.ErrWrongCurve, "P-256 pub must return ErrWrongCurve")
 	})
 
 	t.Run("rejects off-curve point (failure surfaces from KeyIDFromPub)", func(t *testing.T) {
@@ -205,9 +195,7 @@ func TestNewVerifier(t *testing.T) {
 			Y:     big.NewInt(2),
 		}
 		_, err := signecdsa.NewVerifier(pub)
-		if !errors.Is(err, signecdsa.ErrOffCurve) {
-			t.Fatalf("got %v, want ErrOffCurve", err)
-		}
+		testkit.ErrorIs(t, err, signecdsa.ErrOffCurve, "off-curve point must return ErrOffCurve")
 	})
 }
 
@@ -218,15 +206,9 @@ func TestNewVerifierFromPKIX(t *testing.T) {
 		t.Parallel()
 		fix := cryptotest.NewECDSAP384Sample()
 		v, err := signecdsa.NewVerifierFromPKIX(fix.PublicKey)
-		if err != nil {
-			t.Fatalf("NewVerifierFromPKIX: %v", err)
-		}
-		if !bytes.Equal(v.PublicKey(), fix.PublicKey) {
-			t.Fatal("PublicKey round-trip mismatch")
-		}
-		if v.KeyID() != fix.KeyID {
-			t.Fatal("KeyID round-trip mismatch")
-		}
+		testkit.NoError(t, err, "NewVerifierFromPKIX")
+		testkit.Equal(t, v.PublicKey(), fix.PublicKey, "PublicKey round-trip must preserve bytes")
+		testkit.Equal(t, v.KeyID(), fix.KeyID, "KeyID round-trip must preserve identity")
 	})
 
 	t.Run("rejects malformed bytes", func(t *testing.T) {
@@ -234,9 +216,8 @@ func TestNewVerifierFromPKIX(t *testing.T) {
 		cases := [][]byte{nil, {}, {0x00}, []byte("not asn.1 der at all")}
 		for _, c := range cases {
 			_, err := signecdsa.NewVerifierFromPKIX(c)
-			if !errors.Is(err, signecdsa.ErrInvalidPublicKey) {
-				t.Fatalf("len %d: got %v, want ErrInvalidPublicKey", len(c), err)
-			}
+			testkit.ErrorIs(t, err, signecdsa.ErrInvalidPublicKey,
+				fmt.Sprintf("len %d malformed bytes must return ErrInvalidPublicKey", len(c)))
 		}
 	})
 
@@ -244,25 +225,19 @@ func TestNewVerifierFromPKIX(t *testing.T) {
 		t.Parallel()
 		pubBytes := buildEd25519PKIX(t)
 		_, verr := signecdsa.NewVerifierFromPKIX(pubBytes)
-		if !errors.Is(verr, signecdsa.ErrInvalidPublicKey) {
-			t.Fatalf("got %v, want ErrInvalidPublicKey", verr)
-		}
+		testkit.ErrorIs(t, verr, signecdsa.ErrInvalidPublicKey,
+			"Ed25519 PKIX must return ErrInvalidPublicKey")
 	})
 
 	t.Run("rejects PKIX of a non-P-384 key", func(t *testing.T) {
 		t.Parallel()
 		priv, err := ecdsa.GenerateKey(elliptic.P256(), randReader{r: seeded.New(rand.Seed(1))})
-		if err != nil {
-			t.Fatalf("GenerateKey(P-256): %v", err)
-		}
+		testkit.NoError(t, err, "GenerateKey(P-256)")
 		pkix, err := x509.MarshalPKIXPublicKey(&priv.PublicKey)
-		if err != nil {
-			t.Fatalf("MarshalPKIX: %v", err)
-		}
+		testkit.NoError(t, err, "MarshalPKIX")
 		_, verr := signecdsa.NewVerifierFromPKIX(pkix)
-		if !errors.Is(verr, signecdsa.ErrWrongCurve) {
-			t.Fatalf("got %v, want ErrWrongCurve", verr)
-		}
+		testkit.ErrorIs(t, verr, signecdsa.ErrWrongCurve,
+			"P-256 PKIX must return ErrWrongCurve")
 	})
 
 	t.Run("defensive copy: caller may mutate source after construction", func(t *testing.T) {
@@ -270,16 +245,13 @@ func TestNewVerifierFromPKIX(t *testing.T) {
 		fix := cryptotest.NewECDSAP384Sample()
 		src := append([]byte(nil), fix.PublicKey...)
 		v, err := signecdsa.NewVerifierFromPKIX(src)
-		if err != nil {
-			t.Fatalf("NewVerifierFromPKIX: %v", err)
-		}
+		testkit.NoError(t, err, "NewVerifierFromPKIX")
 		want := append([]byte(nil), src...)
 		for i := range src {
 			src[i] = 0
 		}
-		if !bytes.Equal(v.PublicKey(), want) {
-			t.Fatal("Verifier aliases the caller's PKIX buffer")
-		}
+		testkit.Equal(t, v.PublicKey(), want,
+			"Verifier must hold a defensive copy — caller mutation must not leak")
 	})
 }
 
@@ -289,21 +261,16 @@ func TestNew(t *testing.T) {
 	t.Run("rejects nil private key", func(t *testing.T) {
 		t.Parallel()
 		_, err := signecdsa.New(nil)
-		if !errors.Is(err, signecdsa.ErrNilKey) {
-			t.Fatalf("got %v, want ErrNilKey", err)
-		}
+		testkit.ErrorIs(t, err, signecdsa.ErrNilKey, "nil priv must return ErrNilKey")
 	})
 
 	t.Run("rejects non-P-384 private key", func(t *testing.T) {
 		t.Parallel()
 		priv, err := ecdsa.GenerateKey(elliptic.P256(), randReader{r: seeded.New(rand.Seed(1))})
-		if err != nil {
-			t.Fatalf("GenerateKey(P-256): %v", err)
-		}
+		testkit.NoError(t, err, "GenerateKey(P-256)")
 		_, nerr := signecdsa.New(priv)
-		if !errors.Is(nerr, signecdsa.ErrWrongCurve) {
-			t.Fatalf("got %v, want ErrWrongCurve", nerr)
-		}
+		testkit.ErrorIs(t, nerr, signecdsa.ErrWrongCurve,
+			"P-256 priv must return ErrWrongCurve")
 	})
 }
 
@@ -313,16 +280,11 @@ func TestGenerate(t *testing.T) {
 	t.Run("successive calls produce different keypairs", func(t *testing.T) {
 		t.Parallel()
 		a, err := signecdsa.Generate()
-		if err != nil {
-			t.Fatalf("Generate (a): %v", err)
-		}
+		testkit.NoError(t, err, "Generate (a)")
 		b, err := signecdsa.Generate()
-		if err != nil {
-			t.Fatalf("Generate (b): %v", err)
-		}
-		if bytes.Equal(a.PublicKey(), b.PublicKey()) {
-			t.Fatal("successive Generate calls produced identical keypairs — entropy collision is astronomical")
-		}
+		testkit.NoError(t, err, "Generate (b)")
+		testkit.NotEqual(t, a.PublicKey(), b.PublicKey(),
+			"successive Generate calls must produce distinct keypairs (entropy collision is astronomical)")
 	})
 
 	// NOTE: Go 1.26's [crypto/ecdsa.GenerateKey] ignores the
@@ -350,13 +312,9 @@ func TestKeyIDStability(t *testing.T) {
 		}
 		const wantHex = "8c2eb3e0b8d6cc2a197a52c92860f7b1"
 		got, err := signecdsa.KeyIDFromPub(pub)
-		if err != nil {
-			t.Fatalf("KeyIDFromPub(G): %v", err)
-		}
-		gotHex := hex.EncodeToString(got[:])
-		if gotHex != wantHex {
-			t.Fatalf("KeyID encoding drift:\n got=%s\nwant=%s", gotHex, wantHex)
-		}
+		testkit.NoError(t, err, "KeyIDFromPub(G)")
+		testkit.Equal(t, hex.EncodeToString(got[:]), wantHex,
+			"KeyID encoding must match SEC 1 + SHA-256[:16]")
 	})
 
 	t.Run("rejects off-curve point", func(t *testing.T) {
@@ -367,9 +325,7 @@ func TestKeyIDStability(t *testing.T) {
 			Y:     big.NewInt(2),
 		}
 		_, err := signecdsa.KeyIDFromPub(pub)
-		if !errors.Is(err, signecdsa.ErrOffCurve) {
-			t.Fatalf("got %v, want ErrOffCurve", err)
-		}
+		testkit.ErrorIs(t, err, signecdsa.ErrOffCurve, "off-curve point must return ErrOffCurve")
 	})
 }
 
@@ -390,12 +346,8 @@ var _ io.Reader = randReader{}
 func buildEd25519PKIX(t *testing.T) []byte {
 	t.Helper()
 	pub, _, err := stded25519.GenerateKey(randReader{r: seeded.New(rand.Seed(1))})
-	if err != nil {
-		t.Fatalf("ed25519 GenerateKey: %v", err)
-	}
+	testkit.NoError(t, err, "ed25519 GenerateKey")
 	out, err := x509.MarshalPKIXPublicKey(pub)
-	if err != nil {
-		t.Fatalf("MarshalPKIX: %v", err)
-	}
+	testkit.NoError(t, err, "MarshalPKIX")
 	return out
 }

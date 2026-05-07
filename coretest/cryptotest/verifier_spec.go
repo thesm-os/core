@@ -7,6 +7,8 @@ import (
 	"bytes"
 	"testing"
 
+	"go.thesmos.sh/testkit"
+
 	"go.thesmos.sh/core/crypto"
 	"go.thesmos.sh/core/crypto/sign"
 )
@@ -51,39 +53,30 @@ func VerifierContractAssertions(sample VerifierSample) []VerifierOption {
 		// --- Algorithm / KeyID / PublicKey stability ---
 
 		VerifierCustom("Algorithm is stable across calls", func(t *testing.T, v sign.Verifier) {
-			first := v.Algorithm()
-			second := v.Algorithm()
-			if first != second {
-				t.Fatalf("Algorithm changed between calls: %q -> %q", first, second)
-			}
+			testkit.Equal(t, v.Algorithm(), v.Algorithm(),
+				"Algorithm must be stable across consecutive calls")
 		}),
 
 		VerifierCustom("KeyID is stable across calls", func(t *testing.T, v sign.Verifier) {
-			first := v.KeyID()
-			second := v.KeyID()
-			if first != second {
-				t.Fatalf("KeyID changed between calls: %x -> %x", first, second)
-			}
+			testkit.Equal(t, v.KeyID(), v.KeyID(),
+				"KeyID must be stable across consecutive calls")
 		}),
 
 		VerifierCustom("PublicKey returns equal bytes across calls", func(t *testing.T, v sign.Verifier) {
-			if !bytes.Equal(v.PublicKey(), v.PublicKey()) {
-				t.Fatal("PublicKey returned different bytes across calls")
-			}
+			testkit.Equal(t, v.PublicKey(), v.PublicKey(),
+				"PublicKey must return equal bytes across consecutive calls")
 		}),
 
 		// --- Verify length rejection (works without a sample) ---
 
 		VerifierCustom("Verify rejects nil signature", func(t *testing.T, v sign.Verifier) {
-			if v.Verify([]byte("any"), nil) {
-				t.Fatal("Verify accepted a nil signature")
-			}
+			testkit.False(t, v.Verify([]byte("any"), nil),
+				"Verify must reject a nil signature")
 		}),
 
 		VerifierCustom("Verify rejects empty signature", func(t *testing.T, v sign.Verifier) {
-			if v.Verify([]byte("any"), []byte{}) {
-				t.Fatal("Verify accepted an empty signature")
-			}
+			testkit.False(t, v.Verify([]byte("any"), []byte{}),
+				"Verify must reject an empty signature")
 		}),
 	)
 
@@ -94,17 +87,15 @@ func VerifierContractAssertions(sample VerifierSample) []VerifierOption {
 	// Sample-driven subtests: round-trip and tamper rejection.
 	return append(opts,
 		VerifierCustom("Verify accepts canonical signature", func(t *testing.T, v sign.Verifier) {
-			if !v.Verify(sample.Message, sample.Signature) {
-				t.Fatal("Verify rejected the canonical (msg, sig) sample")
-			}
+			testkit.True(t, v.Verify(sample.Message, sample.Signature),
+				"Verify must accept the canonical (msg, sig) sample")
 		}),
 
 		VerifierCustom("Verify rejects flipped signature bit", func(t *testing.T, v sign.Verifier) {
 			tampered := bytes.Clone(sample.Signature)
 			tampered[0] ^= 0x01
-			if v.Verify(sample.Message, tampered) {
-				t.Fatal("Verify accepted a tampered signature")
-			}
+			testkit.False(t, v.Verify(sample.Message, tampered),
+				"Verify must reject a tampered signature")
 		}),
 
 		VerifierCustom("Verify rejects flipped message bit", func(t *testing.T, v sign.Verifier) {
@@ -113,9 +104,8 @@ func VerifierContractAssertions(sample VerifierSample) []VerifierOption {
 			}
 			tampered := bytes.Clone(sample.Message)
 			tampered[0] ^= 0x01
-			if v.Verify(tampered, sample.Signature) {
-				t.Fatal("Verify accepted a signature over a tampered message")
-			}
+			testkit.False(t, v.Verify(tampered, sample.Signature),
+				"Verify must reject a signature over a tampered message")
 		}),
 	)
 }
@@ -124,9 +114,7 @@ func VerifierContractAssertions(sample VerifierSample) []VerifierOption {
 // returns the expected long-term cross-build algorithm name.
 func VerifierAlgorithmAssertion(want crypto.Algorithm) VerifierOption {
 	return VerifierCustom("Algorithm matches", func(t *testing.T, v sign.Verifier) {
-		if got := v.Algorithm(); got != want {
-			t.Fatalf("Algorithm: got %q, want %q", got, want)
-		}
+		testkit.Equal(t, v.Algorithm(), want, "Algorithm must match expected name")
 	})
 }
 
@@ -135,9 +123,7 @@ func VerifierAlgorithmAssertion(want crypto.Algorithm) VerifierOption {
 // public key.
 func VerifierKeyIDAssertion(want sign.KeyID) VerifierOption {
 	return VerifierCustom("KeyID matches", func(t *testing.T, v sign.Verifier) {
-		if got := v.KeyID(); got != want {
-			t.Fatalf("KeyID: got %x, want %x", got, want)
-		}
+		testkit.Equal(t, v.KeyID(), want, "KeyID must match expected identifier")
 	})
 }
 
@@ -147,9 +133,8 @@ func VerifierKeyIDAssertion(want sign.KeyID) VerifierOption {
 // the verifier's fixed public key.
 func VerifierAcceptsAssertion(sample VerifierSample) VerifierOption {
 	return VerifierCustom("Verify accepts sample", func(t *testing.T, v sign.Verifier) {
-		if !v.Verify(sample.Message, sample.Signature) {
-			t.Fatal("Verify rejected the supplied (msg, sig) sample")
-		}
+		testkit.True(t, v.Verify(sample.Message, sample.Signature),
+			"Verify must accept the supplied (msg, sig) sample")
 	})
 }
 
@@ -162,8 +147,7 @@ func VerifierCrossStdlibAssertion(stdlibSign func(msg []byte) []byte) VerifierOp
 	return VerifierCustom("Verify accepts stdlib-produced signature", func(t *testing.T, v sign.Verifier) {
 		msg := []byte("the quick brown fox jumps over the lazy dog")
 		sig := stdlibSign(msg)
-		if !v.Verify(msg, sig) {
-			t.Fatal("Verify rejected a stdlib-produced signature for the same key")
-		}
+		testkit.True(t, v.Verify(msg, sig),
+			"Verify must accept a stdlib-produced signature for the same key")
 	})
 }

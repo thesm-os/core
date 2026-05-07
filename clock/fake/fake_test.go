@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"go.thesmos.sh/testkit"
 	"go.thesmos.sh/testkit/bench"
 
 	"go.thesmos.sh/core/clock"
@@ -66,9 +67,8 @@ func TestNow(t *testing.T) {
 	t.Run("returns origin Wall on first call", func(t *testing.T) {
 		t.Parallel()
 		c := fake.New(origin)
-		if got := c.Now().Wall; got != origin.UnixNano() {
-			t.Fatalf("Wall: got %d, want %d", got, origin.UnixNano())
-		}
+		testkit.Equal(t, c.Now().Wall, origin.UnixNano(),
+			"first Now().Wall must equal origin")
 	})
 
 	t.Run("logical increments per call between advances", func(t *testing.T) {
@@ -76,18 +76,15 @@ func TestNow(t *testing.T) {
 		c := fake.New(origin)
 		first := c.Now()
 		second := c.Now()
-		if second.Logical != first.Logical+1 {
-			t.Fatalf("Logical: got %d, want %d", second.Logical, first.Logical+1)
-		}
+		testkit.Equal(t, second.Logical, first.Logical+1,
+			"Logical must increment by exactly 1 per Now call")
 	})
 
 	t.Run("NewWithNode tags every instant with the configured node", func(t *testing.T) {
 		t.Parallel()
 		const node = clock.NodeID(7)
 		c := fake.NewWithNode(origin, node)
-		if got := c.Now().Node; got != node {
-			t.Fatalf("Node: got %d, want %d", got, node)
-		}
+		testkit.Equal(t, c.Now().Node, node, "Node must equal the configured value")
 	})
 }
 
@@ -97,9 +94,7 @@ func TestTime(t *testing.T) {
 	t.Run("returns the configured origin", func(t *testing.T) {
 		t.Parallel()
 		c := fake.New(origin)
-		if got := c.Time(); !got.Equal(origin) {
-			t.Fatalf("Time: got %v, want %v", got, origin)
-		}
+		testkit.True(t, c.Time().Equal(origin), "Time() must equal the configured origin")
 	})
 
 	t.Run("advances the HLC state per call", func(t *testing.T) {
@@ -109,9 +104,8 @@ func TestTime(t *testing.T) {
 		c.Time() // logical=2
 		// Next Now() bumps logical to 3, confirming Time
 		// advanced HLC state on each prior call.
-		if got := c.Now().Logical; got != 3 {
-			t.Fatalf("Logical: got %d, want 3 (Time must advance HLC state per Clock contract)", got)
-		}
+		testkit.Equal(t, c.Now().Logical, uint32(3),
+			"Logical must equal 3 after two Time() calls — Time must advance HLC state per Clock contract")
 	})
 }
 
@@ -123,9 +117,7 @@ func TestAdvance(t *testing.T) {
 		c := fake.New(origin)
 		c.Advance(5 * time.Second)
 		want := origin.Add(5 * time.Second)
-		if got := c.Time(); !got.Equal(want) {
-			t.Fatalf("Time: got %v, want %v", got, want)
-		}
+		testkit.True(t, c.Time().Equal(want), "Time() must equal origin + 5s")
 	})
 
 	t.Run("accumulates across calls", func(t *testing.T) {
@@ -134,9 +126,8 @@ func TestAdvance(t *testing.T) {
 		c.Advance(3 * time.Second)
 		c.Advance(2 * time.Second)
 		want := origin.Add(5 * time.Second)
-		if got := c.Time(); !got.Equal(want) {
-			t.Fatalf("Time: got %v, want %v", got, want)
-		}
+		testkit.True(t, c.Time().Equal(want),
+			"Time() must equal origin + 5s after accumulated Advance calls")
 	})
 
 	t.Run("non-positive duration leaves time and logical unchanged", func(t *testing.T) {
@@ -151,12 +142,10 @@ func TestAdvance(t *testing.T) {
 			c.Now() // logical=2
 			c.Advance(d)
 			got := c.Now() // logical=3 if Advance was a no-op
-			if got.Wall != origin.UnixNano() {
-				t.Fatalf("Wall: got %d, want %d (d=%v)", got.Wall, origin.UnixNano(), d)
-			}
-			if got.Logical != 3 {
-				t.Fatalf("Logical: got %d, want 3 (d=%v should not reset)", got.Logical, d)
-			}
+			testkit.Equal(t, got.Wall, origin.UnixNano(),
+				"Wall must equal origin after non-positive Advance")
+			testkit.Equal(t, got.Logical, uint32(3),
+				"Logical must not reset after non-positive Advance")
 		}
 	})
 
@@ -166,9 +155,8 @@ func TestAdvance(t *testing.T) {
 		c.Now()
 		c.Now()
 		c.Advance(time.Second)
-		if got := c.Now().Logical; got != 1 {
-			t.Fatalf("Logical: got %d, want 1 after advance", got)
-		}
+		testkit.Equal(t, c.Now().Logical, uint32(1),
+			"Logical must reset to 1 after Wall advances")
 	})
 }
 
@@ -178,9 +166,7 @@ func TestSet(t *testing.T) {
 	target := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
 	c := fake.New(origin)
 	c.Set(target)
-	if got := c.Time(); !got.Equal(target) {
-		t.Fatalf("Time: got %v, want %v", got, target)
-	}
+	testkit.True(t, c.Time().Equal(target), "Time() must equal the Set target")
 }
 
 func TestUpdate(t *testing.T) {
@@ -191,12 +177,10 @@ func TestUpdate(t *testing.T) {
 		c := fake.New(origin)
 		// Observed wall is in 1970; local origin (2026) is ahead.
 		got := c.Update(clock.Instant{Wall: 1, Logical: 99, Node: 7})
-		if got.Wall != origin.UnixNano() {
-			t.Fatalf("Wall: got %d, want %d", got.Wall, origin.UnixNano())
-		}
-		if got.Logical != 1 {
-			t.Fatalf("Logical: got %d, want 1", got.Logical)
-		}
+		testkit.Equal(t, got.Wall, origin.UnixNano(),
+			"Wall must remain at origin (local ahead of observed)")
+		testkit.Equal(t, got.Logical, uint32(1),
+			"Logical must equal 1 (local fresh, observed-Logical ignored when local Wall ahead)")
 	})
 
 	t.Run("observed ahead adopts observed.Logical+1", func(t *testing.T) {
@@ -204,12 +188,8 @@ func TestUpdate(t *testing.T) {
 		c := fake.New(origin)
 		future := origin.Add(time.Hour).UnixNano()
 		got := c.Update(clock.Instant{Wall: future, Logical: 7, Node: 9})
-		if got.Wall != future {
-			t.Fatalf("Wall: got %d, want %d", got.Wall, future)
-		}
-		if got.Logical != 8 {
-			t.Fatalf("Logical: got %d, want 8", got.Logical)
-		}
+		testkit.Equal(t, got.Wall, future, "Wall must adopt observed.Wall when ahead")
+		testkit.Equal(t, got.Logical, uint32(8), "Logical must be observed.Logical+1")
 	})
 
 	t.Run("tied wall, observed logical higher: take observed+1", func(t *testing.T) {
@@ -218,9 +198,8 @@ func TestUpdate(t *testing.T) {
 		c.Now() // local logical = 1
 		got := c.Update(clock.Instant{Wall: origin.UnixNano(), Logical: 5, Node: 9})
 		// max(1, 5) + 1 = 6.
-		if got.Logical != 6 {
-			t.Fatalf("Logical: got %d, want 6", got.Logical)
-		}
+		testkit.Equal(t, got.Logical, uint32(6),
+			"Logical must equal max(local=1, observed=5)+1")
 	})
 
 	t.Run("tied wall, local logical higher: take local+1", func(t *testing.T) {
@@ -233,9 +212,8 @@ func TestUpdate(t *testing.T) {
 		}
 		got := c.Update(clock.Instant{Wall: origin.UnixNano(), Logical: 3, Node: 9})
 		// max(10, 3) + 1 = 11.
-		if got.Logical != 11 {
-			t.Fatalf("Logical: got %d, want 11", got.Logical)
-		}
+		testkit.Equal(t, got.Logical, uint32(11),
+			"Logical must equal max(local=10, observed=3)+1")
 	})
 }
 

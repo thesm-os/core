@@ -4,12 +4,12 @@
 package sha3_test
 
 import (
-	"bytes"
 	"crypto/sha3"
 	"encoding/hex"
 	"hash"
 	"testing"
 
+	"go.thesmos.sh/testkit"
 	"go.thesmos.sh/testkit/bench"
 
 	"go.thesmos.sh/core/coretest/cryptotest"
@@ -229,9 +229,7 @@ func TestSHA3_256FIPSVectors(t *testing.T) {
 			t.Parallel()
 			got := cryptosha3.New256().Hash(tc.input)
 			want := mustDecodeHex(t, tc.wantHex)
-			if !bytes.Equal(got.Bytes(), want) {
-				t.Fatalf("Hash: got %x, want %s", got.Bytes(), tc.wantHex)
-			}
+			testkit.Equal(t, got.Bytes(), want, "Hash output must byte-match FIPS vector")
 		})
 	}
 }
@@ -258,9 +256,7 @@ func TestSHA3_384FIPSVectors(t *testing.T) {
 			t.Parallel()
 			got := cryptosha3.New384().Hash(tc.input)
 			want := mustDecodeHex(t, tc.wantHex)
-			if !bytes.Equal(got.Bytes(), want) {
-				t.Fatalf("Hash: got %x, want %s", got.Bytes(), tc.wantHex)
-			}
+			testkit.Equal(t, got.Bytes(), want, "Hash output must byte-match FIPS vector")
 		})
 	}
 }
@@ -287,9 +283,7 @@ func TestSHA3_512FIPSVectors(t *testing.T) {
 			t.Parallel()
 			got := cryptosha3.New512().Hash(tc.input)
 			want := mustDecodeHex(t, tc.wantHex)
-			if !bytes.Equal(got.Bytes(), want) {
-				t.Fatalf("Hash: got %x, want %s", got.Bytes(), tc.wantHex)
-			}
+			testkit.Equal(t, got.Bytes(), want, "Hash output must byte-match FIPS vector")
 		})
 	}
 }
@@ -299,8 +293,6 @@ func TestSHA3_512FIPSVectors(t *testing.T) {
 func mustDecodeHex(t *testing.T, s string) []byte {
 	t.Helper()
 	b, err := hex.DecodeString(s)
-	if err != nil {
-		t.Fatalf("invalid hex fixture: %v", err)
-	}
+	testkit.NoError(t, err, "decode hex fixture")
 	return b
 }

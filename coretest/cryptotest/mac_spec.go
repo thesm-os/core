@@ -7,6 +7,8 @@ import (
 	"bytes"
 	"testing"
 
+	"go.thesmos.sh/testkit"
+
 	"go.thesmos.sh/core/crypto"
 )
 
@@ -32,21 +34,18 @@ func MACContractAssertions() []MACOption {
 
 		MACCustom("Sign is deterministic", func(t *testing.T, m crypto.MAC) {
 			input := []byte("the quick brown fox jumps over the lazy dog")
-			if !m.Sign(input).Equal(m.Sign(input)) {
-				t.Fatal("Sign(x) != Sign(x): not deterministic for fixed key")
-			}
+			testkit.True(t, m.Sign(input).Equal(m.Sign(input)),
+				"Sign(x) must equal Sign(x) — Sign must be deterministic for fixed key")
 		}),
 
 		MACCustom("Sign of nil equals Sign of empty slice", func(t *testing.T, m crypto.MAC) {
-			if !m.Sign(nil).Equal(m.Sign([]byte{})) {
-				t.Fatal("nil and empty slice produced different MACs")
-			}
+			testkit.True(t, m.Sign(nil).Equal(m.Sign([]byte{})),
+				"Sign(nil) must equal Sign([]byte{})")
 		}),
 
 		MACCustom("distinct inputs produce distinct MACs", func(t *testing.T, m crypto.MAC) {
-			if m.Sign([]byte("alpha")).Equal(m.Sign([]byte("beta"))) {
-				t.Fatal("distinct inputs collided")
-			}
+			testkit.False(t, m.Sign([]byte("alpha")).Equal(m.Sign([]byte("beta"))),
+				"distinct inputs must not collide to the same MAC")
 		}),
 
 		// --- Verify ---
@@ -54,9 +53,8 @@ func MACContractAssertions() []MACOption {
 		MACCustom("Verify accepts canonical MAC", func(t *testing.T, m crypto.MAC) {
 			data := []byte("verify-me")
 			canonical := m.Sign(data)
-			if !m.Verify(data, canonical.Bytes()) {
-				t.Fatal("Verify rejected the canonical MAC")
-			}
+			testkit.True(t, m.Verify(data, canonical.Bytes()),
+				"Verify must accept the canonical MAC")
 		}),
 
 		MACCustom("Verify rejects tampered MAC", func(t *testing.T, m crypto.MAC) {
@@ -64,31 +62,26 @@ func MACContractAssertions() []MACOption {
 			canonical := m.Sign(data).Bytes()
 			tampered := bytes.Clone(canonical)
 			tampered[0] ^= 0x01
-			if m.Verify(data, tampered) {
-				t.Fatal("Verify accepted a tampered MAC")
-			}
+			testkit.False(t, m.Verify(data, tampered),
+				"Verify must reject a tampered MAC")
 		}),
 
 		MACCustom("Verify rejects expected of wrong length", func(t *testing.T, m crypto.MAC) {
 			data := []byte("verify-me")
-			if m.Verify(data, make([]byte, 16)) {
-				t.Fatal("Verify accepted a short expected slice")
-			}
-			if m.Verify(data, make([]byte, m.Size()*2)) {
-				t.Fatal("Verify accepted an over-long expected slice")
-			}
-			if m.Verify(data, nil) {
-				t.Fatal("Verify accepted nil expected")
-			}
+			testkit.False(t, m.Verify(data, make([]byte, 16)),
+				"Verify must reject a short expected slice")
+			testkit.False(t, m.Verify(data, make([]byte, m.Size()*2)),
+				"Verify must reject an over-long expected slice")
+			testkit.False(t, m.Verify(data, nil),
+				"Verify must reject a nil expected slice")
 		}),
 
 		// --- Size ---
 
 		MACCustom("Sign output size matches Size()", func(t *testing.T, m crypto.MAC) {
 			got := m.Sign([]byte("any"))
-			if got.Size() != m.Size() {
-				t.Fatalf("Sign output size %d != reported Size() %d", got.Size(), m.Size())
-			}
+			testkit.Equal(t, got.Size(), m.Size(),
+				"Sign output size must match the Hasher's reported Size()")
 		}),
 
 		// --- Stream ---
@@ -98,9 +91,8 @@ func MACContractAssertions() []MACOption {
 			s := m.NewStream()
 			defer s.Close()
 			_, _ = s.Write(payload)
-			if !s.Sum().Equal(m.Sign(payload)) {
-				t.Fatal("Stream Write+Sum != Sign over the same bytes")
-			}
+			testkit.True(t, s.Sum().Equal(m.Sign(payload)),
+				"Stream Write+Sum must equal Sign over the same bytes")
 		}),
 
 		MACCustom("Stream split-Write equals single Write of concatenation", func(t *testing.T, m crypto.MAC) {
@@ -110,9 +102,8 @@ func MACContractAssertions() []MACOption {
 			_, _ = s.Write(full[:10])
 			_, _ = s.Write(full[10:25])
 			_, _ = s.Write(full[25:])
-			if !s.Sum().Equal(m.Sign(full)) {
-				t.Fatal("split Stream != single Sign of concatenation")
-			}
+			testkit.True(t, s.Sum().Equal(m.Sign(full)),
+				"split-Write must equal Sign over the concatenation")
 		}),
 
 		MACCustom("Stream Reset clears state but preserves key", func(t *testing.T, m crypto.MAC) {
@@ -122,9 +113,8 @@ func MACContractAssertions() []MACOption {
 			_ = s.Sum()
 			s.Reset()
 			_, _ = s.Write([]byte("second"))
-			if !s.Sum().Equal(m.Sign([]byte("second"))) {
-				t.Fatal("Stream after Reset != Sign(\"second\")")
-			}
+			testkit.True(t, s.Sum().Equal(m.Sign([]byte("second"))),
+				`Stream after Reset must equal Sign("second")`)
 		}),
 
 		MACCustom("Stream Sum is non-resetting (snapshot only)", func(t *testing.T, m crypto.MAC) {
@@ -133,9 +123,8 @@ func MACContractAssertions() []MACOption {
 			_, _ = s.Write([]byte("ab"))
 			_ = s.Sum() // snapshot
 			_, _ = s.Write([]byte("c"))
-			if !s.Sum().Equal(m.Sign([]byte("abc"))) {
-				t.Fatal("Sum reset state — should snapshot only")
-			}
+			testkit.True(t, s.Sum().Equal(m.Sign([]byte("abc"))),
+				"Sum must snapshot only — must not reset state")
 		}),
 	}
 }
@@ -144,9 +133,7 @@ func MACContractAssertions() []MACOption {
 // stable build-local identifier.
 func MACIDAssertion(want crypto.ID) MACOption {
 	return MACCustom("ID matches", func(t *testing.T, m crypto.MAC) {
-		if got := m.ID(); got != want {
-			t.Fatalf("ID: got %v, want %v", got, want)
-		}
+		testkit.Equal(t, m.ID(), want, "ID must match expected build-local identifier")
 	})
 }
 
@@ -154,9 +141,7 @@ func MACIDAssertion(want crypto.ID) MACOption {
 // the expected long-term cross-build algorithm name.
 func MACAlgorithmAssertion(want crypto.Algorithm) MACOption {
 	return MACCustom("Algorithm matches", func(t *testing.T, m crypto.MAC) {
-		if got := m.Algorithm(); got != want {
-			t.Fatalf("Algorithm: got %q, want %q", got, want)
-		}
+		testkit.Equal(t, m.Algorithm(), want, "Algorithm must match expected name")
 	})
 }
 
@@ -164,9 +149,7 @@ func MACAlgorithmAssertion(want crypto.Algorithm) MACOption {
 // expected output size in bytes.
 func MACSizeAssertion(want int) MACOption {
 	return MACCustom("Size matches", func(t *testing.T, m crypto.MAC) {
-		if got := m.Size(); got != want {
-			t.Fatalf("Size: got %d, want %d", got, want)
-		}
+		testkit.Equal(t, m.Size(), want, "Size must match expected output size")
 	})
 }
 
@@ -190,12 +173,8 @@ func MACCrossStdlibAssertion(stdlibSign func([]byte) []byte) MACOption {
 			{"4 KiB 0xDD", bytes.Repeat([]byte{0xDD}, 4096)},
 		}
 		for _, tc := range cases {
-			got := m.Sign(tc.data).Bytes()
-			want := stdlibSign(tc.data)
-			if !bytes.Equal(got, want) {
-				t.Fatalf("%s: cross-stdlib mismatch:\n got=%x\nwant=%x",
-					tc.name, got, want)
-			}
+			testkit.Equal(t, m.Sign(tc.data).Bytes(), stdlibSign(tc.data),
+				tc.name+": Sign output must byte-match stdlib")
 		}
 	})
 }

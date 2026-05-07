@@ -4,12 +4,12 @@
 package sha512_test
 
 import (
-	"bytes"
 	"crypto/sha512"
 	"encoding/hex"
 	"hash"
 	"testing"
 
+	"go.thesmos.sh/testkit"
 	"go.thesmos.sh/testkit/bench"
 
 	"go.thesmos.sh/core/coretest/cryptotest"
@@ -174,9 +174,7 @@ func TestSHA384FIPSVectors(t *testing.T) {
 			t.Parallel()
 			got := cryptosha512.New384().Hash(tc.input)
 			want := mustDecodeHex(t, tc.wantHex)
-			if !bytes.Equal(got.Bytes(), want) {
-				t.Fatalf("Hash: got %x, want %s", got.Bytes(), tc.wantHex)
-			}
+			testkit.Equal(t, got.Bytes(), want, "Hash output must byte-match FIPS vector")
 		})
 	}
 }
@@ -211,9 +209,7 @@ func TestSHA512FIPSVectors(t *testing.T) {
 			t.Parallel()
 			got := cryptosha512.New512().Hash(tc.input)
 			want := mustDecodeHex(t, tc.wantHex)
-			if !bytes.Equal(got.Bytes(), want) {
-				t.Fatalf("Hash: got %x, want %s", got.Bytes(), tc.wantHex)
-			}
+			testkit.Equal(t, got.Bytes(), want, "Hash output must byte-match FIPS vector")
 		})
 	}
 }
@@ -223,8 +219,6 @@ func TestSHA512FIPSVectors(t *testing.T) {
 func mustDecodeHex(t *testing.T, s string) []byte {
 	t.Helper()
 	b, err := hex.DecodeString(s)
-	if err != nil {
-		t.Fatalf("invalid hex fixture: %v", err)
-	}
+	testkit.NoError(t, err, "decode hex fixture")
 	return b
 }

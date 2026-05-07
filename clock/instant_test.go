@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"go.thesmos.sh/testkit"
+
 	"go.thesmos.sh/core/clock"
 )
 
@@ -26,9 +28,7 @@ func TestInstantIsZero(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			if got := tc.in.IsZero(); got != tc.want {
-				t.Fatalf("IsZero: got %v, want %v", got, tc.want)
-			}
+			testkit.Equal(t, tc.in.IsZero(), tc.want, "IsZero must match expectation")
 		})
 	}
 }
@@ -51,18 +51,10 @@ func TestInstantOrdering(t *testing.T) {
 	for name, p := range pairs {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			if got := p.a.Compare(p.b); got != -1 {
-				t.Fatalf("a.Compare(b): got %d, want -1", got)
-			}
-			if got := p.b.Compare(p.a); got != 1 {
-				t.Fatalf("b.Compare(a): got %d, want 1", got)
-			}
-			if !p.a.HappensBefore(p.b) {
-				t.Fatal("a must happen before b")
-			}
-			if p.b.HappensBefore(p.a) {
-				t.Fatal("b must not happen before a")
-			}
+			testkit.Equal(t, p.a.Compare(p.b), -1, "a.Compare(b) must equal -1")
+			testkit.Equal(t, p.b.Compare(p.a), 1, "b.Compare(a) must equal 1")
+			testkit.True(t, p.a.HappensBefore(p.b), "a must happen before b")
+			testkit.False(t, p.b.HappensBefore(p.a), "b must not happen before a")
 		})
 	}
 
@@ -73,12 +65,8 @@ func TestInstantOrdering(t *testing.T) {
 		// to static analysis.
 		x := clock.Instant{Wall: 1, Logical: 1, Node: 1}
 		y := clock.Instant{Wall: 1, Logical: 1, Node: 1}
-		if got := x.Compare(y); got != 0 {
-			t.Fatalf("Compare on equal instants: got %d, want 0", got)
-		}
-		if x.HappensBefore(y) {
-			t.Fatal("equal instants must not be ordered")
-		}
+		testkit.Equal(t, x.Compare(y), 0, "Compare on equal instants must return 0")
+		testkit.False(t, x.HappensBefore(y), "equal instants must not be ordered")
 	})
 }
 
@@ -89,39 +77,25 @@ func TestInstantArithmetic(t *testing.T) {
 		t.Parallel()
 		a := clock.Instant{Wall: 2_000_000_000}
 		b := clock.Instant{Wall: 1_000_000_000}
-		if got := a.Sub(b); got != time.Second {
-			t.Fatalf("a.Sub(b): got %v, want %v", got, time.Second)
-		}
-		if got := b.Sub(a); got != -time.Second {
-			t.Fatalf("b.Sub(a): got %v, want %v", got, -time.Second)
-		}
+		testkit.Equal(t, a.Sub(b), time.Second, "a.Sub(b) must equal 1 second")
+		testkit.Equal(t, b.Sub(a), -time.Second, "b.Sub(a) must equal -1 second")
 	})
 
 	t.Run("Add advances Wall, preserves Logical and Node", func(t *testing.T) {
 		t.Parallel()
 		in := clock.Instant{Wall: 1_000_000_000, Logical: 5, Node: 3}
 		got := in.Add(time.Second)
-		if got.Wall != 2_000_000_000 {
-			t.Fatalf("Wall: got %d, want 2_000_000_000", got.Wall)
-		}
-		if got.Logical != 5 {
-			t.Fatalf("Logical: got %d, want 5", got.Logical)
-		}
-		if got.Node != 3 {
-			t.Fatalf("Node: got %d, want 3", got.Node)
-		}
+		testkit.Equal(t, got.Wall, int64(2_000_000_000), "Wall must advance by 1 second")
+		testkit.Equal(t, got.Logical, uint32(5), "Logical must be preserved")
+		testkit.Equal(t, got.Node, clock.NodeID(3), "Node must be preserved")
 	})
 
 	t.Run("Time returns Wall as UTC time.Time", func(t *testing.T) {
 		t.Parallel()
 		want := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
 		got := clock.Instant{Wall: want.UnixNano()}.Time()
-		if !got.Equal(want) {
-			t.Fatalf("Time: got %v, want %v", got, want)
-		}
-		if got.Location() != time.UTC {
-			t.Fatalf("Time location: got %v, want UTC", got.Location())
-		}
+		testkit.True(t, got.Equal(want), "Time must equal expected wall instant")
+		testkit.True(t, got.Location() == time.UTC, "Time location must be UTC")
 	})
 }
 
@@ -135,76 +109,48 @@ func TestInstantRange(t *testing.T) {
 	t.Run("zero range contains every Instant", func(t *testing.T) {
 		t.Parallel()
 		var r clock.InstantRange
-		if !r.IsZero() {
-			t.Fatal("zero range must report IsZero")
-		}
+		testkit.True(t, r.IsZero(), "zero range must report IsZero")
 		for _, i := range []clock.Instant{{}, a, b} {
-			if !r.Contains(i) {
-				t.Fatalf("zero range must contain %+v", i)
-			}
+			testkit.True(t, r.Contains(i), "zero range must contain every Instant")
 		}
 	})
 
 	t.Run("bounded range respects half-open semantics", func(t *testing.T) {
 		t.Parallel()
 		r := clock.InstantRange{Since: a, Until: c}
-		if r.IsZero() {
-			t.Fatal("bounded range must not report IsZero")
-		}
+		testkit.False(t, r.IsZero(), "bounded range must not report IsZero")
 		// Below Since.
-		if r.Contains(clock.Instant{Wall: 50}) {
-			t.Fatal("must not contain instant below Since")
-		}
+		testkit.False(t, r.Contains(clock.Instant{Wall: 50}),
+			"must not contain instant below Since")
 		// At Since (inclusive).
-		if !r.Contains(a) {
-			t.Fatal("must contain Since (inclusive)")
-		}
+		testkit.True(t, r.Contains(a), "must contain Since (inclusive)")
 		// Strictly inside.
-		if !r.Contains(b) {
-			t.Fatal("must contain instant strictly inside")
-		}
+		testkit.True(t, r.Contains(b), "must contain instant strictly inside")
 		// At Until (exclusive).
-		if r.Contains(c) {
-			t.Fatal("must not contain Until (exclusive)")
-		}
+		testkit.False(t, r.Contains(c), "must not contain Until (exclusive)")
 		// Above Until.
-		if r.Contains(clock.Instant{Wall: 400}) {
-			t.Fatal("must not contain instant above Until")
-		}
+		testkit.False(t, r.Contains(clock.Instant{Wall: 400}),
+			"must not contain instant above Until")
 	})
 
 	t.Run("zero Since means no lower bound", func(t *testing.T) {
 		t.Parallel()
 		r := clock.InstantRange{Until: b}
-		if r.IsZero() {
-			t.Fatal("range with Until set must not report IsZero")
-		}
-		if !r.Contains(clock.Instant{Wall: -1}) {
-			t.Fatal("must accept arbitrarily-low instants when Since is zero")
-		}
-		if !r.Contains(a) {
-			t.Fatal("must contain a (below Until)")
-		}
-		if r.Contains(b) {
-			t.Fatal("must not contain Until itself")
-		}
+		testkit.False(t, r.IsZero(), "range with Until set must not report IsZero")
+		testkit.True(t, r.Contains(clock.Instant{Wall: -1}),
+			"must accept arbitrarily-low instants when Since is zero")
+		testkit.True(t, r.Contains(a), "must contain a (below Until)")
+		testkit.False(t, r.Contains(b), "must not contain Until itself")
 	})
 
 	t.Run("zero Until means no upper bound", func(t *testing.T) {
 		t.Parallel()
 		r := clock.InstantRange{Since: b}
-		if r.IsZero() {
-			t.Fatal("range with Since set must not report IsZero")
-		}
-		if r.Contains(a) {
-			t.Fatal("must not contain instant below Since")
-		}
-		if !r.Contains(b) {
-			t.Fatal("must contain Since")
-		}
-		if !r.Contains(c) {
-			t.Fatal("must accept arbitrarily-high instants when Until is zero")
-		}
+		testkit.False(t, r.IsZero(), "range with Since set must not report IsZero")
+		testkit.False(t, r.Contains(a), "must not contain instant below Since")
+		testkit.True(t, r.Contains(b), "must contain Since")
+		testkit.True(t, r.Contains(c),
+			"must accept arbitrarily-high instants when Until is zero")
 	})
 }
 
@@ -232,9 +178,8 @@ func TestZeroAlloc(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := testing.AllocsPerRun(100, tc.fn); got != 0 {
-				t.Fatalf("%s: %v allocs/op, want 0", tc.name, got)
-			}
+			testkit.Equal(t, testing.AllocsPerRun(100, tc.fn), float64(0),
+				tc.name+" must be zero-alloc")
 		})
 	}
 }

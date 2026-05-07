@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"go.thesmos.sh/testkit"
 	"go.thesmos.sh/testkit/bench"
 
 	"go.thesmos.sh/core/clock"
@@ -68,9 +69,7 @@ func TestNow(t *testing.T) {
 		const node = clock.NodeID(42)
 		c := hlc.New(node)
 		for range 100 {
-			if got := c.Now().Node; got != node {
-				t.Fatalf("Node: got %d, want %d", got, node)
-			}
+			testkit.Equal(t, c.Now().Node, node, "Node must equal the configured value")
 		}
 	})
 
@@ -84,12 +83,8 @@ func TestNow(t *testing.T) {
 		}
 		now = 200
 		got := c.Now()
-		if got.Wall != 200 {
-			t.Fatalf("Wall: got %d, want 200", got.Wall)
-		}
-		if got.Logical != 1 {
-			t.Fatalf("Logical: got %d, want 1 (reset on wall advance)", got.Logical)
-		}
+		testkit.Equal(t, got.Wall, int64(200), "Wall must equal new source value")
+		testkit.Equal(t, got.Logical, uint32(1), "Logical must reset to 1 on wall advance")
 	})
 
 	t.Run("logical increments when wall does not advance", func(t *testing.T) {
@@ -98,12 +93,10 @@ func TestNow(t *testing.T) {
 		c := hlc.NewWithSource(clock.NodeID(1), fixedSource(&now))
 		first := c.Now()
 		second := c.Now()
-		if first.Wall != second.Wall {
-			t.Fatalf("Wall changed unexpectedly: %d → %d", first.Wall, second.Wall)
-		}
-		if second.Logical != first.Logical+1 {
-			t.Fatalf("Logical: got %d, want %d", second.Logical, first.Logical+1)
-		}
+		testkit.Equal(t, second.Wall, first.Wall,
+			"Wall must not change between calls when source is fixed")
+		testkit.Equal(t, second.Logical, first.Logical+1,
+			"Logical must increment by 1 when Wall does not advance")
 	})
 }
 
@@ -172,15 +165,9 @@ func TestUpdate(t *testing.T) {
 			}
 			now = tc.physicalWall
 			got := c.Update(clock.Instant{Wall: tc.observedWall, Logical: tc.observedLog, Node: 99})
-			if got.Wall != tc.wantWall {
-				t.Fatalf("Wall: got %d, want %d", got.Wall, tc.wantWall)
-			}
-			if got.Logical != tc.wantLogical {
-				t.Fatalf("Logical: got %d, want %d", got.Logical, tc.wantLogical)
-			}
-			if got.Node != clock.NodeID(1) {
-				t.Fatalf("Node: got %d, want 1", got.Node)
-			}
+			testkit.Equal(t, got.Wall, tc.wantWall, "Wall must match expected scenario value")
+			testkit.Equal(t, got.Logical, tc.wantLogical, "Logical must match expected scenario value")
+			testkit.Equal(t, got.Node, clock.NodeID(1), "Node must remain local node")
 		})
 	}
 }

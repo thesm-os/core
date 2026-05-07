@@ -6,6 +6,8 @@ package cryptotest
 import (
 	"testing"
 
+	"go.thesmos.sh/testkit"
+
 	"go.thesmos.sh/core/crypto/sign"
 )
 
@@ -29,16 +31,11 @@ func SignStreamContractAssertions(verify func(msg, sig []byte) bool) []SignStrea
 	return []SignStreamOption{
 		SignStreamCustom("Write+SignAndReset round-trips via verify", func(t *testing.T, s sign.SignStream) {
 			payload := []byte("the quick brown fox jumps over the lazy dog")
-			if _, err := s.Write(payload); err != nil {
-				t.Fatalf("Write: %v", err)
-			}
+			_, err := s.Write(payload)
+			testkit.NoError(t, err, "Write")
 			sig, err := s.SignAndReset()
-			if err != nil {
-				t.Fatalf("SignAndReset: %v", err)
-			}
-			if !verify(payload, sig) {
-				t.Fatal("verify rejected stream signature")
-			}
+			testkit.NoError(t, err, "SignAndReset")
+			testkit.True(t, verify(payload, sig), "verify must accept the stream signature")
 		}),
 
 		SignStreamCustom("split-Write equals single Write of concatenation", func(t *testing.T, s sign.SignStream) {
@@ -47,28 +44,20 @@ func SignStreamContractAssertions(verify func(msg, sig []byte) bool) []SignStrea
 			_, _ = s.Write(full[10:25])
 			_, _ = s.Write(full[25:])
 			sig, err := s.SignAndReset()
-			if err != nil {
-				t.Fatalf("SignAndReset: %v", err)
-			}
-			if !verify(full, sig) {
-				t.Fatal("verify rejected split-Write signature")
-			}
+			testkit.NoError(t, err, "SignAndReset")
+			testkit.True(t, verify(full, sig), "verify must accept the split-Write signature")
 		}),
 
 		SignStreamCustom("SignAndReset clears state",
 			func(t *testing.T, s sign.SignStream) {
 				_, _ = s.Write([]byte("first"))
-				if _, err := s.SignAndReset(); err != nil {
-					t.Fatalf("SignAndReset(first): %v", err)
-				}
+				_, err := s.SignAndReset()
+				testkit.NoError(t, err, "SignAndReset(first)")
 				_, _ = s.Write([]byte("second"))
 				sig, err := s.SignAndReset()
-				if err != nil {
-					t.Fatalf("SignAndReset(second): %v", err)
-				}
-				if !verify([]byte("second"), sig) {
-					t.Fatal("verify rejected the post-reset signature — state leaked")
-				}
+				testkit.NoError(t, err, "SignAndReset(second)")
+				testkit.True(t, verify([]byte("second"), sig),
+					"verify must accept the post-reset signature — state must not leak")
 			}),
 
 		SignStreamCustom("Write of nil and empty slice are no-ops", func(t *testing.T, s sign.SignStream) {
@@ -77,12 +66,9 @@ func SignStreamContractAssertions(verify func(msg, sig []byte) bool) []SignStrea
 			_, _ = s.Write([]byte{})
 			_, _ = s.Write(payload)
 			sig, err := s.SignAndReset()
-			if err != nil {
-				t.Fatalf("SignAndReset: %v", err)
-			}
-			if !verify(payload, sig) {
-				t.Fatal("verify rejected signature after nil/empty interleave")
-			}
+			testkit.NoError(t, err, "SignAndReset")
+			testkit.True(t, verify(payload, sig),
+				"verify must accept the signature after nil/empty interleave")
 		}),
 	}
 }

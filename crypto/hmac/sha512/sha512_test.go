@@ -4,13 +4,13 @@
 package sha512_test
 
 import (
-	"bytes"
 	stdhmac "crypto/hmac"
 	stdsha512 "crypto/sha512"
 	"encoding/hex"
 	"hash"
 	"testing"
 
+	"go.thesmos.sh/testkit"
 	"go.thesmos.sh/testkit/bench"
 
 	"go.thesmos.sh/core/coretest/cryptotest"
@@ -253,9 +253,7 @@ func TestSHA384RFC4231Vectors(t *testing.T) {
 			data := mustDecodeHex(t, tc.dataHex)
 			want := mustDecodeHex(t, tc.want384)
 			got := hmacsha512.NewSHA384(key).Sign(data)
-			if !bytes.Equal(got.Bytes(), want) {
-				t.Fatalf("Sign:\n got=%x\nwant=%x", got.Bytes(), want)
-			}
+			testkit.Equal(t, got.Bytes(), want, "Sign output must byte-match RFC 4231 vector")
 		})
 	}
 }
@@ -270,9 +268,7 @@ func TestSHA512RFC4231Vectors(t *testing.T) {
 			data := mustDecodeHex(t, tc.dataHex)
 			want := mustDecodeHex(t, tc.want512)
 			got := hmacsha512.NewSHA512(key).Sign(data)
-			if !bytes.Equal(got.Bytes(), want) {
-				t.Fatalf("Sign:\n got=%x\nwant=%x", got.Bytes(), want)
-			}
+			testkit.Equal(t, got.Bytes(), want, "Sign output must byte-match RFC 4231 vector")
 		})
 	}
 }
@@ -282,8 +278,6 @@ func TestSHA512RFC4231Vectors(t *testing.T) {
 func mustDecodeHex(t *testing.T, s string) []byte {
 	t.Helper()
 	b, err := hex.DecodeString(s)
-	if err != nil {
-		t.Fatalf("invalid hex fixture: %v", err)
-	}
+	testkit.NoError(t, err, "decode hex fixture")
 	return b
 }

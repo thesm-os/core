@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"go.thesmos.sh/testkit"
+
 	"go.thesmos.sh/core/clock"
 )
 
@@ -22,34 +24,30 @@ func ClockContractAssertions() []ClockOption {
 		// --- Now ---
 
 		ClockCustom("Now is HLC-monotone", func(t *testing.T, c clock.Clock) {
-			prev := c.Now()
+			samples := make([]clock.Instant, 0, 100)
 			for range 100 {
-				next := c.Now()
-				if !prev.HappensBefore(next) {
-					t.Fatalf("non-monotone: %+v then %+v", prev, next)
-				}
-				prev = next
+				samples = append(samples, c.Now())
 			}
+			testkit.Sequence(t, samples,
+				func(earlier, later clock.Instant) bool { return earlier.HappensBefore(later) },
+				"Now must be HLC-monotone — every adjacent pair must satisfy HappensBefore")
 		}),
 
 		ClockCustom("Now wall is non-zero", func(t *testing.T, c clock.Clock) {
-			if got := c.Now().Wall; got == 0 {
-				t.Fatal("Now().Wall must be non-zero")
-			}
+			testkit.NotEqual(t, c.Now().Wall, int64(0), "Now().Wall must be non-zero")
 		}),
 
 		// --- Time ---
 
 		ClockCustom("Time returns UTC", func(t *testing.T, c clock.Clock) {
-			if got := c.Time().Location(); got != time.UTC {
-				t.Fatalf("Location: got %v, want UTC", got)
-			}
+			// time.Location has unexported fields go-cmp can't
+			// traverse; pointer equality is sufficient since
+			// time.UTC is a package-level singleton.
+			testkit.True(t, c.Time().Location() == time.UTC, "Time() must be UTC-located")
 		}),
 
 		ClockCustom("Time is non-zero", func(t *testing.T, c clock.Clock) {
-			if c.Time().IsZero() {
-				t.Fatal("Time() must be non-zero")
-			}
+			testkit.False(t, c.Time().IsZero(), "Time() must be non-zero")
 		}),
 
 		// --- Update ---
@@ -57,17 +55,14 @@ func ClockContractAssertions() []ClockOption {
 		ClockCustom("Update is causal", func(t *testing.T, c clock.Clock) {
 			observed := NewInstantPeer().WithLogical(99).Build()
 			got := c.Update(observed)
-			if !observed.HappensBefore(got) {
-				t.Fatalf("Update must return instant causally after observed: got=%+v obs=%+v", got, observed)
-			}
+			testkit.True(t, observed.HappensBefore(got),
+				"Update result must be causally after observed instant")
 		}),
 
 		ClockCustom("Update preserves local node", func(t *testing.T, c clock.Clock) {
 			localNode := c.Now().Node
 			got := c.Update(NewInstantPeer().WithLogical(1).Build())
-			if got.Node != localNode {
-				t.Fatalf("Update must preserve local node: got %d, want %d", got.Node, localNode)
-			}
+			testkit.Equal(t, got.Node, localNode, "Update must preserve local node ID")
 		}),
 
 		ClockCustom("Update advances past future-Wall observation", func(t *testing.T, c clock.Clock) {
@@ -81,13 +76,10 @@ func ClockContractAssertions() []ClockOption {
 				WithWall(now.Wall + int64(time.Hour)).
 				Build()
 			got := c.Update(future)
-			if got.Wall < future.Wall {
-				t.Fatalf("Update must adopt future-Wall observation: got Wall=%d, observed Wall=%d",
-					got.Wall, future.Wall)
-			}
-			if !future.HappensBefore(got) {
-				t.Fatalf("Update result must be causally after a future-Wall observation: got=%+v obs=%+v", got, future)
-			}
+			testkit.True(t, got.Wall >= future.Wall,
+				"Update must adopt future-Wall observation")
+			testkit.True(t, future.HappensBefore(got),
+				"Update result must be causally after a future-Wall observation")
 		}),
 
 		// --- Cross-method ---
@@ -100,9 +92,8 @@ func ClockContractAssertions() []ClockOption {
 			t1 := c.Time().UnixNano()
 			now := c.Now()
 			t2 := c.Time().UnixNano()
-			if now.Wall < t1 || now.Wall > t2 {
-				t.Fatalf("Now().Wall %d not bracketed by Time() reads [%d, %d]", now.Wall, t1, t2)
-			}
+			testkit.True(t, now.Wall >= t1 && now.Wall <= t2,
+				"Now().Wall must fall within bracketing Time() reads")
 		}),
 
 		// --- NewTimer ---

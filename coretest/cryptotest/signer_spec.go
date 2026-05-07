@@ -5,7 +5,10 @@ package cryptotest
 
 import (
 	"bytes"
+	"fmt"
 	"testing"
+
+	"go.thesmos.sh/testkit"
 
 	"go.thesmos.sh/core/crypto"
 	"go.thesmos.sh/core/crypto/sign"
@@ -37,25 +40,18 @@ func SignerContractAssertions() []SignerOption {
 		// --- Algorithm / KeyID / PublicKey stability ---
 
 		SignerCustom("Algorithm is stable across calls", func(t *testing.T, s sign.Signer) {
-			first := s.Algorithm()
-			second := s.Algorithm()
-			if first != second {
-				t.Fatalf("Algorithm changed between calls: %q -> %q", first, second)
-			}
+			testkit.Equal(t, s.Algorithm(), s.Algorithm(),
+				"Algorithm must be stable across consecutive calls")
 		}),
 
 		SignerCustom("KeyID is stable across calls", func(t *testing.T, s sign.Signer) {
-			first := s.KeyID()
-			second := s.KeyID()
-			if first != second {
-				t.Fatalf("KeyID changed between calls: %x -> %x", first, second)
-			}
+			testkit.Equal(t, s.KeyID(), s.KeyID(),
+				"KeyID must be stable across consecutive calls")
 		}),
 
 		SignerCustom("PublicKey returns equal bytes across calls", func(t *testing.T, s sign.Signer) {
-			if !bytes.Equal(s.PublicKey(), s.PublicKey()) {
-				t.Fatal("PublicKey returned different bytes across calls")
-			}
+			testkit.Equal(t, s.PublicKey(), s.PublicKey(),
+				"PublicKey must return equal bytes across consecutive calls")
 		}),
 
 		// --- Sign + Verify round-trip ---
@@ -63,25 +59,18 @@ func SignerContractAssertions() []SignerOption {
 		SignerCustom("Sign then Verify accepts canonical signature", func(t *testing.T, s sign.Signer) {
 			msg := []byte("the quick brown fox jumps over the lazy dog")
 			sig, err := s.Sign(msg)
-			if err != nil {
-				t.Fatalf("Sign: %v", err)
-			}
-			if !s.Verify(msg, sig) {
-				t.Fatal("Verify rejected the canonical signature")
-			}
+			testkit.NoError(t, err, "Sign")
+			testkit.True(t, s.Verify(msg, sig),
+				"Verify must accept the canonical signature")
 		}),
 
 		SignerCustom("Sign over empty message round-trips", func(t *testing.T, s sign.Signer) {
 			sig, err := s.Sign(nil)
-			if err != nil {
-				t.Fatalf("Sign(nil): %v", err)
-			}
-			if !s.Verify(nil, sig) {
-				t.Fatal("Verify rejected a signature over nil message")
-			}
-			if !s.Verify([]byte{}, sig) {
-				t.Fatal("nil and empty-slice messages must verify identically")
-			}
+			testkit.NoError(t, err, "Sign(nil)")
+			testkit.True(t, s.Verify(nil, sig),
+				"Verify must accept a signature over nil message")
+			testkit.True(t, s.Verify([]byte{}, sig),
+				"nil and empty-slice messages must verify identically")
 		}),
 
 		// --- Tamper rejection ---
@@ -89,27 +78,21 @@ func SignerContractAssertions() []SignerOption {
 		SignerCustom("Verify rejects flipped signature bit", func(t *testing.T, s sign.Signer) {
 			msg := []byte("verify-me")
 			sig, err := s.Sign(msg)
-			if err != nil {
-				t.Fatalf("Sign: %v", err)
-			}
+			testkit.NoError(t, err, "Sign")
 			tampered := bytes.Clone(sig)
 			tampered[0] ^= 0x01
-			if s.Verify(msg, tampered) {
-				t.Fatal("Verify accepted a tampered signature")
-			}
+			testkit.False(t, s.Verify(msg, tampered),
+				"Verify must reject a tampered signature")
 		}),
 
 		SignerCustom("Verify rejects flipped message bit", func(t *testing.T, s sign.Signer) {
 			msg := []byte("verify-me")
 			sig, err := s.Sign(msg)
-			if err != nil {
-				t.Fatalf("Sign: %v", err)
-			}
+			testkit.NoError(t, err, "Sign")
 			tampered := bytes.Clone(msg)
 			tampered[0] ^= 0x01
-			if s.Verify(tampered, sig) {
-				t.Fatal("Verify accepted a signature over a tampered message")
-			}
+			testkit.False(t, s.Verify(tampered, sig),
+				"Verify must reject a signature over a tampered message")
 		}),
 
 		// --- Verify length guarding ---
@@ -118,9 +101,8 @@ func SignerContractAssertions() []SignerOption {
 			msg := []byte("any")
 			cases := [][]byte{nil, {}, make([]byte, 1), make([]byte, 16)}
 			for _, c := range cases {
-				if s.Verify(msg, c) {
-					t.Fatalf("Verify accepted a %d-byte signature", len(c))
-				}
+				testkit.False(t, s.Verify(msg, c),
+					fmt.Sprintf("Verify must reject a %d-byte signature", len(c)))
 			}
 		}),
 	}
@@ -130,9 +112,7 @@ func SignerContractAssertions() []SignerOption {
 // returns the expected long-term cross-build algorithm name.
 func SignerAlgorithmAssertion(want crypto.Algorithm) SignerOption {
 	return SignerCustom("Algorithm matches", func(t *testing.T, s sign.Signer) {
-		if got := s.Algorithm(); got != want {
-			t.Fatalf("Algorithm: got %q, want %q", got, want)
-		}
+		testkit.Equal(t, s.Algorithm(), want, "Algorithm must match expected name")
 	})
 }
 
@@ -140,9 +120,7 @@ func SignerAlgorithmAssertion(want crypto.Algorithm) SignerOption {
 // expected canonical key identifier for the test's fixed key.
 func SignerKeyIDAssertion(want sign.KeyID) SignerOption {
 	return SignerCustom("KeyID matches", func(t *testing.T, s sign.Signer) {
-		if got := s.KeyID(); got != want {
-			t.Fatalf("KeyID: got %x, want %x", got, want)
-		}
+		testkit.Equal(t, s.KeyID(), want, "KeyID must match expected identifier")
 	})
 }
 
@@ -161,12 +139,9 @@ func SignerCrossStdlibVerifyAssertion(stdlibVerify func(pub, msg, sig []byte) bo
 	return SignerCustom("stdlib accepts SUT-produced signature", func(t *testing.T, s sign.Signer) {
 		msg := []byte("payload that round-trips between our seam and stdlib")
 		sig, err := s.Sign(msg)
-		if err != nil {
-			t.Fatalf("Sign: %v", err)
-		}
-		if !stdlibVerify(s.PublicKey(), msg, sig) {
-			t.Fatal("stdlib rejected SUT-produced signature")
-		}
+		testkit.NoError(t, err, "Sign")
+		testkit.True(t, stdlibVerify(s.PublicKey(), msg, sig),
+			"stdlib must accept the SUT-produced signature")
 	})
 }
 
@@ -179,8 +154,7 @@ func SignerCrossStdlibSignAssertion(stdlibSign func(msg []byte) []byte) SignerOp
 	return SignerCustom("SUT accepts stdlib-produced signature", func(t *testing.T, s sign.Signer) {
 		msg := []byte("payload from the stdlib direction")
 		sig := stdlibSign(msg)
-		if !s.Verify(msg, sig) {
-			t.Fatal("SUT rejected stdlib-produced signature")
-		}
+		testkit.True(t, s.Verify(msg, sig),
+			"SUT must accept the stdlib-produced signature")
 	})
 }

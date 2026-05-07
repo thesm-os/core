@@ -7,6 +7,8 @@ import (
 	"bytes"
 	"testing"
 
+	"go.thesmos.sh/testkit"
+
 	"go.thesmos.sh/core/crypto"
 )
 
@@ -30,21 +32,18 @@ func HasherContractAssertions() []HasherOption {
 
 		HasherCustom("Hash is deterministic", func(t *testing.T, h crypto.Hasher) {
 			input := []byte("the quick brown fox jumps over the lazy dog")
-			if !h.Hash(input).Equal(h.Hash(input)) {
-				t.Fatal("Hash(x) != Hash(x): not deterministic")
-			}
+			testkit.True(t, h.Hash(input).Equal(h.Hash(input)),
+				"Hash(x) must equal Hash(x) — Hash must be deterministic")
 		}),
 
 		HasherCustom("Hash of nil equals Hash of empty slice", func(t *testing.T, h crypto.Hasher) {
-			if !h.Hash(nil).Equal(h.Hash([]byte{})) {
-				t.Fatal("nil and empty slice produced different digests")
-			}
+			testkit.True(t, h.Hash(nil).Equal(h.Hash([]byte{})),
+				"Hash(nil) must equal Hash([]byte{})")
 		}),
 
 		HasherCustom("distinct inputs produce distinct digests", func(t *testing.T, h crypto.Hasher) {
-			if h.Hash([]byte("alpha")).Equal(h.Hash([]byte("beta"))) {
-				t.Fatal("distinct inputs collided")
-			}
+			testkit.False(t, h.Hash([]byte("alpha")).Equal(h.Hash([]byte("beta"))),
+				"distinct inputs must not collide to the same digest")
 		}),
 
 		// --- Combine ---
@@ -52,17 +51,15 @@ func HasherContractAssertions() []HasherOption {
 		HasherCustom("Combine is deterministic", func(t *testing.T, h crypto.Hasher) {
 			a := h.Hash([]byte("a"))
 			b := h.Hash([]byte("b"))
-			if !h.Combine(a, b).Equal(h.Combine(a, b)) {
-				t.Fatal("Combine(a,b) != Combine(a,b): not deterministic")
-			}
+			testkit.True(t, h.Combine(a, b).Equal(h.Combine(a, b)),
+				"Combine(a,b) must equal Combine(a,b) — Combine must be deterministic")
 		}),
 
 		HasherCustom("Combine is asymmetric", func(t *testing.T, h crypto.Hasher) {
 			a := h.Hash([]byte("a"))
 			b := h.Hash([]byte("b"))
-			if h.Combine(a, b).Equal(h.Combine(b, a)) {
-				t.Fatal("Combine(a,b) == Combine(b,a): unexpectedly symmetric")
-			}
+			testkit.False(t, h.Combine(a, b).Equal(h.Combine(b, a)),
+				"Combine(a,b) must not equal Combine(b,a) — order must matter")
 		}),
 
 		// --- Stream ---
@@ -72,9 +69,8 @@ func HasherContractAssertions() []HasherOption {
 			s := h.NewStream()
 			defer s.Close()
 			_, _ = s.Write(payload)
-			if !s.Sum().Equal(h.Hash(payload)) {
-				t.Fatal("Stream Write+Sum != Hash over the same bytes")
-			}
+			testkit.True(t, s.Sum().Equal(h.Hash(payload)),
+				"Stream Write+Sum must equal Hash over the same bytes")
 		}),
 
 		HasherCustom("Stream split-Write equals single Write of concatenation", func(t *testing.T, h crypto.Hasher) {
@@ -84,9 +80,8 @@ func HasherContractAssertions() []HasherOption {
 			_, _ = s.Write(full[:10])
 			_, _ = s.Write(full[10:25])
 			_, _ = s.Write(full[25:])
-			if !s.Sum().Equal(h.Hash(full)) {
-				t.Fatal("split Stream != single Hash of concatenation")
-			}
+			testkit.True(t, s.Sum().Equal(h.Hash(full)),
+				"split-Write must equal Hash over the concatenation")
 		}),
 
 		HasherCustom("Stream Reset clears state", func(t *testing.T, h crypto.Hasher) {
@@ -96,9 +91,8 @@ func HasherContractAssertions() []HasherOption {
 			_ = s.Sum()
 			s.Reset()
 			_, _ = s.Write([]byte("second"))
-			if !s.Sum().Equal(h.Hash([]byte("second"))) {
-				t.Fatal("Stream after Reset != Hash(\"second\")")
-			}
+			testkit.True(t, s.Sum().Equal(h.Hash([]byte("second"))),
+				`Stream after Reset must equal Hash("second")`)
 		}),
 
 		HasherCustom("Stream Sum is non-resetting (snapshot only)", func(t *testing.T, h crypto.Hasher) {
@@ -107,9 +101,8 @@ func HasherContractAssertions() []HasherOption {
 			_, _ = s.Write([]byte("ab"))
 			_ = s.Sum() // snapshot
 			_, _ = s.Write([]byte("c"))
-			if !s.Sum().Equal(h.Hash([]byte("abc"))) {
-				t.Fatal("Sum reset state — should snapshot only")
-			}
+			testkit.True(t, s.Sum().Equal(h.Hash([]byte("abc"))),
+				`Sum must snapshot only — must not reset state`)
 		}),
 	}
 }
@@ -118,9 +111,7 @@ func HasherContractAssertions() []HasherOption {
 // expected stable build-local identifier.
 func HasherIDAssertion(want crypto.ID) HasherOption {
 	return HasherCustom("ID matches", func(t *testing.T, h crypto.Hasher) {
-		if got := h.ID(); got != want {
-			t.Fatalf("ID: got %v, want %v", got, want)
-		}
+		testkit.Equal(t, h.ID(), want, "ID must match expected build-local identifier")
 	})
 }
 
@@ -128,9 +119,7 @@ func HasherIDAssertion(want crypto.ID) HasherOption {
 // returns the expected long-term cross-build algorithm name.
 func HasherAlgorithmAssertion(want crypto.Algorithm) HasherOption {
 	return HasherCustom("Algorithm matches", func(t *testing.T, h crypto.Hasher) {
-		if got := h.Algorithm(); got != want {
-			t.Fatalf("Algorithm: got %q, want %q", got, want)
-		}
+		testkit.Equal(t, h.Algorithm(), want, "Algorithm must match expected name")
 	})
 }
 
@@ -157,12 +146,8 @@ func HasherCrossStdlibAssertion(stdlib func([]byte) []byte) HasherOption {
 			{"4 KiB 0xAB", bytes.Repeat([]byte{0xAB}, 4096)},
 		}
 		for _, tc := range cases {
-			got := h.Hash(tc.data).Bytes()
-			want := stdlib(tc.data)
-			if !bytes.Equal(got, want) {
-				t.Fatalf("%s: cross-stdlib mismatch:\n got=%x\nwant=%x",
-					tc.name, got, want)
-			}
+			testkit.Equal(t, h.Hash(tc.data).Bytes(), stdlib(tc.data),
+				tc.name+": Hash output must byte-match stdlib")
 		}
 	})
 }
@@ -178,17 +163,12 @@ func HasherCrossStdlibAssertion(stdlib func([]byte) []byte) HasherOption {
 func HasherCombinePanicsOnSizeMismatch(expectedSize int, wrongSizeDigest crypto.Digest) HasherOption {
 	return HasherCustom("Combine panics on size mismatch", func(t *testing.T, h crypto.Hasher) {
 		correct := h.Hash([]byte{}) // canonical correctly-sized digest
-		assertPanic := func(name string, fn func()) {
-			defer func() {
-				if r := recover(); r == nil {
-					t.Fatalf("%s: expected panic, got none", name)
-				}
-			}()
-			fn()
-		}
-		assertPanic("wrong-left", func() { _ = h.Combine(wrongSizeDigest, correct) })
-		assertPanic("wrong-right", func() { _ = h.Combine(correct, wrongSizeDigest) })
-		assertPanic("both-wrong", func() { _ = h.Combine(wrongSizeDigest, wrongSizeDigest) })
+		testkit.Panics(t, func() { _ = h.Combine(wrongSizeDigest, correct) },
+			"Combine(wrong-left, correct) must panic")
+		testkit.Panics(t, func() { _ = h.Combine(correct, wrongSizeDigest) },
+			"Combine(correct, wrong-right) must panic")
+		testkit.Panics(t, func() { _ = h.Combine(wrongSizeDigest, wrongSizeDigest) },
+			"Combine(wrong, wrong) must panic")
 		_ = expectedSize // future use: assert panic message contains size info
 	})
 }

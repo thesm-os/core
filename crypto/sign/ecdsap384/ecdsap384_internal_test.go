@@ -4,13 +4,12 @@
 package ecdsap384
 
 import (
-	"bytes"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	stdrand "crypto/rand"
-	"errors"
-	"strings"
 	"testing"
+
+	"go.thesmos.sh/testkit"
 )
 
 // TestWrapGenerate exercises the error branch of [wrapGenerate]
@@ -24,17 +23,12 @@ func TestWrapGenerate(t *testing.T) {
 
 	t.Run("propagates stdlib error wrapped with package context", func(t *testing.T) {
 		t.Parallel()
-		stdErr := errors.New("entropy source failure")
+		stdErr := testkit.TestError("entropy source failure")
 		_, err := wrapGenerate(nil, stdErr)
-		if err == nil {
-			t.Fatal("wrapGenerate(nil, err) returned nil error")
-		}
-		if !errors.Is(err, stdErr) {
-			t.Fatalf("wrap lost the stdlib cause: got %v, want errors.Is to match", err)
-		}
-		if !strings.Contains(err.Error(), "ecdsap384: generate:") {
-			t.Fatalf("wrap missing package context: %v", err)
-		}
+		testkit.Error(t, err, "wrapGenerate must return non-nil error")
+		testkit.ErrorIs(t, err, stdErr, "wrap must preserve the stdlib cause")
+		testkit.Contains(t, err.Error(), "ecdsap384: generate:",
+			"wrap must include package context")
 	})
 
 	t.Run("success path delegates to New", func(t *testing.T) {
@@ -42,16 +36,10 @@ func TestWrapGenerate(t *testing.T) {
 		// Generate a real keypair via the production path so
 		// New(priv) actually succeeds.
 		priv, err := ecdsa.GenerateKey(elliptic.P384(), stdrand.Reader)
-		if err != nil {
-			t.Fatalf("GenerateKey: %v", err)
-		}
+		testkit.NoError(t, err, "GenerateKey")
 		s, werr := wrapGenerate(priv, nil)
-		if werr != nil {
-			t.Fatalf("wrapGenerate(priv, nil): %v", werr)
-		}
-		if s == nil {
-			t.Fatal("wrapGenerate returned nil signer on success")
-		}
+		testkit.NoError(t, werr, "wrapGenerate(priv, nil)")
+		testkit.True(t, s != nil, "wrapGenerate must return non-nil signer on success")
 	})
 }
 
@@ -62,28 +50,19 @@ func TestWrapSign(t *testing.T) {
 
 	t.Run("propagates stdlib error wrapped with package context", func(t *testing.T) {
 		t.Parallel()
-		stdErr := errors.New("signing failure")
+		stdErr := testkit.TestError("signing failure")
 		_, err := wrapSign(nil, stdErr)
-		if err == nil {
-			t.Fatal("wrapSign(nil, err) returned nil error")
-		}
-		if !errors.Is(err, stdErr) {
-			t.Fatalf("wrap lost the stdlib cause: got %v, want errors.Is to match", err)
-		}
-		if !strings.Contains(err.Error(), "ecdsap384: sign:") {
-			t.Fatalf("wrap missing package context: %v", err)
-		}
+		testkit.Error(t, err, "wrapSign must return non-nil error")
+		testkit.ErrorIs(t, err, stdErr, "wrap must preserve the stdlib cause")
+		testkit.Contains(t, err.Error(), "ecdsap384: sign:",
+			"wrap must include package context")
 	})
 
 	t.Run("success path returns the signature unchanged", func(t *testing.T) {
 		t.Parallel()
 		want := []byte{0x01, 0x02, 0x03}
 		got, err := wrapSign(want, nil)
-		if err != nil {
-			t.Fatalf("wrapSign(sig, nil): %v", err)
-		}
-		if !bytes.Equal(got, want) {
-			t.Fatalf("wrapSign altered the signature: got %x, want %x", got, want)
-		}
+		testkit.NoError(t, err, "wrapSign(sig, nil)")
+		testkit.Equal(t, got, want, "wrapSign must return the signature unchanged on success")
 	})
 }

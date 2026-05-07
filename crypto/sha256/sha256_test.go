@@ -4,12 +4,12 @@
 package sha256_test
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"hash"
 	"testing"
 
+	"go.thesmos.sh/testkit"
 	"go.thesmos.sh/testkit/bench"
 
 	"go.thesmos.sh/core/coretest/cryptotest"
@@ -130,9 +130,7 @@ func TestSHA256FIPSVectors(t *testing.T) {
 			t.Parallel()
 			got := cryptosha256.New().Hash(tc.input)
 			want := mustDecodeHex(t, tc.wantHex)
-			if !bytes.Equal(got.Bytes(), want) {
-				t.Fatalf("Hash: got %x, want %s", got.Bytes(), tc.wantHex)
-			}
+			testkit.Equal(t, got.Bytes(), want, "Hash output must byte-match FIPS vector")
 		})
 	}
 }
@@ -144,12 +142,10 @@ func TestSHA256FIPSVectors(t *testing.T) {
 func TestZeroValueHasher(t *testing.T) {
 	t.Parallel()
 	var z cryptosha256.Hasher
-	if got, want := z.ID(), cryptosha256.New().ID(); got != want {
-		t.Fatalf("zero-value ID: got %v, want %v", got, want)
-	}
-	if got, want := z.Algorithm(), cryptosha256.New().Algorithm(); got != want {
-		t.Fatalf("zero-value Algorithm: got %v, want %v", got, want)
-	}
+	testkit.Equal(t, z.ID(), cryptosha256.New().ID(),
+		"zero-value Hasher must report the same ID as a constructed one")
+	testkit.Equal(t, z.Algorithm(), cryptosha256.New().Algorithm(),
+		"zero-value Hasher must report the same Algorithm as a constructed one")
 }
 
 // --- helpers ---
@@ -157,8 +153,6 @@ func TestZeroValueHasher(t *testing.T) {
 func mustDecodeHex(t *testing.T, s string) []byte {
 	t.Helper()
 	b, err := hex.DecodeString(s)
-	if err != nil {
-		t.Fatalf("invalid hex fixture: %v", err)
-	}
+	testkit.NoError(t, err, "decode hex fixture")
 	return b
 }

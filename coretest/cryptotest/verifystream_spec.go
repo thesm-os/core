@@ -7,6 +7,8 @@ import (
 	"bytes"
 	"testing"
 
+	"go.thesmos.sh/testkit"
+
 	"go.thesmos.sh/core/crypto/sign"
 )
 
@@ -39,12 +41,10 @@ type VerifyStreamSample struct {
 func VerifyStreamContractAssertions(sample VerifyStreamSample) []VerifyStreamOption {
 	return []VerifyStreamOption{
 		VerifyStreamCustom("Write+Verify accepts canonical signature", func(t *testing.T, vs sign.VerifyStream) {
-			if _, err := vs.Write(sample.Message); err != nil {
-				t.Fatalf("Write: %v", err)
-			}
-			if !vs.Verify(sample.Signature) {
-				t.Fatal("Verify rejected the canonical (msg, sig) sample")
-			}
+			_, err := vs.Write(sample.Message)
+			testkit.NoError(t, err, "Write")
+			testkit.True(t, vs.Verify(sample.Signature),
+				"Verify must accept the canonical (msg, sig) sample")
 		}),
 
 		// split-Write needs a fresh stream — VerifyStream is single-use.
@@ -58,34 +58,28 @@ func VerifyStreamContractAssertions(sample VerifyStreamSample) []VerifyStreamOpt
 				mid := len(sample.Message) / 2
 				_, _ = vs.Write(sample.Message[:mid])
 				_, _ = vs.Write(sample.Message[mid:])
-				if !vs.Verify(sample.Signature) {
-					t.Fatal("Verify rejected the canonical signature after split-Write")
-				}
+				testkit.True(t, vs.Verify(sample.Signature),
+					"Verify must accept the canonical signature after split-Write")
 			}),
 
 		VerifyStreamCustom("Verify rejects flipped signature bit", func(t *testing.T, vs sign.VerifyStream) {
 			tampered := bytes.Clone(sample.Signature)
 			tampered[0] ^= 0x01
 			_, _ = vs.Write(sample.Message)
-			if vs.Verify(tampered) {
-				t.Fatal("Verify accepted a tampered signature")
-			}
+			testkit.False(t, vs.Verify(tampered), "Verify must reject a tampered signature")
 		}),
 
 		VerifyStreamCustom("Write of nil and empty slice are no-ops", func(t *testing.T, vs sign.VerifyStream) {
 			_, _ = vs.Write(nil)
 			_, _ = vs.Write(sample.Message)
 			_, _ = vs.Write([]byte{})
-			if !vs.Verify(sample.Signature) {
-				t.Fatal("Verify rejected signature after nil/empty interleave")
-			}
+			testkit.True(t, vs.Verify(sample.Signature),
+				"Verify must accept signature after nil/empty interleave")
 		}),
 
 		VerifyStreamCustom("Verify rejects nil and empty signatures", func(t *testing.T, vs sign.VerifyStream) {
 			_, _ = vs.Write(sample.Message)
-			if vs.Verify(nil) {
-				t.Fatal("Verify accepted a nil signature")
-			}
+			testkit.False(t, vs.Verify(nil), "Verify must reject a nil signature")
 		}),
 	}
 }

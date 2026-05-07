@@ -4,11 +4,13 @@
 package ed25519_test
 
 import (
-	"bytes"
 	stded25519 "crypto/ed25519"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"testing"
+
+	"go.thesmos.sh/testkit"
 
 	"go.thesmos.sh/core/coretest/cryptotest"
 	"go.thesmos.sh/core/crypto"
@@ -40,9 +42,7 @@ func stdlibVerify(pub, msg, sig []byte) bool {
 func mustSigner(tb testing.TB, fix cryptotest.Ed25519Fixture) *signed25519.Signer {
 	tb.Helper()
 	s, err := signed25519.New(fix.StdlibPriv)
-	if err != nil {
-		tb.Fatalf("ed25519.New from fixture: %v", err)
-	}
+	testkit.NoError(tb, err, "ed25519.New from fixture")
 	return s
 }
 
@@ -103,12 +103,11 @@ func TestStreamingNotImplemented(t *testing.T) {
 	t.Parallel()
 	signer := mustSigner(t, cryptotest.NewEd25519Sample())
 
-	if _, ok := any(signer).(sign.StreamingSigner); ok {
-		t.Fatal("Ed25519 Signer must NOT implement sign.StreamingSigner")
-	}
-	if _, ok := any(signer.Verifier).(sign.StreamingVerifier); ok {
-		t.Fatal("Ed25519 Verifier must NOT implement sign.StreamingVerifier")
-	}
+	_, isStreamSigner := any(signer).(sign.StreamingSigner)
+	testkit.False(t, isStreamSigner, "Ed25519 Signer must NOT implement sign.StreamingSigner")
+
+	_, isStreamVerifier := any(signer.Verifier).(sign.StreamingVerifier)
+	testkit.False(t, isStreamVerifier, "Ed25519 Verifier must NOT implement sign.StreamingVerifier")
 }
 
 func TestNewVerifier(t *testing.T) {
@@ -119,9 +118,8 @@ func TestNewVerifier(t *testing.T) {
 		cases := [][]byte{nil, {}, make([]byte, 16), make([]byte, 31), make([]byte, 33), make([]byte, 64)}
 		for _, c := range cases {
 			_, err := signed25519.NewVerifier(stded25519.PublicKey(c))
-			if !errors.Is(err, signed25519.ErrInvalidPublicKeySize) {
-				t.Fatalf("len %d: got %v, want ErrInvalidPublicKeySize", len(c), err)
-			}
+			testkit.ErrorIs(t, err, signed25519.ErrInvalidPublicKeySize,
+				fmt.Sprintf("len %d must be rejected as wrong-size", len(c)))
 		}
 	})
 }
@@ -136,24 +134,20 @@ func TestNewVerifierFromBytes(t *testing.T) {
 			src[i] = byte(i + 1)
 		}
 		v, err := signed25519.NewVerifierFromBytes(src)
-		if err != nil {
-			t.Fatalf("NewVerifierFromBytes: %v", err)
-		}
+		testkit.NoError(t, err, "NewVerifierFromBytes")
 		want := append([]byte(nil), src...)
 		for i := range src {
 			src[i] = 0
 		}
-		if !bytes.Equal(v.PublicKey(), want) {
-			t.Fatal("Verifier aliases the caller's buffer")
-		}
+		testkit.Equal(t, v.PublicKey(), want,
+			"Verifier must hold a defensive copy — caller mutation must not leak")
 	})
 
 	t.Run("rejects wrong-size byte slice", func(t *testing.T) {
 		t.Parallel()
 		_, err := signed25519.NewVerifierFromBytes(make([]byte, 16))
-		if !errors.Is(err, signed25519.ErrInvalidPublicKeySize) {
-			t.Fatalf("got %v, want ErrInvalidPublicKeySize", err)
-		}
+		testkit.ErrorIs(t, err, signed25519.ErrInvalidPublicKeySize,
+			"16-byte slice must be rejected")
 	})
 }
 
@@ -165,9 +159,8 @@ func TestNew(t *testing.T) {
 		cases := [][]byte{nil, {}, make([]byte, 32), make([]byte, 63), make([]byte, 65), make([]byte, 128)}
 		for _, c := range cases {
 			_, err := signed25519.New(stded25519.PrivateKey(c))
-			if !errors.Is(err, signed25519.ErrInvalidPrivateKeySize) {
-				t.Fatalf("len %d: got %v, want ErrInvalidPrivateKeySize", len(c), err)
-			}
+			testkit.ErrorIs(t, err, signed25519.ErrInvalidPrivateKeySize,
+				fmt.Sprintf("len %d must be rejected as wrong-size", len(c)))
 		}
 	})
 
@@ -179,10 +172,9 @@ func TestNew(t *testing.T) {
 		priv := append(stded25519.PrivateKey(nil), fix.StdlibPriv...)
 
 		s, err := signed25519.New(priv)
-		if err != nil {
-			t.Fatalf("New: %v", err)
-		}
-		want, _ := s.Sign(fix.Message)
+		testkit.NoError(t, err, "New from fixture priv copy")
+		want, err := s.Sign(fix.Message)
+		testkit.NoError(t, err, "Sign")
 
 		// Zero the caller's buffer — secure-coding practice. The
 		// Signer must continue producing valid signatures from
@@ -190,10 +182,10 @@ func TestNew(t *testing.T) {
 		for i := range priv {
 			priv[i] = 0
 		}
-		got, _ := s.Sign(fix.Message)
-		if !bytes.Equal(got, want) {
-			t.Fatal("Signer's signature changed after caller zeroed source key — defensive copy missing")
-		}
+		got, err := s.Sign(fix.Message)
+		testkit.NoError(t, err, "Sign after zero")
+		testkit.Equal(t, got, want,
+			"Signer must hold a defensive copy — caller's zeroed key must not affect signatures")
 	})
 }
 
@@ -203,42 +195,29 @@ func TestGenerate(t *testing.T) {
 	t.Run("two seeds produce different keypairs", func(t *testing.T) {
 		t.Parallel()
 		a, err := signed25519.Generate(seeded.New(rand.Seed(1)))
-		if err != nil {
-			t.Fatalf("Generate(seed=1): %v", err)
-		}
+		testkit.NoError(t, err, "Generate(seed=1)")
 		b, err := signed25519.Generate(seeded.New(rand.Seed(2)))
-		if err != nil {
-			t.Fatalf("Generate(seed=2): %v", err)
-		}
-		if bytes.Equal(a.PublicKey(), b.PublicKey()) {
-			t.Fatal("distinct seeds produced identical keypairs")
-		}
+		testkit.NoError(t, err, "Generate(seed=2)")
+		testkit.NotEqual(t, a.PublicKey(), b.PublicKey(),
+			"distinct seeds must produce distinct keypairs")
 	})
 
 	t.Run("propagates entropy-source failure", func(t *testing.T) {
 		t.Parallel()
 		_, err := signed25519.Generate(errRand{})
-		if err == nil {
-			t.Fatal("Generate accepted a failing entropy source")
-		}
+		testkit.Error(t, err, "Generate must reject a failing entropy source")
 	})
 
 	t.Run("deterministic across runs (same seed → same keypair)", func(t *testing.T) {
 		t.Parallel()
 		a, err := signed25519.Generate(seeded.New(rand.Seed(42)))
-		if err != nil {
-			t.Fatalf("Generate: %v", err)
-		}
+		testkit.NoError(t, err, "Generate(seed=42) #1")
 		b, err := signed25519.Generate(seeded.New(rand.Seed(42)))
-		if err != nil {
-			t.Fatalf("Generate: %v", err)
-		}
-		if !bytes.Equal(a.PublicKey(), b.PublicKey()) {
-			t.Fatal("same seed produced different public keys")
-		}
-		if a.KeyID() != b.KeyID() {
-			t.Fatal("same seed produced different KeyIDs")
-		}
+		testkit.NoError(t, err, "Generate(seed=42) #2")
+		testkit.Equal(t, a.PublicKey(), b.PublicKey(),
+			"same seed must produce same public key")
+		testkit.Equal(t, a.KeyID(), b.KeyID(),
+			"same seed must produce same KeyID")
 	})
 }
 
@@ -256,10 +235,8 @@ func TestKeyIDStability(t *testing.T) {
 		pub := stded25519.PublicKey(raw[:])
 		const wantHex = "ae216c2ef5247a3782c135efa279a3e4"
 		got := signed25519.KeyIDFromPub(pub)
-		gotHex := hex.EncodeToString(got[:])
-		if gotHex != wantHex {
-			t.Fatalf("KeyID encoding drift:\n got=%s\nwant=%s", gotHex, wantHex)
-		}
+		testkit.Equal(t, hex.EncodeToString(got[:]), wantHex,
+			"KeyID encoding must match SHA-256(pub)[:16]")
 	})
 }
 
@@ -312,29 +289,18 @@ func TestRFC8032Vectors(t *testing.T) {
 
 			priv := stded25519.NewKeyFromSeed(seed)
 			s, err := signed25519.New(priv)
-			if err != nil {
-				t.Fatalf("New: %v", err)
-			}
+			testkit.NoError(t, err, "New")
 
-			if !bytes.Equal(s.PublicKey(), pub) {
-				t.Fatalf("derived pubkey:\n got=%x\nwant=%x", s.PublicKey(), pub)
-			}
+			testkit.Equal(t, []byte(s.PublicKey()), pub, "derived pubkey must match RFC vector")
 
 			gotSig, err := s.Sign(msg)
-			if err != nil {
-				t.Fatalf("Sign: %v", err)
-			}
-			if !bytes.Equal(gotSig, wantSig) {
-				t.Fatalf("Sign:\n got=%x\nwant=%x", gotSig, wantSig)
-			}
+			testkit.NoError(t, err, "Sign")
+			testkit.Equal(t, gotSig, wantSig, "Sign output must byte-match RFC vector")
 
 			v, err := signed25519.NewVerifier(stded25519.PublicKey(pub))
-			if err != nil {
-				t.Fatalf("NewVerifier: %v", err)
-			}
-			if !v.Verify(msg, wantSig) {
-				t.Fatal("Verify rejected the canonical signature")
-			}
+			testkit.NoError(t, err, "NewVerifier")
+			testkit.True(t, v.Verify(msg, wantSig),
+				"Verify must accept the canonical RFC signature")
 		})
 	}
 }
@@ -344,13 +310,12 @@ func TestRFC8032Vectors(t *testing.T) {
 func mustDecodeHex(t *testing.T, s string) []byte {
 	t.Helper()
 	b, err := hex.DecodeString(s)
-	if err != nil {
-		t.Fatalf("invalid hex fixture: %v", err)
-	}
+	testkit.NoError(t, err, "decode hex fixture")
 	return b
 }
 
-// errRand is a rand.Rand that always errors on Read.
+// errRand is a rand.Rand that always errors on Read. Inline stub
+// — replaced when testkit applies to the rand package.
 type errRand struct{}
 
 func (errRand) Uint64() uint64 { return 0 }

@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"go.thesmos.sh/testkit"
+
 	"go.thesmos.sh/core/clock"
 )
 
@@ -33,16 +35,12 @@ func TimerContractAssertions() []TimerOption {
 		// --- Stop ---
 
 		TimerCustom("Stop on pending returns true", func(t *testing.T, tm clock.Timer) {
-			if !tm.Stop() {
-				t.Fatal("Stop on pending timer must return true")
-			}
+			testkit.True(t, tm.Stop(), "Stop on pending timer must return true")
 		}),
 
 		TimerCustom("double Stop returns false", func(t *testing.T, tm clock.Timer) {
 			tm.Stop()
-			if tm.Stop() {
-				t.Fatal("second Stop must return false")
-			}
+			testkit.False(t, tm.Stop(), "second Stop must return false")
 		}),
 
 		TimerCustom("Stop after fire returns false", func(t *testing.T, tm clock.Timer) {
@@ -52,26 +50,20 @@ func TimerContractAssertions() []TimerOption {
 			case <-time.After(time.Second):
 				t.Fatal("Reset(0) timer did not fire")
 			}
-			if tm.Stop() {
-				t.Fatal("Stop on already-fired timer must return false")
-			}
+			testkit.False(t, tm.Stop(), "Stop on already-fired timer must return false")
 		}),
 
 		// --- Reset ---
 
 		TimerCustom("Reset on pending returns true", func(t *testing.T, tm clock.Timer) {
 			defer tm.Stop()
-			if !tm.Reset(time.Hour) {
-				t.Fatal("Reset on pending timer must return true")
-			}
+			testkit.True(t, tm.Reset(time.Hour), "Reset on pending timer must return true")
 		}),
 
 		TimerCustom("Reset after Stop returns false", func(t *testing.T, tm clock.Timer) {
 			tm.Stop()
 			defer tm.Stop()
-			if tm.Reset(time.Hour) {
-				t.Fatal("Reset on stopped timer must return false")
-			}
+			testkit.False(t, tm.Reset(time.Hour), "Reset on stopped timer must return false")
 		}),
 
 		TimerCustom("Reset after fire returns false", func(t *testing.T, tm clock.Timer) {
@@ -82,9 +74,7 @@ func TimerContractAssertions() []TimerOption {
 				t.Fatal("Reset(0) timer did not fire")
 			}
 			defer tm.Stop()
-			if tm.Reset(time.Hour) {
-				t.Fatal("Reset on already-fired timer must return false")
-			}
+			testkit.False(t, tm.Reset(time.Hour), "Reset on already-fired timer must return false")
 		}),
 
 		TimerCustom("Reset reschedules a pending timer to fire", func(t *testing.T, tm clock.Timer) {
@@ -92,9 +82,7 @@ func TimerContractAssertions() []TimerOption {
 			// immediately; verifies the rescheduled deadline is
 			// honoured by both real-time (hlc) and virtual-time
 			// (fake, fires immediately on non-positive d) impls.
-			if !tm.Reset(0) {
-				t.Fatal("Reset on pending must return true")
-			}
+			testkit.True(t, tm.Reset(0), "Reset on pending must return true")
 			select {
 			case <-tm.C():
 			case <-time.After(time.Second):

@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"go.thesmos.sh/testkit"
+
 	"go.thesmos.sh/core/clock"
 	"go.thesmos.sh/core/clock/hlc"
 	"go.thesmos.sh/core/coretest/clocktest"
@@ -49,9 +51,7 @@ func TestNewTimer(t *testing.T) {
 		t.Parallel()
 		c := hlc.New(0)
 		tm := c.NewTimer(time.Hour)
-		if !tm.Reset(10 * time.Millisecond) {
-			t.Fatal("Reset on active timer must return true")
-		}
+		testkit.True(t, tm.Reset(10*time.Millisecond), "Reset on active timer must return true")
 		select {
 		case <-tm.C():
 		case <-time.After(time.Second):
