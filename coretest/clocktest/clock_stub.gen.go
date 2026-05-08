@@ -267,12 +267,14 @@ func NewClockStub(tb testing.TB, opts ...ClockStubOption) *ClockStub {
 		s.OnUpdate.Strict()
 	}
 	if tb != nil {
-		tb.Cleanup(func() {
-			s.OnNewTimer.Verify()
-			s.OnNow.Verify()
-			s.OnTime.Verify()
-			s.OnUpdate.Verify()
-		})
+		if _, isFuzz := tb.(*testing.F); !isFuzz {
+			tb.Cleanup(func() {
+				s.OnNewTimer.Verify()
+				s.OnNow.Verify()
+				s.OnTime.Verify()
+				s.OnUpdate.Verify()
+			})
+		}
 	}
 	return s
 }

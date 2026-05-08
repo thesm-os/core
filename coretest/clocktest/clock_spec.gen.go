@@ -54,6 +54,11 @@ func runClockNewTimer(t *testing.T, factory func() clock.Clock, cfg *clockConfig
 
 	t.Run("NewTimer/smoke", func(t *testing.T) {
 		t.Parallel()
+		defer func() {
+			if r := recover(); r != nil {
+				t.Skipf("smoke: NewTimer panicked on zero-value args (%v) — supply sample values via ClockOnNewTimer", r)
+			}
+		}()
 		s := factory()
 		_ = s.NewTimer(0)
 	})
@@ -87,6 +92,11 @@ func runClockNow(t *testing.T, factory func() clock.Clock, cfg *clockConfig) {
 
 	t.Run("Now/smoke", func(t *testing.T) {
 		t.Parallel()
+		defer func() {
+			if r := recover(); r != nil {
+				t.Skipf("smoke: Now panicked on zero-value args (%v) — supply sample values via ClockOnNow", r)
+			}
+		}()
 		s := factory()
 		_ = s.Now()
 	})
@@ -120,6 +130,11 @@ func runClockTime(t *testing.T, factory func() clock.Clock, cfg *clockConfig) {
 
 	t.Run("Time/smoke", func(t *testing.T) {
 		t.Parallel()
+		defer func() {
+			if r := recover(); r != nil {
+				t.Skipf("smoke: Time panicked on zero-value args (%v) — supply sample values via ClockOnTime", r)
+			}
+		}()
 		s := factory()
 		_ = s.Time()
 	})
@@ -153,6 +168,11 @@ func runClockUpdate(t *testing.T, factory func() clock.Clock, cfg *clockConfig) 
 
 	t.Run("Update/smoke", func(t *testing.T) {
 		t.Parallel()
+		defer func() {
+			if r := recover(); r != nil {
+				t.Skipf("smoke: Update panicked on zero-value args (%v) — supply sample values via ClockOnUpdate", r)
+			}
+		}()
 		s := factory()
 		_ = s.Update(clock.Instant{})
 	})

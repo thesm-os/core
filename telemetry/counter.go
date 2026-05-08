@@ -39,6 +39,8 @@ type Counter interface {
 	// implementation discards as it produces no observable signal
 	// regardless. Consumers writing portable code must not pass
 	// negative values.
+	//
+	//testkit:mutator
 	Add(ctx context.Context, value int64)
 
 	// With returns a [Counter] sharing this instrument but bound

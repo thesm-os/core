@@ -4,24 +4,43 @@
 package noop_test
 
 import (
-	"context"
 	"testing"
 
+	"go.thesmos.sh/testkit"
+	"go.thesmos.sh/testkit/bench"
+
+	"go.thesmos.sh/core/coretest/telemetrytest"
 	"go.thesmos.sh/core/telemetry"
 	"go.thesmos.sh/core/telemetry/noop"
 )
 
+// newCounter is the SUT factory for the testkit-driven Counter
+// contract suite.
+func newCounter() telemetry.Counter {
+	return noop.New().Counter(telemetry.InstrumentSpec{Name: "n"})
+}
+
+// --- testkit-driven contract layer ---
+
+func TestNoopCounterContract(t *testing.T) {
+	t.Parallel()
+	telemetrytest.AssertCounterContract(t, newCounter,
+		telemetrytest.CounterContractAssertions()...,
+	)
+}
+
+func BenchmarkNoopCounter(b *testing.B) {
+	telemetrytest.BenchmarkCounterContract(b, newCounter,
+		telemetrytest.CounterBenchOnAdd(bench.MutatorAllocsWithin[telemetry.Counter, int64](1, 0)),
+		telemetrytest.CounterBenchOnWith(bench.PureAllocsWithin[telemetry.Counter, telemetry.Counter](0)),
+	)
+}
+
+// --- noop-specific tests ---
+
 func TestCounter(t *testing.T) {
 	t.Parallel()
-	c := noop.New().Counter(telemetry.InstrumentSpec{Name: "n"})
-
-	t.Run("Add discards every value without panic", func(t *testing.T) {
-		t.Parallel()
-		ctx := t.Context()
-		c.Add(ctx, 1)
-		c.Add(ctx, 100)
-		c.Add(ctx, 0)
-	})
+	c := newCounter()
 
 	t.Run("Add discards negative values rather than panicking", func(t *testing.T) {
 		// Locks the documented noop contract: noop discards
@@ -29,52 +48,9 @@ func TestCounter(t *testing.T) {
 		// no observable signal regardless. Production-grade
 		// implementations panic; noop deliberately does not.
 		t.Parallel()
-		c.Add(t.Context(), -1)
-		c.Add(t.Context(), -1_000_000)
+		testkit.AssertNilSafe(t, func() {
+			c.Add(t.Context(), -1)
+			c.Add(t.Context(), -1_000_000)
+		})
 	})
-
-	t.Run("With returns a non-nil bound Counter", func(t *testing.T) {
-		t.Parallel()
-		bound := c.With([]telemetry.Attr{telemetry.AttrString("k", "v")})
-		if bound == nil {
-			t.Fatal("With returned nil")
-		}
-		bound.Add(t.Context(), 1)
-	})
-
-	t.Run("With(nil) returns a usable Counter", func(t *testing.T) {
-		t.Parallel()
-		bound := c.With(nil)
-		if bound == nil {
-			t.Fatal("With(nil) returned nil")
-		}
-		bound.Add(t.Context(), 1)
-	})
-}
-
-// TestCounterZeroAlloc cannot run in parallel —
-// testing.AllocsPerRun panics if any other test is running.
-// Uses context.Background() rather than t.Context() to keep the
-// captured context lifetime independent of test framework
-// machinery during the AllocsPerRun loop.
-//
-//nolint:paralleltest,usetesting // see comment above
-func TestCounterZeroAlloc(t *testing.T) {
-	c := noop.New().Counter(telemetry.InstrumentSpec{Name: "n"}).
-		With([]telemetry.Attr{telemetry.AttrString("k", "v")})
-	ctx := context.Background()
-
-	if got := testing.AllocsPerRun(100, func() { c.Add(ctx, 1) }); got != 0 {
-		t.Fatalf("Counter.Add: %v allocs/op, want 0", got)
-	}
-}
-
-func BenchmarkCounterAdd(b *testing.B) {
-	c := noop.New().Counter(telemetry.InstrumentSpec{Name: "n"}).
-		With([]telemetry.Attr{telemetry.AttrString("k", "v")})
-	ctx := b.Context()
-	b.ReportAllocs()
-	for b.Loop() {
-		c.Add(ctx, 1)
-	}
 }

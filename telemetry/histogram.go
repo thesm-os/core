@@ -14,6 +14,8 @@ import "context"
 type Histogram interface {
 	// Record adds a value to the distribution against the bound
 	// attribute set.
+	//
+	//testkit:mutator
 	Record(ctx context.Context, value float64)
 
 	// With returns a [Histogram] sharing this instrument but bound

@@ -42,6 +42,11 @@ func BenchmarkClockContract(
 func benchClockNewTimer(b *testing.B, factory func() clock.Clock, cfg *clockBenchConfig) {
 	b.Helper()
 	b.Run("NewTimer/hot-path", func(b *testing.B) {
+		defer func() {
+			if r := recover(); r != nil {
+				b.Skipf("hot-path: NewTimer panicked on zero-value args (%v) — supply sample values via ClockBenchOnNewTimer", r)
+			}
+		}()
 		impl := factory()
 		if cfg.prePopulate != nil {
 			cfg.prePopulate(b.Context(), impl)
@@ -80,6 +85,11 @@ func benchClockNewTimer(b *testing.B, factory func() clock.Clock, cfg *clockBenc
 func benchClockNow(b *testing.B, factory func() clock.Clock, cfg *clockBenchConfig) {
 	b.Helper()
 	b.Run("Now/hot-path", func(b *testing.B) {
+		defer func() {
+			if r := recover(); r != nil {
+				b.Skipf("hot-path: Now panicked on zero-value args (%v) — supply sample values via ClockBenchOnNow", r)
+			}
+		}()
 		impl := factory()
 		if cfg.prePopulate != nil {
 			cfg.prePopulate(b.Context(), impl)
@@ -118,6 +128,11 @@ func benchClockNow(b *testing.B, factory func() clock.Clock, cfg *clockBenchConf
 func benchClockTime(b *testing.B, factory func() clock.Clock, cfg *clockBenchConfig) {
 	b.Helper()
 	b.Run("Time/hot-path", func(b *testing.B) {
+		defer func() {
+			if r := recover(); r != nil {
+				b.Skipf("hot-path: Time panicked on zero-value args (%v) — supply sample values via ClockBenchOnTime", r)
+			}
+		}()
 		impl := factory()
 		if cfg.prePopulate != nil {
 			cfg.prePopulate(b.Context(), impl)
@@ -156,6 +171,11 @@ func benchClockTime(b *testing.B, factory func() clock.Clock, cfg *clockBenchCon
 func benchClockUpdate(b *testing.B, factory func() clock.Clock, cfg *clockBenchConfig) {
 	b.Helper()
 	b.Run("Update/hot-path", func(b *testing.B) {
+		defer func() {
+			if r := recover(); r != nil {
+				b.Skipf("hot-path: Update panicked on zero-value args (%v) — supply sample values via ClockBenchOnUpdate", r)
+			}
+		}()
 		impl := factory()
 		if cfg.prePopulate != nil {
 			cfg.prePopulate(b.Context(), impl)

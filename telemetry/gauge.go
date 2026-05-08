@@ -22,10 +22,14 @@ import "context"
 type Gauge interface {
 	// Set records an absolute value against the bound attribute
 	// set.
+	//
+	//testkit:mutator
 	Set(ctx context.Context, value float64)
 
 	// Add applies a relative delta. Positive increments, negative
 	// decrements.
+	//
+	//testkit:mutator
 	Add(ctx context.Context, delta float64)
 
 	// With returns a [Gauge] sharing this instrument but bound to

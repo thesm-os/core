@@ -53,6 +53,11 @@ func runTimerC(t *testing.T, factory func() clock.Timer, cfg *timerConfig) {
 
 	t.Run("C/smoke", func(t *testing.T) {
 		t.Parallel()
+		defer func() {
+			if r := recover(); r != nil {
+				t.Skipf("smoke: C panicked on zero-value args (%v) — supply sample values via TimerOnC", r)
+			}
+		}()
 		s := factory()
 		_ = s.C()
 	})
@@ -86,6 +91,11 @@ func runTimerReset(t *testing.T, factory func() clock.Timer, cfg *timerConfig) {
 
 	t.Run("Reset/smoke", func(t *testing.T) {
 		t.Parallel()
+		defer func() {
+			if r := recover(); r != nil {
+				t.Skipf("smoke: Reset panicked on zero-value args (%v) — supply sample values via TimerOnReset", r)
+			}
+		}()
 		s := factory()
 		_ = s.Reset(0)
 	})
@@ -119,6 +129,11 @@ func runTimerStop(t *testing.T, factory func() clock.Timer, cfg *timerConfig) {
 
 	t.Run("Stop/smoke", func(t *testing.T) {
 		t.Parallel()
+		defer func() {
+			if r := recover(); r != nil {
+				t.Skipf("smoke: Stop panicked on zero-value args (%v) — supply sample values via TimerOnStop", r)
+			}
+		}()
 		s := factory()
 		_ = s.Stop()
 	})

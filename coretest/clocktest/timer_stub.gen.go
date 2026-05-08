@@ -219,11 +219,13 @@ func NewTimerStub(tb testing.TB, opts ...TimerStubOption) *TimerStub {
 		s.OnStop.Strict()
 	}
 	if tb != nil {
-		tb.Cleanup(func() {
-			s.OnC.Verify()
-			s.OnReset.Verify()
-			s.OnStop.Verify()
-		})
+		if _, isFuzz := tb.(*testing.F); !isFuzz {
+			tb.Cleanup(func() {
+				s.OnC.Verify()
+				s.OnReset.Verify()
+				s.OnStop.Verify()
+			})
+		}
 	}
 	return s
 }
