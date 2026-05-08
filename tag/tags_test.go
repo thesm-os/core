@@ -7,6 +7,8 @@ import (
 	"slices"
 	"testing"
 
+	"go.thesmos.sh/testkit"
+
 	"go.thesmos.sh/core/tag"
 )
 
@@ -28,24 +30,16 @@ func TestTagsFind(t *testing.T) {
 	t.Run("returns existing tag", func(t *testing.T) {
 		t.Parallel()
 		got, ok := ts.Find("service")
-		if !ok {
-			t.Fatal("Find(service): got !ok, want ok")
-		}
-		want := tag.Tag{Key: "service", Value: "ledger"}
-		if got != want {
-			t.Fatalf("Find(service): got %+v, want %+v", got, want)
-		}
+		testkit.True(t, ok, "Find(service) must return ok=true")
+		testkit.Equal(t, got, tag.Tag{Key: "service", Value: "ledger"},
+			"Find must return the matched tag")
 	})
 
 	t.Run("returns zero on missing key", func(t *testing.T) {
 		t.Parallel()
 		got, ok := ts.Find("missing")
-		if ok {
-			t.Fatal("Find(missing): got ok, want !ok")
-		}
-		if got != (tag.Tag{}) {
-			t.Fatalf("Find(missing): got %+v, want zero", got)
-		}
+		testkit.False(t, ok, "Find(missing) must return ok=false")
+		testkit.Equal(t, got, tag.Tag{}, "Find(missing) must return the zero tag")
 	})
 
 	t.Run("first match wins on duplicate key", func(t *testing.T) {
@@ -55,17 +49,13 @@ func TestTagsFind(t *testing.T) {
 			{Key: "k", Value: "second"},
 		}
 		got, _ := dup.Find("k")
-		if got.Value != "first" {
-			t.Fatalf("Find on duplicates: got %q, want first", got.Value)
-		}
+		testkit.Equal(t, got.Value, "first", "Find on duplicates must return the first match")
 	})
 
 	t.Run("empty Tags returns !ok", func(t *testing.T) {
 		t.Parallel()
 		_, ok := tag.Tags(nil).Find("k")
-		if ok {
-			t.Fatal("Find on nil Tags: got ok, want !ok")
-		}
+		testkit.False(t, ok, "Find on nil Tags must return ok=false")
 	})
 }
 
@@ -74,12 +64,8 @@ func TestTagsHas(t *testing.T) {
 
 	ts := sample()
 
-	if !ts.Has("region") {
-		t.Fatal("Has(region): got false, want true")
-	}
-	if ts.Has("missing") {
-		t.Fatal("Has(missing): got true, want false")
-	}
+	testkit.True(t, ts.Has("region"), "Has(region) must return true")
+	testkit.False(t, ts.Has("missing"), "Has(missing) must return false")
 }
 
 func TestTagsGet(t *testing.T) {
@@ -87,12 +73,8 @@ func TestTagsGet(t *testing.T) {
 
 	ts := sample()
 
-	if got := ts.Get("region"); got != sampleRegion {
-		t.Fatalf("Get(region): got %q, want %q", got, sampleRegion)
-	}
-	if got := ts.Get("missing"); got != "" {
-		t.Fatalf("Get(missing): got %q, want empty", got)
-	}
+	testkit.Equal(t, ts.Get("region"), sampleRegion, "Get(region) must match")
+	testkit.Equal(t, ts.Get("missing"), "", "Get(missing) must return empty string")
 }
 
 func TestTagsWith(t *testing.T) {
@@ -102,31 +84,19 @@ func TestTagsWith(t *testing.T) {
 		t.Parallel()
 		ts := sample()
 		out := ts.With(tag.Tag{Key: "new", Value: "v"})
-		if len(out) != 4 {
-			t.Fatalf("len(With): got %d, want 4", len(out))
-		}
-		if got, _ := out.Find("new"); got.Value != "v" {
-			t.Fatalf("With: new tag missing or wrong value, got %+v", got)
-		}
-		if ts.Has("new") {
-			t.Fatal("With mutated original Tags")
-		}
+		testkit.Equal(t, len(out), 4, "With must append a new entry")
+		got, _ := out.Find("new")
+		testkit.Equal(t, got.Value, "v", "With(new) must add the tag with value v")
+		testkit.False(t, ts.Has("new"), "With must not mutate the original Tags")
 	})
 
 	t.Run("replaces existing key without mutating original", func(t *testing.T) {
 		t.Parallel()
 		ts := sample()
 		out := ts.With(tag.Tag{Key: "region", Value: "us-east-1"})
-		if len(out) != len(ts) {
-			t.Fatalf("len(With) on existing key: got %d, want %d",
-				len(out), len(ts))
-		}
-		if got := out.Get("region"); got != "us-east-1" {
-			t.Fatalf("With(region=us-east-1): got %q", got)
-		}
-		if got := ts.Get("region"); got != sampleRegion {
-			t.Fatalf("original mutated: got %q, want %q", got, sampleRegion)
-		}
+		testkit.Equal(t, len(out), len(ts), "With on existing key must not change length")
+		testkit.Equal(t, out.Get("region"), "us-east-1", "With must replace the value")
+		testkit.Equal(t, ts.Get("region"), sampleRegion, "With must not mutate the original")
 	})
 }
 
@@ -137,28 +107,18 @@ func TestTagsWithout(t *testing.T) {
 		t.Parallel()
 		ts := sample()
 		out := ts.Without("service")
-		if out.Has("service") {
-			t.Fatal("Without(service): result still has key")
-		}
-		if !ts.Has("service") {
-			t.Fatal("Without mutated original")
-		}
-		if len(out) != len(ts)-1 {
-			t.Fatalf("len(Without): got %d, want %d", len(out), len(ts)-1)
-		}
+		testkit.False(t, out.Has("service"), "Without must remove the matching key")
+		testkit.True(t, ts.Has("service"), "Without must not mutate the original")
+		testkit.Equal(t, len(out), len(ts)-1, "Without must shrink the length by 1")
 	})
 
 	t.Run("missing key returns slice of equal length", func(t *testing.T) {
 		t.Parallel()
 		ts := sample()
 		out := ts.Without("missing")
-		if len(out) != len(ts) {
-			t.Fatalf("len(Without missing): got %d, want %d",
-				len(out), len(ts))
-		}
-		if !slices.Equal(out, ts) {
-			t.Fatalf("Without missing: got %+v, want %+v", out, ts)
-		}
+		testkit.Equal(t, len(out), len(ts), "Without(missing) must not change length")
+		testkit.True(t, slices.Equal(out, ts),
+			"Without(missing) must return a slice equal to the original")
 	})
 
 	t.Run("removes every duplicate of the key", func(t *testing.T) {
@@ -169,12 +129,8 @@ func TestTagsWithout(t *testing.T) {
 			{Key: "other", Value: "x"},
 		}
 		out := dup.Without("k")
-		if len(out) != 1 {
-			t.Fatalf("len: got %d, want 1", len(out))
-		}
-		if out[0].Key != "other" {
-			t.Fatalf("remaining tag: got %+v, want other=x", out[0])
-		}
+		testkit.Equal(t, len(out), 1, "Without must remove every duplicate")
+		testkit.Equal(t, out[0].Key, "other", "remaining tag must be the non-matched one")
 	})
 }
 
@@ -198,9 +154,8 @@ func TestTagsZeroAlloc(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := testing.AllocsPerRun(100, tc.fn); got != 0 {
-				t.Fatalf("%s: %v allocs/op, want 0", tc.name, got)
-			}
+			testkit.Equal(t, testing.AllocsPerRun(100, tc.fn),
+				float64(0), tc.name+" must be zero-alloc")
 		})
 	}
 }

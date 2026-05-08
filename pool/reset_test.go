@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"go.thesmos.sh/testkit"
+
 	"go.thesmos.sh/core/pool"
 )
 
@@ -34,13 +36,9 @@ func TestResetPool(t *testing.T) {
 		v := p.Get()
 		// newFn returned value=42, but ResetPool's New callback
 		// calls Reset which zeroes value.
-		if v.value != 0 {
-			t.Fatalf("freshly-allocated value: got %d, want 0 (Reset)",
-				v.value)
-		}
-		if got := v.resetCalls.Load(); got != 1 {
-			t.Fatalf("Reset calls on fresh value: got %d, want 1", got)
-		}
+		testkit.Equal(t, v.value, 0, "freshly-allocated value must be Reset before first Get")
+		testkit.Equal(t, v.resetCalls.Load(), int32(1),
+			"Reset must be called exactly once on fresh value")
 	})
 
 	t.Run("Put auto-Resets before caching", func(t *testing.T) {
@@ -53,13 +51,10 @@ func TestResetPool(t *testing.T) {
 		p.Put(v)
 
 		// Put must have called Reset.
-		if got := v.resetCalls.Load(); got != 1 {
-			t.Fatalf("Reset calls on Put: got %d, want 1", got)
-		}
+		testkit.Equal(t, v.resetCalls.Load(), int32(1),
+			"Put must call Reset exactly once before caching")
 		// And the value field must be zeroed.
-		if v.value != 0 {
-			t.Fatalf("value after Put: got %d, want 0", v.value)
-		}
+		testkit.Equal(t, v.value, 0, "Put must zero the value field via Reset")
 	})
 
 	t.Run("Get after Put returns a Reset value", func(t *testing.T) {
@@ -71,8 +66,8 @@ func TestResetPool(t *testing.T) {
 
 		got := p.Get()
 		// sync.Pool may evict; guard the same-pointer case.
-		if got == v && got.value != 0 {
-			t.Fatalf("recycled value not Reset: got %d, want 0", got.value)
+		if got == v {
+			testkit.Equal(t, got.value, 0, "recycled value must be Reset")
 		}
 	})
 
@@ -106,12 +101,10 @@ func TestResetPoolZeroAlloc(t *testing.T) {
 	v := p.Get()
 	p.Put(v)
 
-	if got := testing.AllocsPerRun(100, func() {
+	testkit.Equal(t, testing.AllocsPerRun(100, func() {
 		v := p.Get()
 		p.Put(v)
-	}); got != 0 {
-		t.Fatalf("Get+Put cycle: %v allocs/op, want 0", got)
-	}
+	}), float64(0), "Get+Put cycle must be zero-alloc")
 }
 
 func BenchmarkResetPool(b *testing.B) {

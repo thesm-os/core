@@ -6,6 +6,8 @@ package page_test
 import (
 	"testing"
 
+	"go.thesmos.sh/testkit"
+
 	"go.thesmos.sh/core/page"
 )
 
@@ -24,9 +26,7 @@ func TestPageIsFirst(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			if got := tc.in.IsFirst(); got != tc.want {
-				t.Fatalf("IsFirst(%+v): got %v, want %v", tc.in, got, tc.want)
-			}
+			testkit.Equal(t, tc.in.IsFirst(), tc.want, "IsFirst must reflect token presence")
 		})
 	}
 }
@@ -49,14 +49,8 @@ func TestPageWithDefault(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			got := tc.in.WithDefault(tc.def)
-			if got.Limit != tc.want {
-				t.Fatalf("WithDefault: got Limit=%d, want %d",
-					got.Limit, tc.want)
-			}
-			if got.Token != tc.in.Token {
-				t.Fatalf("Token mutated: got %q, want %q",
-					got.Token, tc.in.Token)
-			}
+			testkit.Equal(t, got.Limit, tc.want, "WithDefault.Limit must match expected")
+			testkit.Equal(t, got.Token, tc.in.Token, "WithDefault must not mutate Token")
 		})
 	}
 
@@ -64,9 +58,7 @@ func TestPageWithDefault(t *testing.T) {
 		t.Parallel()
 		orig := page.Page{Token: "tok"}
 		_ = orig.WithDefault(100)
-		if orig.Limit != 0 {
-			t.Fatalf("receiver mutated: got Limit=%d, want 0", orig.Limit)
-		}
+		testkit.Equal(t, orig.Limit, 0, "WithDefault must not mutate the receiver")
 	})
 }
 

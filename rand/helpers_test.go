@@ -7,6 +7,8 @@ import (
 	"encoding/binary"
 	"testing"
 
+	"go.thesmos.sh/testkit"
+
 	"go.thesmos.sh/core/rand"
 	"go.thesmos.sh/core/rand/fixed"
 	"go.thesmos.sh/core/rand/pcg"
@@ -42,9 +44,8 @@ func TestFloat64(t *testing.T) {
 
 	t.Run("returns 0.0 when Uint64 returns 0", func(t *testing.T) {
 		t.Parallel()
-		if got := rand.Float64(fixed.New(0)); got != 0.0 {
-			t.Fatalf("Float64(0): got %v, want 0.0", got)
-		}
+		testkit.Equal(t, rand.Float64(fixed.New(0)), 0.0,
+			"Float64(0) must return 0.0")
 	})
 
 	t.Run("stays in [0.0, 1.0)", func(t *testing.T) {
@@ -52,9 +53,8 @@ func TestFloat64(t *testing.T) {
 		r := pcg.New(rand.Seed(42))
 		for range 1000 {
 			got := rand.Float64(r)
-			if got < 0.0 || got >= 1.0 {
-				t.Fatalf("Float64: got %v, want in [0.0, 1.0)", got)
-			}
+			testkit.True(t, got >= 0.0 && got < 1.0,
+				"Float64 must stay in [0.0, 1.0)")
 		}
 	})
 }
@@ -71,9 +71,7 @@ func TestShuffle(t *testing.T) {
 		swap := func(_, _ int) { called = true }
 		rand.Shuffle(fixed.New(0), 0, swap)
 		rand.Shuffle(fixed.New(0), 1, swap)
-		if called {
-			t.Fatal("Shuffle invoked swap for n <= 1")
-		}
+		testkit.False(t, called, "Shuffle must not invoke swap for n <= 1")
 	})
 
 	t.Run("permutes the input", func(t *testing.T) {
@@ -89,14 +87,10 @@ func TestShuffle(t *testing.T) {
 		// Result must contain every index in [0, n) exactly once.
 		seen := make(map[int]bool, n)
 		for _, v := range out {
-			if seen[v] {
-				t.Fatalf("Shuffle produced duplicate index %d", v)
-			}
+			testkit.False(t, seen[v], "Shuffle must not produce duplicate index")
 			seen[v] = true
 		}
-		if len(seen) != n {
-			t.Fatalf("Shuffle did not preserve cardinality: got %d, want %d", len(seen), n)
-		}
+		testkit.Equal(t, len(seen), n, "Shuffle must preserve cardinality")
 	})
 
 	t.Run("deterministic for the same seed", func(t *testing.T) {
@@ -113,11 +107,8 @@ func TestShuffle(t *testing.T) {
 				runs[run][i], runs[run][j] = runs[run][j], runs[run][i]
 			})
 		}
-		for i := range n {
-			if runs[0][i] != runs[1][i] {
-				t.Fatalf("Shuffle not deterministic at index %d: %d vs %d", i, runs[0][i], runs[1][i])
-			}
-		}
+		testkit.Equal(t, runs[0], runs[1],
+			"Shuffle must produce identical permutations for the same seed")
 	})
 }
 
@@ -126,16 +117,14 @@ func TestUint64N(t *testing.T) {
 
 	t.Run("returns 0 when n is 0", func(t *testing.T) {
 		t.Parallel()
-		if got := rand.Uint64N(fixed.New(0xFFFFFFFFFFFFFFFF), 0); got != 0 {
-			t.Fatalf("Uint64N(_, 0): got %d, want 0", got)
-		}
+		testkit.Equal(t, rand.Uint64N(fixed.New(0xFFFFFFFFFFFFFFFF), 0), uint64(0),
+			"Uint64N(_, 0) must return 0")
 	})
 
 	t.Run("returns 0 when n is 1", func(t *testing.T) {
 		t.Parallel()
-		if got := rand.Uint64N(fixed.New(0xFFFFFFFFFFFFFFFF), 1); got != 0 {
-			t.Fatalf("Uint64N(_, 1): got %d, want 0", got)
-		}
+		testkit.Equal(t, rand.Uint64N(fixed.New(0xFFFFFFFFFFFFFFFF), 1), uint64(0),
+			"Uint64N(_, 1) must return 0")
 	})
 
 	t.Run("result is strictly less than n", func(t *testing.T) {
@@ -144,9 +133,7 @@ func TestUint64N(t *testing.T) {
 		const n uint64 = 100
 		for range 10_000 {
 			got := rand.Uint64N(r, n)
-			if got >= n {
-				t.Fatalf("Uint64N(_, %d): got %d, want < %d", n, got, n)
-			}
+			testkit.True(t, got < n, "Uint64N(_, n) must return < n")
 		}
 	})
 
@@ -163,13 +150,9 @@ func TestUint64N(t *testing.T) {
 		// Draw 2: 0x1000000000000000 × 7 = 0x7000000000000000
 		//         → lo huge, hi=0 → loop exits with hi=0.
 		r := &scriptedRand{values: []uint64{0, 0x1000000000000000}}
-		got := rand.Uint64N(r, n)
-		if got != 0 {
-			t.Fatalf("Uint64N: got %d, want 0", got)
-		}
-		if r.pos != 2 {
-			t.Fatalf("rejection loop must consume exactly 2 draws; got %d", r.pos)
-		}
+		testkit.Equal(t, rand.Uint64N(r, n), uint64(0), "Uint64N must return 0")
+		testkit.Equal(t, r.pos, 2,
+			"rejection loop must consume exactly 2 draws")
 	})
 
 	t.Run("non-rejected first draw exits before redrawing", func(t *testing.T) {
@@ -190,13 +173,10 @@ func TestUint64N(t *testing.T) {
 		// Mutated `<=`: lo <= thresh (1 <= 1) true → redraw.
 		// Set draw 2 to 4: 4×3 = 12 → lo=12, hi=0 → exit, return 0.
 		r := &scriptedRand{values: []uint64{12297829382473034411, 4}}
-		got := rand.Uint64N(r, n)
-		if got != 2 {
-			t.Fatalf("Uint64N: got %d, want 2 (rejection loop must use < not <=)", got)
-		}
-		if r.pos != 1 {
-			t.Fatalf("rejection loop must not redraw on lo == thresh; consumed %d draws", r.pos)
-		}
+		testkit.Equal(t, rand.Uint64N(r, n), uint64(2),
+			"rejection loop must use < not <= (returns hi=2 on first draw)")
+		testkit.Equal(t, r.pos, 1,
+			"rejection loop must not redraw on lo == thresh")
 	})
 }
 
@@ -218,12 +198,8 @@ func TestShuffleDeterministic(t *testing.T) {
 		out[i], out[j] = out[j], out[i]
 	})
 
-	for i := range want {
-		if out[i] != want[i] {
-			t.Fatalf("Shuffle[%d]: got %d, want %d (full got=%v want=%v)",
-				i, out[i], want[i], out, want)
-		}
-	}
+	testkit.Equal(t, out, want,
+		"Shuffle output must match the golden permutation")
 }
 
 // TestZeroAlloc enforces the documented "Zero alloc" contracts on
@@ -248,9 +224,8 @@ func TestZeroAlloc(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := testing.AllocsPerRun(100, tc.fn); got != 0 {
-				t.Fatalf("%s: %v allocs/op, want 0", tc.name, got)
-			}
+			testkit.Equal(t, testing.AllocsPerRun(100, tc.fn),
+				float64(0), tc.name+" must be zero-alloc")
 		})
 	}
 }

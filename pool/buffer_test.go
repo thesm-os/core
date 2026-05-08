@@ -6,6 +6,8 @@ package pool_test
 import (
 	"testing"
 
+	"go.thesmos.sh/testkit"
+
 	"go.thesmos.sh/core/pool"
 )
 
@@ -16,12 +18,8 @@ func TestNewBufferPool(t *testing.T) {
 		t.Parallel()
 		p := pool.NewBufferPool()
 		b := p.Get()
-		if b == nil {
-			t.Fatal("Get returned nil")
-		}
-		if b.Len() != 0 {
-			t.Fatalf("fresh buffer Len: got %d, want 0", b.Len())
-		}
+		testkit.True(t, b != nil, "Get must not return nil")
+		testkit.Equal(t, b.Len(), 0, "fresh buffer Len must be 0")
 	})
 
 	t.Run("Put auto-Resets buffer", func(t *testing.T) {
@@ -29,13 +27,9 @@ func TestNewBufferPool(t *testing.T) {
 		p := pool.NewBufferPool()
 		b := p.Get()
 		b.WriteString("tenant data")
-		if b.Len() == 0 {
-			t.Fatal("Write did not extend buffer")
-		}
+		testkit.True(t, b.Len() > 0, "Write must extend buffer")
 		p.Put(b)
-		if b.Len() != 0 {
-			t.Fatalf("buffer after Put: Len=%d, want 0", b.Len())
-		}
+		testkit.Equal(t, b.Len(), 0, "Put must auto-Reset the buffer")
 	})
 
 	t.Run("recycled buffer is empty on next Get", func(t *testing.T) {
@@ -47,9 +41,9 @@ func TestNewBufferPool(t *testing.T) {
 
 		next := p.Get()
 		// sync.Pool may evict; guard the same-pointer case.
-		if next == first && next.Len() != 0 {
-			t.Fatalf("recycled buffer not empty: Len=%d, want 0",
-				next.Len())
+		if next == first {
+			testkit.Equal(t, next.Len(), 0,
+				"recycled buffer must be empty on next Get")
 		}
 	})
 

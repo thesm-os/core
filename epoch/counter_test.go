@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 
+	"go.thesmos.sh/testkit"
+
 	"go.thesmos.sh/core/epoch"
 )
 
@@ -17,26 +19,21 @@ func TestCounter(t *testing.T) {
 	t.Run("zero-value Counter starts at Zero, Next returns 1", func(t *testing.T) {
 		t.Parallel()
 		var c epoch.Counter
-		if got := c.Current(); got != epoch.Zero {
-			t.Fatalf("Current on zero-value: got %d, want Zero", got)
-		}
-		if got := c.Next(); got != 1 {
-			t.Fatalf("first Next on zero-value: got %d, want 1", got)
-		}
+		testkit.Equal(t, c.Current(), epoch.Zero,
+			"Current on zero-value Counter must equal epoch.Zero")
+		testkit.Equal(t, c.Next(), epoch.Epoch(1),
+			"first Next on zero-value Counter must return 1")
 	})
 
 	t.Run("NewCounter advances from start", func(t *testing.T) {
 		t.Parallel()
 		c := epoch.NewCounter(100)
-		if got := c.Current(); got != 100 {
-			t.Fatalf("Current after NewCounter(100): got %d, want 100", got)
-		}
-		if got := c.Next(); got != 101 {
-			t.Fatalf("Next after NewCounter(100): got %d, want 101", got)
-		}
-		if got := c.Next(); got != 102 {
-			t.Fatalf("second Next: got %d, want 102", got)
-		}
+		testkit.Equal(t, c.Current(), epoch.Epoch(100),
+			"Current after NewCounter(100) must equal 100")
+		testkit.Equal(t, c.Next(), epoch.Epoch(101),
+			"first Next after NewCounter(100) must return 101")
+		testkit.Equal(t, c.Next(), epoch.Epoch(102),
+			"second Next must return 102")
 	})
 
 	t.Run("Current does not advance the counter", func(t *testing.T) {
@@ -44,9 +41,8 @@ func TestCounter(t *testing.T) {
 		c := epoch.NewCounter(5)
 		_ = c.Current()
 		_ = c.Current()
-		if got := c.Next(); got != 6 {
-			t.Fatalf("Next after two Currents: got %d, want 6", got)
-		}
+		testkit.Equal(t, c.Next(), epoch.Epoch(6),
+			"Next after Currents must reflect that Current did not advance")
 	})
 
 	t.Run("Next wraps at MaxUint64", func(t *testing.T) {
@@ -54,12 +50,10 @@ func TestCounter(t *testing.T) {
 		// Documented: at MaxUint64 the underlying counter wraps to
 		// zero. Unreachable in practice; not guarded.
 		c := epoch.NewCounter(math.MaxUint64 - 1)
-		if got := c.Next(); got != math.MaxUint64 {
-			t.Fatalf("Next at MaxUint64-1: got %d, want MaxUint64", got)
-		}
-		if got := c.Next(); got != epoch.Zero {
-			t.Fatalf("Next at MaxUint64: got %d, want Zero (wrap)", got)
-		}
+		testkit.Equal(t, c.Next(), epoch.Epoch(math.MaxUint64),
+			"Next at MaxUint64-1 must return MaxUint64")
+		testkit.Equal(t, c.Next(), epoch.Zero,
+			"Next at MaxUint64 must wrap to Zero")
 	})
 }
 
@@ -92,17 +86,14 @@ func TestCounterConcurrent(t *testing.T) {
 	for e := range seen {
 		hits[e]++
 	}
-	if got := len(hits); got != total {
-		t.Fatalf("distinct epochs: got %d, want %d", got, total)
-	}
+	testkit.Equal(t, len(hits), total,
+		"every Next call must produce a distinct epoch")
 	for e := epoch.Epoch(1); e <= total; e++ {
-		if hits[e] != 1 {
-			t.Fatalf("epoch %d: got %d occurrences, want 1", e, hits[e])
-		}
+		testkit.Equal(t, hits[e], 1,
+			"epoch must appear exactly once across all goroutines")
 	}
-	if got := c.Current(); got != total {
-		t.Fatalf("final Current: got %d, want %d", got, total)
-	}
+	testkit.Equal(t, c.Current(), epoch.Epoch(total),
+		"final Current must equal total Next calls")
 }
 
 // TestCounterZeroAlloc cannot run in parallel —
@@ -113,15 +104,13 @@ func TestCounterZeroAlloc(t *testing.T) {
 	c := epoch.NewCounter(epoch.Zero)
 
 	t.Run("Next", func(t *testing.T) {
-		if got := testing.AllocsPerRun(100, func() { _ = c.Next() }); got != 0 {
-			t.Fatalf("Counter.Next: %v allocs/op, want 0", got)
-		}
+		testkit.Equal(t, testing.AllocsPerRun(100, func() { _ = c.Next() }),
+			float64(0), "Counter.Next must be zero-alloc")
 	})
 
 	t.Run("Current", func(t *testing.T) {
-		if got := testing.AllocsPerRun(100, func() { _ = c.Current() }); got != 0 {
-			t.Fatalf("Counter.Current: %v allocs/op, want 0", got)
-		}
+		testkit.Equal(t, testing.AllocsPerRun(100, func() { _ = c.Current() }),
+			float64(0), "Counter.Current must be zero-alloc")
 	})
 }
 

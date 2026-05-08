@@ -6,6 +6,8 @@ package version_test
 import (
 	"testing"
 
+	"go.thesmos.sh/testkit"
+
 	"go.thesmos.sh/core/version"
 )
 
@@ -15,12 +17,8 @@ func TestVersioned(t *testing.T) {
 	t.Run("zero value carries zero Version and zero T", func(t *testing.T) {
 		t.Parallel()
 		var v version.Versioned[int]
-		if v.Value != 0 {
-			t.Fatalf("zero Value: got %d, want 0", v.Value)
-		}
-		if !v.Version.IsZero() {
-			t.Fatalf("zero Version: got %q, want IsZero", v.Version)
-		}
+		testkit.Equal(t, v.Value, 0, "zero Versioned[int].Value must be 0")
+		testkit.True(t, v.Version.IsZero(), "zero Versioned.Version must be IsZero")
 	})
 
 	t.Run("carries value and version round-trip", func(t *testing.T) {
@@ -29,11 +27,7 @@ func TestVersioned(t *testing.T) {
 			Value:   "payload",
 			Version: "v123",
 		}
-		if v.Value != "payload" {
-			t.Fatalf("Value: got %q, want payload", v.Value)
-		}
-		if v.Version != "v123" {
-			t.Fatalf("Version: got %q, want v123", v.Version)
-		}
+		testkit.Equal(t, v.Value, "payload", "Value must round-trip")
+		testkit.Equal(t, v.Version, version.Version("v123"), "Version must round-trip")
 	})
 }

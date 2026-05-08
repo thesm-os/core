@@ -5,8 +5,9 @@ package page_test
 
 import (
 	"context"
-	"errors"
 	"testing"
+
+	"go.thesmos.sh/testkit"
 
 	"go.thesmos.sh/core/page"
 )
@@ -24,19 +25,10 @@ func TestMapCursor(t *testing.T) {
 		c := page.NewMapCursor(entries, "")
 		var got []page.Entry[string, int]
 		for e, err := range c.Seq(t.Context()) {
-			if err != nil {
-				t.Fatalf("unexpected err: %v", err)
-			}
+			testkit.NoError(t, err, "iteration must not error")
 			got = append(got, e)
 		}
-		if len(got) != len(entries) {
-			t.Fatalf("len: got %d, want %d", len(got), len(entries))
-		}
-		for i, e := range got {
-			if e != entries[i] {
-				t.Fatalf("entry %d: got %+v, want %+v", i, e, entries[i])
-			}
-		}
+		testkit.Equal(t, got, entries, "Seq must yield every entry in order")
 	})
 
 	t.Run("empty entries yield nothing without error", func(t *testing.T) {
@@ -44,37 +36,25 @@ func TestMapCursor(t *testing.T) {
 		c := page.NewMapCursor[string, int](nil, "")
 		count := 0
 		for _, err := range c.Seq(t.Context()) {
-			if err != nil {
-				t.Fatalf("unexpected err: %v", err)
-			}
+			testkit.NoError(t, err, "empty Seq must not error")
 			count++
 		}
-		if count != 0 {
-			t.Fatalf("count: got %d, want 0", count)
-		}
+		testkit.Equal(t, count, 0, "empty cursor must yield nothing")
 	})
 
 	t.Run("NextPage returns the configured token", func(t *testing.T) {
 		t.Parallel()
 		final := page.NewMapCursor[string, int](nil, "")
-		if got := final.NextPage(); got != "" {
-			t.Fatalf("NextPage on final: got %q, want empty", got)
-		}
+		testkit.Equal(t, final.NextPage(), "", "NextPage on final cursor must be empty")
 		more := page.NewMapCursor([]page.Entry[string, int]{{Key: "x"}}, "next")
-		if got := more.NextPage(); got != "next" {
-			t.Fatalf("NextPage: got %q, want next", got)
-		}
+		testkit.Equal(t, more.NextPage(), "next", "NextPage must return the configured token")
 	})
 
 	t.Run("Close returns nil and is idempotent", func(t *testing.T) {
 		t.Parallel()
 		c := page.NewMapCursor([]page.Entry[string, int]{{Key: "a", Value: 1}}, "")
-		if err := c.Close(); err != nil {
-			t.Fatalf("first Close: %v", err)
-		}
-		if err := c.Close(); err != nil {
-			t.Fatalf("second Close: %v", err)
-		}
+		testkit.NoError(t, c.Close(), "first Close must succeed")
+		testkit.NoError(t, c.Close(), "second Close must succeed (idempotent)")
 	})
 
 	t.Run("early break stops iteration", func(t *testing.T) {
@@ -89,17 +69,13 @@ func TestMapCursor(t *testing.T) {
 		c := page.NewMapCursor(entries, "")
 		count := 0
 		for e, err := range c.Seq(t.Context()) {
-			if err != nil {
-				t.Fatalf("unexpected err: %v", err)
-			}
+			testkit.NoError(t, err, "iteration must not error")
 			count++
 			if e.Value == 2 {
 				break
 			}
 		}
-		if count != 2 {
-			t.Fatalf("count: got %d, want 2", count)
-		}
+		testkit.Equal(t, count, 2, "early break must stop iteration")
 	})
 
 	t.Run("cancelled context yields ctx.Err and stops", func(t *testing.T) {
@@ -120,12 +96,10 @@ func TestMapCursor(t *testing.T) {
 				break
 			}
 		}
-		if !errors.Is(sawErr, context.Canceled) {
-			t.Fatalf("err: got %v, want Canceled", sawErr)
-		}
-		if count != 1 {
-			t.Fatalf("count: got %d, want 1 (single yield with err)", count)
-		}
+		testkit.ErrorIs(t, sawErr, context.Canceled,
+			"cancelled context must surface context.Canceled")
+		testkit.Equal(t, count, 1,
+			"cancelled context must yield exactly one (entry, err) pair before stopping")
 	})
 
 	t.Run("works with non-string K and V types", func(t *testing.T) {
@@ -137,16 +111,12 @@ func TestMapCursor(t *testing.T) {
 		c := page.NewMapCursor(entries, "")
 		var seen int
 		for e, err := range c.Seq(t.Context()) {
-			if err != nil {
-				t.Fatalf("unexpected err: %v", err)
-			}
+			testkit.NoError(t, err, "iteration must not error")
 			seen++
 			_ = e.Key
 			_ = e.Value
 		}
-		if seen != 2 {
-			t.Fatalf("seen: got %d, want 2", seen)
-		}
+		testkit.Equal(t, seen, 2, "must yield every entry regardless of K/V types")
 	})
 }
 

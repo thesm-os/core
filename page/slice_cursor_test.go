@@ -5,8 +5,9 @@ package page_test
 
 import (
 	"context"
-	"errors"
 	"testing"
+
+	"go.thesmos.sh/testkit"
 
 	"go.thesmos.sh/core/page"
 )
@@ -19,20 +20,10 @@ func TestSliceCursor(t *testing.T) {
 		c := page.NewSliceCursor([]int{1, 2, 3}, "")
 		var got []int
 		for item, err := range c.Seq(t.Context()) {
-			if err != nil {
-				t.Fatalf("unexpected err: %v", err)
-			}
+			testkit.NoError(t, err, "iteration must not error")
 			got = append(got, item)
 		}
-		want := []int{1, 2, 3}
-		if len(got) != len(want) {
-			t.Fatalf("len: got %d, want %d", len(got), len(want))
-		}
-		for i, v := range got {
-			if v != want[i] {
-				t.Fatalf("item %d: got %d, want %d", i, v, want[i])
-			}
-		}
+		testkit.Equal(t, got, []int{1, 2, 3}, "Seq must yield every item in order")
 	})
 
 	t.Run("empty slice yields nothing without error", func(t *testing.T) {
@@ -40,37 +31,25 @@ func TestSliceCursor(t *testing.T) {
 		c := page.NewSliceCursor([]int{}, "")
 		count := 0
 		for _, err := range c.Seq(t.Context()) {
-			if err != nil {
-				t.Fatalf("unexpected err: %v", err)
-			}
+			testkit.NoError(t, err, "empty Seq must not error")
 			count++
 		}
-		if count != 0 {
-			t.Fatalf("count: got %d, want 0", count)
-		}
+		testkit.Equal(t, count, 0, "empty cursor must yield nothing")
 	})
 
 	t.Run("NextPage returns the configured token", func(t *testing.T) {
 		t.Parallel()
 		final := page.NewSliceCursor([]int{}, "")
-		if got := final.NextPage(); got != "" {
-			t.Fatalf("NextPage on final: got %q, want empty", got)
-		}
+		testkit.Equal(t, final.NextPage(), "", "NextPage on final cursor must be empty")
 		more := page.NewSliceCursor([]int{1}, "next-batch")
-		if got := more.NextPage(); got != "next-batch" {
-			t.Fatalf("NextPage: got %q, want next-batch", got)
-		}
+		testkit.Equal(t, more.NextPage(), "next-batch", "NextPage must return the configured token")
 	})
 
 	t.Run("Close returns nil and is idempotent", func(t *testing.T) {
 		t.Parallel()
 		c := page.NewSliceCursor([]int{1, 2}, "")
-		if err := c.Close(); err != nil {
-			t.Fatalf("first Close: %v", err)
-		}
-		if err := c.Close(); err != nil {
-			t.Fatalf("second Close: %v", err)
-		}
+		testkit.NoError(t, c.Close(), "first Close must succeed")
+		testkit.NoError(t, c.Close(), "second Close must succeed (idempotent)")
 	})
 
 	t.Run("early break stops iteration", func(t *testing.T) {
@@ -78,17 +57,13 @@ func TestSliceCursor(t *testing.T) {
 		c := page.NewSliceCursor([]int{1, 2, 3, 4, 5}, "")
 		count := 0
 		for item, err := range c.Seq(t.Context()) {
-			if err != nil {
-				t.Fatalf("unexpected err: %v", err)
-			}
+			testkit.NoError(t, err, "iteration must not error")
 			count++
 			if item == 2 {
 				break
 			}
 		}
-		if count != 2 {
-			t.Fatalf("count: got %d, want 2", count)
-		}
+		testkit.Equal(t, count, 2, "early break must stop iteration")
 	})
 
 	t.Run("cancelled context yields ctx.Err and stops", func(t *testing.T) {
@@ -106,12 +81,10 @@ func TestSliceCursor(t *testing.T) {
 				break
 			}
 		}
-		if !errors.Is(sawErr, context.Canceled) {
-			t.Fatalf("err: got %v, want Canceled", sawErr)
-		}
-		if count != 1 {
-			t.Fatalf("count: got %d, want 1 (single yield with err)", count)
-		}
+		testkit.ErrorIs(t, sawErr, context.Canceled,
+			"cancelled context must surface context.Canceled")
+		testkit.Equal(t, count, 1,
+			"cancelled context must yield exactly one (item, err) pair before stopping")
 	})
 }
 

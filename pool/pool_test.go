@@ -8,6 +8,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"go.thesmos.sh/testkit"
+
 	"go.thesmos.sh/core/pool"
 )
 
@@ -23,12 +25,8 @@ func TestPool(t *testing.T) {
 			return &v
 		})
 		v := p.Get()
-		if calls.Load() != 1 {
-			t.Fatalf("newFn calls: got %d, want 1", calls.Load())
-		}
-		if *v != 42 {
-			t.Fatalf("Get: got %d, want 42", *v)
-		}
+		testkit.Equal(t, calls.Load(), int32(1), "Get on empty pool must call newFn exactly once")
+		testkit.Equal(t, *v, 42, "Get must return the newFn-created value")
 	})
 
 	t.Run("Put then Get returns the same value when cached", func(t *testing.T) {
@@ -46,8 +44,9 @@ func TestPool(t *testing.T) {
 		// guarantee is that Get may return a previously-Put
 		// value. We test that *if* we get the same pointer
 		// back, the state is preserved.
-		if got == original && *got != 99 {
-			t.Fatalf("preserved value: got %d, want 99", *got)
+		if got == original {
+			testkit.Equal(t, *got, 99,
+				"if Get returns the same pointer, the value must be preserved")
 		}
 	})
 
@@ -57,19 +56,18 @@ func TestPool(t *testing.T) {
 		// Get returns string, not any — the assignment to a
 		// typed variable would fail to compile if the signature
 		// drifted to any.
-		s := p.Get()
-		if s != "hello" {
-			t.Fatalf("Get: got %q, want hello", s)
-		}
+		testkit.Equal(t, p.Get(), "hello", "typed Get must return the typed value")
 	})
 
 	t.Run("Put is best-effort (no panic on full pool)", func(t *testing.T) {
 		t.Parallel()
 		p := pool.NewPool(func() int { return 0 })
 		// Repeated Puts must not panic regardless of pool state.
-		for i := range 100 {
-			p.Put(i)
-		}
+		testkit.AssertNilSafe(t, func() {
+			for i := range 100 {
+				p.Put(i)
+			}
+		})
 	})
 
 	t.Run("concurrent Get/Put is safe", func(t *testing.T) {
@@ -112,12 +110,10 @@ func TestPoolZeroAlloc(t *testing.T) {
 	t.Run("Get on warm pool", func(t *testing.T) {
 		// Maintain the invariant: Put before each Get so the
 		// pool is always warm for the next iteration.
-		if got := testing.AllocsPerRun(100, func() {
+		testkit.Equal(t, testing.AllocsPerRun(100, func() {
 			v := p.Get()
 			p.Put(v)
-		}); got != 0 {
-			t.Fatalf("Get+Put cycle: %v allocs/op, want 0", got)
-		}
+		}), float64(0), "Get+Put cycle on warm pool must be zero-alloc")
 	})
 }
 

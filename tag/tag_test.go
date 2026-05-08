@@ -6,6 +6,8 @@ package tag_test
 import (
 	"testing"
 
+	"go.thesmos.sh/testkit"
+
 	"go.thesmos.sh/core/tag"
 )
 
@@ -14,9 +16,7 @@ func TestTag(t *testing.T) {
 
 	t.Run("zero value reports IsZero", func(t *testing.T) {
 		t.Parallel()
-		if !(tag.Tag{}).IsZero() {
-			t.Fatal("zero Tag.IsZero(): got false, want true")
-		}
+		testkit.True(t, (tag.Tag{}).IsZero(), "zero Tag.IsZero must return true")
 	})
 
 	t.Run("non-zero value does not report IsZero", func(t *testing.T) {
@@ -27,9 +27,7 @@ func TestTag(t *testing.T) {
 			{Key: "k", Value: "v"},
 		}
 		for _, tc := range cases {
-			if tc.IsZero() {
-				t.Fatalf("Tag%+v.IsZero(): got true, want false", tc)
-			}
+			testkit.False(t, tc.IsZero(), "non-zero Tag.IsZero must return false")
 		}
 	})
 }
@@ -40,9 +38,8 @@ func TestTag(t *testing.T) {
 //nolint:paralleltest // see comment above
 func TestTagZeroAlloc(t *testing.T) {
 	tt := tag.Tag{Key: "k", Value: "v"}
-	if got := testing.AllocsPerRun(100, func() { _ = tt.IsZero() }); got != 0 {
-		t.Fatalf("IsZero: %v allocs/op, want 0", got)
-	}
+	testkit.Equal(t, testing.AllocsPerRun(100, func() { _ = tt.IsZero() }),
+		float64(0), "IsZero must be zero-alloc")
 }
 
 func BenchmarkIsZero(b *testing.B) {

@@ -5,10 +5,11 @@ package crypto_test
 
 import (
 	"bytes"
-	"errors"
 	"io"
 	"strings"
 	"testing"
+
+	"go.thesmos.sh/testkit"
 
 	"go.thesmos.sh/core/crypto"
 	"go.thesmos.sh/core/crypto/sha256"
@@ -34,9 +35,8 @@ func TestHashDomain(t *testing.T) {
 		}
 		want := s.Sum()
 
-		if !got.Equal(want) {
-			t.Fatalf("HashDomain != manual stream:\n got=%s\nwant=%s", got, want)
-		}
+		testkit.True(t, got.Equal(want),
+			"HashDomain must equal manual stream over domain || parts")
 	})
 
 	t.Run("different domains produce different digests", func(t *testing.T) {
@@ -44,19 +44,15 @@ func TestHashDomain(t *testing.T) {
 		data := []byte("identical-payload")
 		a := crypto.HashDomain(h, []byte("domain-a"), data)
 		b := crypto.HashDomain(h, []byte("domain-b"), data)
-		if a.Equal(b) {
-			t.Fatal("different domains must produce different digests for identical data")
-		}
+		testkit.False(t, a.Equal(b),
+			"different domains must produce different digests for identical data")
 	})
 
 	t.Run("zero parts produces hash of domain alone", func(t *testing.T) {
 		t.Parallel()
 		domain := []byte("just:the:domain")
-		got := crypto.HashDomain(h, domain)
-		want := h.Hash(domain)
-		if !got.Equal(want) {
-			t.Fatalf("HashDomain(_, domain) != Hash(domain):\n got=%s\nwant=%s", got, want)
-		}
+		testkit.True(t, crypto.HashDomain(h, domain).Equal(h.Hash(domain)),
+			"HashDomain with no parts must equal Hash(domain)")
 	})
 }
 
@@ -71,36 +67,25 @@ func TestHashReader(t *testing.T) {
 		want := h.Hash(payload)
 
 		got, err := crypto.HashReader(h, bytes.NewReader(payload))
-		if err != nil {
-			t.Fatalf("HashReader: unexpected error %v", err)
-		}
-		if !got.Equal(want) {
-			t.Fatalf("HashReader != Hash(buf):\n got=%s\nwant=%s", got, want)
-		}
+		testkit.NoError(t, err, "HashReader")
+		testkit.True(t, got.Equal(want),
+			"HashReader must equal Hash over the same bytes")
 	})
 
 	t.Run("empty reader produces hash of empty input", func(t *testing.T) {
 		t.Parallel()
-		want := h.Hash(nil)
 		got, err := crypto.HashReader(h, strings.NewReader(""))
-		if err != nil {
-			t.Fatalf("HashReader: unexpected error %v", err)
-		}
-		if !got.Equal(want) {
-			t.Fatalf("HashReader(empty) != Hash(nil):\n got=%s\nwant=%s", got, want)
-		}
+		testkit.NoError(t, err, "HashReader")
+		testkit.True(t, got.Equal(h.Hash(nil)),
+			"HashReader on empty must equal Hash(nil)")
 	})
 
 	t.Run("reader error is wrapped with package context", func(t *testing.T) {
 		t.Parallel()
-		sentinel := errors.New("network read failed")
+		sentinel := testkit.TestError("network read failed")
 		_, err := crypto.HashReader(h, &errReader{err: sentinel})
-		if err == nil {
-			t.Fatal("expected error from failing reader")
-		}
-		if !errors.Is(err, sentinel) {
-			t.Fatalf("error did not wrap sentinel: %v", err)
-		}
+		testkit.ErrorIs(t, err, sentinel,
+			"HashReader must wrap the source error preserving the cause via errors.Is")
 	})
 }
 
@@ -126,12 +111,9 @@ func FuzzHashReader(f *testing.F) {
 	f.Fuzz(func(t *testing.T, data []byte) {
 		want := h.Hash(data)
 		got, err := crypto.HashReader(h, bytes.NewReader(data))
-		if err != nil {
-			t.Fatalf("HashReader: %v", err)
-		}
-		if !got.Equal(want) {
-			t.Fatalf("HashReader != Hash for %d bytes", len(data))
-		}
+		testkit.NoError(t, err, "HashReader")
+		testkit.True(t, got.Equal(want),
+			"HashReader must equal Hash over the same bytes for any input")
 	})
 }
 
@@ -152,11 +134,8 @@ func FuzzHashDomain(f *testing.F) {
 		_, _ = s.Write(part)
 		want := s.Sum()
 
-		got := crypto.HashDomain(h, domain, part)
-		if !got.Equal(want) {
-			t.Fatalf("HashDomain != Stream(domain).Write(part).Sum() for "+
-				"domain=%d bytes part=%d bytes", len(domain), len(part))
-		}
+		testkit.True(t, crypto.HashDomain(h, domain, part).Equal(want),
+			"HashDomain must equal manual Stream(domain, part).Sum")
 	})
 }
 
@@ -179,10 +158,8 @@ func FuzzStreamReset(f *testing.F) {
 		_, _ = s.Write(data)
 		second := s.Sum()
 
-		if !first.Equal(second) {
-			t.Fatalf("Reset did not restore initial state for %d bytes",
-				len(data))
-		}
+		testkit.True(t, first.Equal(second),
+			"Stream.Reset must restore initial state — same bytes must produce equal digests")
 	})
 }
 
@@ -204,11 +181,9 @@ func TestHashDomainZeroAlloc(t *testing.T) {
 	// count the stream-construction alloc.
 	_ = crypto.HashDomain(h, domain, parts...)
 
-	if got := testing.AllocsPerRun(100, func() {
+	testkit.Equal(t, testing.AllocsPerRun(100, func() {
 		_ = crypto.HashDomain(h, domain, parts...)
-	}); got != 0 {
-		t.Fatalf("HashDomain: %v allocs/op, want 0", got)
-	}
+	}), float64(0), "HashDomain warm path must be zero-alloc")
 }
 
 func BenchmarkHashDomain(b *testing.B) {

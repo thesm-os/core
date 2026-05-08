@@ -4,9 +4,10 @@
 package telemetry_test
 
 import (
-	"bytes"
 	"log/slog"
 	"testing"
+
+	"go.thesmos.sh/testkit"
 
 	"go.thesmos.sh/core/telemetry"
 )
@@ -17,72 +18,42 @@ func TestAttrConstructors(t *testing.T) {
 	t.Run("AttrString sets Kind=String and Str", func(t *testing.T) {
 		t.Parallel()
 		a := telemetry.AttrString("key", "value")
-		if a.Key != "key" {
-			t.Fatalf("Key: got %q, want %q", a.Key, "key")
-		}
-		if a.Value.Kind != telemetry.AttrKindString {
-			t.Fatalf("Kind: got %v, want %v", a.Value.Kind, telemetry.AttrKindString)
-		}
-		if a.Value.Str != "value" {
-			t.Fatalf("Str: got %q, want %q", a.Value.Str, "value")
-		}
+		testkit.Equal(t, a.Key, "key", "AttrString Key must round-trip")
+		testkit.Equal(t, a.Value.Kind, telemetry.AttrKindString, "AttrString Kind must be String")
+		testkit.Equal(t, a.Value.Str, "value", "AttrString Str must round-trip")
 	})
 
 	t.Run("AttrInt sets Kind=Int64 and Int", func(t *testing.T) {
 		t.Parallel()
 		a := telemetry.AttrInt("retries", 7)
-		if a.Key != "retries" {
-			t.Fatalf("Key: got %q, want %q", a.Key, "retries")
-		}
-		if a.Value.Kind != telemetry.AttrKindInt64 {
-			t.Fatalf("Kind: got %v, want %v", a.Value.Kind, telemetry.AttrKindInt64)
-		}
-		if a.Value.Int != 7 {
-			t.Fatalf("Int: got %d, want 7", a.Value.Int)
-		}
+		testkit.Equal(t, a.Key, "retries", "AttrInt Key must round-trip")
+		testkit.Equal(t, a.Value.Kind, telemetry.AttrKindInt64, "AttrInt Kind must be Int64")
+		testkit.Equal(t, a.Value.Int, int64(7), "AttrInt Int must round-trip")
 	})
 
 	t.Run("AttrFloat sets Kind=Float64 and Float", func(t *testing.T) {
 		t.Parallel()
 		a := telemetry.AttrFloat("ratio", 0.42)
-		if a.Key != "ratio" {
-			t.Fatalf("Key: got %q, want %q", a.Key, "ratio")
-		}
-		if a.Value.Kind != telemetry.AttrKindFloat64 {
-			t.Fatalf("Kind: got %v, want %v", a.Value.Kind, telemetry.AttrKindFloat64)
-		}
-		if a.Value.Float != 0.42 {
-			t.Fatalf("Float: got %v, want 0.42", a.Value.Float)
-		}
+		testkit.Equal(t, a.Key, "ratio", "AttrFloat Key must round-trip")
+		testkit.Equal(t, a.Value.Kind, telemetry.AttrKindFloat64, "AttrFloat Kind must be Float64")
+		testkit.Equal(t, a.Value.Float, 0.42, "AttrFloat Float must round-trip")
 	})
 
 	t.Run("AttrBool sets Kind=Bool and Bool", func(t *testing.T) {
 		t.Parallel()
 		a := telemetry.AttrBool("ok", true)
-		if a.Key != "ok" {
-			t.Fatalf("Key: got %q, want %q", a.Key, "ok")
-		}
-		if a.Value.Kind != telemetry.AttrKindBool {
-			t.Fatalf("Kind: got %v, want %v", a.Value.Kind, telemetry.AttrKindBool)
-		}
-		if !a.Value.Bool {
-			t.Fatal("Bool: got false, want true")
-		}
+		testkit.Equal(t, a.Key, "ok", "AttrBool Key must round-trip")
+		testkit.Equal(t, a.Value.Kind, telemetry.AttrKindBool, "AttrBool Kind must be Bool")
+		testkit.True(t, a.Value.Bool, "AttrBool Bool must be true")
 	})
 
 	t.Run("AttrBytes aliases the supplied slice", func(t *testing.T) {
 		t.Parallel()
 		payload := []byte{0x01, 0x02, 0x03}
 		a := telemetry.AttrBytes("payload", payload)
-		if a.Key != "payload" {
-			t.Fatalf("Key: got %q, want %q", a.Key, "payload")
-		}
-		if a.Value.Kind != telemetry.AttrKindBytes {
-			t.Fatalf("Kind: got %v, want %v", a.Value.Kind, telemetry.AttrKindBytes)
-		}
-		if !bytes.Equal(a.Value.Bytes, payload) {
-			t.Fatalf("Bytes: got %v, want %v", a.Value.Bytes, payload)
-		}
+		testkit.Equal(t, a.Key, "payload", "AttrBytes Key must round-trip")
+		testkit.Equal(t, a.Value.Kind, telemetry.AttrKindBytes, "AttrBytes Kind must be Bytes")
+		testkit.Equal(t, a.Value.Bytes, payload, "AttrBytes Bytes must round-trip")
 	})
 }
 
@@ -103,10 +74,8 @@ func TestSlogAttr(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			got := tc.in.SlogAttr()
-			if !got.Equal(tc.want) {
-				t.Fatalf("SlogAttr: got %+v, want %+v", got, tc.want)
-			}
+			testkit.True(t, tc.in.SlogAttr().Equal(tc.want),
+				"SlogAttr must equal expected slog.Attr")
 		})
 	}
 }
@@ -144,9 +113,8 @@ func TestZeroAlloc(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := testing.AllocsPerRun(100, tc.fn); got != 0 {
-				t.Fatalf("%s: %v allocs/op, want 0", tc.name, got)
-			}
+			testkit.Equal(t, testing.AllocsPerRun(100, tc.fn),
+				float64(0), tc.name+" must be zero-alloc")
 		})
 	}
 }

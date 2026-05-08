@@ -6,6 +6,8 @@ package version_test
 import (
 	"testing"
 
+	"go.thesmos.sh/testkit"
+
 	"go.thesmos.sh/core/version"
 )
 
@@ -32,9 +34,8 @@ func TestWriteOptionsIsConditional(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			if got := tc.in.IsConditional(); got != tc.want {
-				t.Fatalf("IsConditional: got %v, want %v", got, tc.want)
-			}
+			testkit.Equal(t, tc.in.IsConditional(), tc.want,
+				"IsConditional must reflect IfMatch/IfNoneMatch presence")
 		})
 	}
 }

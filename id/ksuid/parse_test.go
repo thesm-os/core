@@ -4,10 +4,11 @@
 package ksuid_test
 
 import (
-	"errors"
 	"strings"
 	"testing"
 	"time"
+
+	"go.thesmos.sh/testkit"
 
 	"go.thesmos.sh/core/clock/fake"
 	"go.thesmos.sh/core/id"
@@ -21,18 +22,14 @@ func TestFormat(t *testing.T) {
 
 	t.Run("Zero formats to empty (size 0)", func(t *testing.T) {
 		t.Parallel()
-		if got := ksuid.Format(id.Zero); got != "" {
-			t.Fatalf("Format(Zero): got %q, want empty", got)
-		}
+		testkit.Equal(t, ksuid.Format(id.Zero), "", "Format(Zero) must be empty")
 	})
 
 	t.Run("all-zero 160-bit ID encodes to 27 zeros", func(t *testing.T) {
 		t.Parallel()
 		u := id.New160([id.Size160]byte{})
 		const want = "000000000000000000000000000"
-		if got := ksuid.Format(u); got != want {
-			t.Fatalf("Format: got %q, want %q", got, want)
-		}
+		testkit.Equal(t, ksuid.Format(u), want, "Format of all-zero ID must encode to 27 zeros")
 	})
 
 	// Frozen-output vector cross-checked against the segmentio/ksuid
@@ -50,9 +47,7 @@ func TestFormat(t *testing.T) {
 		}
 		u := id.New160(raw)
 		const want = "0ujtsYcgvSTl8PAuR7PHXnl95SE"
-		if got := ksuid.Format(u); got != want {
-			t.Fatalf("Format: got %q, want %q", got, want)
-		}
+		testkit.Equal(t, ksuid.Format(u), want, "Format must match segmentio/ksuid reference")
 	})
 }
 
@@ -66,40 +61,28 @@ func TestParse(t *testing.T) {
 		want := g.Generate()
 
 		got, err := ksuid.Parse(ksuid.Format(want))
-		if err != nil {
-			t.Fatalf("Parse: %v", err)
-		}
-		if got != want {
-			t.Fatalf("round-trip:\n got=%v\nwant=%v", got, want)
-		}
+		testkit.NoError(t, err, "Parse")
+		testkit.Equal(t, got, want, "Parse(Format(x)) must round-trip")
 	})
 
 	t.Run("decodes the all-zero canonical encoding", func(t *testing.T) {
 		t.Parallel()
 		got, err := ksuid.Parse("000000000000000000000000000")
-		if err != nil {
-			t.Fatalf("Parse: %v", err)
-		}
-		want := id.New160([id.Size160]byte{})
-		if got != want {
-			t.Fatalf("zero parse: got %v, want %v", got, want)
-		}
+		testkit.NoError(t, err, "Parse")
+		testkit.Equal(t, got, id.New160([id.Size160]byte{}),
+			"all-zero parse must decode to all-zero 160-bit ID")
 	})
 
 	t.Run("decodes the known segmentio reference vector", func(t *testing.T) {
 		t.Parallel()
 		got, err := ksuid.Parse("0ujtsYcgvSTl8PAuR7PHXnl95SE")
-		if err != nil {
-			t.Fatalf("Parse: %v", err)
-		}
+		testkit.NoError(t, err, "Parse")
 		want := id.New160([id.Size160]byte{
 			0x06, 0x69, 0xf7, 0xef,
 			0xb5, 0xa1, 0xcd, 0x34, 0xb5, 0xf9, 0x9d, 0x12,
 			0x14, 0xe5, 0xb9, 0x16, 0x9d, 0xa6, 0x9c, 0x32,
 		})
-		if got != want {
-			t.Fatalf("decode: got %x, want %x", got.Bytes(), want.Bytes())
-		}
+		testkit.Equal(t, got, want, "Parse must decode to the segmentio reference bytes")
 	})
 
 	t.Run("rejects wrong length", func(t *testing.T) {
@@ -113,27 +96,22 @@ func TestParse(t *testing.T) {
 		}
 		for _, s := range cases {
 			_, err := ksuid.Parse(s)
-			if !errors.Is(err, ksuid.ErrInvalidLength) {
-				t.Fatalf("len %d: got %v, want ErrInvalidLength", len(s), err)
-			}
+			testkit.ErrorIs(t, err, ksuid.ErrInvalidLength,
+				"wrong-length input must return ErrInvalidLength")
 		}
 	})
 
 	t.Run("rejects characters outside base62 alphabet", func(t *testing.T) {
 		t.Parallel()
 		// '!' at position 0 is not alphanumeric.
-		s := "!" + strings.Repeat("0", 26)
-		_, err := ksuid.Parse(s)
-		if !errors.Is(err, ksuid.ErrInvalidChar) {
-			t.Fatalf("with !: got %v, want ErrInvalidChar", err)
-		}
+		_, err := ksuid.Parse("!" + strings.Repeat("0", 26))
+		testkit.ErrorIs(t, err, ksuid.ErrInvalidChar,
+			"non-alphanumeric input must return ErrInvalidChar")
 
 		// Hyphen mid-string.
-		s = strings.Repeat("0", 13) + "-" + strings.Repeat("0", 13)
-		_, err = ksuid.Parse(s)
-		if !errors.Is(err, ksuid.ErrInvalidChar) {
-			t.Fatalf("with -: got %v, want ErrInvalidChar", err)
-		}
+		_, err = ksuid.Parse(strings.Repeat("0", 13) + "-" + strings.Repeat("0", 13))
+		testkit.ErrorIs(t, err, ksuid.ErrInvalidChar,
+			"hyphen mid-string must return ErrInvalidChar")
 	})
 
 	t.Run("rejects values exceeding 2^160", func(t *testing.T) {
@@ -141,11 +119,9 @@ func TestParse(t *testing.T) {
 		// 27 'z' chars = 62^27 - 1, the maximum representable
 		// base62 27-character value (~2.66e48), well above 2^160
 		// (~1.46e48).
-		s := strings.Repeat("z", 27)
-		_, err := ksuid.Parse(s)
-		if !errors.Is(err, ksuid.ErrOverflow) {
-			t.Fatalf("with all-z: got %v, want ErrOverflow", err)
-		}
+		_, err := ksuid.Parse(strings.Repeat("z", 27))
+		testkit.ErrorIs(t, err, ksuid.ErrOverflow,
+			"value above 2^160 must return ErrOverflow")
 	})
 
 	// Alphabet-coverage corpus. Real-world KSUIDs sampled at a
@@ -184,16 +160,10 @@ func TestParse(t *testing.T) {
 		}
 		for _, s := range corpus {
 			got, err := ksuid.Parse(s)
-			if err != nil {
-				t.Fatalf("Parse(%q): %v", s, err)
-			}
-			if got.IsZero() {
-				t.Fatalf("Parse(%q): unexpected Zero", s)
-			}
+			testkit.NoError(t, err, "Parse "+s)
+			testkit.False(t, got.IsZero(), "Parse must not produce Zero for non-zero input")
 			// Round-trip: Format(Parse(s)) must equal s.
-			if back := ksuid.Format(got); back != s {
-				t.Fatalf("round-trip:\n got=%q\nwant=%q", back, s)
-			}
+			testkit.Equal(t, ksuid.Format(got), s, "Format(Parse(s)) must equal s")
 		}
 	})
 }
@@ -211,10 +181,7 @@ func FuzzParse(f *testing.F) {
 		if err != nil {
 			return
 		}
-		formatted := ksuid.Format(got)
-		if formatted != s {
-			t.Fatalf("round-trip:\n  in  = %q\n  out = %q", s, formatted)
-		}
+		testkit.Equal(t, ksuid.Format(got), s, "Format(Parse(s)) must equal s")
 	})
 }
 
@@ -243,13 +210,8 @@ func FuzzRoundTrip(f *testing.F) {
 
 		formatted := ksuid.Format(u)
 		parsed, err := ksuid.Parse(formatted)
-		if err != nil {
-			t.Fatalf("Format(%x)=%q; Parse: %v", raw, formatted, err)
-		}
-		if parsed != u {
-			t.Fatalf("round-trip failed:\n  in   = %x\n  fmt  = %q\n  out  = %x",
-				raw, formatted, parsed.Bytes())
-		}
+		testkit.NoError(t, err, "Parse(Format(x))")
+		testkit.Equal(t, parsed, u, "Format → Parse round-trip must preserve the ID")
 	})
 }
 

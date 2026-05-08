@@ -7,6 +7,8 @@ import (
 	"math"
 	"testing"
 
+	"go.thesmos.sh/testkit"
+
 	"go.thesmos.sh/core/epoch"
 )
 
@@ -15,20 +17,14 @@ func TestEpochZero(t *testing.T) {
 
 	t.Run("Zero is the reserved sentinel", func(t *testing.T) {
 		t.Parallel()
-		if !epoch.Zero.IsZero() {
-			t.Fatal("Zero.IsZero(): got false, want true")
-		}
-		if epoch.Zero != 0 {
-			t.Fatalf("Zero: got %d, want 0", epoch.Zero)
-		}
+		testkit.True(t, epoch.Zero.IsZero(), "Zero.IsZero must return true")
+		testkit.Equal(t, epoch.Zero, epoch.Epoch(0), "Zero must equal 0")
 	})
 
 	t.Run("non-zero IsZero returns false", func(t *testing.T) {
 		t.Parallel()
 		var e epoch.Epoch = 1
-		if e.IsZero() {
-			t.Fatal("Epoch(1).IsZero(): got true, want false")
-		}
+		testkit.False(t, e.IsZero(), "Epoch(1).IsZero must return false")
 	})
 }
 
@@ -48,10 +44,8 @@ func TestEpochCompare(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			if got := tc.a.Compare(tc.b); got != tc.want {
-				t.Fatalf("Compare(%d, %d): got %d, want %d",
-					tc.a, tc.b, got, tc.want)
-			}
+			testkit.Equal(t, tc.a.Compare(tc.b), tc.want,
+				"Compare must reflect ordering")
 		})
 	}
 }
@@ -62,16 +56,14 @@ func TestEpochSuccessor(t *testing.T) {
 	t.Run("Successor advances by one", func(t *testing.T) {
 		t.Parallel()
 		var e epoch.Epoch = 7
-		if got := e.Successor(); got != 8 {
-			t.Fatalf("Successor(7): got %d, want 8", got)
-		}
+		testkit.Equal(t, e.Successor(), epoch.Epoch(8),
+			"Successor(7) must equal 8")
 	})
 
 	t.Run("Successor of Zero is 1", func(t *testing.T) {
 		t.Parallel()
-		if got := epoch.Zero.Successor(); got != 1 {
-			t.Fatalf("Zero.Successor(): got %d, want 1", got)
-		}
+		testkit.Equal(t, epoch.Zero.Successor(), epoch.Epoch(1),
+			"Successor(Zero) must equal 1")
 	})
 
 	t.Run("Successor wraps at MaxUint64", func(t *testing.T) {
@@ -80,9 +72,8 @@ func TestEpochSuccessor(t *testing.T) {
 		// Documented: monotonicity wraps at MaxUint64; the wrap is
 		// unreachable in practice (~584 years at 1 ns/epoch) and
 		// therefore not guarded.
-		if got := maxEpoch.Successor(); got != epoch.Zero {
-			t.Fatalf("Successor(MaxUint64): got %d, want Zero (wrap)", got)
-		}
+		testkit.Equal(t, maxEpoch.Successor(), epoch.Zero,
+			"Successor(MaxUint64) must wrap to Zero")
 	})
 }
 
@@ -101,9 +92,7 @@ func TestEpochString(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			if got := tc.in.String(); got != tc.want {
-				t.Fatalf("String(%d): got %q, want %q", tc.in, got, tc.want)
-			}
+			testkit.Equal(t, tc.in.String(), tc.want, "String must match expected")
 		})
 	}
 }
@@ -126,9 +115,8 @@ func TestEpochZeroAlloc(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := testing.AllocsPerRun(100, tc.fn); got != 0 {
-				t.Fatalf("%s: %v allocs/op, want 0", tc.name, got)
-			}
+			testkit.Equal(t, testing.AllocsPerRun(100, tc.fn),
+				float64(0), tc.name+" must be zero-alloc")
 		})
 	}
 }

@@ -6,6 +6,8 @@ package telemetry_test
 import (
 	"testing"
 
+	"go.thesmos.sh/testkit"
+
 	"go.thesmos.sh/core/telemetry"
 )
 
@@ -14,11 +16,8 @@ func TestApplySpanOptions(t *testing.T) {
 
 	t.Run("no options yields default SpanKindInternal", func(t *testing.T) {
 		t.Parallel()
-		got := telemetry.ApplySpanOptions(nil)
-		if got != telemetry.SpanKindInternal {
-			t.Fatalf("ApplySpanOptions(nil): got %v, want %v",
-				got, telemetry.SpanKindInternal)
-		}
+		testkit.Equal(t, telemetry.ApplySpanOptions(nil), telemetry.SpanKindInternal,
+			"ApplySpanOptions(nil) must yield SpanKindInternal")
 	})
 
 	t.Run("explicit SpanKindUnspecified falls through to default", func(t *testing.T) {
@@ -26,10 +25,8 @@ func TestApplySpanOptions(t *testing.T) {
 		got := telemetry.ApplySpanOptions([]telemetry.SpanOption{
 			telemetry.WithSpanKind(telemetry.SpanKindUnspecified),
 		})
-		if got != telemetry.SpanKindInternal {
-			t.Fatalf("ApplySpanOptions(Unspecified): got %v, want %v",
-				got, telemetry.SpanKindInternal)
-		}
+		testkit.Equal(t, got, telemetry.SpanKindInternal,
+			"explicit Unspecified must fall through to SpanKindInternal")
 	})
 
 	cases := map[string]telemetry.SpanKind{
@@ -45,10 +42,7 @@ func TestApplySpanOptions(t *testing.T) {
 			got := telemetry.ApplySpanOptions([]telemetry.SpanOption{
 				telemetry.WithSpanKind(kind),
 			})
-			if got != kind {
-				t.Fatalf("ApplySpanOptions(%v): got %v, want %v",
-					kind, got, kind)
-			}
+			testkit.Equal(t, got, kind, "ApplySpanOptions must reflect the configured SpanKind")
 		})
 	}
 
@@ -58,10 +52,8 @@ func TestApplySpanOptions(t *testing.T) {
 			telemetry.WithSpanKind(telemetry.SpanKindClient),
 			telemetry.WithSpanKind(telemetry.SpanKindServer),
 		})
-		if got != telemetry.SpanKindServer {
-			t.Fatalf("ApplySpanOptions(client, server): got %v, want %v",
-				got, telemetry.SpanKindServer)
-		}
+		testkit.Equal(t, got, telemetry.SpanKindServer,
+			"last WithSpanKind must override prior options")
 	})
 }
 

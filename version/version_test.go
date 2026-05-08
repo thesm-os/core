@@ -6,6 +6,8 @@ package version_test
 import (
 	"testing"
 
+	"go.thesmos.sh/testkit"
+
 	"go.thesmos.sh/core/version"
 )
 
@@ -28,13 +30,10 @@ func TestVersionPredicates(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			if got := tc.v.IsZero(); got != tc.isZero {
-				t.Fatalf("IsZero(%q): got %v, want %v", tc.v, got, tc.isZero)
-			}
-			if got := tc.v.IsWildcard(); got != tc.isWildcard {
-				t.Fatalf("IsWildcard(%q): got %v, want %v",
-					tc.v, got, tc.isWildcard)
-			}
+			testkit.Equal(t, tc.v.IsZero(), tc.isZero,
+				"IsZero must match expected predicate result")
+			testkit.Equal(t, tc.v.IsWildcard(), tc.isWildcard,
+				"IsWildcard must match expected predicate result")
 		})
 	}
 }
@@ -55,9 +54,8 @@ func TestVersionZeroAlloc(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := testing.AllocsPerRun(100, tc.fn); got != 0 {
-				t.Fatalf("%s: %v allocs/op, want 0", tc.name, got)
-			}
+			testkit.Equal(t, testing.AllocsPerRun(100, tc.fn),
+				float64(0), tc.name+" must be zero-alloc")
 		})
 	}
 }

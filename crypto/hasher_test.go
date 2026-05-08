@@ -6,18 +6,16 @@ package crypto_test
 import (
 	"testing"
 
+	"go.thesmos.sh/testkit"
+
 	"go.thesmos.sh/core/crypto"
 )
 
 func TestIDSize(t *testing.T) {
 	t.Parallel()
 
-	if got := crypto.IDSize; got != 16 {
-		t.Fatalf("IDSize: got %d, want 16", got)
-	}
-	if got := len(crypto.ID{}); got != crypto.IDSize {
-		t.Fatalf("len(ID): got %d, want %d", got, crypto.IDSize)
-	}
+	testkit.Equal(t, crypto.IDSize, 16, "IDSize must equal 16")
+	testkit.Equal(t, len(crypto.ID{}), crypto.IDSize, "len(ID{}) must equal IDSize")
 }
 
 func TestIDString(t *testing.T) {
@@ -25,20 +23,16 @@ func TestIDString(t *testing.T) {
 
 	t.Run("zero ID hex-encodes to 32 zeros", func(t *testing.T) {
 		t.Parallel()
-		got := crypto.ID{}.String()
-		want := "00000000000000000000000000000000"
-		if got != want {
-			t.Fatalf("String: got %q, want %q", got, want)
-		}
+		testkit.Equal(t, crypto.ID{}.String(),
+			"00000000000000000000000000000000",
+			"zero ID must hex-encode to 32 zeros")
 	})
 
 	t.Run("specific bytes hex-encode in order", func(t *testing.T) {
 		t.Parallel()
 		id := crypto.ID{0xde, 0xad, 0xbe, 0xef}
-		got := id.String()
-		want := "deadbeef000000000000000000000000"
-		if got != want {
-			t.Fatalf("String: got %q, want %q", got, want)
-		}
+		testkit.Equal(t, id.String(),
+			"deadbeef000000000000000000000000",
+			"specific bytes must hex-encode in order, padded with zeros")
 	})
 }

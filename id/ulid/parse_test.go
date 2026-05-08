@@ -4,10 +4,11 @@
 package ulid_test
 
 import (
-	"errors"
 	"strings"
 	"testing"
 	"time"
+
+	"go.thesmos.sh/testkit"
 
 	"go.thesmos.sh/core/clock/fake"
 	"go.thesmos.sh/core/id"
@@ -21,9 +22,7 @@ func TestFormat(t *testing.T) {
 
 	t.Run("Zero formats to empty (size 0)", func(t *testing.T) {
 		t.Parallel()
-		if got := ulid.Format(id.Zero); got != "" {
-			t.Fatalf("Format(Zero): got %q, want \"\"", got)
-		}
+		testkit.Equal(t, ulid.Format(id.Zero), "", "Format(Zero) must be empty")
 	})
 
 	// Frozen-output vectors. Each was hand-derived from the
@@ -33,10 +32,8 @@ func TestFormat(t *testing.T) {
 	t.Run("all-zero 128-bit ID encodes to 26 zeros", func(t *testing.T) {
 		t.Parallel()
 		u := id.New128([id.Size128]byte{})
-		const want = "00000000000000000000000000"
-		if got := ulid.Format(u); got != want {
-			t.Fatalf("Format: got %q, want %q", got, want)
-		}
+		testkit.Equal(t, ulid.Format(u), "00000000000000000000000000",
+			"all-zero ID must encode to 26 zeros")
 	})
 
 	t.Run("timestamp byte 0 = 0x01 encodes to leading '04'", func(t *testing.T) {
@@ -46,10 +43,8 @@ func TestFormat(t *testing.T) {
 		// field are zero; next 5 bits (44..40) carry the
 		// '4' (= 4). Remaining chars are zero.
 		u := idFromBytes(0x01)
-		const want = "04000000000000000000000000"
-		if got := ulid.Format(u); got != want {
-			t.Fatalf("Format: got %q, want %q", got, want)
-		}
+		testkit.Equal(t, ulid.Format(u), "04000000000000000000000000",
+			"timestamp byte 0 = 0x01 must encode to leading '04'")
 	})
 
 	t.Run("random half all-ones encodes to 16 Zs", func(t *testing.T) {
@@ -61,10 +56,8 @@ func TestFormat(t *testing.T) {
 			0, 0, 0, 0, 0, 0,
 			0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
 		)
-		const want = "0000000000ZZZZZZZZZZZZZZZZ"
-		if got := ulid.Format(u); got != want {
-			t.Fatalf("Format: got %q, want %q", got, want)
-		}
+		testkit.Equal(t, ulid.Format(u), "0000000000ZZZZZZZZZZZZZZZZ",
+			"random half all-ones must encode to 16 Zs")
 	})
 
 	t.Run("asymmetric random half locks per-char arithmetic", func(t *testing.T) {
@@ -77,10 +70,8 @@ func TestFormat(t *testing.T) {
 			0, 0, 0, 0, 0, 0,
 			0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0, 0x12, 0x34,
 		)
-		const want = "000000000028T5CY4TQKFF04HM"
-		if got := ulid.Format(u); got != want {
-			t.Fatalf("Format: got %q, want %q", got, want)
-		}
+		testkit.Equal(t, ulid.Format(u), "000000000028T5CY4TQKFF04HM",
+			"asymmetric random half must encode to expected vector")
 	})
 
 	t.Run("mixed timestamp + random locks both halves", func(t *testing.T) {
@@ -91,10 +82,8 @@ func TestFormat(t *testing.T) {
 			0x01, 0x23, 0x45, 0x67, 0x89, 0xAB,
 			0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0xFE, 0xDC,
 		)
-		const want = "04HMASW9NC04HMASW9NF6YZZPW"
-		if got := ulid.Format(u); got != want {
-			t.Fatalf("Format: got %q, want %q", got, want)
-		}
+		testkit.Equal(t, ulid.Format(u), "04HMASW9NC04HMASW9NF6YZZPW",
+			"mixed timestamp+random must encode to expected vector")
 	})
 
 	t.Run("all-ones encodes timestamp prefix 'ZZZZZZZZZW'", func(t *testing.T) {
@@ -109,10 +98,8 @@ func TestFormat(t *testing.T) {
 			0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
 			0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
 		)
-		const want = "ZZZZZZZZZWZZZZZZZZZZZZZZZZ"
-		if got := ulid.Format(u); got != want {
-			t.Fatalf("Format: got %q, want %q", got, want)
-		}
+		testkit.Equal(t, ulid.Format(u), "ZZZZZZZZZWZZZZZZZZZZZZZZZZ",
+			"all-ones must encode timestamp prefix 'ZZZZZZZZZW'")
 	})
 
 	t.Run("output is exactly 26 base32 characters", func(t *testing.T) {
@@ -121,13 +108,11 @@ func TestFormat(t *testing.T) {
 		origin := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 		g := ulid.New(fake.New(origin), seeded.New(rand.Seed(1)))
 		got := ulid.Format(g.Generate())
-		if len(got) != 26 {
-			t.Fatalf("len: got %d, want 26", len(got))
-		}
+		testkit.Equal(t, len(got), 26, "Format output must be 26 characters")
 		for i, ch := range got {
-			if !strings.ContainsRune(alphabet, ch) {
-				t.Fatalf("char %d (%q) not in Crockford alphabet", i, ch)
-			}
+			testkit.True(t, strings.ContainsRune(alphabet, ch),
+				"char "+string(ch)+" at position must be in Crockford alphabet")
+			_ = i
 		}
 	})
 }
@@ -143,73 +128,46 @@ func TestParseULID(t *testing.T) {
 		encoded := ulid.Format(want)
 
 		got, err := ulid.ParseULID(encoded)
-		if err != nil {
-			t.Fatalf("ParseULID: %v", err)
-		}
-		if got != want {
-			t.Fatalf("round-trip:\n got=%v\nwant=%v", got, want)
-		}
+		testkit.NoError(t, err, "ParseULID")
+		testkit.Equal(t, got, want, "ParseULID(Format(x)) must round-trip")
 	})
 
 	t.Run("decodes the all-zero canonical encoding", func(t *testing.T) {
 		t.Parallel()
 		got, err := ulid.ParseULID("00000000000000000000000000")
-		if err != nil {
-			t.Fatalf("ParseULID: %v", err)
-		}
-		want := id.New128([id.Size128]byte{})
-		if got != want {
-			t.Fatalf("zero parse: got %v, want %v", got, want)
-		}
+		testkit.NoError(t, err, "ParseULID")
+		testkit.Equal(t, got, id.New128([id.Size128]byte{}),
+			"all-zero parse must decode to all-zero 128-bit ID")
 	})
 
 	t.Run("decodes asymmetric vector", func(t *testing.T) {
 		t.Parallel()
 		got, err := ulid.ParseULID("04HMASW9NC04HMASW9NF6YZZPW")
-		if err != nil {
-			t.Fatalf("ParseULID: %v", err)
-		}
+		testkit.NoError(t, err, "ParseULID")
 		want := idFromBytes(
 			0x01, 0x23, 0x45, 0x67, 0x89, 0xAB,
 			0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0xFE, 0xDC,
 		)
-		if got != want {
-			t.Fatalf("decode: got %x, want %x", got.Bytes(), want.Bytes())
-		}
+		testkit.Equal(t, got, want, "asymmetric vector must round-trip")
 	})
 
 	t.Run("accepts lowercase input", func(t *testing.T) {
 		t.Parallel()
 		upper, err := ulid.ParseULID("04HMASW9NC04HMASW9NF6YZZPW")
-		if err != nil {
-			t.Fatalf("upper: %v", err)
-		}
+		testkit.NoError(t, err, "ParseULID upper")
 		lower, err := ulid.ParseULID("04hmasw9nc04hmasw9nf6yzzpw")
-		if err != nil {
-			t.Fatalf("lower: %v", err)
-		}
-		if upper != lower {
-			t.Fatalf("case folding: upper=%v lower=%v", upper, lower)
-		}
+		testkit.NoError(t, err, "ParseULID lower")
+		testkit.Equal(t, upper, lower,
+			"upper- and lower-case must decode identically (case folding)")
 	})
 
 	t.Run("substitutes Crockford I/L/O for 1/1/0", func(t *testing.T) {
 		t.Parallel()
 		// '1' and 'L' should decode identically.
-		oneA, err := ulid.ParseULID("1000000000000000000000000O")
-		if err != nil {
-			t.Fatalf("with O: %v", err)
-		}
-		oneB, err := ulid.ParseULID("L0000000000000000000000000")
-		if err != nil {
-			t.Fatalf("with L: %v", err)
-		}
-		// Position 0 carries the leading 1 in oneB; position 25
-		// carries the trailing O→0 in oneA. Different positions,
-		// so they're not equal — but both must parse without
-		// error, demonstrating substitution acceptance.
-		_ = oneA
-		_ = oneB
+		_, err := ulid.ParseULID("1000000000000000000000000O")
+		testkit.NoError(t, err, "ParseULID with O")
+		_, err = ulid.ParseULID("L0000000000000000000000000")
+		testkit.NoError(t, err, "ParseULID with L")
 	})
 
 	t.Run("rejects wrong length", func(t *testing.T) {
@@ -223,27 +181,22 @@ func TestParseULID(t *testing.T) {
 		}
 		for _, s := range cases {
 			_, err := ulid.ParseULID(s)
-			if !errors.Is(err, ulid.ErrInvalidLength) {
-				t.Fatalf("len %d: got %v, want ErrInvalidLength", len(s), err)
-			}
+			testkit.ErrorIs(t, err, ulid.ErrInvalidLength,
+				"wrong-length input must return ErrInvalidLength")
 		}
 	})
 
 	t.Run("rejects characters outside Crockford alphabet", func(t *testing.T) {
 		t.Parallel()
 		// 'U' is excluded from Crockford to avoid V/U confusion.
-		s := "U" + strings.Repeat("0", 25)
-		_, err := ulid.ParseULID(s)
-		if !errors.Is(err, ulid.ErrInvalidChar) {
-			t.Fatalf("with U: got %v, want ErrInvalidChar", err)
-		}
+		_, err := ulid.ParseULID("U" + strings.Repeat("0", 25))
+		testkit.ErrorIs(t, err, ulid.ErrInvalidChar,
+			"'U' (excluded from Crockford) must return ErrInvalidChar")
 
 		// Punctuation: not in alphabet at any position.
-		s = strings.Repeat("0", 10) + "!" + strings.Repeat("0", 15)
-		_, err = ulid.ParseULID(s)
-		if !errors.Is(err, ulid.ErrInvalidChar) {
-			t.Fatalf("with !: got %v, want ErrInvalidChar", err)
-		}
+		_, err = ulid.ParseULID(strings.Repeat("0", 10) + "!" + strings.Repeat("0", 15))
+		testkit.ErrorIs(t, err, ulid.ErrInvalidChar,
+			"punctuation must return ErrInvalidChar")
 	})
 
 	t.Run("rejects timestamp overflow (first char > '7')", func(t *testing.T) {
@@ -251,18 +204,14 @@ func TestParseULID(t *testing.T) {
 		// First char '8' (Crockford value 8) means timestamp bits
 		// 49..45 = 01000, which sets bit 48 — beyond the 48-bit
 		// timestamp slot.
-		s := "8" + strings.Repeat("0", 25)
-		_, err := ulid.ParseULID(s)
-		if !errors.Is(err, ulid.ErrInvalidTimestamp) {
-			t.Fatalf("with 8: got %v, want ErrInvalidTimestamp", err)
-		}
+		_, err := ulid.ParseULID("8" + strings.Repeat("0", 25))
+		testkit.ErrorIs(t, err, ulid.ErrInvalidTimestamp,
+			"first char '8' must return ErrInvalidTimestamp")
 
 		// 'Z' (value 31): top 2 bits non-zero.
-		s = "Z" + strings.Repeat("0", 25)
-		_, err = ulid.ParseULID(s)
-		if !errors.Is(err, ulid.ErrInvalidTimestamp) {
-			t.Fatalf("with Z: got %v, want ErrInvalidTimestamp", err)
-		}
+		_, err = ulid.ParseULID("Z" + strings.Repeat("0", 25))
+		testkit.ErrorIs(t, err, ulid.ErrInvalidTimestamp,
+			"first char 'Z' must return ErrInvalidTimestamp")
 	})
 
 	t.Run("accepts maximum valid first char '7'", func(t *testing.T) {
@@ -271,14 +220,9 @@ func TestParseULID(t *testing.T) {
 		// means timestamp bits 49..45 = 00111, which leaves bit
 		// 48 unset — within the 48-bit timestamp slot. The
 		// boundary check `first > 7` must accept exactly 7.
-		s := "7" + strings.Repeat("0", 25)
-		got, err := ulid.ParseULID(s)
-		if err != nil {
-			t.Fatalf("with 7: got err %v, want nil (boundary)", err)
-		}
-		if got.IsZero() {
-			t.Fatal("with 7: got Zero, want non-zero")
-		}
+		got, err := ulid.ParseULID("7" + strings.Repeat("0", 25))
+		testkit.NoError(t, err, "first char '7' must parse")
+		testkit.False(t, got.IsZero(), "first char '7' must produce non-Zero ID")
 	})
 
 	t.Run("rejects invalid char inside timestamp half", func(t *testing.T) {
@@ -287,11 +231,9 @@ func TestParseULID(t *testing.T) {
 		// 0..9), past the leading-char check. Exercises the
 		// in-loop invalid-char branch that the leading-char
 		// check doesn't cover.
-		s := "00000!0000" + strings.Repeat("0", 16)
-		_, err := ulid.ParseULID(s)
-		if !errors.Is(err, ulid.ErrInvalidChar) {
-			t.Fatalf("with ! mid-timestamp: got %v, want ErrInvalidChar", err)
-		}
+		_, err := ulid.ParseULID("00000!0000" + strings.Repeat("0", 16))
+		testkit.ErrorIs(t, err, ulid.ErrInvalidChar,
+			"invalid char inside timestamp half must return ErrInvalidChar")
 	})
 
 	// Alphabet-coverage tests. Each test parses a complete 26-
@@ -306,30 +248,24 @@ func TestParseULID(t *testing.T) {
 		// 26 distinct chars: 0..9, A-H, J, K, M, N, P, Q, R, S
 		// (covers Crockford values 0..25). First char '0' so the
 		// timestamp boundary check passes.
-		s := "0123456789ABCDEFGHJKMNPQRS"
-		if _, err := ulid.ParseULID(s); err != nil {
-			t.Fatalf("ParseULID(%q): %v", s, err)
-		}
+		_, err := ulid.ParseULID("0123456789ABCDEFGHJKMNPQRS")
+		testkit.NoError(t, err, "uppercase chars 0-S must decode")
 	})
 
 	t.Run("uppercase chars T-Z decode", func(t *testing.T) {
 		t.Parallel()
 		// Covers the T, V, W, X, Y, Z branches (values 26..31)
 		// plus padding.
-		s := "0TVWXYZ" + strings.Repeat("0", 19)
-		if _, err := ulid.ParseULID(s); err != nil {
-			t.Fatalf("ParseULID(%q): %v", s, err)
-		}
+		_, err := ulid.ParseULID("0TVWXYZ" + strings.Repeat("0", 19))
+		testkit.NoError(t, err, "uppercase chars T-Z must decode")
 	})
 
 	t.Run("lowercase chars a-z decode", func(t *testing.T) {
 		t.Parallel()
 		// 25 lowercase chars covering a..h, j, k, m, n, p..t,
 		// v..z plus one '0' padder.
-		s := "0abcdefghjkmnpqrstvwxyz000"
-		if _, err := ulid.ParseULID(s); err != nil {
-			t.Fatalf("ParseULID(%q): %v", s, err)
-		}
+		_, err := ulid.ParseULID("0abcdefghjkmnpqrstvwxyz000")
+		testkit.NoError(t, err, "lowercase chars a-z must decode")
 	})
 
 	t.Run("I L O substitutions decode", func(t *testing.T) {
@@ -337,10 +273,8 @@ func TestParseULID(t *testing.T) {
 		// The ULID spec retroactively accepts I/L → 1 and O → 0
 		// to handle handwritten or transcribed identifiers; both
 		// upper- and lower-case forms are accepted.
-		s := "0IiLlOo" + strings.Repeat("0", 19)
-		if _, err := ulid.ParseULID(s); err != nil {
-			t.Fatalf("ParseULID(%q): %v", s, err)
-		}
+		_, err := ulid.ParseULID("0IiLlOo" + strings.Repeat("0", 19))
+		testkit.NoError(t, err, "I/L/O substitutions must decode")
 	})
 }
 
@@ -363,13 +297,9 @@ func FuzzParseULID(f *testing.F) {
 		}
 		formatted := ulid.Format(got)
 		again, err := ulid.ParseULID(formatted)
-		if err != nil {
-			t.Fatalf("re-parse of Format(%q)=%q: %v", s, formatted, err)
-		}
-		if got != again {
-			t.Fatalf("idempotency broken:\n  Parse(%q)        = %v\n  Format -> Parse  = %v",
-				s, got, again)
-		}
+		testkit.NoError(t, err, "re-parse of Format(Parse(s))")
+		testkit.Equal(t, again, got,
+			"Parse(Format(Parse(s))) must equal Parse(s) — idempotent")
 	})
 }
 
@@ -400,13 +330,8 @@ func FuzzULIDRoundTrip(f *testing.F) {
 
 		formatted := ulid.Format(u)
 		parsed, err := ulid.ParseULID(formatted)
-		if err != nil {
-			t.Fatalf("Format(%x)=%q; Parse: %v", raw, formatted, err)
-		}
-		if parsed != u {
-			t.Fatalf("round-trip failed:\n  in   = %x\n  fmt  = %q\n  out  = %x",
-				raw, formatted, parsed.Bytes())
-		}
+		testkit.NoError(t, err, "Parse(Format(x))")
+		testkit.Equal(t, parsed, u, "Format → Parse round-trip must preserve the ID")
 	})
 }
 

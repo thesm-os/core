@@ -6,6 +6,8 @@ package sign_test
 import (
 	"testing"
 
+	"go.thesmos.sh/testkit"
+
 	"go.thesmos.sh/core/crypto/sign"
 )
 
@@ -15,31 +17,23 @@ func TestKeyIDString(t *testing.T) {
 	t.Run("zero KeyID hex-encodes to all zeros", func(t *testing.T) {
 		t.Parallel()
 		var k sign.KeyID
-		const want = "00000000000000000000000000000000"
-		if got := k.String(); got != want {
-			t.Fatalf("String: got %q, want %q", got, want)
-		}
+		testkit.Equal(t, k.String(), "00000000000000000000000000000000",
+			"zero KeyID must hex-encode to 32 zeros")
 	})
 
 	t.Run("specific bytes hex-encode in order", func(t *testing.T) {
 		t.Parallel()
 		var k sign.KeyID
 		k[0], k[1], k[14], k[15] = 0xab, 0xcd, 0x12, 0x34
-		const want = "abcd0000000000000000000000001234"
-		if got := k.String(); got != want {
-			t.Fatalf("String: got %q, want %q", got, want)
-		}
+		testkit.Equal(t, k.String(), "abcd0000000000000000000000001234",
+			"specific bytes must hex-encode in order")
 	})
 }
 
 func TestKeyIDSize(t *testing.T) {
 	t.Parallel()
 
-	if sign.KeyIDSize != 16 {
-		t.Fatalf("KeyIDSize: got %d, want 16", sign.KeyIDSize)
-	}
+	testkit.Equal(t, sign.KeyIDSize, 16, "KeyIDSize must equal 16")
 	var k sign.KeyID
-	if got := len(k); got != sign.KeyIDSize {
-		t.Fatalf("len(KeyID): got %d, want %d", got, sign.KeyIDSize)
-	}
+	testkit.Equal(t, len(k), sign.KeyIDSize, "len(KeyID) must equal KeyIDSize")
 }

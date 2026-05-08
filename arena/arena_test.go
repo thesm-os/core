@@ -7,6 +7,8 @@ import (
 	"bytes"
 	"testing"
 
+	"go.thesmos.sh/testkit"
+
 	"go.thesmos.sh/core/arena"
 )
 
@@ -16,23 +18,15 @@ func TestNew(t *testing.T) {
 	t.Run("New returns an empty arena", func(t *testing.T) {
 		t.Parallel()
 		a := arena.New()
-		if got := a.Len(); got != 0 {
-			t.Fatalf("Len: got %d, want 0", got)
-		}
-		if got := a.Cap(); got != 0 {
-			t.Fatalf("Cap: got %d, want 0", got)
-		}
+		testkit.Equal(t, a.Len(), 0, "Len on fresh arena must be 0")
+		testkit.Equal(t, a.Cap(), 0, "Cap on fresh arena must be 0")
 	})
 
 	t.Run("NewWithCapacity pre-allocates the backing buffer", func(t *testing.T) {
 		t.Parallel()
 		a := arena.NewWithCapacity(1024)
-		if got := a.Len(); got != 0 {
-			t.Fatalf("Len: got %d, want 0", got)
-		}
-		if got := a.Cap(); got != 1024 {
-			t.Fatalf("Cap: got %d, want 1024", got)
-		}
+		testkit.Equal(t, a.Len(), 0, "Len on freshly-allocated arena must be 0")
+		testkit.Equal(t, a.Cap(), 1024, "Cap must equal the requested capacity")
 	})
 }
 
@@ -43,10 +37,8 @@ func TestAppend(t *testing.T) {
 		t.Parallel()
 		a := arena.New()
 		input := []byte("hello")
-		got := a.Append(input)
-		if !bytes.Equal(got, input) {
-			t.Fatalf("Append: got %q, want %q", got, input)
-		}
+		testkit.Equal(t, a.Append(input), input,
+			"Append must return a slice equal to the supplied input")
 	})
 
 	t.Run("returned slice has capacity equal to length", func(t *testing.T) {
@@ -55,10 +47,8 @@ func TestAppend(t *testing.T) {
 		got := a.Append([]byte("hello"))
 		// Three-index slicing caps capacity. append on the
 		// returned slice must NOT extend into the arena.
-		if cap(got) != len(got) {
-			t.Fatalf("cap=%d, want %d (three-index cap)",
-				cap(got), len(got))
-		}
+		testkit.Equal(t, cap(got), len(got),
+			"three-index cap must keep cap == len so callers can't extend into the arena")
 	})
 
 	t.Run("multiple appends extend Len cumulatively", func(t *testing.T) {
@@ -67,9 +57,7 @@ func TestAppend(t *testing.T) {
 		a.Append([]byte("ab"))
 		a.Append([]byte("cd"))
 		a.Append([]byte("ef"))
-		if got := a.Len(); got != 6 {
-			t.Fatalf("Len after three Appends: got %d, want 6", got)
-		}
+		testkit.Equal(t, a.Len(), 6, "Len must equal the cumulative bytes appended")
 	})
 
 	t.Run("returned slice aliases the backing buffer until Reset", func(t *testing.T) {
@@ -80,10 +68,8 @@ func TestAppend(t *testing.T) {
 		// first — arena guarantees stability across Appends as
 		// long as no realloc occurs.
 		a.Append([]byte("world"))
-		if !bytes.Equal(first, []byte("hello")) {
-			t.Fatalf("first slice corrupted by subsequent Append: got %q",
-				first)
-		}
+		testkit.Equal(t, first, []byte("hello"),
+			"first slice must remain stable across subsequent in-capacity appends")
 	})
 }
 
@@ -94,23 +80,15 @@ func TestAlloc(t *testing.T) {
 		t.Parallel()
 		a := arena.New()
 		got := a.Alloc(8)
-		if len(got) != 8 {
-			t.Fatalf("len: got %d, want 8", len(got))
-		}
-		for i, b := range got {
-			if b != 0 {
-				t.Fatalf("byte %d: got %#x, want 0", i, b)
-			}
-		}
+		testkit.Equal(t, len(got), 8, "Alloc(n) must return a slice of length n")
+		testkit.Equal(t, got, make([]byte, 8), "Alloc must zero the returned region")
 	})
 
 	t.Run("returned slice has capacity equal to length", func(t *testing.T) {
 		t.Parallel()
 		a := arena.New()
 		got := a.Alloc(8)
-		if cap(got) != len(got) {
-			t.Fatalf("cap=%d, want %d", cap(got), len(got))
-		}
+		testkit.Equal(t, cap(got), len(got), "Alloc must cap capacity at length")
 	})
 
 	t.Run("zeroes new region after Reset reuse", func(t *testing.T) {
@@ -123,13 +101,8 @@ func TestAlloc(t *testing.T) {
 		}
 		a.Reset()
 		// Alloc must return zeroed bytes, not the prior 0xFFs.
-		fresh := a.Alloc(32)
-		for i, b := range fresh {
-			if b != 0 {
-				t.Fatalf("byte %d after Reset+Alloc: got %#x, want 0",
-					i, b)
-			}
-		}
+		testkit.Equal(t, a.Alloc(32), make([]byte, 32),
+			"Alloc after Reset must zero the reused region")
 	})
 
 	t.Run("grows via reallocation when capacity exceeded", func(t *testing.T) {
@@ -138,9 +111,7 @@ func TestAlloc(t *testing.T) {
 		a.Alloc(4)
 		// Force a grow.
 		a.Alloc(100)
-		if a.Cap() < 104 {
-			t.Fatalf("Cap after grow: got %d, want ≥ 104", a.Cap())
-		}
+		testkit.True(t, a.Cap() >= 104, "Cap must be ≥ requested after grow")
 	})
 
 	t.Run("uses in-place expansion at cap == needed boundary", func(t *testing.T) {
@@ -150,10 +121,8 @@ func TestAlloc(t *testing.T) {
 		// not the grow branch.
 		a := arena.NewWithCapacity(32)
 		_ = a.Alloc(32)
-		if got := a.Cap(); got != 32 {
-			t.Fatalf("Cap at boundary: got %d, want 32 (no reallocation)",
-				got)
-		}
+		testkit.Equal(t, a.Cap(), 32,
+			"Cap at boundary must not reallocate — in-place expansion")
 	})
 
 	t.Run("doubling growth dominates when have*2 > want", func(t *testing.T) {
@@ -163,10 +132,8 @@ func TestAlloc(t *testing.T) {
 		// is have*2 (50*2=100), not want (75).
 		a := arena.NewWithCapacity(50)
 		_ = a.Alloc(75)
-		if got := a.Cap(); got != 100 {
-			t.Fatalf("Cap after doubling-dominant grow: got %d, want 100",
-				got)
-		}
+		testkit.Equal(t, a.Cap(), 100,
+			"doubling must dominate when have*2 > want")
 	})
 
 	t.Run("doubling boundary: have*2 == want returns have*2", func(t *testing.T) {
@@ -175,9 +142,8 @@ func TestAlloc(t *testing.T) {
 		// check: have*2 == want, growCap returns have*2.
 		a := arena.NewWithCapacity(50)
 		_ = a.Alloc(100)
-		if got := a.Cap(); got != 100 {
-			t.Fatalf("Cap at doubling boundary: got %d, want 100", got)
-		}
+		testkit.Equal(t, a.Cap(), 100,
+			"have*2 == want must return have*2")
 	})
 
 	t.Run("requested capacity dominates when have*2 < want", func(t *testing.T) {
@@ -187,10 +153,8 @@ func TestAlloc(t *testing.T) {
 		// exactly want (1000), not have*2 (8).
 		a := arena.NewWithCapacity(4)
 		_ = a.Alloc(1000)
-		if got := a.Cap(); got != 1000 {
-			t.Fatalf("Cap after want-dominant grow: got %d, want 1000",
-				got)
-		}
+		testkit.Equal(t, a.Cap(), 1000,
+			"want must dominate when have*2 < want")
 	})
 
 	t.Run("caller may write into the returned slice", func(t *testing.T) {
@@ -199,18 +163,14 @@ func TestAlloc(t *testing.T) {
 		buf := a.Alloc(5)
 		copy(buf, "hello")
 		// The arena's Bytes view must reflect the write.
-		if !bytes.Equal(a.Bytes(), []byte("hello")) {
-			t.Fatalf("arena Bytes: got %q, want hello", a.Bytes())
-		}
+		testkit.Equal(t, a.Bytes(), []byte("hello"),
+			"writes into Alloc'd slice must reflect in arena Bytes")
 	})
 
 	t.Run("zero n returns an empty slice", func(t *testing.T) {
 		t.Parallel()
 		a := arena.New()
-		got := a.Alloc(0)
-		if len(got) != 0 {
-			t.Fatalf("Alloc(0) len: got %d, want 0", len(got))
-		}
+		testkit.Equal(t, len(a.Alloc(0)), 0, "Alloc(0) must return an empty slice")
 	})
 }
 
@@ -231,14 +191,14 @@ func FuzzAppendBytesEquivalence(f *testing.F) {
 		want := append([]byte{}, first...)
 		want = append(want, second...)
 
-		if got := a.Bytes(); !bytes.Equal(got, want) {
-			t.Fatalf("Bytes != concat(first, second):\n  got=%x\n  want=%x",
-				got, want)
-		}
-		if got := a.CopyOut(); !bytes.Equal(got, want) {
-			t.Fatalf("CopyOut != concat(first, second):\n  got=%x\n  want=%x",
-				got, want)
-		}
+		// bytes.Equal treats nil and empty slice as equal; go-cmp
+		// (which testkit.Equal uses) does not. The arena may return
+		// nil for an empty result while want is the empty slice —
+		// stick with bytes.Equal here for the right semantics.
+		testkit.True(t, bytes.Equal(a.Bytes(), want),
+			"Bytes must equal the concatenation of the two Appends")
+		testkit.True(t, bytes.Equal(a.CopyOut(), want),
+			"CopyOut must equal the concatenation of the two Appends")
 	})
 }
 
@@ -252,10 +212,8 @@ func TestMarkSliceSince(t *testing.T) {
 		mark := a.Mark()
 		a.Append([]byte("part1"))
 		a.Append([]byte("part2"))
-		got := a.SliceSince(mark)
-		if !bytes.Equal(got, []byte("part1part2")) {
-			t.Fatalf("SliceSince: got %q, want part1part2", got)
-		}
+		testkit.Equal(t, a.SliceSince(mark), []byte("part1part2"),
+			"SliceSince must return bytes appended after the mark")
 	})
 
 	t.Run("returns nil when mark is at current end", func(t *testing.T) {
@@ -263,9 +221,8 @@ func TestMarkSliceSince(t *testing.T) {
 		a := arena.New()
 		a.Append([]byte("data"))
 		mark := a.Mark()
-		if got := a.SliceSince(mark); got != nil {
-			t.Fatalf("SliceSince at end: got %v, want nil", got)
-		}
+		testkit.True(t, a.SliceSince(mark) == nil,
+			"SliceSince at end must return nil — no bytes after mark")
 	})
 
 	t.Run("Marker from previous lifecycle is rejected after Reset", func(t *testing.T) {
@@ -282,10 +239,8 @@ func TestMarkSliceSince(t *testing.T) {
 		a.Reset()
 		a.Append(make([]byte, 200)) // len now 200; stale.pos was 15
 
-		if got := a.SliceSince(stale); got != nil {
-			t.Fatalf("stale Marker after Reset: got %d bytes, want nil",
-				len(got))
-		}
+		testkit.True(t, a.SliceSince(stale) == nil,
+			"stale Marker after Reset must return nil")
 	})
 
 	t.Run("Marker from previous lifecycle is rejected after Shrink", func(t *testing.T) {
@@ -297,10 +252,8 @@ func TestMarkSliceSince(t *testing.T) {
 		a.Shrink()
 		a.Append(make([]byte, 200))
 
-		if got := a.SliceSince(stale); got != nil {
-			t.Fatalf("stale Marker after Shrink: got %d bytes, want nil",
-				len(got))
-		}
+		testkit.True(t, a.SliceSince(stale) == nil,
+			"stale Marker after Shrink must return nil")
 	})
 
 	t.Run("returned slice has capped capacity", func(t *testing.T) {
@@ -309,9 +262,8 @@ func TestMarkSliceSince(t *testing.T) {
 		mark := a.Mark()
 		a.Append([]byte("hello"))
 		got := a.SliceSince(mark)
-		if cap(got) != len(got) {
-			t.Fatalf("cap=%d, want %d", cap(got), len(got))
-		}
+		testkit.Equal(t, cap(got), len(got),
+			"SliceSince must cap capacity at length (three-index slicing)")
 	})
 }
 
@@ -321,9 +273,7 @@ func TestBytes(t *testing.T) {
 	t.Run("empty arena returns empty slice", func(t *testing.T) {
 		t.Parallel()
 		a := arena.New()
-		if got := a.Bytes(); len(got) != 0 {
-			t.Fatalf("Bytes on empty: got %q, want empty", got)
-		}
+		testkit.Equal(t, len(a.Bytes()), 0, "Bytes on empty arena must be empty")
 	})
 
 	t.Run("returns the full appended region", func(t *testing.T) {
@@ -331,9 +281,8 @@ func TestBytes(t *testing.T) {
 		a := arena.New()
 		a.Append([]byte("hello "))
 		a.Append([]byte("world"))
-		if got := a.Bytes(); !bytes.Equal(got, []byte("hello world")) {
-			t.Fatalf("Bytes: got %q, want hello world", got)
-		}
+		testkit.Equal(t, a.Bytes(), []byte("hello world"),
+			"Bytes must return the full appended region")
 	})
 
 	t.Run("returned slice has capped capacity", func(t *testing.T) {
@@ -341,10 +290,8 @@ func TestBytes(t *testing.T) {
 		a := arena.NewWithCapacity(64)
 		a.Append([]byte("data"))
 		got := a.Bytes()
-		if cap(got) != len(got) {
-			t.Fatalf("cap=%d, want %d (three-index cap)",
-				cap(got), len(got))
-		}
+		testkit.Equal(t, cap(got), len(got),
+			"Bytes must cap capacity at length (three-index slicing)")
 	})
 }
 
@@ -358,21 +305,17 @@ func TestZeroAlloc(t *testing.T) {
 
 	t.Run("Append into pre-sized buffer", func(t *testing.T) {
 		// Reset between iterations so capacity stays in scope.
-		if got := testing.AllocsPerRun(100, func() {
+		testkit.Equal(t, testing.AllocsPerRun(100, func() {
 			a.Reset()
 			_ = a.Append(data)
-		}); got != 0 {
-			t.Fatalf("Append: %v allocs/op, want 0", got)
-		}
+		}), float64(0), "Append into pre-sized arena must be zero-alloc")
 	})
 
 	t.Run("Alloc within capacity", func(t *testing.T) {
-		if got := testing.AllocsPerRun(100, func() {
+		testkit.Equal(t, testing.AllocsPerRun(100, func() {
 			a.Reset()
 			_ = a.Alloc(64)
-		}); got != 0 {
-			t.Fatalf("Alloc: %v allocs/op, want 0", got)
-		}
+		}), float64(0), "Alloc within capacity must be zero-alloc")
 	})
 
 	t.Run("Mark + SliceSince", func(t *testing.T) {
@@ -380,23 +323,19 @@ func TestZeroAlloc(t *testing.T) {
 		a.Append(data)
 		mark := a.Mark()
 		a.Append(data)
-		if got := testing.AllocsPerRun(100, func() {
+		testkit.Equal(t, testing.AllocsPerRun(100, func() {
 			_ = a.SliceSince(mark)
-		}); got != 0 {
-			t.Fatalf("SliceSince: %v allocs/op, want 0", got)
-		}
+		}), float64(0), "SliceSince must be zero-alloc")
 	})
 
 	t.Run("Bytes / Len / Cap", func(t *testing.T) {
 		a.Reset()
 		a.Append(data)
-		if got := testing.AllocsPerRun(100, func() {
+		testkit.Equal(t, testing.AllocsPerRun(100, func() {
 			_ = a.Bytes()
 			_ = a.Len()
 			_ = a.Cap()
-		}); got != 0 {
-			t.Fatalf("Bytes/Len/Cap: %v allocs/op, want 0", got)
-		}
+		}), float64(0), "Bytes/Len/Cap must be zero-alloc")
 	})
 }
 

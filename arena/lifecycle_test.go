@@ -6,6 +6,8 @@ package arena_test
 import (
 	"testing"
 
+	"go.thesmos.sh/testkit"
+
 	"go.thesmos.sh/core/arena"
 )
 
@@ -18,13 +20,8 @@ func TestReset(t *testing.T) {
 		a.Append([]byte("data"))
 		capBefore := a.Cap()
 		a.Reset()
-		if got := a.Len(); got != 0 {
-			t.Fatalf("Len after Reset: got %d, want 0", got)
-		}
-		if got := a.Cap(); got != capBefore {
-			t.Fatalf("Cap changed by Reset: got %d, want %d",
-				got, capBefore)
-		}
+		testkit.Equal(t, a.Len(), 0, "Len after Reset must be 0")
+		testkit.Equal(t, a.Cap(), capBefore, "Reset must preserve Cap")
 	})
 
 	t.Run("subsequent Append starts from offset 0", func(t *testing.T) {
@@ -33,12 +30,8 @@ func TestReset(t *testing.T) {
 		a.Append([]byte("first"))
 		a.Reset()
 		got := a.Append([]byte("second"))
-		if string(got) != "second" {
-			t.Fatalf("Append after Reset: got %q, want second", got)
-		}
-		if a.Len() != len("second") {
-			t.Fatalf("Len: got %d, want 6", a.Len())
-		}
+		testkit.Equal(t, string(got), "second", "Append after Reset must return the new value")
+		testkit.Equal(t, a.Len(), len("second"), "Len after Reset+Append must equal new value length")
 	})
 }
 
@@ -58,10 +51,8 @@ func TestCapExceeds(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			a := arena.NewWithCapacity(tc.cap)
-			if got := a.CapExceeds(tc.max); got != tc.want {
-				t.Fatalf("CapExceeds(%d, max=%d): got %v, want %v",
-					tc.cap, tc.max, got, tc.want)
-			}
+			testkit.Equal(t, a.CapExceeds(tc.max), tc.want,
+				"CapExceeds must reflect cap vs max comparison")
 		})
 	}
 }
@@ -74,12 +65,8 @@ func TestShrink(t *testing.T) {
 		a := arena.NewWithCapacity(1024)
 		a.Append([]byte("data"))
 		a.Shrink()
-		if got := a.Len(); got != 0 {
-			t.Fatalf("Len after Shrink: got %d, want 0", got)
-		}
-		if got := a.Cap(); got != 0 {
-			t.Fatalf("Cap after Shrink: got %d, want 0", got)
-		}
+		testkit.Equal(t, a.Len(), 0, "Len after Shrink must be 0")
+		testkit.Equal(t, a.Cap(), 0, "Cap after Shrink must be 0 — backing buffer released")
 	})
 
 	t.Run("arena remains usable after Shrink", func(t *testing.T) {
@@ -87,10 +74,8 @@ func TestShrink(t *testing.T) {
 		a := arena.NewWithCapacity(64)
 		a.Append([]byte("first"))
 		a.Shrink()
-		got := a.Append([]byte("second"))
-		if string(got) != "second" {
-			t.Fatalf("Append after Shrink: got %q, want second", got)
-		}
+		testkit.Equal(t, string(a.Append([]byte("second"))), "second",
+			"Append after Shrink must return the new value")
 	})
 }
 
@@ -102,27 +87,21 @@ func TestLifecycleZeroAlloc(t *testing.T) {
 	a := arena.NewWithCapacity(1024)
 
 	t.Run("Reset", func(t *testing.T) {
-		if got := testing.AllocsPerRun(100, func() {
+		testkit.Equal(t, testing.AllocsPerRun(100, func() {
 			a.Reset()
-		}); got != 0 {
-			t.Fatalf("Reset: %v allocs/op, want 0", got)
-		}
+		}), float64(0), "Reset must be zero-alloc")
 	})
 
 	t.Run("CapExceeds", func(t *testing.T) {
-		if got := testing.AllocsPerRun(100, func() {
+		testkit.Equal(t, testing.AllocsPerRun(100, func() {
 			_ = a.CapExceeds(2048)
-		}); got != 0 {
-			t.Fatalf("CapExceeds: %v allocs/op, want 0", got)
-		}
+		}), float64(0), "CapExceeds must be zero-alloc")
 	})
 
 	t.Run("Shrink", func(t *testing.T) {
-		if got := testing.AllocsPerRun(100, func() {
+		testkit.Equal(t, testing.AllocsPerRun(100, func() {
 			a.Shrink()
-		}); got != 0 {
-			t.Fatalf("Shrink: %v allocs/op, want 0", got)
-		}
+		}), float64(0), "Shrink must be zero-alloc")
 	})
 }
 
