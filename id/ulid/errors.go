@@ -3,6 +3,8 @@
 
 package ulid
 
+//go:generate testkit sentinel -o errors.gen_test.go
+
 import "errors"
 
 // Sentinel errors returned by [ParseULID].
