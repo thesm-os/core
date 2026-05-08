@@ -6,7 +6,6 @@ package sha256_test
 import (
 	stdhmac "crypto/hmac"
 	stdsha256 "crypto/sha256"
-	"encoding/hex"
 	"hash"
 	"testing"
 
@@ -169,9 +168,9 @@ func TestRFC4231Vectors(t *testing.T) {
 	for _, tc := range rfc4231Vectors {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			key := mustDecodeHex(t, tc.keyHex)
-			data := mustDecodeHex(t, tc.dataHex)
-			want := mustDecodeHex(t, tc.wantHex)
+			key := testkit.MustDecodeHex(t, tc.keyHex)
+			data := testkit.MustDecodeHex(t, tc.dataHex)
+			want := testkit.MustDecodeHex(t, tc.wantHex)
 			got := hmacsha256.New(key).Sign(data)
 			testkit.Equal(t, got.Bytes(), want, "Sign output must byte-match RFC 4231 vector")
 		})
@@ -195,13 +194,4 @@ func TestNewKeyIsCopied(t *testing.T) {
 	got := m.Sign(data)
 	testkit.True(t, got.Equal(want),
 		"MAC must hold a defensive copy — caller's mutated key must not affect Sign")
-}
-
-// --- helpers ---
-
-func mustDecodeHex(t *testing.T, s string) []byte {
-	t.Helper()
-	b, err := hex.DecodeString(s)
-	testkit.NoError(t, err, "decode hex fixture")
-	return b
 }

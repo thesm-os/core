@@ -2,7 +2,7 @@ module go.thesmos.sh/core
 
 go 1.26.2
 
-require go.thesmos.sh/testkit v0.8.3
+require go.thesmos.sh/testkit v0.9.0
 
 require (
 	github.com/anishathalye/porcupine v1.1.0 // indirect

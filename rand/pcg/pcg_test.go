@@ -4,7 +4,6 @@
 package pcg_test
 
 import (
-	"encoding/hex"
 	"testing"
 
 	"go.thesmos.sh/testkit"
@@ -88,7 +87,7 @@ func TestKnownAnswerVectors(t *testing.T) {
 		// Golden bytes recorded from pcg.New(42).Read(make([]byte, 32)).
 		// Pinned to detect drift; covers the aligned (8-byte
 		// multiple) path of Read.
-		want := mustDecodeHex(t,
+		want := testkit.MustDecodeHex(t,
 			"9fa987db721b88dbe49fb0762d6df1f5c73270890a25e4227161b5e80282a816")
 		got := make([]byte, len(want))
 		_, _ = pcg.New(rand.Seed(42)).Read(got)
@@ -100,7 +99,7 @@ func TestKnownAnswerVectors(t *testing.T) {
 		// Golden bytes recorded from pcg.New(1).Read(make([]byte, 17)).
 		// 17 = 2*8 + 1; exercises the tail-byte branch where the
 		// final Uint64 only contributes one byte to the output.
-		want := mustDecodeHex(t, "0329edab29a127995653604a8c07d016f2")
+		want := testkit.MustDecodeHex(t, "0329edab29a127995653604a8c07d016f2")
 		got := make([]byte, len(want))
 		_, _ = pcg.New(rand.Seed(1)).Read(got)
 		testkit.Equal(t, got, want, "PCG Seed(1) Read(17) must byte-match the golden vector")
@@ -123,13 +122,4 @@ func TestKnownAnswerVectors(t *testing.T) {
 		testkit.Equal(t, split, single,
 			"split Reads must reproduce the same byte stream as a single Read")
 	})
-}
-
-// --- helpers ---
-
-func mustDecodeHex(t *testing.T, s string) []byte {
-	t.Helper()
-	b, err := hex.DecodeString(s)
-	testkit.NoError(t, err, "decode hex fixture")
-	return b
 }

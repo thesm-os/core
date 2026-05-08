@@ -5,7 +5,6 @@ package seeded_test
 
 import (
 	"bytes"
-	"encoding/hex"
 	"testing"
 
 	"go.thesmos.sh/testkit"
@@ -122,20 +121,11 @@ func TestRead(t *testing.T) {
 		// HMAC-SHA-256 is deterministic and the construction
 		// (key = big-endian seed, counter encoded big-endian) is
 		// part of the public contract — see package godoc.
-		want := mustDecodeHex(t,
+		want := testkit.MustDecodeHex(t,
 			"c1dfde25ff46bc350cbd30fd529c74c4e4e820f2e2ea56dff62b4e1b60e75c56"+
 				"df4a9b70aa92cd69a9a3d37de3ff9a5baa97ee15640101987fd736296aa2cfcc")
 		got := make([]byte, len(want))
 		_, _ = seeded.New(rand.Seed(0xabcd)).Read(got)
 		testkit.Equal(t, got, want, "seeded.New(0xabcd) Read(64) must byte-match the golden vector")
 	})
-}
-
-// --- helpers ---
-
-func mustDecodeHex(t *testing.T, s string) []byte {
-	t.Helper()
-	b, err := hex.DecodeString(s)
-	testkit.NoError(t, err, "decode hex fixture")
-	return b
 }

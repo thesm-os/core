@@ -284,10 +284,10 @@ func TestRFC8032Vectors(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			seed := mustDecodeHex(t, tc.secretHex)
-			pub := mustDecodeHex(t, tc.publicHex)
-			msg := mustDecodeHex(t, tc.msgHex)
-			wantSig := mustDecodeHex(t, tc.sigHex)
+			seed := testkit.MustDecodeHex(t, tc.secretHex)
+			pub := testkit.MustDecodeHex(t, tc.publicHex)
+			msg := testkit.MustDecodeHex(t, tc.msgHex)
+			wantSig := testkit.MustDecodeHex(t, tc.sigHex)
 
 			priv := stded25519.NewKeyFromSeed(seed)
 			s, err := signed25519.New(priv)
@@ -305,13 +305,4 @@ func TestRFC8032Vectors(t *testing.T) {
 				"Verify must accept the canonical RFC signature")
 		})
 	}
-}
-
-// --- helpers ---
-
-func mustDecodeHex(t *testing.T, s string) []byte {
-	t.Helper()
-	b, err := hex.DecodeString(s)
-	testkit.NoError(t, err, "decode hex fixture")
-	return b
 }

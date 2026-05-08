@@ -6,7 +6,6 @@ package sha512_test
 import (
 	stdhmac "crypto/hmac"
 	stdsha512 "crypto/sha512"
-	"encoding/hex"
 	"hash"
 	"testing"
 
@@ -249,9 +248,9 @@ func TestSHA384RFC4231Vectors(t *testing.T) {
 	for _, tc := range rfc4231Vectors {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			key := mustDecodeHex(t, tc.keyHex)
-			data := mustDecodeHex(t, tc.dataHex)
-			want := mustDecodeHex(t, tc.want384)
+			key := testkit.MustDecodeHex(t, tc.keyHex)
+			data := testkit.MustDecodeHex(t, tc.dataHex)
+			want := testkit.MustDecodeHex(t, tc.want384)
 			got := hmacsha512.NewSHA384(key).Sign(data)
 			testkit.Equal(t, got.Bytes(), want, "Sign output must byte-match RFC 4231 vector")
 		})
@@ -264,20 +263,11 @@ func TestSHA512RFC4231Vectors(t *testing.T) {
 	for _, tc := range rfc4231Vectors {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			key := mustDecodeHex(t, tc.keyHex)
-			data := mustDecodeHex(t, tc.dataHex)
-			want := mustDecodeHex(t, tc.want512)
+			key := testkit.MustDecodeHex(t, tc.keyHex)
+			data := testkit.MustDecodeHex(t, tc.dataHex)
+			want := testkit.MustDecodeHex(t, tc.want512)
 			got := hmacsha512.NewSHA512(key).Sign(data)
 			testkit.Equal(t, got.Bytes(), want, "Sign output must byte-match RFC 4231 vector")
 		})
 	}
-}
-
-// --- helpers ---
-
-func mustDecodeHex(t *testing.T, s string) []byte {
-	t.Helper()
-	b, err := hex.DecodeString(s)
-	testkit.NoError(t, err, "decode hex fixture")
-	return b
 }

@@ -5,7 +5,6 @@ package sha3_test
 
 import (
 	"crypto/sha3"
-	"encoding/hex"
 	"hash"
 	"testing"
 
@@ -228,7 +227,7 @@ func TestSHA3_256FIPSVectors(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			got := cryptosha3.New256().Hash(tc.input)
-			want := mustDecodeHex(t, tc.wantHex)
+			want := testkit.MustDecodeHex(t, tc.wantHex)
 			testkit.Equal(t, got.Bytes(), want, "Hash output must byte-match FIPS vector")
 		})
 	}
@@ -255,7 +254,7 @@ func TestSHA3_384FIPSVectors(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			got := cryptosha3.New384().Hash(tc.input)
-			want := mustDecodeHex(t, tc.wantHex)
+			want := testkit.MustDecodeHex(t, tc.wantHex)
 			testkit.Equal(t, got.Bytes(), want, "Hash output must byte-match FIPS vector")
 		})
 	}
@@ -282,17 +281,8 @@ func TestSHA3_512FIPSVectors(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			got := cryptosha3.New512().Hash(tc.input)
-			want := mustDecodeHex(t, tc.wantHex)
+			want := testkit.MustDecodeHex(t, tc.wantHex)
 			testkit.Equal(t, got.Bytes(), want, "Hash output must byte-match FIPS vector")
 		})
 	}
-}
-
-// --- helpers ---
-
-func mustDecodeHex(t *testing.T, s string) []byte {
-	t.Helper()
-	b, err := hex.DecodeString(s)
-	testkit.NoError(t, err, "decode hex fixture")
-	return b
 }

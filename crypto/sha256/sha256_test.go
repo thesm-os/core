@@ -5,7 +5,6 @@ package sha256_test
 
 import (
 	"crypto/sha256"
-	"encoding/hex"
 	"hash"
 	"testing"
 
@@ -129,7 +128,7 @@ func TestSHA256FIPSVectors(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			got := cryptosha256.New().Hash(tc.input)
-			want := mustDecodeHex(t, tc.wantHex)
+			want := testkit.MustDecodeHex(t, tc.wantHex)
 			testkit.Equal(t, got.Bytes(), want, "Hash output must byte-match FIPS vector")
 		})
 	}
@@ -146,13 +145,4 @@ func TestZeroValueHasher(t *testing.T) {
 		"zero-value Hasher must report the same ID as a constructed one")
 	testkit.Equal(t, z.Algorithm(), cryptosha256.New().Algorithm(),
 		"zero-value Hasher must report the same Algorithm as a constructed one")
-}
-
-// --- helpers ---
-
-func mustDecodeHex(t *testing.T, s string) []byte {
-	t.Helper()
-	b, err := hex.DecodeString(s)
-	testkit.NoError(t, err, "decode hex fixture")
-	return b
 }
