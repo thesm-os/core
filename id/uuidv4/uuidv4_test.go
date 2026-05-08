@@ -6,6 +6,10 @@ package uuidv4_test
 import (
 	"testing"
 
+	"go.thesmos.sh/testkit"
+	"go.thesmos.sh/testkit/bench"
+
+	"go.thesmos.sh/core/coretest/idtest"
 	"go.thesmos.sh/core/id"
 	"go.thesmos.sh/core/id/uuidv4"
 	"go.thesmos.sh/core/rand"
@@ -21,6 +25,40 @@ func idFromBytes(b ...byte) id.ID {
 	return id.New128(raw)
 }
 
+// newUUIDv4 is the SUT factory for the testkit-driven contract
+// suite.
+func newUUIDv4() id.Generator {
+	return uuidv4.New(seeded.New(rand.Seed(1)))
+}
+
+// --- testkit-driven contract layer ---
+
+func TestUUIDv4GeneratorContract(t *testing.T) {
+	t.Parallel()
+	idtest.AssertGeneratorContract(t, newUUIDv4,
+		append(idtest.GeneratorContractAssertions(),
+			idtest.GeneratorSizeAssertion(id.Size128),
+		)...,
+	)
+}
+
+func TestUUIDv4GeneratorModel(t *testing.T) {
+	t.Parallel()
+	idtest.GeneratorModelTest(t, newUUIDv4)
+}
+
+func FuzzUUIDv4GeneratorModel(f *testing.F) {
+	idtest.GeneratorModelFuzz(f, newUUIDv4)
+}
+
+func BenchmarkUUIDv4Generator(b *testing.B) {
+	idtest.BenchmarkGeneratorContract(b, newUUIDv4,
+		idtest.GeneratorBenchOnGenerate(bench.PureAllocsWithin[id.Generator, id.ID](0)),
+	)
+}
+
+// --- uuidv4-specific tests ---
+
 func TestGeneratorGenerate(t *testing.T) {
 	t.Parallel()
 
@@ -29,31 +67,16 @@ func TestGeneratorGenerate(t *testing.T) {
 
 	t.Run("stamps version-4 in byte 6 high nibble", func(t *testing.T) {
 		t.Parallel()
-		u := g.Generate()
-		b := u.Bytes()
-		if got := b[6] & 0xF0; got != 0x40 {
-			t.Fatalf("byte 6 high nibble: got 0x%02X, want 0x40", got)
-		}
+		b := g.Generate().Bytes()
+		testkit.Equal(t, b[6]&0xF0, byte(0x40),
+			"byte 6 high nibble must encode UUID version 4")
 	})
 
 	t.Run("stamps variant-10 in byte 8 high bits", func(t *testing.T) {
 		t.Parallel()
-		u := g.Generate()
-		b := u.Bytes()
-		if got := b[8] & 0xC0; got != 0x80 {
-			t.Fatalf("byte 8 high bits: got 0x%02X, want 0x80", got)
-		}
-	})
-
-	t.Run("does not produce Zero", func(t *testing.T) {
-		t.Parallel()
-		u := g.Generate()
-		if u.IsZero() {
-			t.Fatal("Generator.Generate returned Zero")
-		}
-		if u.Size() != id.Size128 {
-			t.Fatalf("Size: got %d, want %d", u.Size(), id.Size128)
-		}
+		b := g.Generate().Bytes()
+		testkit.Equal(t, b[8]&0xC0, byte(0x80),
+			"byte 8 high bits must encode RFC 4122 variant (10xx)")
 	})
 }
 
@@ -64,28 +87,7 @@ func TestGeneratorDeterministic(t *testing.T) {
 	b := uuidv4.New(seeded.New(rand.Seed(42)))
 
 	for range 8 {
-		if got, want := a.Generate(), b.Generate(); got != want {
-			t.Fatalf("identical seeds produced different IDs: %v vs %v",
-				got, want)
-		}
-	}
-}
-
-// TestGeneratorZeroAlloc cannot run in parallel —
-// testing.AllocsPerRun panics if any other test is running.
-//
-//nolint:paralleltest // see comment above
-func TestGeneratorZeroAlloc(t *testing.T) {
-	g := uuidv4.New(seeded.New(rand.Seed(1)))
-	if got := testing.AllocsPerRun(100, func() { _ = g.Generate() }); got != 0 {
-		t.Fatalf("Generator.Generate: %v allocs/op, want 0", got)
-	}
-}
-
-func BenchmarkGenerate(b *testing.B) {
-	g := uuidv4.New(seeded.New(rand.Seed(1)))
-	b.ReportAllocs()
-	for b.Loop() {
-		_ = g.Generate()
+		testkit.Equal(t, a.Generate(), b.Generate(),
+			"identical seeds must produce identical UUIDs")
 	}
 }

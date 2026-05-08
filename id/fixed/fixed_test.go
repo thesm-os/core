@@ -6,9 +6,44 @@ package fixed_test
 import (
 	"testing"
 
+	"go.thesmos.sh/testkit"
+	"go.thesmos.sh/testkit/bench"
+
+	"go.thesmos.sh/core/coretest/idtest"
 	"go.thesmos.sh/core/id"
 	"go.thesmos.sh/core/id/fixed"
 )
+
+// fixedSampleID is the canonical configured value used by the
+// SUT factory. Reused across the contract suite + impl-specific
+// subtests so failure messages reference one well-known fixture.
+var fixedSampleID = id.New128([id.Size128]byte{
+	1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+})
+
+func newFixed() id.Generator { return fixed.New(fixedSampleID) }
+
+// --- testkit-driven contract layer ---
+
+// fixed.Generator deliberately returns the same value on every
+// call — opt out of the distinctness assertion, opt INTO the
+// reproducibility assertion.
+func TestFixedGeneratorContract(t *testing.T) {
+	t.Parallel()
+	idtest.AssertGeneratorContract(t, newFixed,
+		append(idtest.GeneratorAllowZeroAndDuplicates(),
+			idtest.GeneratorSizeAssertion(id.Size128),
+		)...,
+	)
+}
+
+func BenchmarkFixedGenerator(b *testing.B) {
+	idtest.BenchmarkGeneratorContract(b, newFixed,
+		idtest.GeneratorBenchOnGenerate(bench.PureAllocsWithin[id.Generator, id.ID](0)),
+	)
+}
+
+// --- fixed-specific tests ---
 
 func TestGenerator(t *testing.T) {
 	t.Parallel()
@@ -16,31 +51,15 @@ func TestGenerator(t *testing.T) {
 	t.Run("zero-value Generator returns Zero", func(t *testing.T) {
 		t.Parallel()
 		var g fixed.Generator
-		if got := g.Generate(); !got.IsZero() {
-			t.Fatalf("zero Generate(): got %v, want Zero", got)
-		}
+		testkit.True(t, g.Generate().IsZero(),
+			"zero-value Generator must return id.Zero")
 	})
 
 	t.Run("Generate returns the configured value", func(t *testing.T) {
 		t.Parallel()
-		want := id.New128([id.Size128]byte{
-			1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
-		})
-		g := fixed.New(want)
-		if got := g.Generate(); got != want {
-			t.Fatalf("Generate: got %v, want %v", got, want)
-		}
-	})
-
-	t.Run("repeated calls return the same value", func(t *testing.T) {
-		t.Parallel()
-		want := id.New128([id.Size128]byte{42})
-		g := fixed.New(want)
-		for range 5 {
-			if got := g.Generate(); got != want {
-				t.Fatalf("repeated Generate: got %v, want %v", got, want)
-			}
-		}
+		g := fixed.New(fixedSampleID)
+		testkit.Equal(t, g.Generate(), fixedSampleID,
+			"Generate must return the configured value")
 	})
 
 	t.Run("works with all three sizes", func(t *testing.T) {
@@ -49,33 +68,11 @@ func TestGenerator(t *testing.T) {
 		w160 := id.New160([id.Size160]byte{2})
 		w256 := id.New256([id.Size256]byte{3})
 
-		if got := fixed.New(w128).Generate(); got.Size() != id.Size128 {
-			t.Fatalf("128 size: got %d", got.Size())
-		}
-		if got := fixed.New(w160).Generate(); got.Size() != id.Size160 {
-			t.Fatalf("160 size: got %d", got.Size())
-		}
-		if got := fixed.New(w256).Generate(); got.Size() != id.Size256 {
-			t.Fatalf("256 size: got %d", got.Size())
-		}
+		testkit.Equal(t, fixed.New(w128).Generate().Size(), id.Size128,
+			"fixed.New on a 128-bit ID must produce a 128-bit Generator")
+		testkit.Equal(t, fixed.New(w160).Generate().Size(), id.Size160,
+			"fixed.New on a 160-bit ID must produce a 160-bit Generator")
+		testkit.Equal(t, fixed.New(w256).Generate().Size(), id.Size256,
+			"fixed.New on a 256-bit ID must produce a 256-bit Generator")
 	})
-}
-
-// TestGeneratorZeroAlloc cannot run in parallel —
-// testing.AllocsPerRun panics if any other test is running.
-//
-//nolint:paralleltest // see comment above
-func TestGeneratorZeroAlloc(t *testing.T) {
-	g := fixed.New(id.New128([id.Size128]byte{1, 2, 3}))
-	if got := testing.AllocsPerRun(100, func() { _ = g.Generate() }); got != 0 {
-		t.Fatalf("Generator.Generate: %v allocs/op, want 0", got)
-	}
-}
-
-func BenchmarkGenerate(b *testing.B) {
-	g := fixed.New(id.New128([id.Size128]byte{1, 2, 3}))
-	b.ReportAllocs()
-	for b.Loop() {
-		_ = g.Generate()
-	}
 }

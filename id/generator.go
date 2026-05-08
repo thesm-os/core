@@ -24,5 +24,7 @@ type Generator interface {
 	// Generate returns a fresh [ID]. Implementations must NOT
 	// return the [Zero] sentinel except via [id/fixed] seeded
 	// explicitly with the zero value.
+	//
+	//testkit:nondeterministic
 	Generate() ID
 }
