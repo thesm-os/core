@@ -6,13 +6,13 @@ package ed25519_test
 import (
 	stded25519 "crypto/ed25519"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"testing"
 
 	"go.thesmos.sh/testkit"
 
 	"go.thesmos.sh/core/coretest/cryptotest"
+	"go.thesmos.sh/core/coretest/randtest"
 	"go.thesmos.sh/core/crypto"
 	"go.thesmos.sh/core/crypto/sign"
 	signed25519 "go.thesmos.sh/core/crypto/sign/ed25519"
@@ -204,7 +204,9 @@ func TestGenerate(t *testing.T) {
 
 	t.Run("propagates entropy-source failure", func(t *testing.T) {
 		t.Parallel()
-		_, err := signed25519.Generate(errRand{})
+		failingRand := randtest.NewRandStub(t)
+		failingRand.OnRead.Returns(0, testkit.TestError("entropy source failed"))
+		_, err := signed25519.Generate(failingRand)
 		testkit.Error(t, err, "Generate must reject a failing entropy source")
 	})
 
@@ -312,14 +314,4 @@ func mustDecodeHex(t *testing.T, s string) []byte {
 	b, err := hex.DecodeString(s)
 	testkit.NoError(t, err, "decode hex fixture")
 	return b
-}
-
-// errRand is a rand.Rand that always errors on Read. Inline stub
-// — replaced when testkit applies to the rand package.
-type errRand struct{}
-
-func (errRand) Uint64() uint64 { return 0 }
-
-func (errRand) Read(_ []byte) (int, error) {
-	return 0, errors.New("entropy source failed")
 }

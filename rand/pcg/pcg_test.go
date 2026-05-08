@@ -4,59 +4,54 @@
 package pcg_test
 
 import (
-	"bytes"
 	"encoding/hex"
 	"testing"
 
+	"go.thesmos.sh/testkit"
+	"go.thesmos.sh/testkit/bench"
+
+	"go.thesmos.sh/core/coretest/randtest"
 	"go.thesmos.sh/core/rand"
 	"go.thesmos.sh/core/rand/pcg"
 )
 
-func mustDecodeHex(t *testing.T, s string) []byte {
-	t.Helper()
-	b, err := hex.DecodeString(s)
-	if err != nil {
-		t.Fatalf("invalid hex fixture: %v", err)
-	}
-	return b
-}
+// newPCG is the SUT factory for the testkit-driven contract
+// suite. The fixed seed is deliberate — testkit's auto-laws call
+// the factory for each subtest and fresh state matters when
+// asserting determinism.
+func newPCG() rand.Rand { return pcg.New(rand.Seed(1)) }
 
-func TestDeterminism(t *testing.T) {
+// --- testkit-driven contract layer ---
+
+func TestPCGRandContract(t *testing.T) {
 	t.Parallel()
-
-	t.Run("same seed produces identical Uint64 streams", func(t *testing.T) {
-		t.Parallel()
-		a, b := pcg.New(rand.Seed(42)), pcg.New(rand.Seed(42))
-		for i := range 1000 {
-			va, vb := a.Uint64(), b.Uint64()
-			if va != vb {
-				t.Fatalf("step %d: %d != %d", i, va, vb)
-			}
-		}
-	})
-
-	t.Run("same seed produces identical byte streams via Read", func(t *testing.T) {
-		t.Parallel()
-		a, b := pcg.New(rand.Seed(99)), pcg.New(rand.Seed(99))
-		ba, bb := make([]byte, 256), make([]byte, 256)
-		_, _ = a.Read(ba)
-		_, _ = b.Read(bb)
-		if !bytes.Equal(ba, bb) {
-			t.Fatal("streams diverged for identical seeds")
-		}
-	})
-
-	t.Run("different seeds produce different streams", func(t *testing.T) {
-		t.Parallel()
-		a, b := pcg.New(rand.Seed(1)), pcg.New(rand.Seed(2))
-		for range 4 {
-			if a.Uint64() != b.Uint64() {
-				return
-			}
-		}
-		t.Fatal("different seeds produced four identical Uint64 draws (statistically impossible)")
-	})
+	randtest.AssertRandContract(t, newPCG,
+		append(randtest.RandContractAssertions(),
+			randtest.RandUint64DistinctnessAssertion(),
+			randtest.RandSeedDeterminismAssertion(
+				func() rand.Rand { return pcg.New(rand.Seed(42)) },
+				func() rand.Rand { return pcg.New(rand.Seed(42)) },
+			),
+		)...,
+	)
 }
+
+func TestPCGRandModel(t *testing.T) {
+	t.Parallel()
+	randtest.RandModelTest(t, newPCG)
+}
+
+func FuzzPCGRandModel(f *testing.F) {
+	randtest.RandModelFuzz(f, newPCG)
+}
+
+func BenchmarkPCGRand(b *testing.B) {
+	randtest.BenchmarkRandContract(b, newPCG,
+		randtest.RandBenchOnUint64(bench.PureAllocsWithin[rand.Rand, uint64](0)),
+	)
+}
+
+// --- pcg-specific tests ---
 
 func TestSeed(t *testing.T) {
 	t.Parallel()
@@ -64,9 +59,8 @@ func TestSeed(t *testing.T) {
 	t.Run("returns the construction-time seed", func(t *testing.T) {
 		t.Parallel()
 		const seed = rand.Seed(123)
-		if got := pcg.New(seed).Seed(); got != seed {
-			t.Fatalf("Seed: got %d, want %d", got, seed)
-		}
+		testkit.Equal(t, pcg.New(seed).Seed(), seed,
+			"Seed must return the construction-time value")
 	})
 
 	t.Run("is invariant as the generator advances", func(t *testing.T) {
@@ -76,48 +70,40 @@ func TestSeed(t *testing.T) {
 		for range 100 {
 			r.Uint64()
 		}
-		if got := r.Seed(); got != seed {
-			t.Fatalf("Seed after advance: got %d, want %d", got, seed)
-		}
+		testkit.Equal(t, r.Seed(), seed,
+			"Seed must remain unchanged as the generator advances")
 	})
 }
 
-func TestRead(t *testing.T) {
+// TestKnownAnswerVectors locks the impl against frozen byte
+// streams produced by [pcg.Rand.Read]. The contract suite covers
+// "fills the buffer" and "same seed identical streams"; these
+// vectors lock the *specific* PCG-from-math/rand/v2 byte sequence
+// against silent stdlib drift.
+func TestKnownAnswerVectors(t *testing.T) {
 	t.Parallel()
 
-	t.Run("fills the entire slice and returns no error", func(t *testing.T) {
+	t.Run("seed 42 produces a known 32-byte fixture (aligned)", func(t *testing.T) {
 		t.Parallel()
-		buf := make([]byte, 100)
-		n, err := pcg.New(rand.Seed(1)).Read(buf)
-		if err != nil {
-			t.Fatalf("Read: unexpected error %v", err)
-		}
-		if n != 100 {
-			t.Fatalf("Read: filled %d, want 100", n)
-		}
+		// Golden bytes recorded from pcg.New(42).Read(make([]byte, 32)).
+		// Pinned to detect drift; covers the aligned (8-byte
+		// multiple) path of Read.
+		want := mustDecodeHex(t,
+			"9fa987db721b88dbe49fb0762d6df1f5c73270890a25e4227161b5e80282a816")
+		got := make([]byte, len(want))
+		_, _ = pcg.New(rand.Seed(42)).Read(got)
+		testkit.Equal(t, got, want, "PCG Seed(42) Read(32) must byte-match the golden vector")
 	})
 
-	t.Run("zero-length slice is a no-op", func(t *testing.T) {
+	t.Run("seed 1 produces a known 17-byte fixture (non-aligned tail)", func(t *testing.T) {
 		t.Parallel()
-		n, err := pcg.New(rand.Seed(1)).Read(nil)
-		if err != nil {
-			t.Fatalf("Read(nil): unexpected error %v", err)
-		}
-		if n != 0 {
-			t.Fatalf("Read(nil): filled %d, want 0", n)
-		}
-	})
-
-	t.Run("non-aligned length still fills correctly", func(t *testing.T) {
-		t.Parallel()
-		buf := make([]byte, 13)
-		n, err := pcg.New(rand.Seed(1)).Read(buf)
-		if err != nil {
-			t.Fatalf("Read: unexpected error %v", err)
-		}
-		if n != 13 {
-			t.Fatalf("Read: filled %d, want 13", n)
-		}
+		// Golden bytes recorded from pcg.New(1).Read(make([]byte, 17)).
+		// 17 = 2*8 + 1; exercises the tail-byte branch where the
+		// final Uint64 only contributes one byte to the output.
+		want := mustDecodeHex(t, "0329edab29a127995653604a8c07d016f2")
+		got := make([]byte, len(want))
+		_, _ = pcg.New(rand.Seed(1)).Read(got)
+		testkit.Equal(t, got, want, "PCG Seed(1) Read(17) must byte-match the golden vector")
 	})
 
 	t.Run("split reads equal a single read of the same length", func(t *testing.T) {
@@ -134,92 +120,16 @@ func TestRead(t *testing.T) {
 		_, _ = r.Read(split[:8])
 		_, _ = r.Read(split[8:24])
 		_, _ = r.Read(split[24:])
-		if !bytes.Equal(single, split) {
-			t.Fatalf("split reads diverged from single Read:\n single=%x\n split =%x", single, split)
-		}
-	})
-
-	t.Run("seed 42 produces a known 32-byte fixture (aligned)", func(t *testing.T) {
-		t.Parallel()
-		// Golden bytes recorded from pcg.New(42).Read(make([]byte, 32)).
-		// Pinned to detect drift; covers the aligned (8-byte
-		// multiple) path of Read.
-		want := mustDecodeHex(t,
-			"9fa987db721b88dbe49fb0762d6df1f5c73270890a25e4227161b5e80282a816")
-		got := make([]byte, len(want))
-		_, _ = pcg.New(rand.Seed(42)).Read(got)
-		if !bytes.Equal(got, want) {
-			t.Fatalf("got  %x\nwant %x", got, want)
-		}
-	})
-
-	t.Run("seed 1 produces a known 17-byte fixture (non-aligned tail)", func(t *testing.T) {
-		t.Parallel()
-		// Golden bytes recorded from pcg.New(1).Read(make([]byte, 17)).
-		// 17 = 2*8 + 1; exercises the tail-byte branch where the
-		// final Uint64 only contributes one byte to the output.
-		want := mustDecodeHex(t,
-			"0329edab29a127995653604a8c07d016f2")
-		got := make([]byte, len(want))
-		_, _ = pcg.New(rand.Seed(1)).Read(got)
-		if !bytes.Equal(got, want) {
-			t.Fatalf("got  %x\nwant %x", got, want)
-		}
+		testkit.Equal(t, split, single,
+			"split Reads must reproduce the same byte stream as a single Read")
 	})
 }
 
-// TestZeroAlloc enforces the documented "Zero alloc" contracts on
-// pcg.Rand's hot-path methods. testing.AllocsPerRun uses a
-// process-global malloc counter, so this test does not call
-// t.Parallel.
-func TestZeroAlloc(t *testing.T) {
-	r := pcg.New(rand.Seed(1))
-	buf := make([]byte, 64)
+// --- helpers ---
 
-	cases := []struct {
-		name string
-		fn   func()
-	}{
-		{"Uint64", func() { _ = r.Uint64() }},
-		{"Read", func() { _, _ = r.Read(buf) }},
-		{"Seed", func() { _ = r.Seed() }},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := testing.AllocsPerRun(100, tc.fn); got != 0 {
-				t.Fatalf("%s: %v allocs/op, want 0", tc.name, got)
-			}
-		})
-	}
-}
-
-func BenchmarkUint64(b *testing.B) {
-	r := pcg.New(rand.Seed(1))
-	b.ReportAllocs()
-	b.SetBytes(8)
-	for b.Loop() {
-		_ = r.Uint64()
-	}
-}
-
-func BenchmarkRead(b *testing.B) {
-	r := pcg.New(rand.Seed(1))
-	for _, sz := range []struct {
-		name string
-		n    int
-	}{
-		{"8B", 8},
-		{"64B", 64},
-		{"4K", 4096},
-		{"64K", 65536},
-	} {
-		b.Run(sz.name, func(b *testing.B) {
-			buf := make([]byte, sz.n)
-			b.ReportAllocs()
-			b.SetBytes(int64(sz.n))
-			for b.Loop() {
-				_, _ = r.Read(buf)
-			}
-		})
-	}
+func mustDecodeHex(t *testing.T, s string) []byte {
+	t.Helper()
+	b, err := hex.DecodeString(s)
+	testkit.NoError(t, err, "decode hex fixture")
+	return b
 }

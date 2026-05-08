@@ -8,53 +8,65 @@ import (
 	"encoding/hex"
 	"testing"
 
+	"go.thesmos.sh/testkit"
+	"go.thesmos.sh/testkit/bench"
+
+	"go.thesmos.sh/core/coretest/randtest"
 	"go.thesmos.sh/core/rand"
 	"go.thesmos.sh/core/rand/seeded"
 )
 
-func mustDecodeHex(t *testing.T, s string) []byte {
-	t.Helper()
-	b, err := hex.DecodeString(s)
-	if err != nil {
-		t.Fatalf("invalid hex fixture: %v", err)
-	}
-	return b
+// newSeeded is the SUT factory for the testkit-driven contract
+// suite.
+func newSeeded() rand.Rand { return seeded.New(rand.Seed(1)) }
+
+// --- testkit-driven contract layer ---
+
+func TestSeededRandContract(t *testing.T) {
+	t.Parallel()
+	randtest.AssertRandContract(t, newSeeded,
+		append(randtest.RandContractAssertions(),
+			randtest.RandUint64DistinctnessAssertion(),
+			randtest.RandSeedDeterminismAssertion(
+				func() rand.Rand { return seeded.New(rand.Seed(42)) },
+				func() rand.Rand { return seeded.New(rand.Seed(42)) },
+			),
+		)...,
+	)
 }
 
-func TestDeterminism(t *testing.T) {
+func TestSeededRandModel(t *testing.T) {
+	t.Parallel()
+	randtest.RandModelTest(t, newSeeded)
+}
+
+func FuzzSeededRandModel(f *testing.F) {
+	randtest.RandModelFuzz(f, newSeeded)
+}
+
+func BenchmarkSeededRand(b *testing.B) {
+	randtest.BenchmarkRandContract(b, newSeeded,
+		randtest.RandBenchOnUint64(bench.PureAllocsWithin[rand.Rand, uint64](0)),
+	)
+}
+
+// --- seeded-specific tests ---
+
+func TestSeed(t *testing.T) {
 	t.Parallel()
 
-	t.Run("same seed produces identical byte streams", func(t *testing.T) {
+	t.Run("Seed reports construction-time seed for int-seeded", func(t *testing.T) {
 		t.Parallel()
-		a, b := seeded.New(rand.Seed(42)), seeded.New(rand.Seed(42))
-		ba, bb := make([]byte, 256), make([]byte, 256)
-		_, _ = a.Read(ba)
-		_, _ = b.Read(bb)
-		if !bytes.Equal(ba, bb) {
-			t.Fatal("streams diverged for identical seeds")
-		}
+		const s = rand.Seed(99)
+		testkit.Equal(t, seeded.New(s).Seed(), s,
+			"Seed must return the construction-time value")
 	})
 
-	t.Run("same seed produces identical Uint64 streams", func(t *testing.T) {
+	t.Run("Seed reports SeedUnspecified for byte-seeded", func(t *testing.T) {
 		t.Parallel()
-		a, b := seeded.New(rand.Seed(7)), seeded.New(rand.Seed(7))
-		for i := range 100 {
-			va, vb := a.Uint64(), b.Uint64()
-			if va != vb {
-				t.Fatalf("step %d: %d != %d", i, va, vb)
-			}
-		}
-	})
-
-	t.Run("different seeds produce different streams", func(t *testing.T) {
-		t.Parallel()
-		a, b := seeded.New(rand.Seed(1)), seeded.New(rand.Seed(2))
-		ba, bb := make([]byte, 32), make([]byte, 32)
-		_, _ = a.Read(ba)
-		_, _ = b.Read(bb)
-		if bytes.Equal(ba, bb) {
-			t.Fatal("distinct seeds produced identical streams")
-		}
+		testkit.Equal(t, seeded.NewFromBytes([]byte("anything")).Seed(),
+			rand.SeedUnspecified,
+			"NewFromBytes must report SeedUnspecified — no int recovers a byte seed")
 	})
 
 	t.Run("byte-seeded instances with equal input produce identical streams", func(t *testing.T) {
@@ -64,29 +76,8 @@ func TestDeterminism(t *testing.T) {
 		ba, bb := make([]byte, 128), make([]byte, 128)
 		_, _ = a.Read(ba)
 		_, _ = b.Read(bb)
-		if !bytes.Equal(ba, bb) {
-			t.Fatal("byte-seeded streams diverged for identical seed bytes")
-		}
-	})
-}
-
-func TestSeed(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Seed reports construction-time seed for int-seeded", func(t *testing.T) {
-		t.Parallel()
-		const s = rand.Seed(99)
-		if got := seeded.New(s).Seed(); got != s {
-			t.Fatalf("Seed: got %d, want %d", got, s)
-		}
-	})
-
-	t.Run("Seed reports SeedUnspecified for byte-seeded", func(t *testing.T) {
-		t.Parallel()
-		got := seeded.NewFromBytes([]byte("anything")).Seed()
-		if got != rand.SeedUnspecified {
-			t.Fatalf("Seed: got %d, want SeedUnspecified", got)
-		}
+		testkit.Equal(t, ba, bb,
+			"NewFromBytes with equal seed bytes must produce identical streams")
 	})
 }
 
@@ -106,9 +97,8 @@ func TestRead(t *testing.T) {
 		for i := 0; i < 100; i += 10 {
 			_, _ = r.Read(split[i : i+10])
 		}
-		if !bytes.Equal(single, split) {
-			t.Fatalf("split reads diverged from single Read:\n single=%x\n split =%x", single, split)
-		}
+		testkit.Equal(t, split, single,
+			"split Reads must reproduce the same byte stream as a single Read")
 	})
 
 	t.Run("each HMAC-SHA-256 block is distinct", func(t *testing.T) {
@@ -119,9 +109,10 @@ func TestRead(t *testing.T) {
 		buf := make([]byte, 96)
 		_, _ = seeded.New(rand.Seed(123)).Read(buf)
 		b1, b2, b3 := buf[0:32], buf[32:64], buf[64:96]
-		if bytes.Equal(b1, b2) || bytes.Equal(b2, b3) {
-			t.Fatal("consecutive HMAC blocks were equal — counter did not advance")
-		}
+		testkit.False(t, bytes.Equal(b1, b2),
+			"block 1 must differ from block 2 — counter must advance")
+		testkit.False(t, bytes.Equal(b2, b3),
+			"block 2 must differ from block 3 — counter must advance")
 	})
 
 	t.Run("seed 0xabcd produces a known 64-byte fixture", func(t *testing.T) {
@@ -136,64 +127,15 @@ func TestRead(t *testing.T) {
 				"df4a9b70aa92cd69a9a3d37de3ff9a5baa97ee15640101987fd736296aa2cfcc")
 		got := make([]byte, len(want))
 		_, _ = seeded.New(rand.Seed(0xabcd)).Read(got)
-		if !bytes.Equal(got, want) {
-			t.Fatalf("got  %x\nwant %x", got, want)
-		}
+		testkit.Equal(t, got, want, "seeded.New(0xabcd) Read(64) must byte-match the golden vector")
 	})
 }
 
-// TestZeroAlloc enforces the documented "Zero alloc" contracts on
-// seeded.Rand's hot-path methods. testing.AllocsPerRun uses a
-// process-global malloc counter, so this test does not call
-// t.Parallel.
-func TestZeroAlloc(t *testing.T) {
-	r := seeded.New(rand.Seed(1))
-	buf := make([]byte, 64)
+// --- helpers ---
 
-	cases := []struct {
-		name string
-		fn   func()
-	}{
-		{"Uint64", func() { _ = r.Uint64() }},
-		{"Read", func() { _, _ = r.Read(buf) }},
-		{"Seed", func() { _ = r.Seed() }},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := testing.AllocsPerRun(100, tc.fn); got != 0 {
-				t.Fatalf("%s: %v allocs/op, want 0", tc.name, got)
-			}
-		})
-	}
-}
-
-func BenchmarkUint64(b *testing.B) {
-	r := seeded.New(rand.Seed(1))
-	b.ReportAllocs()
-	b.SetBytes(8)
-	for b.Loop() {
-		_ = r.Uint64()
-	}
-}
-
-func BenchmarkRead(b *testing.B) {
-	r := seeded.New(rand.Seed(1))
-	for _, sz := range []struct {
-		name string
-		n    int
-	}{
-		{"8B", 8},
-		{"64B", 64},
-		{"4K", 4096},
-		{"64K", 65536},
-	} {
-		b.Run(sz.name, func(b *testing.B) {
-			buf := make([]byte, sz.n)
-			b.ReportAllocs()
-			b.SetBytes(int64(sz.n))
-			for b.Loop() {
-				_, _ = r.Read(buf)
-			}
-		})
-	}
+func mustDecodeHex(t *testing.T, s string) []byte {
+	t.Helper()
+	b, err := hex.DecodeString(s)
+	testkit.NoError(t, err, "decode hex fixture")
+	return b
 }
