@@ -4,6 +4,7 @@
 package clock_test
 
 import (
+	"runtime"
 	"testing"
 	"time"
 
@@ -206,17 +207,21 @@ func BenchmarkInstantSub(b *testing.B) {
 	now := clock.Instant{Wall: time.Now().UnixNano()}
 	earlier := clock.Instant{Wall: now.Wall - int64(time.Second)}
 	b.ReportAllocs()
+	var sink time.Duration
 	for b.Loop() {
-		_ = now.Sub(earlier)
+		sink = now.Sub(earlier)
 	}
+	runtime.KeepAlive(sink)
 }
 
 func BenchmarkInstantAdd(b *testing.B) {
 	i := clock.Instant{Wall: time.Now().UnixNano()}
 	b.ReportAllocs()
+	var sink clock.Instant
 	for b.Loop() {
-		_ = i.Add(time.Second)
+		sink = i.Add(time.Second)
 	}
+	runtime.KeepAlive(sink)
 }
 
 func BenchmarkInstantTime(b *testing.B) {

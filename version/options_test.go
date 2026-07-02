@@ -4,6 +4,7 @@
 package version_test
 
 import (
+	"runtime"
 	"testing"
 
 	"go.thesmos.sh/testkit"
@@ -43,7 +44,9 @@ func TestWriteOptionsIsConditional(t *testing.T) {
 func BenchmarkIsConditional(b *testing.B) {
 	opts := version.WriteOptions{IfMatch: "v1"}
 	b.ReportAllocs()
+	var sink bool
 	for b.Loop() {
-		_ = opts.IsConditional()
+		sink = opts.IsConditional()
 	}
+	runtime.KeepAlive(sink)
 }

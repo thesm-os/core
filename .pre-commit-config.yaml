@@ -39,8 +39,8 @@ repos:
   # ─── Commit message ───────────────────────────────────────────
   - repo: local
     hooks:
-      - id: commitlint
-        name: commitlint
-        entry: npx --yes --package @commitlint/cli@latest --package @commitlint/config-conventional@latest -- commitlint --edit
+      - id: ergon-commit-msg
+        name: ergon check commit-msg
+        entry: ergon check commit-msg
         language: system
         stages: [commit-msg]

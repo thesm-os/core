@@ -4,6 +4,7 @@
 package tag_test
 
 import (
+	"runtime"
 	"slices"
 	"testing"
 
@@ -164,32 +165,44 @@ func BenchmarkFind(b *testing.B) {
 	ts := sample()
 	b.Run("hit", func(b *testing.B) {
 		b.ReportAllocs()
+		var sinkTag tag.Tag
+		var sinkOK bool
 		for b.Loop() {
-			_, _ = ts.Find("service")
+			sinkTag, sinkOK = ts.Find("service")
 		}
+		runtime.KeepAlive(sinkTag)
+		runtime.KeepAlive(sinkOK)
 	})
 	b.Run("miss", func(b *testing.B) {
 		b.ReportAllocs()
+		var sinkTag tag.Tag
+		var sinkOK bool
 		for b.Loop() {
-			_, _ = ts.Find("missing")
+			sinkTag, sinkOK = ts.Find("missing")
 		}
+		runtime.KeepAlive(sinkTag)
+		runtime.KeepAlive(sinkOK)
 	})
 }
 
 func BenchmarkHas(b *testing.B) {
 	ts := sample()
 	b.ReportAllocs()
+	var sink bool
 	for b.Loop() {
-		_ = ts.Has("service")
+		sink = ts.Has("service")
 	}
+	runtime.KeepAlive(sink)
 }
 
 func BenchmarkGet(b *testing.B) {
 	ts := sample()
 	b.ReportAllocs()
+	var sink string
 	for b.Loop() {
-		_ = ts.Get("service")
+		sink = ts.Get("service")
 	}
+	runtime.KeepAlive(sink)
 }
 
 func BenchmarkWith(b *testing.B) {

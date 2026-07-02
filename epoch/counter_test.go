@@ -5,6 +5,7 @@ package epoch_test
 
 import (
 	"math"
+	"runtime"
 	"sync"
 	"testing"
 
@@ -125,9 +126,11 @@ func BenchmarkNext(b *testing.B) {
 func BenchmarkCurrent(b *testing.B) {
 	c := epoch.NewCounter(epoch.Epoch(1))
 	b.ReportAllocs()
+	var sink epoch.Epoch
 	for b.Loop() {
-		_ = c.Current()
+		sink = c.Current()
 	}
+	runtime.KeepAlive(sink)
 }
 
 func BenchmarkNextParallel(b *testing.B) {

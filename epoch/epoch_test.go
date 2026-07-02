@@ -5,6 +5,7 @@ package epoch_test
 
 import (
 	"math"
+	"runtime"
 	"testing"
 
 	"go.thesmos.sh/testkit"
@@ -125,17 +126,21 @@ func BenchmarkCompare(b *testing.B) {
 	e := epoch.Epoch(42)
 	other := epoch.Epoch(43)
 	b.ReportAllocs()
+	var sink int
 	for b.Loop() {
-		_ = e.Compare(other)
+		sink = e.Compare(other)
 	}
+	runtime.KeepAlive(sink)
 }
 
 func BenchmarkSuccessor(b *testing.B) {
 	e := epoch.Epoch(42)
 	b.ReportAllocs()
+	var sink epoch.Epoch
 	for b.Loop() {
-		_ = e.Successor()
+		sink = e.Successor()
 	}
+	runtime.KeepAlive(sink)
 }
 
 func BenchmarkString(b *testing.B) {

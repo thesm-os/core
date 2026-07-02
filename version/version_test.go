@@ -4,6 +4,7 @@
 package version_test
 
 import (
+	"runtime"
 	"testing"
 
 	"go.thesmos.sh/testkit"
@@ -63,15 +64,19 @@ func TestVersionZeroAlloc(t *testing.T) {
 func BenchmarkIsZero(b *testing.B) {
 	v := version.Version("opaque-token")
 	b.ReportAllocs()
+	var sink bool
 	for b.Loop() {
-		_ = v.IsZero()
+		sink = v.IsZero()
 	}
+	runtime.KeepAlive(sink)
 }
 
 func BenchmarkIsWildcard(b *testing.B) {
 	v := version.Wildcard
 	b.ReportAllocs()
+	var sink bool
 	for b.Loop() {
-		_ = v.IsWildcard()
+		sink = v.IsWildcard()
 	}
+	runtime.KeepAlive(sink)
 }

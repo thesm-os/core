@@ -5,6 +5,7 @@ package arena_test
 
 import (
 	"bytes"
+	"runtime"
 	"testing"
 
 	"go.thesmos.sh/testkit"
@@ -390,9 +391,11 @@ func BenchmarkMark(b *testing.B) {
 	a := arena.NewWithCapacity(4096)
 	a.Append(make([]byte, 256))
 	b.ReportAllocs()
+	var sink arena.Marker
 	for b.Loop() {
-		_ = a.Mark()
+		sink = a.Mark()
 	}
+	runtime.KeepAlive(sink)
 }
 
 func BenchmarkSliceSince(b *testing.B) {
@@ -400,16 +403,20 @@ func BenchmarkSliceSince(b *testing.B) {
 	m := a.Mark()
 	a.Append(make([]byte, 128))
 	b.ReportAllocs()
+	var sink []byte
 	for b.Loop() {
-		_ = a.SliceSince(m)
+		sink = a.SliceSince(m)
 	}
+	runtime.KeepAlive(sink)
 }
 
 func BenchmarkBytes(b *testing.B) {
 	a := arena.NewWithCapacity(4096)
 	a.Append(make([]byte, 1024))
 	b.ReportAllocs()
+	var sink []byte
 	for b.Loop() {
-		_ = a.Bytes()
+		sink = a.Bytes()
 	}
+	runtime.KeepAlive(sink)
 }

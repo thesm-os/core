@@ -4,6 +4,7 @@
 package tag_test
 
 import (
+	"runtime"
 	"testing"
 
 	"go.thesmos.sh/testkit"
@@ -45,7 +46,9 @@ func TestTagZeroAlloc(t *testing.T) {
 func BenchmarkIsZero(b *testing.B) {
 	tt := tag.Tag{Key: "k", Value: "v"}
 	b.ReportAllocs()
+	var sink bool
 	for b.Loop() {
-		_ = tt.IsZero()
+		sink = tt.IsZero()
 	}
+	runtime.KeepAlive(sink)
 }

@@ -5,6 +5,7 @@ package telemetry_test
 
 import (
 	"log/slog"
+	"runtime"
 	"testing"
 
 	"go.thesmos.sh/testkit"
@@ -121,16 +122,20 @@ func TestZeroAlloc(t *testing.T) {
 
 func BenchmarkAttrString(b *testing.B) {
 	b.ReportAllocs()
+	var sink telemetry.Attr
 	for b.Loop() {
-		_ = telemetry.AttrString("user_id", "abc123")
+		sink = telemetry.AttrString("user_id", "abc123")
 	}
+	runtime.KeepAlive(sink)
 }
 
 func BenchmarkAttrInt(b *testing.B) {
 	b.ReportAllocs()
+	var sink telemetry.Attr
 	for b.Loop() {
-		_ = telemetry.AttrInt("retry", 42)
+		sink = telemetry.AttrInt("retry", 42)
 	}
+	runtime.KeepAlive(sink)
 }
 
 func BenchmarkSlogAttr(b *testing.B) {

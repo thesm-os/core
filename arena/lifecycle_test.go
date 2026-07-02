@@ -4,6 +4,7 @@
 package arena_test
 
 import (
+	"runtime"
 	"testing"
 
 	"go.thesmos.sh/testkit"
@@ -117,9 +118,11 @@ func BenchmarkReset(b *testing.B) {
 func BenchmarkCapExceeds(b *testing.B) {
 	a := arena.NewWithCapacity(4096)
 	b.ReportAllocs()
+	var sink bool
 	for b.Loop() {
-		_ = a.CapExceeds(8192)
+		sink = a.CapExceeds(8192)
 	}
+	runtime.KeepAlive(sink)
 }
 
 func BenchmarkShrink(b *testing.B) {

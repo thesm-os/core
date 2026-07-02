@@ -4,6 +4,7 @@
 package page_test
 
 import (
+	"runtime"
 	"testing"
 
 	"go.thesmos.sh/testkit"
@@ -65,15 +66,19 @@ func TestPageWithDefault(t *testing.T) {
 func BenchmarkIsFirst(b *testing.B) {
 	p := page.Page{Token: "page-2"}
 	b.ReportAllocs()
+	var sink bool
 	for b.Loop() {
-		_ = p.IsFirst()
+		sink = p.IsFirst()
 	}
+	runtime.KeepAlive(sink)
 }
 
 func BenchmarkWithDefault(b *testing.B) {
 	p := page.Page{}
 	b.ReportAllocs()
+	var sink page.Page
 	for b.Loop() {
-		_ = p.WithDefault(50)
+		sink = p.WithDefault(50)
 	}
+	runtime.KeepAlive(sink)
 }

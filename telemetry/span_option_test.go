@@ -4,6 +4,7 @@
 package telemetry_test
 
 import (
+	"runtime"
 	"testing"
 
 	"go.thesmos.sh/testkit"
@@ -60,7 +61,9 @@ func TestApplySpanOptions(t *testing.T) {
 func BenchmarkApplySpanOptions(b *testing.B) {
 	opts := []telemetry.SpanOption{telemetry.WithSpanKind(telemetry.SpanKindServer)}
 	b.ReportAllocs()
+	var sink telemetry.SpanKind
 	for b.Loop() {
-		_ = telemetry.ApplySpanOptions(opts)
+		sink = telemetry.ApplySpanOptions(opts)
 	}
+	runtime.KeepAlive(sink)
 }
