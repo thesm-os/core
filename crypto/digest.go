@@ -94,6 +94,104 @@ func NewDigest512(b [DigestSize512]byte) Digest {
 	return d
 }
 
+// DigestFromBytes builds a [Digest] from a digest-shaped byte slice,
+// inferring [Digest.Size] from len(b). This is the construction path
+// for callers whose digest arrives from a wire, a database column, or
+// a proof body rather than from a [Hasher].
+//
+// Returns [ErrDigestSize] unless len(b) is exactly [DigestSize256],
+// [DigestSize384], or [DigestSize512]. The zero-length case is
+// included: the zero [Digest] is an in-memory sentinel with no wire
+// form, so decoding one back from empty input would turn every
+// truncated read into a genesis anchor. See ADR-0007.
+//
+// b is copied; the returned Digest does not alias it.
+//
+// # Allocation contract
+//
+// Zero alloc.
+func DigestFromBytes(b []byte) (Digest, error) {
+	var size uint8
+	switch len(b) {
+	case DigestSize256:
+		size = DigestSize256
+	case DigestSize384:
+		size = DigestSize384
+	case DigestSize512:
+		size = DigestSize512
+	default:
+		return Digest{}, ErrDigestSize
+	}
+
+	var d Digest
+	copy(d.bytes[:], b)
+	d.size = size
+
+	return d, nil
+}
+
+// AppendBinary appends d's active bytes to dst with no length header.
+// The size is recoverable from the length of the encoded form, so
+// every container that carries a digest already carries its width.
+//
+// Returns [ErrDigestZero] for the zero [Digest], which has no wire
+// form. Implements [encoding.BinaryAppender].
+//
+// # Allocation contract
+//
+// Zero alloc when dst has capacity for d.Size() more bytes.
+func (d Digest) AppendBinary(dst []byte) ([]byte, error) {
+	if d.IsZero() {
+		return dst, ErrDigestZero
+	}
+
+	return append(dst, d.bytes[:d.size]...), nil
+}
+
+// MarshalBinary returns exactly d.Size() bytes. Implementing
+// [encoding.BinaryMarshaler] also restores [encoding/gob] support,
+// which a struct with no exported fields otherwise refuses — as a
+// value and as a map key.
+//
+// Returns [ErrDigestZero] for the zero [Digest].
+//
+// # Allocation contract
+//
+// One allocation for the returned slice.
+//
+// Calling this through the [encoding.BinaryMarshaler] interface
+// costs a second allocation: Digest is a value type wider than a
+// word, so converting it to an interface boxes it onto the heap.
+// [encoding.BinaryUnmarshaler] is unaffected — its receiver is a
+// *Digest, which is pointer-shaped. Hot paths use
+// [Digest.AppendBinary] and avoid both.
+func (d Digest) MarshalBinary() ([]byte, error) {
+	out, err := d.AppendBinary(make([]byte, 0, d.size))
+	if err != nil {
+		return nil, err
+	}
+
+	return out, nil
+}
+
+// UnmarshalBinary decodes exactly what [DigestFromBytes] accepts and
+// returns the same error, because two decode paths that disagree
+// about which inputs are valid is the defect this method exists to
+// avoid. Implements [encoding.BinaryUnmarshaler].
+//
+// # Allocation contract
+//
+// Zero alloc — decodes into the receiver the caller already owns.
+func (d *Digest) UnmarshalBinary(data []byte) error {
+	parsed, err := DigestFromBytes(data)
+	if err != nil {
+		return err
+	}
+	*d = parsed
+
+	return nil
+}
+
 // Size returns the number of meaningful bytes in d.
 func (d Digest) Size() int {
 	return int(d.size)

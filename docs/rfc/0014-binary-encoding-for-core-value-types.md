@@ -2,7 +2,7 @@
 rfc: 0014
 title: Binary Encoding for Core Value Types
 author: Roy Klopper <roy.klopper@stealthscale.io>
-status: Draft
+status: Accepted
 created: 2026-08-03
 updated: 2026-08-03
 discussion: none

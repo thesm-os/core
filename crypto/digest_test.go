@@ -4,6 +4,7 @@
 package crypto_test
 
 import (
+	"runtime"
 	"testing"
 
 	"go.thesmos.sh/testkit"
@@ -273,6 +274,167 @@ func BenchmarkString(b *testing.B) {
 	for b.Loop() {
 		_ = d.String()
 	}
+}
+
+func TestDigestFromBytes(t *testing.T) {
+	t.Parallel()
+
+	sizes := []struct {
+		name string
+		size int
+	}{
+		{"DigestSize256", crypto.DigestSize256},
+		{"DigestSize384", crypto.DigestSize384},
+		{"DigestSize512", crypto.DigestSize512},
+	}
+	for _, tc := range sizes {
+		t.Run("accepts "+tc.name, func(t *testing.T) {
+			t.Parallel()
+			b := make([]byte, tc.size)
+			for i := range b {
+				b[i] = byte(i)
+			}
+			got, err := crypto.DigestFromBytes(b)
+			testkit.NoError(t, err, "DigestFromBytes must accept a valid length")
+			testkit.Equal(t, got.Size(), tc.size, "Size must be inferred from len(b)")
+			testkit.Equal(t, got.Bytes(), b, "DigestFromBytes must round-trip the input")
+		})
+	}
+
+	bad := []struct {
+		name string
+		size int
+	}{
+		{"empty", 0},
+		{"one short of DigestSize256", crypto.DigestSize256 - 1},
+		{"between DigestSize256 and DigestSize384", 40},
+		{"one past DigestSize512", crypto.DigestSize512 + 1},
+	}
+	for _, tc := range bad {
+		t.Run("rejects "+tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := crypto.DigestFromBytes(make([]byte, tc.size))
+			testkit.ErrorIs(t, err, crypto.ErrDigestSize, "DigestFromBytes must reject an invalid length")
+			testkit.True(t, got.IsZero(), "DigestFromBytes must return the zero Digest on error")
+		})
+	}
+
+	t.Run("does not alias the input", func(t *testing.T) {
+		t.Parallel()
+		b := make([]byte, crypto.DigestSize256)
+		got, err := crypto.DigestFromBytes(b)
+		testkit.NoError(t, err, "DigestFromBytes must accept a valid length")
+		b[0] = 0xFF
+		testkit.Equal(t, got.Bytes()[0], byte(0), "mutating the input must not change the Digest")
+	})
+
+	t.Run("round-trips NewDigest256", func(t *testing.T) {
+		t.Parallel()
+		want := crypto.NewDigest256(fill256(0x42))
+		got, err := crypto.DigestFromBytes(want.Bytes())
+		testkit.NoError(t, err, "DigestFromBytes must accept NewDigest256 output")
+		testkit.Equal(t, got, want, "DigestFromBytes must round-trip a constructed Digest")
+	})
+}
+
+func TestDigestBinaryRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		in   crypto.Digest
+	}{
+		{"256-bit", crypto.NewDigest256(fill256(0x11))},
+		{"384-bit", crypto.NewDigest384(fill384(0x22))},
+		{"512-bit", crypto.NewDigest512(fill512(0x33))},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			encoded, err := tc.in.MarshalBinary()
+			testkit.NoError(t, err, "MarshalBinary must not fail for a sized digest")
+			testkit.Equal(t, len(encoded), tc.in.Size(), "encoding carries no length header")
+
+			var got crypto.Digest
+			testkit.NoError(t, got.UnmarshalBinary(encoded), "UnmarshalBinary must accept its own output")
+			testkit.Equal(t, got, tc.in, "round-trip must preserve bytes and size")
+		})
+	}
+}
+
+func TestDigestAppendBinary(t *testing.T) {
+	t.Parallel()
+
+	t.Run("appends to a non-empty destination", func(t *testing.T) {
+		t.Parallel()
+		d := crypto.NewDigest256(fill256(0x7f))
+		got, err := d.AppendBinary([]byte{0xAA})
+		testkit.NoError(t, err, "AppendBinary must not fail for a sized digest")
+		testkit.Equal(t, len(got), 1+crypto.DigestSize256, "AppendBinary must not overwrite dst")
+		testkit.Equal(t, got[0], byte(0xAA), "existing dst bytes must be preserved")
+		testkit.Equal(t, got[1:], d.Bytes(), "appended bytes must be the digest's active prefix")
+	})
+
+	t.Run("matches MarshalBinary", func(t *testing.T) {
+		t.Parallel()
+		d := crypto.NewDigest384(fill384(0x5a))
+		appended, err := d.AppendBinary(nil)
+		testkit.NoError(t, err, "AppendBinary must not fail")
+		marshalled, err := d.MarshalBinary()
+		testkit.NoError(t, err, "MarshalBinary must not fail")
+		testkit.Equal(t, appended, marshalled, "AppendBinary and MarshalBinary must agree")
+	})
+}
+
+func TestDigestZeroHasNoBinaryEncoding(t *testing.T) {
+	t.Parallel()
+
+	t.Run("MarshalBinary reports ErrDigestZero", func(t *testing.T) {
+		t.Parallel()
+		var zero crypto.Digest
+		got, err := zero.MarshalBinary()
+		testkit.ErrorIs(t, err, crypto.ErrDigestZero, "the zero Digest must not marshal")
+		testkit.Equal(t, got, []byte(nil), "MarshalBinary must return nil on error")
+	})
+
+	t.Run("AppendBinary reports ErrDigestZero and leaves dst untouched", func(t *testing.T) {
+		t.Parallel()
+		var zero crypto.Digest
+		got, err := zero.AppendBinary([]byte{0xAA})
+		testkit.ErrorIs(t, err, crypto.ErrDigestZero, "the zero Digest must not append")
+		testkit.Equal(t, got, []byte{0xAA}, "AppendBinary must leave dst unchanged on error")
+	})
+
+	t.Run("UnmarshalBinary rejects empty input rather than decoding the sentinel", func(t *testing.T) {
+		t.Parallel()
+		// A truncated read must not decode back into a genesis
+		// anchor — that is the hazard ADR-0007 rules out.
+		var d crypto.Digest
+		testkit.ErrorIs(t, d.UnmarshalBinary(nil), crypto.ErrDigestSize,
+			"empty input must be a size error, not the zero Digest")
+	})
+}
+
+func BenchmarkDigestFromBytes(b *testing.B) {
+	src := crypto.NewDigest256(fill256(0x7f)).Bytes()
+	b.ReportAllocs()
+	var sink crypto.Digest
+	for b.Loop() {
+		sink, _ = crypto.DigestFromBytes(src)
+	}
+	runtime.KeepAlive(sink)
+}
+
+func BenchmarkDigestAppendBinary(b *testing.B) {
+	d := crypto.NewDigest256(fill256(0x7f))
+	dst := make([]byte, 0, crypto.DigestSize256)
+	b.ReportAllocs()
+	var sink []byte
+	for b.Loop() {
+		sink, _ = d.AppendBinary(dst[:0])
+	}
+	runtime.KeepAlive(sink)
 }
 
 func fill256(b byte) [crypto.DigestSize256]byte {

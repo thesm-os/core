@@ -4,7 +4,10 @@
 package clock_test
 
 import (
+	"bytes"
+	"math"
 	"runtime"
+	"strconv"
 	"testing"
 	"time"
 
@@ -242,4 +245,121 @@ func BenchmarkInstantRangeContains(b *testing.B) {
 	for b.Loop() {
 		_ = r.Contains(i)
 	}
+}
+
+func TestInstantBinaryRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		in   clock.Instant
+	}{
+		{"zero", clock.Instant{}},
+		{"typical", clock.Instant{Wall: 1_767_225_600_000_000_000, Logical: 7, Node: 42}},
+		{"pre-epoch wall", clock.Instant{Wall: -1_000_000_000, Logical: 1, Node: 1}},
+		{"min wall", clock.Instant{Wall: math.MinInt64}},
+		{"max wall", clock.Instant{Wall: math.MaxInt64}},
+		{"max logical and node", clock.Instant{Logical: math.MaxUint32, Node: math.MaxUint32}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			encoded, err := tc.in.MarshalBinary()
+			testkit.NoError(t, err, "MarshalBinary must not fail")
+			testkit.Equal(t, len(encoded), clock.InstantSize, "encoding must be InstantSize bytes")
+
+			var got clock.Instant
+			testkit.NoError(t, got.UnmarshalBinary(encoded), "UnmarshalBinary must accept its own output")
+			testkit.Equal(t, got, tc.in, "round-trip must preserve every field")
+		})
+	}
+}
+
+func TestInstantAppendBinary(t *testing.T) {
+	t.Parallel()
+
+	t.Run("layout is Wall then Logical then Node, big-endian", func(t *testing.T) {
+		t.Parallel()
+		i := clock.Instant{Wall: 1, Logical: 2, Node: 3}
+		got, err := i.AppendBinary(nil)
+		testkit.NoError(t, err, "AppendBinary must not fail")
+		testkit.Equal(t, got, []byte{
+			0, 0, 0, 0, 0, 0, 0, 1, // Wall
+			0, 0, 0, 2, // Logical
+			0, 0, 0, 3, // Node
+		}, "encoding must match the documented layout")
+	})
+
+	t.Run("appends to a non-empty destination", func(t *testing.T) {
+		t.Parallel()
+		dst := []byte{0xFF}
+		got, err := clock.Instant{Wall: 1}.AppendBinary(dst)
+		testkit.NoError(t, err, "AppendBinary must not fail")
+		testkit.Equal(t, len(got), 1+clock.InstantSize, "AppendBinary must not overwrite dst")
+		testkit.Equal(t, got[0], byte(0xFF), "existing dst bytes must be preserved")
+	})
+
+	t.Run("post-epoch instants sort bytewise in Compare order", func(t *testing.T) {
+		t.Parallel()
+		lo := clock.Instant{Wall: 100, Logical: 1, Node: 1}
+		hi := clock.Instant{Wall: 100, Logical: 2, Node: 0}
+		loEnc, _ := lo.MarshalBinary()
+		hiEnc, _ := hi.MarshalBinary()
+		testkit.Equal(t, lo.Compare(hi) < 0, bytes.Compare(loEnc, hiEnc) < 0,
+			"bytewise order must match Compare for post-epoch instants")
+	})
+}
+
+func TestInstantUnmarshalBinaryRejectsWrongLength(t *testing.T) {
+	t.Parallel()
+
+	for _, n := range []int{0, 1, clock.InstantSize - 1, clock.InstantSize + 1} {
+		t.Run("rejects length "+strconv.Itoa(n), func(t *testing.T) {
+			t.Parallel()
+			var i clock.Instant
+			testkit.ErrorIs(t, i.UnmarshalBinary(make([]byte, n)), clock.ErrInstantSize,
+				"UnmarshalBinary must reject a wrong-length encoding")
+		})
+	}
+}
+
+func TestInstantUnixAccessors(t *testing.T) {
+	t.Parallel()
+
+	t.Run("UnixMilli truncates nanoseconds to milliseconds", func(t *testing.T) {
+		t.Parallel()
+		i := clock.Instant{Wall: 1_500_000_123}
+		testkit.Equal(t, i.UnixMilli(), int64(1_500), "UnixMilli must divide Wall by 1e6")
+	})
+
+	t.Run("UnixMicro truncates nanoseconds to microseconds", func(t *testing.T) {
+		t.Parallel()
+		i := clock.Instant{Wall: 1_500_000_123}
+		testkit.Equal(t, i.UnixMicro(), int64(1_500_000), "UnixMicro must divide Wall by 1e3")
+	})
+
+	t.Run("truncation is toward zero for a pre-epoch instant", func(t *testing.T) {
+		t.Parallel()
+		i := clock.Instant{Wall: -1_500_000}
+		testkit.Equal(t, i.UnixMilli(), int64(-1), "UnixMilli must truncate toward zero, not floor")
+	})
+
+	t.Run("the zero Instant reports zero", func(t *testing.T) {
+		t.Parallel()
+		var i clock.Instant
+		testkit.Equal(t, i.UnixMilli(), int64(0), "the zero Instant must report 0 ms")
+		testkit.Equal(t, i.UnixMicro(), int64(0), "the zero Instant must report 0 us")
+	})
+}
+
+func BenchmarkInstantAppendBinary(b *testing.B) {
+	i := clock.Instant{Wall: 1_767_225_600_000_000_000, Logical: 7, Node: 42}
+	dst := make([]byte, 0, clock.InstantSize)
+	b.ReportAllocs()
+	var sink []byte
+	for b.Loop() {
+		sink, _ = i.AppendBinary(dst[:0])
+	}
+	runtime.KeepAlive(sink)
 }

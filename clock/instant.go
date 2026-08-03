@@ -5,6 +5,7 @@ package clock
 
 import (
 	"cmp"
+	"encoding/binary"
 	"time"
 )
 
@@ -68,6 +69,103 @@ type Instant struct {
 	// Node is the identifier of the node that minted this Instant.
 	// Used as the final tiebreaker for total ordering.
 	Node NodeID
+}
+
+// InstantSize is the byte length of the canonical [Instant] binary
+// encoding: Wall (8) || Logical (4) || Node (4).
+const InstantSize = 16
+
+// AppendBinary appends the canonical 16-byte big-endian encoding of
+// i to dst:
+//
+//	Wall     int64   8 bytes
+//	Logical  uint32  4 bytes
+//	Node     uint32  4 bytes
+//
+// The encoding is a stable wire contract. Instants are signed over
+// and persisted in artefacts that must verify across builds and
+// across years; the layout will not change within a major version.
+//
+// Field order follows comparison order, so encoded instants sort
+// bytewise in the same order [Instant.Compare] ranks them — with one
+// exception: Wall is two's-complement, so instants before the Unix
+// epoch sort after later ones. Bytewise ordering holds only for
+// post-epoch instants.
+//
+// The error is always nil; it exists to satisfy
+// [encoding.BinaryAppender].
+//
+// # Allocation contract
+//
+// Zero alloc when dst has capacity for [InstantSize] more bytes.
+func (i Instant) AppendBinary(dst []byte) ([]byte, error) {
+	// G115 false positive: int64 -> uint64 is same-width and
+	// bit-preserving, not truncating. UnmarshalBinary reverses it
+	// exactly; TestInstantBinaryRoundTrip covers negative Wall.
+	dst = binary.BigEndian.AppendUint64(dst, uint64(i.Wall)) //nolint:gosec
+	dst = binary.BigEndian.AppendUint32(dst, i.Logical)
+	dst = binary.BigEndian.AppendUint32(dst, uint32(i.Node))
+
+	return dst, nil
+}
+
+// MarshalBinary returns the canonical [InstantSize]-byte encoding.
+// Implements [encoding.BinaryMarshaler].
+//
+// The error is always nil.
+//
+// # Allocation contract
+//
+// One allocation for the returned slice.
+//
+// Calling this through the [encoding.BinaryMarshaler] interface
+// costs a second allocation: Instant is a value type wider than a
+// word, so converting it to an interface boxes it onto the heap.
+// [encoding.BinaryUnmarshaler] is unaffected — its receiver is an
+// *Instant, which is pointer-shaped. Hot paths use
+// [Instant.AppendBinary] and avoid both.
+func (i Instant) MarshalBinary() ([]byte, error) {
+	return i.AppendBinary(make([]byte, 0, InstantSize))
+}
+
+// UnmarshalBinary decodes the canonical encoding produced by
+// [Instant.AppendBinary]. Returns [ErrInstantSize] unless len(data)
+// is exactly [InstantSize]. Implements [encoding.BinaryUnmarshaler].
+//
+// # Allocation contract
+//
+// Zero alloc — decodes into the receiver the caller already owns.
+func (i *Instant) UnmarshalBinary(data []byte) error {
+	if len(data) != InstantSize {
+		return ErrInstantSize
+	}
+
+	// G115 false positive: reverses AppendBinary's same-width,
+	// bit-preserving conversion. See TestInstantBinaryRoundTrip.
+	i.Wall = int64(binary.BigEndian.Uint64(data[:8])) //nolint:gosec
+	i.Logical = binary.BigEndian.Uint32(data[8:12])
+	i.Node = NodeID(binary.BigEndian.Uint32(data[12:16]))
+
+	return nil
+}
+
+// UnixMilli returns Wall truncated to milliseconds.
+//
+// Provided because open-coding Wall/1e6 is a recurring source of
+// unit errors — the wrong divisor produces a plausible number rather
+// than a failure, and when an instant is packed into a time-sortable
+// identifier it silently collapses the representable window.
+//
+// Truncation is toward zero, so instants before the Unix epoch round
+// up rather than down.
+func (i Instant) UnixMilli() int64 {
+	return i.Wall / 1e6
+}
+
+// UnixMicro returns Wall truncated to microseconds. Truncation is
+// toward zero; see [Instant.UnixMilli].
+func (i Instant) UnixMicro() int64 {
+	return i.Wall / 1e3
 }
 
 // NodeID identifies a node in the cluster. Used as the final
