@@ -84,7 +84,7 @@ Start from [`docs/templates/RFC.md`](../templates/RFC.md).
 | [0019](0019-extendable-output-functions.md) | Extendable Output Functions | Accepted |
 | [0020](0020-trace-context-propagation.md) | Trace Context Propagation | Accepted |
 | [0021](0021-bounded-pool.md) | Bounded Pool | Accepted |
-| [0022](0022-keyed-storage.md) | Keyed Storage | Draft |
+| [0022](0022-keyed-storage.md) | Keyed Storage | Withdrawn |
 | [0023](0023-resilience-primitives.md) | Resilience Primitives | Draft |
 | [0024](0024-request-coalescing.md) | Request Coalescing | Draft |
 

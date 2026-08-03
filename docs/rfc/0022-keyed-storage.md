@@ -2,7 +2,7 @@
 rfc: 0022
 title: Keyed Storage
 author: Roy Klopper <roy.klopper@stealthscale.io>
-status: Draft
+status: Withdrawn
 created: 2026-08-03
 updated: 2026-08-03
 discussion: none
@@ -336,3 +336,57 @@ than succeeding.
 - TTL as a capability interface, if a shape emerges that a relational
   store and a cache can both honour.
 - Whether `store` should define a watch or change-feed capability.
+
+---
+
+## Withdrawal
+
+Withdrawn 2026-08-03, before acceptance. Nothing was implemented.
+
+**One interface was the wrong unit.** `KV` is the intersection of a
+relational store, an object store and a cache, and what an
+intersection discards is precisely what each member is good at:
+transactions and queries, ranges and multipart, TTLs and atomics. This
+RFC's own answer — "callers needing those declare a superset interface
+embedding KV" — is the tell. If most callers declare the superset, the
+subset bought a name.
+
+It is also the shape this module rejects everywhere else. `crypto`
+does not define one `Crypto` interface with capability sub-interfaces;
+it defines `Hasher`, `MAC`, `AEAD`, `XOF` and `Keeper` as separate
+seams, because they are separate primitives. Storage kinds are
+separate primitives too, and the differences are contractual rather
+than optional:
+
+- A **cache** miss is the expected case. Modelling absence as
+  [ErrNotFound] — an error — is backwards for the one kind where
+  absence is normal, and no capability interface fixes that.
+- A **blob** is streamed by nature. Making streaming an optional
+  capability inverts which case is the default.
+- A **database** has queries and transactions, which are the whole
+  point and which this RFC explicitly refuses to model.
+
+**Two of the kinds are not core's at all.** `database/sql` is already
+the database seam, and defining a second repeats the mistake ADR-0009
+avoided for logging. Anything document- or query-shaped needs an
+expression language, which is domain vocabulary by construction.
+
+**What survives.** The motivation stands: `version.Version`,
+`WriteOptions`, `Versioned[T]`, `page.Page` and `page.Cursor[T]` are
+shipped and no operation consumes them, so every caller still
+re-decides what a stale conditional write returns and whether an
+absent key is an error. Those decisions still land inside
+optimistic-concurrency loops where a wrong answer corrupts rather than
+fails.
+
+The replacement is per-kind seams — `blob` is the best-anchored, since
+[io/fs] establishes the read side and the write side is the
+acknowledged gap — each argued on its own terms and shipped when a
+real backend has been pushed through it. None is written yet, and none
+should be written speculatively.
+
+**Why not simply narrow this RFC.** Because the parts worth keeping —
+`Update`'s read-modify-write loop, the error vocabulary — do not
+depend on the interface, and the parts that do depend on it are the
+ones under question. Narrowing would have left the shape half-decided
+in an accepted document.
