@@ -24,6 +24,14 @@ type stubError struct{ class errs.Class }
 func (stubError) Error() string       { return "stub" }
 func (s stubError) Class() errs.Class { return s.class }
 
+// nilUnwrapError unwraps to nil, which is legal for the Unwrap
+// contract and drives classOf's loop to its exit rather than to one
+// of the switch's returns.
+type nilUnwrapError struct{}
+
+func (nilUnwrapError) Error() string { return "nil unwrap" }
+func (nilUnwrapError) Unwrap() error { return nil }
+
 var errSentinel = errors.New("errs_test: sentinel")
 
 func TestClassify(t *testing.T) {
@@ -105,6 +113,14 @@ func TestClassify(t *testing.T) {
 		joined := errors.Join(errSentinel, errors.New("errs_test: other"))
 		testkit.Equal(t, errs.Classify(joined), errs.Unspecified,
 			"a tree without a Classifier must be Unspecified")
+	})
+
+	t.Run("an error unwrapping to nil is Unspecified", func(t *testing.T) {
+		t.Parallel()
+		// Unwrap returning nil ends the walk without a Classifier
+		// and without hitting the switch's default.
+		testkit.Equal(t, errs.Classify(nilUnwrapError{}), errs.Unspecified,
+			"a chain ending in nil must be Unspecified")
 	})
 
 	t.Run("an explicit Classifier wins over a recognised sentinel", func(t *testing.T) {
