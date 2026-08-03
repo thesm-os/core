@@ -15,12 +15,13 @@ produces-adr: none
 
 ## Summary
 
-`preimage` — canonical, unambiguous framing for the byte sequences that
-get hashed and signed, under a versioned domain tag. Variable-width
-fields are length-prefixed; fixed-width fields are not, because their
-width is a constant of the protocol, and when that width changes the
-domain version changes with it. Also repairs `crypto.HashDomain`, which
-today does not separate its own parts from one another.
+`crypto.Framer` — canonical, unambiguous framing for the byte sequences
+that get hashed and signed, under a versioned domain tag.
+Variable-width fields are length-prefixed; fixed-width fields are not,
+because their width is a constant of the protocol, and when that width
+changes the domain version changes with it. Also repairs
+`crypto.HashDomain`, which today does not separate its own parts from
+one another.
 
 ## Motivation
 
@@ -50,17 +51,10 @@ detects the mismatch.
 ## Detailed design
 
 ```go
-// Package preimage builds canonically-framed, domain-separated byte
-// sequences for hashing and signing.
-//
-// The contract is that no two distinct field sequences produce the
-// same bytes. Variable-width fields are length-prefixed; fixed-width
-// fields are not, because their width is a constant of the protocol —
-// and when that width changes, the domain version changes with it.
-package preimage
+// In package crypto.
 
 // Domain is the versioned domain-separation tag prefixing every
-// preimage.
+// framed byte sequence.
 //
 // Version makes layout evolution safe: a protocol that changes any
 // field's width, order, or framing increments Version, and artefacts
@@ -71,37 +65,37 @@ type Domain struct {
     Version uint16
 }
 
-// Builder appends framed fields to a byte slice. It has no decode
-// half: a preimage is built, hashed, and discarded; verifiers rebuild
-// it from the artefact's own fields.
+// Framer appends framed fields to a byte slice. It has no decode
+// half: the sequence is built, hashed, and discarded; verifiers
+// rebuild it from the artefact's own fields.
 //
-// No method can fail, so none returns an error. The zero Builder is
-// not usable — construct one with New.
+// No method can fail, so none returns an error. The zero Framer is
+// not usable — construct one with NewFramer.
 //
 // # Allocation contract
 //
-// Zero alloc when dst has capacity for the finished preimage.
-type Builder struct{ dst []byte }
+// Zero alloc when dst has capacity for the finished sequence.
+type Framer struct{ dst []byte }
 
-// New begins a preimage in dst under d.
-func New(dst []byte, d Domain) Builder
+// NewFramer begins a framed sequence in dst under d.
+func NewFramer(dst []byte, d Domain) Framer
 
 // Fixed appends p verbatim, with no length prefix. Use only for fields
 // whose width is a constant of the protocol.
-func (b *Builder) Fixed(p []byte)
+func (f *Framer) Fixed(p []byte)
 
-// Bytes appends p with a big-endian uint32 length prefix.
-func (b *Builder) Bytes(p []byte)
+// Bytes appends p with a big-endian uint64 length prefix.
+func (f *Framer) Bytes(p []byte)
 
-func (b *Builder) String(s string)
-func (b *Builder) Uint64(v uint64)
-func (b *Builder) Uint32(v uint32)
-func (b *Builder) Preimage() []byte
+func (f *Framer) String(s string)
+func (f *Framer) Uint64(v uint64)
+func (f *Framer) Uint32(v uint32)
+func (f *Framer) Frame() []byte
 ```
 
 ### The domain tag is framed like everything else
 
-The tag encodes as `uint32(len(Name)) || Name || uint16(Version)`.
+The tag encodes as `uint64(len(Name)) || Name || uint16(Version)`.
 
 The obvious alternative is a fixed-width name — pad or truncate to some
 constant so the tag needs no framing of its own. That design has a
@@ -117,17 +111,33 @@ keeps an arbitrary constant, an error return, and a limit callers will
 hit. Length-prefixing the name removes all three: there is no limit, no
 truncation, no error, and no constant to justify.
 
-The consequence is that `New` cannot fail, no `Builder` method can
-fail, and the package declares no errors at all. That is the shape a
-primitive this small should have.
+The consequence is that `NewFramer` cannot fail, no `Framer` method can
+fail, and the framing surface declares no errors at all. That is the
+shape a primitive this small should have.
+
+### Length prefixes are 64-bit
+
+Every length prefix — the domain name and each variable-width field —
+is a big-endian `uint64`.
+
+A 32-bit prefix cannot represent a field above 4 GiB, which forces a
+failure mode, and neither available answer is acceptable. Truncating
+the length silently reintroduces the ambiguity the prefix exists to
+remove. Failing turns a total function into a fallible one, and
+propagates an error through `HashDomain` — whose sibling
+`Hasher.Hash` returns no error — and through every `Framer` method.
+
+`len(p)` is an `int`, so a 64-bit prefix represents every possible
+length by construction. Four extra bytes per field buy a primitive
+that has no error, no panic, and no unrepresentable input.
 
 ### `Fixed` is a sharp edge and is documented as one
 
 `Fixed` writes no length prefix, so calling it on a variable-width
-field reintroduces exactly the ambiguity this package removes.
+field reintroduces exactly the ambiguity `Framer` removes.
 
-It cannot be omitted: a preimage made entirely of length-prefixed
-fields spends four bytes on every digest and every identifier, which
+It cannot be omitted: a sequence made entirely of length-prefixed
+fields spends eight bytes on every digest and every identifier, which
 are the most common fields in any signed record and are all
 fixed-width. The mitigation is naming and documentation — the method is
 called `Fixed`, its doc says "only for fields whose width is a constant
@@ -136,7 +146,7 @@ work exists to catch the misuse.
 
 ### Repairing `crypto.HashDomain`
 
-`HashDomain` gains a big-endian `uint32` length prefix before each
+`HashDomain` gains a big-endian `uint64` length prefix before each
 part. The domain itself keeps its current treatment: it is written
 first and its own length is not prefixed, because nothing precedes it
 and nothing follows it that could be confused with it.
@@ -147,14 +157,14 @@ digests it produced before were ambiguous, and preserving them would
 mean preserving the collision.
 
 The alternative — deprecating `HashDomain` and pointing callers at
-`preimage` — was rejected because it leaves a working-looking function
+`Framer` — was rejected because it leaves a working-looking function
 with a silent collision in the module for the whole deprecation window.
 
 ### Relationship between the two
 
 `HashDomain` is the one-shot helper for the common case: a domain and a
-few parts, hashed immediately. `preimage.Builder` is for records with
-mixed fixed and variable fields, an evolving layout, or a preimage that
+few parts, hashed immediately. `crypto.Framer` is for records with
+mixed fixed and variable fields, an evolving layout, or a sequence that
 is signed rather than hashed.
 
 `core` ships the mechanism and no domain constants. A domain name is a
@@ -165,7 +175,7 @@ one.
 
 ### A. Length-prefix everything, drop `Fixed`
 
-**Why not:** four bytes per field on records whose fields are mostly
+**Why not:** eight bytes per field on records whose fields are mostly
 32-byte digests is a large constant overhead on the most common shape,
 and it is pure waste — a fixed-width field cannot be ambiguous. The
 sharp edge is the price of not paying it.
@@ -177,7 +187,7 @@ Pad or truncate the name to a constant so the tag is a fixed size.
 **Why not:** truncation collides names sharing a prefix, which is what a
 naming convention produces. Rejecting over-long names avoids the
 collision but keeps an arbitrary constant, an error path, and a limit.
-Length-prefixing costs four bytes once per preimage and removes the
+Length-prefixing costs eight bytes once per sequence and removes the
 entire question.
 
 ### C. A tag-length-value encoding
@@ -185,7 +195,8 @@ entire question.
 Give every field a type tag as well as a length.
 
 **Why not:** that is a serialisation format, and it invites a decode
-half, and then a schema. A preimage is built, hashed, and discarded;
+half, and then a schema. A framed sequence is built, hashed, and
+discarded;
 the verifier rebuilds it from fields it already holds. Nothing needs to
 parse one.
 
@@ -196,7 +207,7 @@ separation will be hit by whoever does not read the doc, which is
 whoever is in a hurry. The function is small and pre-1.0; fixing it
 costs one line and one CHANGELOG entry.
 
-### E. Variable-length prefix (varint) instead of `uint32`
+### E. Variable-length prefix (varint) instead of `uint64`
 
 **Why not:** a varint's encoded length depends on the value, which means
 the framing of a field depends on the length of the field. That is a
@@ -210,29 +221,29 @@ second thing to get right for no benefit at these sizes.
 - `Fixed` can be misused, and the misuse produces a silent collision
   rather than an error. It is the one unsafe operation in a package
   whose purpose is safety.
-- A variable-width domain tag means two preimages under different
+- A variable-width domain tag means two sequences under different
   domains differ in length as well as content, so a caller sizing a
   buffer from the domain alone cannot.
-- Two overlapping mechanisms — `HashDomain` and `Builder` — mean a
+- Two overlapping mechanisms — `HashDomain` and `Framer` — mean a
   caller has to choose, and the wrong choice is not an error.
-- The zero `Builder` is unusable but not detectably so; a caller who
-  declares one instead of calling `New` gets an untagged preimage.
+- The zero `Framer` is unusable but not detectably so; a caller who
+  declares one instead of calling `NewFramer` gets an untagged sequence.
 
 ## Open questions
 
 None. The three questions this RFC previously carried are resolved
 above: the domain name is length-prefixed rather than bounded, so no
-size constant is needed and `New` cannot fail; and a hashing
+size constant is needed and `NewFramer` cannot fail; and a hashing
 convenience over `Preimage()` is one line the caller writes, since
 `h.Hash(b.Preimage())` already reads correctly.
 
 ## Unresolved / future work
 
-- A conformance helper that asserts a caller's own preimage
+- A conformance helper that asserts a caller's own framed-sequence
   construction is boundary-shift-free, by generating adjacent
   variable-width field pairs and checking for collisions. This is the
   mitigation for `Fixed` and it belongs with the suites in `coretest`.
-- Whether `Instant`, `Digest` and `ID` should have `Builder` methods of
+- Whether `Instant`, `Digest` and `ID` should have `Framer` methods of
   their own, once RFC-0014's encodings land, so a caller writes
   `b.Instant(t)` rather than remembering that an instant is a
   fixed-width 16-byte field.
