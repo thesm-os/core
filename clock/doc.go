@@ -26,7 +26,7 @@
 //
 // # Provided implementations
 //
-// The [wall] sub-package provides the production HLC clock built on
+// The [hlc] sub-package provides the production HLC clock built on
 // [time.Now]. The [fake] sub-package provides a deterministic
 // virtual-time clock for tests. Both implement [Clock].
 //
