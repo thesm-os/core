@@ -180,10 +180,10 @@ func AssertDestroyerContract(t *testing.T, d crypto.Destroyer) {
 	testkit.Error(t, err, "a destroyed Keeper must not wrap new material")
 }
 
-// AssertGeneratorContract asserts the [crypto.KeyGenerator] capability:
+// AssertKeyGeneratorContract asserts the [crypto.KeyGenerator] capability:
 // a data key minted inside the custodian unwraps to the plaintext
 // returned alongside it, and successive calls differ.
-func AssertGeneratorContract(t *testing.T, g crypto.KeyGenerator) {
+func AssertKeyGeneratorContract(t *testing.T, g crypto.KeyGenerator) {
 	t.Helper()
 
 	plaintext, wrapped, err := g.GenerateKey(t.Context(), 32)

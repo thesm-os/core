@@ -46,6 +46,31 @@ package cryptotest
 //go:generate testkit stub -p go.thesmos.sh/core/crypto -o aead_stub.gen.go AEAD
 //go:generate testkit bench -p go.thesmos.sh/core/crypto -o aead_bench.gen.go AEAD
 
+// XOF
+//go:generate testkit stub -p go.thesmos.sh/core/crypto -o xof_stub.gen.go XOF
+//go:generate testkit suite -p go.thesmos.sh/core/crypto -o xof_spec.gen.go XOF
+//go:generate testkit bench -p go.thesmos.sh/core/crypto -o xof_bench.gen.go XOF
+
+// XOFStream
+//go:generate testkit stub -p go.thesmos.sh/core/crypto -o xofstream_stub.gen.go XOFStream
+//go:generate testkit suite -p go.thesmos.sh/core/crypto -o xofstream_spec.gen.go XOFStream
+
+// Keeper, Destroyer, KeyGenerator. Stubs only.
+//
+// The suite and bench generators read Unwrap(ctx, []byte) ([]byte,
+// error) as a keyed store lookup and emit
+// suite.ReaderContext[Impl, K, V] with K = []byte, which does not
+// satisfy comparable — so neither file compiles. Destroyer is worse:
+// Destroy alongside Unwrap makes the whole interface look
+// store-shaped. The generator has directives to declare that shape
+// (`deleter`, `keyfield`, `entry-id`) but none to deny it.
+//
+// AssertKeeperContract and the capability asserts are hand-written in
+// keeper_spec.go.
+//go:generate testkit stub -p go.thesmos.sh/core/crypto -o keeper_stub.gen.go Keeper
+//go:generate testkit stub -p go.thesmos.sh/core/crypto -o destroyer_stub.gen.go Destroyer
+//go:generate testkit stub -p go.thesmos.sh/core/crypto -o keygenerator_stub.gen.go KeyGenerator
+
 // Verifier
 //go:generate testkit stub -p go.thesmos.sh/core/crypto/sign -o verifier_stub.gen.go Verifier
 //go:generate testkit suite -p go.thesmos.sh/core/crypto/sign -o verifier_spec.gen.go Verifier

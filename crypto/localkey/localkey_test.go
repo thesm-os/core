@@ -66,7 +66,7 @@ func TestDestroyerContract(t *testing.T) {
 func TestKeyGeneratorContract(t *testing.T) {
 	t.Parallel()
 
-	cryptotest.AssertGeneratorContract(t, mustNew(t, testKeyID, rootKey))
+	cryptotest.AssertKeyGeneratorContract(t, mustNew(t, testKeyID, rootKey))
 }
 
 // --- impl-specific ---
