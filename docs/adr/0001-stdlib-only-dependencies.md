@@ -1,17 +1,22 @@
 ---
 adr: 0001
 title: Stdlib-Only Dependencies
-status: Accepted
+status: Superseded
 date: 2026-05-06
 supersedes: none
-superseded-by: none
+superseded-by: ADR-0006
 ---
 
 # ADR-0001: Stdlib-Only Dependencies
 
 ## Status
 
-Accepted
+Superseded by
+[ADR-0006: Stdlib-Only Scope: Test Dependencies](0006-stdlib-only-scope-test-dependencies.md).
+
+The production constraint recorded below is unchanged and remains in
+force. ADR-0006 revises only its scope over test code, where module
+graph pruning keeps a test-only requirement out of a consumer's build.
 
 ## Context
 
