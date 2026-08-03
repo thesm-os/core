@@ -50,18 +50,31 @@ type RetryConfig struct {
 	// every caller sharing this Retrier, measured over BudgetWindow.
 	// Must be >= 0.
 	//
-	// Zero disables retrying entirely. A value below one means a
-	// Retrier with no traffic behind it refuses the first retry it is
-	// asked for: the budget is a ratio, and one call cannot pay for
-	// one retry at any fraction under 1.0. That is the intended
-	// behaviour for a shared dependency — the protection is worth
-	// least exactly where the traffic is thinnest — but a caller that
-	// wants the attempt count to be the only bound sets this to
-	// Attempts-1 or higher.
+	// This is the protection: a failure affecting one call in a
+	// thousand retries freely, one affecting everything retries almost
+	// not at all. It is also unusable on its own below one call per
+	// window, which is what MinRetries is for.
 	Budget float64
 
-	// BudgetWindow is how far back the budget looks. Must be > 0
-	// unless Budget is zero.
+	// MinRetries is the floor beneath that fraction: this many retries
+	// are affordable within the window whatever the ratio says. Must
+	// be >= 0.
+	//
+	// Without it a Retrier refuses the first retry it is ever asked
+	// for at any Budget below 1.0 — one call cannot pay for one retry
+	// at a fraction — so a caller behind thin traffic would never
+	// retry at all, and the budget would protect a dependency that was
+	// never at risk.
+	//
+	// Below the floor the attempt count is the only bound, which is
+	// the right answer while the aggregate is too small to threaten
+	// anything. Above it the ratio takes over.
+	//
+	// Both this and Budget at zero disables retrying entirely.
+	MinRetries int
+
+	// BudgetWindow is how far back the budget looks. Must be > 0 when
+	// either Budget or MinRetries is.
 	//
 	// Long enough to span a dependency's recovery, short enough that
 	// yesterday's traffic does not pay for today's retries.
@@ -80,6 +93,10 @@ type RetryConfig struct {
 // thousand retries freely, one affecting everything retries almost not
 // at all.
 //
+// The allowance over the window is max(MinRetries, Budget×calls): a
+// floor while the traffic is too thin for a ratio to mean anything,
+// and the ratio once it is not.
+//
 // That is why this is a type rather than a free function. A budget is
 // state shared across calls, and a per-call value would bound nothing.
 // One Retrier per dependency, shared by every caller of it.
@@ -94,10 +111,11 @@ type Retrier struct {
 	// start is the beginning of the bucket at cur.
 	start time.Time
 
-	attempts int
-	base     time.Duration
-	max      time.Duration
-	budget   float64
+	attempts   int
+	base       time.Duration
+	max        time.Duration
+	budget     float64
+	minRetries int
 
 	// bucket is BudgetWindow/budgetBuckets: the resolution at which
 	// old traffic ages out.
@@ -115,8 +133,9 @@ type Retrier struct {
 // NewRetrier returns a Retrier over cfg.
 //
 // Returns [ErrConfig] when Clock or Rand is nil, Attempts is not
-// positive, Base is not positive, Max is below Base, Budget is
-// negative, or BudgetWindow is not positive while Budget is.
+// positive, Base is not positive, Max is below Base, Budget or
+// MinRetries is negative, or BudgetWindow is not positive while either
+// of those is.
 func NewRetrier(cfg RetryConfig) (*Retrier, error) {
 	switch {
 	case cfg.Clock == nil,
@@ -125,17 +144,19 @@ func NewRetrier(cfg RetryConfig) (*Retrier, error) {
 		cfg.Base <= 0,
 		cfg.Max < cfg.Base,
 		cfg.Budget < 0,
-		cfg.Budget > 0 && cfg.BudgetWindow <= 0:
+		cfg.MinRetries < 0,
+		(cfg.Budget > 0 || cfg.MinRetries > 0) && cfg.BudgetWindow <= 0:
 		return nil, ErrConfig
 	}
 
 	return &Retrier{
-		clock:    cfg.Clock,
-		rand:     cfg.Rand,
-		attempts: cfg.Attempts,
-		base:     cfg.Base,
-		max:      cfg.Max,
-		budget:   cfg.Budget,
+		clock:      cfg.Clock,
+		rand:       cfg.Rand,
+		attempts:   cfg.Attempts,
+		base:       cfg.Base,
+		max:        cfg.Max,
+		budget:     cfg.Budget,
+		minRetries: cfg.MinRetries,
 		// A window shorter than the bucket count would divide to zero.
 		bucket: max(cfg.BudgetWindow/budgetBuckets, 1),
 		start:  cfg.Clock.Time(),
@@ -272,7 +293,7 @@ func (r *Retrier) spend() bool {
 		retries += r.retries[i]
 	}
 
-	if float64(retries+1) > r.budget*float64(calls) {
+	if float64(retries+1) > max(float64(r.minRetries), r.budget*float64(calls)) {
 		return false
 	}
 	r.retries[r.cur]++

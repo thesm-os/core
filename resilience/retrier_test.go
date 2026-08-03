@@ -46,6 +46,7 @@ func retryConfig(c clock.Clock, r rand.Rand) resilience.RetryConfig {
 		// Two retries per call: enough that the attempt count is what
 		// bounds these tests, not the budget. TestDoBudget lowers it.
 		Budget:       2,
+		MinRetries:   0,
 		BudgetWindow: time.Minute,
 	}
 }
@@ -89,7 +90,11 @@ func TestNewRetrier(t *testing.T) {
 		{"zero max", func(c *resilience.RetryConfig) { c.Max = 0 }},
 		{"max below base", func(c *resilience.RetryConfig) { c.Max = c.Base - 1 }},
 		{"negative budget", func(c *resilience.RetryConfig) { c.Budget = -1 }},
+		{"negative floor", func(c *resilience.RetryConfig) { c.MinRetries = -1 }},
 		{"budget without a window", func(c *resilience.RetryConfig) { c.BudgetWindow = 0 }},
+		{"a floor without a window", func(c *resilience.RetryConfig) {
+			c.Budget, c.MinRetries, c.BudgetWindow = 0, 1, 0
+		}},
 	}
 	for _, tc := range invalid {
 		t.Run("rejects a "+tc.name, func(t *testing.T) {
@@ -102,15 +107,15 @@ func TestNewRetrier(t *testing.T) {
 		})
 	}
 
-	t.Run("accepts a zero budget without a window", func(t *testing.T) {
+	t.Run("accepts no allowance at all without a window", func(t *testing.T) {
 		t.Parallel()
-		// A zero budget disables retrying, so there is no window to
-		// measure it over.
+		// A zero budget and a zero floor disable retrying, so there is
+		// no window to measure them over.
 		cfg := retryConfig(fake.New(originUTC), noJitter)
-		cfg.Budget, cfg.BudgetWindow = 0, 0
+		cfg.Budget, cfg.MinRetries, cfg.BudgetWindow = 0, 0, 0
 
 		_, err := resilience.NewRetrier(cfg)
-		testkit.NoError(t, err, "a zero budget needs no window")
+		testkit.NoError(t, err, "no allowance needs no window")
 	})
 }
 
@@ -251,10 +256,11 @@ func TestDoContext(t *testing.T) {
 func TestDoBudget(t *testing.T) {
 	t.Parallel()
 
-	// Budget 0.5 allows one retry for every two calls in the window.
+	// Budget 0.5 allows one retry for every two calls in the window,
+	// with no floor beneath it.
 	halfBudget := func(c clock.Clock) resilience.RetryConfig {
 		cfg := retryConfig(c, noJitter)
-		cfg.Budget = 0.5
+		cfg.Budget, cfg.MinRetries = 0.5, 0
 
 		return cfg
 	}
@@ -327,16 +333,87 @@ func TestDoBudget(t *testing.T) {
 		testkit.Equal(t, *calls, 2, "the retry must have run")
 	})
 
-	t.Run("a zero budget disables retrying", func(t *testing.T) {
+	t.Run("no budget and no floor disables retrying", func(t *testing.T) {
 		t.Parallel()
 		cfg := retryConfig(fake.New(originUTC), noJitter)
-		cfg.Budget, cfg.BudgetWindow = 0, 0
+		cfg.Budget, cfg.MinRetries, cfg.BudgetWindow = 0, 0, 0
 		r := mustRetrier(t, cfg)
 
 		fn, calls := failFor(99, errTransient)
 		_, err := resilience.Do(t.Context(), r, fn)
-		testkit.ErrorIs(t, err, resilience.ErrBudget, "no budget means no retry")
+		testkit.ErrorIs(t, err, resilience.ErrBudget, "no allowance means no retry")
 		testkit.Equal(t, *calls, 1, "the retry must not have run")
+	})
+}
+
+func TestDoMinRetries(t *testing.T) {
+	t.Parallel()
+
+	// A floor of one retry beneath a ratio that cannot pay for one.
+	floored := func(c clock.Clock) resilience.RetryConfig {
+		cfg := retryConfig(c, noJitter)
+		cfg.Budget, cfg.MinRetries, cfg.Attempts = 0.5, 1, 4
+
+		return cfg
+	}
+
+	t.Run("the floor pays where the ratio cannot", func(t *testing.T) {
+		t.Parallel()
+		// Without MinRetries this same call is refused outright: one
+		// call cannot pay for one retry at any fraction under 1.0.
+		r := mustRetrier(t, floored(fake.New(originUTC)))
+		fn, calls := failFor(1, errTransient)
+
+		_, err := resilience.Do(t.Context(), r, fn)
+		testkit.NoError(t, err, "the floor must cover the first retry")
+		testkit.Equal(t, *calls, 2, "the retry must have run")
+	})
+
+	t.Run("the floor is a floor, not an allowance per call", func(t *testing.T) {
+		t.Parallel()
+		// Attempts would allow three retries; the window affords one.
+		r := mustRetrier(t, floored(fake.New(originUTC)))
+		fn, calls := failFor(99, errTransient)
+
+		_, err := resilience.Do(t.Context(), r, fn)
+		testkit.ErrorIs(t, err, resilience.ErrBudget, "the second retry must exceed the floor")
+		testkit.Equal(t, *calls, 2, "exactly one retry must have run")
+	})
+
+	t.Run("the ratio takes over once the traffic is there", func(t *testing.T) {
+		t.Parallel()
+		// Eleven calls at 0.5 afford five retries, well above the floor.
+		r := mustRetrier(t, floored(fake.New(originUTC)))
+
+		succeed, _ := failFor(0, errTransient)
+		for range 10 {
+			_, err := resilience.Do(t.Context(), r, succeed)
+			testkit.NoError(t, err, "the priming calls must succeed")
+		}
+
+		fn, calls := failFor(2, errTransient)
+		_, err := resilience.Do(t.Context(), r, fn)
+		testkit.NoError(t, err, "the ratio must pay for more than the floor")
+		testkit.Equal(t, *calls, 3, "both retries must have run")
+	})
+
+	t.Run("the floor ages out with the window", func(t *testing.T) {
+		t.Parallel()
+		// A floor that never reset would be an unbounded retry
+		// allowance spread thinly over time.
+		c := fake.New(originUTC)
+		r := mustRetrier(t, floored(c))
+
+		spend, _ := failFor(1, errTransient)
+		_, err := resilience.Do(t.Context(), r, spend)
+		testkit.NoError(t, err, "the floor must cover the first retry")
+
+		c.Advance(2 * time.Minute)
+
+		fn, calls := failFor(1, errTransient)
+		_, err = resilience.Do(t.Context(), r, fn)
+		testkit.NoError(t, err, "a fresh window must restore the floor")
+		testkit.Equal(t, *calls, 2, "the retry must have run")
 	})
 }
 

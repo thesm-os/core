@@ -264,11 +264,17 @@ type RetryConfig struct {
 
     // Budget is the fraction of calls that may become retries, across
     // every caller sharing this Retrier, measured over BudgetWindow.
-    // Must be >= 0; zero disables retrying entirely.
+    // Must be >= 0.
     Budget float64
 
-    // BudgetWindow is how far back the budget looks. Must be > 0 when
-    // Budget is.
+    // MinRetries is the floor beneath that fraction: this many
+    // retries are affordable within the window whatever the ratio
+    // says. Must be >= 0. Both it and Budget at zero disables
+    // retrying entirely.
+    MinRetries int
+
+    // BudgetWindow is how far back the budget looks. Must be > 0
+    // when either Budget or MinRetries is.
     BudgetWindow time.Duration
 }
 
@@ -395,8 +401,11 @@ Testing a breaker against the wall clock means sleeping past
 
 Calls and retries are counted in a ring of buckets covering
 `BudgetWindow`, advanced by `Clock`. A retry is permitted while
-retries over the window remain below `Budget` times the calls over the
-same window.
+retries over the window remain within the allowance:
+
+```text
+max(MinRetries, Budget × calls)
+```
 
 A fixed window would be simpler and has an edge that matters: a burst
 of failures landing just before a boundary gets a fresh allowance
@@ -407,6 +416,26 @@ state and removes the cliff.
 Bucket count is an implementation detail rather than configuration —
 finer buckets smooth the edge further and none of the choices are
 worth a knob.
+
+### The budget needs a floor
+
+A ratio alone is unusable below one call per window. `Budget × calls`
+for the first call a `Retrier` ever sees is `Budget`, which is under
+one for every fraction worth setting — so the first retry is always
+refused, and a caller behind thin traffic never retries at all. The
+budget then protects a dependency that was never at risk, at the cost
+of the callers who most needed the retry.
+
+`MinRetries` is the floor: that many retries are always affordable
+within the window regardless of the ratio. Below the floor the
+attempt count is the only bound, which is the correct answer while
+the aggregate is too small to be a threat; above it the ratio takes
+over, which is the correct answer once it is.
+
+The two thresholds answer different questions and neither substitutes
+for the other, so both are required. Setting both to zero disables
+retrying, which is a defensible thing to want and now has to be
+written down rather than arrived at by leaving a field unset.
 
 ### Circuits are not evicted
 
