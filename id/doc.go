@@ -42,17 +42,35 @@
 // # Compile-time-distinct identifier types
 //
 // Consumers that want compile-time distinction between
-// identifier vocabularies declare a typed alias and convert at
-// the boundary:
+// identifier vocabularies embed [ID] in a struct:
 //
-//	type EpochID id.ID
-//	type AccumulatorID id.ID
+//	type EpochID struct{ id.ID }
+//	type AccumulatorID struct{ id.ID }
 //
 //	gen := ulid.New(clk, rng)
-//	epochID := EpochID(gen.New())
+//	epochID := EpochID{gen.Generate()}
+//
+// Both keep every [ID] method through promotion, remain
+// comparable, and will not assign to one another.
+//
+// Do NOT use a defined type for this:
+//
+//	type EpochID id.ID // wrong
+//
+// A defined type inherits no methods, so [ID.IsZero],
+// [ID.Bytes], [ID.Compare], [ID.Equal], and [ID.String] are all
+// lost — and because [ID]'s fields are unexported, the defined
+// type cannot be constructed outside this package either.
 //
 // The [Generator] interface still produces [ID]; the consumer
-// owns the typed conversion.
+// owns the wrapping.
+//
+// # Decoding an identifier
+//
+// [FromBytes] builds an [ID] from a byte slice for callers whose
+// identifier arrives from a wire or a database rather than from a
+// [Generator]. Each subpackage additionally ships a Parse
+// function for its own canonical text encoding.
 //
 // # Allocation contract
 //

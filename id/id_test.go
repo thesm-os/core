@@ -4,6 +4,7 @@
 package id_test
 
 import (
+	"runtime"
 	"testing"
 
 	"go.thesmos.sh/testkit"
@@ -238,6 +239,77 @@ func BenchmarkString(b *testing.B) {
 	for b.Loop() {
 		_ = a.String()
 	}
+}
+
+func TestFromBytes(t *testing.T) {
+	t.Parallel()
+
+	sizes := []struct {
+		name string
+		size int
+	}{
+		{"Size128", id.Size128},
+		{"Size160", id.Size160},
+		{"Size256", id.Size256},
+	}
+	for _, tc := range sizes {
+		t.Run("accepts "+tc.name, func(t *testing.T) {
+			t.Parallel()
+			b := make([]byte, tc.size)
+			for i := range b {
+				b[i] = byte(i)
+			}
+			got, err := id.FromBytes(b)
+			testkit.NoError(t, err, "FromBytes must accept a valid length")
+			testkit.Equal(t, got.Size(), tc.size, "FromBytes must infer Size from len(b)")
+			testkit.Equal(t, got.Bytes(), b, "FromBytes must round-trip the input")
+		})
+	}
+
+	bad := []struct {
+		name string
+		size int
+	}{
+		{"empty", 0},
+		{"one short of Size128", id.Size128 - 1},
+		{"between Size128 and Size160", 18},
+		{"one past Size256", id.Size256 + 1},
+	}
+	for _, tc := range bad {
+		t.Run("rejects "+tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := id.FromBytes(make([]byte, tc.size))
+			testkit.ErrorIs(t, err, id.ErrSize, "FromBytes must reject an invalid length")
+			testkit.True(t, got.IsZero(), "FromBytes must return Zero on error")
+		})
+	}
+
+	t.Run("does not alias the input", func(t *testing.T) {
+		t.Parallel()
+		b := make([]byte, id.Size128)
+		got, err := id.FromBytes(b)
+		testkit.NoError(t, err, "FromBytes must accept a valid length")
+		b[0] = 0xFF
+		testkit.Equal(t, got.Bytes()[0], byte(0), "mutating the input must not change the ID")
+	})
+
+	t.Run("round-trips New128", func(t *testing.T) {
+		t.Parallel()
+		want := id.New128(fill128(0x42))
+		got, err := id.FromBytes(want.Bytes())
+		testkit.NoError(t, err, "FromBytes must accept New128 output")
+		testkit.Equal(t, got, want, "FromBytes must round-trip a constructed ID")
+	})
+}
+
+func BenchmarkFromBytes(b *testing.B) {
+	src := id.New256(fill256(0x7f)).Bytes()
+	b.ReportAllocs()
+	var sink id.ID
+	for b.Loop() {
+		sink, _ = id.FromBytes(src)
+	}
+	runtime.KeepAlive(sink)
 }
 
 func fill128(b byte) [id.Size128]byte {

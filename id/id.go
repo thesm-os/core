@@ -97,6 +97,37 @@ func New256(b [Size256]byte) ID {
 	return i
 }
 
+// FromBytes builds an [ID] from a byte slice, inferring the size
+// from len(b). This is the construction path for callers whose
+// identifier arrives from a wire, a database column, or a proof
+// body rather than from a [Generator].
+//
+// Returns [ErrSize] unless len(b) is exactly [Size128], [Size160],
+// or [Size256]. b is copied; the returned ID does not alias it.
+//
+// # Allocation contract
+//
+// Zero alloc.
+func FromBytes(b []byte) (ID, error) {
+	var size uint8
+	switch len(b) {
+	case Size128:
+		size = Size128
+	case Size160:
+		size = Size160
+	case Size256:
+		size = Size256
+	default:
+		return Zero, ErrSize
+	}
+
+	var i ID
+	copy(i.bytes[:], b)
+	i.size = size
+
+	return i, nil
+}
+
 // Size returns the number of meaningful bytes in i. Returns 0 for
 // [Zero].
 func (i ID) Size() int {
