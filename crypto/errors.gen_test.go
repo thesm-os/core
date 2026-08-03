@@ -21,8 +21,13 @@ func TestCryptoSentinelErrors(t *testing.T) {
 		err  error
 	}
 	all := []errEntry{
+		{"ErrCiphertextShort", crypto.ErrCiphertextShort},
 		{"ErrDigestSize", crypto.ErrDigestSize},
 		{"ErrDigestZero", crypto.ErrDigestZero},
+		{"ErrKeyDestroyed", crypto.ErrKeyDestroyed},
+		{"ErrKeyID", crypto.ErrKeyID},
+		{"ErrKeySize", crypto.ErrKeySize},
+		{"ErrXOFSqueezing", crypto.ErrXOFSqueezing},
 	}
 
 	t.Run("prefix", func(t *testing.T) {
