@@ -43,4 +43,15 @@ var (
 	// suggests damaged storage, and a caller acts on them
 	// differently.
 	ErrKeyDestroyed = errors.New("crypto: wrapping key destroyed")
+
+	// ErrXOFSqueezing is returned by [XOFStream.Write] once Read has
+	// been called. The sponge absorbs and then squeezes; the phases
+	// do not interleave, and resuming absorption would silently
+	// produce output unrelated to what a reader expects.
+	//
+	// The standard library panics on this. The seam returns an error
+	// because a caller reaches the state by threading a stream
+	// through code that does not know its phase, which is a runtime
+	// condition rather than a programmer error.
+	ErrXOFSqueezing = errors.New("crypto: write after read on an XOF stream")
 )

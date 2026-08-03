@@ -153,3 +153,19 @@ const (
 	// bound worth tracking. Reserved; not implemented.
 	AlgXChaCha20Poly1305 Algorithm = "xchacha20-poly1305"
 )
+
+// Extendable-output-function algorithms, named for the [XOF] seam.
+// Persist the value alongside anything squeezed: output length is the
+// caller's choice, so the algorithm is the only thing that makes a
+// squeeze reproducible.
+//
+// Names follow the FIPS 202 spelling, as the hash and MAC constants
+// follow their own registries rather than being invented here.
+const (
+	// AlgSHAKE128 is SHAKE128 per FIPS 202, a sponge with 128-bit
+	// security strength against collisions when enough output is
+	// taken.
+	AlgSHAKE128 Algorithm = "shake128"
+	// AlgSHAKE256 is SHAKE256 per FIPS 202, at 256-bit strength.
+	AlgSHAKE256 Algorithm = "shake256"
+)
