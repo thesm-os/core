@@ -2,7 +2,7 @@
 rfc: 0017
 title: Authenticated Encryption
 author: Roy Klopper <roy.klopper@stealthscale.io>
-status: Draft
+status: Accepted
 created: 2026-08-03
 updated: 2026-08-03
 discussion: none
