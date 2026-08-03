@@ -253,25 +253,45 @@ checks:
     # metrics: exit status 1".
     #
     # Run from the module root instead and it works. Measured
-    # directly, every package is at 100% mutator coverage, and at
-    # 100% test efficacy with the exception of resilience (97.01%).
-    # pool yields no viable mutants at all, its wrappers being
-    # single-expression generics with nothing to mutate.
+    # directly across every gated package, three carry surviving
+    # mutants and the rest are at 100% efficacy and 100% reach:
     #
-    # resilience's two survivors are equivalent mutants in
-    # Backoff's doubling guard and the budget ring's roll guard:
-    # `d > limit/2` vs `>=` reaches the cap either way, because
-    # doubling exactly half the cap IS the cap; and `steps < 1` vs
-    # `<= 1` only defers a roll by one bucket, since steps is
-    # recomputed from start on the next call and the deferred
-    # buckets are picked up then. No test can kill either, and
-    # contorting the code to make them killable would trade real
-    # clarity for a metric.
+    #   crypto          98.4% efficacy, 100% reach — 1 survivor
+    #   resilience      97.1% efficacy, 100% reach — 2 survivors
+    #   telemetry/w3c   85.3% efficacy,  85% reach — 5 + 6 unreached
     #
-    # Note also that a mutation run needs a raised
-    # timeout_coefficient: this module's tests bound their own
-    # waits, so a mutant that hangs a helper shows up as a timeout
-    # rather than a failure at gremlins' default.
+    # crypto/shake, id/fixed and telemetry/noop yield no viable
+    # mutants at all, being single-expression wrappers with nothing
+    # to mutate.
+    #
+    # Every survivor is an equivalent mutant — a change that cannot
+    # alter observable behaviour, so no test can kill it:
+    #
+    # - crypto Seal's `make` capacity hint. Capacity is a
+    #   performance argument; append grows the slice regardless.
+    # - resilience Backoff's `d > limit/2` vs `>=`, which reaches
+    #   the cap either way because doubling exactly half the cap IS
+    #   the cap; and the budget ring's `steps < 1` vs `<= 1`, which
+    #   only defers a roll by one bucket, since steps is recomputed
+    #   from start on the next call and the deferred buckets are
+    #   picked up then.
+    # - w3c unhex's arithmetic. Only bit 0 of its result escapes
+    #   (`&sampledFlag`), and every mutation shifts the value by an
+    #   even amount, so the observable bit never changes. The six
+    #   unreached ones are traceParentLen's const arithmetic: a
+    #   const declaration carries no coverage counter, so gremlins
+    #   cannot reach it by construction.
+    #
+    # Contorting any of these to satisfy the metric would trade real
+    # clarity for a number.
+    #
+    # A run needs a much raised timeout_coefficient. gremlins scales
+    # its per-mutant budget off baseline test duration, so this
+    # module's FASTEST packages get the tightest budget and report
+    # 0% on both metrics purely from timeouts — crypto/localkey and
+    # crypto/sign/ecdsap384 score 0% at the default and 100% at 400.
+    # Timeouts are excluded from the efficacy denominator, so a
+    # timing-starved run also reads as a flatteringly high score.
     #
     # Restore the per-layer list below once ergon passes the layer
     # in the path rather than in the working directory.
@@ -281,14 +301,23 @@ checks:
     #   coverage: 99
     #   ... one entry per top-level package
     # gremlins invocation policy. Workers + test_cpu bound CPU
-    # usage; timeout_coefficient tolerates slow-but-finite tests
-    # (gremlins' default of 3 produces spurious timeouts). File
-    # exclusion comes from `checks.excludes` / `checks.skips`
-    # above; gremlins' `--exclude-files` is computed at call time.
+    # usage. File exclusion comes from `checks.excludes` /
+    # `checks.skips` above; gremlins' `--exclude-files` is computed
+    # at call time.
+    #
+    # timeout_coefficient is high because the budget is a multiple
+    # of the package's own baseline test time, so the packages with
+    # the fastest suites get the tightest budget — and a suite that
+    # runs in milliseconds cannot compile and run again inside a
+    # small multiple of that. Measured: crypto/localkey and
+    # crypto/sign/ecdsap384 report 0% at 40 and 100% at 400, having
+    # timed out on every mutant rather than failing any. Nothing
+    # here is slow enough for 400 to cost real wall-clock time,
+    # because a genuinely hanging mutant is rare.
     gremlins:
       workers: 2
       test_cpu: 2
-      timeout_coefficient: 30
+      timeout_coefficient: 400
 
   # commit-msg — `ergon check commit-msg <file>`
   commit_msg:
