@@ -156,13 +156,13 @@ checks:
 
   # Path globs both gates ignore. `reason` is human-facing so
   # reviewers can challenge new excludes on PR.
-  excludes: []
-  # Example:
-  #   excludes:
-  #     - path: "**/*_test.go"
-  #       reason: tests are not part of the coverage or mutation gates
-  #     - path: internal/version/...
-  #       reason: ldflags-injected build metadata; no logic
+  excludes:
+    - path: coretest/...
+      reason: >-
+        testkit-generated stubs, conformance suites and benchmarks.
+        These are exercised by the packages that wire them, not by
+        their own tests, so self-coverage measures nothing. The
+        contracts they assert are gated at the implementations.
 
   # Structural skip rules: a function whose name matches func_glob
   # AND whose file matches file_glob is exempt from every gate.
@@ -199,17 +199,22 @@ checks:
   coverage:
     # Per-layer thresholds. Empty disables the check —
     # `ergon check coverage` short-circuits with a notice.
-    packages: []
-    # Example:
-    #   packages:
-    #     - path: internal/...
-    #       line: 80
-    #       branch: 80
-    #       require_branch: false
-    #     - path: cmd/...
-    #       line: 60
-    #       branch: 0
-    #       require_branch: false
+    #
+    # 100 is the standing number, not an aspiration: every
+    # production package in this module is at 100% line coverage,
+    # and a seam whose contract is not fully exercised is a seam
+    # whose contract is partly a suggestion. A genuinely
+    # unreachable branch is restructured until it is reachable, or
+    # it does not exist.
+    #
+    # coretest is excluded above rather than given a lower number —
+    # a threshold it could never meaningfully hit would just be
+    # noise.
+    packages:
+      - path: ...
+        line: 100
+        branch: 0
+        require_branch: false
     # Cap on the per-target list of below-threshold functions.
     # Anything past the cap is collapsed into "… and N more".
     top_n: 10
@@ -225,12 +230,41 @@ checks:
   #            mutateable code".
   mutation:
     # Per-layer thresholds. An empty list short-circuits the check.
+    #
+    # score gates efficacy — of the mutants the suite reached, how
+    # many it caught. coverage gates reach — of every viable
+    # mutant, how many the suite exercised at all. Both are needed:
+    # a suite that reaches little can score highly on what little
+    # it reaches.
+    #
+    # 99 rather than 100 because gremlins emits a small number of
+    # equivalent mutants — changes that cannot alter observable
+    # behaviour, so no test can kill them. That residue is the only
+    # slack intended here.
+    #
+    # DISABLED pending an ergon fix, not because the module misses
+    # the bar. `ergon check mutation` runs gremlins with the working
+    # directory set to the layer subdirectory
+    # (internal/checks/mutation/mutation.go:235,
+    # filepath.Join(root, t.Layer) with RelPath "."), and gremlins
+    # resolves the module root from the filesystem root rather than
+    # from cwd — so it looks for /go.mod, fails before doing any
+    # work, and every layer reports "gremlins did not produce
+    # metrics: exit status 1".
+    #
+    # Run from the module root instead and it works. Measured
+    # directly, every package is at 100% test efficacy and 100%
+    # mutator coverage with zero surviving mutants; pool yields no
+    # viable mutants at all, its wrappers being single-expression
+    # generics with nothing to mutate.
+    #
+    # Restore the per-layer list below once ergon passes the layer
+    # in the path rather than in the working directory.
     packages: []
-    # Example:
-    #   packages:
-    #     - path: internal/...
-    #       score: 80
-    #       coverage: 80
+    # - path: arena
+    #   score: 99
+    #   coverage: 99
+    #   ... one entry per top-level package
     # gremlins invocation policy. Workers + test_cpu bound CPU
     # usage; timeout_coefficient tolerates slow-but-finite tests
     # (gremlins' default of 3 produces spurious timeouts). File
