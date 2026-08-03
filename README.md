@@ -98,6 +98,27 @@ seams every other thesmos library and framework depends on:
   safely. Pool integration via `Reset` (satisfies
   `pool.Resettable`) keeps the backing buffer warm across
   requests. See [RFC-0011][rfc-0011].
+- **Errs** — error-classification seam: a closed eight-value
+  taxonomy of what a caller should *do* about a failure, not
+  what went wrong. `Classify` walks an error tree
+  zero-allocation and recognises stdlib sentinels, so a
+  producer that has never heard of the package still classifies
+  usefully; `Retryable` is the shorthand a retry loop or a
+  circuit breaker asks for. See [RFC-0015][rfc-0015].
+- **Resilience** — the algorithms every caller of a remote
+  dependency needs: `Breaker` (per-target circuit, single-probe
+  half-open, injectable failure judgement for transports where
+  failure is not an error), `Bulkhead` (concurrency limit with
+  optional queue, rejection / timeout / cancellation kept
+  distinct), and `Retrier` (attempt count *and* a sliding-window
+  budget, full-jitter `Backoff`). All read time through
+  `clock.Clock`, so their transitions are exact under a virtual
+  clock. See [RFC-0023][rfc-0023].
+- **Batch** — request coalescing: `Loader[K, V]` accumulates
+  concurrent single-key loads into one batched call and
+  deduplicates concurrent loads of the same key. Not a cache —
+  results are not retained past the in-flight window.
+  See [RFC-0024][rfc-0024].
 
 These interfaces — and the others added over time — share three
 properties:
@@ -157,5 +178,8 @@ Apache 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 [rfc-0011]: docs/rfc/0011-arena.md
 [rfc-0012]: docs/rfc/0012-crypto-hmac-seam.md
 [rfc-0013]: docs/rfc/0013-crypto-sign-seam.md
+[rfc-0015]: docs/rfc/0015-error-classification.md
+[rfc-0023]: docs/rfc/0023-resilience-primitives.md
+[rfc-0024]: docs/rfc/0024-request-coalescing.md
 [contrib]: CONTRIBUTING.md
 [sec]: SECURITY.md
