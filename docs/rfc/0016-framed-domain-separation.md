@@ -74,7 +74,8 @@ type Domain struct {
 //
 // # Allocation contract
 //
-// Zero alloc when dst has capacity for the finished sequence.
+// Zero alloc only when dst already has capacity for the finished
+// sequence. A nil buffer grows once per field.
 type Framer struct{ dst []byte }
 
 // NewFramer begins a framed sequence in dst under d.
@@ -130,6 +131,26 @@ propagates an error through `HashDomain` — whose sibling
 `len(p)` is an `int`, so a 64-bit prefix represents every possible
 length by construction. Four extra bytes per field buy a primitive
 that has no error, no panic, and no unrepresentable input.
+
+### The buffer must be sized before the domain tag is written
+
+`NewFramer` writes the domain tag immediately, so a `Grow`-style
+method called afterwards cannot recover the growth the tag has
+already caused — measured, it takes a four-field sequence from four
+allocations to three, not to one. The method was proposed and
+dropped for that reason.
+
+Sizing is therefore the caller's, at construction, and there are
+exactly two call sites that get it right:
+
+```go
+f := crypto.NewFramer(buf[:0], d)              // 0 allocations
+f := crypto.NewFramer(make([]byte, 0, 128), d) // 1 allocation
+```
+
+Reuse costs nothing per call and is what a hot path should do. Where
+reuse is impossible, sizing at construction collapses the growth to a
+single allocation. Both numbers are gated by benchmarks.
 
 ### `Fixed` is a sharp edge and is documented as one
 
