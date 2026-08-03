@@ -2,7 +2,7 @@
 rfc: 0021
 title: Bounded Pool
 author: Roy Klopper <roy.klopper@stealthscale.io>
-status: Draft
+status: Accepted
 created: 2026-08-03
 updated: 2026-08-03
 discussion: none
@@ -63,11 +63,12 @@ regresses while believing the opposite.
 // Safe for concurrent use.
 type Bounded[T any] struct{ ... }
 
-// NewBounded creates a pool of at most cap values. cap must be > 0.
+// NewBounded creates a pool of at most limit values. limit must
+// be > 0.
 //
-// newFn is called lazily, at most cap times, so a pool of expensive
+// newFn is called lazily, at most limit times, so a pool of expensive
 // resources does not construct all of them at startup.
-func NewBounded[T any](cap int, newFn func() T) (*Bounded[T], error)
+func NewBounded[T any](limit int, newFn func() T) (*Bounded[T], error)
 
 // Get returns a value, blocking until one is available or ctx ends.
 func (p *Bounded[T]) Get(ctx context.Context) (T, error)
@@ -91,6 +92,12 @@ func (p *Bounded[T]) Cap() int
 // ceiling has been reached at least once and callers have waited.
 func (p *Bounded[T]) Created() int
 ```
+
+The constructor parameter is `limit`, not `cap`: shadowing a
+predeclared identifier inside a package whose subject is capacity
+would make every later reader check which one was meant. `Cap` is
+still the accessor's name, since there it reads as the pool's
+capacity rather than as the builtin.
 
 ### `Get` blocks; `Put` does not
 
