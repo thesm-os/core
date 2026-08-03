@@ -396,17 +396,30 @@ func TestBulkheadConcurrent(t *testing.T) {
 	testkit.Equal(t, b.InFlight(), 0, "every permit must be returned")
 }
 
-func BenchmarkBulkheadAcquire(b *testing.B) {
-	bh, err := resilience.NewBulkhead(resilience.BulkheadConfig{
-		Clock: fake.New(originUTC), Limit: 1,
-	})
-	testkit.NoError(b, err, "NewBulkhead must succeed")
-	b.ReportAllocs()
+func BenchmarkBulkhead(b *testing.B) {
+	b.Run("Admitted", func(b *testing.B) {
+		bh := mustBulkhead(b, resilience.BulkheadConfig{Clock: fake.New(originUTC), Limit: 1})
 
-	for b.Loop() {
-		release, err := bh.Acquire(b.Context())
-		if err == nil {
-			release()
+		b.ReportAllocs()
+		for b.Loop() {
+			release, err := bh.Acquire(b.Context())
+			if err == nil {
+				release()
+			}
 		}
-	}
+	})
+
+	b.Run("Rejected", func(b *testing.B) {
+		bh := mustBulkhead(b, resilience.BulkheadConfig{Clock: fake.New(originUTC), Limit: 1})
+		defer acquireAll(b, bh, 1)[0]()
+
+		var sink error
+
+		b.ReportAllocs()
+		for b.Loop() {
+			_, sink = bh.Acquire(b.Context())
+		}
+
+		runtime.KeepAlive(sink)
+	})
 }

@@ -106,6 +106,13 @@ func NewBulkhead(cfg BulkheadConfig) (*Bulkhead, error) {
 // outages. A cancellation storm on the client side would otherwise be
 // indistinguishable from a saturated dependency in any metric derived
 // from them, and the two call for opposite responses.
+//
+// # Allocation contract
+//
+// Two allocations on the admitted path — the release closure and its
+// one-shot guard — and none on a rejection. That is the price of
+// handing back a release the caller can defer, and it is negligible
+// beside the remote call it is admitting.
 func (b *Bulkhead) Acquire(ctx context.Context) (func(), error) {
 	// The uncontended path, and the only one that touches neither the
 	// queue nor the clock.
