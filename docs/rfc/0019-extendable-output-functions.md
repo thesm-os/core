@@ -2,7 +2,7 @@
 rfc: 0019
 title: Extendable Output Functions
 author: Roy Klopper <roy.klopper@stealthscale.io>
-status: Draft
+status: Accepted
 created: 2026-08-03
 updated: 2026-08-03
 discussion: none
@@ -71,10 +71,10 @@ type XOF interface {
 
 // XOFStream absorbs input and squeezes output.
 //
-// The method set is exactly that of the standard library's SHAKE type,
-// so a stdlib value satisfies XOFStream directly and no adapter is
-// needed. That is deliberate: core adds identity to a stdlib contract
-// and does not restate the contract itself.
+// The method set is exactly that of the standard library's SHAKE
+// type, so the shape is familiar and an implementation is a thin
+// forwarder. It is NOT the case that a stdlib value can be used as an
+// XOFStream unchanged — see below.
 //
 // The name distinguishes it from [Stream], which is the fixed-output
 // hashing stream and has an incompatible method set — Sum and Close
@@ -89,14 +89,36 @@ type XOFStream interface {
 ### Deferring to the standard library's shape
 
 The `XOFStream` method set is not designed here. It is copied from the
-standard library's extendable-output type, so that type satisfies
-`XOFStream` structurally and an implementation in this module is a
-struct holding one, forwarding three methods.
+standard library's extendable-output type, so an implementation in
+this module is a struct holding one and forwarding three methods.
 
 This is the same discipline RFC-0003 §E applied to `hash.Hash` and
 RFC-0017 applies to `cipher.AEAD`: where Go defines a contract, `core`
 defers to it and adds only what the ecosystem needs on top, which is
 almost always durable identity for persisted artefacts.
+
+### Structural satisfaction is not contractual satisfaction
+
+The standard library's SHAKE type satisfies `XOFStream`'s method set,
+but it **does not satisfy the contract**: it panics on a write after a
+read, where this seam requires an error.
+
+```text
+$ sha3.NewSHAKE128() → Write → Read → Write
+panic: sha3: Write after Read
+```
+
+So a bare stdlib value must not be handed out as an `XOFStream`, and
+`crypto/shake` wraps rather than aliases: it tracks the phase itself
+and returns [ErrXOFSqueezing] before the stdlib can panic.
+
+That is the difference from RFC-0017's AEAD, and it is worth stating
+because the two look alike. There, the seam *embeds* `cipher.AEAD`, so
+the stdlib's panic on a wrong-length nonce is inherited and cannot be
+intercepted — the module accepted a panicking surface for the interop.
+Here the seam declares its own interface, so the panic can be and is
+converted at the boundary. Owning the interface is what buys the
+choice.
 
 An interface is still required rather than the concrete type, because
 algorithm agility is the entire point of the seam — a caller selects
@@ -204,9 +226,12 @@ the choice is then baked into every artefact it produces.
   using the standard library directly. The answer is only identity and
   agility, and for a caller who will never rotate algorithms that is
   nothing.
-- `XOFStream` mirrors a standard-library method set, so if that type
-  gains a method the mirror is incomplete and the structural
-  satisfaction argument weakens.
+- `XOFStream` mirrors a standard-library method set without inheriting
+  its behaviour, which is a shape that invites misuse: the compiler
+  accepts a bare stdlib value where the contract does not, and the
+  difference only surfaces as a panic on a write after a read.
+  Implementations must wrap, and nothing but the conformance suite
+  enforces that.
 - `NewXOFStream` and `XOFStream` are clumsier names than a subpackage
   would allow. That is the cost of keeping the seam in `crypto`, and it
   falls on the less common of the two stream types.
