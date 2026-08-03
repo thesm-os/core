@@ -77,6 +77,14 @@
 //     immediate, unmissable test failure that the offending
 //     change cannot ship.
 //
+// The zero [Digest] is the one documented exception. It is a
+// sentinel with a stated meaning — see [Digest.IsZero] — rather
+// than a programmer error, so [Hasher.Combine] admits it as either
+// operand, zero-padded to the hasher's width. The distinction is
+// programmer error versus documented sentinel: panicking on a value
+// the type documents would make that documentation a trap. See
+// ADR-0007.
+//
 // This split matches the Go standard library: I/O packages
 // return errors; [encoding/binary], [crypto/cipher],
 // [sync.Mutex], and the slice/string operators panic on

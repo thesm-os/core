@@ -62,16 +62,20 @@ func (Hasher256) Hash(data []byte) crypto.Digest {
 
 // Combine returns SHA3-256(left || right).
 //
-// Combine panics if either digest's [crypto.Digest.Size] differs
-// from [crypto.DigestSize256] — a programmer error that would
-// otherwise produce a silently-wrong digest. See the package doc
+// The zero [crypto.Digest] is accepted as either operand and
+// contributes DigestSize256 zero bytes. It is the documented
+// sentinel for "no digest computed" — the predecessor anchor of
+// a hash chain's genesis entry — so rejecting it would make that
+// documentation a trap. Combine panics on every other size
+// mismatch: a programmer error that would otherwise produce a
+// silently-wrong digest. See ADR-0007 and the package doc
 // "Failure semantics" section.
 //
 // # Allocation contract
 //
 // Zero alloc on the success path.
 func (Hasher256) Combine(left, right crypto.Digest) crypto.Digest {
-	if left.Size() != crypto.DigestSize256 || right.Size() != crypto.DigestSize256 {
+	if !combinable(left, crypto.DigestSize256) || !combinable(right, crypto.DigestSize256) {
 		// Precondition violation; see crypto package "Failure
 		// semantics" — programmer errors panic to surface
 		// silent audit-chain corruption.
@@ -121,16 +125,20 @@ func (Hasher384) Hash(data []byte) crypto.Digest {
 
 // Combine returns SHA3-384(left || right).
 //
-// Combine panics if either digest's [crypto.Digest.Size] differs
-// from [crypto.DigestSize384] — a programmer error that would
-// otherwise produce a silently-wrong digest. See the package doc
+// The zero [crypto.Digest] is accepted as either operand and
+// contributes DigestSize384 zero bytes. It is the documented
+// sentinel for "no digest computed" — the predecessor anchor of
+// a hash chain's genesis entry — so rejecting it would make that
+// documentation a trap. Combine panics on every other size
+// mismatch: a programmer error that would otherwise produce a
+// silently-wrong digest. See ADR-0007 and the package doc
 // "Failure semantics" section.
 //
 // # Allocation contract
 //
 // Zero alloc on the success path.
 func (Hasher384) Combine(left, right crypto.Digest) crypto.Digest {
-	if left.Size() != crypto.DigestSize384 || right.Size() != crypto.DigestSize384 {
+	if !combinable(left, crypto.DigestSize384) || !combinable(right, crypto.DigestSize384) {
 		// Precondition violation; see crypto package "Failure
 		// semantics" — programmer errors panic to surface
 		// silent audit-chain corruption.
@@ -180,16 +188,20 @@ func (Hasher512) Hash(data []byte) crypto.Digest {
 
 // Combine returns SHA3-512(left || right).
 //
-// Combine panics if either digest's [crypto.Digest.Size] differs
-// from [crypto.DigestSize512] — a programmer error that would
-// otherwise produce a silently-wrong digest. See the package doc
+// The zero [crypto.Digest] is accepted as either operand and
+// contributes DigestSize512 zero bytes. It is the documented
+// sentinel for "no digest computed" — the predecessor anchor of
+// a hash chain's genesis entry — so rejecting it would make that
+// documentation a trap. Combine panics on every other size
+// mismatch: a programmer error that would otherwise produce a
+// silently-wrong digest. See ADR-0007 and the package doc
 // "Failure semantics" section.
 //
 // # Allocation contract
 //
 // Zero alloc on the success path.
 func (Hasher512) Combine(left, right crypto.Digest) crypto.Digest {
-	if left.Size() != crypto.DigestSize512 || right.Size() != crypto.DigestSize512 {
+	if !combinable(left, crypto.DigestSize512) || !combinable(right, crypto.DigestSize512) {
 		// Precondition violation; see crypto package "Failure
 		// semantics" — programmer errors panic to surface
 		// silent audit-chain corruption.
@@ -325,3 +337,10 @@ func (s *stream512) Reset() { s.h.Reset() }
 // Close returns the stream to the package-level pool. The
 // stream MUST NOT be used after Close.
 func (s *stream512) Close() { stream512Pool.Put(s) }
+
+// combinable reports whether d may be an operand of Combine at the
+// given digest width: either a correctly-sized digest, or the zero
+// [crypto.Digest], which ADR-0007 admits as the genesis sentinel.
+func combinable(d crypto.Digest, size int) bool {
+	return d.Size() == size || d.IsZero()
+}

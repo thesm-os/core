@@ -52,6 +52,9 @@ func TestSHA384HasherContract(t *testing.T) {
 				crypto.DigestSize384,
 				crypto.NewDigest256([crypto.DigestSize256]byte{}),
 			),
+			cryptotest.HasherCombineAdmitsZeroDigest(
+				crypto.NewDigest384([crypto.DigestSize384]byte{}),
+			),
 		)...,
 	)
 }
@@ -102,6 +105,9 @@ func TestSHA512HasherContract(t *testing.T) {
 			cryptotest.HasherCombinePanicsOnSizeMismatch(
 				crypto.DigestSize512,
 				crypto.NewDigest256([crypto.DigestSize256]byte{}),
+			),
+			cryptotest.HasherCombineAdmitsZeroDigest(
+				crypto.NewDigest512([crypto.DigestSize512]byte{}),
 			),
 		)...,
 	)

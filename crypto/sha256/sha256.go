@@ -64,10 +64,13 @@ func (Hasher) Hash(data []byte) crypto.Digest {
 // function processes the input in a single compress invocation
 // with no padding.
 //
-// Combine panics if either digest's [crypto.Digest.Size] differs
-// from [crypto.DigestSize256] — a programmer error that would
-// otherwise produce a silently-wrong digest. See the package doc
-// "Failure semantics" section.
+// The zero [crypto.Digest] is accepted as either operand and
+// contributes 32 zero bytes. It is the documented sentinel for "no
+// digest computed" — the predecessor anchor of a hash chain's
+// genesis entry — so rejecting it would make that documentation a
+// trap. Combine panics on every other size mismatch: a programmer
+// error that would otherwise produce a silently-wrong digest. See
+// ADR-0007 and the package doc "Failure semantics" section.
 //
 // # Allocation contract
 //
@@ -75,7 +78,7 @@ func (Hasher) Hash(data []byte) crypto.Digest {
 // the stack and [crypto/sha256.Sum256] does not escape its
 // argument (concrete function, not the [hash.Hash] interface).
 func (Hasher) Combine(left, right crypto.Digest) crypto.Digest {
-	if left.Size() != crypto.DigestSize256 || right.Size() != crypto.DigestSize256 {
+	if !combinable(left) || !combinable(right) {
 		// Precondition violation; see crypto package "Failure
 		// semantics" — programmer errors panic to surface
 		// silent audit-chain corruption.
@@ -84,10 +87,19 @@ func (Hasher) Combine(left, right crypto.Digest) crypto.Digest {
 			crypto.DigestSize256, left.Size(), right.Size(),
 		))
 	}
+	// buf starts zeroed, so a zero-Digest operand copies nothing and
+	// leaves its half zero-padded to the hasher's width.
 	var buf [64]byte
 	copy(buf[:32], left.Bytes())
 	copy(buf[32:], right.Bytes())
 	return crypto.NewDigest256(sha256.Sum256(buf[:]))
+}
+
+// combinable reports whether d may be an operand of Combine: either a
+// correctly-sized digest, or the zero [crypto.Digest], which ADR-0007
+// admits as the genesis sentinel.
+func combinable(d crypto.Digest) bool {
+	return d.Size() == crypto.DigestSize256 || d.IsZero()
 }
 
 // NewStream returns a [crypto.Stream] backed by

@@ -47,6 +47,9 @@ func TestSHA256HasherContract(t *testing.T) {
 				crypto.DigestSize256,
 				crypto.NewDigest384([crypto.DigestSize384]byte{}),
 			),
+			cryptotest.HasherCombineAdmitsZeroDigest(
+				crypto.NewDigest256([crypto.DigestSize256]byte{}),
+			),
 		)...,
 	)
 }

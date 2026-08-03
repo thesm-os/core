@@ -112,6 +112,13 @@ func (d Digest) Bytes() []byte {
 // bytes zero). The zero Digest is the conventional sentinel for
 // "no digest computed" — for example, the predecessor anchor of
 // the genesis entry in a hash chain.
+//
+// [Hasher.Combine] accepts the zero Digest as either operand and
+// zero-pads it to the hasher's width, so the genesis case needs no
+// branch at the call site. Every other size mismatch panics. The
+// zero Digest has no binary encoding: it is an in-memory sentinel,
+// and absence on the wire is the containing format's job. See
+// ADR-0007.
 func (d Digest) IsZero() bool {
 	return d == Digest{}
 }

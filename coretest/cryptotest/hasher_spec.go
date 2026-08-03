@@ -158,10 +158,16 @@ func HasherCrossStdlibAssertion(stdlib func([]byte) []byte) HasherOption {
 // surfacing programmer errors rather than silently producing a
 // truncated digest.
 //
+// The zero [crypto.Digest] is exempt — it is a documented sentinel
+// rather than a programmer error, and is covered by
+// [HasherCombineAdmitsZeroDigest].
+//
 // expectedSize is the Hasher's output size in bytes; the panic
 // message must mention this number.
 func HasherCombinePanicsOnSizeMismatch(expectedSize int, wrongSizeDigest crypto.Digest) HasherOption {
 	return HasherCustom("Combine panics on size mismatch", func(t *testing.T, h crypto.Hasher) {
+		testkit.False(t, wrongSizeDigest.IsZero(),
+			"wrongSizeDigest must not be the zero Digest — that is an admitted sentinel")
 		correct := h.Hash([]byte{}) // canonical correctly-sized digest
 		testkit.Panics(t, func() { _ = h.Combine(wrongSizeDigest, correct) },
 			"Combine(wrong-left, correct) must panic")
@@ -170,5 +176,45 @@ func HasherCombinePanicsOnSizeMismatch(expectedSize int, wrongSizeDigest crypto.
 		testkit.Panics(t, func() { _ = h.Combine(wrongSizeDigest, wrongSizeDigest) },
 			"Combine(wrong, wrong) must panic")
 		_ = expectedSize // future use: assert panic message contains size info
+	})
+}
+
+// HasherCombineAdmitsZeroDigest verifies [crypto.Hasher.Combine]
+// accepts the zero [crypto.Digest] as either operand, zero-padded to
+// this Hasher's digest width, per ADR-0007.
+//
+// The zero Digest is the documented sentinel for "no digest
+// computed" — the predecessor anchor of a hash chain's genesis
+// entry. Panicking on it would make the documentation a trap, so it
+// is admitted while every other size mismatch still panics.
+//
+// zeroPadded must be a digest of this Hasher's own width whose bytes
+// are all zero: the assertion checks that combining with the
+// sentinel produces the same digest as combining with that value,
+// which is what "zero-padded to the hasher's width" means.
+func HasherCombineAdmitsZeroDigest(zeroPadded crypto.Digest) HasherOption {
+	return HasherCustom("Combine admits the zero Digest", func(t *testing.T, h crypto.Hasher) {
+		var zero crypto.Digest
+		correct := h.Hash([]byte{})
+
+		testkit.True(t, zero.IsZero(), "the zero Digest must report IsZero")
+		testkit.Equal(t, zeroPadded.Size(), correct.Size(),
+			"zeroPadded must match the hasher's digest width")
+
+		// None of the Combine calls below may panic. A regression to
+		// the old reject-everything behaviour surfaces as a panic
+		// that fails this test directly, carrying the
+		// implementation's own size-mismatch message.
+		testkit.True(t, h.Combine(zero, correct).Equal(h.Combine(zeroPadded, correct)),
+			"Combine(zero, x) must equal Combine(zero-padded, x)")
+		testkit.True(t, h.Combine(correct, zero).Equal(h.Combine(correct, zeroPadded)),
+			"Combine(x, zero) must equal Combine(x, zero-padded)")
+		testkit.True(t, h.Combine(zero, zero).Equal(h.Combine(zeroPadded, zeroPadded)),
+			"Combine(zero, zero) must equal Combine(zero-padded, zero-padded)")
+
+		// The genesis digest must still be a well-formed digest of
+		// this hasher's width, so a chain can keep combining from it.
+		testkit.Equal(t, h.Combine(zero, correct).Size(), correct.Size(),
+			"Combine with the sentinel must return a full-width digest")
 	})
 }
