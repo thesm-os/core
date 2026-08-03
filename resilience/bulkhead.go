@@ -69,8 +69,7 @@ type Bulkhead struct {
 // Returns [ErrConfig] when Clock is nil, Limit is not positive, or
 // Queue or Wait is negative.
 func NewBulkhead(cfg BulkheadConfig) (*Bulkhead, error) {
-	switch {
-	case cfg.Clock == nil, cfg.Limit <= 0, cfg.Queue < 0, cfg.Wait < 0:
+	if cfg.Clock == nil || cfg.Limit <= 0 || cfg.Queue < 0 || cfg.Wait < 0 {
 		return nil, ErrConfig
 	}
 

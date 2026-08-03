@@ -137,15 +137,15 @@ type Retrier struct {
 // MinRetries is negative, or BudgetWindow is not positive while either
 // of those is.
 func NewRetrier(cfg RetryConfig) (*Retrier, error) {
-	switch {
-	case cfg.Clock == nil,
-		cfg.Rand == nil,
-		cfg.Attempts <= 0,
-		cfg.Base <= 0,
-		cfg.Max < cfg.Base,
-		cfg.Budget < 0,
-		cfg.MinRetries < 0,
-		(cfg.Budget > 0 || cfg.MinRetries > 0) && cfg.BudgetWindow <= 0:
+	if cfg.Clock == nil ||
+		cfg.Rand == nil ||
+		cfg.Attempts <= 0 ||
+		cfg.Base <= 0 ||
+		cfg.Max < cfg.Base ||
+		cfg.Budget < 0 ||
+		cfg.MinRetries < 0 ||
+		((cfg.Budget > 0 || cfg.MinRetries > 0) && cfg.BudgetWindow <= 0) {
+
 		return nil, ErrConfig
 	}
 
@@ -247,7 +247,9 @@ func Backoff(r rand.Rand, attempt int, base, limit time.Duration) time.Duration 
 		return 0
 	}
 
-	d := base
+	// Clamped once here rather than again at the end, so d is never
+	// above the cap at any point in the loop.
+	d := min(base, limit)
 	for range attempt - 1 {
 		// Doubling from here would pass the cap, and for a large
 		// attempt count would overflow before it got there.
@@ -259,7 +261,7 @@ func Backoff(r rand.Rand, attempt int, base, limit time.Duration) time.Duration 
 		d *= 2
 	}
 
-	return time.Duration(rand.Float64(r) * float64(min(d, limit)))
+	return time.Duration(rand.Float64(r) * float64(d))
 }
 
 // backoff draws the delay before the given attempt under r's lock.
@@ -305,7 +307,7 @@ func (r *Retrier) spend() bool {
 // it passes. Must be called with r.mu held.
 func (r *Retrier) roll() {
 	steps := int(r.clock.Time().Sub(r.start) / r.bucket)
-	if steps <= 0 {
+	if steps < 1 {
 		return
 	}
 

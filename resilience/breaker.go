@@ -131,12 +131,12 @@ type circuit struct {
 // left at zero would make the breaker either useless or permanently
 // open, and that is a wiring error worth catching at construction.
 func NewBreaker(cfg BreakerConfig) (*Breaker, error) {
-	switch {
-	case cfg.Clock == nil,
-		cfg.FailureThreshold <= 0,
-		cfg.SuccessThreshold <= 0,
-		cfg.OpenFor <= 0,
-		len(cfg.TripOn) == 0:
+	if cfg.Clock == nil ||
+		cfg.FailureThreshold <= 0 ||
+		cfg.SuccessThreshold <= 0 ||
+		cfg.OpenFor <= 0 ||
+		len(cfg.TripOn) == 0 {
+
 		return nil, ErrConfig
 	}
 

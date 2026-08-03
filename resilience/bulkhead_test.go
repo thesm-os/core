@@ -18,10 +18,18 @@ import (
 
 // awaitQueued spins until a caller is waiting for a permit. Mirrors
 // fake.Clock.AwaitWaiters: a deterministic hand-off, where a sleep
-// would be a guess. A caller that never queues hangs here until the
-// testing framework's own deadline fires.
-func awaitQueued(b *resilience.Bulkhead) {
+// would be a guess.
+//
+// Bounded rather than spinning forever, so a bulkhead that loses track
+// of its queue fails the test instead of hanging it.
+func awaitQueued(tb testing.TB, b *resilience.Bulkhead) {
+	tb.Helper()
+
+	deadline := time.Now().Add(time.Second)
 	for b.Queued() == 0 {
+		if time.Now().After(deadline) {
+			tb.Fatal("no caller ever queued")
+		}
 		runtime.Gosched()
 	}
 }
@@ -144,7 +152,7 @@ func TestBulkheadQueue(t *testing.T) {
 		}()
 
 		// The waiter must be queued, not rejected.
-		awaitQueued(b)
+		awaitQueued(t, b)
 
 		held()
 
@@ -171,7 +179,7 @@ func TestBulkheadQueue(t *testing.T) {
 				release()
 			}
 		}()
-		awaitQueued(b)
+		awaitQueued(t, b)
 
 		_, err := b.Acquire(t.Context())
 		testkit.ErrorIs(t, err, resilience.ErrFull,
@@ -282,7 +290,7 @@ func TestBulkheadWait(t *testing.T) {
 			got <- err
 		}()
 
-		awaitQueued(b)
+		awaitQueued(t, b)
 		cancel()
 
 		select {
@@ -313,7 +321,7 @@ func TestBulkheadCancellationIsNotRejection(t *testing.T) {
 		got <- err
 	}()
 
-	awaitQueued(b)
+	awaitQueued(t, b)
 	cancel()
 
 	err := <-got

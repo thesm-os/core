@@ -107,6 +107,17 @@ func TestNewRetrier(t *testing.T) {
 		})
 	}
 
+	t.Run("accepts a cap equal to the base", func(t *testing.T) {
+		t.Parallel()
+		// Max must be >= Base, not > Base: a caller wanting a constant
+		// interval rather than an exponential one sets them equal.
+		cfg := retryConfig(fake.New(originUTC), noJitter)
+		cfg.Max = cfg.Base
+
+		_, err := resilience.NewRetrier(cfg)
+		testkit.NoError(t, err, "an equal cap and base is a constant interval")
+	})
+
 	t.Run("accepts no allowance at all without a window", func(t *testing.T) {
 		t.Parallel()
 		// A zero budget and a zero floor disable retrying, so there is
@@ -326,6 +337,56 @@ func TestDoBudget(t *testing.T) {
 
 		// Well inside the window: the buckets roll, the counts stay.
 		c.Advance(10 * time.Second)
+
+		fn, calls := failFor(1, errTransient)
+		_, err := resilience.Do(t.Context(), r, fn)
+		testkit.NoError(t, err, "traffic still inside the window must pay")
+		testkit.Equal(t, *calls, 2, "the retry must have run")
+	})
+
+	t.Run("the window forgets one bucket at a time", func(t *testing.T) {
+		t.Parallel()
+		// A live system's time arrives in small increments, not in one
+		// jump past the whole window. Traffic must age out either way.
+		c := fake.New(originUTC)
+		r := mustRetrier(t, halfBudget(c))
+
+		succeed, _ := failFor(0, errTransient)
+		for range 2 {
+			_, err := resilience.Do(t.Context(), r, succeed)
+			testkit.NoError(t, err, "the priming calls must succeed")
+		}
+
+		// One bucket at a time, all the way round the ring.
+		for range 12 {
+			c.Advance(5 * time.Second)
+		}
+
+		fn, calls := failFor(1, errTransient)
+		_, err := resilience.Do(t.Context(), r, fn)
+		testkit.ErrorIs(t, err, resilience.ErrBudget, "a full lap must clear the traffic")
+		testkit.Equal(t, *calls, 1, "the retry must not have run")
+	})
+
+	t.Run("repeated rolls age the window only once", func(t *testing.T) {
+		t.Parallel()
+		// The ring advances from where it left off. A roll that lost
+		// its place would re-age the same traffic on every call and
+		// empty the window long before its time.
+		c := fake.New(originUTC)
+		r := mustRetrier(t, halfBudget(c))
+
+		succeed, _ := failFor(0, errTransient)
+		for range 2 {
+			_, err := resilience.Do(t.Context(), r, succeed)
+			testkit.NoError(t, err, "the priming calls must succeed")
+		}
+
+		// Six advances of one bucket each: half the window, so the
+		// priming traffic is still well inside it.
+		for range 6 {
+			c.Advance(5 * time.Second)
+		}
 
 		fn, calls := failFor(1, errTransient)
 		_, err := resilience.Do(t.Context(), r, fn)
