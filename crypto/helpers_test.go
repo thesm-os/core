@@ -5,6 +5,7 @@ package crypto_test
 
 import (
 	"bytes"
+	"encoding/binary"
 	"io"
 	"strings"
 	"testing"
@@ -27,16 +28,21 @@ func TestHashDomain(t *testing.T) {
 
 		got := crypto.HashDomain(h, domain, parts...)
 
-		// Build the same digest manually via Stream.
+		// Build the same digest manually via Stream, framing each
+		// part exactly as HashDomain documents: domain verbatim,
+		// then a big-endian uint64 length before every part.
 		s := h.NewStream()
 		_, _ = s.Write(domain)
 		for _, p := range parts {
+			var lenBuf [8]byte
+			binary.BigEndian.PutUint64(lenBuf[:], uint64(len(p)))
+			_, _ = s.Write(lenBuf[:])
 			_, _ = s.Write(p)
 		}
 		want := s.Sum()
 
 		testkit.True(t, got.Equal(want),
-			"HashDomain must equal manual stream over domain || parts")
+			"HashDomain must equal manual stream over domain || len(part) || part")
 	})
 
 	t.Run("different domains produce different digests", func(t *testing.T) {
@@ -117,11 +123,11 @@ func FuzzHashReader(f *testing.F) {
 	})
 }
 
-// FuzzHashDomain asserts the property that
-// [crypto.HashDomain] is equivalent to manually streaming the
-// domain followed by a single payload through a [crypto.Stream].
-// The variadic-parts case is tested elsewhere; this fuzz keeps
-// the surface small.
+// FuzzHashDomain asserts two properties of [crypto.HashDomain]:
+// that it equals a manually framed stream, and that a shifted
+// boundary between two adjacent parts changes the digest. The
+// second is the one the length prefix exists to provide — without
+// it, HashDomain(d, "ab", "c") and HashDomain(d, "a", "bc") collide.
 func FuzzHashDomain(f *testing.F) {
 	f.Add([]byte("domain:"), []byte("payload"))
 	f.Add([]byte(""), []byte(""))
@@ -131,11 +137,23 @@ func FuzzHashDomain(f *testing.F) {
 	f.Fuzz(func(t *testing.T, domain, part []byte) {
 		s := h.NewStream()
 		_, _ = s.Write(domain)
+		var lenBuf [8]byte
+		binary.BigEndian.PutUint64(lenBuf[:], uint64(len(part)))
+		_, _ = s.Write(lenBuf[:])
 		_, _ = s.Write(part)
 		want := s.Sum()
 
 		testkit.True(t, crypto.HashDomain(h, domain, part).Equal(want),
-			"HashDomain must equal manual Stream(domain, part).Sum")
+			"HashDomain must equal manual Stream(domain, len(part), part).Sum")
+
+		// Every split of part into two adjacent parts must differ
+		// from the single-part digest, and from every other split.
+		one := crypto.HashDomain(h, domain, part)
+		for i := range len(part) + 1 {
+			split := crypto.HashDomain(h, domain, part[:i], part[i:])
+			testkit.False(t, split.Equal(one),
+				"splitting a part in two must change the digest")
+		}
 	})
 }
 
