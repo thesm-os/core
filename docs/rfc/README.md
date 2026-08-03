@@ -76,6 +76,17 @@ Start from [`docs/templates/RFC.md`](../templates/RFC.md).
 | [0011](0011-arena.md) | Arena — Bump-Allocator for Hot-Path Variable-Length Output | Accepted |
 | [0012](0012-crypto-hmac-seam.md) | Cryptographic HMAC Seam | Accepted |
 | [0013](0013-crypto-sign-seam.md) | Public-Key Signing Seam | Accepted |
+| [0014](0014-binary-encoding-for-core-value-types.md) | Binary Encoding for Core Value Types | Draft |
+| [0015](0015-error-classification.md) | Error Classification | Draft |
+| [0016](0016-framed-domain-separation.md) | Framed Domain Separation | Draft |
+| [0017](0017-authenticated-encryption.md) | Authenticated Encryption | Draft |
+| [0018](0018-key-custody.md) | Key Custody | Draft |
+| [0019](0019-extendable-output-functions.md) | Extendable Output Functions | Draft |
+| [0020](0020-trace-context-propagation.md) | Trace Context Propagation | Draft |
+| [0021](0021-bounded-pool.md) | Bounded Pool | Draft |
+| [0022](0022-keyed-storage.md) | Keyed Storage | Draft |
+| [0023](0023-resilience-primitives.md) | Resilience Primitives | Draft |
+| [0024](0024-request-coalescing.md) | Request Coalescing | Draft |
 
 ## Canonical first RFC
 
