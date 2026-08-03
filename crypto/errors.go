@@ -22,4 +22,13 @@ var (
 	// decode back into a genesis anchor. Encoding the absence of a
 	// digest is the containing format's job. See ADR-0007.
 	ErrDigestZero = errors.New("crypto: the zero digest has no binary encoding")
+
+	// ErrKeySize is returned when a key's length does not match any
+	// size the algorithm accepts.
+	ErrKeySize = errors.New("crypto: key length does not match the algorithm")
+
+	// ErrCiphertextShort is returned by [Open] when the input is
+	// smaller than the nonce it must begin with, so no ciphertext
+	// can be present.
+	ErrCiphertextShort = errors.New("crypto: ciphertext shorter than the nonce")
 )

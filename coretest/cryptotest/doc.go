@@ -3,9 +3,9 @@
 
 // Package cryptotest holds testkit-generated test infrastructure
 // for the crypto package's interface seams ([go.thesmos.sh/core/crypto.Hasher],
-// [go.thesmos.sh/core/crypto.MAC]) and consumer-facing assertion
-// bundles. Generated artefacts have a `.gen.go` suffix; hand-
-// rolled assertion / fixture files do not.
+// [go.thesmos.sh/core/crypto.MAC], [go.thesmos.sh/core/crypto.AEAD])
+// and consumer-facing assertion bundles. Generated artefacts have a
+// `.gen.go` suffix; hand-rolled assertion / fixture files do not.
 package cryptotest
 
 // Digest is opaque (unexported fields by design — size-
@@ -31,6 +31,20 @@ package cryptotest
 //go:generate testkit suite -p go.thesmos.sh/core/crypto -o mac_spec.gen.go MAC
 //go:generate testkit bench -p go.thesmos.sh/core/crypto -o mac_bench.gen.go MAC
 //go:generate testkit model -p go.thesmos.sh/core/crypto -o mac_model.gen.go MAC
+
+// AEAD. No model layer: Seal draws a fresh nonce per call, so
+// successive outputs are not comparable against a reference.
+//
+// No generated suite either. [go.thesmos.sh/core/crypto.AEAD] embeds
+// [crypto/cipher.AEAD], whose Seal and Open are documented to panic
+// on a nonce that is not NonceSize() bytes. The suite generator emits
+// nil-safety subtests calling every method with all-nil arguments,
+// which that contract cannot satisfy — and the methods belong to the
+// standard library, so there is nowhere to put a directive
+// suppressing them. AssertAEADContract is hand-written in
+// aead_spec.go instead.
+//go:generate testkit stub -p go.thesmos.sh/core/crypto -o aead_stub.gen.go AEAD
+//go:generate testkit bench -p go.thesmos.sh/core/crypto -o aead_bench.gen.go AEAD
 
 // Verifier
 //go:generate testkit stub -p go.thesmos.sh/core/crypto/sign -o verifier_stub.gen.go Verifier

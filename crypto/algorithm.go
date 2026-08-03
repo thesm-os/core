@@ -128,3 +128,28 @@ const (
 	// encoding produced by [crypto/ecdsa.SignASN1]).
 	AlgECDSAP384 Algorithm = "ecdsa-p384"
 )
+
+// Authenticated-encryption algorithms, named for the [AEAD] seam.
+// Persist the value alongside every ciphertext: it is what lets a
+// build that does not yet exist select the implementation that can
+// open it.
+//
+// The ChaCha20 constants are reserved and not implemented. The
+// standard library cannot express either construction, so no
+// implementation in this module reports them; naming them now costs
+// nothing and prevents two spellings appearing if that changes.
+const (
+	// AlgAES128GCM is AES-128 in Galois/Counter Mode per NIST
+	// SP 800-38D, with a 96-bit nonce and a 128-bit tag.
+	AlgAES128GCM Algorithm = "aes-128-gcm"
+	// AlgAES256GCM is AES-256 in Galois/Counter Mode per NIST
+	// SP 800-38D, with a 96-bit nonce and a 128-bit tag.
+	AlgAES256GCM Algorithm = "aes-256-gcm"
+	// AlgChaCha20Poly1305 is ChaCha20-Poly1305 per RFC 8439, with a
+	// 96-bit nonce. Reserved; not implemented.
+	AlgChaCha20Poly1305 Algorithm = "chacha20-poly1305"
+	// AlgXChaCha20Poly1305 is XChaCha20-Poly1305 with a 192-bit
+	// nonce, wide enough that random nonces carry no birthday
+	// bound worth tracking. Reserved; not implemented.
+	AlgXChaCha20Poly1305 Algorithm = "xchacha20-poly1305"
+)
