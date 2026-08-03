@@ -77,7 +77,8 @@ func (Hasher256) Combine(left, right crypto.Digest) crypto.Digest {
 		// silent audit-chain corruption.
 		panic(fmt.Sprintf( //nolint:forbidigo
 			"crypto/sha3: SHA3-256 Combine requires %d-byte digests, got left=%d right=%d",
-			crypto.DigestSize256, left.Size(), right.Size()))
+			crypto.DigestSize256, left.Size(), right.Size(),
+		))
 	}
 	var buf [2 * crypto.DigestSize256]byte
 	copy(buf[:crypto.DigestSize256], left.Bytes())
@@ -135,7 +136,8 @@ func (Hasher384) Combine(left, right crypto.Digest) crypto.Digest {
 		// silent audit-chain corruption.
 		panic(fmt.Sprintf( //nolint:forbidigo
 			"crypto/sha3: SHA3-384 Combine requires %d-byte digests, got left=%d right=%d",
-			crypto.DigestSize384, left.Size(), right.Size()))
+			crypto.DigestSize384, left.Size(), right.Size(),
+		))
 	}
 	var buf [2 * crypto.DigestSize384]byte
 	copy(buf[:crypto.DigestSize384], left.Bytes())
@@ -193,7 +195,8 @@ func (Hasher512) Combine(left, right crypto.Digest) crypto.Digest {
 		// silent audit-chain corruption.
 		panic(fmt.Sprintf( //nolint:forbidigo
 			"crypto/sha3: SHA3-512 Combine requires %d-byte digests, got left=%d right=%d",
-			crypto.DigestSize512, left.Size(), right.Size()))
+			crypto.DigestSize512, left.Size(), right.Size(),
+		))
 	}
 	var buf [2 * crypto.DigestSize512]byte
 	copy(buf[:crypto.DigestSize512], left.Bytes())

@@ -81,7 +81,8 @@ func (Hasher) Combine(left, right crypto.Digest) crypto.Digest {
 		// silent audit-chain corruption.
 		panic(fmt.Sprintf( //nolint:forbidigo
 			"crypto/sha256: Combine requires %d-byte digests, got left=%d right=%d",
-			crypto.DigestSize256, left.Size(), right.Size()))
+			crypto.DigestSize256, left.Size(), right.Size(),
+		))
 	}
 	var buf [64]byte
 	copy(buf[:32], left.Bytes())
