@@ -253,10 +253,25 @@ checks:
     # metrics: exit status 1".
     #
     # Run from the module root instead and it works. Measured
-    # directly, every package is at 100% test efficacy and 100%
-    # mutator coverage with zero surviving mutants; pool yields no
-    # viable mutants at all, its wrappers being single-expression
-    # generics with nothing to mutate.
+    # directly, every package is at 100% mutator coverage, and at
+    # 100% test efficacy with the exception of resilience (97.01%).
+    # pool yields no viable mutants at all, its wrappers being
+    # single-expression generics with nothing to mutate.
+    #
+    # resilience's two survivors are equivalent mutants in
+    # Backoff's doubling guard and the budget ring's roll guard:
+    # `d > limit/2` vs `>=` reaches the cap either way, because
+    # doubling exactly half the cap IS the cap; and `steps < 1` vs
+    # `<= 1` only defers a roll by one bucket, since steps is
+    # recomputed from start on the next call and the deferred
+    # buckets are picked up then. No test can kill either, and
+    # contorting the code to make them killable would trade real
+    # clarity for a metric.
+    #
+    # Note also that a mutation run needs a raised
+    # timeout_coefficient: this module's tests bound their own
+    # waits, so a mutant that hangs a helper shows up as a timeout
+    # rather than a failure at gremlins' default.
     #
     # Restore the per-layer list below once ergon passes the layer
     # in the path rather than in the working directory.
