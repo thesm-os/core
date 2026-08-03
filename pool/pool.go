@@ -37,10 +37,13 @@ import "sync"
 //
 // # Allocation contract
 //
-// [Pool.Get] and [Pool.Put] are zero-allocation on the success
-// path (when the pool has a cached value). [Pool.Get]
-// allocates once via newFn when the pool is empty or after GC
-// eviction.
+// Requires a pointer T. [Pool.Get] and [Pool.Put] are
+// zero-allocation on the success path (when the pool has a
+// cached value). [Pool.Get] allocates once via newFn when the
+// pool is empty or after GC eviction.
+//
+// For a non-pointer T, [Pool.Put] allocates on every call — see
+// the package documentation.
 type Pool[T any] struct {
 	p sync.Pool
 }
@@ -83,7 +86,8 @@ func (p *Pool[T]) Get() T {
 //
 // # Allocation contract
 //
-// Zero-alloc.
+// Zero-alloc for a pointer T. For a non-pointer T, converting v
+// to the `any` that [sync.Pool] stores allocates on every call.
 func (p *Pool[T]) Put(v T) {
 	p.p.Put(v)
 }

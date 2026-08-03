@@ -32,9 +32,20 @@
 //
 // # Allocation contract
 //
-// [Pool.Get] / [Pool.Put] / [ResetPool.Get] / [ResetPool.Put]
-// are zero-allocation on the success path (when the pool has a
-// cached value). [Pool.Get] / [ResetPool.Get] allocate via the
-// caller-supplied newFn when the pool is empty or after
-// garbage collection has evicted cached values.
+// The zero-allocation contract holds for a POINTER T. Pool a
+// pointer.
+//
+// [sync.Pool] stores values as `any`, so [Pool.Put] and
+// [ResetPool.Put] convert T to an interface. That conversion is
+// free only when T is pointer-shaped; for a non-pointer T —
+// `Pool[[]byte]`, `Pool[SomeStruct]` — it allocates on every
+// Put, and a caller reading an unqualified zero-allocation
+// claim would regress rather than improve. `Pool[*bytes.Buffer]`
+// is the shape the contract describes.
+//
+// Given a pointer T: [Pool.Get] / [Pool.Put] / [ResetPool.Get] /
+// [ResetPool.Put] are zero-allocation on the success path (when
+// the pool has a cached value). [Pool.Get] / [ResetPool.Get]
+// allocate via the caller-supplied newFn when the pool is empty
+// or after garbage collection has evicted cached values.
 package pool
