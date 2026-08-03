@@ -110,8 +110,7 @@ func NewLoader[K comparable, V any](
 	cfg LoaderConfig,
 	fn func(context.Context, []K) (map[K]V, error),
 ) (*Loader[K, V], error) {
-	switch {
-	case cfg.Clock == nil, fn == nil, cfg.Wait <= 0, cfg.MaxBatch <= 0:
+	if cfg.Clock == nil || fn == nil || cfg.Wait <= 0 || cfg.MaxBatch <= 0 {
 		return nil, ErrConfig
 	}
 
@@ -355,12 +354,11 @@ func (l *Loader[K, V]) dispatch(ctx context.Context, b *batch[K, V]) {
 	for i, k := range b.keys {
 		c := b.calls[i]
 
-		switch v, ok := got[k]; {
-		case err != nil:
+		if err != nil {
 			c.err = err
-		case ok:
+		} else if v, ok := got[k]; ok {
 			c.v = v
-		default:
+		} else {
 			c.err = fmt.Errorf("%w: %v", ErrNotFound, k)
 		}
 

@@ -40,8 +40,17 @@ const window = 5 * time.Millisecond
 // awaitPending spins until n callers are waiting. Mirrors
 // fake.Clock.AwaitWaiters: coalescing is only observable once every
 // caller has joined, and a sleep would be a guess about when that is.
-func awaitPending(l *batch.Loader[int, int], n int) {
+//
+// Bounded rather than spinning forever, so a loader that loses track
+// of its callers fails the test instead of hanging it.
+func awaitPending(tb testing.TB, l *batch.Loader[int, int], n int) {
+	tb.Helper()
+
+	deadline := time.Now().Add(time.Second)
 	for l.Pending() < n {
+		if time.Now().After(deadline) {
+			tb.Fatalf("only %d of %d callers ever queued", l.Pending(), n)
+		}
 		runtime.Gosched()
 	}
 }
@@ -205,7 +214,7 @@ func TestLoad(t *testing.T) {
 			outs = append(outs, loadAsync(t.Context(), l, key+1))
 		}
 
-		awaitPending(l, 4)
+		awaitPending(t, l, 4)
 		c.Advance(window)
 
 		for i, out := range outs {
@@ -227,7 +236,7 @@ func TestLoad(t *testing.T) {
 			outs = append(outs, loadAsync(t.Context(), l, 7))
 		}
 
-		awaitPending(l, 3)
+		awaitPending(t, l, 3)
 		c.Advance(window)
 
 		for _, out := range outs {
@@ -247,7 +256,7 @@ func TestLoad(t *testing.T) {
 		l := mustLoader(t, c, 2, r.fn)
 
 		first := loadAsync(t.Context(), l, 1)
-		awaitPending(l, 1)
+		awaitPending(t, l, 1)
 		second := loadAsync(t.Context(), l, 2)
 
 		// No Advance: reaching MaxBatch is what fires this batch.
@@ -303,7 +312,7 @@ func TestLoadFailure(t *testing.T) {
 
 		first := loadAsync(t.Context(), l, 1)
 		second := loadAsync(t.Context(), l, 2)
-		awaitPending(l, 2)
+		awaitPending(t, l, 2)
 		c.Advance(window)
 
 		testkit.ErrorIs(t, await(t, first).err, errDown, "the first caller must see the failure")
@@ -322,7 +331,7 @@ func TestLoadContext(t *testing.T) {
 
 		ctx, cancel := context.WithCancel(t.Context())
 		out := loadAsync(ctx, l, 1)
-		awaitPending(l, 1)
+		awaitPending(t, l, 1)
 		cancel()
 
 		got := await(t, out)
@@ -338,7 +347,7 @@ func TestLoadContext(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		leaving := loadAsync(ctx, l, 1)
 		staying := loadAsync(t.Context(), l, 2)
-		awaitPending(l, 2)
+		awaitPending(t, l, 2)
 
 		cancel()
 		testkit.ErrorIs(t, await(t, leaving).err, context.Canceled,
@@ -348,6 +357,37 @@ func TestLoadContext(t *testing.T) {
 		got := await(t, staying)
 		testkit.NoError(t, got.err, "the remaining caller must still be served")
 		testkit.Equal(t, got.v, 4, "the batch must have run")
+	})
+
+	t.Run("a departing caller does not abandon the batch", func(t *testing.T) {
+		t.Parallel()
+		// The batch is abandoned only when the LAST caller goes. One
+		// leaving early must not cancel work the others still want.
+		c := fake.New(originUTC)
+		proceed := make(chan struct{})
+		live := make(chan bool, 1)
+		l := mustLoader(t, c, 10, func(ctx context.Context, keys []int) (map[int]int, error) {
+			<-proceed
+			live <- ctx.Err() == nil
+
+			return map[int]int{keys[0]: 7}, nil
+		})
+
+		ctx, cancel := context.WithCancel(t.Context())
+		leaving := loadAsync(ctx, l, 1)
+		staying := loadAsync(t.Context(), l, 1)
+		awaitPending(t, l, 2)
+		c.Advance(window)
+
+		cancel()
+		testkit.ErrorIs(t, await(t, leaving).err, context.Canceled,
+			"the departing caller must be released")
+
+		close(proceed)
+		got := await(t, staying)
+		testkit.NoError(t, got.err, "the remaining caller must still be served")
+		testkit.Equal(t, got.v, 7, "the batch must have run")
+		testkit.True(t, <-live, "the batch must stay live while a caller remains")
 	})
 
 	t.Run("the batch is abandoned once every caller is gone", func(t *testing.T) {
@@ -363,13 +403,18 @@ func TestLoadContext(t *testing.T) {
 			return nil, ctx.Err()
 		})
 
+		// Two callers on one key, so the count a joiner adds is
+		// load-bearing: a join that did not register would leave the
+		// batch running for callers that had all gone.
 		ctx, cancel := context.WithCancel(t.Context())
-		out := loadAsync(ctx, l, 1)
-		awaitPending(l, 1)
+		first := loadAsync(ctx, l, 1)
+		second := loadAsync(ctx, l, 1)
+		awaitPending(t, l, 2)
 		c.Advance(window)
 
 		cancel()
-		testkit.ErrorIs(t, await(t, out).err, context.Canceled, "the caller must be released")
+		testkit.ErrorIs(t, await(t, first).err, context.Canceled, "the caller must be released")
+		testkit.ErrorIs(t, await(t, second).err, context.Canceled, "the caller must be released")
 
 		select {
 		case <-gone:
