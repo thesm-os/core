@@ -33,6 +33,23 @@ func newAEAD(tb testing.TB) crypto.AEAD {
 	return a
 }
 
+func TestSealOpenRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	// The contract suite covers this far more thoroughly from each
+	// implementation's package. It is repeated here so crypto's own
+	// tests exercise Open's success path rather than inheriting that
+	// coverage from another package's test suite.
+	a := newAEAD(t)
+
+	sealed, err := crypto.Seal(a, randcrypto.New(), []byte("payload"), []byte("aad"))
+	testkit.NoError(t, err, "Seal must succeed")
+
+	opened, err := crypto.Open(a, sealed, []byte("aad"))
+	testkit.NoError(t, err, "Open must succeed on Seal's own output")
+	testkit.True(t, bytes.Equal(opened, []byte("payload")), "Open must recover the plaintext")
+}
+
 func TestSealPropagatesEntropyFailure(t *testing.T) {
 	t.Parallel()
 

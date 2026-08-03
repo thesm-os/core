@@ -31,4 +31,16 @@ var (
 	// smaller than the nonce it must begin with, so no ciphertext
 	// can be present.
 	ErrCiphertextShort = errors.New("crypto: ciphertext shorter than the nonce")
+
+	// ErrKeyID is returned when a key identifier is empty, or names a
+	// key the custodian does not hold. See [Keeper.KeyID] and
+	// [Destroyer.Destroy].
+	ErrKeyID = errors.New("crypto: unknown or empty key identifier")
+
+	// ErrKeyDestroyed is returned by a [Destroyer] whose wrapping key
+	// has been destroyed. Distinct from a corruption failure: this
+	// one is unrecoverable by design, where corrupted material
+	// suggests damaged storage, and a caller acts on them
+	// differently.
+	ErrKeyDestroyed = errors.New("crypto: wrapping key destroyed")
 )
