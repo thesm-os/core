@@ -2,7 +2,7 @@
 rfc: 0024
 title: Request Coalescing
 author: Roy Klopper <roy.klopper@stealthscale.io>
-status: Draft
+status: Accepted
 created: 2026-08-03
 updated: 2026-08-03
 discussion: none
@@ -81,18 +81,51 @@ func (l *Loader[K, V]) Load(ctx context.Context, key K) (V, error)
 // key set has nothing to wait for, and making it wait would add the
 // window to a request that cannot benefit from it.
 //
-// Keys beyond MaxBatch are split across several concurrent batches.
+// Duplicate keys are collapsed, and keys beyond MaxBatch are split
+// across several concurrent batches. Unlike Load, LoadAll serves
+// exactly one caller, so ctx reaches fn unchanged.
 func (l *Loader[K, V]) LoadAll(ctx context.Context, keys []K) (map[K]V, error)
 
-// Close releases the Loader's timer and dispatch goroutine. In-flight
-// batches run to completion; calls to Load after Close return
-// ErrClosed.
+// Pending reports how many callers are waiting for a result, for
+// emission as a gauge.
+func (l *Loader[K, V]) Pending() int
+
+// Close refuses further work. In-flight and accumulating batches run
+// to completion, so a caller already waiting is still served; calls
+// to Load after Close return ErrClosed.
 //
-// Close is required at shutdown. A Loader holds a goroutine for its
-// lifetime, and one per abandoned Loader is a leak that grows with
-// every reconfiguration.
+// Close is idempotent and always returns nil. The error is in the
+// signature so a Loader satisfies io.Closer and belongs in the same
+// shutdown path as everything else.
 func (l *Loader[K, V]) Close() error
 ```
+
+### Goroutines are per batch, not per Loader
+
+A `Loader` between batches holds nothing running. The window timer and
+the goroutine that waits on it are created when a batch's first key
+arrives and end when that batch dispatches.
+
+The alternative — one dispatch goroutine for the `Loader`'s lifetime —
+would make `Close` load-bearing against a leak, and a `Loader`
+constructed and dropped would leak a goroutine with nothing in the type
+system to say so. Per-batch, an abandoned `Loader` costs at most one
+goroutine that is already on its way out.
+
+`Close` remains, because refusing work after shutdown is a separate
+need from releasing resources, and a caller that keeps loading through
+a shutdown wants to be told.
+
+### Observing the coalescing ratio
+
+`Pending` is the numerator the RFC previously left to future work. Read
+against the batch sizes `fn` receives, it says whether `Wait` is
+earning its latency: many callers against few keys means the window is
+working, and one caller per batch means it is not.
+
+It is a point-in-time observation and racy by nature, like
+`Bulkhead.Queued` and `Breaker.State`. A caller that branches on it
+rather than calling `Load` is reimplementing the loader badly.
 
 ### Missing keys
 
@@ -153,10 +186,20 @@ has made it invisible.
 ```go
 // batch/errors.go
 
+// ErrConfig is returned by NewLoader when a required field is missing
+// or out of range. A window left at zero would coalesce nothing,
+// which looks exactly like a loader that is working.
+var ErrConfig = errors.New("batch: invalid configuration")
+
 // ErrClosed reports a Load or LoadAll on a Loader whose Close has
-// returned. Classifies as [errs.Invalid]: the caller's wiring is
+// returned. Classifies as errs.Invalid: the caller's wiring is
 // wrong, and retrying cannot help.
-var ErrClosed = errors.New("batch: loader closed")
+var ErrClosed = errs.WithClass(errors.New("batch: loader closed"), errs.Invalid)
+
+// ErrNotFound reports a key the batch function did not resolve.
+// Classifies as errs.NotFound.
+var ErrNotFound = errs.WithClass(
+    errors.New("batch: key not in result"), errs.NotFound)
 ```
 
 ### Allocation contract
@@ -207,10 +250,9 @@ harder to find.
   make and it will surprise someone measuring p99.
 - The context semantics are unusual and cannot be made ordinary. Code
   inside `fn` that reads request-scoped values will silently see none.
-- `Loader` holds a goroutine and a timer, so it has a lifecycle a
-  caller must manage. `Close` makes that possible and does not make it
-  automatic: a `Loader` constructed and dropped still leaks, and
-  nothing in the type system says otherwise.
+- `Loader` has a lifecycle a caller must manage, even though an
+  abandoned one costs only the batch already on its way out. Nothing
+  in the type system says `Close` is expected.
 - Being generic over both `K` and `V`, one loader serves one key/value
   pairing, so a caller resolving three entity kinds constructs three
   loaders and wires three `fn`s.
@@ -237,5 +279,3 @@ honest way to observe a batch.
 
 - Per-key error reporting, if a batch protocol emerges that
   distinguishes "this key failed" from "the call failed".
-- A metrics hook reporting batch size and coalescing ratio, which is
-  the number that tells a caller whether `Wait` is tuned.
