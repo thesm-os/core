@@ -63,7 +63,27 @@ type SpanContext struct {
 	TraceID  TraceID
 	SpanID   SpanID
 	ParentID SpanID
-	Kind     SpanKind
+
+	// TraceState is vendor state travelling with the trace, carried
+	// verbatim and never interpreted here — the W3C tracestate
+	// header when a [Propagator] put it there.
+	//
+	// It is opaque by design. Preserving state belonging to vendors
+	// further along the call path is what lets a trace survive a hop
+	// through a system that does not speak their format, and parsing
+	// it would only be needed to add an entry of our own, which this
+	// module never does.
+	TraceState string
+
+	Kind SpanKind
+
+	// Sampled reports whether this trace is being recorded.
+	//
+	// The decision belongs to the head of the trace and propagates
+	// unchanged: a service that re-decides produces a trace recorded
+	// in some processes and not others, which is worse than either
+	// answer applied consistently.
+	Sampled bool
 }
 
 // Span is a mutable handle to a measured operation within a trace.
