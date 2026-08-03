@@ -52,13 +52,41 @@ seams every other thesmos library and framework depends on:
   RFC 8032 §5.1.6), `crypto/sign/ecdsap384` (ECDSA P-384 +
   SHA-384 per FIPS 186-5, ASN.1 DER signatures, also satisfies
   the streaming interfaces). See [RFC-0013][rfc-0013].
+- **Framer** — unambiguous domain separation for hashed and
+  signed inputs. `Domain` (name + version) plus a `Framer`
+  builder that length-prefixes every part, so no two distinct
+  inputs can encode to the same bytes. `HashDomain` is built on
+  it. See [RFC-0016][rfc-0016].
+- **AEAD** — authenticated-encryption seam. `crypto.AEAD`
+  embeds stdlib `cipher.AEAD` and adds the same `ID` +
+  `Algorithm` identity model as the hash and signing seams, so
+  a ciphertext at rest records what produced it. `Seal` / `Open`
+  helpers carry the nonce with the ciphertext. Implementation:
+  `crypto/aesgcm` (AES-128-GCM, AES-256-GCM). See
+  [RFC-0017][rfc-0017].
+- **Keeper** — key-custody seam. `Keeper` wraps and unwraps data
+  keys without exposing the root key, with optional `Destroyer`
+  and `KeyGenerator` capability interfaces. The shape is the one
+  a KMS or HSM already has, so a consumer swaps custody without
+  touching call sites. Implementation: `crypto/localkey`
+  (in-process, for development and tests). See
+  [RFC-0018][rfc-0018].
+- **XOF** — extendable-output-function seam. `crypto.XOF` /
+  `XOFStream` produce arbitrary-length output for key
+  derivation and deterministic padding, where a fixed-size
+  `Digest` cannot. Implementation: `crypto/shake` (SHAKE128,
+  SHAKE256). See [RFC-0019][rfc-0019].
 - **Telemetry** — metric and trace seams for hot-path
   observability emission, with attribute pre-binding via
   `.With([]Attr)` keeping the emit path zero-allocation while
   preserving `context.Context` for OTel exemplar correlation,
   baggage, and trace-stitching. Kind-tagged `Attr` bridges to
-  stdlib `log/slog`. Implementations: `telemetry/noop`.
-  See [RFC-0004][rfc-0004].
+  stdlib `log/slog`. `Propagator` / `Carrier` carry a
+  `SpanContext` across a process boundary, with `MapCarrier` for
+  the common case. Implementations: `telemetry/noop`,
+  `telemetry/w3c` (W3C Trace Context `traceparent` /
+  `tracestate`). See [RFC-0004][rfc-0004] and
+  [RFC-0020][rfc-0020].
 - **Epoch** — in-process strictly-monotonic 64-bit counter for
   leader generations, schema versions, optimistic-concurrency
   tokens. `epoch.Epoch` value type plus thread-safe
@@ -90,7 +118,11 @@ seams every other thesmos library and framework depends on:
   arbitrary values, `ResetPool[T Resettable]` that
   auto-clears state on `Put` (preventing cross-tenant data
   leaks at the type level), and `NewBufferPool` for the
-  `*bytes.Buffer` case. See [RFC-0010][rfc-0010].
+  `*bytes.Buffer` case. `Bounded[T]` is the fixed-capacity peer
+  for objects that are scarce rather than merely reusable — a
+  connection, a decoder, a hardware handle — where exhaustion
+  must be reported (`ErrLimit`) rather than allocated around.
+  See [RFC-0010][rfc-0010] and [RFC-0021][rfc-0021].
 - **Arena** — bump allocator for hot-path variable-length
   output. `Append` / `Alloc` return three-index-capped
   sub-slices into a contiguous backing buffer; epoch-tagged
@@ -179,6 +211,12 @@ Apache 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 [rfc-0012]: docs/rfc/0012-crypto-hmac-seam.md
 [rfc-0013]: docs/rfc/0013-crypto-sign-seam.md
 [rfc-0015]: docs/rfc/0015-error-classification.md
+[rfc-0016]: docs/rfc/0016-framed-domain-separation.md
+[rfc-0017]: docs/rfc/0017-authenticated-encryption.md
+[rfc-0018]: docs/rfc/0018-key-custody.md
+[rfc-0019]: docs/rfc/0019-extendable-output-functions.md
+[rfc-0020]: docs/rfc/0020-trace-context-propagation.md
+[rfc-0021]: docs/rfc/0021-bounded-pool.md
 [rfc-0023]: docs/rfc/0023-resilience-primitives.md
 [rfc-0024]: docs/rfc/0024-request-coalescing.md
 [contrib]: CONTRIBUTING.md

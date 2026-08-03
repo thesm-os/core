@@ -91,6 +91,101 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - RFC 8032 §7.1 known-answer test vectors for Ed25519 (TEST 1,
   2, 3) — locks in interoperability with the published RFC.
 
+- `errs` package: the error-classification seam. `Class` — a
+  closed eight-value enumeration of what a caller should *do*
+  about a failure, orthogonal to what went wrong. `Classify`
+  walks an error tree and returns the first `Classifier` it
+  finds, falling back to two recognised stdlib sentinels
+  (`fs.ErrNotExist`, `errors.ErrUnsupported`) so a producer that
+  has never heard of the package still classifies usefully.
+  `Retryable` is the shorthand. `WithClass` wraps. `Classify`
+  and `Retryable` are zero-allocation.
+  See `docs/rfc/0015-error-classification.md`.
+- `crypto.Domain`, `crypto.Framer`, `crypto.NewFramer` —
+  unambiguous domain separation. `Framer` length-prefixes every
+  part it appends (`Fixed`, `Bytes`, `String`, `Uint64`,
+  `Uint32`), so no two distinct inputs can encode to the same
+  bytes. See `docs/rfc/0016-framed-domain-separation.md`.
+- `crypto.AEAD` interface — authenticated encryption. Embeds
+  stdlib `cipher.AEAD` and adds the `ID` + `Algorithm` identity
+  model, so a ciphertext at rest records what produced it.
+  `crypto.Seal` / `crypto.Open` carry the nonce with the
+  ciphertext. See `docs/rfc/0017-authenticated-encryption.md`.
+- `crypto/aesgcm` package: AES-128-GCM and AES-256-GCM per
+  NIST SP 800-38D, backed by `crypto/aes` + `crypto/cipher`.
+- `crypto.Keeper` interface — key custody: wrap and unwrap data
+  keys without exposing the root key. Optional `Destroyer` and
+  `KeyGenerator` capability interfaces.
+  See `docs/rfc/0018-key-custody.md`.
+- `crypto/localkey` package: in-process `Keeper` for development
+  and tests.
+- `crypto.XOF` / `crypto.XOFStream` interfaces — extendable
+  output for key derivation and deterministic padding, where a
+  fixed-size `Digest` cannot serve.
+  See `docs/rfc/0019-extendable-output-functions.md`.
+- `crypto/shake` package: SHAKE128 and SHAKE256 per FIPS 202,
+  with NIST vectors. The wrapper converts the stdlib's
+  write-after-read panic into `crypto.ErrXOFSqueezing`.
+- `crypto.AlgAES128GCM`, `AlgAES256GCM`, `AlgChaCha20Poly1305`,
+  `AlgXChaCha20Poly1305`, `AlgSHAKE128`, `AlgSHAKE256`
+  Algorithm constants.
+- `crypto.DigestFromBytes`, `Digest.AppendBinary`,
+  `Digest.MarshalBinary`, `Digest.UnmarshalBinary` and
+  `clock.InstantSize`, `Instant.AppendBinary`,
+  `Instant.MarshalBinary`, `Instant.UnmarshalBinary`,
+  `Instant.UnixMilli`, `Instant.UnixMicro`, plus `id.FromBytes`
+  — binary encoding for the core value types, satisfying
+  `encoding.BinaryAppender` / `BinaryMarshaler` /
+  `BinaryUnmarshaler`.
+  See `docs/rfc/0014-binary-encoding-for-core-value-types.md`.
+- `telemetry.Propagator`, `telemetry.Carrier`,
+  `telemetry.MapCarrier` — carrying a `SpanContext` across a
+  process boundary. `SpanContext` gains `Sampled` and
+  `TraceState`.
+  See `docs/rfc/0020-trace-context-propagation.md`.
+- `telemetry/w3c` package: W3C Trace Context `traceparent` /
+  `tracestate` propagator.
+- `pool.Bounded[T]` and `pool.ErrLimit` — fixed-capacity peer of
+  `Pool[T]` for objects that are scarce rather than merely
+  reusable (a connection, a decoder, a hardware handle), where
+  exhaustion must be reported rather than allocated around.
+  See `docs/rfc/0021-bounded-pool.md`.
+- `arena.AppendVia` and `arena.TruncateTo` — writing into arena
+  space through a caller-supplied function, and unwinding to a
+  `Marker` when it fails.
+- `clock.Wait(ctx, c, d)` — the cancellable counterpart to
+  `Sleep` and the safe counterpart to `After`; stops its timer
+  on every exit path.
+- `resilience` package: `Breaker` (per-target circuit,
+  consecutive-failure threshold, single-probe half-open, with
+  `Allow` / `Record` for transports where failure is not an
+  error and `Call` where it is), `Bulkhead` (concurrency limit
+  with optional queue and clock-bounded wait, keeping
+  `ErrFull` / `ErrWaitTimeout` / `ctx.Err()` distinct), and
+  `Retrier` (`Do` bounded by an attempt count *and* a
+  sliding-window budget with a `MinRetries` floor, plus the
+  free `Backoff` function — full jitter, zero-allocation).
+  All read time through `clock.Clock`.
+  See `docs/rfc/0023-resilience-primitives.md`.
+- `batch` package: `Loader[K, V]` coalesces concurrent
+  single-key loads into one batched call and deduplicates
+  concurrent loads of the same key. `Load`, `LoadAll`
+  (immediate dispatch, split at `MaxBatch`), `Pending` (the
+  coalescing ratio) and `Close`. Not a cache: results are not
+  retained past the in-flight window.
+  See `docs/rfc/0024-request-coalescing.md`.
+- `version.ErrMismatch` and `version.ErrExists` — the sentinels
+  the `WriteOptions` preconditions had always described in
+  prose but never supplied.
+- `docs/adr/0005-primitive-set-chosen-for-coherence.md`,
+  `0006-stdlib-only-scope-test-dependencies.md` (supersedes
+  ADR-0001), `0007-zero-digest-is-valid-chain-genesis.md`,
+  `0008-core-defines-contracts-that-describe-io.md`,
+  `0009-logging-is-log-slog.md`.
+- `docs/rfc/0022-keyed-storage.md`, recorded as Withdrawn: a
+  cache miss is normal, so modelling absence as `ErrNotFound` is
+  backwards, and `database/sql` is already the database seam.
+
 ### Changed
 
 - Hasher streams (`crypto/sha256`, `crypto/sha512`,
@@ -141,6 +236,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   public contract, fixture test unchanged); zero-alloc contract
   preserved.
 
+- `crypto.Combine` now admits the zero `Digest` as a valid chain
+  genesis rather than rejecting it. A hash chain has to start
+  somewhere, and refusing the zero value forced every caller to
+  invent its own sentinel first block.
+  See `docs/adr/0007-zero-digest-is-valid-chain-genesis.md`.
+- Build gate migrated from `make` targets to `ergon`, with the
+  `mod` / `lint` / `test` / `coverage` stages configured in
+  `.ergon.yaml`. Line coverage is gated at 100% for every
+  package except `coretest`.
+- Test assertions across the module migrated to `testkit`
+  primitives (`Equal`, `ErrorIs`, `True`, `Panics`, …),
+  replacing inline comparisons and per-package `eq[T]` helpers.
+- `docs/rfc/0009-id.md` §"Compile-time-distinct identifier
+  types" now recommends embedding (`type EpochID struct{
+  id.ID }`) instead of a defined type. A defined type inherits
+  no methods and, because `ID`'s fields are unexported, cannot
+  be constructed outside the package either.
+
 ### Fixed
 
 - `BenchmarkHashReader` test artifact — `bytes.NewReader(data)`
@@ -150,6 +263,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   loop body forces the per-iteration signature slice to escape,
   surfacing the true allocation cost (the prior bench
   under-reported with `_, _ =` due to compiler stack-promotion).
+- `crypto.HashDomain` now length-prefixes each part with a
+  big-endian `uint64` before hashing it. Without the prefix,
+  `("ab", "c")` and `("a", "bc")` hashed identically — a
+  domain-separation failure in the helper whose whole job is
+  domain separation. The length buffer is pooled, so the helper
+  stays zero-allocation.
+- `id.ID` distinct-identifier guidance in `id/doc.go`: the
+  defined-type pattern the docs recommended does not work, for
+  the reasons above.
 
 ## [0.5.0] - 2026-05-06
 
