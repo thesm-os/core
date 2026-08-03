@@ -2,7 +2,7 @@
 rfc: 0023
 title: Resilience Primitives
 author: Roy Klopper <roy.klopper@stealthscale.io>
-status: Draft
+status: Accepted
 created: 2026-08-03
 updated: 2026-08-03
 discussion: none
@@ -263,9 +263,13 @@ type RetryConfig struct {
     Base, Max time.Duration
 
     // Budget is the fraction of calls that may become retries, across
-    // every caller sharing this Retrier. Must be >= 0; zero disables
-    // retrying entirely.
+    // every caller sharing this Retrier, measured over BudgetWindow.
+    // Must be >= 0; zero disables retrying entirely.
     Budget float64
+
+    // BudgetWindow is how far back the budget looks. Must be > 0 when
+    // Budget is.
+    BudgetWindow time.Duration
 }
 
 func NewRetrier(cfg RetryConfig) (*Retrier, error)
@@ -372,9 +376,12 @@ Testing a breaker against the wall clock means sleeping past
 - `Allow`/`Record` can be misused: a caller that takes a probe slot
   and never records leaves the circuit half-open forever. `Call` is
   safe but does not cover the transports that most need the split.
-- Circuits and their per-target state are never evicted, so a
-  `Breaker` keyed on anything a client supplies is a memory leak. The
-  doc says so; nothing enforces it.
+- Circuits are never evicted, so a `Breaker` keyed on anything a
+  client supplies is a memory leak. The doc says so; nothing enforces
+  it, and the failure is silent until the process is out of memory.
+- The retry budget holds a ring of counters per `Retrier` and advances
+  it on every call, so retrying costs a little even when nothing is
+  failing.
 - The retry budget is a property of a `Retrier`, so callers sharing
   one share a budget. That is the point, and it means the sharing
   boundary is a decision nobody is prompted to make.
@@ -384,14 +391,49 @@ Testing a breaker against the wall clock means sleeping past
   40% of the time. That is the simplest correct rule, not the best
   one.
 
+### The budget is a sliding window
+
+Calls and retries are counted in a ring of buckets covering
+`BudgetWindow`, advanced by `Clock`. A retry is permitted while
+retries over the window remain below `Budget` times the calls over the
+same window.
+
+A fixed window would be simpler and has an edge that matters: a burst
+of failures landing just before a boundary gets a fresh allowance
+immediately after it, which is exactly the moment the dependency can
+least afford the second burst. The ring costs a small fixed amount of
+state and removes the cliff.
+
+Bucket count is an implementation detail rather than configuration —
+finer buckets smooth the edge further and none of the choices are
+worth a knob.
+
+### Circuits are not evicted
+
+The per-target map only grows. That is deliberate for now, on three
+grounds.
+
+Eviction is invisible from outside the API, so adding a bound later
+breaks nothing — shipping without one forecloses nothing, while
+shipping with one commits to a policy today.
+
+It also does not fix what it appears to. The hazard is a `Breaker`
+keyed on values a client supplies, and a maximum or an idle timeout
+converts an unbounded leak into unbounded churn rather than removing
+it. The real rule is that targets come from the caller's own
+configuration, and that is a documented constraint either way.
+
+And both policies interact badly with an open circuit: evicting one
+discards the protection exactly while it is working, so the next call
+proceeds to a dependency already known to be down. An idle timeout is
+the safer variant — an idle open circuit evicts to roughly what a
+probe would have done — but it needs a sweep interval, which is
+another required field in a configuration already heavy with them.
+
 ## Open questions
 
-- Should the budget be a token bucket over a sliding window, or a
-  ratio over a fixed window? The first is smoother and holds more
-  state; the second is easier to reason about and has edge effects at
-  the window boundary.
-- Should `Breaker` bound its circuit count — a maximum, or an idle
-  timeout — or is documenting the unbounded growth enough?
+None. Both questions this RFC previously carried are resolved above:
+the budget is a sliding window, and circuits are not evicted.
 
 ## Unresolved / future work
 
