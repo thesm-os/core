@@ -2,7 +2,7 @@
 rfc: 0015
 title: Error Classification
 author: Roy Klopper <roy.klopper@stealthscale.io>
-status: Draft
+status: Accepted
 created: 2026-08-03
 updated: 2026-08-03
 discussion: none

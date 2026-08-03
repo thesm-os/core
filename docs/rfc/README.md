@@ -77,7 +77,7 @@ Start from [`docs/templates/RFC.md`](../templates/RFC.md).
 | [0012](0012-crypto-hmac-seam.md) | Cryptographic HMAC Seam | Accepted |
 | [0013](0013-crypto-sign-seam.md) | Public-Key Signing Seam | Accepted |
 | [0014](0014-binary-encoding-for-core-value-types.md) | Binary Encoding for Core Value Types | Accepted |
-| [0015](0015-error-classification.md) | Error Classification | Draft |
+| [0015](0015-error-classification.md) | Error Classification | Accepted |
 | [0016](0016-framed-domain-separation.md) | Framed Domain Separation | Accepted |
 | [0017](0017-authenticated-encryption.md) | Authenticated Encryption | Draft |
 | [0018](0018-key-custody.md) | Key Custody | Draft |
