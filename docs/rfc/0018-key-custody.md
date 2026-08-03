@@ -2,7 +2,7 @@
 rfc: 0018
 title: Key Custody
 author: Roy Klopper <roy.klopper@stealthscale.io>
-status: Draft
+status: Accepted
 created: 2026-08-03
 updated: 2026-08-03
 discussion: none
@@ -15,7 +15,7 @@ produces-adr: ADR-0008
 
 ## Summary
 
-`crypto/keywrap` — a key-custody seam that wraps and unwraps data
+`crypto.Keeper` — a key-custody seam that wraps and unwraps data
 encryption keys and never sees a payload. The contract is
 `Wrap`/`Unwrap`, never `Get`/`Put`, because the custodians that matter
 cannot export their root key material and a seam that required them to
@@ -47,9 +47,7 @@ re-wrapping every data key that was ever written.
 ## Detailed design
 
 ```go
-// Package keywrap is the key-custody seam: it wraps and unwraps data
-// keys and never sees a payload.
-package keywrap
+// In package crypto.
 
 // Keeper wraps and unwraps data encryption keys.
 //
@@ -76,13 +74,13 @@ type Keeper interface {
 }
 ```
 
-### The package is named for the operation, not for storage
+### The seam is named for the operation, not for storage
 
-`keywrap` rather than `keystore`. The seam's central decision is that
-it is not storage — there is no `Get`, no `Put`, and no path by which
-key material is retrieved by name. A package called `keystore` would
-advertise the shape the RFC exists to reject, and the first question
-every reader asked would be why the store has no read method.
+`Keeper` with `Wrap`/`Unwrap`, not a `KeyStore` with `Get`/`Put`. The
+central decision is that this is not storage — there is no path by
+which key material is retrieved by name. A type called `KeyStore`
+would advertise the shape this RFC exists to reject, and the first
+question every reader asked would be why the store has no read method.
 
 ### `KeyID` is a string, not a `crypto.ID`
 
@@ -121,7 +119,7 @@ type Destroyer interface {
 // custodian's entropy boundary rather than the caller's, and a caller
 // that only ever encrypts can discard the plaintext immediately and
 // never hold key material it does not need.
-type Generator interface {
+type KeyGenerator interface {
     Keeper
 
     // GenerateKey returns a fresh data key of size bytes, both in the
@@ -138,9 +136,22 @@ only time it can be handled — discovering at deletion time that the
 configured custodian cannot destroy leaves a caller with a request it
 cannot honour and data it has already promised to erase.
 
+### Where the seam lives
+
+In package `crypto`, beside `Hasher`, `MAC`, `AEAD` and `XOF`, rather
+than in a subpackage. The test is the one RFC-0017 applied: a seam
+whose value types belong to `crypto` lives in `crypto`, and this one
+introduces no value types at all — its whole surface is `[]byte` and
+`string`. `crypto/sign` is a subpackage because it owns `KeyID`; there
+is no equivalent here.
+
+The capability is named `KeyGenerator` rather than `Generator`: inside
+a package holding hashers, MACs and ciphers, an unqualified
+`Generator` says nothing about what it generates.
+
 ### The in-module implementation
 
-`crypto/keywrap/local` implements all three interfaces over a
+`crypto/localkey` implements all three interfaces over a
 `crypto.AEAD` (RFC-0017) with a root key held in process memory.
 
 It exists so the conformance suite has a subject, and so a caller can
@@ -171,8 +182,10 @@ in the drawbacks rather than hidden.
 
 ### Conformance
 
-`coretest/keywraptest` asserts the properties that make the seam
-meaningful:
+The suite lives in `coretest/cryptotest` alongside the other crypto
+seams, not in a package of its own: `crypto/sign` is likewise a
+subpackage of `crypto` and its `Signer` and `Verifier` suites are
+there. It asserts the properties that make the seam meaningful:
 
 - `Unwrap(Wrap(dek))` returns `dek` exactly.
 - `Wrap` of the same data key twice does not produce identical bytes,
@@ -238,9 +251,12 @@ for. The seam deliberately does not.
   wrapped it to still exist and still know the key.
 - `Wrap` and `Unwrap` are per-call remote operations with no batching,
   so a caller unwrapping many data keys pays a round trip each.
-- `Generator.GenerateKey` returns plaintext key material as a slice
+- `KeyGenerator.GenerateKey` returns plaintext key material as a slice
   the caller must zero, which is a discipline the type system does not
   enforce.
+- `crypto` grows by three more interfaces, and it is already the
+  module's largest package. The alternative — a subpackage — would
+  have split the crypto vocabulary for a seam that owns none of it.
 
 ## Open questions
 
