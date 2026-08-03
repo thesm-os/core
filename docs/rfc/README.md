@@ -82,7 +82,7 @@ Start from [`docs/templates/RFC.md`](../templates/RFC.md).
 | [0017](0017-authenticated-encryption.md) | Authenticated Encryption | Accepted |
 | [0018](0018-key-custody.md) | Key Custody | Accepted |
 | [0019](0019-extendable-output-functions.md) | Extendable Output Functions | Accepted |
-| [0020](0020-trace-context-propagation.md) | Trace Context Propagation | Draft |
+| [0020](0020-trace-context-propagation.md) | Trace Context Propagation | Accepted |
 | [0021](0021-bounded-pool.md) | Bounded Pool | Draft |
 | [0022](0022-keyed-storage.md) | Keyed Storage | Draft |
 | [0023](0023-resilience-primitives.md) | Resilience Primitives | Draft |

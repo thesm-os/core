@@ -2,7 +2,7 @@
 rfc: 0020
 title: Trace Context Propagation
 author: Roy Klopper <roy.klopper@stealthscale.io>
-status: Draft
+status: Accepted
 created: 2026-08-03
 updated: 2026-08-03
 discussion: none
@@ -74,6 +74,58 @@ type MapCarrier map[string]string
 ```
 
 with `telemetry/w3c` implementing `traceparent` and `tracestate`.
+
+### This amends RFC-0004: `SpanContext` gains `Sampled` and `TraceState`
+
+`SpanContext` carries `TraceID`, `SpanID`, `ParentID` and `Kind`, and
+none of those is the sampling decision. W3C `traceparent` is
+`version-traceid-spanid-traceflags`, and the flags byte carries the
+sampled bit — which is the main thing propagation moves beyond the
+identifiers. Without it every service re-decides independently and a
+trace arrives partial, which is the failure this RFC exists to
+prevent.
+
+So `SpanContext` gains two fields:
+
+```go
+// Sampled reports whether this trace is being recorded. It is the
+// decision the head of the trace made, and it propagates unchanged.
+Sampled bool
+
+// TraceState is the W3C tracestate header verbatim: other vendors'
+// state, carried across this hop untouched. Opaque by design — core
+// never parses it and never adds an entry of its own.
+TraceState string
+```
+
+The change is additive and source-compatible: every `SpanContext`
+literal in the module is keyed, so no construction breaks. It amends
+RFC-0004, which defined the type without either concept because
+nothing then needed one.
+
+### `TraceState` is opaque, and that is what makes it cheap
+
+`tracestate` looks expensive: a 32-member limit, a 512-byte budget, a
+key/value grammar, and rules for evicting from the right when a new
+entry overflows. Every one of those governs a vendor **adding its own
+entry**. `core` is not a tracing vendor and has nothing to add.
+
+What propagation needs is pass-through — read the header into a
+string, write it back unchanged — which needs none of that machinery.
+Storing it opaquely is strictly less work than parsing it, and it is
+also the only correct behaviour: the specification requires a receiver
+to preserve `tracestate` it does not understand, so that state
+belonging to vendors further along the call path survives a hop
+through a system that does not speak it.
+
+Dropping it would not be a clean scope boundary. It would silently
+discard other vendors' state whenever the caller builds fresh
+transport metadata rather than forwarding a whole header map — the
+exact interop failure the header exists to prevent.
+
+Parsing lands only if `core` ever needs to mutate an entry, which
+would mean it had become a tracing vendor. That is future work in the
+sense that it is not expected to happen.
 
 ### The carrier method set is not designed here
 
@@ -170,10 +222,16 @@ maps, so a map-typed carrier would force a copy at every real boundary.
   versions it does not understand per the specification's forward-
   compatibility rules. That is subtle behaviour which is easy to
   implement as a rejection by mistake.
-- `tracestate` has a size limit, a member limit, and mutation rules
-  that are more intricate than `traceparent`, and a partial
-  implementation is worse than none because it silently drops vendor
-  state.
+- `TraceState` is carried but never validated, so a malformed value
+  arriving on the wire is passed on unchanged. That is deliberate —
+  preserving what we do not understand is the specification's rule —
+  but it means this seam will forward garbage as faithfully as it
+  forwards state.
+- Amending `SpanContext` means RFC-0004's type now carries two fields
+  that exist for one wire format's benefit. `Sampled` is defensible
+  independently — sampling is a property of a trace, not of a header —
+  but `TraceState` is W3C's name for W3C's data, sitting in a
+  format-neutral type.
 - `Extract` collapsing "absent" and "malformed" means a
   misconfigured upstream is invisible: traces silently start fresh
   instead of continuing, and nothing reports why.
