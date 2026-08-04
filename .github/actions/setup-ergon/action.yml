@@ -25,4 +25,4 @@ runs:
         url="https://github.com/thesm-os/ergon/releases/download/v${ver}/ergon_${ver}_linux_amd64.tar.gz"
         curl --fail --silent --show-error --location --retry 3 "$url" \
           | sudo tar -xz -C /usr/local/bin ergon
-        ergon version
+        ergon --version
