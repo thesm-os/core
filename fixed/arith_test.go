@@ -177,6 +177,20 @@ func TestMul(t *testing.T) {
 		testkit.ErrorIs(t, err, fixed.ErrOverflow,
 			"a quotient beyond Max must overflow")
 	})
+
+	t.Run("guards the exact value at which bits.Div64 would panic", func(t *testing.T) {
+		t.Parallel()
+
+		// 2^32 × (10^Scale × 2^32) is exactly 10^Scale × 2^64, so the
+		// high word equals the divisor. The pre-check is >= for this
+		// input and only this input: at > it would fall through to
+		// bits.Div64, whose contract is to panic when the quotient will
+		// not fit. The boundary is the whole point of the guard.
+		_, err := fixed.Fixed64(1 << 32).Mul(fixed.Fixed64(1e8 << 32))
+
+		testkit.ErrorIs(t, err, fixed.ErrOverflow,
+			"the exact panic boundary must be an error, not a panic")
+	})
 }
 
 func TestMulAway(t *testing.T) {
@@ -291,6 +305,19 @@ func TestDiv(t *testing.T) {
 		testkit.ErrorIs(t, err, fixed.ErrOverflow,
 			"a quotient beyond Max must overflow")
 	})
+
+	t.Run("guards the exact value at which bits.Div64 would panic", func(t *testing.T) {
+		t.Parallel()
+
+		// 184467440738 × 10^Scale has a high word of exactly 1, which
+		// is the divisor. As in Mul, the pre-check must be >= rather
+		// than >: at > this input reaches bits.Div64 with hi == divisor
+		// and panics.
+		_, err := fixed.Fixed64(184467440738).Div(fixed.Smallest)
+
+		testkit.ErrorIs(t, err, fixed.ErrOverflow,
+			"the exact panic boundary must be an error, not a panic")
+	})
 }
 
 func TestDivAway(t *testing.T) {
@@ -346,6 +373,28 @@ func TestDivAway(t *testing.T) {
 
 		testkit.ErrorIs(t, err, fixed.ErrOverflow,
 			"rounding away from Max must overflow")
+	})
+
+	t.Run("admits a rounding step that lands exactly on Max", func(t *testing.T) {
+		t.Parallel()
+
+		// The other side of the same bound. Here the truncated quotient
+		// is Max-1 with a remainder, so the away-from-zero step reaches
+		// Max exactly — which is representable and must NOT be an
+		// overflow. Without this case the post-increment check could be
+		// >= instead of > and nothing would notice.
+		a, b := fixed.Fixed64(9223371944621055438), fixed.Fixed64(99999999)
+
+		truncated, err := a.Div(b)
+
+		testkit.NoError(t, err, "the truncated quotient must be in range")
+		testkit.Equal(t, truncated, fixed.Max-1,
+			"the truncated quotient must land one step below Max")
+
+		got, err := a.DivAway(b)
+
+		testkit.NoError(t, err, "a step landing exactly on Max must succeed")
+		testkit.Equal(t, got, fixed.Max, "the result must be exactly Max")
 	})
 }
 
