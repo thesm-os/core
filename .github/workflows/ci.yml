@@ -86,3 +86,23 @@ jobs:
       - uses: ./.github/actions/setup-ergon
       - run: make bootstrap
       - run: make check-coverage
+
+  mutation:
+    name: Mutation
+    runs-on: ubuntu-latest
+    # Mutation re-runs the suite once per mutant across fifteen
+    # layers. It is the one stage deliberately kept out of the local
+    # hooks, so this job is where it actually gates.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: ./.github/actions/setup-ergon
+      - uses: actions/cache@v5
+        with:
+          path: ~/go/bin
+          key: go-tools-${{ hashFiles('Makefile') }}
+      - run: make bootstrap
+      - run: make check-mutation

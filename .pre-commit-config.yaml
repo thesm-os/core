@@ -26,15 +26,25 @@ repos:
       - id: check-toml
       - id: check-symlinks
 
-  # ─── Pre-push: full gate ──────────────────────────────────────
+  # ─── The gate, minus the one slow stage ───────────────────────
+  #
+  # mod + lint + test + coverage is 2.4s on a warm Go cache, so it
+  # belongs at commit time where the feedback is worth most. Mutation
+  # is the entire remaining cost of `make check` — tens of minutes —
+  # and running it here would train everyone to pass --no-verify,
+  # which costs more than it catches. CI runs it per push instead.
+  #
+  # Repeated at pre-push deliberately: with caches warm it is
+  # near-instant, and it catches the case where a commit landed
+  # through --no-verify or an amend.
   - repo: local
     hooks:
-      - id: check
-        name: make check
-        entry: make check
+      - id: check-fast
+        name: ergon check (skip mutation)
+        entry: ergon check --skip mutation
         language: system
         pass_filenames: false
-        stages: [pre-push]
+        stages: [pre-commit, pre-push]
 
   # ─── Commit message ───────────────────────────────────────────
   - repo: local
