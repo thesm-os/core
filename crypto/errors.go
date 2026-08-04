@@ -27,10 +27,41 @@ var (
 	// size the algorithm accepts.
 	ErrKeySize = errors.New("crypto: key length does not match the algorithm")
 
-	// ErrCiphertextShort is returned by [Open] when the input is
-	// smaller than the nonce it must begin with, so no ciphertext
-	// can be present.
-	ErrCiphertextShort = errors.New("crypto: ciphertext shorter than the nonce")
+	// ErrCiphertextShort is returned by [Open], [AppendOpen], and
+	// [PeekAlgorithm] when the input is too short to hold the envelope
+	// it claims: a truncated header, an algorithm name longer than the
+	// bytes that follow it, or no room for a nonce.
+	ErrCiphertextShort = errors.New("crypto: sealed envelope truncated")
+
+	// ErrEnvelopeVersion is returned when a sealed envelope declares a
+	// layout this build does not know.
+	//
+	// An unknown version is refused outright, never parsed as far as
+	// the reader recognises. Forward-compatible parsing of a security
+	// envelope is a downgrade path: it invites a reader to act on the
+	// part of a structure it understands while ignoring the part that
+	// changed the meaning.
+	ErrEnvelopeVersion = errors.New("crypto: unknown sealed-envelope version")
+
+	// ErrAlgorithmMismatch is returned by [Open] and [AppendOpen] when
+	// the envelope names an algorithm other than the [AEAD]'s own.
+	//
+	// Decided from the header before any key is used, so it is not the
+	// distinguishable authentication failure the package otherwise
+	// forbids: it reports a fact the caller supplied and can already
+	// read, never why a tag failed to verify. Select the implementation
+	// with [PeekAlgorithm] to avoid it.
+	ErrAlgorithmMismatch = errors.New("crypto: envelope algorithm does not match the AEAD")
+
+	// ErrAlgorithmSize is returned when an algorithm name will not fit
+	// the envelope's single length byte.
+	//
+	// On seal that means the [AEAD] reports a name that is empty or
+	// over 255 bytes, which is a defect in that implementation. On open
+	// it means the envelope declares a zero-length name, which no AEAD
+	// can match and which would otherwise surface as a mismatch against
+	// a name that was never there.
+	ErrAlgorithmSize = errors.New("crypto: algorithm name empty or over 255 bytes")
 
 	// ErrKeyID is returned when a key identifier is empty, or names a
 	// key the custodian does not hold. See [Keeper.KeyID] and

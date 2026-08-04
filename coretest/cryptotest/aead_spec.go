@@ -107,26 +107,59 @@ func AEADContractAssertions() []AEADOption {
 				"sealing one plaintext twice must not repeat the nonce")
 		}),
 
-		AEADCustom("sealed output is nonce plus ciphertext plus overhead", func(t *testing.T, a crypto.AEAD) {
+		AEADCustom("sealed output is the envelope, nonce, ciphertext and tag", func(t *testing.T, a crypto.AEAD) {
 			plaintext := []byte("payload")
 			sealed, err := crypto.Seal(a, randcrypto.New(), plaintext, nil)
 			testkit.NoError(t, err, "Seal must succeed")
-			testkit.Equal(t, len(sealed), a.NonceSize()+len(plaintext)+a.Overhead(),
-				"Seal must prepend the nonce and append the tag")
+			testkit.Equal(t, len(sealed),
+				envelopeHeaderLen(a)+a.NonceSize()+len(plaintext)+a.Overhead(),
+				"Seal must prepend the header and nonce and append the tag")
+		}),
+
+		AEADCustom("the envelope names the implementation", func(t *testing.T, a crypto.AEAD) {
+			// The point of the envelope: a stored ciphertext says what
+			// produced it, so a caller holding several implementations
+			// picks one from the bytes rather than from a side channel.
+			sealed := mustSeal(t, a, []byte("payload"), nil)
+
+			got, err := crypto.PeekAlgorithm(sealed)
+			testkit.NoError(t, err, "PeekAlgorithm must parse Seal's own output")
+			testkit.Equal(t, got, a.Algorithm(),
+				"the envelope must name the algorithm that sealed it")
+		}),
+
+		AEADCustom("a rewritten version does not open", func(t *testing.T, a crypto.AEAD) {
+			// Refused from the header, before any key is used.
+			sealed := mustSeal(t, a, []byte("payload"), nil)
+			sealed[0]++
+
+			_, err := crypto.Open(a, sealed, nil)
+			testkit.ErrorIs(t, err, crypto.ErrEnvelopeVersion,
+				"an unknown layout must be refused rather than parsed")
+		}),
+
+		AEADCustom("a rewritten algorithm does not open", func(t *testing.T, a crypto.AEAD) {
+			// The header is authenticated, not merely prepended, so
+			// steering an open towards another primitive fails.
+			sealed := mustSeal(t, a, []byte("payload"), nil)
+			sealed[crypto.EnvelopeVersionSize+crypto.EnvelopeAlgorithmLenSize] ^= 0x20
+
+			_, err := crypto.Open(a, sealed, nil)
+			testkit.Error(t, err, "a rewritten algorithm name must not open")
 		}),
 
 		// --- authentication ---
 
 		AEADCustom("a modified ciphertext does not open", func(t *testing.T, a crypto.AEAD) {
 			sealed := mustSeal(t, a, []byte("payload"), []byte("aad"))
-			sealed[a.NonceSize()] ^= 0x01
+			sealed[envelopeHeaderLen(a)+a.NonceSize()] ^= 0x01
 			_, err := crypto.Open(a, sealed, []byte("aad"))
 			testkit.Error(t, err, "a flipped ciphertext bit must fail authentication")
 		}),
 
 		AEADCustom("a modified nonce does not open", func(t *testing.T, a crypto.AEAD) {
 			sealed := mustSeal(t, a, []byte("payload"), []byte("aad"))
-			sealed[0] ^= 0x01
+			sealed[envelopeHeaderLen(a)] ^= 0x01
 			_, err := crypto.Open(a, sealed, []byte("aad"))
 			testkit.Error(t, err, "a flipped nonce bit must fail authentication")
 		}),
@@ -145,10 +178,15 @@ func AEADContractAssertions() []AEADOption {
 		}),
 
 		AEADCustom("truncated input is a size error", func(t *testing.T, a crypto.AEAD) {
-			for _, n := range []int{0, 1, a.NonceSize() - 1} {
-				_, err := crypto.Open(a, make([]byte, n), nil)
+			// Every prefix short of a complete header and nonce. Built
+			// from a real envelope so the version and algorithm parse
+			// and the size check is what rejects it.
+			sealed := mustSeal(t, a, []byte("payload"), nil)
+
+			for n := range envelopeHeaderLen(a) + a.NonceSize() {
+				_, err := crypto.Open(a, sealed[:n], nil)
 				testkit.ErrorIs(t, err, crypto.ErrCiphertextShort,
-					"input shorter than the nonce must report ErrCiphertextShort")
+					"a prefix too short to hold a header and nonce must report ErrCiphertextShort")
 			}
 		}),
 
@@ -215,6 +253,13 @@ func AEADCrossInstanceAssertion(other func() crypto.AEAD) AEADOption {
 		testkit.Equal(t, peer.Algorithm(), a.Algorithm(),
 			"Algorithm must not vary between instances")
 	})
+}
+
+// envelopeHeaderLen is the length of the header [crypto.Seal] writes
+// ahead of the nonce for a: the version byte, the length byte, and
+// the algorithm name.
+func envelopeHeaderLen(a crypto.AEAD) int {
+	return crypto.EnvelopeVersionSize + crypto.EnvelopeAlgorithmLenSize + len(a.Algorithm())
 }
 
 // mustSeal seals plaintext or fails the test, keeping the assertion

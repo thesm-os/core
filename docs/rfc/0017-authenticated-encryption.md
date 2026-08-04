@@ -4,7 +4,7 @@ title: Authenticated Encryption
 author: Roy Klopper <roy.klopper@stealthscale.io>
 status: Accepted
 created: 2026-08-03
-updated: 2026-08-03
+updated: 2026-08-04
 discussion: none
 supersedes: none
 superseded-by: none
@@ -77,22 +77,23 @@ both correct and cheaper than randomness. For everyone else the package
 provides the safe path:
 
 ```go
-// Seal draws a fresh random nonce from r, encrypts plaintext under a
-// with aad as associated data, and returns nonce || ciphertext.
-//
-// The nonce is prepended rather than returned separately because a
-// nonce stored apart from its ciphertext is a nonce that gets lost,
-// and a lost nonce is an unrecoverable value.
-//
-// Use this unless you have a specific reason to manage nonces
-// yourself. Reusing a nonce under one key breaks AES-GCM completely:
-// it discloses the XOR of the two plaintexts and permits tag forgery
-// for every message under that key.
+// Seal draws a fresh random nonce from r and returns a sealed
+// envelope: version || algorithm || nonce || ciphertext.
 func Seal(a AEAD, r rand.Rand, plaintext, aad []byte) ([]byte, error)
 
-// Open splits sealed into nonce and ciphertext and decrypts it.
-// Returns ErrCiphertextShort if sealed is smaller than a.NonceSize().
+// AppendSeal appends the envelope to dst, for callers reusing a buffer.
+func AppendSeal(dst []byte, a AEAD, r rand.Rand, plaintext, aad []byte) ([]byte, error)
+
+// Open parses the envelope and decrypts it.
 func Open(a AEAD, sealed, aad []byte) ([]byte, error)
+
+// AppendOpen appends the plaintext to dst.
+func AppendOpen(dst []byte, a AEAD, sealed, aad []byte) ([]byte, error)
+
+// PeekAlgorithm reads the algorithm an envelope names, without a key
+// and without authenticating. It is how a caller selects which AEAD to
+// open with.
+func PeekAlgorithm(sealed []byte) (Algorithm, error)
 ```
 
 `Seal` and `Open` sit beside `HashDomain` and `HashReader` as
@@ -110,6 +111,93 @@ implementation.
 Random nonces are safe for AES-GCM's 96-bit nonce at any message volume
 a single key will realistically see; the doc comment states the bound
 rather than leaving a reader to look it up.
+
+### The envelope carries its own algorithm
+
+A ciphertext must say what produced it. `AEAD` reports an `Algorithm`
+for exactly the reason `Hasher` does — so an artefact written today can
+be opened by a build that does not exist yet — and an envelope that
+omits it leaves that identity in a side channel the caller has to keep
+in step by hand.
+
+The nonce is already prepended on the argument that *a nonce stored
+apart from its ciphertext is a nonce that gets lost*. That argument does
+not distinguish between the nonce and the algorithm: both are
+non-secret, both are needed to open, and losing either makes the
+ciphertext unrecoverable. Prepending one and not the other was
+inconsistent rather than considered.
+
+```text
+version    1 byte              layout version, currently 1
+algLen     1 byte              length of the algorithm name, 1..255
+algorithm  algLen bytes        e.g. "aes-256-gcm"
+nonce      a.NonceSize() bytes
+body       ciphertext || tag
+```
+
+The header is not merely prepended — it is bound into what the tag
+covers. The associated data handed to the underlying `cipher.AEAD` is
+built with the package's own framer:
+
+```go
+f := NewFramer(scratch[:0], Domain{Name: "thesmos.crypto.aead", Version: 1})
+f.String(string(a.Algorithm()))
+f.Bytes(callerAAD)
+```
+
+Without that binding an attacker could rewrite the algorithm name in
+transit; the open would then either fail with a confusing error or, for
+two implementations sharing a nonce and key size, succeed under the
+wrong primitive. Framing it rather than concatenating it is what stops
+a crafted `aad` from imitating a longer algorithm name.
+
+### Two versions, deliberately
+
+The layout version appears twice: once as a plaintext byte, once as
+`Domain.Version` inside the authenticated bytes.
+
+The wire byte gives a clean rejection. A reader that meets an unknown
+version returns `ErrEnvelopeVersion` before any key touches the input,
+which is what an operator migrating formats needs to see instead of an
+opaque authentication failure.
+
+`Domain.Version` makes the rejection unforgeable. The domain tag is part
+of what the tag authenticates, so bytes written under one layout cannot
+authenticate under another even if the plaintext version byte is
+rewritten. The wire byte is for diagnosis; the domain version is the
+guarantee.
+
+**An unknown version is rejected, never partially parsed.** This is the
+opposite of the rule for `traceparent` in RFC-0020, where a higher
+version may append fields a v1 reader ignores. Forward-compatible
+parsing of a security envelope is a downgrade path: it invites a reader
+to act on the part of a structure it recognises while ignoring the part
+that changed the meaning.
+
+### No fallback to a headerless ciphertext
+
+`Open` does not attempt a bare `nonce || ciphertext` read when the
+header does not parse. A reader that falls back is a reader an attacker
+can force into the weaker mode by stripping bytes, and the algorithm
+binding then covers nothing.
+
+`core` is pre-1.0 and this changes a wire format, so ciphertexts written
+by an earlier build do not open. That is the intended outcome: a
+migration a caller performs deliberately is better than a compatibility
+path that is permanently attackable. The failure is loud — an old
+ciphertext's first nonce byte is a version this build does not know,
+almost always, and the algorithm check catches the rest.
+
+### What the envelope does not carry
+
+No key identifier. `core` cannot know how a deployment names keys, and a
+field it cannot specify is a field every implementation fills
+differently. A caller that needs one puts it in `aad`, where it is
+authenticated without `core` having invented a schema for it.
+
+No ciphertext length. The storage or transport that hands over the bytes
+already knows how many there are, and a second copy of a length is a
+second thing that can disagree.
 
 ### Algorithms
 
@@ -132,8 +220,11 @@ spellings appearing if a standard-library implementation lands later.
 Per the module's convention, in `crypto/errors.go`:
 
 ```go
-var ErrKeySize         = errors.New("crypto: key length does not match the algorithm")
-var ErrCiphertextShort = errors.New("crypto: ciphertext shorter than the nonce")
+var ErrKeySize          = errors.New("crypto: key length does not match the algorithm")
+var ErrCiphertextShort  = errors.New("crypto: sealed envelope truncated")
+var ErrEnvelopeVersion  = errors.New("crypto: unknown sealed-envelope version")
+var ErrAlgorithmMismatch = errors.New("crypto: envelope algorithm does not match the AEAD")
+var ErrAlgorithmSize    = errors.New("crypto: algorithm name empty or over 255 bytes")
 ```
 
 Open failures from the underlying `cipher.AEAD` are returned unwrapped.
@@ -141,21 +232,76 @@ An authentication failure must not be distinguishable from a
 malformed-ciphertext failure by anything a caller can branch on, and
 adding a distinct sentinel would create exactly that distinction.
 
+The three envelope errors do not weaken that rule, and the reason is
+worth stating because it is the test any future sentinel here must
+pass: each is decided from public header bytes before a key is used.
+`ErrEnvelopeVersion` and `ErrAlgorithmMismatch` report facts an attacker
+supplied and can already read; neither is a function of the key, the
+plaintext, or the tag. The rule forbids an oracle, not an error — what
+it rules out is a sentinel that distinguishes *why the tag did not
+verify*, and no sentinel here does.
+
+`ErrAlgorithmSize` covers both directions of the same malformation. On
+seal it means the `AEAD` reports a name that is empty or longer than the
+header can express, which is a defect in that implementation; it returns
+an error rather than panicking because this module does not panic in
+production paths. On open and on `PeekAlgorithm` it means the envelope
+declares a zero-length name, which no `AEAD` can match and which would
+otherwise surface as a confusing mismatch against a name that was never
+there.
+
 ### Rotation is the caller's dispatch
 
-There is no helper that tries several algorithms against a ciphertext.
-The persisted `Algorithm` names exactly one implementation, so the
-caller's dispatch is a map lookup, and a helper that iterated
-candidates would turn a deterministic open into a series of
-authentication failures — which is both slower and a weaker security
-posture than knowing which key and algorithm should have worked.
+There is still no helper that tries several algorithms against a
+ciphertext. What changes is where the dispatch key comes from:
+`PeekAlgorithm` reads it from the ciphertext, so the caller's map lookup
+no longer depends on a side channel staying in step with the bytes.
+
+That is the whole benefit of the envelope. A helper that iterated
+candidates would remain wrong for the reasons it always was — slower,
+and a weaker posture than knowing which key and algorithm should have
+worked — and `PeekAlgorithm` removes the only excuse for wanting one.
+
+`PeekAlgorithm` authenticates nothing, and says so. The name it returns
+is an attacker-supplied hint used to *select* a key, never to decide
+whether the bytes are genuine; the tag decides that, and the selected
+algorithm is bound into what the tag covers. A caller must treat an
+unrecognised name as a rejection rather than a reason to try something.
 
 ### Allocation contract
 
-`Seal` allocates one buffer of `NonceSize() + len(plaintext) +
-Overhead()`. `Open` allocates one plaintext buffer. The embedded
-`cipher.AEAD` methods keep the standard library's append-style
-contract, so a caller managing its own buffers can avoid both.
+Measured, not asserted:
+
+| | allocs/op |
+|---|---|
+| `Seal` | 2 |
+| `AppendSeal` | 1 |
+| `AppendOpen` | 0 |
+| `PeekAlgorithm` | 1 |
+| embedded `cipher.AEAD.Seal`, sized dst | 0 |
+
+`Seal` sizes its buffer once, from the header, nonce, plaintext and
+overhead together, rather than regrowing as each field is appended —
+four allocations it used to pay and no longer does.
+
+The associated-data frame is scratch drawn from a package-level pool,
+the same treatment `HashDomain` gets and for the same reason. It costs
+nothing per call.
+
+**`AppendSeal`'s remaining allocation is the entropy read, and it is
+not removable from here.** Drawing the nonce through the `rand.Rand`
+interface costs one 16-byte allocation because an indirect call cannot
+be shown not to retain its buffer; the same read is zero-alloc when the
+compiler can devirtualise it, which is why `rand/crypto`'s own
+benchmarks report zero. Reading into pooled scratch and copying does
+not help — it is the indirect call, not the destination. `AppendOpen`
+draws no entropy and is genuinely zero-alloc.
+
+`PeekAlgorithm` allocates the string it returns.
+
+The embedded `cipher.AEAD` methods keep the standard library's
+append-style contract, so a caller wanting neither the envelope nor the
+managed nonce pays nothing at all.
 
 ## Alternatives considered
 
@@ -187,11 +333,48 @@ that is safe if you already knew the failure mode.
 signature says it is pure, and it makes the package untestable without
 real randomness.
 
+### E. Leave the algorithm out and let the caller persist it
+
+The original design, and what `Hasher` does for digests.
+
+**Why not:** a digest is a value a caller stores in a field it defines,
+alongside whatever else that record needs — the algorithm sits in the
+next column. A sealed ciphertext is an opaque blob handed to storage
+that has no other columns, and the nonce prefix already conceded that
+point. Splitting the identity out means every caller reinvents the same
+two-field record, and the ones that forget find out when they rotate.
+
+### F. Put the build-local `ID` in the envelope instead of `Algorithm`
+
+`ID` is fixed-size, so the header would need no length byte.
+
+**Why not:** `ID` is documented as build-local and explicitly not for
+cross-build identification. A ciphertext outlives the build that wrote
+it, which is the entire premise. Fourteen bytes of header is the cost of
+the field that is still meaningful in five years.
+
+### G. A registry of numeric algorithm codes
+
+Compact and fixed-width, like a TLS cipher-suite registry.
+
+**Why not:** `core` would own the registry, and a registry is external
+data with a release cadence `core` cannot meet — the same reason
+`money` stays out. `Algorithm` is already an open string precisely so a
+consumer can add one without waiting for `core`, and a numeric code
+would take that back.
+
 ## Drawbacks
 
-- `Seal` and `Open` define a ciphertext framing — nonce prefix — that is
-  now a wire format `core` owns. A caller with an existing framing
-  cannot use them and must drop to the embedded interface.
+- `Seal` and `Open` define a wire format `core` owns, and it is now
+  larger than a nonce prefix. A caller with an existing framing cannot
+  use them and must drop to the embedded interface.
+- The header costs two bytes plus the algorithm name — fourteen for
+  `aes-256-gcm`. For a payload of a few bytes that is a real proportion
+  of the record, and a caller storing many tiny ciphertexts under one
+  known algorithm is paying for agility it has decided not to use.
+- Ciphertexts written before this change do not open. `core` is pre-1.0
+  and the alternative was a permanent downgrade path, but it is still a
+  migration someone has to run.
 - The seam adds identity to a contract whose stdlib form has none, so a
   `cipher.AEAD` from elsewhere does not satisfy `crypto.AEAD` without a
   wrapper. That is the cost of the identity half and it is the whole
