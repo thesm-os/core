@@ -52,9 +52,11 @@ func Parse(s string) (Fixed64, error) {
 		return Zero, err
 	}
 
-	// whole is bounded at maxWholeUnits and frac below 10^Scale, so
-	// this product and sum cannot wrap a uint64; the bound that can
-	// be exceeded is the domain's, which is what is tested.
+	// parseWhole guarantees whole <= maxWholeUnits and parseFrac
+	// guarantees frac < 10^Scale, so this product and sum cannot wrap
+	// a uint64 — the largest reachable raw is 9,223,372,036,899,999,999
+	// against a uint64 ceiling of ~1.8e19. What remains reachable is
+	// exceeding the DOMAIN bound, which is what is tested.
 	raw := whole*scaleFactorU + frac
 	if raw > maxRawU {
 		return Zero, ErrRange
@@ -69,9 +71,16 @@ func Parse(s string) (Fixed64, error) {
 
 // parseWhole reads the integer part as a count of whole units.
 //
-// The bound is tested before each accumulation rather than after, so
-// an input of arbitrary length is rejected while the accumulator is
-// still small — a 40-digit string never gets the chance to wrap.
+// The bound is tested after each accumulation, which is what keeps
+// the return value inside maxWholeUnits rather than one digit past
+// it. Testing before instead lets v reach maxWholeUnits*10+9, and
+// that value times 10^Scale wraps a uint64 — so an input of twelve
+// digits could wrap back under the domain bound and parse as a small
+// number instead of being rejected.
+//
+// Testing after is also safe against wrapping in the accumulation
+// itself: entering an iteration v is at most maxWholeUnits, so
+// v*10+9 is at most 922,337,203,689 — nowhere near a uint64.
 func parseWhole(s string) (uint64, error) {
 	if s == "" {
 		return 0, ErrSyntax
@@ -85,11 +94,10 @@ func parseWhole(s string) (uint64, error) {
 			return 0, ErrSyntax
 		}
 
+		v = v*10 + uint64(c-'0')
 		if v > uint64(maxWholeUnits) {
 			return 0, ErrRange
 		}
-
-		v = v*10 + uint64(c-'0')
 	}
 
 	return v, nil

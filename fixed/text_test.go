@@ -63,21 +63,26 @@ func TestParse(t *testing.T) {
 			in   string
 			want fixed.Fixed64
 		}{
-			"whole number":            {"1", fixed.One},
-			"zero":                    {"0", fixed.Zero},
-			"negative zero":           {"-0", fixed.Zero},
-			"negative zero fraction":  {"-0.00000000", fixed.Zero},
-			"full scale":              {"1.00000000", fixed.One},
-			"smallest":                {"0.00000001", fixed.Smallest},
-			"negative":                {"-1.00000000", -fixed.One},
-			"short fraction":          {"1.5", fixed.One + fixed.One/2},
-			"max":                     {"92233720368.54775807", fixed.Max},
-			"min":                     {"-92233720368.54775807", fixed.Min},
-			"leading zeroes":          {"007", 7 * fixed.One},
-			"insignificant ninth":     {"1.000000000", fixed.One},
-			"many insignificant":      {"1.00000000000000", fixed.One},
-			"mixed":                   {"12.34567890", 1234567890},
-			"fraction only in tenths": {"0.1", 10000000},
+			"whole number":           {"1", fixed.One},
+			"zero":                   {"0", fixed.Zero},
+			"negative zero":          {"-0", fixed.Zero},
+			"negative zero fraction": {"-0.00000000", fixed.Zero},
+			"full scale":             {"1.00000000", fixed.One},
+			"smallest":               {"0.00000001", fixed.Smallest},
+			"negative":               {"-1.00000000", -fixed.One},
+			"short fraction":         {"1.5", fixed.One + fixed.One/2},
+			"max":                    {"92233720368.54775807", fixed.Max},
+			"min":                    {"-92233720368.54775807", fixed.Min},
+			"leading zeroes":         {"007", 7 * fixed.One},
+			// Exactly the largest whole count: the accumulator reaches
+			// its bound without exceeding it, so the guard must be > and
+			// not >=.
+			"largest whole count":          {"92233720368", 9223372036800000000},
+			"largest whole count negative": {"-92233720368", -9223372036800000000},
+			"insignificant ninth":          {"1.000000000", fixed.One},
+			"many insignificant":           {"1.00000000000000", fixed.One},
+			"mixed":                        {"12.34567890", 1234567890},
+			"fraction only in tenths":      {"0.1", 10000000},
 		}
 		for name, tc := range cases {
 			t.Run(name, func(t *testing.T) {
@@ -162,6 +167,13 @@ func TestParse(t *testing.T) {
 			"whole part too large": "92233720369",
 			"far beyond":           "99999999999999999999999999999999",
 			"negative far beyond":  "-99999999999999999999999999999999",
+			// One digit past the largest whole count. Scaling this by
+			// 10^Scale wraps a uint64 and lands back under the domain
+			// bound, so a parser that bounds the accumulator one digit
+			// too late returns 3.52241920 here instead of an error.
+			"wraps back under the bound":           "922337203689",
+			"wraps back under the bound, negative": "-922337203689",
+			"wraps to a large value":               "922337203680",
 		}
 		for name, in := range cases {
 			t.Run(name, func(t *testing.T) {
