@@ -210,10 +210,43 @@ checks:
     # coretest is excluded above rather than given a lower number —
     # a threshold it could never meaningfully hit would just be
     # noise.
+    #
+    # branch is 99, which is the measured aggregate and not a guess:
+    # gobco run per package reports 658/664 conditions = 99.10%, with
+    # 29 of 33 instrumentable packages at a clean 100%. The four below
+    # are arena 19/20, batch 37/38, telemetry/w3c 49/50, id/uuidv4
+    # 19/22.
+    #
+    # require_branch stays false — the gate CANNOT run to completion
+    # today, and that is a tooling limit rather than a coverage gap.
+    # gobco fails to instrument six packages, aborting the whole run:
+    #
+    #   crypto/sha256   crypto/sha3   crypto/sha512
+    #   crypto/hmac/sha256   crypto/hmac/sha3   crypto/hmac/sha512
+    #
+    # All six declare a package-level pool over an UNEXPORTED local
+    # type — `pool.NewPool(func() *stream { ... })`. gobco cannot
+    # resolve that generic instantiation across the instrumented
+    # package and its external _test package, so it never injects its
+    # cover symbols and the generated bridge fails to compile with
+    # "undefined: <pkg>.GobcoCover". crypto and rand/crypto use pool
+    # too and instrument fine, because theirs instantiate over
+    # *[]byte and *[8]byte rather than an unexported type.
+    #
+    # Note this cannot be worked around with `excludes` above: those
+    # drop a path from the VERDICT, not from the gobco run. coretest
+    # is excluded and still gets instrumented.
+    #
+    # Flip require_branch to true once gobco handles those six; the
+    # threshold is already correct for the rest of the tree. Until
+    # then run `make check-branch` per package, or accept that the
+    # umbrella skips it.
+    #
+    # gobco also needs GODEBUG=gotypesalias=1 — set in the Makefile.
     packages:
       - path: ...
         line: 100
-        branch: 0
+        branch: 99
         require_branch: false
     # Cap on the per-target list of below-threshold functions.
     # Anything past the cap is collapsed into "… and N more".
@@ -242,30 +275,15 @@ checks:
     # behaviour, so no test can kill them. That residue is the only
     # slack intended here.
     #
-    # DISABLED pending an ergon fix, not because the module misses
-    # the bar. `ergon check mutation` runs gremlins with the working
-    # directory set to the layer subdirectory
-    # (internal/checks/mutation/mutation.go:235,
-    # filepath.Join(root, t.Layer) with RelPath "."), and gremlins
-    # resolves the module root from the filesystem root rather than
-    # from cwd — so it looks for /go.mod, fails before doing any
-    # work, and every layer reports "gremlins did not produce
-    # metrics: exit status 1".
+    # One entry per package rather than a single `...` catch-all.
+    # A catch-all aggregates every mutant in the module into one
+    # ratio, where a handful of survivors disappears into thousands
+    # of kills and reads as a pass. Per-package entries make a
+    # survivor fail the package that owns it, which is the only
+    # form of the number that says where to go.
     #
-    # Run from the module root instead and it works. Measured
-    # directly across every gated package, three carry surviving
-    # mutants and the rest are at 100% efficacy and 100% reach:
-    #
-    #   crypto          98.4% efficacy, 100% reach — 1 survivor
-    #   resilience      97.1% efficacy, 100% reach — 2 survivors
-    #   telemetry/w3c   85.3% efficacy,  85% reach — 5 + 6 unreached
-    #
-    # crypto/shake, id/constant and telemetry/noop yield no viable
-    # mutants at all, being single-expression wrappers with nothing
-    # to mutate.
-    #
-    # Every survivor is an equivalent mutant — a change that cannot
-    # alter observable behaviour, so no test can kill it:
+    # Known survivors, all equivalent mutants — a change that
+    # cannot alter observable behaviour, so no test can kill it:
     #
     # - crypto Seal's `make` capacity hint. Capacity is a
     #   performance argument; append grows the slice regardless.
@@ -292,14 +310,52 @@ checks:
     # crypto/sign/ecdsap384 score 0% at the default and 100% at 400.
     # Timeouts are excluded from the efficacy denominator, so a
     # timing-starved run also reads as a flatteringly high score.
-    #
-    # Restore the per-layer list below once ergon passes the layer
-    # in the path rather than in the working directory.
-    packages: []
-    # - path: arena
-    #   score: 99
-    #   coverage: 99
-    #   ... one entry per top-level package
+    packages:
+      - path: arena
+        score: 99
+        coverage: 99
+      - path: batch
+        score: 99
+        coverage: 99
+      - path: clock
+        score: 99
+        coverage: 99
+      - path: crypto
+        score: 99
+        coverage: 99
+      - path: epoch
+        score: 99
+        coverage: 99
+      - path: errs
+        score: 99
+        coverage: 99
+      - path: fixed
+        score: 99
+        coverage: 99
+      - path: id
+        score: 99
+        coverage: 99
+      - path: page
+        score: 99
+        coverage: 99
+      - path: pool
+        score: 99
+        coverage: 99
+      - path: rand
+        score: 99
+        coverage: 99
+      - path: resilience
+        score: 99
+        coverage: 99
+      - path: tag
+        score: 99
+        coverage: 99
+      - path: telemetry
+        score: 99
+        coverage: 99
+      - path: version
+        score: 99
+        coverage: 99
     # gremlins invocation policy. Workers + test_cpu bound CPU
     # usage. File exclusion comes from `checks.excludes` /
     # `checks.skips` above; gremlins' `--exclude-files` is computed

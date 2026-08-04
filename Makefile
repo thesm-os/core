@@ -16,6 +16,17 @@
 
 ERGON ?= ergon
 
+# gobco, which backs the branch gate, resolves types through go/types
+# directly and cannot read the generic type alias in
+# go.thesmos.sh/testkit/model without this — it panics during
+# instrumentation. checks.excludes drops coretest from the branch
+# VERDICT but ergon still hands every workspace package to gobco, so
+# the instrumenter reaches the alias whatever the config says.
+#
+# gotypesalias=1 has been the toolchain default since Go 1.23, so
+# setting it explicitly is a no-op for every other target.
+export GODEBUG := gotypesalias=1
+
 help: ## Show this help (auto-generated from per-target annotations)
 	@awk 'BEGIN {FS = ":.*?## "; printf "Targets:\n"} \
 		/^[a-zA-Z][a-zA-Z_-]*:.*?## / {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}' \

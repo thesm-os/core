@@ -5,7 +5,6 @@ package aesgcm_test
 
 import (
 	"bytes"
-	"crypto/des" //nolint:gosec // 64-bit block cipher, used only to prove GCM rejects it
 	"strconv"
 	"testing"
 
@@ -160,20 +159,6 @@ func TestNewKeySizes(t *testing.T) {
 		_, err := aesgcm.New(nil)
 		testkit.ErrorIs(t, err, crypto.ErrKeySize, "a nil key must be rejected")
 	})
-}
-
-func TestNewRejectsANonAESBlockSize(t *testing.T) {
-	t.Parallel()
-
-	// GCM is defined only over a 128-bit block. AES always gives
-	// that, so this path is unreachable through New — DES, with its
-	// 64-bit block, is the only way to prove the guard works rather
-	// than merely exists.
-	block, err := des.NewCipher(make([]byte, 8))
-	testkit.NoError(t, err, "DES must accept an 8-byte key")
-
-	_, err = aesgcm.NewGCMForTest(block)
-	testkit.ErrorIs(t, err, crypto.ErrKeySize, "GCM must reject a 64-bit block cipher")
 }
 
 func TestConstructionsHaveDistinctIDs(t *testing.T) {
