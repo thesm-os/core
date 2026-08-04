@@ -320,18 +320,30 @@ checks:
       - path: clock
         score: 99
         coverage: 99
+      # reach 98.9, not 99: envelopeHeaderFixed in aead.go is a
+      # const, and a const declaration carries no coverage counter,
+      # so gremlins cannot reach that mutant by construction. Score
+      # stays at 99 — nothing crypto's suite reaches survives it.
       - path: crypto
         score: 99
-        coverage: 99
+        coverage: 98
       - path: epoch
         score: 99
         coverage: 99
       - path: errs
         score: 99
         coverage: 99
+      # Five equivalent mutants and four counter-less consts.
+      # Equivalent: Abs and magnitude test `f < Zero`, and at zero
+      # both arms return zero; round's `q > Max-step` and
+      # `q < Min+step` can never be equal, because q is always a
+      # multiple of step while Max and Min never are; and round's
+      # `f > Zero` is unreachable at zero, which returns earlier.
+      # Counter-less: Min's negation, maxWholeUnits' division, and
+      # pow10's array size are all const expressions.
       - path: fixed
-        score: 99
-        coverage: 99
+        score: 95
+        coverage: 96
       - path: id
         score: 99
         coverage: 99
@@ -344,15 +356,25 @@ checks:
       - path: rand
         score: 99
         coverage: 99
+      # Two equivalent mutants in retrier.go: `d > limit/2` reaches
+      # the cap either way, because doubling exactly half the cap IS
+      # the cap; and the budget ring's `steps < 1` only defers a roll
+      # by one bucket, since steps is recomputed from start on the
+      # next call and the deferred buckets are picked up then.
       - path: resilience
-        score: 99
+        score: 97
         coverage: 99
       - path: tag
         score: 99
         coverage: 99
+      # All eleven live in w3c.go. Five are unhex's arithmetic:
+      # only bit 0 of its result escapes (via &sampledFlag) and every
+      # mutation shifts the value by an even amount, so the observable
+      # bit never changes. Six are traceParentLen's const arithmetic,
+      # which carries no coverage counter.
       - path: telemetry
-        score: 99
-        coverage: 99
+        score: 86
+        coverage: 85
       - path: version
         score: 99
         coverage: 99
