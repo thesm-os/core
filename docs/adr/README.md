@@ -62,5 +62,7 @@ Start from [`docs/templates/ADR.md`](../templates/ADR.md).
 | [0007](0007-zero-digest-is-valid-chain-genesis.md) | The Zero Digest Is a Valid Chain Genesis | Accepted |
 | [0008](0008-core-defines-contracts-that-describe-io.md) | Core Defines Contracts That Describe IO | Accepted |
 | [0009](0009-logging-is-log-slog.md) | Logging Is log/slog | Accepted |
+| [0010](0010-one-package-name-one-concept.md) | One Package Name, One Concept | Accepted |
+| [0011](0011-test-doubles-named-for-behaviour.md) | Test Doubles Are Named for Their Behaviour | Accepted |
 
 [nygard]: https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions
