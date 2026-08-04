@@ -1,6 +1,6 @@
 module go.thesmos.sh/core
 
-go 1.26.2
+go 1.26.5
 
 require go.thesmos.sh/testkit v0.10.0
 

@@ -24,7 +24,7 @@ jobs:
         with:
           go-version-file: go.mod
       - uses: ./.github/actions/setup-ergon
-      - run: make vet
+      - run: make lint-vet
       - run: make build
 
   tidy:
