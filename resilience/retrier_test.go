@@ -15,7 +15,7 @@ import (
 	"go.thesmos.sh/core/clock/fake"
 	"go.thesmos.sh/core/errs"
 	"go.thesmos.sh/core/rand"
-	"go.thesmos.sh/core/rand/fixed"
+	"go.thesmos.sh/core/rand/constant"
 	"go.thesmos.sh/core/resilience"
 )
 
@@ -25,10 +25,10 @@ import (
 // Typed as the interface so the boxing happens once here rather than
 // on every call, which would otherwise show up as an allocation
 // against Backoff in the benchmark.
-var noJitter rand.Rand = fixed.FromFloat64(0)
+var noJitter rand.Rand = constant.FromFloat64(0)
 
 // halfJitter draws the midpoint, so a backoff is a known duration.
-var halfJitter rand.Rand = fixed.FromFloat64(0.5)
+var halfJitter rand.Rand = constant.FromFloat64(0.5)
 
 // errTransient is retryable; errPermanent is not.
 var (
@@ -531,7 +531,7 @@ func TestBackoff(t *testing.T) {
 		// backoff exists to prevent.
 		testkit.Equal(t, resilience.Backoff(noJitter, 1, base, peak), time.Duration(0),
 			"the bottom of the interval must be reachable")
-		testkit.True(t, resilience.Backoff(fixed.FromFloat64(0.99), 1, base, peak) > 98*time.Millisecond,
+		testkit.True(t, resilience.Backoff(constant.FromFloat64(0.99), 1, base, peak) > 98*time.Millisecond,
 			"the top of the interval must be reachable")
 	})
 }

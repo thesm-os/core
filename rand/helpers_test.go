@@ -10,7 +10,7 @@ import (
 	"go.thesmos.sh/testkit"
 
 	"go.thesmos.sh/core/rand"
-	"go.thesmos.sh/core/rand/fixed"
+	"go.thesmos.sh/core/rand/constant"
 	"go.thesmos.sh/core/rand/pcg"
 )
 
@@ -44,7 +44,7 @@ func TestFloat64(t *testing.T) {
 
 	t.Run("returns 0.0 when Uint64 returns 0", func(t *testing.T) {
 		t.Parallel()
-		testkit.Equal(t, rand.Float64(fixed.New(0)), 0.0,
+		testkit.Equal(t, rand.Float64(constant.New(0)), 0.0,
 			"Float64(0) must return 0.0")
 	})
 
@@ -69,8 +69,8 @@ func TestShuffle(t *testing.T) {
 		// never called.
 		called := false
 		swap := func(_, _ int) { called = true }
-		rand.Shuffle(fixed.New(0), 0, swap)
-		rand.Shuffle(fixed.New(0), 1, swap)
+		rand.Shuffle(constant.New(0), 0, swap)
+		rand.Shuffle(constant.New(0), 1, swap)
 		testkit.False(t, called, "Shuffle must not invoke swap for n <= 1")
 	})
 
@@ -117,13 +117,13 @@ func TestUint64N(t *testing.T) {
 
 	t.Run("returns 0 when n is 0", func(t *testing.T) {
 		t.Parallel()
-		testkit.Equal(t, rand.Uint64N(fixed.New(0xFFFFFFFFFFFFFFFF), 0), uint64(0),
+		testkit.Equal(t, rand.Uint64N(constant.New(0xFFFFFFFFFFFFFFFF), 0), uint64(0),
 			"Uint64N(_, 0) must return 0")
 	})
 
 	t.Run("returns 0 when n is 1", func(t *testing.T) {
 		t.Parallel()
-		testkit.Equal(t, rand.Uint64N(fixed.New(0xFFFFFFFFFFFFFFFF), 1), uint64(0),
+		testkit.Equal(t, rand.Uint64N(constant.New(0xFFFFFFFFFFFFFFFF), 1), uint64(0),
 			"Uint64N(_, 1) must return 0")
 	})
 
@@ -216,7 +216,7 @@ func TestZeroAlloc(t *testing.T) {
 	}{
 		{"Float64", func() { _ = rand.Float64(r) }},
 		{"Uint64N", func() { _ = rand.Uint64N(r, 100) }},
-		// pcg, not fixed.New(0): Shuffle uses Lemire's rejection
+		// pcg, not constant.New(0): Shuffle uses Lemire's rejection
 		// sampling, and a constant-zero source would hit the
 		// rejection band on every draw and loop forever for
 		// n >= 3.

@@ -14,8 +14,8 @@ import (
 
 	"go.thesmos.sh/core/crypto"
 	"go.thesmos.sh/core/crypto/aesgcm"
+	"go.thesmos.sh/core/rand/constant"
 	randcrypto "go.thesmos.sh/core/rand/crypto"
-	"go.thesmos.sh/core/rand/fixed"
 )
 
 // These tests cover the Seal / Open helpers, which are the seam's
@@ -359,13 +359,13 @@ func TestSealWithDeterministicSourceRepeatsTheNonce(t *testing.T) {
 	t.Parallel()
 
 	// Documents the hazard the Seal doc warns about rather than
-	// endorsing it: a fixed source produces the same nonce every
+	// endorsing it: a constant source produces the same nonce every
 	// call, which is exactly what must never happen in production.
 	a := newAEAD(t)
 
-	first, err := crypto.Seal(a, fixed.New(1), []byte("payload"), nil)
+	first, err := crypto.Seal(a, constant.New(1), []byte("payload"), nil)
 	testkit.NoError(t, err, "Seal must succeed")
-	second, err := crypto.Seal(a, fixed.New(1), []byte("payload"), nil)
+	second, err := crypto.Seal(a, constant.New(1), []byte("payload"), nil)
 	testkit.NoError(t, err, "Seal must succeed")
 
 	testkit.Equal(t, first, second,

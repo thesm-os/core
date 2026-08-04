@@ -23,7 +23,7 @@ seams every other thesmos library and framework depends on:
 - **Rand** — unified randomness seam exposing both `Uint64` and
   `Read([]byte)`. Implementations: `rand/pcg` (non-crypto PCG),
   `rand/crypto` (CSPRNG over `crypto/rand`), `rand/seeded`
-  (HMAC-SHA-256 deterministic CSPRNG), `rand/fixed` (constant for
+  (HMAC-SHA-256 deterministic CSPRNG), `rand/constant` (constant for
   tests). See [RFC-0002][rfc-0002].
 - **Crypto** — cryptographic-hash seam producing comparable
   fixed-shape digests covering 256/384/512-bit outputs in one
@@ -110,7 +110,7 @@ seams every other thesmos library and framework depends on:
   (128-bit time-sortable Crockford base32), `id/uuidv4`
   (128-bit random RFC 4122), `id/ksuid` (160-bit K-sortable
   base62 — alphanumeric encoding and 128-bit entropy floor
-  for gov / defense / fintech / health consumers), `id/fixed`
+  for gov / defense / fintech / health consumers), `id/constant`
   (constant for fixtures). Every subpackage ships `Format`
   and `Parse` for canonical serialization.
   See [RFC-0009][rfc-0009].

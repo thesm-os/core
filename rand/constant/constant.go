@@ -1,7 +1,7 @@
 // Copyright Thesmos 2026
 // SPDX-License-Identifier: Apache-2.0
 
-package fixed
+package constant
 
 import (
 	"encoding/binary"
@@ -40,7 +40,7 @@ func New(value uint64) Rand {
 // Useful for fault-injection tests that want to exercise a
 // specific probability threshold:
 //
-//	r := fixed.FromFloat64(0.5)
+//	r := constant.FromFloat64(0.5)
 //	rand.Float64(r) // == 0.5 (within 53-bit precision)
 func FromFloat64(v float64) Rand {
 	// Largest representable float64 strictly < 1.0.

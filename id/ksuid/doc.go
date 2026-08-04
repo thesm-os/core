@@ -60,6 +60,6 @@
 // [Generator] depends on a [clock.Clock] (for the timestamp)
 // and a [rand.Rand] (for the entropy). Production callers wire
 // the real clock and a CSPRNG-grade [rand/crypto.Rand]; tests
-// wire [clock/fake.Clock] and [rand/fixed.Rand] /
+// wire [clock/fake.Clock] and [rand/constant.Rand] /
 // [rand/seeded.Rand] for deterministic identifier streams.
 package ksuid

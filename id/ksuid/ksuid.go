@@ -34,7 +34,7 @@ const Epoch int64 = 1_400_000_000
 // (which would escape a slice through the interface boundary).
 // [Generator.Generate] inherits the underlying source's
 // [rand.Rand.Uint64] allocation contract: zero-alloc for
-// [rand/seeded], [rand/pcg], and [rand/fixed]; one alloc per
+// [rand/seeded], [rand/pcg], and [rand/constant]; one alloc per
 // call for [rand/crypto].
 type Generator struct {
 	clk clock.Clock

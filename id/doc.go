@@ -36,7 +36,7 @@
 //     encoded. Time-sortable at second granularity; identifier
 //     of choice when consumers want a longer entropy field than
 //     ULID provides.
-//   - [id/fixed] — constant-output generator for fixtures and
+//   - [id/constant] — constant-output generator for fixtures and
 //     deterministic tests.
 //
 // # Compile-time-distinct identifier types

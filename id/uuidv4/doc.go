@@ -20,7 +20,7 @@
 //
 // [Generator] depends on a [rand.Rand]. Production callers wire
 // [rand/crypto.Rand] (CSPRNG-grade); tests wire [rand/seeded.Rand]
-// or [rand/fixed.Rand] for deterministic identifier streams.
+// or [rand/constant.Rand] for deterministic identifier streams.
 //
 // # Encoding
 //

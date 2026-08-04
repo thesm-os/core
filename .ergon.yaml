@@ -260,7 +260,7 @@ checks:
     #   resilience      97.1% efficacy, 100% reach — 2 survivors
     #   telemetry/w3c   85.3% efficacy,  85% reach — 5 + 6 unreached
     #
-    # crypto/shake, id/fixed and telemetry/noop yield no viable
+    # crypto/shake, id/constant and telemetry/noop yield no viable
     # mutants at all, being single-expression wrappers with nothing
     # to mutate.
     #

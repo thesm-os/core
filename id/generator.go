@@ -10,19 +10,19 @@ package id
 // [go.thesmos.sh/core/clock] / [go.thesmos.sh/core/rand]. The
 // dependencies are injected at construction; consumers that want
 // deterministic test runs supply a [clock/fake.Clock] and a
-// [rand/fixed.Rand] (or [rand/seeded.Rand]) and get reproducible
+// [rand/constant.Rand] (or [rand/seeded.Rand]) and get reproducible
 // identifier streams.
 //
 // # Concurrency
 //
 // Implementations document their concurrency safety. The
 // canonical implementations in this module ([id/ulid],
-// [id/uuidv4], [id/ksuid], [id/fixed]) are safe for concurrent
+// [id/uuidv4], [id/ksuid], [id/constant]) are safe for concurrent
 // use under the concurrency guarantees of the underlying
 // [rand.Rand] and [clock.Clock].
 type Generator interface {
 	// Generate returns a fresh [ID]. Implementations must NOT
-	// return the [Zero] sentinel except via [id/fixed] seeded
+	// return the [Zero] sentinel except via [id/constant] seeded
 	// explicitly with the zero value.
 	//
 	//testkit:nondeterministic

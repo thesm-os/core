@@ -1,7 +1,7 @@
 // Copyright Thesmos 2026
 // SPDX-License-Identifier: Apache-2.0
 
-package fixed
+package constant
 
 import "go.thesmos.sh/core/id"
 

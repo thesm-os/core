@@ -59,7 +59,7 @@ func GeneratorContractAssertions() []GeneratorOption {
 
 // GeneratorAllowZeroAndDuplicates returns assertion replacements
 // for [GeneratorContractAssertions] for the deliberately-fixed
-// [id/fixed.Generator]: Generate may return [id.Zero], and
+// [id/constant.Generator]: Generate may return [id.Zero], and
 // consecutive calls return the same value. Only the Size
 // stability assertion still applies.
 //

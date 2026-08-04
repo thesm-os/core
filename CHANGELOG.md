@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `fixed` package: `fixed.Fixed64`, exact-scale decimal
+  arithmetic at eight places stored as one `int64`. Checked
+  `Add` / `Sub` / `Mul` / `Div` with 128-bit intermediates,
+  away-from-zero variants, `Round` / `RoundAway` quantisation to
+  a chosen place count, and a symmetric domain (`Min` is
+  `-math.MaxInt64`) that makes `Neg` and `Abs` total. Text form
+  renders all eight places and round-trips exactly; binary form
+  is 8 bytes big-endian two's complement and is a stable wire
+  contract. No `FromFloat` or `Float`, deliberately.
+  See RFC-0025.
 - `crypto.MAC` interface — keyed-authentication peer of
   `crypto.Hasher` with `ID`, `Algorithm`, `Size`, `Sign`,
   `Verify`, `NewStream`. Verify runs in constant time over the
@@ -188,6 +198,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `id/fixed` renamed to `id/constant`, and `rand/fixed` to
+  `rand/constant`. **Breaking**: both import paths change. The
+  name `fixed` now denotes fixed-point decimals, and a package
+  name in `core` may repeat only when the repeats denote the
+  same concept. Both packages are named for their behaviour —
+  which is what their own doc comments already called them.
+  See ADR-0010 and ADR-0011.
 - Hasher streams (`crypto/sha256`, `crypto/sha512`,
   `crypto/sha3`) — pooled at package level. `NewStream` is
   zero-allocation on the warm path; [crypto.Stream.Close]

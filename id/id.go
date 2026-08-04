@@ -55,7 +55,7 @@ type ID struct {
 }
 
 // Zero is the reserved zero value. Generators MUST NOT produce
-// [Zero] except via [id/fixed] explicitly seeded with it;
+// [Zero] except via [id/constant] explicitly seeded with it;
 // consumers treat [Zero] as "no identifier."
 var Zero = ID{}
 

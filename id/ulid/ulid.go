@@ -28,7 +28,7 @@ import (
 // escape a slice through the interface boundary). [Generator.New]
 // inherits the underlying source's [rand.Rand.Uint64] allocation
 // contract: zero-alloc for [rand/seeded], [rand/pcg], and
-// [rand/fixed]; one alloc per call for [rand/crypto] (an
+// [rand/constant]; one alloc per call for [rand/crypto] (an
 // unavoidable cost of the [io.Reader] indirection in
 // [rand/crypto.Rand.Uint64]).
 type Generator struct {
