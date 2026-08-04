@@ -37,6 +37,7 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+      - uses: ./.github/actions/setup-ergon
       - run: make bootstrap
       - run: make check
 
@@ -54,8 +55,12 @@ jobs:
         id: changelog
         run: |
           tag="${GITHUB_REF_NAME}"
-          # Extract the section between [tag] and the next [version] heading.
-          body=$(awk -v tag="$tag" '
+          # Headings follow Keep a Changelog and carry no "v" prefix,
+          # while the tag does. Strip it, or every release falls back
+          # to the placeholder below.
+          version="${tag#v}"
+          # Extract the section between [version] and the next heading.
+          body=$(awk -v tag="$version" '
             $0 ~ "^## \\[" tag "\\]" { found=1; next }
             found && /^## \[/         { exit }
             found                     { print }

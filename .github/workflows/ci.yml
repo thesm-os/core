@@ -23,6 +23,7 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+      - uses: ./.github/actions/setup-ergon
       - run: make vet
       - run: make build
 
@@ -35,6 +36,7 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+      - uses: ./.github/actions/setup-ergon
       - run: make check-tidy
 
   lint:
@@ -52,6 +54,7 @@ jobs:
             ~/go/bin
             ~/.npm
           key: go-tools-${{ hashFiles('Makefile') }}
+      - uses: ./.github/actions/setup-ergon
       - run: make bootstrap
       - run: make lint
 
@@ -64,6 +67,7 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+      - uses: ./.github/actions/setup-ergon
       - run: make test-race
 
   coverage:
@@ -79,5 +83,6 @@ jobs:
         with:
           path: ~/go/bin
           key: go-tools-${{ hashFiles('Makefile') }}
+      - uses: ./.github/actions/setup-ergon
       - run: make bootstrap
       - run: make check-coverage

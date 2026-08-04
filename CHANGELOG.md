@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-08-04
+
 ### Added
 
 - `fixed` package: `fixed.Fixed64`, exact-scale decimal
@@ -410,5 +412,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `docs/rfc/0011-arena.md` documenting the arena seam
   rationale.
 
-[Unreleased]: https://github.com/thesmos-ai/core/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/thesmos-ai/core/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/thesmos-ai/core/releases/tag/v0.6.1
 [0.5.0]: https://github.com/thesmos-ai/core/releases/tag/v0.5.0

@@ -1,0 +1,28 @@
+name: Setup ergon
+description: >-
+  Install a pinned ergon release onto the runner PATH. Every job that
+  invokes a make target needs this: the Makefile delegates to ergon,
+  and `make bootstrap` is itself `ergon bootstrap`, so ergon cannot
+  bootstrap itself.
+
+inputs:
+  version:
+    description: ergon release version, without the leading "v".
+    required: false
+    # Pinned rather than latest so a CI failure is attributable to the
+    # commit under test and not to a tool that moved underneath it.
+    # Bump here and the whole workflow set follows.
+    default: "1.6.6"
+
+runs:
+  using: composite
+  steps:
+    - name: Install ergon ${{ inputs.version }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        ver='${{ inputs.version }}'
+        url="https://github.com/thesm-os/ergon/releases/download/v${ver}/ergon_${ver}_linux_amd64.tar.gz"
+        curl --fail --silent --show-error --location --retry 3 "$url" \
+          | sudo tar -xz -C /usr/local/bin ergon
+        ergon version
