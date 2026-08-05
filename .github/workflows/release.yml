@@ -52,33 +52,33 @@ jobs:
           fetch-depth: 0
 
       - name: Extract changelog section for ${{ github.ref_name }}
-        id: changelog
         run: |
-          tag="${GITHUB_REF_NAME}"
           # Headings follow Keep a Changelog and carry no "v" prefix,
           # while the tag does. Strip it, or every release falls back
           # to the placeholder below.
-          version="${tag#v}"
+          version="${GITHUB_REF_NAME#v}"
           # Extract the section between [version] and the next heading.
-          body=$(awk -v tag="$version" '
+          awk -v tag="$version" '
             $0 ~ "^## \\[" tag "\\]" { found=1; next }
             found && /^## \[/         { exit }
             found                     { print }
-          ' CHANGELOG.md)
-          if [ -z "$body" ]; then
-            body="See [CHANGELOG.md](CHANGELOG.md)."
+          ' CHANGELOG.md > "${RUNNER_TEMP}/release-notes.md"
+          if [ ! -s "${RUNNER_TEMP}/release-notes.md" ]; then
+            echo "See [CHANGELOG.md](CHANGELOG.md)." > "${RUNNER_TEMP}/release-notes.md"
           fi
-          {
-            echo "body<<EOF"
-            echo "$body"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
 
       - name: Create release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # The notes travel as a file, never as text inside this
+        # script. A ${{ }} interpolation is substituted before bash
+        # parses the line, so a changelog body — full of backticks
+        # and quotes — would be EXECUTED as shell, not passed as an
+        # argument. That is an injection surface as well as a bug,
+        # and it is why the first release with real notes failed
+        # where every placeholder release before it succeeded.
         run: |
           gh release create "${GITHUB_REF_NAME}" \
             --title "${GITHUB_REF_NAME}" \
-            --notes "${{ steps.changelog.outputs.body }}" \
+            --notes-file "${RUNNER_TEMP}/release-notes.md" \
             --verify-tag
