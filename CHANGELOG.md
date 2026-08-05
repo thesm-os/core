@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.6.1] - 2026-08-04
+## [0.6.1] - 2026-08-05
 
 ### Added
 
@@ -200,6 +200,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Minimum Go version raised from 1.26.2 to 1.26.5. Go 1.26.2's
+  standard library carries GO-2026-4980, an escaper bypass in
+  `html/template` that is reachable through this module's test
+  infrastructure; a foundation library must not instruct its
+  dependents to build on a toolchain with a known escaper bypass.
+- `clock/fake.Clock.AwaitWaiters` now panics after a two-second
+  watchdog instead of spinning until something outside it
+  intervenes. Awaiting goroutines that never register is a
+  programmer error, and the panic names the count expected and the
+  count reached; previously the failure surfaced as the whole test
+  binary hitting its `go test` deadline, attributed to whichever
+  test happened to be running.
 - `id/fixed` renamed to `id/constant`, and `rand/fixed` to
   `rand/constant`. **Breaking**: both import paths change. The
   name `fixed` now denotes fixed-point decimals, and a package
