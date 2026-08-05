@@ -233,7 +233,33 @@ func TestAwaitWaiters(t *testing.T) {
 			clock.Sleep(c, time.Hour)
 		}()
 	}
-	t.Cleanup(func() { c.Advance(2 * time.Hour); wg.Wait() })
+	// Bounded rather than a bare wg.Wait(). The cleanup exists to
+	// release the sleepers, so it only blocks at all when something
+	// upstream is already broken — and an unbounded wait there turns
+	// that into the whole binary hanging until `go test -timeout`,
+	// reported against whichever test was running at the time.
+	//
+	// The interval is a watchdog, not a synchronisation budget:
+	// Advance wakes every due waiter before it returns, so the
+	// WaitGroup is already released by the time this runs.
+	t.Cleanup(func() {
+		c.Advance(2 * time.Hour)
+
+		drained := make(chan struct{})
+		go func() {
+			wg.Wait()
+			close(drained)
+		}()
+
+		const settle = 5 * time.Second
+
+		select {
+		case <-drained:
+		case <-time.After(settle):
+			t.Errorf("sleepers still blocked %s after advancing past every deadline",
+				settle)
+		}
+	})
 	c.AwaitWaiters(n)
 }
 

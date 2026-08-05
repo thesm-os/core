@@ -4,6 +4,7 @@
 package fake
 
 import (
+	"fmt"
 	"runtime"
 	"slices"
 	"sync"
@@ -24,6 +25,13 @@ type Clock struct {
 	mu      sync.Mutex
 	logical uint32
 	node    clock.NodeID
+
+	// awaitTimeout overrides the [Clock.AwaitWaiters] watchdog.
+	// Zero means the default. Per-instance rather than a
+	// package-level variable so the watchdog's own test can shorten
+	// it without mutating state other tests read — this package's
+	// tests run in parallel.
+	awaitTimeout time.Duration
 }
 
 // Compile-time interface check.
@@ -147,17 +155,69 @@ func (c *Clock) Set(t time.Time) {
 //	clk.Advance(6 * time.Second)
 //
 // AwaitWaiters yields to the scheduler between checks and is
-// therefore cheap when the goroutines are already running. It will
-// spin if the awaited goroutines never register; tests are expected
-// to bound their wait via the [testing] framework's own deadlines.
+// therefore cheap when the goroutines are already running.
+//
+// # Failure semantics
+//
+// Waiting for waiters that never arrive is a programmer error: the
+// awaited goroutines are not calling a blocking clock operation, or
+// n is larger than the number that ever will. AwaitWaiters panics
+// after a fixed watchdog interval rather than spinning until
+// something outside it intervenes.
+//
+// The interval is generous by design: it bounds goroutines that will
+// never register, not slow ones. A legitimate wait completes in
+// microseconds — the awaited goroutine only has to reach its first
+// blocking clock call — so the watchdog cannot make a correct test
+// flaky even on a contended runner, while still firing far inside
+// any plausible `go test -timeout`.
+//
+// Delegating that to the [testing] deadline, as this did previously,
+// makes the failure slow, silent, and reported against whichever
+// test happened to be running when the process died rather than the
+// one that called this. The panic names the count reached and the
+// count expected, which is the whole diagnosis.
+//
+// The bound is real elapsed time, not virtual time. It measures the
+// test process's patience with goroutines that will not start, which
+// no amount of [Clock.Advance] can affect.
+//
+// # Concurrency
+//
+// Safe for concurrent use. The spin holds c.mu only for the length
+// of a slice read.
 func (c *Clock) AwaitWaiters(n int) {
+	// Unset is the normal case: no constructor populates the field,
+	// so every ordinary Clock takes the default. Only this package's
+	// own watchdog test overrides it, per-instance, to avoid spending
+	// the whole interval proving the panic fires.
+	//
+	// The default lives here rather than in a package-level const so
+	// that it sits inside a function body, where it carries a
+	// coverage counter and its mutants are therefore reachable.
+	bound := c.awaitTimeout
+	if bound <= 0 {
+		bound = 5 * time.Second
+	}
+
+	deadline := time.Now().Add(bound)
+
 	for {
 		c.mu.Lock()
 		count := len(c.waiters)
 		c.mu.Unlock()
+
 		if count >= n {
 			return
 		}
+
+		if time.Now().After(deadline) {
+			panic(fmt.Sprintf( //nolint:forbidigo // a hung test helper is a programmer error; see Failure semantics
+				"clock/fake: AwaitWaiters(%d) gave up after %s with %d waiter(s) registered — "+
+					"the awaited goroutines never called a blocking clock operation",
+				n, bound, count))
+		}
+
 		runtime.Gosched()
 	}
 }
