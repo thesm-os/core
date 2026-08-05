@@ -16,6 +16,25 @@ import (
 	"go.thesmos.sh/core/pool"
 )
 
+// awaitGet bounds a Get that is expected to succeed.
+//
+// Get blocks until a value is free or its context is done, and
+// t.Context() is only cancelled once the test COMPLETES — so a Get
+// that never returns prevents the very cancellation that would
+// release it. The deadline turns that deadlock into a named failure
+// attributed to the test that caused it.
+//
+// Tests that deliberately cancel keep their own context; this is
+// only for the calls that should never block at all.
+func awaitGet(t *testing.T) context.Context {
+	t.Helper()
+
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	t.Cleanup(cancel)
+
+	return ctx
+}
+
 // counter builds values while recording how many were made, which is
 // how the lazy-construction and never-exceeds-limit properties are
 // observed.
@@ -76,7 +95,7 @@ func TestBoundedLazyConstruction(t *testing.T) {
 		p, made := mustBounded(t, 3)
 
 		for i := 1; i <= 3; i++ {
-			_, err := p.Get(t.Context())
+			_, err := p.Get(awaitGet(t))
 			testkit.NoError(t, err, "Get must succeed below the limit")
 			testkit.Equal(t, int(made.Load()), i, "each Get below the limit must build one value")
 			testkit.Equal(t, p.Created(), i, "Created must track construction")
@@ -87,11 +106,11 @@ func TestBoundedLazyConstruction(t *testing.T) {
 		t.Parallel()
 		p, made := mustBounded(t, 4)
 
-		v, err := p.Get(t.Context())
+		v, err := p.Get(awaitGet(t))
 		testkit.NoError(t, err, "Get must succeed")
 		p.Put(v)
 
-		got, err := p.Get(t.Context())
+		got, err := p.Get(awaitGet(t))
 		testkit.NoError(t, err, "Get must succeed")
 		testkit.Equal(t, got, v, "a returned value must be handed back out")
 		testkit.Equal(t, int(made.Load()), 1, "reuse must not construct")
@@ -115,7 +134,7 @@ func TestBoundedNeverExceedsLimit(t *testing.T) {
 	for range workers {
 		wg.Go(func() {
 			for range rounds {
-				v, err := p.Get(t.Context())
+				v, err := p.Get(awaitGet(t))
 				if err != nil {
 					return
 				}
@@ -138,12 +157,12 @@ func TestBoundedGetBlocksAtCapacity(t *testing.T) {
 		t.Parallel()
 		p, _ := mustBounded(t, 1)
 
-		held, err := p.Get(t.Context())
+		held, err := p.Get(awaitGet(t))
 		testkit.NoError(t, err, "the first Get must succeed")
 
 		got := make(chan *int, 1)
 		go func() {
-			v, err := p.Get(t.Context())
+			v, err := p.Get(awaitGet(t))
 			if err == nil {
 				got <- v
 			}
@@ -169,7 +188,7 @@ func TestBoundedGetBlocksAtCapacity(t *testing.T) {
 		t.Parallel()
 		p, _ := mustBounded(t, 1)
 
-		_, err := p.Get(t.Context())
+		_, err := p.Get(awaitGet(t))
 		testkit.NoError(t, err, "the first Get must succeed")
 
 		ctx, cancel := context.WithCancel(t.Context())
@@ -186,7 +205,7 @@ func TestBoundedGetBlocksAtCapacity(t *testing.T) {
 		// cancelled context asking for a value that is sitting right
 		// there should not be made to fail.
 		p, _ := mustBounded(t, 1)
-		v, err := p.Get(t.Context())
+		v, err := p.Get(awaitGet(t))
 		testkit.NoError(t, err, "the first Get must succeed")
 		p.Put(v)
 
@@ -213,7 +232,7 @@ func TestBoundedAccessors(t *testing.T) {
 		p, _ := mustBounded(t, 2)
 		testkit.Equal(t, p.Len(), 0, "a fresh pool holds nothing")
 
-		v, err := p.Get(t.Context())
+		v, err := p.Get(awaitGet(t))
 		testkit.NoError(t, err, "Get must succeed")
 		testkit.Equal(t, p.Len(), 0, "a value in a caller's hands is not available")
 
@@ -225,9 +244,9 @@ func TestBoundedAccessors(t *testing.T) {
 		t.Parallel()
 		p, _ := mustBounded(t, 2)
 
-		a, err := p.Get(t.Context())
+		a, err := p.Get(awaitGet(t))
 		testkit.NoError(t, err, "Get must succeed")
-		b, err := p.Get(t.Context())
+		b, err := p.Get(awaitGet(t))
 		testkit.NoError(t, err, "Get must succeed")
 		testkit.Equal(t, p.Created(), 2, "Created must count both")
 
@@ -247,7 +266,7 @@ func TestBoundedPutNeverBlocks(t *testing.T) {
 
 	values := make([]*int, 0, 3)
 	for range 3 {
-		v, err := p.Get(t.Context())
+		v, err := p.Get(awaitGet(t))
 		testkit.NoError(t, err, "Get must succeed")
 		values = append(values, v)
 	}

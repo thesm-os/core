@@ -12,7 +12,7 @@ inputs:
     # Pinned rather than latest so a CI failure is attributable to the
     # commit under test and not to a tool that moved underneath it.
     # Bump here and the whole workflow set follows.
-    default: "1.6.6"
+    default: "1.8.1"
 
 runs:
   using: composite
