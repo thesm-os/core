@@ -19,6 +19,38 @@ import (
 	"go.thesmos.sh/core/resilience"
 )
 
+// bounded is the context for every blocking call that is expected to
+// succeed.
+//
+// Do and Acquire block until released or until their context is done,
+// and t.Context() is only cancelled once the test COMPLETES — so a
+// call that never returns prevents the very cancellation that would
+// release it, and the binary hangs until go test gives up, attributed
+// to whichever test was running. A real-time deadline turns that
+// deadlock into a named failure against the test that caused it.
+//
+// The bound is real time, not virtual: it measures the process's
+// patience with a call that will never return, which no amount of
+// fake-clock advancement can affect. Tests that deliberately cancel
+// or deliberately block keep their own contexts.
+//
+// One second, not five. A legitimate Do or Acquire here completes in
+// microseconds — every wait is a fake clock or an already-free
+// permit — so the margin is still five orders of magnitude. The
+// ceiling matters more than the floor: a mutant escapes through this
+// bound, and the escape must land well inside gremlins' per-mutant
+// budget (coefficient x a ~0.2s baseline) even when two bounded
+// subtests trip in sequence. At five seconds that race was real and
+// the mutation run flaked; at one it is not close.
+func bounded(tb testing.TB) context.Context {
+	tb.Helper()
+
+	ctx, cancel := context.WithTimeout(tb.Context(), time.Second)
+	tb.Cleanup(cancel)
+
+	return ctx
+}
+
 // noJitter draws the bottom of every backoff interval, so a retry
 // proceeds without the test having to advance virtual time.
 //
@@ -138,7 +170,7 @@ func TestDo(t *testing.T) {
 		r := mustRetrier(t, retryConfig(fake.New(originUTC), noJitter))
 		fn, calls := failFor(0, errTransient)
 
-		got, err := resilience.Do(t.Context(), r, fn)
+		got, err := resilience.Do(bounded(t), r, fn)
 		testkit.NoError(t, err, "a successful call must return its value")
 		testkit.Equal(t, got, 1, "the value must be the one fn returned")
 		testkit.Equal(t, *calls, 1, "a success must not be retried")
@@ -149,7 +181,7 @@ func TestDo(t *testing.T) {
 		r := mustRetrier(t, retryConfig(fake.New(originUTC), noJitter))
 		fn, calls := failFor(1, errTransient)
 
-		got, err := resilience.Do(t.Context(), r, fn)
+		got, err := resilience.Do(bounded(t), r, fn)
 		testkit.NoError(t, err, "a retried call that succeeds must return its value")
 		testkit.Equal(t, got, 2, "the value must come from the successful attempt")
 		testkit.Equal(t, *calls, 2, "one retry must have been spent")
@@ -163,7 +195,7 @@ func TestDo(t *testing.T) {
 		r := mustRetrier(t, retryConfig(fake.New(originUTC), noJitter))
 		fn, calls := failFor(3, errPermanent)
 
-		_, err := resilience.Do(t.Context(), r, fn)
+		_, err := resilience.Do(bounded(t), r, fn)
 		testkit.ErrorIs(t, err, errPermanent, "the error must reach the caller unchanged")
 		testkit.Equal(t, *calls, 1, "a non-retryable error must not be retried")
 	})
@@ -175,7 +207,7 @@ func TestDo(t *testing.T) {
 		r := mustRetrier(t, retryConfig(fake.New(originUTC), noJitter))
 		fn, calls := failFor(3, testkit.TestError("unclassified"))
 
-		_, err := resilience.Do(t.Context(), r, fn)
+		_, err := resilience.Do(bounded(t), r, fn)
 		testkit.Error(t, err, "the failure must reach the caller")
 		testkit.Equal(t, *calls, 1, "an unclassified error must not be retried")
 	})
@@ -185,7 +217,7 @@ func TestDo(t *testing.T) {
 		r := mustRetrier(t, retryConfig(fake.New(originUTC), noJitter))
 		fn, calls := failFor(99, errTransient)
 
-		_, err := resilience.Do(t.Context(), r, fn)
+		_, err := resilience.Do(bounded(t), r, fn)
 		testkit.ErrorIs(t, err, errTransient, "the last error must reach the caller")
 		testkit.Equal(t, *calls, 3, "Attempts counts calls, not retries")
 	})
@@ -246,7 +278,7 @@ func TestDoContext(t *testing.T) {
 
 		got := make(chan error, 1)
 		go func() {
-			_, err := resilience.Do(t.Context(), r, fn)
+			_, err := resilience.Do(bounded(t), r, fn)
 			got <- err
 		}()
 
@@ -281,7 +313,7 @@ func TestDoBudget(t *testing.T) {
 		r := mustRetrier(t, halfBudget(fake.New(originUTC)))
 		fn, calls := failFor(99, errTransient)
 
-		_, err := resilience.Do(t.Context(), r, fn)
+		_, err := resilience.Do(bounded(t), r, fn)
 		testkit.ErrorIs(t, err, resilience.ErrBudget, "the refusal must name the budget")
 		testkit.ErrorIs(t, err, errTransient, "the failure that prompted it must survive")
 		testkit.Equal(t, *calls, 1, "the retry must not have run")
@@ -293,12 +325,12 @@ func TestDoBudget(t *testing.T) {
 
 		succeed, _ := failFor(0, errTransient)
 		for range 2 {
-			_, err := resilience.Do(t.Context(), r, succeed)
+			_, err := resilience.Do(bounded(t), r, succeed)
 			testkit.NoError(t, err, "the priming calls must succeed")
 		}
 
 		fn, calls := failFor(1, errTransient)
-		_, err := resilience.Do(t.Context(), r, fn)
+		_, err := resilience.Do(bounded(t), r, fn)
 		testkit.NoError(t, err, "three calls in the window pay for one retry")
 		testkit.Equal(t, *calls, 2, "the retry must have run")
 	})
@@ -312,14 +344,14 @@ func TestDoBudget(t *testing.T) {
 
 		succeed, _ := failFor(0, errTransient)
 		for range 2 {
-			_, err := resilience.Do(t.Context(), r, succeed)
+			_, err := resilience.Do(bounded(t), r, succeed)
 			testkit.NoError(t, err, "the priming calls must succeed")
 		}
 
 		c.Advance(2 * time.Minute)
 
 		fn, calls := failFor(1, errTransient)
-		_, err := resilience.Do(t.Context(), r, fn)
+		_, err := resilience.Do(bounded(t), r, fn)
 		testkit.ErrorIs(t, err, resilience.ErrBudget, "aged-out traffic must not pay")
 		testkit.Equal(t, *calls, 1, "the retry must not have run")
 	})
@@ -331,7 +363,7 @@ func TestDoBudget(t *testing.T) {
 
 		succeed, _ := failFor(0, errTransient)
 		for range 2 {
-			_, err := resilience.Do(t.Context(), r, succeed)
+			_, err := resilience.Do(bounded(t), r, succeed)
 			testkit.NoError(t, err, "the priming calls must succeed")
 		}
 
@@ -339,7 +371,7 @@ func TestDoBudget(t *testing.T) {
 		c.Advance(10 * time.Second)
 
 		fn, calls := failFor(1, errTransient)
-		_, err := resilience.Do(t.Context(), r, fn)
+		_, err := resilience.Do(bounded(t), r, fn)
 		testkit.NoError(t, err, "traffic still inside the window must pay")
 		testkit.Equal(t, *calls, 2, "the retry must have run")
 	})
@@ -353,7 +385,7 @@ func TestDoBudget(t *testing.T) {
 
 		succeed, _ := failFor(0, errTransient)
 		for range 2 {
-			_, err := resilience.Do(t.Context(), r, succeed)
+			_, err := resilience.Do(bounded(t), r, succeed)
 			testkit.NoError(t, err, "the priming calls must succeed")
 		}
 
@@ -363,7 +395,7 @@ func TestDoBudget(t *testing.T) {
 		}
 
 		fn, calls := failFor(1, errTransient)
-		_, err := resilience.Do(t.Context(), r, fn)
+		_, err := resilience.Do(bounded(t), r, fn)
 		testkit.ErrorIs(t, err, resilience.ErrBudget, "a full lap must clear the traffic")
 		testkit.Equal(t, *calls, 1, "the retry must not have run")
 	})
@@ -378,7 +410,7 @@ func TestDoBudget(t *testing.T) {
 
 		succeed, _ := failFor(0, errTransient)
 		for range 2 {
-			_, err := resilience.Do(t.Context(), r, succeed)
+			_, err := resilience.Do(bounded(t), r, succeed)
 			testkit.NoError(t, err, "the priming calls must succeed")
 		}
 
@@ -389,7 +421,7 @@ func TestDoBudget(t *testing.T) {
 		}
 
 		fn, calls := failFor(1, errTransient)
-		_, err := resilience.Do(t.Context(), r, fn)
+		_, err := resilience.Do(bounded(t), r, fn)
 		testkit.NoError(t, err, "traffic still inside the window must pay")
 		testkit.Equal(t, *calls, 2, "the retry must have run")
 	})
@@ -401,7 +433,7 @@ func TestDoBudget(t *testing.T) {
 		r := mustRetrier(t, cfg)
 
 		fn, calls := failFor(99, errTransient)
-		_, err := resilience.Do(t.Context(), r, fn)
+		_, err := resilience.Do(bounded(t), r, fn)
 		testkit.ErrorIs(t, err, resilience.ErrBudget, "no allowance means no retry")
 		testkit.Equal(t, *calls, 1, "the retry must not have run")
 	})
@@ -425,7 +457,7 @@ func TestDoMinRetries(t *testing.T) {
 		r := mustRetrier(t, floored(fake.New(originUTC)))
 		fn, calls := failFor(1, errTransient)
 
-		_, err := resilience.Do(t.Context(), r, fn)
+		_, err := resilience.Do(bounded(t), r, fn)
 		testkit.NoError(t, err, "the floor must cover the first retry")
 		testkit.Equal(t, *calls, 2, "the retry must have run")
 	})
@@ -436,7 +468,7 @@ func TestDoMinRetries(t *testing.T) {
 		r := mustRetrier(t, floored(fake.New(originUTC)))
 		fn, calls := failFor(99, errTransient)
 
-		_, err := resilience.Do(t.Context(), r, fn)
+		_, err := resilience.Do(bounded(t), r, fn)
 		testkit.ErrorIs(t, err, resilience.ErrBudget, "the second retry must exceed the floor")
 		testkit.Equal(t, *calls, 2, "exactly one retry must have run")
 	})
@@ -448,12 +480,12 @@ func TestDoMinRetries(t *testing.T) {
 
 		succeed, _ := failFor(0, errTransient)
 		for range 10 {
-			_, err := resilience.Do(t.Context(), r, succeed)
+			_, err := resilience.Do(bounded(t), r, succeed)
 			testkit.NoError(t, err, "the priming calls must succeed")
 		}
 
 		fn, calls := failFor(2, errTransient)
-		_, err := resilience.Do(t.Context(), r, fn)
+		_, err := resilience.Do(bounded(t), r, fn)
 		testkit.NoError(t, err, "the ratio must pay for more than the floor")
 		testkit.Equal(t, *calls, 3, "both retries must have run")
 	})
@@ -466,13 +498,13 @@ func TestDoMinRetries(t *testing.T) {
 		r := mustRetrier(t, floored(c))
 
 		spend, _ := failFor(1, errTransient)
-		_, err := resilience.Do(t.Context(), r, spend)
+		_, err := resilience.Do(bounded(t), r, spend)
 		testkit.NoError(t, err, "the floor must cover the first retry")
 
 		c.Advance(2 * time.Minute)
 
 		fn, calls := failFor(1, errTransient)
-		_, err = resilience.Do(t.Context(), r, fn)
+		_, err = resilience.Do(bounded(t), r, fn)
 		testkit.NoError(t, err, "a fresh window must restore the floor")
 		testkit.Equal(t, *calls, 2, "the retry must have run")
 	})

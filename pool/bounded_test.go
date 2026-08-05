@@ -26,10 +26,15 @@ import (
 //
 // Tests that deliberately cancel keep their own context; this is
 // only for the calls that should never block at all.
+//
+// One second: the deadline is an escape hatch, and its value is
+// arriving early — well inside the per-mutant budget a fast suite
+// earns under mutation testing. A legitimate Get completes in
+// microseconds, so the margin is still six orders of magnitude.
 func awaitGet(t *testing.T) context.Context {
 	t.Helper()
 
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	t.Cleanup(cancel)
 
 	return ctx

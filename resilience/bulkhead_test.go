@@ -49,7 +49,7 @@ func acquireAll(tb testing.TB, b *resilience.Bulkhead, n int) []func() {
 
 	releases := make([]func(), 0, n)
 	for range n {
-		release, err := b.Acquire(tb.Context())
+		release, err := b.Acquire(bounded(tb))
 		testkit.NoError(tb, err, "Acquire must succeed below the limit")
 		releases = append(releases, release)
 	}
@@ -114,7 +114,7 @@ func TestBulkheadLimit(t *testing.T) {
 		b := mustBulkhead(t, resilience.BulkheadConfig{Clock: fake.New(originUTC), Limit: 1})
 		defer acquireAll(t, b, 1)[0]()
 
-		_, err := b.Acquire(t.Context())
+		_, err := b.Acquire(bounded(t))
 		testkit.ErrorIs(t, err, resilience.ErrFull,
 			"a call arriving at the limit with no queue must be rejected at once")
 	})
@@ -126,7 +126,7 @@ func TestBulkheadLimit(t *testing.T) {
 		release := acquireAll(t, b, 1)[0]
 		release()
 
-		next, err := b.Acquire(t.Context())
+		next, err := b.Acquire(bounded(t))
 		testkit.NoError(t, err, "a freed permit must admit the next caller")
 		next()
 	})
@@ -144,7 +144,7 @@ func TestBulkheadQueue(t *testing.T) {
 
 		got := make(chan error, 1)
 		go func() {
-			release, err := b.Acquire(t.Context())
+			release, err := b.Acquire(bounded(t))
 			if err == nil {
 				release()
 			}
@@ -181,7 +181,7 @@ func TestBulkheadQueue(t *testing.T) {
 		}()
 		awaitQueued(t, b)
 
-		_, err := b.Acquire(t.Context())
+		_, err := b.Acquire(bounded(t))
 		testkit.ErrorIs(t, err, resilience.ErrFull,
 			"a caller arriving at a full limit and full queue must be rejected")
 	})
@@ -201,7 +201,7 @@ func TestBulkheadWait(t *testing.T) {
 
 		got := make(chan error, 1)
 		go func() {
-			_, err := b.Acquire(t.Context())
+			_, err := b.Acquire(bounded(t))
 			got <- err
 		}()
 
@@ -228,7 +228,7 @@ func TestBulkheadWait(t *testing.T) {
 
 		got := make(chan error, 1)
 		go func() {
-			release, err := b.Acquire(t.Context())
+			release, err := b.Acquire(bounded(t))
 			if err == nil {
 				release()
 			}
@@ -324,7 +324,16 @@ func TestBulkheadCancellationIsNotRejection(t *testing.T) {
 	awaitQueued(t, b)
 	cancel()
 
-	err := <-got
+	// Bounded like every other receive from an Acquire goroutine: a
+	// mutant that makes Acquire ignore its context leaves got empty
+	// forever, and a bare receive would hang the test against its
+	// own completion.
+	var err error
+	select {
+	case err = <-got:
+	case <-time.After(time.Second):
+		t.Fatal("Acquire never returned after cancellation")
+	}
 	testkit.ErrorIs(t, err, context.Canceled, "cancellation must surface as the context error")
 	testkit.ErrorIsNot(t, err, resilience.ErrFull, "cancellation is not a rejection")
 	testkit.ErrorIsNot(t, err, resilience.ErrWaitTimeout, "cancellation is not a timeout")
@@ -346,11 +355,11 @@ func TestBulkheadRelease(t *testing.T) {
 
 		testkit.Equal(t, b.InFlight(), 0, "the permit must be returned exactly once")
 
-		first, err := b.Acquire(t.Context())
+		first, err := b.Acquire(bounded(t))
 		testkit.NoError(t, err, "the freed permit must be available")
 		defer first()
 
-		_, err = b.Acquire(t.Context())
+		_, err = b.Acquire(bounded(t))
 		testkit.ErrorIs(t, err, resilience.ErrFull,
 			"a double release must not admit a second holder")
 	})
@@ -376,7 +385,7 @@ func TestBulkheadConcurrent(t *testing.T) {
 	)
 	for range workers {
 		wg.Go(func() {
-			release, err := b.Acquire(t.Context())
+			release, err := b.Acquire(bounded(t))
 			if err != nil {
 				return
 			}

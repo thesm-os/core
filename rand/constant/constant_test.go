@@ -5,7 +5,9 @@ package constant_test
 
 import (
 	"encoding/binary"
+	"fmt"
 	"testing"
+	"time"
 
 	"go.thesmos.sh/testkit"
 	"go.thesmos.sh/testkit/bench"
@@ -111,4 +113,43 @@ func TestFromFloat64(t *testing.T) {
 				"clamped value must remain strictly < 1.0")
 		}
 	})
+}
+
+// TestReadTerminates pins the one property of Read no other test can
+// observe: that it returns at all. See the seeded package's twin for
+// the full rationale — the fill loop here has the same shape and the
+// same mutation-induced failure mode, a spin that no assertion can
+// reach because Read never returns.
+func TestReadTerminates(t *testing.T) {
+	t.Parallel()
+
+	// Zero and one probe the empty-buffer edge; 8 is exactly one
+	// chunk; 9 and 100 force the copy to wrap mid-fill.
+	for _, size := range []int{0, 1, 8, 9, 100} {
+		done := make(chan struct{})
+
+		go func() {
+			_, _ = constant.New(0x42).Read(make([]byte, size))
+			close(done)
+		}()
+
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			// Panic, not t.Fatal — see the seeded twin: only a process
+			// crash escapes the parallel siblings this mutant has
+			// already hung.
+			//nolint:forbidigo // only a process crash escapes the parallel siblings this mutant has already hung; see the seeded twin
+			panic(fmt.Sprintf(
+				"constant: Read(len %d) did not return — the fill loop no longer terminates", size))
+		}
+	}
+
+	r := constant.New(0x42)
+	p := make([]byte, 100)
+
+	n, err := r.Read(p)
+
+	testkit.NoError(t, err, "Read must not fail")
+	testkit.Equal(t, n, len(p), "Read must fill the whole buffer")
 }

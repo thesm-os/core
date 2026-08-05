@@ -14,17 +14,29 @@ import (
 	"go.thesmos.sh/core/rand/pcg"
 )
 
-// scriptedRand returns a pre-set sequence of Uint64 values, looping
-// once exhausted. Used to force specific algorithmic branches
+// scriptedRand returns a pre-set sequence of Uint64 values and
+// panics once exhausted. Used to force specific algorithmic branches
 // (e.g. Lemire's rejection loop) that probabilistic inputs cannot
 // reliably trigger.
+//
+// Panicking rather than looping is load-bearing. Every test scripts
+// exactly the draws the algorithm should consume and asserts pos
+// afterwards, so a draw past the script is always a defect — and
+// under a mutated redraw condition, looping converts that defect
+// into an infinite spin the binary can only escape by deadline.
+// The panic turns the same defect into an immediate, named kill.
 type scriptedRand struct {
 	values []uint64
 	pos    int
 }
 
 func (s *scriptedRand) Uint64() uint64 {
-	v := s.values[s.pos%len(s.values)]
+	if s.pos >= len(s.values) {
+		// A draw past the script is a programmer error, and under a
+		// mutated redraw loop the alternative is an infinite spin.
+		panic("scriptedRand: draw past the script") //nolint:forbidigo // see above
+	}
+	v := s.values[s.pos]
 	s.pos++
 	return v
 }
@@ -66,11 +78,22 @@ func TestShuffle(t *testing.T) {
 		t.Parallel()
 		// Construct a fixed Rand that would deterministically swap
 		// indices if Shuffle ran the loop body. Verify swap is
-		// never called.
+		// never called — and panic if it is called OUT OF CONTRACT,
+		// because the called-flag assertion only runs after Shuffle
+		// returns. A mutant that turns the loop condition inside out
+		// runs it downward from i = n-1 forever, and a swap that
+		// ignores its indices lets that spin until the binary's
+		// deadline instead of dying at the first bad call.
 		called := false
-		swap := func(_, _ int) { called = true }
-		rand.Shuffle(constant.New(0), 0, swap)
-		rand.Shuffle(constant.New(0), 1, swap)
+		for _, n := range []int{0, 1} {
+			swap := func(i, j int) {
+				called = true
+				if i < 0 || i >= n || j < 0 || j > i {
+					panic("Shuffle: swap invoked outside its index contract") //nolint:forbidigo // see above
+				}
+			}
+			rand.Shuffle(constant.New(0), n, swap)
+		}
 		testkit.False(t, called, "Shuffle must not invoke swap for n <= 1")
 	})
 
@@ -208,7 +231,17 @@ func TestShuffleDeterministic(t *testing.T) {
 // t.Parallel.
 func TestZeroAlloc(t *testing.T) {
 	r := pcg.New(rand.Seed(1))
-	noopSwap := func(_, _ int) {}
+	// The swap asserts Shuffle's index contract (0 <= j <= i < n)
+	// rather than ignoring its arguments. Comparisons cost no
+	// allocations, so the measurement is undisturbed — and a mutant
+	// that runs the loop index away from its bounds dies here by
+	// panic instead of spinning until the test binary's deadline.
+	noopSwap := func(i, j int) {
+		if j < 0 || i < j || i >= 16 {
+			//nolint:forbidigo // an out-of-contract index is a programmer error, and the panic is what stops a runaway loop index from spinning forever
+			panic("Shuffle: swap invoked outside its index contract")
+		}
+	}
 
 	cases := []struct {
 		name string

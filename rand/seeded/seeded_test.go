@@ -5,7 +5,9 @@ package seeded_test
 
 import (
 	"bytes"
+	"fmt"
 	"testing"
+	"time"
 
 	"go.thesmos.sh/testkit"
 	"go.thesmos.sh/testkit/bench"
@@ -128,4 +130,59 @@ func TestRead(t *testing.T) {
 		_, _ = seeded.New(rand.Seed(0xabcd)).Read(got)
 		testkit.Equal(t, got, want, "seeded.New(0xabcd) Read(64) must byte-match the golden vector")
 	})
+}
+
+// TestReadTerminates pins the one property of Read no other test can
+// observe: that it returns at all.
+//
+// Read's fill loop is correct, but a mutated bound — `<` to `<=`, or
+// the refill condition inverted — leaves `written` stuck and the
+// loop spinning forever. Every other Read test calls it directly, so
+// under such a mutant they do not fail; they hang, and the binary
+// dies by deadline attributed to whichever test was running. Running
+// Read on a watchdogged goroutine converts that hang into a named
+// failure here.
+//
+// The bound is real time and generous: a legitimate Read of these
+// sizes completes in microseconds, so one second cannot flake on a
+// contended runner. It is deliberately the smallest deadline in
+// play — the escape must land inside a per-mutant budget that also
+// funds compiling the mutated tree in a cold cache.
+func TestReadTerminates(t *testing.T) {
+	t.Parallel()
+
+	// Zero and one probe the empty-buffer edge; 32 is exactly one
+	// HMAC block; 33 and 100 force refills mid-fill.
+	for _, size := range []int{0, 1, 8, 32, 33, 100} {
+		done := make(chan struct{})
+
+		go func() {
+			r := seeded.New(rand.Seed(1))
+			_, _ = r.Read(make([]byte, size))
+			close(done)
+		}()
+
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			// Panic, not t.Fatal. A mutant that hangs this Read hangs
+			// every parallel sibling that calls Read directly, and a
+			// Fatal only exits THIS test's goroutine — the process then
+			// waits on the stuck siblings until the deadline anyway.
+			// Crashing the process is the entire job of this watchdog.
+			//nolint:forbidigo // only a process crash escapes the parallel siblings this mutant has already hung; see the comment above
+			panic(fmt.Sprintf(
+				"seeded: Read(len %d) did not return — the fill loop no longer terminates", size))
+		}
+	}
+
+	// Anchor the helper's other guarantee so this test cannot rot
+	// into liveness-only: a terminated Read must also have filled.
+	r := seeded.New(rand.Seed(1))
+	p := make([]byte, 100)
+
+	n, err := r.Read(p)
+
+	testkit.NoError(t, err, "Read must not fail")
+	testkit.Equal(t, n, len(p), "Read must fill the whole buffer")
 }
