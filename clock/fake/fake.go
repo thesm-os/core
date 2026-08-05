@@ -195,9 +195,17 @@ func (c *Clock) AwaitWaiters(n int) {
 	// The default lives here rather than in a package-level const so
 	// that it sits inside a function body, where it carries a
 	// coverage counter and its mutants are therefore reachable.
+	//
+	// Two seconds, not five. A legitimate registration completes in
+	// microseconds, so the margin is still six orders of magnitude —
+	// and the panic is an escape hatch whose whole value is arriving
+	// EARLY relative to every other deadline in play. Under mutation
+	// testing the per-mutant budget is a small multiple of a suite's
+	// baseline, and a five-second escape against a six-second budget
+	// was a coin flip that made kills flake into timeouts.
 	bound := c.awaitTimeout
 	if bound <= 0 {
-		bound = 5 * time.Second
+		bound = 2 * time.Second
 	}
 
 	deadline := time.Now().Add(bound)
