@@ -383,15 +383,50 @@ checks:
     # `checks.skips` above; gremlins' `--exclude-files` is computed
     # at call time.
     #
-    # timeout_coefficient is high because the budget is a multiple
-    # of the package's own baseline test time, so the packages with
-    # the fastest suites get the tightest budget — and a suite that
-    # runs in milliseconds cannot compile and run again inside a
-    # small multiple of that. Measured: crypto/localkey and
-    # crypto/sign/ecdsap384 report 0% at 40 and 100% at 400, having
-    # timed out on every mutant rather than failing any. Nothing
-    # here is slow enough for 400 to cost real wall-clock time,
-    # because a genuinely hanging mutant is rare.
+    # timeout_coefficient is a per-mutant budget expressed as a
+    # multiple of the package's own baseline test time, measured on
+    # the machine running it — so the value is runner-independent: a
+    # slow CI box measures a slower baseline and the budget scales
+    # with it.
+    #
+    # The coefficient is also the direct price of every mutant that
+    # genuinely never terminates, and this module has eleven of
+    # those — loop-termination mutants in rand's fill and rejection
+    # loops and fixed's pad loop, all in correct code that no test
+    # can kill faster than its deadline. At 400 they alone cost
+    # ~230s of the sweep; at 60 the classifications across every
+    # layer are byte-identical and the sweep drops by ~4x.
+    #
+    # 120 is bracketed by measurement on both sides. The floor: at
+    # 30, crypto/localkey times out on all twelve of its mutants —
+    # the budget for a millisecond-baseline package no longer covers
+    # compiling the mutated tree — and a timed-out mutant is
+    # EXCLUDED from the efficacy denominator, so a too-tight budget
+    # does not fail loudly; it silently shrinks the evaluated set.
+    # At 60 the tests' own escape hatches (watchdog panics, deadline
+    # contexts, bounded selects — one to two seconds each, and they
+    # chain across sequential subtests) raced resilience's 3.8s
+    # budget and kills flaked into timeouts run to run. The budget
+    # must also fund compiling the mutated tree: gremlins builds in
+    # a fresh cache every run, so the first mutants of a run carry
+    # ~3s of dependency compilation inside their own deadlines, and
+    # at 120-240 the layers with the fastest suites still flaked one
+    # or two early mutants per run. 400 is the value at which no
+    # spurious timeout has been observed in any layer.
+    # The ceiling: every mutant that genuinely never terminates
+    # burns its full budget by construction, so the coefficient is
+    # the direct price of each one — two remain in the module, both
+    # in fixed's pad loop, costing ~22s each at this value.
+    #
+    # A layer that flakes between killed and timed out under this
+    # budget is not asking for a bigger coefficient. Every such case
+    # so far was a test observing a hang only by outliving it — an
+    # index-ignoring swap, a bare receive, an unbounded spin — and
+    # the fix was making the test die at the first out-of-contract
+    # event. The number that would let the coefficient drop is a
+    # warm, shared GOCACHE for the gremlins subprocess: Go's build
+    # cache is content-addressed, so mutated sources cannot poison
+    # it, and the cold-compile term vanishes.
     gremlins:
       workers: 2
       test_cpu: 2
