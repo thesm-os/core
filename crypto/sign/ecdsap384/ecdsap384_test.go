@@ -189,6 +189,8 @@ func TestNewVerifier(t *testing.T) {
 		// X=1, Y=2 is on Curve=P384 nominally but off the curve
 		// mathematically. NewVerifier reaches KeyIDFromPub →
 		// pub.Bytes(), which rejects.
+		//nolint:staticcheck // raw coordinates are deprecated because they
+		// can build an invalid key. An invalid key is the subject here.
 		pub := &ecdsa.PublicKey{
 			Curve: elliptic.P384(),
 			X:     big.NewInt(1),
@@ -305,6 +307,8 @@ func TestKeyIDStability(t *testing.T) {
 		// check. The KeyID frozen below locks the exact
 		// SEC 1 + SHA-256 + truncate pipeline.
 		params := elliptic.P384().Params()
+		//nolint:staticcheck // the published coordinates of G are the
+		// fixture; parsing an encoding of them would test the parser.
 		pub := &ecdsa.PublicKey{
 			Curve: elliptic.P384(),
 			X:     params.Gx,
@@ -319,6 +323,8 @@ func TestKeyIDStability(t *testing.T) {
 
 	t.Run("rejects off-curve point", func(t *testing.T) {
 		t.Parallel()
+		//nolint:staticcheck // raw coordinates are deprecated because they
+		// can build an invalid key. An invalid key is the subject here.
 		pub := &ecdsa.PublicKey{
 			Curve: elliptic.P384(),
 			X:     big.NewInt(1),
