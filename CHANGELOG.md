@@ -24,15 +24,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   visibility on `Put`, one consistent object per open reader, and
   cursor-chain completeness over a quiescent store. `blob/memory`
   is the reference implementation; `coretest/blobtest` holds every
-  implementation to the laws. See RFC-0028.
-- `cas` package: the content-addressed storage seam. `Store` is
-  bound to one hashing algorithm; `Put` verifies that the data
-  hashes to its address and stores nothing on disagreement,
-  reports whether it wrote (exactly once under concurrency), and
-  there is no `Delete` — deletion is consumer-side garbage
-  collection, and erasure of meaning is crypto-shred. `cas/memory`
-  is the reference implementation; `coretest/castest` holds every
-  implementation to the same laws. See RFC-0027.
+  implementation to the laws. `PutBytes` and `GetBytes` sit beside
+  the seam for values that fit in memory, so a small object does
+  not cost its caller a reader at every call site. See RFC-0028.
+- `cas` package: the content-addressed storage seam. A `Store` is
+  bound to one hashing algorithm and reports it through `Hasher`,
+  so a store received through injection can be written to without
+  a second parameter carrying the binding. `Put` verifies that the
+  data hashes to its address, stores nothing on disagreement, and
+  reports a write exactly once under concurrency. `Get` appends
+  into a caller-supplied buffer, so a reader at rate allocates
+  nothing. There is no `Delete` — deletion is consumer-side garbage
+  collection, and erasure of meaning is crypto-shred.
+
+  Large objects use the optional `Streamer` capability. The
+  `PutStream` and `GetStream` functions take a store's native path
+  when it has one and buffer when it does not, so both are correct
+  against any `Store`. `cas/memory` is the reference implementation
+  and implements `Streamer` natively: it hashes during the read
+  rather than after it, and serves stored bytes without copying
+  them. `coretest/castest` holds every implementation to the laws,
+  including the streaming ones. See RFC-0027.
 - `epoch` fencing (RFC-0026): `Admissible` and the `Watermark`
   adapter kit apply the admit-equal fence laws over the existing
   `Epoch` type; `ErrFenced` reports revoked authority and
