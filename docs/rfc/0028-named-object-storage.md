@@ -2,7 +2,7 @@
 rfc: 0028
 title: Named Object Storage
 author: Roy Klopper <roy.klopper@stealthscale.io>
-status: Draft
+status: Accepted
 created: 2026-08-05
 updated: 2026-08-05
 discussion: none
@@ -58,7 +58,7 @@ the bytes, so values are whole; here the key is independent of
 content, so a body can flow through without ever being held.
 
 Why here: keys are strings, proofs are `version.Version`, pages are
-`page.Page`, instants are `clock.Instant`, absence classifies
+`page.Page`, timestamps are stdlib `time.Time`, absence classifies
 through `errs`, and fencing composes per RFC-0026. Every noun is
 `core`'s; only the verbs are missing — and this is the second kind
 the ADR-0012 charter names, after `cas`.
@@ -93,10 +93,13 @@ type Info struct {
     // deletion cycles.
     Version version.Version
 
-    // ModTime is the backend's record of the last write. Mapping
-    // backend timestamps onto the instant type is the adapter's
-    // concern; precision is whatever the backend affords.
-    ModTime clock.Instant
+    // ModTime is the backend's record of the last write. It is
+    // stdlib time rather than an instant: an external fact
+    // reported by storage is not an event in this deployment's
+    // causal chain, which is the distinction clock.Instant's own
+    // documentation draws. On the Info returned by Put it MAY be
+    // zero; Get and Stat MUST report it.
+    ModTime time.Time
 
     // ContentType is carried opaquely: stored as given on Put,
     // returned as stored, never inferred. Empty means unspecified.
@@ -118,10 +121,13 @@ type PutOptions struct {
 
 // Store is named object storage.
 //
-// Keys are non-empty strings; the empty key classifies as
-// errs.Invalid on every method. Beyond non-emptiness the key space
-// is the backend's, and prefix narrowing in List is defined by
-// byte-prefix over whatever keys exist.
+// A key satisfies ValidKey: an io/fs.ValidPath, excluding the
+// root, at most 1024 bytes with elements of at most 255. One that
+// does not classifies as errs.Invalid on every method. Nesting is
+// unrestricted — a store may hold "a/b" and "a/b/c" — and a
+// backend whose namespace cannot hold both encodes around it.
+// Prefix narrowing in List is byte-prefix and is not governed by
+// ValidKey; a prefix may end part-way through an element.
 //
 // # Fencing
 //
@@ -158,26 +164,28 @@ type Store interface {
     // as errs.NotFound.
     Stat(ctx context.Context, key string) (Info, error)
 
-    // Delete removes the object subject to opts.
+    // Delete removes the object, subject to ifMatch.
     //
-    // An unconditional Delete of an absent key succeeds: the
-    // caller's intent — that it be gone — holds. A conditional
-    // Delete (IfMatch) of an absent key returns
-    // version.ErrMismatch: the precondition names a version and no
-    // version is present. IfNoneMatch on a Delete classifies as
-    // errs.Invalid — a create-only precondition on a removal is a
-    // category error, not a request.
-    Delete(ctx context.Context, key string, opts version.WriteOptions) error
+    // The zero version deletes unconditionally, and an
+    // unconditional Delete of an absent key succeeds: the caller's
+    // intent — that it be gone — holds. A non-zero ifMatch naming
+    // any other version, including against an absent key, returns
+    // version.ErrMismatch. The parameter is one version rather
+    // than the full WriteOptions because a create-only
+    // precondition on a removal is a category error, and a
+    // parameter that accepts one in order to reject it is a
+    // mistake the caller can write.
+    Delete(ctx context.Context, key string, ifMatch version.Version) error
 
     // List enumerates objects whose keys begin with prefix, one
     // page per call; the empty prefix enumerates everything.
     //
-    // Order is unpromised, but a cursor is complete: over a store
-    // with no concurrent mutation, one cursor walked to exhaustion
-    // yields every matching object exactly once. Under concurrent
-    // mutation, objects present for the cursor's whole lifetime
-    // are yielded exactly once; objects created or deleted
-    // mid-walk may or may not appear.
+    // Order is unpromised, but a cursor chain is complete: over a
+    // store with no concurrent mutation, walking pages to
+    // exhaustion yields every matching object exactly once. Under
+    // concurrent mutation, objects present for the walk's whole
+    // lifetime are yielded exactly once; objects created or
+    // deleted mid-walk may or may not appear.
     List(ctx context.Context, prefix string, p page.Page) (page.Cursor[Info], error)
 }
 ```
@@ -221,8 +229,7 @@ and assert the complement never leaks.
 | absent key on `Get`/`Stat` | classifies `errs.NotFound` |
 | `IfMatch` failed on `Put`/`Delete` | `version.ErrMismatch` |
 | `IfNoneMatch` failed on `Put` | `version.ErrExists` |
-| `IfNoneMatch` on `Delete` | classifies `errs.Invalid` |
-| empty key, any method | classifies `errs.Invalid` |
+| key fails `ValidKey`, any method | classifies `errs.Invalid` |
 | ctx done | the context's error |
 
 No new sentinels. The proof axis already has its vocabulary, and
@@ -243,25 +250,37 @@ func New(c clock.Clock) *Store
 Bodies buffer fully before the atomic swap, which makes atomic
 visibility and reader snapshots trivial; versions come from a
 monotonic counter that never reuses a value across deletions, per
-the version package's uniqueness requirement; `List` snapshots
-matching keys at call time and pages over the snapshot. The clock
-is injected because `ModTime` is an instant and this module does
-not read wall time ambiently.
+the version package's uniqueness requirement. `List` snapshots one
+page of matching keys per call, in key order so the continuation
+token — the last key of a truncated page — is stable across calls;
+an untruncated page, even an exactly-full one, carries no token,
+so a walk never pays a spurious empty round trip. The clock is
+injected so a test drives `ModTime` deterministically, and this
+module does not read wall time ambiently.
 
 ### Conformance: `coretest/blobtest`
 
 `AssertStore(t, newStore func(c clock.Clock) blob.Store)` drives
 the laws: streamed round-trip with `ContentType` and `Size`
 fidelity; unconditional overwrite changing `Version`; `IfMatch`
-success and stale rejection; `IfNoneMatch` create-once and
-`ErrExists` on collision; the delete table above; atomic visibility
+success and stale rejection; `IfNoneMatch` create-once, `ErrExists`
+on collision, and the specific-version form rejecting exactly the
+version it names; the delete table above; atomic visibility
 under a failing reader, a failed precondition, and a cancelled
 context; reader snapshot under overwrite; cursor completeness at
-page sizes 1, 2, and N+1 with and without prefix; empty-key
-rejection on every method; and Version uniqueness across
+page sizes 1, 2, and N+1 with and without prefix; rejection of
+every key shape `ValidKey` refuses, on every method; a nested key
+coexisting with its own prefix; and Version uniqueness across
 delete-and-recreate — the ABA requirement inherited from `version`,
 asserted here because a filesystem-style adapter synthesizing
 versions is exactly where it breaks.
+
+The suite compares `Key`, `Version`, `Size` and `ContentType`
+between what `Put` reports and what `Get` and `Stat` report, and
+requires only that `ModTime` is set on the read side. A
+whole-struct comparison would oblige an adapter over a backend that
+reports no timestamp on write to read the object back once per
+write, to populate a field the comparison did not mean to assert.
 
 ### Edge cases
 
