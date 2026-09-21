@@ -87,6 +87,15 @@ var errReadMismatch = errors.New("cas: bytes read do not hash to the address the
 // every method rejects it with an error classifying as
 // [go.thesmos.sh/core/errs.Invalid] before touching storage.
 //
+// # Context
+//
+// ctx cancels the call and bounds its duration. A method returns
+// the context's error when it is already done, and abandons work in
+// progress when it becomes done mid-call — a streamed transfer
+// cancelled part-way commits nothing. It carries no authorisation
+// and selects no backend; an implementation that reads values from
+// it is adding vocabulary this seam does not define.
+//
 // # Fencing
 //
 // A Store implementation MAY be fenced: the fence epoch binds at

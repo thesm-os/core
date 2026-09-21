@@ -14,6 +14,7 @@ import (
 	"errors"
 	"io"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -44,8 +45,28 @@ func (r *failingReader) Read(p []byte) (int, error) {
 	return n, nil
 }
 
+// assertSameObject compares the fields that identify one written
+// object.
+//
+// [blob.Info.ModTime] is excluded on purpose. A backend may not
+// report a timestamp on write — the S3 family returns an entity tag
+// and no last-modified — so requiring Put's Info to equal Get's in
+// full would cost such an adapter a second request per write to
+// fill in a field nothing here compares. The seam says Put MAY
+// return a zero ModTime and Get and Stat MUST report one, and the
+// cases assert exactly that.
+func assertSameObject(t *testing.T, got, want blob.Info, who string) {
+	t.Helper()
+
+	testkit.Equal(t, got.Key, want.Key, who+" must carry the same key")
+	testkit.Equal(t, got.Version, want.Version, who+" must carry the same version")
+	testkit.Equal(t, got.Size, want.Size, who+" must report the same size")
+	testkit.Equal(t, got.ContentType, want.ContentType,
+		who+" must carry the same content type")
+}
+
 // AssertStore drives a [blob.Store] implementation through the blob
-// laws. newStore must return an empty store reading instants from
+// laws. newStore must return an empty store reading wall time from
 // the given clock; the suite constructs a fresh one per case, so
 // cases cannot observe each other's contents.
 func AssertStore(t *testing.T, newStore func(c clock.Clock) blob.Store) {
@@ -85,15 +106,16 @@ func AssertStore(t *testing.T, newStore func(c clock.Clock) blob.Store) {
 		testkit.Equal(t, info.Size, int64(10), "Put's Info must report the consumed size")
 		testkit.Equal(t, info.ContentType, "text/plain", "ContentType must round-trip")
 		testkit.False(t, info.Version.IsZero(), "a written object must carry a version")
-		testkit.False(t, info.ModTime.IsZero(), "a written object must carry an instant")
 
 		body, got := read(t, s, "k")
 		testkit.Equal(t, body, "hello blob", "the body must round-trip")
-		testkit.Equal(t, got, info, "Get's Info must match Put's")
+		assertSameObject(t, got, info, "Get's Info")
+		testkit.False(t, got.ModTime.IsZero(), "Get must report a modification time")
 
 		stat, err := s.Stat(t.Context(), "k")
 		testkit.NoError(t, err, "Stat must succeed")
-		testkit.Equal(t, stat, info, "Stat must match without the body")
+		assertSameObject(t, stat, info, "Stat's Info")
+		testkit.False(t, stat.ModTime.IsZero(), "Stat must report a modification time")
 	})
 
 	t.Run("an overwrite issues a new version", func(t *testing.T) {
@@ -165,28 +187,24 @@ func AssertStore(t *testing.T, newStore func(c clock.Clock) blob.Store) {
 
 		s := fresh()
 
-		testkit.NoError(t, s.Delete(t.Context(), "absent", version.WriteOptions{}),
+		testkit.NoError(t, s.Delete(t.Context(), "absent", ""),
 			"unconditional delete of an absent key succeeds — the intent holds")
 
 		testkit.ErrorIs(t,
-			s.Delete(t.Context(), "absent", version.WriteOptions{IfMatch: "v"}),
+			s.Delete(t.Context(), "absent", "v"),
 			version.ErrMismatch,
-			"IfMatch against an absent key names a version that is not there")
+			"a version named against an absent key is not there")
 
 		info := put(t, s, "k", "body", blob.PutOptions{})
 
 		testkit.ErrorIs(t,
-			s.Delete(t.Context(), "k", version.WriteOptions{IfMatch: "stale"}),
+			s.Delete(t.Context(), "k", "stale"),
 			version.ErrMismatch,
-			"IfMatch naming a superseded version must not delete")
-
-		derr := s.Delete(t.Context(), "k", version.WriteOptions{IfNoneMatch: version.Wildcard})
-		testkit.Equal(t, errs.Classify(derr), errs.Invalid,
-			"a create-only precondition cannot guard a removal")
+			"a superseded version must not delete")
 
 		testkit.NoError(t,
-			s.Delete(t.Context(), "k", version.WriteOptions{IfMatch: info.Version}),
-			"IfMatch naming the current version must delete")
+			s.Delete(t.Context(), "k", info.Version),
+			"the current version must delete")
 
 		_, err := s.Stat(t.Context(), "k")
 		testkit.Equal(t, errs.Classify(err), errs.NotFound,
@@ -322,22 +340,59 @@ func AssertStore(t *testing.T, newStore func(c clock.Clock) blob.Store) {
 		}
 	})
 
-	t.Run("the empty key is Invalid on every method", func(t *testing.T) {
+	t.Run("a key the seam rejects is Invalid on every method", func(t *testing.T) {
 		t.Parallel()
 
+		// The rules are the standard library's so a caller can write
+		// a key without knowing the backend. A store that admitted
+		// any of these would take a key that escapes the root on one
+		// backend and works on another.
+		s0 := fresh()
+
+		for name, key := range map[string]string{
+			"empty":             "",
+			"the root":          ".",
+			"rooted":            "/k",
+			"trailing slash":    "k/",
+			"empty element":     "a//b",
+			"dot element":       "a/./b",
+			"dot-dot element":   "a/../b",
+			"escaping the root": "../k",
+			"over the length":   strings.Repeat("a", blob.MaxKeyLen+1),
+			"over the element":  strings.Repeat("a", blob.MaxKeyElemLen+1) + "/b",
+		} {
+			testkit.False(t, blob.ValidKey(key), name+" must not satisfy ValidKey")
+
+			_, perr := s0.Put(t.Context(), key, bytes.NewReader(nil), blob.PutOptions{})
+			testkit.Equal(t, errs.Classify(perr), errs.Invalid, "Put must reject "+name)
+
+			_, _, gerr := s0.Get(t.Context(), key)
+			testkit.Equal(t, errs.Classify(gerr), errs.Invalid, "Get must reject "+name)
+
+			_, serr := s0.Stat(t.Context(), key)
+			testkit.Equal(t, errs.Classify(serr), errs.Invalid, "Stat must reject "+name)
+
+			testkit.Equal(t, errs.Classify(s0.Delete(t.Context(), key, "")),
+				errs.Invalid, "Delete must reject "+name)
+		}
+	})
+
+	t.Run("a nested key coexists with its own prefix", func(t *testing.T) {
+		t.Parallel()
+
+		// Object stores hold both, so the seam does. A backend whose
+		// namespace cannot must encode around it rather than refuse
+		// the caller's key.
 		s := fresh()
 
-		_, perr := s.Put(t.Context(), "", bytes.NewReader(nil), blob.PutOptions{})
-		testkit.Equal(t, errs.Classify(perr), errs.Invalid, "Put must reject the empty key")
+		put(t, s, "a/b", "the shorter one", blob.PutOptions{})
+		put(t, s, "a/b/c", "the longer one", blob.PutOptions{})
 
-		_, _, gerr := s.Get(t.Context(), "")
-		testkit.Equal(t, errs.Classify(gerr), errs.Invalid, "Get must reject the empty key")
+		shorter, _ := read(t, s, "a/b")
+		longer, _ := read(t, s, "a/b/c")
 
-		_, serr := s.Stat(t.Context(), "")
-		testkit.Equal(t, errs.Classify(serr), errs.Invalid, "Stat must reject the empty key")
-
-		testkit.Equal(t, errs.Classify(s.Delete(t.Context(), "", version.WriteOptions{})),
-			errs.Invalid, "Delete must reject the empty key")
+		testkit.Equal(t, shorter, "the shorter one", "the shorter key must keep its body")
+		testkit.Equal(t, longer, "the longer one", "the longer key must keep its body")
 	})
 
 	t.Run("absence classifies as NotFound", func(t *testing.T) {
@@ -370,7 +425,7 @@ func AssertStore(t *testing.T, newStore func(c clock.Clock) blob.Store) {
 		_, err = s.Stat(ctx, "k")
 		testkit.ErrorIs(t, err, context.Canceled, "Stat must surface the context")
 
-		testkit.ErrorIs(t, s.Delete(ctx, "k", version.WriteOptions{}), context.Canceled,
+		testkit.ErrorIs(t, s.Delete(ctx, "k", ""), context.Canceled,
 			"Delete must surface the context")
 
 		_, err = s.List(ctx, "", page.Page{})
@@ -386,7 +441,7 @@ func AssertStore(t *testing.T, newStore func(c clock.Clock) blob.Store) {
 		s := fresh()
 
 		first := put(t, s, "k", "one", blob.PutOptions{})
-		testkit.NoError(t, s.Delete(t.Context(), "k", version.WriteOptions{}),
+		testkit.NoError(t, s.Delete(t.Context(), "k", ""),
 			"Delete must succeed")
 
 		second := put(t, s, "k", "two", blob.PutOptions{})

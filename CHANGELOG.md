@@ -26,7 +26,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is the reference implementation; `coretest/blobtest` holds every
   implementation to the laws. `PutBytes` and `GetBytes` sit beside
   the seam for values that fit in memory, so a small object does
-  not cost its caller a reader at every call site. See RFC-0028.
+  not cost its caller a reader at every call site.
+
+  `ValidKey` defines the key space by `io/fs.ValidPath` plus a
+  1024-byte key bound and a 255-byte element bound, so a key a
+  caller writes travels between an object store and a filesystem
+  rather than working on one and escaping the root on the other.
+  Nesting is permitted, because the object stores this seam fronts
+  permit it; a backend whose namespace cannot hold `a/b` beside
+  `a/b/c` encodes around it. `Delete` takes one optional version
+  rather than the whole write-options struct, so a create-only
+  precondition on a removal is no longer a value a caller can pass
+  and the store then reject. `Info.ModTime` is `time.Time`, which
+  is what the clock package's own documentation asks for, and it
+  MAY be zero on the `Info` a `Put` returns: a backend that reports
+  no timestamp on write would otherwise owe a second request per
+  write. See RFC-0028.
 - `cas` package: the content-addressed storage seam. A `Store` is
   bound to one hashing algorithm and reports it through `Hasher`,
   so a store received through injection can be written to without

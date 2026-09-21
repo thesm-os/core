@@ -41,9 +41,8 @@ const defaultPageSize = 50
 // spelling; they exist so this package's own tests can assert cause
 // identity as well as class.
 var (
-	errEmptyKey       = errors.New("memory: the empty key is not a name")
-	errAbsent         = errors.New("memory: object not present")
-	errDeleteCreation = errors.New("memory: IfNoneMatch is a create-only precondition and cannot guard a delete")
+	errBadKey = errors.New("memory: key is not a valid object name")
+	errAbsent = errors.New("memory: object not present")
 )
 
 // object pairs a stored body with its metadata. The body slice is
@@ -95,7 +94,9 @@ type Store struct {
 // Compile-time interface check.
 var _ blob.Store = (*Store)(nil)
 
-// New returns an empty [Store] reading instants from c.
+// New returns an empty [Store] reading wall time from c. The
+// clock is injected so a test drives [blob.Info.ModTime]
+// deterministically; the value is stdlib time, not an instant.
 func New(c clock.Clock) *Store {
 	return &Store{c: c, m: map[string]object{}}
 }
@@ -110,7 +111,7 @@ func New(c clock.Clock) *Store {
 // Error modes, all leaving the store untouched:
 //
 //   - ctx already done — the context's error, unwrapped.
-//   - key is empty — classifies as [errs.Invalid].
+//   - key fails [blob.ValidKey] — classifies as [errs.Invalid].
 //   - r fails mid-stream — the reader's error, unwrapped; the
 //     bytes consumed so far are discarded.
 //   - opts.Write.IfMatch names a version other than the stored one,
@@ -129,8 +130,8 @@ func (s *Store) Put(ctx context.Context, key string, r io.Reader, opts blob.PutO
 		return blob.Info{}, err
 	}
 
-	if key == "" {
-		return blob.Info{}, errs.WithClass(errEmptyKey, errs.Invalid)
+	if !blob.ValidKey(key) {
+		return blob.Info{}, errs.WithClass(errBadKey, errs.Invalid)
 	}
 
 	data, err := io.ReadAll(r)
@@ -160,7 +161,7 @@ func (s *Store) Put(ctx context.Context, key string, r io.Reader, opts blob.PutO
 		Key:         key,
 		Size:        int64(len(data)),
 		Version:     version.Version(strconv.FormatUint(s.seq, 10)),
-		ModTime:     s.c.Now(),
+		ModTime:     s.c.Time(),
 		ContentType: opts.ContentType,
 	}
 	s.m[key] = object{data: data, info: info}
@@ -175,9 +176,9 @@ func (s *Store) Put(ctx context.Context, key string, r io.Reader, opts blob.PutO
 // replaces the object, so an open reader keeps serving the version
 // named by the Info it was returned with.
 //
-// Error modes: a done ctx returns the context's error; the empty
-// key classifies as [errs.Invalid]; absence classifies as
-// [errs.NotFound].
+// Error modes: a done ctx returns the context's error; a key
+// [blob.ValidKey] rejects classifies as [errs.Invalid]; absence
+// classifies as [errs.NotFound].
 //
 // # Allocation contract
 //
@@ -187,8 +188,8 @@ func (s *Store) Get(ctx context.Context, key string) (io.ReadCloser, blob.Info, 
 		return nil, blob.Info{}, err
 	}
 
-	if key == "" {
-		return nil, blob.Info{}, errs.WithClass(errEmptyKey, errs.Invalid)
+	if !blob.ValidKey(key) {
+		return nil, blob.Info{}, errs.WithClass(errBadKey, errs.Invalid)
 	}
 
 	s.mu.Lock()
@@ -204,9 +205,9 @@ func (s *Store) Get(ctx context.Context, key string) (io.ReadCloser, blob.Info, 
 
 // Stat returns metadata without the body.
 //
-// Error modes: a done ctx returns the context's error; the empty
-// key classifies as [errs.Invalid]; absence classifies as
-// [errs.NotFound].
+// Error modes: a done ctx returns the context's error; a key
+// [blob.ValidKey] rejects classifies as [errs.Invalid]; absence
+// classifies as [errs.NotFound].
 //
 // # Allocation contract
 //
@@ -216,8 +217,8 @@ func (s *Store) Stat(ctx context.Context, key string) (blob.Info, error) {
 		return blob.Info{}, err
 	}
 
-	if key == "" {
-		return blob.Info{}, errs.WithClass(errEmptyKey, errs.Invalid)
+	if !blob.ValidKey(key) {
+		return blob.Info{}, errs.WithClass(errBadKey, errs.Invalid)
 	}
 
 	s.mu.Lock()
@@ -231,32 +232,27 @@ func (s *Store) Stat(ctx context.Context, key string) (blob.Info, error) {
 	return obj.info, nil
 }
 
-// Delete removes the object subject to opts.
+// Delete removes the object, subject to ifMatch.
 //
-// An unconditional delete of an absent key succeeds — the caller's
+// The zero [version.Version] deletes unconditionally, and an
+// unconditional delete of an absent key succeeds — the caller's
 // intent holds. Error modes:
 //
 //   - ctx already done — the context's error, unwrapped.
-//   - key is empty — classifies as [errs.Invalid].
-//   - opts.IfNoneMatch set — classifies as [errs.Invalid]; a
-//     create-only precondition cannot guard a removal.
-//   - opts.IfMatch set while the key is absent, or naming a version
+//   - key fails [blob.ValidKey] — classifies as [errs.Invalid].
+//   - ifMatch set while the key is absent, or naming a version
 //     other than the stored one — [version.ErrMismatch].
 //
 // # Allocation contract
 //
 // Zero alloc on the happy path.
-func (s *Store) Delete(ctx context.Context, key string, opts version.WriteOptions) error {
+func (s *Store) Delete(ctx context.Context, key string, ifMatch version.Version) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 
-	if key == "" {
-		return errs.WithClass(errEmptyKey, errs.Invalid)
-	}
-
-	if !opts.IfNoneMatch.IsZero() {
-		return errs.WithClass(errDeleteCreation, errs.Invalid)
+	if !blob.ValidKey(key) {
+		return errs.WithClass(errBadKey, errs.Invalid)
 	}
 
 	s.mu.Lock()
@@ -264,7 +260,7 @@ func (s *Store) Delete(ctx context.Context, key string, opts version.WriteOption
 
 	cur, exists := s.m[key]
 
-	if m := opts.IfMatch; !m.IsZero() {
+	if m := ifMatch; !m.IsZero() {
 		if !exists || cur.info.Version != m {
 			return version.ErrMismatch
 		}
