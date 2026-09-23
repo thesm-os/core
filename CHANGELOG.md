@@ -108,9 +108,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every `Breaker` shares one `fsm.Spec` built when the package
   initialises. Behaviour is unchanged: the existing tests pass
   unchanged, and a differential test matched the hand-written
-  version on 600,000 random operations. New tests cover outcomes that
-  arrive while a circuit is open. An `Allow` and `Record` pair costs
-  3 to 5 ns more and still allocates nothing.
+  version on 600,000 random operations. An `Allow` and `Record` pair
+  costs 3 to 5 ns more. `Allow`, `Record` and `State` do not allocate
+  for a target that has a circuit, and `TestZeroAlloc` asserts it.
 - `coretest/castest` returns the errors of its concurrent-`Put`
   races to the test goroutine. A failed `Put` inside the race called
   `t.Fatalf` on its own goroutine, which the `testing` package

@@ -23,8 +23,9 @@ const target = "inventory"
 
 var errDependency = errors.New("resilience_test: dependency failed")
 
-// breakerConfig is the shared shape: open after 2 consecutive
-// failures, stay open 30s, close after 2 consecutive probe successes.
+// breakerConfig returns the configuration every test uses: a circuit
+// opens after 2 consecutive failures, refuses calls for 30s, and closes
+// after 2 consecutive probe successes.
 func breakerConfig(c *fake.Clock) resilience.BreakerConfig {
 	return resilience.BreakerConfig{
 		Clock:            c,
@@ -80,7 +81,7 @@ func TestNewBreaker(t *testing.T) {
 func TestBreakerOpens(t *testing.T) {
 	t.Parallel()
 
-	t.Run("stays closed below the threshold", func(t *testing.T) {
+	t.Run("allows calls below the threshold", func(t *testing.T) {
 		t.Parallel()
 		b := mustBreaker(t, fake.New(originUTC))
 
@@ -106,8 +107,6 @@ func TestBreakerOpens(t *testing.T) {
 
 	t.Run("a success resets the failure count", func(t *testing.T) {
 		t.Parallel()
-		// Consecutive failures, not cumulative: a dependency that
-		// fails, succeeds, fails is not down.
 		b := mustBreaker(t, fake.New(originUTC))
 
 		b.Allow(target)
@@ -122,7 +121,6 @@ func TestBreakerOpens(t *testing.T) {
 
 	t.Run("circuits are independent per target", func(t *testing.T) {
 		t.Parallel()
-		// One dependency being down says nothing about another.
 		b := mustBreaker(t, fake.New(originUTC))
 
 		for range 2 {
@@ -153,12 +151,12 @@ func TestBreakerHalfOpen(t *testing.T) {
 		return b, c
 	}
 
-	t.Run("stays open until the interval elapses", func(t *testing.T) {
+	t.Run("refuses calls until the interval elapses", func(t *testing.T) {
 		t.Parallel()
 		b, c := open(t)
 
 		c.Advance(29 * time.Second)
-		testkit.False(t, b.Allow(target), "the circuit must stay open before the interval")
+		testkit.False(t, b.Allow(target), "the circuit must refuse calls before the interval ends")
 
 		c.Advance(2 * time.Second)
 		testkit.True(t, b.Allow(target), "the circuit must admit a probe after the interval")
@@ -166,15 +164,12 @@ func TestBreakerHalfOpen(t *testing.T) {
 
 	t.Run("admits exactly one probe", func(t *testing.T) {
 		t.Parallel()
-		// Without the claim, "the interval elapsed" would release the
-		// full load at once — indistinguishable from never having
-		// opened, for a dependency still down.
 		b, c := open(t)
 		c.Advance(31 * time.Second)
 
 		testkit.True(t, b.Allow(target), "the first caller must take the probe slot")
 		testkit.False(t, b.Allow(target), "a second caller must be refused")
-		testkit.False(t, b.Allow(target), "and a third")
+		testkit.False(t, b.Allow(target), "a third caller must be refused")
 		testkit.Equal(t, b.State(target), resilience.HalfOpen, "State must report HalfOpen")
 	})
 
@@ -190,7 +185,7 @@ func TestBreakerHalfOpen(t *testing.T) {
 		c.Advance(29 * time.Second)
 		testkit.False(t, b.Allow(target), "the full interval must elapse again")
 		c.Advance(2 * time.Second)
-		testkit.True(t, b.Allow(target), "and then admit another probe")
+		testkit.True(t, b.Allow(target), "the circuit must admit a probe after the second interval")
 	})
 
 	t.Run("closes after consecutive probe successes", func(t *testing.T) {
@@ -204,14 +199,12 @@ func TestBreakerHalfOpen(t *testing.T) {
 		}
 
 		testkit.Equal(t, b.State(target), resilience.Closed, "the circuit must close")
-		testkit.True(t, b.Allow(target), "and admit freely")
-		testkit.True(t, b.Allow(target), "without claiming a probe slot")
+		testkit.True(t, b.Allow(target), "a closed circuit must admit a call")
+		testkit.True(t, b.Allow(target), "a closed circuit must admit a second call")
 	})
 
 	t.Run("a failure resets the probe successes", func(t *testing.T) {
 		t.Parallel()
-		// A dependency answering one request and falling over must
-		// not get the whole traffic back.
 		b, c := open(t)
 
 		c.Advance(31 * time.Second)
@@ -234,7 +227,7 @@ func TestBreakerRecord(t *testing.T) {
 		b := mustBreaker(t, fake.New(originUTC))
 		b.Record("never-allowed", true)
 		testkit.Equal(t, b.State("never-allowed"), resilience.Closed,
-			"a target with no circuit must stay closed")
+			"a target with no circuit must report Closed")
 	})
 
 	t.Run("State of an unknown target is Closed", func(t *testing.T) {
@@ -246,8 +239,6 @@ func TestBreakerRecord(t *testing.T) {
 
 	t.Run("State reports HalfOpen once the interval elapses", func(t *testing.T) {
 		t.Parallel()
-		// Before any caller claims the probe slot. State describes
-		// what the next caller will find, not what has happened.
 		c := fake.New(originUTC)
 		b := mustBreaker(t, c)
 		for range 2 {
@@ -263,9 +254,6 @@ func TestBreakerRecord(t *testing.T) {
 
 	t.Run("a late failure while open extends the interval", func(t *testing.T) {
 		t.Parallel()
-		// A call admitted before the circuit opened reports after it
-		// did. The dependency is still failing, so the interval starts
-		// again from that report.
 		c := fake.New(originUTC)
 		b := mustBreaker(t, c)
 		for range 3 {
@@ -288,8 +276,6 @@ func TestBreakerRecord(t *testing.T) {
 
 	t.Run("a late success while open resets the failure count", func(t *testing.T) {
 		t.Parallel()
-		// After a late success, one more late failure is below the
-		// threshold, so it does not restart the interval.
 		c := fake.New(originUTC)
 		b := mustBreaker(t, c)
 		for range 4 {
@@ -306,11 +292,8 @@ func TestBreakerRecord(t *testing.T) {
 		testkit.True(t, b.Allow(target), "the original interval must end with a probe")
 	})
 
-	t.Run("a late failure that reaches the threshold again extends the interval", func(t *testing.T) {
+	t.Run("a second late failure after a late success extends the interval", func(t *testing.T) {
 		t.Parallel()
-		// After a late success, the second late failure brings the
-		// count back to the threshold exactly, and that is enough to
-		// restart the interval.
 		c := fake.New(originUTC)
 		b := mustBreaker(t, c)
 		for range 5 {
@@ -325,7 +308,7 @@ func TestBreakerRecord(t *testing.T) {
 		b.Record(target, true)
 
 		c.Advance(25 * time.Second)
-		testkit.False(t, b.Allow(target), "reaching the threshold again must restart the interval")
+		testkit.False(t, b.Allow(target), "the second late failure must restart the interval")
 	})
 }
 
@@ -350,12 +333,11 @@ func TestStateString(t *testing.T) {
 	t.Run("an out-of-range value renders numerically", func(t *testing.T) {
 		t.Parallel()
 		testkit.Equal(t, resilience.State(99).String(), "State(99)",
-			"an unrecognised state must stay distinguishable in a log line")
+			"an unrecognised state must be distinguishable in a log line")
 	})
 
 	t.Run("Closed is the zero value", func(t *testing.T) {
 		t.Parallel()
-		// A circuit with no history must read as passing traffic.
 		var zero resilience.State
 		testkit.Equal(t, zero, resilience.Closed, "the zero State must be Closed")
 	})
@@ -383,7 +365,7 @@ func TestBreakerCall(t *testing.T) {
 		for range 2 {
 			_, err := resilience.Call(t.Context(), b, target,
 				func(context.Context) (int, error) { return 0, transient })
-			testkit.ErrorIs(t, err, errDependency, "the dependency's error must reach the caller")
+			testkit.ErrorIs(t, err, errDependency, "Call must return the dependency's error")
 		}
 
 		_, err := resilience.Call(t.Context(), b, target,
@@ -393,8 +375,6 @@ func TestBreakerCall(t *testing.T) {
 
 	t.Run("a non-tripping class does not open the circuit", func(t *testing.T) {
 		t.Parallel()
-		// A dependency correctly rejecting a bad request is not a
-		// failing dependency.
 		b := mustBreaker(t, fake.New(originUTC))
 		invalid := errs.WithClass(errDependency, errs.Invalid)
 
@@ -409,17 +389,12 @@ func TestBreakerCall(t *testing.T) {
 
 	t.Run("ErrOpen classifies as Transient", func(t *testing.T) {
 		t.Parallel()
-		// So a retry wrapped around a breaker backs off rather than
-		// giving up.
 		testkit.Equal(t, errs.Classify(resilience.ErrOpen), errs.Transient,
 			"ErrOpen must be retryable")
 	})
 
 	t.Run("a cancelled caller does not count as a failure", func(t *testing.T) {
 		t.Parallel()
-		// The dependency did not fail; the caller stopped waiting.
-		// Counting it would open a circuit against a healthy
-		// dependency during a cancellation storm.
 		b := mustBreaker(t, fake.New(originUTC))
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
@@ -450,15 +425,15 @@ func TestBreakerCall(t *testing.T) {
 			func(context.Context) (int, error) { called = true; return 0, nil })
 
 		testkit.ErrorIs(t, err, resilience.ErrOpen, "the call must be refused")
-		testkit.False(t, called, "an open circuit must not reach the dependency")
+		testkit.False(t, called, "an open circuit must not run fn")
 	})
 }
 
+// TestBreakerConcurrent checks that 64 callers arriving after the
+// interval elapses receive one probe between them.
 func TestBreakerConcurrent(t *testing.T) {
 	t.Parallel()
 
-	// Exactly one probe may be admitted no matter how many callers
-	// arrive at the moment the interval elapses.
 	c := fake.New(originUTC)
 	b := mustBreaker(t, c)
 
@@ -485,6 +460,38 @@ func TestBreakerConcurrent(t *testing.T) {
 	wg.Wait()
 
 	testkit.Equal(t, allowed, 1, "exactly one caller may take the probe slot")
+}
+
+// TestZeroAlloc enforces the allocation contract of Allow, Record and
+// State for a target that has a circuit. testing.AllocsPerRun reads a
+// process-global malloc counter, so this test does not call
+// t.Parallel.
+func TestZeroAlloc(t *testing.T) {
+	c := fake.New(originUTC)
+
+	closed := mustBreaker(t, c)
+	closed.Allow(target)
+
+	opened := mustBreaker(t, c)
+	for range 2 {
+		opened.Allow(target)
+		opened.Record(target, true)
+	}
+
+	tests := []struct {
+		name string
+		fn   func()
+	}{
+		{"Breaker.Allow", func() { _ = closed.Allow(target) }},
+		{"Breaker.Allow on an open circuit", func() { _ = opened.Allow(target) }},
+		{"Breaker.Record", func() { closed.Record(target, false) }},
+		{"Breaker.State", func() { _ = opened.State(target) }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			testkit.Equal(t, testing.AllocsPerRun(1000, tt.fn), float64(0), tt.name+" must not allocate")
+		})
+	}
 }
 
 func BenchmarkBreakerAllow(b *testing.B) {
