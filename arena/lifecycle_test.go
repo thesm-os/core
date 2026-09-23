@@ -4,6 +4,7 @@
 package arena_test
 
 import (
+	"bytes"
 	"runtime"
 	"testing"
 
@@ -11,6 +12,22 @@ import (
 
 	"go.thesmos.sh/core/arena"
 )
+
+// spare returns a copy of the arena's spare capacity, read the way an
+// appender passed to AppendVia can read it.
+func spare(t *testing.T, a *arena.Arena) []byte {
+	t.Helper()
+
+	var seen []byte
+	_, err := a.AppendVia(func(dst []byte) ([]byte, error) {
+		seen = bytes.Clone(dst[len(dst):cap(dst)])
+
+		return dst, nil
+	})
+	testkit.NoError(t, err, "a no-op appender must succeed")
+
+	return seen
+}
 
 func TestReset(t *testing.T) {
 	t.Parallel()
@@ -33,6 +50,50 @@ func TestReset(t *testing.T) {
 		got := a.Append([]byte("second"))
 		testkit.Equal(t, string(got), "second", "Append after Reset must return the new value")
 		testkit.Equal(t, a.Len(), len("second"), "Len after Reset+Append must equal new value length")
+	})
+
+	t.Run("zeroes the bytes written", func(t *testing.T) {
+		t.Parallel()
+		a := arena.NewWithCapacity(64)
+		a.Append([]byte("secret"))
+		a.Reset()
+		testkit.Equal(t, spare(t, a), make([]byte, 64), "no written byte may survive Reset")
+	})
+
+	t.Run("zeroes the bytes a TruncateTo rewind left behind", func(t *testing.T) {
+		t.Parallel()
+		a := arena.NewWithCapacity(64)
+		a.Append([]byte("keep"))
+		m := a.Mark()
+		a.Append([]byte("secret"))
+		testkit.True(t, a.TruncateTo(m), "the marker is current")
+		a.Reset()
+		testkit.Equal(t, spare(t, a), make([]byte, 64), "bytes past the rewound length must be zeroed")
+	})
+
+	t.Run("zeroes the spare capacity a failed AppendVia wrote into", func(t *testing.T) {
+		t.Parallel()
+		a := arena.NewWithCapacity(64)
+		_, err := a.AppendVia(func(dst []byte) ([]byte, error) {
+			_ = append(dst, "secret"...)
+
+			return nil, testkit.TestError("encode failed")
+		})
+		testkit.Error(t, err, "the appender's failure must be returned")
+		a.Reset()
+		testkit.Equal(t, spare(t, a), make([]byte, 64), "bytes a failed appender wrote must be zeroed")
+	})
+
+	t.Run("accepts an appender that returned a smaller buffer", func(t *testing.T) {
+		t.Parallel()
+		a := arena.NewWithCapacity(64)
+		m := a.Mark()
+		a.Append(make([]byte, 32))
+		testkit.True(t, a.TruncateTo(m), "the marker is current")
+		_, err := a.AppendVia(func([]byte) ([]byte, error) { return []byte{1}, nil })
+		testkit.NoError(t, err, "the appender must succeed")
+		a.Reset()
+		testkit.Equal(t, a.Cap(), 1, "the arena keeps the buffer the appender returned")
 	})
 }
 

@@ -21,7 +21,7 @@ package arena
 //
 // The returned slice covers only the bytes fn wrote, three-index
 // capped like every other arena region so a downstream [append]
-// cannot reach into a neighbour.
+// cannot write into a neighbour.
 //
 // # On error
 //
@@ -49,7 +49,9 @@ func (a *Arena) AppendVia(fn func(dst []byte) ([]byte, error)) ([]byte, error) {
 		// fn's writes went past len(a.buf) — into spare capacity or
 		// onto an array it reallocated — so the arena's own length
 		// still describes the pre-call extent. Re-slicing makes that
-		// explicit rather than relying on it.
+		// explicit rather than relying on it. How far fn wrote into
+		// spare capacity is unknown, so Reset clears all of it.
+		a.dirty = cap(a.buf)
 		a.buf = a.buf[:start]
 
 		return nil, err
@@ -77,7 +79,7 @@ func (a *Arena) AppendVia(fn func(dst []byte) ([]byte, error)) ([]byte, error) {
 // Capacity is preserved; only the length moves. Sub-slices covering
 // discarded bytes remain readable until the next append overwrites
 // them, and must be treated as invalid from here — the same rule
-// Reset carries.
+// that applies after Reset.
 //
 // # Allocation contract
 //
@@ -87,6 +89,7 @@ func (a *Arena) TruncateTo(m Marker) bool {
 		return false
 	}
 
+	a.dirty = max(a.dirty, len(a.buf))
 	a.buf = a.buf[:m.pos]
 
 	return true

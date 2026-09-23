@@ -32,10 +32,11 @@ import "go.thesmos.sh/core/epoch"
 //	a := arena.NewWithCapacity(8)
 //	first := a.Append([]byte("a"))     // first → array A, byte 0
 //	a.Append(make([]byte, 1024))        // exceeds cap, realloc → array B
-//	view := a.Bytes()                   // view → array B (zeroed prefix + tail)
+//	view := a.Bytes()                   // view → array B (copied prefix + tail)
 //	// first[0] == 'a' (still alive on array A)
-//	// view[0] == 0   (array B was freshly allocated)
-//	// first and view DO NOT alias the same memory.
+//	// view[0] == 'a'  (a copy on array B)
+//	// first and view DO NOT alias the same memory: a write
+//	// through first does not change view.
 //
 // To keep the alias-stable contract, pre-size the arena via
 // [NewWithCapacity] above the highest expected total. Once
@@ -56,6 +57,11 @@ import "go.thesmos.sh/core/epoch"
 type Arena struct {
 	buf   []byte
 	epoch epoch.Epoch // bumped on every Reset/Shrink to invalidate stale Markers.
+
+	// dirty is the highest length buf has had since the last Reset,
+	// where a rewind has since lowered it. Reset zeroes buf up to it,
+	// so bytes a rewind left past the length are cleared too.
+	dirty int
 }
 
 // New returns an [Arena] with no backing buffer; the first

@@ -36,7 +36,11 @@
 //
 //	var arenas = pool.NewResetPool(arena.New)
 //
-// [Arena.ShouldShrink] reports whether the backing buffer has
+// [Arena.Reset] zeroes the bytes written in the finished
+// lifecycle, so a pooled arena passes none of one user's bytes
+// to the next.
+//
+// [Arena.CapExceeds] reports whether the backing buffer has
 // grown past a threshold; the pool wrapper can decide to
 // release oversized arenas (via [Arena.Shrink]) rather than
 // retain them indefinitely.

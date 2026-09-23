@@ -8,6 +8,12 @@ package arena
 // next [Arena.Append] / [Arena.Alloc] writes from offset 0
 // without reallocating.
 //
+// Reset zeroes every byte written since the previous Reset,
+// including bytes an [Arena.TruncateTo] rewind or a failed
+// [Arena.AppendVia] left past the length. The next user of a
+// pooled arena therefore finds only zeros in its spare
+// capacity, which [Arena.AppendVia] hands to its appender.
+//
 // Reset advances the arena's lifecycle epoch, invalidating
 // every previously-returned [Marker]: subsequent
 // [Arena.SliceSince] calls with a stale Marker return nil
@@ -27,9 +33,15 @@ package arena
 //
 // # Allocation contract
 //
-// Zero-alloc.
+// Zero-alloc. Runs in time proportional to the bytes written since
+// the previous Reset, or to the capacity after a failed
+// [Arena.AppendVia].
 func (a *Arena) Reset() {
+	// Bounded by the capacity: an appender may hand AppendVia back a
+	// smaller buffer than the one the dirty mark was taken on.
+	clear(a.buf[:min(max(a.dirty, len(a.buf)), cap(a.buf))])
 	a.buf = a.buf[:0]
+	a.dirty = 0
 	a.epoch = a.epoch.Successor()
 }
 
@@ -64,5 +76,6 @@ func (a *Arena) CapExceeds(maxCap int) bool {
 // Zero-alloc (drops the slice header reference).
 func (a *Arena) Shrink() {
 	a.buf = nil
+	a.dirty = 0
 	a.epoch = a.epoch.Successor()
 }
