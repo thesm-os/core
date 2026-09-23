@@ -92,6 +92,7 @@ Start from [`docs/templates/RFC.md`](../templates/RFC.md).
 | [0027](0027-content-addressed-storage.md) | Content-Addressed Storage | Accepted |
 | [0028](0028-named-object-storage.md) | Named Object Storage | Accepted |
 | [0029](0029-domain-separated-tree-hashing.md) | Domain-Separated Tree Hashing | Accepted |
+| [0030](0030-structured-concurrency.md) | Structured Concurrency | Draft |
 
 ## Canonical first RFC
 
