@@ -72,8 +72,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `coretest/versiontest`: `OrderingTraps` fixtures that make any
   ordering assumption over opaque `version.Version` tokens
   observable in a consumer's suite.
+- `task` package: concurrent work that ends before the call that
+  started it returns. `All` runs a fixed set of functions, `Each`
+  and `Map` call one function for every element of a slice, `Stream`
+  calls one for every element of an `iter.Seq2[E, error]` such as a
+  `page.Cursor`, and `Run` starts tasks one at a time through
+  `Group.Go`. Every function cancels its context on the first error
+  and returns that error, and records the cause for work it skipped,
+  so a nil result means every task ran and returned nil. A task that
+  panics crashes the process from its own goroutine, and a task that
+  calls `runtime.Goexit` records `ErrExited`. `Each`, `Map` and
+  `Stream` run on a fixed set of workers and do not allocate per
+  element. See RFC-0030.
 
 ### Changed
+
+- `batch.Loader.LoadAll` runs its batches through `task.Each`. A
+  failed batch now cancels the other batches of the same call, whose
+  results were discarded anyway, and the batch function receives a
+  context derived from the caller's: it carries the caller's values
+  and deadline.
+- `coretest/castest` returns the errors of its concurrent-`Put`
+  races to the test goroutine. A failed `Put` inside the race called
+  `t.Fatalf` on its own goroutine, which the `testing` package
+  forbids, and `sync.WaitGroup.Go` counted the resulting
+  `runtime.Goexit` as a normal return.
 
 - **Breaking:** `crypto.Hasher.Combine` is removed. An unprefixed
   `H(left || right)` is indistinguishable from the hash of a

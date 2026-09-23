@@ -11,7 +11,7 @@
 
 Foundational interfaces for the [thesmos][thesmos] ecosystem.
 
-`core` is a [stdlib-only][adr-0006] Go module that defines the contract
+`core` is a [stdlib-first][adr-0015] Go module that defines the contract
 seams every other thesmos library and framework depends on:
 
 - **Clock** — abstracts `time.Now`, `time.Sleep`, and timers so
@@ -151,14 +151,22 @@ seams every other thesmos library and framework depends on:
   deduplicates concurrent loads of the same key. Not a cache —
   results are not retained past the in-flight window.
   See [RFC-0024][rfc-0024].
+- **Task** — structured concurrency: `All`, `Each`, `Map`, `Stream`
+  and `Run` return only after every goroutine they started has
+  returned. The first error cancels the other tasks and is the
+  result, and a task that panics crashes the process from its own
+  goroutine. `Each`, `Map` and `Stream` run on a fixed set of workers
+  and do not allocate per element. See [RFC-0030][rfc-0030].
 
 These interfaces — and the others added over time — share three
 properties:
 
-1. **Stdlib-only.** Production code imports nothing outside the Go
-   standard library and the module itself; the dependency guard fails
-   CI on anything else. Test code may draw on a closed allow-list that
-   only an ADR can extend. ([ADR-0006][adr-0006])
+1. **Stdlib first.** Production code imports the Go standard library,
+   the module itself, and golang.org/x modules that have no module
+   requirements, each listed by name in the dependency guard. The
+   guard fails CI on any other import. Test code may draw on a closed
+   allow-list. Extending either list takes an ADR.
+   ([ADR-0015][adr-0015])
 2. **Single module.** One `go.mod`. Submodules are not needed because
    there are no heavy deps to isolate. ([ADR-0002][adr-0002])
 3. **Apache 2.0.** Unencumbered for production and downstream
@@ -196,7 +204,7 @@ Apache 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 [adr-0002]: docs/adr/0002-single-module-layout.md
 [adr-0003]: docs/adr/0003-apache-2-0-with-spdx-headers.md
 [adr-0005]: docs/adr/0005-primitive-set-chosen-for-coherence.md
-[adr-0006]: docs/adr/0006-stdlib-only-scope-test-dependencies.md
+[adr-0015]: docs/adr/0015-dependency-free-x-modules-in-production.md
 [rfc-0001]: docs/rfc/0001-clock-seam.md
 [rfc-0002]: docs/rfc/0002-rand-seam.md
 [rfc-0003]: docs/rfc/0003-crypto-seam.md
@@ -219,5 +227,6 @@ Apache 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 [rfc-0021]: docs/rfc/0021-bounded-pool.md
 [rfc-0023]: docs/rfc/0023-resilience-primitives.md
 [rfc-0024]: docs/rfc/0024-request-coalescing.md
+[rfc-0030]: docs/rfc/0030-structured-concurrency.md
 [contrib]: CONTRIBUTING.md
 [sec]: SECURITY.md

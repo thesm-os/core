@@ -146,6 +146,14 @@ linters:
         - \.(Wrap|Wrapf)\(
         - errors\.(Join|Unwrap)\(
         - \.Err\(
+        # context.Cause is ctx.Err with the recorded cause, and a
+        # function that reports why its context ended returns it as
+        # is, as it returns ctx.Err.
+        - context\.Cause\(
+        # testkit.TestError builds a sentinel for a test double to
+        # return; the test matches it with errors.Is, so wrapping it
+        # adds nothing.
+        - testkit\.TestError\(
       ignore-package-globs:
         - go.thesmos.sh/core/*
 
@@ -240,6 +248,15 @@ linters:
       # CSPRNG is the worst possible failure mode for a security
       # primitive.
       - path: 'rand/crypto/crypto\.go'
+        linters: [forbidigo]
+        text: "panic"
+
+      # task's crash raises a task's own panic again on the task's
+      # goroutine, after a recover that tells a panic from
+      # runtime.Goexit. It originates no panic: it lets the task's
+      # panic crash the process with the task's frames in the trace,
+      # as sync.WaitGroup.Go does.
+      - path: 'task/crash\.go'
         linters: [forbidigo]
         text: "panic"
 

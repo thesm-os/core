@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"go.thesmos.sh/core/clock"
+	"go.thesmos.sh/core/task"
 )
 
 // LoaderConfig has no defaults. Both thresholds are required, because
@@ -174,10 +175,12 @@ func (l *Loader[K, V]) Load(ctx context.Context, key K) (V, error) {
 // return is a map, so absence is representable, where [Loader.Load]
 // has no such option.
 //
-// Unlike Load, this serves exactly one caller, so ctx is passed to the
-// batch function unchanged. An error from any batch fails the call
-// rather than returning a partial result, which a caller would have no
-// way to tell from a set of missing keys.
+// Unlike Load, this serves exactly one caller, so the batch function
+// receives a context derived from ctx: it carries the values and the
+// deadline of ctx, and it is cancelled when another batch of the same
+// call fails. An error from any batch fails the call rather than
+// returning a partial result, which a caller would have no way to tell
+// from a set of missing keys.
 //
 // Returns [ErrClosed] after [Loader.Close].
 func (l *Loader[K, V]) LoadAll(ctx context.Context, keys []K) (map[K]V, error) {
@@ -198,33 +201,32 @@ func (l *Loader[K, V]) LoadAll(ctx context.Context, keys []K) (map[K]V, error) {
 		}
 	}
 
-	var (
-		mu    sync.Mutex
-		out   = make(map[K]V, len(uniq))
-		first error
-		wg    sync.WaitGroup
-	)
-	for chunk := range slices.Chunk(uniq, l.maxBatch) {
-		wg.Go(func() {
-			got, err := l.fn(ctx, chunk)
-
-			mu.Lock()
-			defer mu.Unlock()
-
-			if err != nil {
-				if first == nil {
-					first = err
-				}
-
-				return
-			}
-			maps.Copy(out, got)
-		})
+	// task.Each rejects a limit of zero, and there is nothing to call.
+	if len(uniq) == 0 {
+		return map[K]V{}, nil
 	}
-	wg.Wait()
 
-	if first != nil {
-		return nil, first
+	chunks := slices.Collect(slices.Chunk(uniq, l.maxBatch))
+
+	var (
+		mu  sync.Mutex
+		out = make(map[K]V, len(uniq))
+	)
+
+	err := task.Each(ctx, len(chunks), chunks, func(ctx context.Context, _ int, chunk []K) error {
+		got, err := l.fn(ctx, chunk)
+		if err != nil {
+			return err
+		}
+
+		mu.Lock()
+		maps.Copy(out, got)
+		mu.Unlock()
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	return out, nil

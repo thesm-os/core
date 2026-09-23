@@ -13,7 +13,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -24,6 +23,7 @@ import (
 	"go.thesmos.sh/core/crypto/sha256"
 	"go.thesmos.sh/core/crypto/sha3"
 	"go.thesmos.sh/core/errs"
+	"go.thesmos.sh/core/task"
 )
 
 // failingReader yields its data and then fails, standing in for a
@@ -270,20 +270,26 @@ func AssertStore(t *testing.T, newStore func(h crypto.Hasher) cas.Store) {
 		s := newStore(h)
 		d := h.Hash(payload)
 
-		var (
-			wrote atomic.Int64
-			wg    sync.WaitGroup
-		)
-		for range 16 {
-			wg.Go(func() {
-				ok, err := s.Put(t.Context(), d, payload)
-				testkit.NoError(t, err, "concurrent identical Puts must all succeed")
-				if ok {
-					wrote.Add(1)
+		// The error comes back to the test goroutine, because FailNow
+		// must not run on the goroutine of a Put.
+		var wrote atomic.Int64
+		err := task.Run(t.Context(), 16, func(_ context.Context, g *task.Group) error {
+			for range 16 {
+				if err := g.Go(func(ctx context.Context) error {
+					ok, err := s.Put(ctx, d, payload)
+					if ok {
+						wrote.Add(1)
+					}
+
+					return err
+				}); err != nil {
+					return err
 				}
-			})
-		}
-		wg.Wait()
+			}
+
+			return nil
+		})
+		testkit.NoError(t, err, "concurrent identical Puts must all succeed")
 
 		testkit.Equal(t, wrote.Load(), int64(1),
 			"exactly one concurrent Put may report wrote — it is an accounting signal")
@@ -393,20 +399,24 @@ func AssertStore(t *testing.T, newStore func(h crypto.Hasher) cas.Store) {
 		s := newStore(h)
 		d := h.Hash(payload)
 
-		var (
-			wrote atomic.Int64
-			wg    sync.WaitGroup
-		)
-		for range 16 {
-			wg.Go(func() {
-				ok, err := cas.PutStream(t.Context(), s, d, bytes.NewReader(payload))
-				testkit.NoError(t, err, "concurrent identical streamed Puts must all succeed")
-				if ok {
-					wrote.Add(1)
+		var wrote atomic.Int64
+		err := task.Run(t.Context(), 16, func(_ context.Context, g *task.Group) error {
+			for range 16 {
+				if err := g.Go(func(ctx context.Context) error {
+					ok, err := cas.PutStream(ctx, s, d, bytes.NewReader(payload))
+					if ok {
+						wrote.Add(1)
+					}
+
+					return err
+				}); err != nil {
+					return err
 				}
-			})
-		}
-		wg.Wait()
+			}
+
+			return nil
+		})
+		testkit.NoError(t, err, "concurrent identical streamed Puts must all succeed")
 
 		testkit.Equal(t, wrote.Load(), int64(1),
 			"exactly one concurrent streamed Put may report wrote")

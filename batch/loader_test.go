@@ -522,6 +522,47 @@ func TestLoadAll(t *testing.T) {
 		testkit.ErrorIs(t, err, errDown, "one failed chunk fails the call")
 		testkit.Equal(t, got, map[int]int(nil), "a partial result would be a trap")
 	})
+
+	t.Run("a failed batch cancels the other batches of the call", func(t *testing.T) {
+		t.Parallel()
+		// The result of the other batches is discarded, so their calls
+		// stop as soon as one batch fails.
+		var cause error
+		l := mustLoader(t, fake.New(originUTC), 1, func(ctx context.Context, keys []int) (map[int]int, error) {
+			if keys[0] == 2 {
+				return nil, errDown
+			}
+
+			select {
+			case <-ctx.Done():
+				cause = context.Cause(ctx)
+			case <-time.After(time.Second):
+			}
+
+			return nil, ctx.Err()
+		})
+
+		_, err := l.LoadAll(t.Context(), []int{1, 2})
+		testkit.ErrorIs(t, err, errDown, "the failed batch must be the result")
+		testkit.ErrorIs(t, cause, errDown, "the other batch must be cancelled with the failure as the cause")
+	})
+
+	t.Run("passes the values of ctx to the batch function", func(t *testing.T) {
+		t.Parallel()
+		// LoadAll serves one caller, so the batch function sees that
+		// caller's trace span and request identifier.
+		type spanKey struct{}
+		var value any
+		l := mustLoader(t, fake.New(originUTC), 10, func(ctx context.Context, keys []int) (map[int]int, error) {
+			value = ctx.Value(spanKey{})
+
+			return map[int]int{keys[0]: 1}, nil
+		})
+
+		_, err := l.LoadAll(context.WithValue(t.Context(), spanKey{}, "span"), []int{1})
+		testkit.NoError(t, err, "LoadAll must succeed")
+		testkit.Equal(t, value, any("span"), "the caller's values must reach the batch function")
+	})
 }
 
 func TestLoaderClose(t *testing.T) {
