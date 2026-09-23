@@ -19,6 +19,16 @@ import "sync/atomic"
 // check-then-write gap reintroduces the race fencing exists to
 // close.
 //
+// # Precondition
+//
+// Admit-equal is sound only when the issuer grants each epoch to at
+// most one holder. Two holders granted one epoch both pass, and
+// nothing in an Epoch tells them apart. Take fence epochs from a
+// source that is unique per grant, such as the revision a
+// linearizable coordination service assigns to the grant: etcd's
+// revision of the election key meets this. A term from an election
+// that can grant one term twice does not.
+//
 // # Allocation contract
 //
 // Zero alloc.
@@ -28,6 +38,8 @@ func Admissible(w, e Epoch) bool {
 
 // Watermark tracks the highest fence epoch admitted, applying the
 // three fence laws: admit-equal, advance-on-greater, zero-bypass.
+// It has [Admissible]'s precondition: each epoch is granted to at
+// most one holder.
 //
 // Watermark is the adapter kit, not the authority. An in-memory
 // adapter may use it as its whole implementation; a durable adapter
