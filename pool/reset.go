@@ -10,16 +10,22 @@ import "sync"
 // returns the value to its zero state, erasing any
 // tenant-specific or request-specific data.
 //
-// Types whose only state is already-immutable bytes (a
-// []byte-backed arena that is overwritten from the start on
-// every Get) do not need to satisfy [Resettable] and should
-// use the plain [Pool] instead.
+// Types that carry no user data between uses do not need to
+// satisfy [Resettable] and can use the plain [Pool]. A byte
+// buffer that is overwritten from the start on every Get does
+// carry user data: its spare capacity keeps the previous
+// user's bytes.
 type Resettable interface {
 	// Reset clears v's tenant-specific or request-specific
 	// state, returning it to a usable post-zero state. Called
 	// by [ResetPool.Put] before caching, and by
 	// [NewResetPool] on freshly-allocated values. Must not
 	// allocate on a pool that promises zero-allocation Put.
+	//
+	// Reset must leave none of the previous user's bytes
+	// reachable through v's API, including the spare capacity a
+	// slice or buffer keeps. [bytes.Buffer.Reset] only truncates,
+	// which is why [NewBufferPool] pools [Buffer] instead.
 	Reset()
 }
 

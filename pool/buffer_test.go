@@ -47,19 +47,29 @@ func TestNewBufferPool(t *testing.T) {
 		}
 	})
 
-	t.Run("returned type is *bytes.Buffer", func(t *testing.T) {
+	t.Run("Get returns a *Buffer with the bytes.Buffer methods", func(t *testing.T) {
 		t.Parallel()
-		// Compile-time check: NewBufferPool returns
-		// *ResetPool[*bytes.Buffer] whose Get returns
-		// *bytes.Buffer. Calling a *bytes.Buffer-only method
-		// without conversion would fail if the signature
-		// drifted.
+		// Compile-time check: calling Cap, a bytes.Buffer method,
+		// without an interface assertion proves Get's static type
+		// promotes the bytes.Buffer API.
 		p := pool.NewBufferPool()
-		b := p.Get()
-		// (*bytes.Buffer).Cap is unique to *bytes.Buffer; calling
-		// it without an interface assertion proves the static
-		// type.
-		_ = b.Cap()
+		func(b *pool.Buffer) { _ = b.Cap() }(p.Get())
+	})
+}
+
+func TestBuffer(t *testing.T) {
+	t.Parallel()
+
+	t.Run("Reset zeroes the bytes the buffer held", func(t *testing.T) {
+		t.Parallel()
+		var b pool.Buffer
+		b.WriteString("tenant data")
+		b.Reset()
+
+		avail := b.AvailableBuffer()
+		testkit.Equal(t, avail[:cap(avail)], make([]byte, cap(avail)),
+			"no byte of the previous user may survive Reset")
+		testkit.Equal(t, b.Len(), 0, "Reset must empty the buffer")
 	})
 }
 

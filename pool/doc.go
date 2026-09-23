@@ -20,9 +20,8 @@
 //   - [ResetPool] — typed [sync.Pool] wrapper that auto-Resets
 //     on [ResetPool.Put]. Prevents cross-tenant data leaks at
 //     the type level.
-//   - [NewBufferPool] — convenience constructor for the
-//     [bytes.Buffer] specialization (the canonical example of a
-//     [Resettable] pooled value).
+//   - [Buffer] and [NewBufferPool] — a [bytes.Buffer] whose Reset
+//     zeroes its bytes, and a [ResetPool] of them.
 //
 // # Concurrency
 //

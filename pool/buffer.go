@@ -5,17 +5,35 @@ package pool
 
 import "bytes"
 
-// NewBufferPool returns a [ResetPool] of [bytes.Buffer]
-// pointers — the canonical [Resettable] pooled value type.
+// Buffer is a [bytes.Buffer] whose Reset also zeroes the bytes the
+// buffer held. [bytes.Buffer.Reset] only truncates, and
+// [bytes.Buffer.AvailableBuffer] hands the next user the previous
+// user's bytes as spare capacity. A pooled Buffer passes nothing on.
+type Buffer struct {
+	bytes.Buffer
+}
+
+// Reset empties the buffer and zeroes its whole capacity.
+//
+// # Allocation contract
+//
+// Zero-alloc. Runs in time proportional to the capacity.
+func (b *Buffer) Reset() {
+	b.Buffer.Reset()
+	avail := b.AvailableBuffer()
+	clear(avail[:cap(avail)])
+}
+
+// NewBufferPool returns a [ResetPool] of [Buffer] pointers, which
+// zero their bytes when put back.
 //
 // Equivalent to:
 //
-//	pool.NewResetPool(func() *bytes.Buffer { return new(bytes.Buffer) })
+//	pool.NewResetPool(func() *pool.Buffer { return new(pool.Buffer) })
 //
-// Construct one [BufferPool] per "shape" of allocation:
-// separate pools for small (~256 B) and large (~64 KiB)
-// buffers, etc., to avoid retaining oversized buffers in the
-// small-allocation pool.
-func NewBufferPool() *ResetPool[*bytes.Buffer] {
-	return NewResetPool(func() *bytes.Buffer { return new(bytes.Buffer) })
+// Construct one pool per "shape" of allocation: separate pools for
+// small (~256 B) and large (~64 KiB) buffers, etc., to avoid retaining
+// oversized buffers in the small-allocation pool.
+func NewBufferPool() *ResetPool[*Buffer] {
+	return NewResetPool(func() *Buffer { return new(Buffer) })
 }
