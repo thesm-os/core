@@ -5,6 +5,9 @@ package aesgcm_test
 
 import (
 	"bytes"
+	"crypto/fips140"
+	"os"
+	"os/exec"
 	"strconv"
 	"testing"
 
@@ -13,15 +16,28 @@ import (
 	"go.thesmos.sh/core/coretest/cryptotest"
 	"go.thesmos.sh/core/crypto"
 	"go.thesmos.sh/core/crypto/aesgcm"
+	"go.thesmos.sh/core/errs"
 	randcrypto "go.thesmos.sh/core/rand/crypto"
 )
 
-// aesGCM128ID and aesGCM256ID are the canonical build-local
-// identifiers, distinct per construction.
+// The canonical build-local identifiers, distinct per constructor and
+// key size.
 var (
-	aesGCM128ID = crypto.ID{'a', 'e', 's', '-', '1', '2', '8', '-', 'g', 'c', 'm', '/', 'v', '1'}
-	aesGCM256ID = crypto.ID{'a', 'e', 's', '-', '2', '5', '6', '-', 'g', 'c', 'm', '/', 'v', '1'}
+	aesGCM128ID  = crypto.ID{'a', 'e', 's', '-', '1', '2', '8', '-', 'g', 'c', 'm', '/', 'v', '1'}
+	aesGCM256ID  = crypto.ID{'a', 'e', 's', '-', '2', '5', '6', '-', 'g', 'c', 'm', '/', 'v', '1'}
+	aesGCMR128ID = crypto.ID{'a', 'e', 's', '-', '1', '2', '8', '-', 'g', 'c', 'm', '-', 'r', '/', 'v', '1'}
+	aesGCMR256ID = crypto.ID{'a', 'e', 's', '-', '2', '5', '6', '-', 'g', 'c', 'm', '-', 'r', '/', 'v', '1'}
 )
+
+// constructors are the two ways to build an AEAD, so every
+// construction-level test runs against both.
+var constructors = []struct {
+	build func([]byte) (crypto.AEAD, error)
+	name  string
+}{
+	{aesgcm.New, "New"},
+	{aesgcm.NewRandomNonce, "NewRandomNonce"},
+}
 
 // Shared keys for SUT and reference. Their lengths select the
 // construction, so TestKeyFixtureLengths pins them.
@@ -35,6 +51,15 @@ func mustNew(tb testing.TB, key []byte) crypto.AEAD {
 
 	a, err := aesgcm.New(key)
 	testkit.NoError(tb, err, "New must accept a valid key length")
+
+	return a
+}
+
+func mustNewRandomNonce(tb testing.TB, key []byte) crypto.AEAD {
+	tb.Helper()
+
+	a, err := aesgcm.NewRandomNonce(key)
+	testkit.NoError(tb, err, "NewRandomNonce must accept a valid key length")
 
 	return a
 }
@@ -76,15 +101,44 @@ func TestAES128GCMContract(t *testing.T) {
 	)
 }
 
+func TestAES256GCMRandomNonceContract(t *testing.T) {
+	t.Parallel()
+
+	factory := func() crypto.AEAD { return mustNewRandomNonce(t, testKey256) }
+	cryptotest.AssertAEADContract(t, factory,
+		append(cryptotest.AEADContractAssertions(),
+			cryptotest.AEADIDAssertion(aesGCMR256ID),
+			cryptotest.AEADAlgorithmAssertion(crypto.AlgAES256GCM),
+			cryptotest.AEADCrossInstanceAssertion(factory),
+		)...,
+	)
+}
+
+func TestAES128GCMRandomNonceContract(t *testing.T) {
+	t.Parallel()
+
+	factory := func() crypto.AEAD { return mustNewRandomNonce(t, testKey128) }
+	cryptotest.AssertAEADContract(t, factory,
+		append(cryptotest.AEADContractAssertions(),
+			cryptotest.AEADIDAssertion(aesGCMR128ID),
+			cryptotest.AEADAlgorithmAssertion(crypto.AlgAES128GCM),
+			cryptotest.AEADCrossInstanceAssertion(factory),
+		)...,
+	)
+}
+
 func BenchmarkAESGCM(b *testing.B) {
-	// Both constructions: AES-256 runs 14 rounds to AES-128's 10, so
-	// the two have materially different throughput and each needs
-	// its own baseline.
+	// Both key sizes: AES-256 runs 14 rounds to AES-128's 10, so the
+	// two have materially different throughput and each needs its own
+	// baseline.
 	b.Run("AES-128", func(b *testing.B) {
 		cryptotest.BenchmarkAEADContract(b, func() crypto.AEAD { return mustNew(b, testKey128) })
 	})
 	b.Run("AES-256", func(b *testing.B) {
 		cryptotest.BenchmarkAEADContract(b, func() crypto.AEAD { return mustNew(b, testKey256) })
+	})
+	b.Run("AES-256 random nonce", func(b *testing.B) {
+		cryptotest.BenchmarkAEADContract(b, func() crypto.AEAD { return mustNewRandomNonce(b, testKey256) })
 	})
 }
 
@@ -134,40 +188,115 @@ func TestNewKeySizes(t *testing.T) {
 		{aesgcm.KeySize128, crypto.AlgAES128GCM},
 		{aesgcm.KeySize256, crypto.AlgAES256GCM},
 	}
-	for _, tc := range valid {
-		t.Run("accepts a "+strconv.Itoa(tc.size)+"-byte key", func(t *testing.T) {
+
+	for _, c := range constructors {
+		for _, tc := range valid {
+			t.Run(c.name+" accepts a "+strconv.Itoa(tc.size)+"-byte key", func(t *testing.T) {
+				t.Parallel()
+				a, err := c.build(make([]byte, tc.size))
+				testkit.NoError(t, err, "the constructor must accept the key length")
+				testkit.Equal(t, a.Algorithm(), tc.alg, "the key length selects the construction")
+			})
+		}
+
+		// 24 is included deliberately: AES-192 is a valid AES key size
+		// that this package does not support, matching most modern
+		// protocol profiles.
+		for _, n := range []int{0, 1, 15, 17, 24, 31, 33, 64} {
+			t.Run(c.name+" rejects a "+strconv.Itoa(n)+"-byte key", func(t *testing.T) {
+				t.Parallel()
+				_, err := c.build(make([]byte, n))
+				testkit.ErrorIs(t, err, crypto.ErrKeySize, "only 16- and 32-byte keys are valid")
+			})
+		}
+
+		t.Run(c.name+" rejects a nil key", func(t *testing.T) {
 			t.Parallel()
-			a, err := aesgcm.New(make([]byte, tc.size))
-			testkit.NoError(t, err, "New must accept the key length")
-			testkit.Equal(t, a.Algorithm(), tc.alg, "the key length selects the construction")
+			_, err := c.build(nil)
+			testkit.ErrorIs(t, err, crypto.ErrKeySize, "a nil key must be rejected")
 		})
 	}
-
-	// 24 is included deliberately: AES-192 is a valid AES key size
-	// that this package does not support, matching most modern
-	// protocol profiles.
-	for _, n := range []int{0, 1, 15, 17, 24, 31, 33, 64} {
-		t.Run("rejects a "+strconv.Itoa(n)+"-byte key", func(t *testing.T) {
-			t.Parallel()
-			_, err := aesgcm.New(make([]byte, n))
-			testkit.ErrorIs(t, err, crypto.ErrKeySize, "only 16- and 32-byte keys are valid")
-		})
-	}
-
-	t.Run("rejects a nil key", func(t *testing.T) {
-		t.Parallel()
-		_, err := aesgcm.New(nil)
-		testkit.ErrorIs(t, err, crypto.ErrKeySize, "a nil key must be rejected")
-	})
 }
 
 func TestConstructionsHaveDistinctIDs(t *testing.T) {
 	t.Parallel()
 
 	// A receipt naming one construction must not be satisfiable by
-	// the other.
-	testkit.NotEqual(t, mustNew(t, testKey128).ID(), mustNew(t, testKey256).ID(),
-		"AES-128 and AES-256 must not share an ID")
+	// another.
+	ids := map[crypto.ID]bool{
+		mustNew(t, testKey128).ID():            true,
+		mustNew(t, testKey256).ID():            true,
+		mustNewRandomNonce(t, testKey128).ID(): true,
+		mustNewRandomNonce(t, testKey256).ID(): true,
+	}
+	testkit.Equal(t, len(ids), 4, "every constructor and key size must have its own ID")
+}
+
+func TestEnvelopesInteroperate(t *testing.T) {
+	t.Parallel()
+
+	// The two constructors write the nonce at the same offset, so an
+	// envelope from either opens under the other with the same key.
+	pairs := []struct {
+		seal, open crypto.AEAD
+		name       string
+	}{
+		{mustNew(t, testKey256), mustNewRandomNonce(t, testKey256), "New to NewRandomNonce"},
+		{mustNewRandomNonce(t, testKey256), mustNew(t, testKey256), "NewRandomNonce to New"},
+	}
+	for _, tt := range pairs {
+		t.Run("an envelope opens from "+tt.name, func(t *testing.T) {
+			t.Parallel()
+			sealed, err := crypto.Seal(tt.seal, randcrypto.New(), []byte("payload"), []byte("aad"))
+			testkit.NoError(t, err, "Seal must succeed")
+
+			opened, err := crypto.Open(tt.open, sealed, []byte("aad"))
+			testkit.NoError(t, err, "the other constructor must open the envelope")
+			testkit.Equal(t, opened, []byte("payload"), "Open must recover the plaintext")
+		})
+	}
+}
+
+// TestFIPSOnlyMode checks both constructors under GODEBUG=fips140=only.
+// The mode is fixed when a process starts, so the test runs itself
+// again in a child process with the mode set. In the child,
+// fips140.Enforced reports true and the checks run there.
+func TestFIPSOnlyMode(t *testing.T) {
+	t.Parallel()
+
+	if !fips140.Enforced() {
+		t.Run("passes in a child process under fips140=only", func(t *testing.T) {
+			t.Parallel()
+			//nolint:gosec // G204: the child is this test binary, run again with a fixed pattern.
+			cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestFIPSOnlyMode$", "-test.v")
+			cmd.Env = append(os.Environ(), "GODEBUG=fips140=only")
+			out, err := cmd.CombinedOutput()
+			testkit.NoError(t, err, "the fips140=only child must pass:\n"+string(out))
+			testkit.True(t, bytes.Contains(out, []byte("NewRandomNonce_seals_and_opens")),
+				"the child must run the FIPS checks, not skip them")
+		})
+
+		return
+	}
+
+	t.Run("New refuses caller-supplied nonces", func(t *testing.T) {
+		t.Parallel()
+		_, err := aesgcm.New(testKey256)
+		testkit.Equal(t, errs.Classify(err), errs.Unsupported,
+			"FIPS 140-only mode must refuse caller-supplied nonces as Unsupported")
+	})
+
+	t.Run("NewRandomNonce seals and opens", func(t *testing.T) {
+		t.Parallel()
+		a := mustNewRandomNonce(t, testKey256)
+
+		sealed, err := crypto.Seal(a, nil, []byte("payload"), nil)
+		testkit.NoError(t, err, "Seal must succeed without a random source")
+
+		opened, err := crypto.Open(a, sealed, nil)
+		testkit.NoError(t, err, "Open must succeed on Seal's own output")
+		testkit.Equal(t, opened, []byte("payload"), "Open must recover the plaintext")
+	})
 }
 
 func TestKeyIsCopied(t *testing.T) {
@@ -196,7 +325,17 @@ func TestGCMParameters(t *testing.T) {
 
 	// Fixed by NIST SP 800-38D. A change here would be a wire-format
 	// change for every stored ciphertext.
-	a := mustNew(t, testKey256)
-	testkit.Equal(t, a.NonceSize(), 12, "GCM uses a 96-bit nonce")
-	testkit.Equal(t, a.Overhead(), 16, "GCM appends a 128-bit tag")
+	t.Run("New takes a 96-bit nonce and appends a 128-bit tag", func(t *testing.T) {
+		t.Parallel()
+		a := mustNew(t, testKey256)
+		testkit.Equal(t, a.NonceSize(), 12, "GCM uses a 96-bit nonce")
+		testkit.Equal(t, a.Overhead(), 16, "GCM appends a 128-bit tag")
+	})
+
+	t.Run("NewRandomNonce carries its 96-bit nonce in the overhead", func(t *testing.T) {
+		t.Parallel()
+		a := mustNewRandomNonce(t, testKey256)
+		testkit.Equal(t, a.NonceSize(), 0, "the caller supplies no nonce")
+		testkit.Equal(t, a.Overhead(), 28, "the overhead is the 12-byte nonce and the 16-byte tag")
+	})
 }

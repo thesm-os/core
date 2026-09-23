@@ -38,9 +38,8 @@ type AEAD interface {
 	//
 	// It is also the only panicking surface in this module. Use
 	// [Seal] and [Open], which construct the nonce themselves and
-	// cannot reach the panicking path; reach for these methods only
-	// when managing nonces deliberately, and validate the length
-	// first.
+	// cannot call the panicking path. Use these methods only when
+	// managing nonces deliberately, and validate the length first.
 	cipher.AEAD
 
 	// ID is the build-local implementation identifier.
@@ -76,7 +75,7 @@ const (
 
 	// EnvelopeAlgorithmLenSize is the width of the algorithm-length
 	// byte. A caller computing offsets into an envelope adds this to
-	// [EnvelopeVersionSize] and the algorithm's own length to reach the
+	// [EnvelopeVersionSize] and the algorithm's own length to find the
 	// nonce.
 	EnvelopeAlgorithmLenSize = 1
 
@@ -88,7 +87,7 @@ const (
 	maxAlgorithmLen = 255
 )
 
-// aadPool holds the scratch the associated-data frame is built in. The
+// aadPool pools the scratch the associated-data frame is built in. The
 // frame never escapes the call that builds it, so a per-call
 // allocation would be the whole cost of these helpers.
 var aadPool = pool.NewPool(func() *[]byte {
@@ -147,10 +146,16 @@ func splitEnvelope(sealed []byte) (name, rest []byte, err error) {
 //
 //	version || algLen || algorithm || nonce || ciphertext || tag
 //
-// The algorithm and the nonce travel with the ciphertext rather than
-// beside it, because both are needed to open and neither is secret. A
-// value stored apart from the bytes it belongs to is a value that gets
-// lost, and losing either makes the ciphertext unrecoverable.
+// An AEAD whose NonceSize is 0 generates the nonce itself and prepends
+// it to its own output, as
+// [go.thesmos.sh/core/crypto/aesgcm.NewRandomNonce] does. Seal then
+// reads nothing from r, which may be nil, and the envelope has the
+// same layout.
+//
+// The algorithm and the nonce are written into the envelope, because
+// both are needed to open it and neither is secret. A value stored
+// apart from its ciphertext can be lost, and losing either makes the
+// ciphertext unrecoverable.
 //
 // The header is authenticated, not merely prepended: it is bound into
 // what the tag covers, so an attacker cannot rewrite the algorithm to
@@ -174,9 +179,9 @@ func splitEnvelope(sealed []byte) (name, rest []byte, err error) {
 //
 // # Allocation contract
 //
-// Two allocations: the returned envelope, sized once up front rather
-// than regrown per field, and one the entropy read costs. [AppendSeal]
-// reuses a caller's buffer and pays only the second.
+// Allocates the returned envelope once, sized up front rather than
+// regrown per field. [AppendSeal] reuses a caller's buffer and
+// allocates nothing.
 func Seal(a AEAD, r rand.Rand, plaintext, aad []byte) ([]byte, error) {
 	return AppendSeal(make([]byte, 0, envelopeSize(a, plaintext)), a, r, plaintext, aad)
 }
@@ -190,13 +195,14 @@ func Seal(a AEAD, r rand.Rand, plaintext, aad []byte) ([]byte, error) {
 //
 // # Allocation contract
 //
-// One allocation when dst has capacity for the finished envelope, and
-// it is not this function's: drawing the nonce through the [rand.Rand]
-// interface costs one, because an indirect call cannot be shown not to
-// retain its buffer. The envelope itself, and the associated-data
-// frame — scratch drawn from a package pool — cost nothing.
+// Zero alloc when dst has capacity for the finished envelope and r's
+// Read does not allocate, as [go.thesmos.sh/core/rand/crypto.Rand]'s
+// does not. The nonce is drawn into dst, and the associated-data frame
+// is scratch drawn from a package pool.
 //
-// [AppendOpen] has no entropy to draw and is genuinely zero-alloc.
+// A caller that passes r as a concrete type wider than a pointer pays
+// one allocation per call to box it into the [rand.Rand] interface.
+// Converting r once, outside the loop, avoids it.
 func AppendSeal(dst []byte, a AEAD, r rand.Rand, plaintext, aad []byte) ([]byte, error) {
 	alg := a.Algorithm()
 	if len(alg) == 0 || len(alg) > maxAlgorithmLen {
@@ -216,8 +222,12 @@ func AppendSeal(dst []byte, a AEAD, r rand.Rand, plaintext, aad []byte) ([]byte,
 	dst = dst[:len(dst)+nonceSize]
 	nonce := dst[len(dst)-nonceSize:]
 
-	if _, err := r.Read(nonce); err != nil {
-		return nil, err //nolint:wrapcheck // the source's own failure is the whole story
+	// An AEAD with no nonce of its own generates one inside Seal, so r
+	// is neither read nor required.
+	if nonceSize > 0 {
+		if _, err := r.Read(nonce); err != nil {
+			return nil, err //nolint:wrapcheck // returned as the source produced it
+		}
 	}
 
 	// Taken after every append to dst, so no growth can have moved
@@ -237,7 +247,7 @@ func AppendSeal(dst []byte, a AEAD, r rand.Rand, plaintext, aad []byte) ([]byte,
 // and decrypts it with aad as the caller's associated data.
 //
 // Returns [ErrEnvelopeVersion] for a layout this build does not know,
-// [ErrCiphertextShort] for an envelope too short to hold what it
+// [ErrCiphertextShort] for an envelope shorter than its header
 // declares, [ErrAlgorithmSize] for one naming nothing, and
 // [ErrAlgorithmMismatch] when it names an algorithm other than a's.
 // All four are decided from the header before any key is used.
@@ -300,7 +310,7 @@ func AppendOpen(dst []byte, a AEAD, sealed, aad []byte) ([]byte, error) {
 	aadPool.Put(scratch)
 
 	if err != nil {
-		return nil, err //nolint:wrapcheck // authentication failures must stay indistinguishable
+		return nil, err //nolint:wrapcheck // authentication failures must remain indistinguishable
 	}
 
 	return plaintext, nil
@@ -309,12 +319,12 @@ func AppendOpen(dst []byte, a AEAD, sealed, aad []byte) ([]byte, error) {
 // PeekAlgorithm reports the algorithm a sealed envelope names, without
 // a key and without authenticating anything.
 //
-// This is how a caller holding several implementations chooses which
-// to open with, so the dispatch key comes from the ciphertext rather
-// than from a side channel that has to be kept in step with it.
+// A caller with several implementations uses it to choose which to
+// open with, so the dispatch key comes from the ciphertext and not
+// from a side channel that has to be kept in step with it.
 //
 // The name is attacker-supplied and is only ever a hint for selecting
-// a key. It says nothing about whether the bytes are genuine — the tag
+// a key. It does not show whether the bytes are genuine. The tag
 // decides that, and the algorithm is bound into what the tag covers,
 // so a rewritten name fails to authenticate. Treat a name you do not
 // recognise as a rejection, never as a reason to try something else.

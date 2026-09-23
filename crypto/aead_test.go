@@ -92,6 +92,27 @@ func TestSealEnvelopeLayout(t *testing.T) {
 		"the envelope is exactly its header, nonce, ciphertext and tag")
 }
 
+// TestSealEnvelopeVector pins the sealed-envelope bytes. The envelope
+// layout is frozen, so a change to any byte here changes every
+// envelope ever sealed and must fail this test.
+func TestSealEnvelopeVector(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a fixed key, nonce, plaintext and aad give the recorded envelope", func(t *testing.T) {
+		t.Parallel()
+		sealed, err := crypto.Seal(newAEAD(t), constant.New(0x0706050403020100), []byte("payload"), []byte("aad"))
+		testkit.NoError(t, err, "Seal must succeed")
+		testkit.Equal(t, sealed, testkit.MustDecodeHex(t,
+			"01"+ // envelope version
+				"0b"+ // algorithm length
+				"6165732d3235362d67636d"+ // "aes-256-gcm"
+				"000102030405060700010203"+ // nonce
+				"f76564626377d7"+ // ciphertext of "payload"
+				"9bd3c07b7edbf8db8bd2d5f62ae3280d"), // tag
+			"the sealed envelope must match its recorded bytes")
+	})
+}
+
 func TestSealSizesItsBufferExactly(t *testing.T) {
 	t.Parallel()
 
@@ -404,6 +425,76 @@ func TestAppendSealAndAppendOpen(t *testing.T) {
 		testkit.Equal(t, got, []byte(nil), "a failed append returns no partial output")
 		testkit.Equal(t, dst, prefix, "the caller's buffer is untouched")
 	})
+}
+
+func TestSealWithAModuleNonce(t *testing.T) {
+	t.Parallel()
+
+	t.Run("reads nothing from the random source", func(t *testing.T) {
+		t.Parallel()
+		// A nil source panics on the first read, so success proves
+		// Seal never reaches for it.
+		a := newModuleNonceAEAD(t)
+		sealed, err := crypto.Seal(a, nil, []byte("payload"), []byte("aad"))
+		testkit.NoError(t, err, "Seal must not need a random source")
+
+		opened, err := crypto.Open(a, sealed, []byte("aad"))
+		testkit.NoError(t, err, "Open must succeed on Seal's own output")
+		testkit.Equal(t, opened, []byte("payload"), "Open must recover the plaintext")
+	})
+}
+
+// TestAppendSealZeroAlloc enforces the allocation contract of
+// AppendSeal and AppendOpen for both nonce modes. testing.AllocsPerRun
+// reads a process-global malloc counter, so this test does not call
+// t.Parallel.
+//
+//nolint:paralleltest // see comment above
+func TestAppendSealZeroAlloc(t *testing.T) {
+	aeads := []struct {
+		a    crypto.AEAD
+		name string
+	}{
+		{newAEAD(t), "a caller nonce"},
+		{newModuleNonceAEAD(t), "a module nonce"},
+	}
+	for _, tt := range aeads {
+		t.Run("AppendSeal with "+tt.name+" costs nothing", func(t *testing.T) {
+			plaintext := make([]byte, 64)
+			dst := make([]byte, 0, 256)
+
+			// Fills the associated-data pool, so the measured runs reuse it.
+			_, err := crypto.AppendSeal(dst, tt.a, randcrypto.New(), plaintext, nil)
+			testkit.NoError(t, err, "AppendSeal must succeed")
+
+			testkit.Equal(t, testing.AllocsPerRun(100, func() {
+				dst, _ = crypto.AppendSeal(dst[:0], tt.a, randcrypto.New(), plaintext, nil)
+			}), float64(0), "AppendSeal must not allocate when dst has capacity")
+		})
+
+		t.Run("AppendOpen with "+tt.name+" costs nothing", func(t *testing.T) {
+			sealed, err := crypto.Seal(tt.a, randcrypto.New(), make([]byte, 64), nil)
+			testkit.NoError(t, err, "Seal must succeed")
+			dst := make([]byte, 0, 256)
+
+			testkit.Equal(t, testing.AllocsPerRun(100, func() {
+				dst, _ = crypto.AppendOpen(dst[:0], tt.a, sealed, nil)
+			}), float64(0), "AppendOpen must not allocate when dst has capacity")
+		})
+	}
+}
+
+func newModuleNonceAEAD(tb testing.TB) crypto.AEAD {
+	tb.Helper()
+
+	k := make([]byte, aesgcm.KeySize256)
+	for i := range k {
+		k[i] = byte(i)
+	}
+	a, err := aesgcm.NewRandomNonce(k)
+	testkit.NoError(tb, err, "NewRandomNonce must accept a valid key")
+
+	return a
 }
 
 func BenchmarkAEAD(b *testing.B) {

@@ -192,8 +192,10 @@ func AEADContractAssertions() []AEADOption {
 
 		// --- advertised sizes ---
 
-		AEADCustom("NonceSize and Overhead are positive and stable", func(t *testing.T, a crypto.AEAD) {
-			testkit.True(t, a.NonceSize() > 0, "NonceSize must be positive")
+		AEADCustom("NonceSize is non-negative, Overhead positive, both stable", func(t *testing.T, a crypto.AEAD) {
+			// NonceSize 0 is valid: an AEAD that draws its own nonce
+			// prepends it to the ciphertext and counts it in Overhead.
+			testkit.True(t, a.NonceSize() >= 0, "NonceSize must not be negative")
 			testkit.True(t, a.Overhead() > 0, "Overhead must be positive")
 			testkit.Equal(t, a.NonceSize(), a.NonceSize(), "NonceSize must be stable")
 			testkit.Equal(t, a.Overhead(), a.Overhead(), "Overhead must be stable")

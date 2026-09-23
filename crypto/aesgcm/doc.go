@@ -18,14 +18,24 @@
 //
 // # Nonces
 //
-// Use [crypto.Seal] and [crypto.Open], which draw a fresh nonce per
-// message and prepend it. The embedded [cipher.AEAD] methods are
+// Use [crypto.Seal] and [crypto.Open], which place a fresh nonce in
+// every envelope. The two constructors differ in who generates it:
+//
+//   - [New] takes the nonce from the caller. crypto.Seal reads it from
+//     the random source it is given.
+//   - [NewRandomNonce] generates the nonce inside the standard library's
+//     FIPS 140-3 module and prepends it to the ciphertext. It is the
+//     only construction FIPS 140-only mode accepts, and crypto.Seal
+//     reads no entropy for it.
+//
+// Both produce the same envelope bytes and open each other's
+// envelopes. The embedded [cipher.AEAD] methods of a [New] AEAD are
 // available for callers managing nonces themselves; reusing a nonce
 // under one key breaks the construction completely.
 //
 // # Concurrency
 //
-// The returned [crypto.AEAD] is safe for concurrent use. It holds no
+// The returned [crypto.AEAD] is safe for concurrent use. It has no
 // mutable state — the underlying [cipher.AEAD] is read-only after
 // construction.
 package aesgcm
