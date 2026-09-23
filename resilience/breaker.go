@@ -19,19 +19,21 @@ import (
 type State uint8
 
 const (
-	// Closed passes every call through. The steady state.
+	// Closed passes every call through. A circuit starts in Closed.
 	Closed State = iota
 
-	// Open refuses every call without reaching the dependency, until
-	// the configured interval elapses.
+	// Open refuses every call until the configured interval elapses.
+	// A refused call does not contact the dependency.
 	Open
 
-	// HalfOpen has admitted one probe and is waiting for its outcome.
-	// Every other caller is refused meanwhile.
+	// HalfOpen has admitted one probe and waits for its outcome. It
+	// refuses every other call meanwhile, so a dependency that is still
+	// down receives one call instead of the full load.
 	HalfOpen
 )
 
-// String returns the state name.
+// String returns the state name, or State(n) for a value outside the
+// three states.
 func (s State) String() string {
 	switch s {
 	case Closed:
@@ -45,64 +47,70 @@ func (s State) String() string {
 	}
 }
 
-// BreakerConfig has no defaults. Every field is required, because a
-// threshold that is wrong is wrong silently: a breaker that never
-// opens looks exactly like a healthy dependency.
+// BreakerConfig configures a [Breaker]. Every field is required and
+// has no default. A wrong threshold does not cause an error: a breaker
+// that never opens is indistinguishable from a healthy dependency.
 type BreakerConfig struct {
-	// Clock reads elapsed time. Under a virtual clock the state
-	// transitions are exact, which is the property that makes a
-	// breaker testable at all.
+	// Clock is the time source for the open interval. A virtual clock
+	// makes every transition deterministic in tests.
 	Clock clock.Clock
 
-	// TripOn are the error classes [Call] counts as a dependency
-	// failure. Must be non-empty.
+	// TripOn lists the error classes that [Call] counts as a
+	// dependency failure. Must be non-empty.
 	//
-	// Ignored by [Breaker.Allow] and [Breaker.Record], where the
-	// caller judges for itself.
+	// [Breaker.Allow] and [Breaker.Record] ignore TripOn, because their
+	// caller decides what a failure is.
 	//
-	// Whether [errs.Unspecified] belongs here is the decision that
-	// determines whether the breaker protects anything: an
-	// unclassified error may be a failing dependency or a caller-side
-	// bug, and this package cannot tell them apart. Including it
-	// means every unclassified error trips the circuit.
+	// Including [errs.Unspecified] makes every unclassified error trip
+	// the circuit. An unclassified error can come from a failing
+	// dependency or from a bug in the caller, and this package cannot
+	// tell the two apart.
 	TripOn []errs.Class
 
-	// FailureThreshold is the count of consecutive failures that
+	// FailureThreshold is the number of consecutive failures that
 	// opens a circuit. Must be > 0.
 	//
-	// Consecutive rather than a rate: a dependency that fails this
-	// many times in a row is down, whereas a rate needs a window to
-	// be meaningful and a window needs traffic to fill it.
+	// A success resets the count. A failure rate would need a time
+	// window, and a window needs traffic before its rate reflects the
+	// dependency.
 	FailureThreshold int
 
-	// SuccessThreshold is the count of consecutive probe successes
+	// SuccessThreshold is the number of consecutive probe successes
 	// that closes a circuit. Must be > 0.
 	//
-	// Above one because a dependency that answers a single request
-	// and falls over should not receive the whole traffic back.
+	// A value above one keeps the circuit from closing on a dependency
+	// that serves one request and then fails again.
 	SuccessThreshold int
 
-	// OpenFor is how long a circuit stays open before admitting a
+	// OpenFor is how long a circuit refuses calls before it admits a
 	// probe. Must be > 0.
 	OpenFor time.Duration
 }
 
-// Breaker holds one circuit per target.
+// Breaker keeps one circuit per target.
 //
-// Per target because a caller has several dependencies and one being
-// down says nothing about the others. A single shared circuit would
-// either open for all of them when one fails, or never open.
+// Each target has its own circuit because one failing dependency
+// implies nothing about another. A shared circuit would either open
+// for every target when one fails, or never open, because successes
+// from the healthy targets would reset its failure count.
 //
 // # Growth
 //
-// Circuits are never evicted, so targets must come from the caller's
-// own configuration. A Breaker keyed on anything a client supplies is
-// a memory leak, and the failure is silent until the process runs out
-// of memory.
+// A Breaker never evicts a circuit, so targets must come from the
+// caller's own configuration. A Breaker keyed on client-supplied
+// values grows without bound, and nothing reports the growth before
+// the process runs out of memory.
 //
 // # Concurrency
 //
-// Safe for concurrent use.
+// A Breaker is safe for concurrent use. Calls for different targets
+// contend on one mutex.
+//
+// # Allocation contract
+//
+// [Breaker.Allow] allocates one circuit the first time it sees a
+// target. Allow, [Breaker.Record] and [Breaker.State] do not allocate
+// for a target that has a circuit.
 type Breaker struct {
 	clock            clock.Clock
 	circuits         map[string]*fsm.Machine[State, event, circuit]
@@ -114,8 +122,8 @@ type Breaker struct {
 	mu sync.Mutex
 }
 
-// event is what happens to a circuit: a caller asks to proceed, or
-// reports the outcome of a call it was allowed to make.
+// event is an input to a circuit: a caller asks to proceed, or reports
+// the outcome of a call it was allowed to make.
 type event uint8
 
 const (
@@ -124,7 +132,8 @@ const (
 	failure
 )
 
-// String returns the event name, for the circuit's diagram.
+// String returns the event name, which the circuit's Mermaid diagram
+// and the errors of [fsm.Builder.Build] contain.
 func (e event) String() string {
 	switch e {
 	case allow:
@@ -136,30 +145,31 @@ func (e event) String() string {
 	}
 }
 
-// circuit is one target's data: the counters and the deadline that
-// the guards read and the actions update, and the breaker whose
-// thresholds and clock they use.
+// circuit is the data of one target's machine: the counters and the
+// deadline that the guards read and the actions update. b points at
+// the Breaker whose thresholds and clock the guards and actions use.
 type circuit struct {
 	openUntil time.Time
 	b         *Breaker
 	failures  int
 	successes int
 
-	// probing records that a probe has been admitted and its outcome
-	// is outstanding. It is what limits a half-open circuit to one
-	// call rather than the full load.
+	// probing reports that a probe has been admitted and its outcome
+	// is outstanding. A half-open circuit does not admit another call
+	// while probing is set.
 	probing bool
 }
 
-// circuitSpec is the state machine every circuit runs. The
-// declaration is static, so it is built once, and
-// breaker_internal_test.go asserts that it builds.
+// circuitSpec is the state machine of every circuit. Guards and
+// actions read the thresholds and the clock through circuit.b, so one
+// Spec serves every Breaker and is built once, at package
+// initialisation. errCircuitSpec is nil for a valid declaration.
 //
-// The Open state covers the whole interval and the moment after it
-// elapses: the first Allow after the deadline claims the probe and
-// moves the circuit to HalfOpen. A result that arrives while the
-// circuit is open comes from a call admitted before it opened, and it
-// updates the counters without closing the circuit.
+// Open covers the whole interval and the moment after it elapses. The
+// first Allow after the deadline claims the probe and moves the circuit
+// to HalfOpen. An outcome recorded while the circuit is open belongs to
+// a call admitted before it opened. It updates the counters and leaves
+// the circuit open.
 var circuitSpec, errCircuitSpec = fsm.NewBuilder[State, event, circuit](Closed).
 	Edge(Closed, allow, Closed).
 	Edge(Closed, success, Closed, fsm.Do(clearFailures)).
@@ -181,7 +191,7 @@ var circuitSpec, errCircuitSpec = fsm.NewBuilder[State, event, circuit](Closed).
 // atThreshold reports whether one more failure opens the circuit.
 func atThreshold(c *circuit) bool { return c.failures+1 >= c.b.failureThreshold }
 
-// elapsed reports whether the open interval is over.
+// elapsed reports whether the open interval has ended.
 func elapsed(c *circuit) bool { return !c.b.clock.Time().Before(c.openUntil) }
 
 // idle reports whether no probe is outstanding.
@@ -190,23 +200,25 @@ func idle(c *circuit) bool { return !c.probing }
 // probing reports whether a probe is outstanding.
 func probing(c *circuit) bool { return c.probing }
 
-// probeFailed reports whether a failure re-opens a half-open circuit:
-// always for the probe itself, which has just confirmed the dependency
-// is still down, and for a late failure once the threshold is reached.
+// probeFailed reports whether a failure re-opens a half-open circuit.
+// A failed probe always re-opens it, because the dependency is still
+// down. A late failure re-opens it when the failure count meets the
+// threshold.
 func probeFailed(c *circuit) bool { return c.probing || atThreshold(c) }
 
 // recovered reports whether the probe's success is the last one the
 // circuit needs to close.
 func recovered(c *circuit) bool { return c.probing && c.successes+1 >= c.b.successThreshold }
 
-// countFailure records a failure and ends any probe.
+// countFailure records a failure and ends any outstanding probe.
 func countFailure(c *circuit) {
 	c.probing, c.successes = false, 0
 	c.failures++
 }
 
 // countLateFailure records a failure that arrives while the circuit is
-// open, and extends the interval once the threshold is reached.
+// open. When the failure count meets the threshold, it restarts the
+// open interval.
 func countLateFailure(c *circuit) {
 	countFailure(c)
 
@@ -215,29 +227,31 @@ func countLateFailure(c *circuit) {
 	}
 }
 
-// countSuccess records a probe's success short of the threshold.
+// countSuccess records a probe success below the threshold.
 func countSuccess(c *circuit) {
 	c.probing = false
 	c.successes++
 }
 
-// clearFailures records a success that is not a probe's.
+// clearFailures resets the failure count after a success that is not
+// a probe's.
 func clearFailures(c *circuit) { c.failures = 0 }
 
 // claimProbe admits the one probe a half-open circuit allows.
 func claimProbe(c *circuit) { c.probing = true }
 
-// reopen starts the open interval from now.
+// reopen starts the open interval at the current time.
 func reopen(c *circuit) { c.openUntil = c.b.clock.Time().Add(c.b.openFor) }
 
-// reset clears a circuit that has closed.
+// reset clears the counters of a circuit that has closed.
 func reset(c *circuit) { *c = circuit{b: c.b} }
 
-// NewBreaker returns a Breaker over cfg.
+// NewBreaker returns a Breaker configured by cfg.
 //
-// Returns [ErrConfig] when any required field is missing: a threshold
-// left at zero would make the breaker either useless or permanently
-// open, and that is a wiring error worth catching at construction.
+// NewBreaker returns [ErrConfig] when cfg.Clock is nil, when TripOn is
+// empty, or when a threshold or OpenFor is not positive. A zero
+// threshold makes a breaker either useless or permanently open, so
+// NewBreaker rejects it at construction.
 func NewBreaker(cfg BreakerConfig) (*Breaker, error) {
 	if cfg.Clock == nil ||
 		cfg.FailureThreshold <= 0 ||
@@ -258,16 +272,17 @@ func NewBreaker(cfg BreakerConfig) (*Breaker, error) {
 	}, nil
 }
 
-// Allow reports whether a call to target may proceed, claiming the
-// probe slot when the circuit has just become eligible for one.
+// Allow reports whether a call to target may proceed. When the open
+// interval of target's circuit has elapsed, Allow admits one probe and
+// refuses every other call until the probe's outcome is recorded.
 //
 // A caller that receives true MUST report the outcome with
-// [Breaker.Record]. A probe slot taken and never recorded leaves the
-// circuit half-open forever, admitting nothing further.
+// [Breaker.Record]. A probe that is admitted and never recorded leaves
+// the circuit half-open, and the circuit admits no further call.
 //
-// Use this with Record when the caller judges failure itself — which
-// is the common case for a transport where failure is not an error.
-// [Call] pairs them for callers whose failures do arrive as errors.
+// Use Allow with Record when the caller decides what a failure is, as
+// for a transport that reports failure in a status code. [Call] pairs
+// them for a function whose failures are errors.
 func (b *Breaker) Allow(target string) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -284,10 +299,10 @@ func (b *Breaker) Allow(target string) bool {
 	return err == nil
 }
 
-// Record folds one outcome into target's circuit.
+// Record adds the outcome of one call to target's circuit. failed
+// reports whether the caller counts the call as a failure.
 //
-// What counts as a failure is the caller's judgement. Recording a
-// target that [Breaker.Allow] has never seen is a no-op.
+// Record ignores a target that [Breaker.Allow] has never seen.
 func (b *Breaker) Record(target string, failed bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -306,12 +321,13 @@ func (b *Breaker) Record(target string, failed bool) {
 	_, _ = m.Fire(outcome)
 }
 
-// State reports target's current state, for emission as a gauge.
+// State returns target's current state, for export as a gauge.
 //
-// A point-in-time observation, and racy by nature: a caller that
-// branches on it rather than calling [Breaker.Allow] is
-// reimplementing the breaker badly. A target with no circuit reports
-// [Closed].
+// The result is a snapshot. Another goroutine can change the state
+// before the caller uses it, so use [Breaker.Allow] to decide whether
+// to call the dependency. State returns [HalfOpen] for an open circuit
+// whose interval has elapsed, because the next Allow admits a probe. A
+// target with no circuit is [Closed].
 func (b *Breaker) State(target string) State {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -321,8 +337,6 @@ func (b *Breaker) State(target string) State {
 		return Closed
 	}
 
-	// An open circuit whose interval has elapsed admits a probe on the
-	// next Allow. Reporting HalfOpen describes what that caller finds.
 	if m.State() == Open && elapsed(m.Data()) {
 		return HalfOpen
 	}
@@ -330,22 +344,22 @@ func (b *Breaker) State(target string) State {
 	return m.State()
 }
 
-// Call runs fn under target's circuit, returning [ErrOpen] without
-// calling fn when the circuit is open.
+// Call runs fn under target's circuit. When the circuit refuses the
+// call, Call returns [ErrOpen] and does not run fn.
 //
-// Failure is judged by [errs.Classify] against the configured
-// TripOn classes. A dependency correctly rejecting a bad request is
-// not a failing dependency, so [errs.Invalid], [errs.NotFound] and
-// [errs.Denied] should not normally appear there.
+// Call classifies fn's error with [errs.Classify] and counts it as a
+// failure when its class is in TripOn. A dependency that rejects a bad
+// request is working, so [errs.Invalid], [errs.NotFound] and
+// [errs.Denied] do not normally belong in TripOn.
 //
-// A call whose context ended is never counted as a failure: the
-// dependency did not fail, the caller stopped waiting. Counting it
-// would open a circuit against a healthy dependency during a
-// cancellation storm, and the resulting ErrOpen responses would then
-// look like the outage that was not happening.
+// Call does not count an error as a failure when ctx has ended. The
+// caller stopped waiting, and the dependency did not fail. Counting
+// these errors would open the circuit when many callers cancel at
+// once, and the resulting ErrOpen errors would report an outage that
+// did not happen.
 //
-// Callers whose failures do not arrive as errors — an HTTP status, an
-// RPC trailer — use [Breaker.Allow] and [Breaker.Record] instead.
+// A caller whose failures are not errors, such as an HTTP status or an
+// RPC trailer, uses [Breaker.Allow] and [Breaker.Record] instead.
 func Call[T any](
 	ctx context.Context, b *Breaker, target string,
 	fn func(context.Context) (T, error),
