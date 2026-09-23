@@ -94,6 +94,14 @@ Start from [`docs/templates/RFC.md`](../templates/RFC.md).
 | [0029](0029-domain-separated-tree-hashing.md) | Domain-Separated Tree Hashing | Accepted |
 | [0030](0030-structured-concurrency.md) | Structured Concurrency | Draft |
 | [0031](0031-finite-state-machines.md) | Finite State Machines | Draft |
+| [0032](0032-transparency-log-trees.md) | Transparency Log Trees | Draft |
+| [0033](0033-ml-dsa-signatures.md) | ML-DSA Signatures | Draft |
+| [0034](0034-scheduled-key-destruction.md) | Scheduled Key Destruction | Draft |
+| [0035](0035-context-aware-signing.md) | Context-Aware Signing | Draft |
+| [0036](0036-utc-error-bounds.md) | UTC Readings with an Error Bound | Draft |
+| [0037](0037-periodic-and-quorum-tasks.md) | Periodic and Quorum Tasks | Draft |
+| [0038](0038-conformance-for-durable-adapters.md) | Conformance for Durable Adapters and Decorators | Draft |
+| [0039](0039-signature-policies.md) | Signature Policies and Verifier Resolution | Draft |
 
 ## Canonical first RFC
 
