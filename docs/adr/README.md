@@ -58,7 +58,7 @@ Start from [`docs/templates/ADR.md`](../templates/ADR.md).
 | [0003](0003-apache-2-0-with-spdx-headers.md) | Apache 2.0 with SPDX Short-Form Headers | Accepted |
 | [0004](0004-library-only-release-via-plain-tags.md) | Library-Only Release via Plain Tags | Accepted |
 | [0005](0005-primitive-set-chosen-for-coherence.md) | The Primitive Set Is Chosen for Coherence | Accepted |
-| [0006](0006-stdlib-only-scope-test-dependencies.md) | Stdlib-Only Scope: Test Dependencies | Accepted |
+| [0006](0006-stdlib-only-scope-test-dependencies.md) | Stdlib-Only Scope: Test Dependencies | Superseded by [0015](0015-dependency-free-x-modules-in-production.md) |
 | [0007](0007-zero-digest-is-valid-chain-genesis.md) | The Zero Digest Is a Valid Chain Genesis | Superseded by [0013](0013-tagged-tree-hashing-on-the-interface.md), [0014](0014-genesis-sentinel-is-deleted.md) |
 | [0008](0008-core-defines-contracts-that-describe-io.md) | Core Defines Contracts That Describe IO | Accepted |
 | [0009](0009-logging-is-log-slog.md) | Logging Is log/slog | Accepted |
@@ -67,5 +67,6 @@ Start from [`docs/templates/ADR.md`](../templates/ADR.md).
 | [0012](0012-storage-is-per-kind.md) | Storage Is Per-Kind; a Unified KV Seam Is Refused | Accepted |
 | [0013](0013-tagged-tree-hashing-on-the-interface.md) | Tagged Tree Hashing on the Hasher Interface | Accepted |
 | [0014](0014-genesis-sentinel-is-deleted.md) | The Genesis Sentinel Is Deleted, Not Documented | Accepted |
+| [0015](0015-dependency-free-x-modules-in-production.md) | Dependency-Free golang.org/x Modules in Production Code | Accepted |
 
 [nygard]: https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions

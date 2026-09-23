@@ -1,17 +1,22 @@
 ---
 adr: 0006
 title: "Stdlib-Only Scope: Test Dependencies"
-status: Accepted
+status: Superseded
 date: 2026-08-03
 supersedes: ADR-0001
-superseded-by: none
+superseded-by: ADR-0015
 ---
 
 # ADR-0006: Stdlib-Only Scope: Test Dependencies
 
 ## Status
 
-Accepted
+Superseded by
+[ADR-0015: Dependency-Free golang.org/x Modules in Production Code](0015-dependency-free-x-modules-in-production.md).
+
+The test-code rule recorded below is unchanged and remains in force.
+ADR-0015 adds one exception to the production rule: a golang.org/x
+module without requirements, listed by name in `depguard`.
 
 Supersedes [ADR-0001](0001-stdlib-only-dependencies.md). The
 production constraint from ADR-0001 is unchanged and is restated here;
