@@ -3,7 +3,11 @@
 
 package crypto
 
-import "context"
+import (
+	"context"
+
+	"go.thesmos.sh/core/rand"
+)
 
 // Keeper wraps and unwraps data encryption keys.
 //
@@ -47,13 +51,13 @@ type Keeper interface {
 
 	// Unwrap decrypts a data key. Material wrapped under a different
 	// key, or corrupted in any position, is an error rather than a
-	// wrong answer.
+	// wrong result.
 	Unwrap(ctx context.Context, wrapped []byte) ([]byte, error)
 }
 
 // Destroyer is the optional capability for custodians that can
 // irreversibly destroy a wrapping key — the primitive underneath
-// erasure of encrypted-at-rest data. The payload stays where it is and
+// erasure of encrypted-at-rest data. The payload remains in place and
 // becomes unreadable, which is what makes erasure tractable for data
 // that is replicated, backed up, or on tape.
 //
@@ -69,7 +73,7 @@ type Destroyer interface {
 	// wrapped under it no longer unwraps, by this or any other
 	// instance.
 	//
-	// Destroying a key the custodian does not hold is an error:
+	// Destroying a key the custodian does not have is an error:
 	// succeeding silently would leave a caller believing data was
 	// erased when it was not.
 	Destroy(ctx context.Context, keyID string) error
@@ -82,7 +86,7 @@ type Destroyer interface {
 // stronger shape: the plaintext data key is generated inside the
 // custodian's entropy boundary rather than the caller's, and a caller
 // that only ever encrypts can discard the plaintext immediately and
-// never hold key material it does not need.
+// never have key material it does not need.
 type KeyGenerator interface {
 	Keeper
 
@@ -92,4 +96,51 @@ type KeyGenerator interface {
 	//
 	// A non-positive size is an error.
 	GenerateKey(ctx context.Context, size int) (plaintext, wrapped []byte, err error)
+}
+
+// GenerateKey returns a fresh data key of size bytes, in the clear and
+// wrapped under k.
+//
+// When k implements [KeyGenerator], the key is minted inside the
+// custodian's entropy boundary and r is not read. Otherwise
+// GenerateKey reads size bytes from r and wraps them with
+// [Keeper.Wrap]. A caller therefore gets the stronger path whenever
+// the custodian offers it, without asserting for the capability
+// itself. Callers that only encrypt should zero plaintext as soon as
+// the payload is sealed.
+//
+// Returns [ErrKeySize] for a non-positive size on the r path, and the
+// custodian's own error on the KeyGenerator path. An error from r or
+// from Wrap is returned as it is, and no key material accompanies an
+// error: the drawn bytes are zeroed before GenerateKey returns.
+//
+// # Allocation contract
+//
+// On the r path, one allocation for plaintext plus whatever Wrap
+// allocates. On the KeyGenerator path, whatever the custodian
+// allocates.
+func GenerateKey(ctx context.Context, k Keeper, r rand.Rand, size int) (plaintext, wrapped []byte, err error) {
+	if g, ok := k.(KeyGenerator); ok {
+		return g.GenerateKey(ctx, size) //nolint:wrapcheck // returned as the custodian produced it
+	}
+
+	if size <= 0 {
+		return nil, nil, ErrKeySize
+	}
+
+	plaintext = make([]byte, size)
+	if _, err = r.Read(plaintext); err != nil {
+		clear(plaintext)
+
+		return nil, nil, err //nolint:wrapcheck // returned as the source produced it
+	}
+
+	wrapped, err = k.Wrap(ctx, plaintext)
+	if err != nil {
+		clear(plaintext)
+
+		return nil, nil, err //nolint:wrapcheck // returned as the custodian produced it
+	}
+
+	return plaintext, wrapped, nil
 }
