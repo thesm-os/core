@@ -19,22 +19,23 @@ import (
 // Safe for concurrent use. The body passed to Run and every running
 // task may call Go.
 type Group struct {
-	// ctx is the context every task receives. The group holds it
+	// ctx is the context every task receives. The group stores it
 	// because a task that Go starts after body has returned still
 	// needs it.
 	ctx context.Context //nolint:containedctx // tasks started after body returns receive it from the group.
 
-	// sem holds one token per running task; its capacity is the limit.
+	// sem contains one token per running task. Its capacity is the
+	// limit.
 	sem chan struct{}
 
 	scope
 
-	// idle is a one-shot event that leave releases when n reaches zero.
-	// A WaitGroup is stored in the Group itself, and a channel would
-	// cost an allocation of its own.
+	// idle is a one-shot event that leave releases when n drops to
+	// zero. It is a WaitGroup because a WaitGroup is stored inside the
+	// Group, while a channel costs an allocation of its own.
 	idle sync.WaitGroup
 
-	// n counts body and every admitted task, and it reaches zero once,
+	// n counts body and every admitted task. It drops to zero once,
 	// after the last of them returns. Admission fails at zero, so a
 	// closed group cannot reopen.
 	n atomic.Int64
@@ -74,9 +75,9 @@ func Run(ctx context.Context, limit int, body func(ctx context.Context, g *Group
 	defer cancel(nil)
 
 	g := &Group{
-		ctx:   gctx,
-		sem:   make(chan struct{}, limit),
-		scope: scope{cancel: cancel},
+		ctx:    gctx,
+		sem:    make(chan struct{}, limit),
+		cancel: cancel,
 	}
 	g.n.Store(1) // body
 	g.idle.Add(1)
@@ -172,9 +173,9 @@ func (g *Group) refuse() error {
 	return cause
 }
 
-// enter admits one task. It fails once the count has reached zero.
-// Every legitimate caller is body or a running task, which holds a
-// count of its own, so only a group used after Run returned sees zero.
+// enter admits one task. It fails once the count has dropped to zero.
+// Every legitimate caller is body or a running task, which has a count
+// of its own, so only a group used after Run returned sees zero.
 func (g *Group) enter() bool {
 	for {
 		n := g.n.Load()

@@ -5,7 +5,7 @@ run:
   modules-download-mode: readonly
   allow-parallel-runners: true
   tests: true
-  go: "1.26"
+  go: "1.27"
   relative-path-mode: gomod
 
 output:
@@ -336,7 +336,8 @@ formatters:
     golines:
       max-len: 120
     gofumpt:
-      extra-rules: true
+      extra:
+        group-params: true
 
 issues:
   max-issues-per-linter: 0

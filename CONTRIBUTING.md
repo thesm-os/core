@@ -19,7 +19,7 @@ depends on. Contributions are scrutinised against three constraints:
 git clone git@github.com:thesmos-ai/core.git && cd core
 
 # Verify toolchain
-go version    # 1.26.2 or later (matches go.mod)
+go version    # 1.27.0 or later (matches go.mod)
 
 # Install development tools
 make bootstrap

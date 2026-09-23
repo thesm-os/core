@@ -107,6 +107,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking:** core requires Go 1.27.0, up from 1.26.6, so its
+  packages can use the Go 1.27 standard library, including
+  `crypto/mldsa`.
 - `batch.Loader.LoadAll` runs its batches through `task.Each`. A
   failed batch now cancels the other batches of the same call, whose
   results were discarded anyway, and the batch function receives a
