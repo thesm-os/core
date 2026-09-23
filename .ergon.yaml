@@ -348,6 +348,9 @@ checks:
       - path: errs
         score: 99
         coverage: 99
+      - path: fsm
+        score: 99
+        coverage: 99
       # Five equivalent mutants and four counter-less consts.
       # Equivalent: Abs and magnitude test `f < Zero`, and at zero
       # both arms return zero; round's `q > Max-step` and

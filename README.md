@@ -157,6 +157,13 @@ seams every other thesmos library and framework depends on:
   result, and a task that panics crashes the process from its own
   goroutine. `Each`, `Map` and `Stream` run on a fixed set of workers
   and do not allocate per element. See [RFC-0030][rfc-0030].
+- **FSM** — finite state machines over small integer states and
+  events. A `Spec` is a transition table, built once and validated at
+  construction: unreachable states, states that cannot be left and
+  edges that can never be taken are errors. `Allows` checks a stored
+  status change before a compare-and-swap, and a `Machine` runs guards
+  and exit, edge and entry actions for one event at a time. Neither
+  allocates per event. See [RFC-0031][rfc-0031].
 
 These interfaces — and the others added over time — share three
 properties:
@@ -228,5 +235,6 @@ Apache 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 [rfc-0023]: docs/rfc/0023-resilience-primitives.md
 [rfc-0024]: docs/rfc/0024-request-coalescing.md
 [rfc-0030]: docs/rfc/0030-structured-concurrency.md
+[rfc-0031]: docs/rfc/0031-finite-state-machines.md
 [contrib]: CONTRIBUTING.md
 [sec]: SECURITY.md

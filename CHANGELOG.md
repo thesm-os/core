@@ -84,6 +84,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   calls `runtime.Goexit` records `ErrExited`. `Each`, `Map` and
   `Stream` run on a fixed set of workers and do not allocate per
   element. See RFC-0030.
+- `fsm` package: finite state machines over `uint8` states and events
+  with `String` methods. `NewBuilder` declares edges with optional
+  guards and actions, entry and exit actions, and terminal states.
+  `Build` validates the declaration and reports every problem at once:
+  unreachable states, states without an outgoing edge that are not
+  terminal, terminal states with an edge, and edges that follow an
+  unguarded edge. The resulting `Spec` is immutable and answers
+  `Next`, `Allows` and `Terminal`, so a caller that stores a status
+  checks a transition before its compare-and-swap. A `Machine` holds a
+  state and its data and runs one event at a time through `Fire`, in
+  exit, edge and entry order. `Fire` costs about 5 ns and allocates
+  nothing. See RFC-0031.
 
 ### Changed
 
