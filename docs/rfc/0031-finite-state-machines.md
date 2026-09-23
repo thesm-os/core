@@ -86,10 +86,10 @@ an AMD Ryzen 9 9950X3D:
   at a time and run exit, transition and entry actions in that order.
   Erlang's `gen_statem` treats a machine as state and event in,
   actions and next state out.
-- The package imports only `errors`, `fmt`, `strings` and `core/errs`.
-- Every rule is testable. A prototype reimplements `Breaker` on the
-  package and matches the original on every call across 600,000
-  random operations.
+- The package imports only `errors`, `fmt`, `math`, `slices`,
+  `strings` and `core/errs`.
+- Every rule is testable. `Breaker`, rebuilt on the package, matches
+  the original on every call across 600,000 random operations.
 - Core keeps to its line between mechanism and domain. Core supplies
   the rule a lease enforces and not the lease, and in the same way it
   supplies the machine and not the lifecycle. Every state machine in
@@ -141,7 +141,7 @@ var (
 
     // ErrReentrant is returned by Machine.Fire when a guard or action
     // of the same machine calls Fire. It classifies as errs.Invalid.
-    ErrReentrant = errs.WithClass(errors.New("fsm: fire called from an action of the same machine"), errs.Invalid)
+    ErrReentrant = errs.WithClass(errors.New("fsm: fire called during a transition of the same machine"), errs.Invalid)
 
     // ErrState is returned by Spec.Resume for a state that the Spec
     // does not declare. It classifies as errs.Invalid.
@@ -285,9 +285,10 @@ stateDiagram-v2
 
 ### Running a machine: the circuit breaker
 
-The prototype reimplements `resilience.Breaker` with one `Machine` per
-target. The circuit's counters and deadline are the machine's data,
-and the thresholds are captured when the `Breaker` builds its Spec.
+A scratch copy of core reimplements `resilience.Breaker` on the
+package, with one `Machine` per target. The circuit's counters and
+deadline are the machine's data, and the thresholds are captured when
+the `Breaker` builds its Spec.
 
 ```go
 return fsm.NewBuilder[State, event, circuit](Closed).
@@ -323,8 +324,9 @@ The port matches the original, and its overhead is a few nanoseconds:
   300 seeds of 2,000 steps over three targets, and every result
   matches. When one late-outcome edge is removed from the port, the
   test fails at step 16.
-- An `Allow` followed by a `Record` costs 27.5 to 31.0 ns, against 23.6
-  to 24.2 ns for the current `Breaker`. Neither allocates.
+- An `Allow` followed by a `Record` costs 27.0 to 27.8 ns, against 24.0
+  to 24.3 ns for the current `Breaker` in a back-to-back run. Neither
+  allocates.
 
 The port is also longer: 89 lines of circuit logic against 60. Every
 late-outcome path becomes a visible edge, but most of the logic is
@@ -343,7 +345,9 @@ with extended data, not a migration.
 - An edge declared after an unguarded edge for the same state and
   event, which can never be taken.
 - A second guard or action on one edge, a second entry or exit action
-  on one state, and a nil guard or action.
+  on one state, and a nil guard, action, or entry or exit action.
+- More than 65,535 edges, which the table's 16-bit offsets cannot
+  address. A full table of 256 states by 256 events needs 65,536.
 
 ### Semantics
 
@@ -359,9 +363,11 @@ with extended data, not a migration.
   state runs only its edge action.
 - A guard reads the data and must not change it, because `Spec.Next`
   evaluates guards without running actions.
-- An action that panics leaves the machine mid-transition, and every
-  later `Fire` returns `ErrReentrant`. The machine fails closed rather
-  than continuing from a state that no edge describes.
+- A guard or action that panics leaves the machine mid-transition, and
+  every later `Fire` returns `ErrReentrant`. The machine fails closed
+  rather than continuing from a state that no edge describes. `Fire`
+  marks the transition before it evaluates the first guard, so a guard
+  that calls `Fire` is refused as an action is.
 
 ### Concurrency
 
@@ -399,15 +405,16 @@ it reaches the store.
 
 ### Cost
 
-Measured on the prototype, Go 1.27.1, AMD Ryzen 9 9950X3D, five runs
-of 5,000,000 operations:
+Measured on the implementation in core, Go 1.27.1, AMD Ryzen 9
+9950X3D, five runs of 5,000,000 operations. `TestZeroAlloc` pins the
+allocation column:
 
 | Operation | ns | allocs |
 |---|---|---|
-| `Spec.Allows` | 0.6-0.8 | 0 |
-| `Spec.Next` | 5.0-5.3 | 0 |
-| `Machine.Fire` | 5.0-5.4 | 0 |
-| `Machine.Fire`, guarded edge with an edge action and an entry action | 6.7-6.9 | 0 |
+| `Spec.Allows` | 0.5-0.6 | 0 |
+| `Spec.Next`, over the job lifecycle's guarded edge | 2.3-2.4 | 0 |
+| `Machine.Fire` | 4.4-4.6 | 0 |
+| `Machine.Fire`, guarded edge with an edge action and an entry action | 5.8-5.9 | 0 |
 
 A `Spec` holds a table of states by events and a table of states by
 states. With the 256 states and events that `uint8` allows, the tables
@@ -416,23 +423,29 @@ take about 100 bytes.
 
 ### Guarantees
 
-The prototype has a test for each guarantee, and the suite passes
-three times under the race detector:
+Every guarantee below has a test in the implementation, and the suite
+passes three times under the race detector. It covers every statement,
+and gremlins generates 68 mutants of the package, which the suite
+kills.
 
 | # | Guarantee |
 |---|---|
-| 1 | `Build` rejects an unreachable state, a state with no outgoing edge that is not terminal, a terminal state with an edge, an edge after an unguarded edge, a second entry action and a nil option |
-| 2 | `Build` reports several problems in one error |
-| 3 | `Next` follows the first edge whose guard holds, and runs no action |
-| 4 | `Next` rejects an event without an edge |
-| 5 | `Allows`, `Terminal` and `Known` follow the declaration, and reject values outside it |
-| 6 | `Mermaid` renders the initial state, every edge with guarded edges marked, and every terminal state |
-| 7 | `Fire` runs the exit, edge and entry actions in that order |
-| 8 | A rejected event changes neither the state nor the data |
-| 9 | A terminal state rejects every event |
-| 10 | A `Fire` from an action of the same machine returns `ErrReentrant`, and the outer transition completes |
-| 11 | `Resume` refuses a state outside the Spec |
-| 12 | `Fire` and `Next` do not allocate |
+| 1 | `Build` rejects every problem in the Validation list, each in its own test |
+| 2 | `Build` sizes its tables from the largest value in any role, so an initial state or a source beyond every other state is reported, not indexed out of range |
+| 3 | `Build` accepts 65,535 edges and rejects 65,536 |
+| 4 | `Build` reports several problems in one error, and can be called again on the same `Builder` |
+| 5 | `Next` follows the first edge whose guard holds, falls through when a guard fails, and runs no action |
+| 6 | `Next` rejects an event without an edge, and a state or event one past the Spec, including where the next cell holds an edge |
+| 7 | `Allows`, `Terminal` and `Known` follow the declaration, and reject values one past it |
+| 8 | `Start` and `Resume` hold the data, and `Resume` refuses a state outside the Spec |
+| 9 | `Mermaid` renders the initial state, every edge in declaration order with guarded edges marked, and every terminal state |
+| 10 | `Fire` runs the exit, edge and entry actions in that order, and the entry action sees the new state |
+| 11 | An edge back to its own state runs only its edge action |
+| 12 | A rejected event changes neither the state nor the data, and the machine accepts events afterwards |
+| 13 | A terminal state rejects every event |
+| 14 | A `Fire` from a guard or an action of the same machine returns `ErrReentrant`, and the outer transition completes |
+| 15 | After an action panics, every `Fire` returns `ErrReentrant` |
+| 16 | `Fire`, `Next`, `Allows` and `Terminal` do not allocate |
 
 ## Alternatives considered
 
