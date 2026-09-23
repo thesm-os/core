@@ -28,17 +28,19 @@ We propose a package `fsm` with two layers:
   in that order.
 
 `Next` and `Fire` cost about 5 ns and do not allocate. Core supplies
-the mechanism and no state machine of its own.
+the mechanism and no ready-made lifecycle. `resilience.Breaker` runs
+its circuits on the package.
 
 ## Motivation
 
 ### Core writes its state machines by hand
 
-- `resilience.Breaker` has three states, and none of them is stored.
-  `Allow`, `Record` and `State` derive the state from two counters, a
-  probe flag and a deadline (`resilience/breaker.go:163-257`). A
-  result that arrives while the circuit is open is a transition of its
-  own, and a reader finds it only by reading both functions.
+- `resilience.Breaker` had three states and stored none of them.
+  `Allow`, `Record` and `State` derived the state from two counters, a
+  probe flag and a deadline (`resilience/breaker.go:163-257` at
+  `7143d11`). A result that arrived while the circuit was open was a
+  transition of its own, and a reader found it only by reading both
+  functions.
 - The XOF's absorb-then-squeeze sequence is a state machine, as its RFC
   states. `task.Group` moves from open to draining to closed, and
   `batch.Loader` moves each batch from accumulating to in flight.
@@ -285,54 +287,59 @@ stateDiagram-v2
 
 ### Running a machine: the circuit breaker
 
-A scratch copy of core reimplements `resilience.Breaker` on the
-package, with one `Machine` per target. The circuit's counters and
-deadline are the machine's data, and the thresholds are captured when
-the `Breaker` builds its Spec.
+`resilience.Breaker` runs one `Machine` per target. The circuit's
+counters and deadline are the machine's data. The data also holds a
+pointer to the `Breaker`, whose thresholds and clock the guards read,
+so every `Breaker` shares one `Spec`. The package builds that `Spec`
+once, when it initialises.
 
 ```go
-return fsm.NewBuilder[State, event, circuit](Closed).
-    Edge(Closed, evAllow, Closed).
-    Edge(Closed, evSuccess, Closed, fsm.Do(resetFailures)).
-    Edge(Closed, evFailure, Open, fsm.If(tripped), fsm.Do(fail)).
-    Edge(Closed, evFailure, Closed, fsm.Do(fail)).
-    // A late outcome of a call admitted before the circuit opened.
-    Edge(Open, evSuccess, Open, fsm.Do(resetFailures)).
-    Edge(Open, evFailure, Open, fsm.Do(failLate)).
-    // The interval has elapsed: admit one probe.
-    Edge(Open, evAllow, HalfOpen, fsm.If(elapsed), fsm.Do(claim)).
-    Edge(HalfOpen, evAllow, HalfOpen, fsm.If(idle), fsm.Do(claim)).
-    Edge(HalfOpen, evFailure, Open, fsm.If(probeFailed), fsm.Do(fail)).
-    Edge(HalfOpen, evFailure, HalfOpen, fsm.Do(fail)).
-    Edge(HalfOpen, evSuccess, Closed, fsm.If(recovered)).
-    Edge(HalfOpen, evSuccess, HalfOpen, fsm.If(probing), fsm.Do(countSuccess)).
-    Edge(HalfOpen, evSuccess, HalfOpen, fsm.Do(resetFailures)).
+var circuitSpec, errCircuitSpec = fsm.NewBuilder[State, event, circuit](Closed).
+    Edge(Closed, allow, Closed).
+    Edge(Closed, success, Closed, fsm.Do(clearFailures)).
+    Edge(Closed, failure, Open, fsm.If(atThreshold), fsm.Do(countFailure)).
+    Edge(Closed, failure, Closed, fsm.Do(countFailure)).
+    Edge(Open, allow, HalfOpen, fsm.If(elapsed), fsm.Do(claimProbe)).
+    Edge(Open, success, Open, fsm.Do(clearFailures)).
+    Edge(Open, failure, Open, fsm.Do(countLateFailure)).
+    Edge(HalfOpen, allow, HalfOpen, fsm.If(idle), fsm.Do(claimProbe)).
+    Edge(HalfOpen, failure, Open, fsm.If(probeFailed), fsm.Do(countFailure)).
+    Edge(HalfOpen, failure, HalfOpen, fsm.Do(countFailure)).
+    Edge(HalfOpen, success, Closed, fsm.If(recovered)).
+    Edge(HalfOpen, success, HalfOpen, fsm.If(probing), fsm.Do(countSuccess)).
+    Edge(HalfOpen, success, HalfOpen, fsm.Do(clearFailures)).
     OnEnter(Open, reopen).
-    OnEnter(Closed, func(c *circuit) { *c = circuit{} })
+    OnEnter(Closed, reset).
+    Build()
 ```
 
-`Allow` becomes `Fire(evAllow)`, and `Record` fires `evSuccess` or
-`evFailure`. `State` reports `HalfOpen` for an open circuit whose
-interval has elapsed, as today.
+`Allow` returns whether `Fire(allow)` succeeds, and `Record` fires
+`success` or `failure`. `State` reports `HalfOpen` for an open circuit
+whose interval has elapsed, as the hand-written `Breaker` did. An
+internal test asserts that the declaration builds and compares its
+`Mermaid` output with the expected diagram, so a change to an edge
+shows in review.
 
-The port matches the original, and its overhead is a few nanoseconds:
+The migration kept the behaviour and added a few nanoseconds:
 
 - `resilience`'s tests pass unchanged, three times under the race
   detector.
-- A differential test sends the same random sequence of calls, clock
-  advances and state reads to the original and to the port. It covers
-  300 seeds of 2,000 steps over three targets, and every result
-  matches. When one late-outcome edge is removed from the port, the
-  test fails at step 16.
-- An `Allow` followed by a `Record` costs 27.0 to 27.8 ns, against 24.0
-  to 24.3 ns for the current `Breaker` in a back-to-back run. Neither
-  allocates.
+- A differential test sent the same random sequence of calls, clock
+  advances and state reads to the hand-written `Breaker` and to the
+  migrated one. It covered 300 seeds of 2,000 steps over three
+  targets, and every result matched. When one late-outcome edge was
+  removed from the migrated `Breaker`, the test failed at step 16.
+- New tests cover a late failure, a late success, and a late failure
+  that reaches the threshold again, all while the circuit is open.
+  They pass against both versions.
+- An `Allow` followed by a `Record` costs 27.7 to 28.7 ns, against 24.0
+  to 24.5 ns for the hand-written `Breaker` in a back-to-back run.
+  Neither allocates.
 
-The port is also longer: 89 lines of circuit logic against 60. Every
-late-outcome path becomes a visible edge, but most of the logic is
-counter arithmetic, which a table does not shorten. `Breaker` stays as
-it is. The port is the evidence that the package can express a machine
-with extended data, not a migration.
+The migrated circuit logic is also longer: 101 lines against 66,
+without comments and blank lines. Every late-outcome path becomes a
+visible edge, but most of the logic is counter arithmetic, which a
+table does not shorten.
 
 ### Validation
 
@@ -470,7 +477,7 @@ string key costs a map lookup where an integer indexes an array, and
 `any` boxes every value that is not a pointer. The `...any` variant of
 our mechanism benchmark allocated 16 B on every event. Core's own
 `resilience.State` is already a `uint8` with a `String` method
-(`resilience/breaker.go:18-45`).
+(`resilience/breaker.go:19-46`).
 
 ### C. Hierarchical states
 
@@ -575,14 +582,16 @@ scheduler that runs jobs, and core does not include a scheduler.
 
 - The package adds a builder, two types, two option constructors and
   four errors.
-- A machine costs about 3 ns per event more than the same logic
-  written by hand, measured on the `Breaker` port.
+- A machine costs about 2 ns per event more than the same logic
+  written by hand. `Breaker`'s `Allow` and `Record` pair costs 3 to 5
+  ns more than it did.
 - A machine whose logic is in its guards and actions gains little from
-  the table. The `Breaker` port is 89 lines against 60.
+  the table. `Breaker`'s circuit logic grew from 66 lines to 101.
 - States and events are limited to 256 values each.
-- Guards and actions are functions over `*D`. Configuration that they
-  need, such as `Breaker`'s thresholds, is captured in closures when
-  the owner builds the Spec, so the Spec is built once per owner.
+- Guards and actions are functions over `*D` alone. Configuration that
+  they need goes into the data or into closures built with the Spec.
+  `Breaker` stores a pointer to itself in every circuit, which costs 8
+  bytes per target and lets one Spec serve every `Breaker`.
 - The owner serialises calls to a `Machine`, and a machine used from
   more than one goroutine without a lock has a data race.
 - Every state and event type needs a `String` method, which `stringer`
