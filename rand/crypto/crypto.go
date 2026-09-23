@@ -13,7 +13,7 @@ import (
 	"go.thesmos.sh/core/rand"
 )
 
-// uint64BufPool holds 8-byte scratch buffers for [Rand.Uint64].
+// uint64BufPool pools 8-byte scratch buffers for [Rand.Uint64].
 // The interface boundary into [io.Reader.Read] forces the buffer
 // to escape; routing through a package-level pool keeps the
 // allocation amortised across calls (zero-alloc on the warm
@@ -56,8 +56,19 @@ var uint64BufPool = pool.NewPool(func() *[8]byte { return new([8]byte) })
 // [io.ReadFull] take an [io.Reader], not a pointer to a
 // fixed-size array). Cold-path callers may still observe an
 // allocation when the pool is empty.
+//
+// Converting a Rand to [rand.Rand] does not allocate. A Rand is one
+// pointer wide, so the interface stores it directly, and a caller may
+// pass [New]'s result straight to a function taking a [rand.Rand].
 type Rand struct {
-	src io.Reader
+	// src is nil for the default source. It is a pointer so that a
+	// Rand is pointer-shaped.
+	src *source
+}
+
+// source stores the reader [NewWithReader] was given.
+type source struct {
+	r io.Reader
 }
 
 // Compile-time interface check.
@@ -71,11 +82,21 @@ func New() Rand { return Rand{} }
 // NewWithReader returns a [Rand] backed by src. Used to inject a
 // custom CSPRNG implementation (for example a hardware key
 // device, an audit-logging wrapper, or a fault-injecting reader
-// in tests).
+// in tests). A nil src gives the default source, as [New] does.
 //
 // src must be CSPRNG-grade for security-sensitive call sites; the
 // type system cannot enforce this property.
-func NewWithReader(src io.Reader) Rand { return Rand{src: src} }
+//
+// # Allocation contract
+//
+// One allocation for a non-nil src, at construction.
+func NewWithReader(src io.Reader) Rand {
+	if src == nil {
+		return Rand{}
+	}
+
+	return Rand{src: &source{r: src}}
+}
 
 // reader returns the configured source, defaulting to
 // [crypto/rand.Reader] for the zero-value [Rand].
@@ -83,7 +104,7 @@ func (r Rand) reader() io.Reader {
 	if r.src == nil {
 		return cryptorand.Reader
 	}
-	return r.src
+	return r.src.r
 }
 
 // Uint64 returns a uniformly distributed 64-bit value drawn from

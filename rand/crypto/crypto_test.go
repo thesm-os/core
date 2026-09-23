@@ -119,23 +119,49 @@ func TestNewWithReaderUsesProvidedSource(t *testing.T) {
 	testkit.Equal(t, string(got), want, "Read must produce the supplied source's bytes verbatim")
 }
 
-// TestZeroAlloc enforces the documented "Zero alloc" contract on
-// [crypto.Rand.Read] and the warm-path zero-alloc behaviour of
-// [crypto.Rand.Uint64]. The Uint64 path borrows an 8-byte buffer
-// from a package-level [pool.Pool], so callers see zero allocs
-// after the pool warms up.
-// testing.AllocsPerRun uses a process-global malloc counter, so
-// this test does not call t.Parallel.
+func TestNewWithReaderOfNil(t *testing.T) {
+	t.Parallel()
+
+	t.Run("reads from the default source", func(t *testing.T) {
+		t.Parallel()
+		r := crypto.NewWithReader(nil)
+		buf := make([]byte, 8)
+		n, err := r.Read(buf)
+		testkit.NoError(t, err, "a nil reader must fall back to crypto/rand")
+		testkit.Equal(t, n, 8, "Read must fill the supplied buffer")
+	})
+}
+
+// sink receives a Rand converted to the interface, so the conversion
+// happens at run time and is measured.
+var sink rand.Rand
+
+// TestZeroAlloc enforces the allocation contract of Rand: Read is
+// zero-alloc, Uint64 is zero-alloc once its buffer pool is warm, and
+// converting a Rand to rand.Rand stores it without boxing.
+// testing.AllocsPerRun reads a process-global malloc counter, so this
+// test does not call t.Parallel.
 func TestZeroAlloc(t *testing.T) {
 	r := crypto.New()
+	custom := crypto.NewWithReader(bytes.NewReader(nil))
 	buf := make([]byte, 64)
 
-	testkit.Equal(t, testing.AllocsPerRun(100, func() { _, _ = r.Read(buf) }),
-		float64(0), "Read must be zero-alloc")
-
-	// Warm the pool so the first Uint64 call doesn't count
-	// the buffer-creation alloc.
+	// Fills the pool, so the first measured Uint64 does not count the
+	// buffer it creates.
 	_ = r.Uint64()
-	testkit.Equal(t, testing.AllocsPerRun(100, func() { _ = r.Uint64() }),
-		float64(0), "Uint64 warm path must be zero-alloc")
+
+	tests := []struct {
+		name string
+		fn   func()
+	}{
+		{"Read", func() { _, _ = r.Read(buf) }},
+		{"Uint64", func() { _ = r.Uint64() }},
+		{"conversion of the default Rand", func() { sink = r }},
+		{"conversion of a Rand with a custom reader", func() { sink = custom }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			testkit.Equal(t, testing.AllocsPerRun(100, tt.fn), float64(0), tt.name+" must not allocate")
+		})
+	}
 }
