@@ -68,5 +68,6 @@ Start from [`docs/templates/ADR.md`](../templates/ADR.md).
 | [0013](0013-tagged-tree-hashing-on-the-interface.md) | Tagged Tree Hashing on the Hasher Interface | Accepted |
 | [0014](0014-genesis-sentinel-is-deleted.md) | The Genesis Sentinel Is Deleted, Not Documented | Accepted |
 | [0015](0015-dependency-free-x-modules-in-production.md) | Dependency-Free golang.org/x Modules in Production Code | Accepted |
+| [0016](0016-persisted-encodings-are-frozen.md) | Persisted Encodings Are Frozen Before 1.0 | Accepted |
 
 [nygard]: https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions
