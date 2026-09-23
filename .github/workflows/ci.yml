@@ -14,9 +14,16 @@ env:
   TEST_TIMEOUT: 30m
 
 jobs:
+  # Build, vet and the race tests run on every supported OS. The
+  # remaining jobs check properties of the source that do not depend
+  # on the runner's OS, so they run on Linux only.
   vet-build:
-    name: Vet + Build
-    runs-on: ubuntu-latest
+    name: Vet + Build (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
@@ -59,8 +66,12 @@ jobs:
       - run: make lint
 
   test:
-    name: Test (race + 10x)
-    runs-on: ubuntu-latest
+    name: Test (race, ${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
@@ -107,10 +118,12 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-      - uses: ./.github/actions/setup-ergon
+      # The cache restores ~/go/bin, where setup-ergon installs ergon,
+      # so it runs first and the pinned ergon overwrites a cached one.
       - uses: actions/cache@v5
         with:
           path: ~/go/bin
           key: go-tools-${{ hashFiles('Makefile') }}
+      - uses: ./.github/actions/setup-ergon
       - run: make bootstrap
       - run: make check-mutation
