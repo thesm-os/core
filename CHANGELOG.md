@@ -96,6 +96,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   state and its data and runs one event at a time through `Fire`, in
   exit, edge and entry order. `Fire` costs about 5 ns and allocates
   nothing. See RFC-0031.
+- `aesgcm.NewRandomNonce`: AES-GCM whose nonces the standard library's
+  FIPS 140-3 module generates. It is the only AES-GCM construction
+  FIPS 140-only mode accepts. Its envelopes and those of `aesgcm.New`
+  open under either constructor with the same key.
+- `crypto.GenerateKey` returns a fresh data key in the clear and
+  wrapped. It uses the custodian's `KeyGenerator` when there is one,
+  and otherwise draws the key from a `rand.Rand` and calls `Wrap`.
+- `pool.Buffer`: a `bytes.Buffer` whose `Reset` zeroes its capacity.
 
 ### Changed
 
@@ -130,9 +138,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `version.Version` is equality-only by documented law: it proves
   identity, never order. Ordering across time is `epoch.Epoch`'s
   axis. See RFC-0026.
+- **Breaking:** `pool.NewBufferPool` returns a `ResetPool` of
+  `*pool.Buffer` instead of `*bytes.Buffer`. `bytes.Buffer.Reset`
+  only truncates, so a pooled buffer handed the next user the
+  previous user's bytes through `AvailableBuffer`. `pool.Buffer`
+  embeds `bytes.Buffer`, so its methods are unchanged.
+- `arena.Arena.Reset` zeroes every byte written since the previous
+  `Reset`, including bytes a `TruncateTo` rewind or a failed
+  `AppendVia` left past the length. `AppendVia` hands its appender
+  the arena's spare capacity, which held the previous user's bytes.
+  `Reset` now runs in time proportional to the bytes written.
+- `crypto.Seal` and `crypto.AppendSeal` read nothing from their
+  `rand.Rand` for an AEAD with `NonceSize` 0, so the source may be
+  nil. `AppendSeal` does not allocate when its buffer has capacity.
+- `epoch.Admissible` and `epoch.Watermark` document their
+  precondition: the issuer grants each epoch to at most one holder.
 
 ### Fixed
 
+- `aesgcm.New` in FIPS 140-only mode returns the standard library's
+  refusal of caller-supplied nonces, classified `errs.Unsupported`. It
+  reported `crypto.ErrKeySize` for a valid key.
+- Converting a `rand/crypto.Rand` to `rand.Rand` no longer allocates.
+  `Rand` holds its reader behind a pointer, so the interface stores it
+  directly. Every call that passed `randcrypto.New()` to a function
+  taking a `rand.Rand` paid one allocation, which the `AppendSeal`
+  documentation attributed to the entropy read.
+- The `arena` package documentation links `Arena.CapExceeds`, and the
+  `Arena` example shows that a grown buffer holds a copy of the
+  earlier bytes.
 - `errs.Classify` now actually recognises `version.ErrMismatch`
   and `version.ErrExists` as Conflict. Both sentinels documented
   the classification since RFC-0015, but `Classify` only ever
