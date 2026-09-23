@@ -260,6 +260,73 @@ func TestBreakerRecord(t *testing.T) {
 		testkit.Equal(t, b.State(target), resilience.HalfOpen,
 			"an elapsed interval must report HalfOpen before the probe is claimed")
 	})
+
+	t.Run("a late failure while open extends the interval", func(t *testing.T) {
+		t.Parallel()
+		// A call admitted before the circuit opened reports after it
+		// did. The dependency is still failing, so the interval starts
+		// again from that report.
+		c := fake.New(originUTC)
+		b := mustBreaker(t, c)
+		for range 3 {
+			testkit.True(t, b.Allow(target), "a closed circuit must admit calls")
+		}
+		b.Record(target, true)
+		b.Record(target, true)
+		testkit.Equal(t, b.State(target), resilience.Open, "two failures must open the circuit")
+
+		c.Advance(20 * time.Second)
+		b.Record(target, true)
+
+		c.Advance(15 * time.Second)
+		testkit.False(t, b.Allow(target), "the late failure must restart the interval")
+		testkit.Equal(t, b.State(target), resilience.Open, "the circuit must still be open")
+
+		c.Advance(15 * time.Second)
+		testkit.True(t, b.Allow(target), "the restarted interval must end with a probe")
+	})
+
+	t.Run("a late success while open resets the failure count", func(t *testing.T) {
+		t.Parallel()
+		// After a late success, one more late failure is below the
+		// threshold, so it does not restart the interval.
+		c := fake.New(originUTC)
+		b := mustBreaker(t, c)
+		for range 4 {
+			testkit.True(t, b.Allow(target), "a closed circuit must admit calls")
+		}
+		b.Record(target, true)
+		b.Record(target, true)
+
+		c.Advance(10 * time.Second)
+		b.Record(target, false)
+		b.Record(target, true)
+
+		c.Advance(25 * time.Second)
+		testkit.True(t, b.Allow(target), "the original interval must end with a probe")
+	})
+
+	t.Run("a late failure that reaches the threshold again extends the interval", func(t *testing.T) {
+		t.Parallel()
+		// After a late success, the second late failure brings the
+		// count back to the threshold exactly, and that is enough to
+		// restart the interval.
+		c := fake.New(originUTC)
+		b := mustBreaker(t, c)
+		for range 5 {
+			testkit.True(t, b.Allow(target), "a closed circuit must admit calls")
+		}
+		b.Record(target, true)
+		b.Record(target, true)
+
+		c.Advance(10 * time.Second)
+		b.Record(target, false)
+		b.Record(target, true)
+		b.Record(target, true)
+
+		c.Advance(25 * time.Second)
+		testkit.False(t, b.Allow(target), "reaching the threshold again must restart the interval")
+	})
 }
 
 func TestStateString(t *testing.T) {

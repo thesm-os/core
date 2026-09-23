@@ -12,6 +12,7 @@ import (
 
 	"go.thesmos.sh/core/clock"
 	"go.thesmos.sh/core/errs"
+	"go.thesmos.sh/core/fsm"
 )
 
 // State is a circuit's position in the breaker's state machine.
@@ -104,7 +105,7 @@ type BreakerConfig struct {
 // Safe for concurrent use.
 type Breaker struct {
 	clock            clock.Clock
-	circuits         map[string]*circuit
+	circuits         map[string]*fsm.Machine[State, event, circuit]
 	tripOn           []errs.Class
 	failureThreshold int
 	successThreshold int
@@ -113,9 +114,34 @@ type Breaker struct {
 	mu sync.Mutex
 }
 
-// circuit is one target's state.
+// event is what happens to a circuit: a caller asks to proceed, or
+// reports the outcome of a call it was allowed to make.
+type event uint8
+
+const (
+	allow event = iota
+	success
+	failure
+)
+
+// String returns the event name, for the circuit's diagram.
+func (e event) String() string {
+	switch e {
+	case allow:
+		return "Allow"
+	case success:
+		return "Success"
+	default:
+		return "Failure"
+	}
+}
+
+// circuit is one target's data: the counters and the deadline that
+// the guards read and the actions update, and the breaker whose
+// thresholds and clock they use.
 type circuit struct {
 	openUntil time.Time
+	b         *Breaker
 	failures  int
 	successes int
 
@@ -124,6 +150,88 @@ type circuit struct {
 	// call rather than the full load.
 	probing bool
 }
+
+// circuitSpec is the state machine every circuit runs. The
+// declaration is static, so it is built once, and
+// breaker_internal_test.go asserts that it builds.
+//
+// The Open state covers the whole interval and the moment after it
+// elapses: the first Allow after the deadline claims the probe and
+// moves the circuit to HalfOpen. A result that arrives while the
+// circuit is open comes from a call admitted before it opened, and it
+// updates the counters without closing the circuit.
+var circuitSpec, errCircuitSpec = fsm.NewBuilder[State, event, circuit](Closed).
+	Edge(Closed, allow, Closed).
+	Edge(Closed, success, Closed, fsm.Do(clearFailures)).
+	Edge(Closed, failure, Open, fsm.If(atThreshold), fsm.Do(countFailure)).
+	Edge(Closed, failure, Closed, fsm.Do(countFailure)).
+	Edge(Open, allow, HalfOpen, fsm.If(elapsed), fsm.Do(claimProbe)).
+	Edge(Open, success, Open, fsm.Do(clearFailures)).
+	Edge(Open, failure, Open, fsm.Do(countLateFailure)).
+	Edge(HalfOpen, allow, HalfOpen, fsm.If(idle), fsm.Do(claimProbe)).
+	Edge(HalfOpen, failure, Open, fsm.If(probeFailed), fsm.Do(countFailure)).
+	Edge(HalfOpen, failure, HalfOpen, fsm.Do(countFailure)).
+	Edge(HalfOpen, success, Closed, fsm.If(recovered)).
+	Edge(HalfOpen, success, HalfOpen, fsm.If(probing), fsm.Do(countSuccess)).
+	Edge(HalfOpen, success, HalfOpen, fsm.Do(clearFailures)).
+	OnEnter(Open, reopen).
+	OnEnter(Closed, reset).
+	Build()
+
+// atThreshold reports whether one more failure opens the circuit.
+func atThreshold(c *circuit) bool { return c.failures+1 >= c.b.failureThreshold }
+
+// elapsed reports whether the open interval is over.
+func elapsed(c *circuit) bool { return !c.b.clock.Time().Before(c.openUntil) }
+
+// idle reports whether no probe is outstanding.
+func idle(c *circuit) bool { return !c.probing }
+
+// probing reports whether a probe is outstanding.
+func probing(c *circuit) bool { return c.probing }
+
+// probeFailed reports whether a failure re-opens a half-open circuit:
+// always for the probe itself, which has just confirmed the dependency
+// is still down, and for a late failure once the threshold is reached.
+func probeFailed(c *circuit) bool { return c.probing || atThreshold(c) }
+
+// recovered reports whether the probe's success is the last one the
+// circuit needs to close.
+func recovered(c *circuit) bool { return c.probing && c.successes+1 >= c.b.successThreshold }
+
+// countFailure records a failure and ends any probe.
+func countFailure(c *circuit) {
+	c.probing, c.successes = false, 0
+	c.failures++
+}
+
+// countLateFailure records a failure that arrives while the circuit is
+// open, and extends the interval once the threshold is reached.
+func countLateFailure(c *circuit) {
+	countFailure(c)
+
+	if c.failures >= c.b.failureThreshold {
+		reopen(c)
+	}
+}
+
+// countSuccess records a probe's success short of the threshold.
+func countSuccess(c *circuit) {
+	c.probing = false
+	c.successes++
+}
+
+// clearFailures records a success that is not a probe's.
+func clearFailures(c *circuit) { c.failures = 0 }
+
+// claimProbe admits the one probe a half-open circuit allows.
+func claimProbe(c *circuit) { c.probing = true }
+
+// reopen starts the open interval from now.
+func reopen(c *circuit) { c.openUntil = c.b.clock.Time().Add(c.b.openFor) }
+
+// reset clears a circuit that has closed.
+func reset(c *circuit) { *c = circuit{b: c.b} }
 
 // NewBreaker returns a Breaker over cfg.
 //
@@ -142,7 +250,7 @@ func NewBreaker(cfg BreakerConfig) (*Breaker, error) {
 
 	return &Breaker{
 		clock:            cfg.Clock,
-		circuits:         make(map[string]*circuit),
+		circuits:         make(map[string]*fsm.Machine[State, event, circuit]),
 		tripOn:           cfg.TripOn,
 		failureThreshold: cfg.FailureThreshold,
 		successThreshold: cfg.SuccessThreshold,
@@ -164,30 +272,16 @@ func (b *Breaker) Allow(target string) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	c, ok := b.circuits[target]
+	m, ok := b.circuits[target]
 	if !ok {
-		c = &circuit{}
-		b.circuits[target] = c
+		c := circuitSpec.Start(circuit{b: b})
+		m = &c
+		b.circuits[target] = m
 	}
 
-	if c.openUntil.IsZero() {
-		return true
-	}
+	_, err := m.Fire(allow)
 
-	if b.clock.Time().Before(c.openUntil) {
-		return false
-	}
-
-	// The interval has elapsed. Admit one probe and refuse everyone
-	// else until its outcome is recorded — releasing the full load
-	// here would be indistinguishable from never having opened, for a
-	// dependency that is still down.
-	if c.probing {
-		return false
-	}
-	c.probing = true
-
-	return true
+	return err == nil
 }
 
 // Record folds one outcome into target's circuit.
@@ -198,34 +292,18 @@ func (b *Breaker) Record(target string, failed bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	c, ok := b.circuits[target]
+	m, ok := b.circuits[target]
 	if !ok {
 		return
 	}
 
-	wasProbe := c.probing
-	c.probing = false
-
-	switch {
-	case failed:
-		c.successes = 0
-		c.failures++
-
-		// A failed probe re-opens immediately, without waiting for
-		// the threshold again: the circuit was already open and one
-		// call has just confirmed the dependency is still down.
-		if wasProbe || c.failures >= b.failureThreshold {
-			c.openUntil = b.clock.Time().Add(b.openFor)
-		}
-	case wasProbe:
-		c.successes++
-
-		if c.successes >= b.successThreshold {
-			*c = circuit{}
-		}
-	default:
-		c.failures = 0
+	outcome := success
+	if failed {
+		outcome = failure
 	}
+
+	// Every state accepts both outcomes, so Fire cannot reject one.
+	_, _ = m.Fire(outcome)
 }
 
 // State reports target's current state, for emission as a gauge.
@@ -238,22 +316,18 @@ func (b *Breaker) State(target string) State {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	c, ok := b.circuits[target]
-	if !ok || c.openUntil.IsZero() {
+	m, ok := b.circuits[target]
+	if !ok {
 		return Closed
 	}
 
-	if c.probing {
+	// An open circuit whose interval has elapsed admits a probe on the
+	// next Allow. Reporting HalfOpen describes what that caller finds.
+	if m.State() == Open && elapsed(m.Data()) {
 		return HalfOpen
 	}
 
-	if b.clock.Time().Before(c.openUntil) {
-		return Open
-	}
-
-	// The interval has elapsed but no probe has been claimed yet.
-	// Reporting HalfOpen describes what the next caller will find.
-	return HalfOpen
+	return m.State()
 }
 
 // Call runs fn under target's circuit, returning [ErrOpen] without
