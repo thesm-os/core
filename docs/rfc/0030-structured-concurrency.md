@@ -34,25 +34,26 @@ returned. A task that panics crashes the process from its own
 goroutine.
 
 `Each`, `Map` and `Stream` run on a set of worker goroutines and do not
-allocate per element. `Each` costs 27 to 29 ns per element, and `Stream`
-costs 47 to 73 ns. Every mechanism we measured that starts a goroutine
-per task costs 130 ns or more.
+allocate per element. `Each` costs 16 ns per element, and `Stream`
+costs 48 to 73 ns. Every mechanism we measured that starts a goroutine
+per task costs 129 ns or more.
 
 ## Motivation
 
 ### Core writes its fan-out by hand
 
-`batch.Loader.LoadAll` (`batch/loader.go:201-224`) starts one
-goroutine per chunk with `sync.WaitGroup.Go` and keeps the first error
-under a mutex.
+At `d301d45`, `batch.Loader.LoadAll` (`batch/loader.go:201-224`)
+starts one goroutine per chunk with `sync.WaitGroup.Go` and keeps the
+first error under a mutex.
 
 - A failed batch call does not cancel the other calls. They run to
   completion, and `LoadAll` discards their results.
 - `LoadAll` does not bound its concurrency. 100,000 keys at a
   `MaxBatch` of 100 start 1,000 concurrent batch calls.
 
-The conformance suite in `coretest/castest` races 16 identical `Put`
-calls with `sync.WaitGroup.Go` (`castest.go:277-286` and `:400-409`).
+At the same commit, the conformance suite in `coretest/castest` races
+16 identical `Put` calls with `sync.WaitGroup.Go` (`castest.go:277-286`
+and `:400-409`).
 Every goroutine calls `testkit.NoError`, which calls `t.Fatalf`. The
 `testing` package requires `FailNow` to run on the test goroutine.
 `WaitGroup.Go` counts the resulting `runtime.Goexit` as a normal
@@ -61,8 +62,8 @@ return, so the test goroutine continues past `Wait`.
 ### The standard library and x/sync leave gaps
 
 `sync.WaitGroup.Go` starts a goroutine and waits for it. It does not
-return an error or bound concurrency, and its documentation states
-that the function "must not panic".
+return an error, and it does not bound concurrency. Its documentation
+states that the function "must not panic".
 
 `golang.org/x/sync/errgroup` adds the first error, cancellation and a
 limit, and core may import it. At v0.23.0 it leaves these gaps:
@@ -93,8 +94,8 @@ core's bar for a primitive:
   Go.
 - The package imports only `context`, `errors`, `iter`, `sync`,
   `sync/atomic` and `core/errs`.
-- Every guarantee is testable. A prototype passes a test for each of
-  the 34 guarantees listed in this document.
+- Every guarantee is testable. The implementation has a test for each
+  of the guarantees listed in this document.
 
 ## Detailed design
 
@@ -194,18 +195,19 @@ func Map[E, R any](ctx context.Context, limit int, items []E, fn func(ctx contex
 // Stream calls fn for every element that seq yields, with at most limit
 // calls running at once, and returns after every call has returned.
 //
-// Stream ranges over seq on the caller's goroutine, so seq does not
-// need to be safe for concurrent use. It hands elements to its worker
-// goroutines through a buffer of limit elements. It starts a worker
-// when an element waits in the buffer and fewer than limit workers run,
-// so a short sequence starts few goroutines. Stream does not allocate
-// per element.
+// Stream calls seq on the caller's goroutine, so seq does not need to
+// be safe for concurrent use. It hands elements to its worker
+// goroutines through a buffer of limit elements, and it starts one
+// worker for each of the first limit elements. A sequence shorter than
+// limit starts one goroutine per element. Stream does not allocate per
+// element.
 //
 // Stream returns the first non-nil error from seq or from fn, or nil.
-// Recording that error cancels the context passed to fn, and Stream
-// stops ranging over seq. Stream records context.Cause for any element
-// that seq yielded and fn did not receive. A nil result means that seq
-// did not yield an error and fn returned nil for every element.
+// Recording that error cancels the context passed to fn, and the next
+// yield returns false, which stops seq. Stream records context.Cause for
+// any element that seq yielded and fn did not receive. A nil result
+// means that seq did not yield an error and fn returned nil for every
+// element.
 //
 // # Context
 //
@@ -370,7 +372,7 @@ return task.Stream(ctx, 16, cursor.Seq(ctx), func(ctx context.Context, info blob
 })
 ```
 
-`Stream` ranges over the cursor on the caller's goroutine, so the
+`Stream` calls the cursor's iterator on the caller's goroutine, so the
 cursor does not need to be safe for concurrent use. An error that the
 cursor yields stops the scrub and becomes the result.
 
@@ -409,8 +411,8 @@ err := task.Run(ctx, 1+copiers, func(ctx context.Context, g *task.Group) error {
 ```
 
 The limit is `1+copiers`, so every stage runs at once. When a copy
-fails, `produce` observes the cancelled context and closes `keys`, and
-the other copiers finish their current key and return.
+fails, `produce` observes the cancelled context and closes `keys`. The
+other copiers then finish their current key and return.
 
 ### Lifecycle of a Group
 
@@ -430,8 +432,8 @@ is zero. The count reaches zero once, after `body` and every task have
 returned, so a closed group cannot reopen.
 
 A running task may call `Go` after `body` has returned. The new task
-increments the count before its parent decrements it, so the count
-does not reach zero, and `Run` waits for the new task.
+increments the count before its parent decrements it. The count never
+reaches zero at that point, and `Run` waits for the new task.
 
 ### Failure rules
 
@@ -483,43 +485,46 @@ package requires its thresholds at construction for the same reason.
   their number does not depend on input.
 - `Each` and `Map` start `min(limit, len(items))` goroutines, so a
   limit larger than the slice does not start extra goroutines.
-- `Stream` starts a worker only while an element waits, so a short
-  sequence starts fewer than `limit` goroutines.
+- `Stream` starts one worker for each of the first `limit` elements,
+  so a sequence shorter than `limit` starts one goroutine per element.
 
 ### Cost
 
 We measured each mechanism on Go 1.27.1 with an AMD Ryzen 9 9950X3D
-and GOMAXPROCS 32. Every task performs one atomic add and captures its
-loop index, as a call site that writes `results[i]` does. The ranges
-cover eight runs.
+and GOMAXPROCS 32. The `task` rows measure the implementation in core.
+Every task performs one atomic add and captures its loop index, as a
+call site that writes `results[i]` does. The ranges cover eight runs.
+The conc and ants rows come from an earlier session with the same
+harness and machine.
 
 Per task or element, at limit 64, with 500,000 per run:
 
 | Mechanism | ns | B | allocs |
 |---|---|---|---|
-| `sync.WaitGroup.Go`, unbounded | 130-236 | 40 | 2 |
-| New goroutine per task, channel semaphore | 210-264 | 32 | 1 |
-| errgroup v0.11.0 with `SetLimit` | 196-271 | 40 | 2 |
+| `sync.WaitGroup.Go`, unbounded | 129-206 | 40 | 2 |
+| New goroutine per task, channel semaphore | 200-273 | 32 | 1 |
+| errgroup v0.11.0 with `SetLimit` | 196-254 | 40 | 2 |
 | conc context pool | 207-300 | 64 | 3 |
 | ants `Pool.Submit` | 213-272 | 24 | 1 |
 | Fixed workers, channel of closures | 54-87 | 16 | 1 |
-| Fixed workers, channel of indices | 41-61 | 0 | 0 |
-| `task.Go`, prototype | 237-322 | 40 | 2 |
-| `task.Stream`, prototype | 47-73 | 0 | 0 |
-| `task.Each`, prototype | 27-29 | 0 | 0 |
+| Fixed workers, channel of indices | 41-59 | 0 | 0 |
+| `task.Go` | 243-333 | 40 | 2 |
+| `task.Stream` | 48-73 | 0 | 0 |
+| `task.Each` | 16 | 0 | 0 |
 
-Per call, with three tasks per call and 200,000 calls per run:
+Per call, with three tasks per call and 200,000 calls per run. The
+allocations include the three closures that the caller builds:
 
 | Mechanism | ns | B | allocs |
 |---|---|---|---|
-| `sync.WaitGroup.Go` | 481-507 | 160 | 7 |
-| `errgroup.WithContext` | 563-583 | 304 | 9 |
-| `task.Each`, prototype | 595-651 | 256 | 5 |
-| `task.All`, prototype | 631-702 | 312 | 8 |
-| `task.Map`, prototype | 631-706 | 328 | 7 |
-| `task.Run`, prototype | 676-789 | 544 | 11 |
-| `task.Stream`, prototype | 824-908 | 496 | 9 |
-| Fixed workers started per call, limit 64 | 12,803-20,210 | 3,306 | 135 |
+| `sync.WaitGroup.Go` | 476-526 | 160 | 7 |
+| `errgroup.WithContext` | 562-612 | 304 | 9 |
+| `task.Each` | 563-612 | 256 | 5 |
+| `task.All` | 584-638 | 312 | 8 |
+| `task.Map` | 588-691 | 312 | 6 |
+| `task.Run` | 688-758 | 432 | 10 |
+| `task.Stream` | 751-843 | 432 | 7 |
+| Fixed workers started per call, limit 64 | 12,383-13,975 | 3,304 | 135 |
 
 Per request under load: 32 goroutines serve 1,000,000 requests, and
 every request runs three lookups concurrently. The ranges cover six
@@ -527,48 +532,79 @@ runs.
 
 | Mechanism | Background parent | One shared cancellable parent | One parent per worker | B | allocs |
 |---|---|---|---|---|---|
-| Sequential, no fan-out | 29-30 | | | 0 | 0 |
-| `sync.WaitGroup.Go` | 132-140 | | | 160 | 7 |
-| `errgroup.WithContext` | 170-178 | 431-520 | 172-178 | 304 | 9 |
-| `task.Each`, prototype | 148-153 | 432-669 | 151-158 | 256 | 5 |
-| `task.Run`, prototype | 216-222 | 600-659 | 220-227 | 544 | 11 |
+| Sequential, no concurrency | 28-29 | | | 0 | 0 |
+| `sync.WaitGroup.Go` | 117-125 | | | 160 | 7 |
+| `errgroup.WithContext` | 154-164 | 461-522 | 153-157 | 304 | 9 |
+| `task.Each` | 133-142 | 414-517 | 135-142 | 256 | 5 |
+| `task.Run` | 181-185 | 531-586 | 182-186 | 432 | 10 |
 
 - In the per-task table, every mechanism that starts a goroutine per
-  task costs 130 ns or more. The goroutine start is most of that cost.
+  task costs 129 ns or more. The goroutine start is most of that cost.
 - `Each` does not have a producer or a channel. Every worker claims an
   index with one atomic add. `Stream` has one producer, the caller's
-  goroutine, and one channel, so it costs about twice as much per
-  element as `Each`.
-- `Each` starts every worker from one closure value. `go work()` with
-  no arguments passes the existing function value, so it does not
-  allocate per worker. This cut `Each` from 7 allocations and 384 B
-  per call to 5 allocations and 256 B. In one parallel run it cut the
-  time per request from 180-210 ns to 158-171 ns.
-- A shared cancellable parent triples the cost of every fan-out, in
-  errgroup and in `task`. Deriving a context from a cancellable parent
-  locks the parent's mutex and adds the child to the parent's
+  goroutine, and one channel, and it costs three to four times as much
+  per element as `Each`.
+- A shared cancellable parent roughly triples the cost of every call,
+  in errgroup and in `task`. Deriving a context from a cancellable
+  parent locks the parent's mutex and adds the child to the parent's
   children, and cancelling it locks the mutex again to remove the
   child (`src/context/context.go:492-502` and `:409-411`). One derived
   context per worker goroutine removes the contention.
-- Run in sequence, the lookups of one request cost 29 to 30 ns, and
-  the cheapest concurrent form costs 132 to 140 ns. Running tasks concurrently cuts
-  latency when the tasks block on I/O. When the CPU is the bottleneck,
-  it cuts throughput.
+- Run in sequence, the lookups of one request cost 28 to 29 ns, and
+  the cheapest concurrent form costs 117 to 125 ns. Running tasks
+  concurrently cuts latency when the tasks block on I/O. When the CPU
+  is the bottleneck, it cuts throughput.
 - At 100,000 calls per second with three tasks each, `Run` costs 0.02
   to 0.03 CPU cores more than `sync.WaitGroup.Go`.
-- We measured three changes to the bookkeeping in `Go`:
-  - One compare-and-swap replaced two mutex acquisitions. It cut the
-    median cost per call from 882 to 715 ns and saved one allocation,
-    and the design keeps it.
-  - A plain channel send replaced the select on the semaphore and the
-    context, as errgroup admits a task. It measured 215 to 278 ns per
-    task against 242 to 307 ns for the select in a back-to-back run.
-    The select makes a waiting `Go` return on cancellation, and the
-    design keeps it.
-  - A variant padded the task counter onto its own cache line and
-    replaced the idle channel with a `sync.WaitGroup`. It did not move
-    the per-task or per-call cost outside the spread, and the design
-    leaves it out.
+
+### Allocations
+
+With tasks that capture nothing, a call allocates:
+
+| Call | allocs | What |
+|---|---|---|
+| `Each`, `All` | 4 | the derived context and its cancel function, the call's state, one worker closure |
+| `Map` | 5 | as `Each`, and the result slice |
+| `Stream` | 6 | as `Each`, the buffer channel and the yield function |
+| `Run` | 4, and 1 per task | the derived context and its cancel function, the `Group`, the semaphore channel, and the closure of each go statement |
+
+- The workers of one call start from one closure value. A go statement
+  without arguments passes the existing function value, so starting a
+  worker does not allocate.
+- `Each`, `Map` and `All` share one worker loop, generic over a small
+  struct type that makes the call for one element. The worker closure
+  copies that value, so `Map` does not wrap `fn` in a closure of its
+  own.
+- `Stream` calls `seq` with one yield function. A range-over-func loop
+  over the same `seq` costs 1.5 allocations per call, because the
+  compiler cannot see into `seq`.
+- `Run` waits on a `sync.WaitGroup` stored in the `Group`, where a
+  channel would cost an allocation of its own.
+- The derived context costs two allocations, and a context type of
+  the package's own would avoid them. `context.Cause` finds a cause
+  only through the standard library's cancellable context
+  (`src/context/context.go:289-303`), so tasks would then see the
+  parent's cause or `context.Canceled` instead of the first error.
+- The closure of the go statement in `Go` goes away only if a finished
+  goroutine runs the next waiting task. conc works that way and
+  measured 207 to 300 ns per task, the same range as a new goroutine
+  per task.
+
+We measured four changes to the implementation of `Go`:
+
+- One compare-and-swap replaced two mutex acquisitions. It cut the
+  median cost per call from 882 to 715 ns and saved one allocation.
+- A plain channel send replaced the select on the semaphore and the
+  context, as errgroup admits a task. It measured 215 to 278 ns per
+  task against 242 to 307 ns for the select in a back-to-back run. The
+  select makes a waiting `Go` return on cancellation, and the design
+  keeps it.
+- A send without a select, tried before the select, measured 261 to
+  303 ns per task against 291 to 340 ns without it. `Stream` gained
+  more from the same change: 52 to 95 ns per element against 79 to
+  120 ns.
+- Padding the task counter onto its own cache line did not move the
+  cost outside the spread.
 
 ### Migration
 
@@ -614,57 +650,65 @@ return out, nil
 - The limit is the chunk count, so the concurrency of `LoadAll` does
   not change.
 
-The races at `castest.go:277-286` and `:400-409` move to `task.Run`.
-The tasks return the error from `Put`, and the test checks the result
-of `Run` on the test goroutine.
+In `coretest/castest`, the tasks of both races return the error from
+`Put`, and the test checks the result of `task.Run` on the test
+goroutine. The races were at `castest.go:277-286` and `:400-409`.
 
 ### Guarantees
 
-The prototype has one test per guarantee, and all 34 tests passed
-three times under the race detector on Go 1.27.1. To check that the
-tests detect a broken guarantee, we broke guarantees 7, 8, 9, 16 and
-29 in five copies of the prototype. The test for each broken
-guarantee failed.
+Every guarantee below has a test in the implementation, and the suite
+passes three times under the race detector on Go 1.27.1. It covers
+every statement except the panic in `crash`. gremlins generates 29
+mutants of the package, and the suite kills all 29.
 
-`All` and `Map` run on `Each` and inherit its panic and
-`runtime.Goexit` rules, so their tests cover only what they add.
+`TestScope` checks the guarantees that every function shares, once for
+each of `All`, `Each`, `Map`, `Stream` and `Run`:
+
+| # | Guarantee |
+|---|---|
+| 1 | Every task runs exactly once, and the call returns nil. The test runs 500 tasks |
+| 2 | The first error is the result, and the other tasks see it as the cause of their cancelled context |
+| 3 | A task that calls `runtime.Goexit` makes the call return `ErrExited` |
+| 4 | Every task sees the values and the deadline of `ctx` |
+| 5 | The context of every task is cancelled when the call returns |
+| 6 | Under a cancelled `ctx`, the call returns the cause and runs no task |
+| 7 | With 60 slow tasks at limit 3, exactly 3 run at once. `All` takes no limit and is exempt |
+| 8 | At limit 1, the tasks run one at a time |
+| 9 | Limits of 0 and -1 return `ErrLimit` and run no task |
+
+`TestCrash` runs every function in a child process whose task panics:
+
+| # | Guarantee |
+|---|---|
+| 10 | The child dies with the task's frame in its trace, and the call does not return first |
+
+The remaining guarantees belong to one function each:
 
 | # | Function | Guarantee |
 |---|---|---|
-| 1 | `Run` | At most `limit` tasks run at once. The test asserts a peak between 1 and 4 at limit 4 over 2,000 tasks |
-| 2 | `Run` | `Run` returns only after `body` and every task have returned, including a task that a task started after `body` returned |
-| 3 | `Run` | The first error from `body`, a task or a refused `Go` is the result of `Run` |
-| 4 | `Run` | The first error cancels the group's context, and `context.Cause` returns that error in every task |
-| 5 | `Run` | Once the group's context is done, `Go` returns the cause and does not start `fn` |
-| 6 | `Run` | A `Go` that waits for a slot returns when the group's context is done. The test accepts nil or the cause, because the slot can free before the cancellation, so it proves only that the call does not hang |
-| 7 | `Run` | A refused `Go` records its cause, so `Run` fails when `body` ignores the refusal |
-| 8 | `Run` | `Go` returns `ErrClosed` after `Run` has returned |
-| 9 | `Run` | A task that calls `runtime.Goexit` makes `Run` return `ErrExited` |
-| 10 | `Run` | A task that panics crashes the process. The trace includes the task's frames, and `Run` does not return. The test checks this in a child process |
-| 11 | `Run` | A `body` that panics cancels the tasks and waits for them before the panic continues |
-| 12 | `Run` | `Run` returns `ErrLimit` without calling `body` when `limit` is below one |
-| 13 | `Each` | `fn` runs once for every element, with the element at its index. The test covers 10,000 elements |
-| 14 | `Each` | At most `limit` calls run at once |
-| 15 | `Each` | The first error stops the claiming of indices and is the result |
-| 16 | `Each` | A parent context that is done before every index is claimed makes `Each` return its cause |
-| 17 | `Each` | An empty slice returns nil without calling `fn` |
-| 18 | `Each` | A call that ends by `runtime.Goexit` makes `Each` return `ErrExited` |
-| 19 | `Each` | A call that panics crashes the process, and `Each` does not return |
-| 20 | `All` | `All` runs every function at once. The test passes only when two functions wait for each other |
-| 21 | `All` | The first error cancels the other functions and is the result |
-| 22 | `All` | `All` with no functions returns nil |
-| 23 | `Map` | `Map` returns the results in the order of `items` |
-| 24 | `Map` | A failing call makes `Map` return nil results and the error |
-| 25 | `Map` | `Map` returns `ErrLimit` when `limit` is below one |
-| 26 | `Stream` | `fn` runs once for every element that `seq` yields. The test covers 10,000 elements |
+| 11 | `Run` | `Run` waits for a task that a task started after `body` returned |
+| 12 | `Run` | A failure of `body` is the result and cancels the tasks with it as the cause |
+| 13 | `Run` | A `body` that panics cancels the tasks and waits for them, and then the panic reaches the caller |
+| 14 | `Run` | A `body` that calls `runtime.Goexit` cancels the tasks and waits for them |
+| 15 | `Go` | After a failure, `Go` returns the cause and does not start `fn` |
+| 16 | `Go` | A `Go` that waits for a slot returns the cause when the group is cancelled, and does not start `fn` |
+| 17 | `Go` | A refused `Go` records its cause, so `Run` fails when `body` ignores the refusal |
+| 18 | `Go` | `Go` returns `ErrClosed` after `Run` has returned, and does not start `fn` |
+| 19 | `Each` | Every call receives the element at its index |
+| 20 | `Each` | An empty slice returns nil without calling `fn` |
+| 21 | `Each` | No index is claimed after a failure is recorded |
+| 22 | `Map` | The results are in the order of `items` |
+| 23 | `Map` | A failing call makes `Map` return nil results and the error |
+| 24 | `Map` | `Map` accepts an existing function |
+| 25 | `All` | `All` runs every function at once. The test passes only when two functions wait for each other |
+| 26 | `All` | `All` with no functions returns nil |
 | 27 | `Stream` | An error that `seq` yields stops the stream and is the result |
-| 28 | `Stream` | The first error from `fn` stops the ranging over `seq` and is the result |
-| 29 | `Stream` | `limit` slow elements run at once. They do not fill the buffer, so only the rule that starts a worker for a waiting element can reach the limit |
-| 30 | `Stream` | A parent context that is done before every element reaches `fn` makes `Stream` return its cause |
-| 31 | `Stream` | An empty `seq` returns nil |
-| 32 | `Stream` | A call that ends by `runtime.Goexit` makes `Stream` return `ErrExited` |
-| 33 | `Stream` | A `seq` that panics cancels the workers and waits for them before the panic continues |
-| 34 | `Stream` | A call that panics crashes the process, and `Stream` does not return |
+| 28 | `Stream` | After a failure, `Stream` stops `seq` |
+| 29 | `Stream` | A `Stream` waiting for a worker returns when the context is done |
+| 30 | `Stream` | A `Stream` whose only worker calls `runtime.Goexit` returns `ErrExited` and does not stall |
+| 31 | `Stream` | A `seq` that panics cancels the workers and waits for them, and then the panic reaches the caller |
+| 32 | `Stream` | An empty `seq` returns nil without calling `fn` |
+| 33 | `Each`, `Map`, `Stream` | A call with 512 elements allocates as much as a call with 64 |
 
 ## Alternatives considered
 
@@ -672,8 +716,8 @@ guarantee failed.
 
 `sync.WaitGroup.Go`, added in Go 1.25, starts a goroutine and waits
 for it. It already crashes on a task panic before `Wait` can return.
-It is the cheapest mechanism that starts a goroutine per task: 130 to
-236 ns per task and 481 to 507 ns for a fan-out of three.
+It is the cheapest mechanism that starts a goroutine per task: 129 to
+206 ns per task and 476 to 526 ns for a fan-out of three.
 
 **Why not:** it provides the wait and none of the rest of the
 contract.
@@ -688,7 +732,7 @@ contract.
 - A caller can omit `Wait`, and the code compiles.
 
 `task` reuses the panic mechanism of `WaitGroup.Go` and adds the error,
-the bound and the cancellation for 170 to 310 ns per call. A small
+the bound and the cancellation for 160 to 280 ns per call. A small
 fixed number of calls that return no error still belongs on
 `WaitGroup.Go`.
 
@@ -705,8 +749,8 @@ cancellation: 563 to 583 ns for three tasks.
 
 - A wrapper that closes them adds a context check before every `Go`,
   a count of refused tasks, a `runtime.Goexit` check in every task and
-  a closed state. That wrapper is the size of the prototype's `Run`,
-  and it adds a dependency that the prototype does not need.
+  a closed state. That wrapper is the size of `Run` itself, and it
+  adds a dependency that `Run` does not need.
 - errgroup starts a goroutine for every task. `Each`, `Map` and
   `Stream` cost 27 to 73 ns per element because they do not.
 - A caller can omit `Wait`. In the callback form, `Run` itself waits,
@@ -773,12 +817,12 @@ because its functions are written at the call site.
 `Run` starts `limit` workers that read closures from a buffered
 channel, and `Go` sends `fn` on the channel. This removes the goroutine
 start from every task. With closures that capture their index, it
-measured 54 to 87 ns per task, against 237 to 322 ns for `Go`.
+measured 54 to 87 ns per task, against 243 to 333 ns for `Go`.
 
 **Why not:**
 
 - The workers must exist before the first task arrives. Starting 64 of
-  them per call costs 12.8 to 20.2 µs for three tasks, 16 to 30 times
+  them per call costs 12.4 to 14.0 µs for three tasks, 16 to 20 times
   the cost of `Run`.
 - Starting workers on demand requires `Go` to know whether a worker is
   idle. conc hands every task to an idle worker over an unbuffered
@@ -794,14 +838,14 @@ measured 54 to 87 ns per task, against 237 to 322 ns for `Go`.
 `Each`, `Map` and `Stream` get the speed of fixed workers without
 these costs. They call one function for every element, so they pass
 an element where `Go` passes a closure. `Each` and `Map` know the
-element count before they start, and `Stream` starts a worker only
-while an element waits.
+element count before they start, and `Stream` starts its workers with
+its first `limit` elements.
 
 ### H. A goroutine pool
 
 ants reuses worker goroutines across tasks and bounds their number.
 
-**Why not:** ants measured 213 to 272 ns per task, against 210 to 264
+**Why not:** ants measured 213 to 272 ns per task, against 200 to 273
 ns for a new goroutine per task. Its long-lived workers need idle
 expiry, which reads the wall clock. A pool also runs after the call
 that submitted to it returns, which is the property this design
@@ -870,9 +914,9 @@ with a three-line function that yields a nil error.
 - The package adds five functions, one type, one method and three
   errors. A reader chooses among five entry points where errgroup
   offers one, and the package doc lists which to use.
-- `Go` costs 237 to 322 ns per task, against 196 to 271 ns for
-  errgroup. `Run` costs 676 to 789 ns for a fan-out of three, against
-  481 to 507 ns for `sync.WaitGroup.Go`. `Stream` costs 824 to 908 ns
+- `Go` costs 243 to 333 ns per task, against 196 to 254 ns for
+  errgroup. `Run` costs 688 to 758 ns for a fan-out of three, against
+  476 to 526 ns for `sync.WaitGroup.Go`. `Stream` costs 751 to 843 ns
   for three elements, because it starts its workers and its channel
   per call.
 - Every `Run` call site nests one closure and checks the error from
@@ -888,9 +932,12 @@ with a three-line function that yields a nil error.
   its context delays that panic without bound. x/sync cited this cost
   when it reverted panic propagation. We accept it for the caller's
   goroutine only.
-- `Stream` ranges over `seq` on one goroutine. A source slower than
-  its workers sets the rate, and a fast source tops out at 47 to 73 ns
-  per element.
+- `Stream` calls `seq` on one goroutine. A source slower than its
+  workers sets the rate, and a fast source tops out at 48 to 73 ns per
+  element.
+- `Stream` starts one worker for each of the first `limit` elements,
+  so a fast source with a large limit starts `limit` goroutines even
+  when fewer would keep up.
 - Under `GODEBUG=panicnil=1`, `panic(nil)` looks the same as
   `runtime.Goexit`. Such a task reports `ErrExited` and does not
   crash. Without that setting, Go 1.21 and later turn `panic(nil)` into
@@ -899,7 +946,10 @@ with a three-line function that yields a nil error.
   caller that modifies `items` during the call has a data race. The
   race detector finds it, and the compiler does not.
 - The panic in the task goroutine needs a `forbidigo` exclusion in
-  `.golangci.yml`, as `rand/crypto/crypto.go` has.
+  `.golangci.yml`, as `rand/crypto/crypto.go` has. Only a process that
+  dies of that panic can observe it, so `.ergon.yaml` exempts `crash`
+  from the coverage and mutation gates, and `TestCrash` covers it in a
+  child process.
 - Code written against errgroup ports by hand. `WithContext`,
   `SetLimit` and `Wait` have no counterparts.
 
