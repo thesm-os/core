@@ -288,8 +288,8 @@ stateDiagram-v2
 ### Running a machine: the circuit breaker
 
 `resilience.Breaker` runs one `Machine` per target. The circuit's
-counters and deadline are the machine's data. The data also holds a
-pointer to the `Breaker`, whose thresholds and clock the guards read,
+counters and deadline are the machine's data. The data also contains
+a pointer to the `Breaker`, whose thresholds and clock the guards read,
 so every `Breaker` shares one `Spec`. The package builds that `Spec`
 once, when it initialises.
 
@@ -316,9 +316,7 @@ var circuitSpec, errCircuitSpec = fsm.NewBuilder[State, event, circuit](Closed).
 `Allow` returns whether `Fire(allow)` succeeds, and `Record` fires
 `success` or `failure`. `State` reports `HalfOpen` for an open circuit
 whose interval has elapsed, as the hand-written `Breaker` did. An
-internal test asserts that the declaration builds and compares its
-`Mermaid` output with the expected diagram, so a change to an edge
-shows in review.
+internal test asserts that the declaration builds.
 
 The migration kept the behaviour and added a few nanoseconds:
 
@@ -329,12 +327,13 @@ The migration kept the behaviour and added a few nanoseconds:
   migrated one. It covered 300 seeds of 2,000 steps over three
   targets, and every result matched. When one late-outcome edge was
   removed from the migrated `Breaker`, the test failed at step 16.
-- New tests cover a late failure, a late success, and a late failure
-  that reaches the threshold again, all while the circuit is open.
-  They pass against both versions.
+- New tests cover a late failure, a late success, and a second late
+  failure after a late success, all while the circuit is open. They
+  pass against both versions.
 - An `Allow` followed by a `Record` costs 27.7 to 28.7 ns, against 24.0
   to 24.5 ns for the hand-written `Breaker` in a back-to-back run.
-  Neither allocates.
+  Neither allocates. `TestZeroAlloc` asserts that `Allow`, `Record`
+  and `State` do not allocate for a target that has a circuit.
 
 The migrated circuit logic is also longer: 101 lines against 66,
 without comments and blank lines. Every late-outcome path becomes a
@@ -407,8 +406,8 @@ for {
 A state is a small integer, so it stores as one byte. `Resume`
 rebuilds a machine from a stored state and refuses one that the Spec
 does not declare. A store that updates a status by compare-and-swap
-checks `Allows(from, to)` first, so an illegal transition fails before
-it reaches the store.
+checks `Allows(from, to)` first, so the store never receives an
+illegal transition.
 
 ### Cost
 
@@ -423,7 +422,7 @@ allocation column:
 | `Machine.Fire` | 4.4-4.6 | 0 |
 | `Machine.Fire`, guarded edge with an edge action and an entry action | 5.8-5.9 | 0 |
 
-A `Spec` holds a table of states by events and a table of states by
+A `Spec` contains a table of states by events and a table of states by
 states. With the 256 states and events that `uint8` allows, the tables
 take 256 KiB and 64 KiB. For the job lifecycle in this document, they
 take about 100 bytes.
@@ -442,9 +441,9 @@ kills.
 | 3 | `Build` accepts 65,535 edges and rejects 65,536 |
 | 4 | `Build` reports several problems in one error, and can be called again on the same `Builder` |
 | 5 | `Next` follows the first edge whose guard holds, falls through when a guard fails, and runs no action |
-| 6 | `Next` rejects an event without an edge, and a state or event one past the Spec, including where the next cell holds an edge |
+| 6 | `Next` rejects an event without an edge, and a state or event one past the Spec, including where the next cell contains an edge |
 | 7 | `Allows`, `Terminal` and `Known` follow the declaration, and reject values one past it |
-| 8 | `Start` and `Resume` hold the data, and `Resume` refuses a state outside the Spec |
+| 8 | `Start` and `Resume` return a machine with the given data, and `Resume` refuses a state outside the Spec |
 | 9 | `Mermaid` renders the initial state, every edge in declaration order with guarded edges marked, and every terminal state |
 | 10 | `Fire` runs the exit, edge and entry actions in that order, and the entry action sees the new state |
 | 11 | An edge back to its own state runs only its edge action |
@@ -535,9 +534,9 @@ it: `type stateFn func(*lexer) stateFn`
 (`src/text/template/parse/lex.go:110`).
 
 **Why not:** a state function has no table, so nothing can validate
-the machine, answer `Allows` or `Terminal`, or draw it. It fits a
-parser whose states are code paths, not a lifecycle whose states are
-data.
+the machine, compute `Allows` or `Terminal`, or render it as a
+diagram. It fits a parser whose states are code paths, not a lifecycle
+whose states are data.
 
 ### G. Generated or compile-time tables
 
@@ -575,7 +574,7 @@ scheduler that runs jobs, and core does not include a scheduler.
 - `state` produces `state.State`, and every lifecycle already has a
   type named `State`.
 - `machine` and `statemachine` name one half of the package.
-- `fsm` is the term a reader searches for, and the package holds both
+- `fsm` is the term a reader searches for, and the package contains both
   halves: `fsm.Spec`, `fsm.Machine`.
 
 ## Drawbacks
