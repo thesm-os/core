@@ -20,7 +20,7 @@ import (
 
 var originUTC = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
-// errDown stands in for a dependency that refused a batch.
+// errDown is the error of a dependency that refused a batch.
 var errDown = testkit.TestError("dependency down")
 
 // failOn returns a batch function that refuses any batch containing
@@ -37,12 +37,13 @@ func failOn(key int, err error) func(context.Context, []int) (map[int]int, error
 
 const window = 5 * time.Millisecond
 
-// awaitPending spins until n callers are waiting. Mirrors
-// fake.Clock.AwaitWaiters: coalescing is only observable once every
-// caller has joined, and a sleep would be a guess about when that is.
+// awaitPending waits until n callers are pending, as
+// fake.Clock.AwaitWaiters waits for sleepers. Coalescing is observable
+// only after every caller has joined, and a sleep would guess when that
+// happens.
 //
-// Bounded rather than spinning forever, so a loader that loses track
-// of its callers fails the test instead of hanging it.
+// The wait fails the test after one second, so a loader that loses
+// track of its callers fails the test and does not hang it.
 func awaitPending(tb testing.TB, l *batch.Loader[int, int], n int) {
 	tb.Helper()
 
@@ -55,8 +56,8 @@ func awaitPending(tb testing.TB, l *batch.Loader[int, int], n int) {
 	}
 }
 
-// resolve answers every key with its own doubling, recording the
-// batches it was given.
+// resolve maps every key to twice its value and records the batches it
+// receives.
 type resolve struct {
 	batches [][]int
 	mu      sync.Mutex
@@ -113,13 +114,13 @@ func mustLoader(
 	return l
 }
 
-// result is one Load outcome, carried back from its goroutine.
+// result is the outcome of one Load, sent back from its goroutine.
 type result struct {
 	err error
 	v   int
 }
 
-// loadAsync starts a Load and returns the channel carrying its
+// loadAsync starts a Load and returns the channel that receives its
 // outcome.
 func loadAsync(ctx context.Context, l *batch.Loader[int, int], key int) <-chan result {
 	out := make(chan result, 1)
@@ -131,7 +132,8 @@ func loadAsync(ctx context.Context, l *batch.Loader[int, int], key int) <-chan r
 	return out
 }
 
-// await takes one outcome, failing rather than hanging.
+// await returns one outcome, and fails the test when none arrives
+// within one second.
 func await(tb testing.TB, out <-chan result) result {
 	tb.Helper()
 
@@ -204,7 +206,7 @@ func TestLoad(t *testing.T) {
 
 	t.Run("concurrent distinct keys coalesce into one call", func(t *testing.T) {
 		t.Parallel()
-		// The reason the package exists: four round trips become one.
+		// Four concurrent loads cost one round trip instead of four.
 		c := fake.New(originUTC)
 		var r resolve
 		l := mustLoader(t, c, 10, r.fn)
@@ -403,8 +405,8 @@ func TestLoadContext(t *testing.T) {
 			return nil, ctx.Err()
 		})
 
-		// Two callers on one key, so the count a joiner adds is
-		// load-bearing: a join that did not register would leave the
+		// Two callers wait on one key, so the test depends on the count
+		// a joiner adds. A join that did not register would leave the
 		// batch running for callers that had all gone.
 		ctx, cancel := context.WithCancel(t.Context())
 		first := loadAsync(ctx, l, 1)
@@ -487,7 +489,7 @@ func TestLoadAll(t *testing.T) {
 		testkit.Equal(t, r.sizes(), []int{2}, "a key must not travel twice")
 	})
 
-	t.Run("no keys is no call", func(t *testing.T) {
+	t.Run("calls nothing for no keys", func(t *testing.T) {
 		t.Parallel()
 		c := fake.New(originUTC)
 		var r resolve
@@ -499,7 +501,7 @@ func TestLoadAll(t *testing.T) {
 		testkit.Equal(t, r.calls(), 0, "there is nothing to call")
 	})
 
-	t.Run("a missing key is simply absent", func(t *testing.T) {
+	t.Run("a missing key is absent from the result", func(t *testing.T) {
 		t.Parallel()
 		// LoadAll returns a map, so absence is representable without
 		// an error; Load has no such option.
@@ -526,13 +528,19 @@ func TestLoadAll(t *testing.T) {
 	t.Run("a failed batch cancels the other batches of the call", func(t *testing.T) {
 		t.Parallel()
 		// The result of the other batches is discarded, so their calls
-		// stop as soon as one batch fails.
+		// stop as soon as one batch fails. The failing batch waits for
+		// the other to start, because task.Each does not call fn for an
+		// element it claims after the first failure.
 		var cause error
+		started := make(chan struct{})
 		l := mustLoader(t, fake.New(originUTC), 1, func(ctx context.Context, keys []int) (map[int]int, error) {
 			if keys[0] == 2 {
+				<-started
+
 				return nil, errDown
 			}
 
+			close(started)
 			select {
 			case <-ctx.Done():
 				cause = context.Cause(ctx)
