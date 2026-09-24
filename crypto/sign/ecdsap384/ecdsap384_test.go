@@ -26,12 +26,9 @@ import (
 	"go.thesmos.sh/core/rand/seeded"
 )
 
-// stdlibSign returns the stdlib ECDSA P-384 + SHA-384 signature
-// over msg under priv. Reference for cross-stdlib equivalence
-// assertions; the consumer closes over the fixture priv at the
-// call site. tb.Fatalf is wired in so the (essentially
-// unreachable in Go 1.26) error path produces a clean test
-// failure rather than a panic.
+// stdlibSign returns a function that signs msg with the stdlib's
+// ECDSA P-384 + SHA-384 under priv. The cross-stdlib assertions use
+// it as the reference. A signing error fails tb.
 func stdlibSign(tb testing.TB, priv *ecdsa.PrivateKey) func([]byte) []byte {
 	tb.Helper()
 	return func(msg []byte) []byte {
@@ -43,8 +40,8 @@ func stdlibSign(tb testing.TB, priv *ecdsa.PrivateKey) func([]byte) []byte {
 }
 
 // stdlibVerify reports whether sig is a valid ECDSA P-384 +
-// SHA-384 signature over msg under pub (PKIX-encoded). Stateless
-// reference — usable across fixtures without a closure.
+// SHA-384 signature over msg under the PKIX-encoded pub, verified by
+// the stdlib.
 func stdlibVerify(pub, msg, sig []byte) bool {
 	parsed, err := x509.ParsePKIXPublicKey(pub)
 	if err != nil {
@@ -153,20 +150,28 @@ func BenchmarkECDSAP384VerifyStream(b *testing.B) {
 
 // --- impl-specific tests ---
 
-// TestStreamingImplemented locks the streaming-asymmetry
-// invariant: ECDSA P-384 (hash-then-sign) MUST satisfy
-// [sign.StreamingSigner] / [sign.StreamingVerifier].
+// TestStreamingImplemented checks that ECDSA P-384, a hash-then-sign
+// algorithm, implements [sign.StreamingSigner] and
+// [sign.StreamingVerifier].
 func TestStreamingImplemented(t *testing.T) {
 	t.Parallel()
-	signer := mustSigner(t, cryptotest.NewECDSAP384Sample())
 
-	_, isStreamSigner := any(signer).(sign.StreamingSigner)
-	testkit.True(t, isStreamSigner, "ECDSA P-384 Signer must implement sign.StreamingSigner")
+	t.Run("the Signer is a StreamingSigner", func(t *testing.T) {
+		t.Parallel()
+		_, ok := any(mustSigner(t, cryptotest.NewECDSAP384Sample())).(sign.StreamingSigner)
+		testkit.True(t, ok, "ECDSA P-384 Signer must implement sign.StreamingSigner")
+	})
 
-	_, isStreamVerifier := any(signer.Verifier).(sign.StreamingVerifier)
-	testkit.True(t, isStreamVerifier, "ECDSA P-384 Verifier must implement sign.StreamingVerifier")
+	t.Run("the Verifier is a StreamingVerifier", func(t *testing.T) {
+		t.Parallel()
+		_, ok := any(mustSigner(t, cryptotest.NewECDSAP384Sample()).Verifier).(sign.StreamingVerifier)
+		testkit.True(t, ok, "ECDSA P-384 Verifier must implement sign.StreamingVerifier")
+	})
 }
 
+// TestNewVerifier covers the constructor's refusals. The point X=1,
+// Y=2 names P-384 as its curve but is not on it, so KeyIDFromPub
+// refuses it through [ecdsa.PublicKey.Bytes].
 func TestNewVerifier(t *testing.T) {
 	t.Parallel()
 
@@ -184,11 +189,8 @@ func TestNewVerifier(t *testing.T) {
 		testkit.ErrorIs(t, verr, signecdsa.ErrWrongCurve, "P-256 pub must return ErrWrongCurve")
 	})
 
-	t.Run("rejects off-curve point (failure surfaces from KeyIDFromPub)", func(t *testing.T) {
+	t.Run("rejects an off-curve point through KeyIDFromPub", func(t *testing.T) {
 		t.Parallel()
-		// X=1, Y=2 is on Curve=P384 nominally but off the curve
-		// mathematically. NewVerifier reaches KeyIDFromPub →
-		// pub.Bytes(), which rejects.
 		//nolint:staticcheck // raw coordinates are deprecated because they
 		// can build an invalid key. An invalid key is the subject here.
 		pub := &ecdsa.PublicKey{
@@ -242,18 +244,36 @@ func TestNewVerifierFromPKIX(t *testing.T) {
 			"P-256 PKIX must return ErrWrongCurve")
 	})
 
-	t.Run("defensive copy: caller may mutate source after construction", func(t *testing.T) {
+	t.Run("copies the source buffer", func(t *testing.T) {
 		t.Parallel()
 		fix := cryptotest.NewECDSAP384Sample()
 		src := append([]byte(nil), fix.PublicKey...)
 		v, err := signecdsa.NewVerifierFromPKIX(src)
 		testkit.NoError(t, err, "NewVerifierFromPKIX")
 		want := append([]byte(nil), src...)
-		for i := range src {
-			src[i] = 0
-		}
+		clear(src)
 		testkit.Equal(t, v.PublicKey(), want,
-			"Verifier must hold a defensive copy — caller mutation must not leak")
+			"zeroing the caller's buffer must not change the Verifier's key")
+	})
+}
+
+func TestResolve(t *testing.T) {
+	t.Parallel()
+
+	t.Run("returns a Verifier for the PKIX public key", func(t *testing.T) {
+		t.Parallel()
+		fix := cryptotest.NewECDSAP384Sample()
+		v, err := signecdsa.Resolve(fix.PublicKey)
+		testkit.NoError(t, err, "Resolve must accept a PKIX P-384 key")
+		testkit.Equal(t, v.KeyID(), fix.KeyID, "the Verifier must have the key's KeyID")
+		testkit.True(t, v.Verify(fix.Message, fix.Signature), "the Verifier must accept the key's signature")
+	})
+
+	t.Run("returns ErrInvalidPublicKey and a nil Verifier", func(t *testing.T) {
+		t.Parallel()
+		v, err := signecdsa.Resolve([]byte("not a PKIX key"))
+		testkit.ErrorIs(t, err, signecdsa.ErrInvalidPublicKey, "malformed bytes must be refused")
+		testkit.True(t, v == nil, "the Verifier must be a nil interface")
 	})
 }
 
@@ -276,6 +296,10 @@ func TestNew(t *testing.T) {
 	})
 }
 
+// TestGenerate covers key generation. [crypto/ecdsa.GenerateKey]
+// ignores the supplied reader and uses the runtime's secure RNG unless
+// `GODEBUG=cryptocustomrand=1` is set, so the seam does not promise
+// deterministic ECDSA P-384 keys and no test asserts them.
 func TestGenerate(t *testing.T) {
 	t.Parallel()
 
@@ -286,26 +310,19 @@ func TestGenerate(t *testing.T) {
 		b, err := signecdsa.Generate()
 		testkit.NoError(t, err, "Generate (b)")
 		testkit.NotEqual(t, a.PublicKey(), b.PublicKey(),
-			"successive Generate calls must produce distinct keypairs (entropy collision is astronomical)")
+			"successive Generate calls must produce distinct keypairs")
 	})
-
-	// NOTE: Go 1.26's [crypto/ecdsa.GenerateKey] ignores the
-	// supplied reader and draws from the runtime's secure RNG
-	// unless `GODEBUG=cryptocustomrand=1` is set. Deterministic
-	// key generation for ECDSA P-384 is therefore not promised
-	// at this seam.
 }
 
+// TestKeyIDStability pins the KeyID derivation, SHA-256 of the SEC 1
+// uncompressed point truncated to 16 bytes, for the P-384 base point
+// G of FIPS 186-5 and SEC 2. G is on the curve, so
+// [crypto/ecdsa.PublicKey.Bytes] accepts it.
 func TestKeyIDStability(t *testing.T) {
 	t.Parallel()
 
-	t.Run("hardcoded vector locks SEC 1 + SHA-256[:16] derivation", func(t *testing.T) {
+	t.Run("matches SEC 1 + SHA-256[:16] for the base point", func(t *testing.T) {
 		t.Parallel()
-		// Vector: the P-384 base point G (FIPS 186-5 / SEC 2).
-		// Well-known on-curve coordinates that survive
-		// [crypto/ecdsa.PublicKey.Bytes]'s curve-membership
-		// check. The KeyID frozen below locks the exact
-		// SEC 1 + SHA-256 + truncate pipeline.
 		params := elliptic.P384().Params()
 		//nolint:staticcheck // the published coordinates of G are the
 		// fixture; parsing an encoding of them would test the parser.
@@ -341,14 +358,12 @@ type randReader struct{ r rand.Rand }
 
 func (rr randReader) Read(p []byte) (int, error) { return rr.r.Read(p) }
 
-// Compile-time assertion: io.Reader is satisfied by randReader,
-// so the adapter pattern works with any stdlib API expecting a
-// reader (like ecdsa.GenerateKey).
+// Compile-time assertion that randReader is an [io.Reader], as
+// stdlib functions such as ecdsa.GenerateKey require.
 var _ io.Reader = randReader{}
 
-// buildEd25519PKIX returns PKIX-encoded bytes of a fresh Ed25519
-// public key. Used to drive the NewVerifierFromPKIX-non-ECDSA
-// failure path.
+// buildEd25519PKIX returns the PKIX encoding of a fresh Ed25519
+// public key, which NewVerifierFromPKIX must refuse.
 func buildEd25519PKIX(t *testing.T) []byte {
 	t.Helper()
 	pub, _, err := stded25519.GenerateKey(randReader{r: seeded.New(rand.Seed(1))})

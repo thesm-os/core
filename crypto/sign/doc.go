@@ -68,6 +68,18 @@
 // buffer M and hash it twice when the stream closes, so the Ed25519
 // [Signer] does not implement [StreamingSigner].
 //
+// # Resolvers and policies
+//
+// A [Resolver] builds the [Verifier] a stored signature names, from a
+// table of the algorithms the caller trusts. It has no default entries,
+// so a stored name selects only an algorithm the caller listed.
+//
+// A [Policy] requires valid signatures from a threshold of parties. A
+// party is one or more keys that must all sign, which expresses a
+// threshold of approvers, a quorum of witnesses and a hybrid
+// signature. [Policy.Check] counts each key once and verifies at most
+// one signature per key of the policy.
+//
 // # Signing across a process boundary
 //
 // A [Signer] backed by a hosted key service or a hardware module

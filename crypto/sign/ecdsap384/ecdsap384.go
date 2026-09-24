@@ -24,9 +24,8 @@ import (
 // # Allocation contract
 //
 // [Verifier.KeyID], [Verifier.PublicKey], [Verifier.Algorithm]
-// are zero-alloc. [Verifier.Verify] allocates because
-// [crypto/ecdsa.VerifyASN1] performs big.Int arithmetic — a
-// stdlib constraint, distinct from Ed25519's zero-alloc Verify.
+// are zero-alloc. [Verifier.Verify] allocates, because
+// [crypto/ecdsa.VerifyASN1] performs big.Int arithmetic.
 type Verifier struct {
 	pub      *ecdsa.PublicKey
 	pubBytes []byte // PKIX (X.509 SubjectPublicKeyInfo) DER
@@ -57,7 +56,7 @@ func NewVerifier(pub *ecdsa.PublicKey) (*Verifier, error) {
 	pubBytes, _ := x509.MarshalPKIXPublicKey(pub)
 	keyID, err := KeyIDFromPub(pub)
 	if err != nil {
-		// Off-curve point — propagate so callers see the real cause.
+		// An off-curve point. Return the error so callers see the cause.
 		return nil, err
 	}
 	return &Verifier{pub: pub, pubBytes: pubBytes, keyID: keyID}, nil
@@ -77,24 +76,35 @@ func NewVerifierFromPKIX(pubBytes []byte) (*Verifier, error) {
 	if !ok {
 		return nil, ErrInvalidPublicKey
 	}
-	// Delegate curve validation + KeyID derivation to
-	// NewVerifier; both functions then share one tested
-	// implementation. Errors include [ErrWrongCurve] (P-256
-	// or other non-P-384 curves) and any propagated
-	// off-curve detection from KeyIDFromPub.
+	// NewVerifier validates the curve and derives the KeyID, so both
+	// constructors share one tested implementation. Its errors
+	// include [ErrWrongCurve] for P-256 and other curves, and the
+	// off-curve error from KeyIDFromPub.
 	v, err := NewVerifier(pub)
 	if err != nil {
 		return nil, err
 	}
-	// Override v.pubBytes with the supplied source bytes
-	// (defensive copy). NewVerifier marshals its own PKIX,
-	// which is byte-identical to the source for canonical
-	// inputs but may diverge for non-canonical PKIX —
-	// preserving the caller's bytes is the conservative
-	// choice.
+	// Keep a copy of the caller's bytes in place of NewVerifier's
+	// own PKIX encoding. The two are byte-identical for canonical
+	// input and may differ for non-canonical PKIX, and PublicKey
+	// returns what the caller supplied.
 	keep := make([]byte, len(pubBytes))
 	copy(keep, pubBytes)
 	v.pubBytes = keep
+	return v, nil
+}
+
+// Resolve returns a [sign.Verifier] for a PKIX-encoded P-384 public
+// key, as [NewVerifierFromPKIX] does. It is the [sign.Resolver] entry
+// for [crypto.AlgECDSAP384].
+//
+// Returns the errors NewVerifierFromPKIX returns, with a nil Verifier.
+func Resolve(pub []byte) (sign.Verifier, error) {
+	v, err := NewVerifierFromPKIX(pub)
+	if err != nil {
+		return nil, err
+	}
+
 	return v, nil
 }
 
@@ -104,7 +114,7 @@ func (v *Verifier) KeyID() sign.KeyID { return v.keyID }
 
 // PublicKey returns the PKIX-encoded public-key bytes (X.509
 // SubjectPublicKeyInfo DER). The returned slice aliases
-// internal storage; callers must treat it as immutable.
+// internal storage, and callers must treat it as immutable.
 func (v *Verifier) PublicKey() []byte { return v.pubBytes }
 
 // Algorithm returns [crypto.AlgECDSAP384].
@@ -150,7 +160,7 @@ func New(priv *ecdsa.PrivateKey) (*Signer, error) {
 	if priv.Curve != elliptic.P384() {
 		return nil, ErrWrongCurve
 	}
-	// NewVerifier on priv.PublicKey can't fail: priv.Curve is
+	// NewVerifier on priv.PublicKey cannot fail: priv.Curve is
 	// validated above (so the curve check inside NewVerifier
 	// passes), and priv.PublicKey is on-curve by construction
 	// for any [ecdsa.PrivateKey] that survived stdlib's
@@ -159,23 +169,20 @@ func New(priv *ecdsa.PrivateKey) (*Signer, error) {
 	return &Signer{Verifier: v, priv: priv}, nil
 }
 
-// Generate creates a fresh ECDSA P-384 keypair drawing from
-// the runtime's secure entropy source.
+// Generate creates a fresh ECDSA P-384 keypair from the runtime's
+// secure entropy source.
 //
-// Unlike [crypto/sign/ed25519.Generate], this function does not
-// take a [go.thesmos.sh/core/rand.Rand] parameter. Go 1.26's
-// [crypto/ecdsa.GenerateKey] ignores any supplied
-// [io.Reader] and uses the runtime's internal secure RNG
-// regardless (unless `GODEBUG=cryptocustomrand=1` is set).
-// Accepting a [go.thesmos.sh/core/rand.Rand] would be a misleading API shape —
-// the parameter would silently do nothing. Tests requiring
-// deterministic ECDSA key generation use
+// Unlike [go.thesmos.sh/core/crypto/sign/ed25519.Generate], this
+// function takes no [go.thesmos.sh/core/rand.Rand]. Since Go 1.26,
+// [crypto/ecdsa.GenerateKey] ignores any supplied [io.Reader] and uses
+// the runtime's internal secure RNG unless
+// `GODEBUG=cryptocustomrand=1` is set. A source parameter would have no
+// effect. Tests requiring deterministic ECDSA key generation use
 // [testing/cryptotest.SetGlobalRandom].
 func Generate() (*Signer, error) {
-	// Wrapped through wrapGenerate so the error path is
-	// reachable from internal tests via synthetic input —
-	// Go 1.26's [ecdsa.GenerateKey] uses an internal secure
-	// RNG and cannot fail in default mode.
+	// wrapGenerate lets internal tests exercise the error path with
+	// synthetic input. [ecdsa.GenerateKey] uses an internal secure RNG
+	// and cannot fail in default mode.
 	return wrapGenerate(ecdsa.GenerateKey(elliptic.P384(), stdrand.Reader))
 }
 
@@ -191,17 +198,15 @@ func wrapGenerate(priv *ecdsa.PrivateKey, err error) (*Signer, error) {
 }
 
 // Sign returns the ECDSA P-384 + SHA-384 signature for msg in
-// ASN.1 DER encoding. Per Go 1.26's [crypto/ecdsa.SignASN1]
-// contract, the entropy source is selected internally by the
-// stdlib (ignoring any caller-supplied reader unless
-// `GODEBUG=cryptocustomrand=1`); we pass [crypto/rand.Reader]
-// for compatibility with the function signature.
+// ASN.1 DER encoding. [crypto/ecdsa.SignASN1] selects its entropy
+// source internally and ignores the reader it is given unless
+// `GODEBUG=cryptocustomrand=1` is set. Sign passes
+// [crypto/rand.Reader] to satisfy the function signature.
 func (s *Signer) Sign(msg []byte) ([]byte, error) {
 	digest := sha512.Sum384(msg)
-	// Wrapped through wrapSign so the error branch is
-	// reachable from internal tests — Go 1.26's
-	// [ecdsa.SignASN1] uses an internal secure RNG and
-	// cannot fail in default mode.
+	// wrapSign lets internal tests exercise the error branch.
+	// [ecdsa.SignASN1] uses an internal secure RNG and cannot fail in
+	// default mode.
 	return wrapSign(ecdsa.SignASN1(stdrand.Reader, s.priv, digest[:]))
 }
 
@@ -217,7 +222,7 @@ func wrapSign(sig []byte, err error) ([]byte, error) {
 
 // NewSignStream returns a fresh [sign.SignStream] backed by a
 // SHA-384 hash. Bytes written to the stream are absorbed into
-// the hash; [sign.SignStream.SignAndReset] finalises the digest,
+// the hash. [sign.SignStream.SignAndReset] finalises the digest,
 // signs it, and resets the underlying hash for reuse with the
 // next message.
 func (s *Signer) NewSignStream() sign.SignStream {
@@ -232,14 +237,12 @@ func (s *Signer) NewSignStream() sign.SignStream {
 //	0x04 || X(48 byte big-endian) || Y(48 byte big-endian)
 //
 // (97 bytes total). Fixed-width big-endian coordinates make the
-// encoding deterministic across builds and languages — distinct
-// from the variable-length PKIX bytes returned by
-// [Verifier.PublicKey].
+// encoding deterministic across builds and languages, unlike the
+// variable-length PKIX bytes returned by [Verifier.PublicKey].
 //
 // The encoding goes through [crypto/ecdsa.PublicKey.Bytes],
-// which validates that (X, Y) lies on the curve. Off-curve
-// points return an error (Go 1.25+ deprecated direct
-// X / Y access for cryptographic encoding).
+// which validates that (X, Y) lies on the curve. An off-curve point
+// returns an error wrapping [ErrOffCurve].
 func KeyIDFromPub(pub *ecdsa.PublicKey) (sign.KeyID, error) {
 	canonical, err := pub.Bytes()
 	if err != nil {
@@ -255,9 +258,9 @@ func KeyIDFromPub(pub *ecdsa.PublicKey) (sign.KeyID, error) {
 }
 
 // signStream wraps a SHA-384 [hash.Hash] for [sign.SignStream].
-// The receiver-owned digest buffer keeps the hash-finalise path
-// zero-alloc; the returned signature itself is allocated by
-// [crypto/ecdsa.SignASN1] (stdlib constraint).
+// Finalising the hash writes into a digest array on the stack and
+// does not allocate. [crypto/ecdsa.SignASN1] allocates the returned
+// signature.
 type signStream struct {
 	h    hash.Hash
 	priv *ecdsa.PrivateKey
@@ -270,8 +273,8 @@ var _ sign.SignStream = (*signStream)(nil)
 // [hash.Hash] contract guarantees no error path, so Write
 // always reports (len(p), nil).
 func (ss *signStream) Write(p []byte) (int, error) {
-	// hash.Hash.Write never returns a non-nil error per the
-	// stdlib contract; ignoring is safe.
+	// hash.Hash.Write never returns a non-nil error, per the stdlib
+	// contract.
 	n, _ := ss.h.Write(p)
 	return n, nil
 }
@@ -299,15 +302,15 @@ var _ sign.VerifyStream = (*verifyStream)(nil)
 // [hash.Hash] contract guarantees no error path, so Write
 // always reports (len(p), nil).
 func (vs *verifyStream) Write(p []byte) (int, error) {
-	// hash.Hash.Write never returns a non-nil error per the
-	// stdlib contract; ignoring is safe.
+	// hash.Hash.Write never returns a non-nil error, per the stdlib
+	// contract.
 	n, _ := vs.h.Write(p)
 	return n, nil
 }
 
 // Verify finalises the SHA-384 digest and reports whether sig
 // is a valid signature over the absorbed bytes. The stream is
-// single-use; consumers create a new one via
+// single-use, and consumers create a new one via
 // [Verifier.NewVerifyStream] for the next message.
 func (vs *verifyStream) Verify(sig []byte) bool {
 	var digest [sha512.Size384]byte

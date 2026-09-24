@@ -116,6 +116,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The FIPS 204 context string is fixed when a signer or verifier is
   built, and a private key is its 32-byte seed. `crypto` gains
   `AlgMLDSA44`, `AlgMLDSA65` and `AlgMLDSA87`. See RFC-0033.
+- `sign.Resolver` and `sign.Policy`. A Resolver maps an algorithm name
+  to a verifier constructor, from a table the caller writes, and
+  refuses an unlisted name with `sign.ErrUnknownAlgorithm`. A Policy
+  requires valid signatures from k of n parties, where a party is one
+  or more keys that must all sign. That covers approver thresholds,
+  witness quorums and hybrid signatures. `Policy.Check` counts each key
+  once and verifies at most one signature per key of the policy.
+  `ed25519.Resolve`, `ecdsap384.Resolve` and `mldsa.Resolver` build the
+  Resolver entries. See RFC-0039.
 
 ### Changed
 

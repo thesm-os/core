@@ -20,17 +20,14 @@ import (
 	"go.thesmos.sh/core/rand/seeded"
 )
 
-// stdlibSign returns the stdlib Ed25519 signature over msg under
-// fix.StdlibPriv. Reference for cross-stdlib equivalence
-// assertions; the consumer closes over the fixture priv at the
-// call site.
+// stdlibSign returns a function that signs msg with the stdlib under
+// priv. The cross-stdlib assertions use it as the reference.
 func stdlibSign(priv stded25519.PrivateKey) func([]byte) []byte {
 	return func(msg []byte) []byte { return stded25519.Sign(priv, msg) }
 }
 
 // stdlibVerify reports whether sig is a valid Ed25519 signature
-// over msg under pub. Stateless reference — usable across
-// fixtures without a closure.
+// over msg under pub, verified by the stdlib.
 func stdlibVerify(pub, msg, sig []byte) bool {
 	return stded25519.Verify(stded25519.PublicKey(pub), msg, sig)
 }
@@ -93,21 +90,25 @@ func BenchmarkEd25519Signer(b *testing.B) {
 
 // --- impl-specific tests ---
 
-// TestStreamingNotImplemented locks the streaming-asymmetry
-// invariant: Ed25519 PureEdDSA must NOT satisfy
-// [sign.StreamingSigner] / [sign.StreamingVerifier]. RFC 8032
-// §5.1.6 needs the message in two SHA-512 computations, the
-// second depending on the first — a streaming API would force
-// internal buffering.
+// TestStreamingNotImplemented checks that Ed25519 PureEdDSA
+// implements neither [sign.StreamingSigner] nor
+// [sign.StreamingVerifier]. RFC 8032 §5.1.6 needs the message in two
+// SHA-512 computations, and the second depends on the first, so a
+// streaming API would have to buffer the message.
 func TestStreamingNotImplemented(t *testing.T) {
 	t.Parallel()
-	signer := mustSigner(t, cryptotest.NewEd25519Sample())
 
-	_, isStreamSigner := any(signer).(sign.StreamingSigner)
-	testkit.False(t, isStreamSigner, "Ed25519 Signer must NOT implement sign.StreamingSigner")
+	t.Run("the Signer is not a StreamingSigner", func(t *testing.T) {
+		t.Parallel()
+		_, ok := any(mustSigner(t, cryptotest.NewEd25519Sample())).(sign.StreamingSigner)
+		testkit.False(t, ok, "Ed25519 Signer must not implement sign.StreamingSigner")
+	})
 
-	_, isStreamVerifier := any(signer.Verifier).(sign.StreamingVerifier)
-	testkit.False(t, isStreamVerifier, "Ed25519 Verifier must NOT implement sign.StreamingVerifier")
+	t.Run("the Verifier is not a StreamingVerifier", func(t *testing.T) {
+		t.Parallel()
+		_, ok := any(mustSigner(t, cryptotest.NewEd25519Sample()).Verifier).(sign.StreamingVerifier)
+		testkit.False(t, ok, "Ed25519 Verifier must not implement sign.StreamingVerifier")
+	})
 }
 
 func TestNewVerifier(t *testing.T) {
@@ -140,7 +141,7 @@ func TestNewVerifierFromBytes(t *testing.T) {
 			src[i] = 0
 		}
 		testkit.Equal(t, v.PublicKey(), want,
-			"Verifier must hold a defensive copy — caller mutation must not leak")
+			"zeroing the caller's buffer must not change the Verifier's key")
 	})
 
 	t.Run("rejects wrong-size byte slice", func(t *testing.T) {
@@ -148,6 +149,26 @@ func TestNewVerifierFromBytes(t *testing.T) {
 		_, err := signed25519.NewVerifierFromBytes(make([]byte, 16))
 		testkit.ErrorIs(t, err, signed25519.ErrInvalidPublicKeySize,
 			"16-byte slice must be rejected")
+	})
+}
+
+func TestResolve(t *testing.T) {
+	t.Parallel()
+
+	t.Run("returns a Verifier for the public key", func(t *testing.T) {
+		t.Parallel()
+		fix := cryptotest.NewEd25519Sample()
+		v, err := signed25519.Resolve(mustSigner(t, fix).PublicKey())
+		testkit.NoError(t, err, "Resolve must accept a 32-byte key")
+		testkit.Equal(t, v.KeyID(), fix.KeyID, "the Verifier must have the key's KeyID")
+		testkit.True(t, v.Verify(fix.Message, fix.Signature), "the Verifier must accept the key's signature")
+	})
+
+	t.Run("returns ErrInvalidPublicKeySize and a nil Verifier", func(t *testing.T) {
+		t.Parallel()
+		v, err := signed25519.Resolve(make([]byte, 31))
+		testkit.ErrorIs(t, err, signed25519.ErrInvalidPublicKeySize, "a 31-byte key must be refused")
+		testkit.True(t, v == nil, "the Verifier must be a nil interface")
 	})
 }
 
@@ -167,8 +188,6 @@ func TestNew(t *testing.T) {
 	t.Run("copies the source private key", func(t *testing.T) {
 		t.Parallel()
 		fix := cryptotest.NewEd25519Sample()
-		// Take a fresh copy of the fixture priv — we mutate it
-		// below and don't want to poison sibling tests.
 		priv := append(stded25519.PrivateKey(nil), fix.StdlibPriv...)
 
 		s, err := signed25519.New(priv)
@@ -176,16 +195,11 @@ func TestNew(t *testing.T) {
 		want, err := s.Sign(fix.Message)
 		testkit.NoError(t, err, "Sign")
 
-		// Zero the caller's buffer — secure-coding practice. The
-		// Signer must continue producing valid signatures from
-		// its internal copy.
-		for i := range priv {
-			priv[i] = 0
-		}
+		clear(priv)
 		got, err := s.Sign(fix.Message)
 		testkit.NoError(t, err, "Sign after zero")
 		testkit.Equal(t, got, want,
-			"Signer must hold a defensive copy — caller's zeroed key must not affect signatures")
+			"zeroing the caller's key must not change the Signer's signatures")
 	})
 }
 
@@ -210,7 +224,7 @@ func TestGenerate(t *testing.T) {
 		testkit.Error(t, err, "Generate must reject a failing entropy source")
 	})
 
-	t.Run("deterministic across runs (same seed → same keypair)", func(t *testing.T) {
+	t.Run("returns the same keypair for the same seed", func(t *testing.T) {
 		t.Parallel()
 		a, err := signed25519.Generate(seeded.New(rand.Seed(42)))
 		testkit.NoError(t, err, "Generate(seed=42) #1")
@@ -223,13 +237,13 @@ func TestGenerate(t *testing.T) {
 	})
 }
 
+// TestKeyIDStability pins the KeyID derivation, SHA-256(pub)[:16], for
+// the public key whose bytes are 0x01 to 0x20.
 func TestKeyIDStability(t *testing.T) {
 	t.Parallel()
 
-	t.Run("hardcoded vector locks SHA-256(pub)[:16] derivation", func(t *testing.T) {
+	t.Run("matches SHA-256(pub)[:16] for a fixed key", func(t *testing.T) {
 		t.Parallel()
-		// Vector: pub = bytes 0x01, 0x02, ..., 0x20.
-		// Expected KeyID = SHA-256(pub)[:16].
 		var raw [stded25519.PublicKeySize]byte
 		for i := range raw {
 			raw[i] = byte(i + 1)
@@ -242,10 +256,10 @@ func TestKeyIDStability(t *testing.T) {
 	})
 }
 
-// TestRFC8032Vectors locks the impl against RFC 8032 §7.1
-// known-answer vectors. Round-trip tests prove internal
-// consistency; KAT vectors prove byte-for-byte interop with every
-// other RFC-8032-conformant implementation.
+// TestRFC8032Vectors checks the implementation against the RFC 8032
+// §7.1 known-answer vectors. Round-trip tests show internal
+// consistency, and the vectors show byte-for-byte interoperability
+// with every other conformant implementation.
 func TestRFC8032Vectors(t *testing.T) {
 	t.Parallel()
 

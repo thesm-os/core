@@ -254,6 +254,29 @@ func TestNewVerifier(t *testing.T) {
 	})
 }
 
+func TestResolver(t *testing.T) {
+	t.Parallel()
+
+	t.Run("builds a Verifier under the bound parameter set and context", func(t *testing.T) {
+		t.Parallel()
+		s := mustSigner(t, mldsa.MLDSA65, testContext)
+		sig, err := s.Sign([]byte("payload"))
+		testkit.NoError(t, err, "Sign must succeed")
+
+		v, err := mldsa.Resolver(mldsa.MLDSA65, testContext)(s.PublicKey())
+		testkit.NoError(t, err, "the entry must accept the public key")
+		testkit.Equal(t, v.Algorithm(), crypto.AlgMLDSA65, "the Verifier must report the bound parameter set")
+		testkit.True(t, v.Verify([]byte("payload"), sig), "the Verifier must accept the signature")
+	})
+
+	t.Run("returns NewVerifier's error and a nil Verifier", func(t *testing.T) {
+		t.Parallel()
+		v, err := mldsa.Resolver(0, testContext)(make([]byte, stdmldsa.MLDSA44PublicKeySize))
+		testkit.ErrorIs(t, err, mldsa.ErrParams, "an unknown parameter set must be refused")
+		testkit.True(t, v == nil, "the Verifier must be a nil interface")
+	})
+}
+
 func TestContextSeparation(t *testing.T) {
 	t.Parallel()
 

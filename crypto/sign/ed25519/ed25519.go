@@ -19,8 +19,8 @@ import (
 // # Allocation contract
 //
 // [Verifier.KeyID], [Verifier.PublicKey], [Verifier.Algorithm]
-// are zero-alloc. [Verifier.Verify] is zero-alloc on the success
-// path — [crypto/ed25519.Verify] does not allocate.
+// are zero-alloc. [Verifier.Verify] is zero-alloc, because
+// [crypto/ed25519.Verify] does not allocate.
 type Verifier struct {
 	pub   stded25519.PublicKey
 	keyID sign.KeyID
@@ -29,8 +29,8 @@ type Verifier struct {
 // Compile-time interface check.
 var _ sign.Verifier = (*Verifier)(nil)
 
-// NewVerifier wraps a public key in a [Verifier]. The public-key
-// bytes are retained by reference; callers must not mutate the
+// NewVerifier wraps a public key in a [Verifier]. The Verifier keeps a
+// reference to the public-key bytes, so callers must not mutate the
 // underlying buffer afterwards.
 func NewVerifier(pub stded25519.PublicKey) (*Verifier, error) {
 	if len(pub) != stded25519.PublicKeySize {
@@ -40,7 +40,7 @@ func NewVerifier(pub stded25519.PublicKey) (*Verifier, error) {
 }
 
 // NewVerifierFromBytes wraps a 32-byte public-key slice as a
-// [Verifier]. The bytes are copied; callers may zero or reuse
+// [Verifier]. The bytes are copied, so callers may zero or reuse
 // the source buffer immediately.
 func NewVerifierFromBytes(pubBytes []byte) (*Verifier, error) {
 	if len(pubBytes) != stded25519.PublicKeySize {
@@ -51,12 +51,27 @@ func NewVerifierFromBytes(pubBytes []byte) (*Verifier, error) {
 	return &Verifier{pub: pub, keyID: KeyIDFromPub(pub)}, nil
 }
 
+// Resolve returns a [sign.Verifier] for a 32-byte public key, as
+// [NewVerifierFromBytes] does. It is the [sign.Resolver] entry for
+// [crypto.AlgEd25519]. The bytes are copied.
+//
+// Returns [ErrInvalidPublicKeySize] for a key of another length, with
+// a nil Verifier.
+func Resolve(pub []byte) (sign.Verifier, error) {
+	v, err := NewVerifierFromBytes(pub)
+	if err != nil {
+		return nil, err
+	}
+
+	return v, nil
+}
+
 // KeyID returns the canonical key identifier
 // SHA-256(public-key)[:16].
 func (v *Verifier) KeyID() sign.KeyID { return v.keyID }
 
 // PublicKey returns the 32-byte raw Ed25519 public key. The
-// returned slice aliases internal storage; callers must treat
+// returned slice aliases internal storage, and callers must treat
 // it as immutable.
 func (v *Verifier) PublicKey() []byte { return v.pub }
 
@@ -82,11 +97,9 @@ type Signer struct {
 var _ sign.Signer = (*Signer)(nil)
 
 // New wraps an existing Ed25519 private key in a [Signer]. The
-// private-key bytes are copied; callers may zero or reuse the
-// source buffer immediately after construction. The defensive
-// copy closes the foot-gun where a caller follows secure-coding
-// practice and zeroes the key, only to find subsequent [Sign]
-// calls produce silently invalid signatures.
+// private-key bytes are copied, so a caller may zero or reuse the
+// source buffer as soon as New returns without breaking later
+// [Signer.Sign] calls.
 //
 // The 64-byte private-key representation embeds the matching
 // public key in its trailing 32 bytes (per
@@ -105,10 +118,11 @@ func New(priv stded25519.PrivateKey) (*Signer, error) {
 	return &Signer{Verifier: v, priv: privCopy}, nil
 }
 
-// Generate creates a fresh Ed25519 keypair drawing from r. The
-// caller-supplied [rand.Rand] is wrapped to satisfy stdlib's
+// Generate creates a fresh Ed25519 keypair from bytes read from r.
+// The caller-supplied [rand.Rand] is wrapped to satisfy stdlib's
 // [io.Reader] expectation. Tests pass a deterministic
-// [rand/seeded.Rand] for reproducible key generation.
+// [go.thesmos.sh/core/rand/seeded.Rand] for reproducible key
+// generation.
 func Generate(r rand.Rand) (*Signer, error) {
 	pub, priv, err := stded25519.GenerateKey(randReader{r: r})
 	if err != nil {
@@ -122,20 +136,19 @@ func Generate(r rand.Rand) (*Signer, error) {
 
 // Sign returns the Ed25519 signature for msg per RFC 8032
 // §5.1.6 (PureEdDSA). The 64-byte signature is freshly
-// allocated; the stdlib offers no buffer-passing API.
+// allocated, because the stdlib offers no buffer-passing API.
 //
-// Returns a nil error always — Ed25519 is deterministic and has
-// no failure path. The error return is for [sign.Signer]
-// interface conformance.
+// Always returns a nil error. Ed25519 signing is deterministic and
+// has no failure path, and the error result exists to satisfy
+// [sign.Signer].
 func (s *Signer) Sign(msg []byte) ([]byte, error) {
 	return stded25519.Sign(s.priv, msg), nil
 }
 
 // KeyIDFromPub derives the canonical [sign.KeyID] from a public
-// key: SHA-256(raw 32 public-key bytes)[:16]. Same key produces
-// the same KeyID across runs, builds, and verifier services —
-// that's the load-bearing property for receipt-routing trust
-// stores.
+// key: SHA-256(raw 32 public-key bytes)[:16]. The same key produces
+// the same KeyID across runs, builds and verifier services, and a
+// trust store routes receipts to their key by this value.
 //
 // # Allocation contract
 //
@@ -153,8 +166,8 @@ func KeyIDFromPub(pub stded25519.PublicKey) sign.KeyID {
 // id/ksuid.
 type randReader struct{ r rand.Rand }
 
-// Read fills p from the wrapped [rand.Rand]. Always returns
-// (len(p), nil) — the [rand.Rand] contract has no error path.
+// Read fills p from the wrapped [rand.Rand] and returns what it
+// returns.
 func (rr randReader) Read(p []byte) (int, error) {
 	return rr.r.Read(p)
 }

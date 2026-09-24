@@ -130,6 +130,23 @@ func parseVerifier(
 	return newVerifier(p, pk, context), nil
 }
 
+// Resolver returns the [sign.Resolver] entry for parameter set p under
+// context. An ML-DSA verifier needs both, so the entry binds them, and
+// the Resolver's key for it is p.Algorithm().
+//
+// The entry returns the errors [NewVerifier] returns, with a nil
+// Verifier. An invalid p or context fails on every call.
+func Resolver(p Params, context string) func(pub []byte) (sign.Verifier, error) {
+	return func(pub []byte) (sign.Verifier, error) {
+		v, err := NewVerifier(p, pub, context)
+		if err != nil {
+			return nil, err
+		}
+
+		return v, nil
+	}
+}
+
 // unavailable reports that the FIPS 140-3 module in use does not
 // provide ML-DSA.
 func unavailable(err error) error {

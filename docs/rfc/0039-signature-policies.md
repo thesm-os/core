@@ -73,8 +73,9 @@ type Resolver map[crypto.Algorithm]func(pub []byte) (Verifier, error)
 // Verifier returns a Verifier for alg and the encoded public key pub.
 //
 // Returns ErrUnknownAlgorithm, classified errs.Unsupported, for a name
-// the Resolver does not contain, and the constructor's error for a
-// key it refuses.
+// the Resolver does not contain, and for an entry that builds no
+// Verifier or a Verifier of another algorithm. Returns the
+// constructor's error for a key it refuses.
 func (r Resolver) Verifier(alg crypto.Algorithm, pub []byte) (Verifier, error)
 ```
 
@@ -89,10 +90,13 @@ resolve := sign.Resolver{
 }
 ```
 
-`ed25519.Resolve` and `ecdsap384.Resolve` wrap the existing
-`NewVerifierFromBytes` constructors. `mldsa.Resolver` binds a
-parameter set and a context string, because an ML-DSA verifier needs
-both.
+`ed25519.Resolve` wraps `NewVerifierFromBytes`, and
+`ecdsap384.Resolve` wraps `NewVerifierFromPKIX`. `mldsa.Resolver`
+binds a parameter set and a context string, because an ML-DSA verifier
+needs both. `Resolver.Verifier` checks that the Verifier an entry
+builds reports the requested algorithm, so a table that maps a name to
+the wrong constructor fails instead of verifying under another
+algorithm.
 
 A Resolver builds verifiers from key material the caller trusts: its
 configuration, its trust store, or a key it pinned earlier. It is never
@@ -120,9 +124,9 @@ algorithm.
 // Signature is one signature with the identity of the key that made
 // it.
 type Signature struct {
-    KeyID     KeyID
     Algorithm crypto.Algorithm
     Value     []byte
+    KeyID     KeyID
 }
 
 // Party is a signer that counts once toward a threshold. It has
@@ -135,16 +139,17 @@ type Party struct {
 }
 
 // Policy requires valid signatures from at least Threshold of its
-// parties. It is immutable and safe for concurrent use.
+// parties. It is immutable and safe for concurrent use. The zero
+// Policy refuses every check with ErrPolicy.
 type Policy struct{ /* unexported fields */ }
 
 // NewPolicy returns a Policy over parties with the given threshold.
 //
 // Returns ErrPolicy, classified errs.Invalid, when threshold is not
-// between 1 and len(parties), when a party has no keys, or when one
-// key appears twice, in one party or in two. The key check compares
-// KeyIDs and the encoded public keys, so one key cannot be listed
-// under two identities.
+// between 1 and len(parties), when a party has no keys or a nil key,
+// or when one key appears twice, in one party or in two. The key check
+// compares KeyIDs and the encoded public keys, so one key cannot be
+// listed under two identities.
 func NewPolicy(threshold int, parties ...Party) (Policy, error)
 
 // Check reports whether sigs satisfy p for message.
@@ -158,18 +163,19 @@ func NewPolicy(threshold int, parties ...Party) (Policy, error)
 // count, which keeps a requester from approving their own request.
 //
 // Check stops verifying as soon as Threshold parties count, and as
-// soon as the remaining parties can no longer meet Threshold. It therefore
-// runs at most one verification per key of p, whatever the number of
+// soon as the remaining parties can no longer meet Threshold. It runs
+// at most one verification per key of p, whatever the number of
 // signatures a caller or an attacker supplies.
 //
 // Returns nil when at least Threshold parties count. Otherwise it
 // returns ErrThreshold, classified errs.Integrity, wrapped with the
-// number of parties that counted and the threshold.
+// most parties that could count and the threshold.
 //
 // # Allocation contract
 //
-// Zero-alloc for a policy of up to 64 keys, whose bookkeeping fits in
-// bitmaps on the stack, apart from what each Verifier allocates.
+// Zero-alloc when it returns nil for a policy of up to 64 keys, whose
+// bookkeeping fits on the stack, apart from what each Verifier
+// allocates. A failed check allocates the returned error.
 func (p Policy) Check(message []byte, sigs []Signature, exclude ...KeyID) error
 ```
 
@@ -202,7 +208,8 @@ var (
     ErrUnknownAlgorithm = errs.WithClass(errors.New("sign: unknown algorithm"), errs.Unsupported)
 
     // ErrPolicy reports a policy that cannot be satisfied or that
-    // lists a key twice. It classifies as errs.Invalid.
+    // lists a key twice, and a check on the zero Policy. It
+    // classifies as errs.Invalid.
     ErrPolicy = errs.WithClass(errors.New("sign: invalid policy"), errs.Invalid)
 
     // ErrThreshold reports signatures that satisfy fewer parties than
@@ -221,8 +228,10 @@ var (
   and a public key listed under a second KeyID.
 - An excluded key removes its party, and a signature whose algorithm
   differs from its key's does not count.
-- `Resolver.Verifier` returns `ErrUnknownAlgorithm` for a missing name,
-  and a Verifier that verifies a known key's signature.
+- `Resolver.Verifier` returns `ErrUnknownAlgorithm` for a missing name
+  and for an entry of the wrong algorithm, and a Verifier that verifies
+  a known key's signature.
+- The zero `Policy` refuses every check.
 - `Check` runs at most one verification per key of the policy, counted
   through a Verifier that records its calls, when the caller passes a
   thousand signatures for one key. It stops once the threshold is met,
