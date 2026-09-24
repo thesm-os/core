@@ -166,8 +166,11 @@ func (q *quorum) record(parent context.Context, i int, err error) {
 		return
 	}
 
+	// The decision comes at the latest with failure n-k+1, so n is
+	// room enough. A capacity computed from k would give a mutation tool
+	// a mutant that only changes the capacity, which no test can see.
 	if q.failures == nil {
-		q.failures = make([]error, 0, q.n-q.k+1)
+		q.failures = make([]error, 0, q.n)
 	}
 
 	q.failures = append(q.failures, fmt.Errorf("item %d: %w", i, err))

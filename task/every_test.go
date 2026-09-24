@@ -108,6 +108,10 @@ func succeed(context.Context, int) error { return nil }
 // The jitter tests pin the draw with rand/constant. A constant of all
 // ones draws one below the bound, and a constant of one draws zero. A
 // constant zero never leaves rand.Uint64N's rejection band.
+//
+// A test in which fn must not run has fn return errBoom. A loop that
+// starts by mistake then ends at its first call, and the test fails
+// instead of hanging.
 func TestEvery(t *testing.T) {
 	t.Parallel()
 
@@ -239,7 +243,7 @@ func TestEvery(t *testing.T) {
 		err := task.Every(ctx, fake.New(origin), nil, period, 0, func(context.Context) error {
 			calls++
 
-			return nil
+			return errBoom
 		})
 		testkit.NoError(t, err, "an ended ctx must stop the loop with nil")
 		testkit.Equal(t, calls, 0, "fn must not run under an ended ctx")
@@ -253,7 +257,7 @@ func TestEvery(t *testing.T) {
 			err := task.Every(t.Context(), fake.New(origin), nil, tc.period, tc.jitter, func(context.Context) error {
 				t.Error("fn must not run for an invalid period")
 
-				return nil
+				return errBoom
 			})
 			testkit.ErrorIs(t, err, task.ErrPeriod, "an invalid period or jitter must be refused")
 			testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrPeriod must classify as Invalid")
@@ -265,7 +269,7 @@ func TestEvery(t *testing.T) {
 		err := task.Every(t.Context(), fake.New(origin), nil, period, time.Second, func(context.Context) error {
 			t.Error("fn must not run without a jitter source")
 
-			return nil
+			return errBoom
 		})
 		testkit.ErrorIs(t, err, task.ErrPeriod, "a jitter without a source must be refused")
 	})
