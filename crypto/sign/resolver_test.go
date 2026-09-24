@@ -16,6 +16,21 @@ import (
 	"go.thesmos.sh/core/rand/seeded"
 )
 
+// BenchmarkResolverVerifier measures resolving an Ed25519 key. The
+// cost is the lookup plus the constructor's copy of the key.
+func BenchmarkResolverVerifier(b *testing.B) {
+	signer, err := ed25519.Generate(seeded.New(rand.Seed(1)))
+	testkit.NoError(b, err, "ed25519.Generate must succeed")
+
+	r := sign.Resolver{crypto.AlgEd25519: ed25519.Resolve}
+	pub := signer.PublicKey()
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _ = r.Verifier(crypto.AlgEd25519, pub)
+	}
+}
+
 func TestResolverVerifier(t *testing.T) {
 	t.Parallel()
 

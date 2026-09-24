@@ -13,6 +13,20 @@ import (
 	"go.thesmos.sh/core/clock/fake"
 )
 
+// TestReadUTCZeroAlloc enforces the allocation contract of ReadUTC.
+// testing.AllocsPerRun reads a process-global malloc counter, so this
+// test does not call t.Parallel.
+//
+//nolint:paralleltest // see comment above
+func TestReadUTCZeroAlloc(t *testing.T) {
+	c := fake.New(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+
+	t.Run("ReadUTC", func(t *testing.T) {
+		testkit.Equal(t, testing.AllocsPerRun(100, func() { _, _ = c.ReadUTC() }), float64(0),
+			"ReadUTC must not allocate")
+	})
+}
+
 func TestReadUTC(t *testing.T) {
 	t.Parallel()
 

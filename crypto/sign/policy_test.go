@@ -354,6 +354,66 @@ func TestCheck(t *testing.T) {
 	})
 }
 
+// BenchmarkCheck measures Policy.Check for three policies: a threshold
+// of three Ed25519 approvers of five, a hybrid party of an Ed25519 and
+// an ML-DSA-65 key, and 64 keys of the test double, which isolates the
+// bookkeeping from the cost of verification.
+func BenchmarkCheck(b *testing.B) {
+	approvers := make([]sign.Party, 5)
+	approvals := make([]sign.Signature, 0, 5)
+	for i := range approvers {
+		s, err := ed25519.Generate(seeded.New(rand.Seed(int64(i + 1))))
+		testkit.NoError(b, err, "ed25519.Generate must succeed")
+		approvers[i] = sign.Party{Name: s.KeyID().String(), Keys: []sign.Verifier{s}}
+		approvals = append(approvals, signature(b, s))
+	}
+
+	classical, err := ed25519.Generate(seeded.New(rand.Seed(10)))
+	testkit.NoError(b, err, "ed25519.Generate must succeed")
+	postQuantum, err := mldsa.Generate(mldsa.MLDSA65, seeded.New(rand.Seed(11)), "")
+	testkit.NoError(b, err, "mldsa.Generate must succeed")
+
+	doubles := make([]*key, 64)
+	signed := make([]sign.Signature, len(doubles))
+	for i := range doubles {
+		doubles[i] = newKey(byte(i))
+		signed[i] = doubles[i].signed()
+	}
+
+	cases := []struct {
+		name   string
+		policy sign.Policy
+		sigs   []sign.Signature
+	}{
+		{"3 of 5 Ed25519", mustPolicy(b, 3, approvers...), approvals},
+		{
+			"hybrid Ed25519 and ML-DSA-65",
+			mustPolicy(b, 1, sign.Party{Name: "hybrid", Keys: []sign.Verifier{classical, postQuantum}}),
+			[]sign.Signature{signature(b, classical), signature(b, postQuantum)},
+		},
+		{"64 test-double keys", mustPolicy(b, len(doubles), solo(doubles...)...), signed},
+	}
+	for _, tc := range cases {
+		b.Run(tc.name, func(b *testing.B) {
+			b.ReportAllocs()
+
+			for b.Loop() {
+				_ = tc.policy.Check(message, tc.sigs)
+			}
+		})
+	}
+}
+
+// signature returns s's signature over message.
+func signature(tb testing.TB, s sign.Signer) sign.Signature {
+	tb.Helper()
+
+	value, err := s.Sign(message)
+	testkit.NoError(tb, err, "Sign must succeed")
+
+	return sign.Signature{Algorithm: s.Algorithm(), Value: value, KeyID: s.KeyID()}
+}
+
 // TestZeroAlloc enforces the allocation contract of Policy.Check for a
 // policy of 64 keys. testing.AllocsPerRun reads a process-global
 // malloc counter, so this test does not call t.Parallel.

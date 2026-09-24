@@ -31,6 +31,24 @@ func barrier(n int) func() {
 	}
 }
 
+// BenchmarkQuorum measures one call that needs two immediate successes
+// of five, the shape of a witness quorum.
+func BenchmarkQuorum(b *testing.B) {
+	b.ReportAllocs()
+
+	witnesses := indices(5)
+	var sink atomic.Int64
+	cosign := func(_ context.Context, i, _ int) error {
+		sink.Add(int64(i))
+
+		return nil
+	}
+
+	for b.Loop() {
+		_ = task.Quorum(b.Context(), len(witnesses), 2, witnesses, cosign)
+	}
+}
+
 // TestQuorum covers the quorum decision. Each test starts every call
 // at once and keeps them at a barrier until all have started, so the
 // order in which results arrive fixes the decision. The rules Quorum

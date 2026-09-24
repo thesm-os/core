@@ -14,6 +14,25 @@ import (
 
 var at = time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 
+// TestUTCReadingZeroAlloc enforces the allocation contract of the
+// UTCReading methods. testing.AllocsPerRun reads a process-global
+// malloc counter, so this test does not call t.Parallel.
+//
+//nolint:paralleltest // see comment above
+func TestUTCReadingZeroAlloc(t *testing.T) {
+	r := clock.UTCReading{Time: at, MaxError: time.Millisecond, Synced: true}
+
+	for name, fn := range map[string]func(){
+		"Within":   func() { _ = r.Within(time.Second) },
+		"Earliest": func() { _ = r.Earliest() },
+		"Latest":   func() { _ = r.Latest() },
+	} {
+		t.Run(name, func(t *testing.T) {
+			testkit.Equal(t, testing.AllocsPerRun(100, fn), float64(0), name+" must not allocate")
+		})
+	}
+}
+
 func TestUTCReading(t *testing.T) {
 	t.Parallel()
 
