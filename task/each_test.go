@@ -22,6 +22,12 @@ func double(_ context.Context, n int) (int, error) {
 	return n * 2, nil
 }
 
+// TestEach covers Each. In the failure test, element 0 fails only once
+// element 1 is running, and element 1 returns nil only once the failure
+// has cancelled the context, so both workers are busy until the failure
+// is recorded. Element 1's worker then goes back to claiming, and only
+// the context check can stop it. Any third call was claimed after the
+// failure.
 func TestEach(t *testing.T) {
 	t.Parallel()
 
@@ -68,12 +74,6 @@ func TestEach(t *testing.T) {
 	t.Run("stops claiming indices after a failure", func(t *testing.T) {
 		t.Parallel()
 
-		// Element 0 fails only once element 1 is running, and element 1
-		// returns nil only once the failure has cancelled the context,
-		// so both workers are busy until the failure is recorded. Its
-		// worker then goes back to claiming, and only the context
-		// check can stop it. Any third call was claimed after the
-		// failure.
 		var (
 			runs     atomic.Int32
 			err      error
@@ -163,6 +163,8 @@ func TestMap(t *testing.T) {
 	})
 }
 
+// TestAll covers All. In the concurrency test each function waits for
+// the other, so All passes only when both run at once.
 func TestAll(t *testing.T) {
 	t.Parallel()
 
@@ -170,8 +172,6 @@ func TestAll(t *testing.T) {
 		t.Parallel()
 
 		a, b := make(chan struct{}), make(chan struct{})
-		// Each function waits for the other, so All passes only when
-		// both run at once.
 		meet := func(mine, theirs chan struct{}) func(context.Context) error {
 			return func(context.Context) error {
 				close(mine)
@@ -199,10 +199,11 @@ func TestAll(t *testing.T) {
 	})
 }
 
-// TestZeroAlloc enforces the allocation contract of Each, Map and
-// Stream: allocations per call do not grow with the number of
+// TestZeroAlloc enforces the allocation contract of Each, Map, Stream
+// and Quorum: allocations per call do not grow with the number of
 // elements. testing.AllocsPerRun reads a process-global malloc
-// counter, so this test does not call t.Parallel.
+// counter, so this test does not call t.Parallel. Quorum runs with k
+// equal to the number of elements, so it calls fn for every one.
 //
 // Both lengths exceed the limit, so both calls wait for their worker
 // in the same way, and the runtime's allocations for that wait appear
@@ -236,6 +237,19 @@ func TestZeroAlloc(t *testing.T) {
 			name:  "Stream",
 			short: func() { _ = task.Stream(ctx, 1, sequence(len(short), nil), noop) },
 			long:  func() { _ = task.Stream(ctx, 1, sequence(len(long), nil), noop) },
+		},
+		{
+			name: "Quorum",
+			short: func() {
+				_ = task.Quorum(ctx, 1, len(short), short, func(ctx context.Context, i, _ int) error {
+					return noop(ctx, i)
+				})
+			},
+			long: func() {
+				_ = task.Quorum(ctx, 1, len(long), long, func(ctx context.Context, i, _ int) error {
+					return noop(ctx, i)
+				})
+			},
 		},
 	}
 	for _, tc := range cases {

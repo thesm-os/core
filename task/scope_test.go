@@ -17,7 +17,7 @@ import (
 	"go.thesmos.sh/core/task"
 )
 
-// errBoom stands in for a task that failed.
+// errBoom is the error of a task that failed.
 var errBoom = testkit.TestError("boom")
 
 // errStuck is returned by a task that waited a second for a
@@ -115,8 +115,10 @@ type entry struct {
 	limited bool // the function takes a limit
 }
 
-// entries returns every function of the package as an entry, so a rule
-// that holds for all of them is tested against each.
+// entries returns every function of the package that fans out as an
+// entry, so a rule that applies to all of them is tested against each.
+// Quorum runs with k equal to the number of tasks, where it succeeds
+// only when every task does.
 func entries() []entry {
 	return []entry{
 		{
@@ -159,6 +161,15 @@ func entries() []entry {
 			limited: true,
 			run: func(ctx context.Context, limit, n int, fn func(ctx context.Context, i int) error) error {
 				return task.Stream(ctx, limit, sequence(n, nil), fn)
+			},
+		},
+		{
+			name:    "Quorum",
+			limited: true,
+			run: func(ctx context.Context, limit, n int, fn func(ctx context.Context, i int) error) error {
+				return task.Quorum(ctx, limit, n, indices(n), func(ctx context.Context, i, _ int) error {
+					return fn(ctx, i)
+				})
 			},
 		},
 		{

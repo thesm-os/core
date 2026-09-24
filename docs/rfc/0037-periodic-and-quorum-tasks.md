@@ -24,8 +24,10 @@ We propose two functions for package `task`:
   calls have succeeded, cancelling the rest. It fails as soon as k
   successes have become impossible.
 
-Both keep `task`'s guarantees: no goroutine outlives the call, the
-first error is the one returned, and a panic crashes the process.
+Both keep `task`'s guarantee that no goroutine outlives the call. A
+panic in a call that `Quorum` makes crashes the process. `Every` runs
+its function on the caller's goroutine, so a panic there continues to
+the caller, as a panic in the body passed to `task.Run` does.
 
 ## Motivation
 
@@ -78,12 +80,18 @@ use it for reads and writes.
 // which may be nil when jitter is 0.
 //
 // Every returns nil when ctx ends, which is how a loop stops. It
-// returns fn's error, unchanged, when fn fails. A caller that wants
-// the loop to continue after a failure handles the failure inside
-// fn. A panic in fn crashes the process, as a panic in any task does.
+// returns fn's error, unchanged, when fn fails, except an error that
+// is ctx's error or cause after ctx has ended. A call cut short by the
+// end of ctx also stops the loop with nil, so the result of a shutdown
+// does not depend on when it arrives. A caller that wants the loop to
+// continue after a failure handles the failure inside fn.
 //
-// Every returns ErrPeriod for a period that is not positive or a
-// negative jitter.
+// fn runs on the caller's goroutine, so a panic in fn continues to the
+// caller. Inside a task started by Group.Go, it crashes the process as
+// a panic in any task does.
+//
+// Every returns ErrPeriod for a period that is not positive, a
+// negative jitter, or a positive jitter with a nil r.
 //
 // # Allocation contract
 //
@@ -94,7 +102,7 @@ func Every(ctx context.Context, c clock.Clock, r rand.Rand, period, jitter time.
 A loop runs inside a group, so it stops with the group:
 
 ```go
-err := task.Run(ctx, 0, func(ctx context.Context, g *task.Group) error {
+err := task.Run(ctx, 1, func(ctx context.Context, g *task.Group) error {
     return g.Go(func(ctx context.Context) error {
         return task.Every(ctx, clk, rnd, 30*time.Second, 3*time.Second, relay.Once)
     })
@@ -109,24 +117,28 @@ err := task.Run(ctx, 0, func(ctx context.Context, g *task.Group) error {
 // the context of the calls still running.
 //
 // As soon as fewer than k calls can still succeed, Quorum cancels the
-// rest and returns ErrNoQuorum joined with every failure, each
-// wrapped with its item's index. When ctx ends first, it returns
-// context.Cause(ctx).
+// rest and returns ErrNoQuorum joined with the failures that decided
+// it, each wrapped with its item's index. When ctx ends first, it
+// returns context.Cause(ctx). The first decision is final, and results
+// that arrive after it are discarded.
 //
 // Quorum returns only after every call it started has returned. A
-// call that ignores its context therefore delays Quorum's return
+// call that ignores its context delays Quorum's return
 // until it does. A call made through net/http with the context stops
 // promptly, because the context "controls the entire lifetime of a
 // request and its response".
 //
 // fn records its own results, for example into a slice indexed by i,
-// as it does for Each. A panic in fn crashes the process.
+// as it does for Each. A panic in fn crashes the process. A call that
+// ends by runtime.Goexit counts as a failure with ErrExited.
 //
-// Returns ErrQuorumSize unless 0 < k <= len(items).
+// Returns ErrLimit when limit is below one, and ErrQuorumSize unless
+// 0 < k <= len(items).
 //
 // # Allocation contract
 //
 // As Each: a fixed number of allocations per call, and none per item.
+// Each failure allocates its wrapped error.
 func Quorum[E any](ctx context.Context, limit, k int, items []E, fn func(ctx context.Context, i int, item E) error) error
 ```
 
@@ -134,7 +146,7 @@ A caller collects two cosignatures from five witnesses:
 
 ```go
 sigs := make([][]byte, len(witnesses))
-err := task.Quorum(ctx, 0, 2, witnesses, func(ctx context.Context, i int, w Witness) error {
+err := task.Quorum(ctx, len(witnesses), 2, witnesses, func(ctx context.Context, i int, w Witness) error {
     sig, err := w.Cosign(ctx, checkpoint)
     sigs[i] = sig
     return err
@@ -145,8 +157,9 @@ err := task.Quorum(ctx, 0, 2, witnesses, func(ctx context.Context, i int, w Witn
 
 ```go
 var (
-    // ErrPeriod reports a non-positive period or a negative jitter.
-    // It classifies as errs.Invalid.
+    // ErrPeriod reports a non-positive period, a negative jitter, or a
+    // positive jitter without a random source. It classifies as
+    // errs.Invalid.
     ErrPeriod = errs.WithClass(errors.New("task: period must be positive and jitter non-negative"), errs.Invalid)
 
     // ErrQuorumSize reports a quorum of zero or of more than the items.
@@ -167,11 +180,12 @@ var (
   a full period, the jitter remains within its bound, cancellation ends
   the loop with nil, and an error from fn ends it with that error.
 - `Quorum`: k successes return nil and cancel the rest. n − k + 1
-  failures return `ErrNoQuorum` with every failure joined. The limit
-  bounds concurrency, and the context's cause is returned when it ends
-  first.
-- Both functions leave no goroutine running, checked by testkit's
-  leak check.
+  failures return `ErrNoQuorum` with those failures joined. The
+  context's cause is returned when it ends first.
+- `Quorum` runs the rules shared by every function of the package,
+  with k equal to the number of tasks: the limit bounds concurrency,
+  `runtime.Goexit` records `ErrExited`, and no task's context outlives
+  the call. `Every` starts no goroutine.
 
 ## Alternatives considered
 
@@ -222,7 +236,7 @@ latency instead of hiding it as a leak.
 - `Quorum` waits for every call it started. A remote call that ignores
   cancellation delays the return, as it delays `Each`.
 - `ErrNoQuorum` has no class, so a caller that switches on the
-  class sees the class of the first failure joined with it.
+  class sees the class of the first classified failure joined with it.
 
 ## Open questions
 

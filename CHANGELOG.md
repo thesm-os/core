@@ -125,6 +125,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   once and verifies at most one signature per key of the policy.
   `ed25519.Resolve`, `ecdsap384.Resolve` and `mldsa.Resolver` build the
   Resolver entries. See RFC-0039.
+- `task.Every` and `task.Quorum`. `Every` calls a function, waits a
+  period plus a random jitter after each call returns, and calls it
+  again, until its context ends or the function fails. It reads time
+  through `clock.Clock`, so a test can run it against the fake clock.
+  `Quorum` calls a function for every element and returns as soon as k
+  calls succeed, cancelling the rest. It returns `task.ErrNoQuorum`,
+  joined with the failures, as soon as k successes are impossible. See
+  RFC-0037.
 
 ### Changed
 

@@ -24,9 +24,14 @@
 //     [go.thesmos.sh/core/page.Cursor].
 //   - [Run] starts tasks one at a time through [Group.Go], for stages
 //     that run together and for tasks that start tasks.
+//   - [Quorum] calls one function for every element of a slice and
+//     returns once k calls have succeeded, for k of n replicas or
+//     witnesses.
+//   - [Every] calls one function repeatedly, with a delay between
+//     calls, until its context ends.
 //
 // A task is a function passed to [All] or [Group.Go], or one call of
-// the function passed to [Each], [Map] or [Stream].
+// the function passed to [Each], [Map], [Stream] or [Quorum].
 //
 // # Failure semantics
 //
@@ -35,6 +40,11 @@
 // later errors are discarded. Work skipped because the context was
 // done records the context's cause, so a nil result means that every
 // task ran and returned nil.
+//
+// [Quorum] and [Every] differ. Quorum succeeds when k calls succeed,
+// and fails only when k successes have become impossible. Every stops
+// at its function's first error, and returns nil when its context
+// ends.
 //
 // A task that ends by [runtime.Goexit] records [ErrExited]. The
 // testing package's FailNow and SkipNow call runtime.Goexit, and they
@@ -50,12 +60,14 @@
 //
 // The body passed to [Run] and the sequence passed to [Stream] run on
 // the caller's goroutine. A panic there cancels the context, waits for
-// every task, and then continues to the caller.
+// every task, and then continues to the caller. The function passed to
+// [Every] also runs on the caller's goroutine, and a panic in it
+// continues to the caller.
 //
 // # Limits
 //
-// [Each], [Map], [Stream] and [Run] require a limit of at least one
-// and return [ErrLimit] for a smaller one. For CPU-bound work, pass
+// [Each], [Map], [Stream], [Quorum] and [Run] require a limit of at
+// least one and return [ErrLimit] for a smaller one. For CPU-bound work, pass
 // runtime.GOMAXPROCS(0), which follows the cgroup CPU limit on Linux.
 // For calls to a dependency, pass the concurrency that the dependency
 // accepts. [All] takes no limit, because its functions are written at
@@ -72,8 +84,9 @@
 //
 // # Allocation contract
 //
-// [Each], [Map] and [Stream] run on a fixed set of worker goroutines
-// that claim elements, so their allocations do not grow with the
-// number of elements. [Group.Go] starts one goroutine per task and
-// allocates the closure that starts it.
+// [Each], [Map], [Stream] and [Quorum] run on a fixed set of worker
+// goroutines that claim elements, so their allocations do not grow
+// with the number of elements. [Group.Go] starts one goroutine per task
+// and allocates the closure that starts it. [Every] allocates one timer
+// per wait.
 package task
