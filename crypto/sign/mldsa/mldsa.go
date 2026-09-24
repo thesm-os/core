@@ -21,15 +21,15 @@ type Params uint8
 const (
 	// MLDSA44 is ML-DSA-44: 1,312-byte public keys and 2,420-byte
 	// signatures, NIST security category 2.
-	MLDSA44 Params = iota + 1
+	MLDSA44 Params = 1
 
 	// MLDSA65 is ML-DSA-65: 1,952-byte public keys and 3,309-byte
 	// signatures, NIST security category 3.
-	MLDSA65
+	MLDSA65 Params = 2
 
 	// MLDSA87 is ML-DSA-87: 2,592-byte public keys and 4,627-byte
 	// signatures, NIST security category 5. CNSA 2.0 requires it.
-	MLDSA87
+	MLDSA87 Params = 3
 )
 
 // SeedSize is the length of a private-key seed, the same for every

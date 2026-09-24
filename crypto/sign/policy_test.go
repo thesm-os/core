@@ -269,6 +269,8 @@ func TestCheck(t *testing.T) {
 		err := p.Check(message, []sign.Signature{a.forged(), b.signed(), c.signed()})
 		testkit.ErrorIs(t, err, sign.ErrThreshold, "a forged signature must fail a unanimous policy")
 		testkit.Equal(t, calls(a, b, c), int32(1), "Check must stop once three parties are out of reach")
+		testkit.True(t, strings.Contains(err.Error(), "at most 2 of 3 required parties"),
+			"the error must count the parties Check did not reach: "+err.Error())
 	})
 
 	t.Run("verifies nothing for a party missing a signature", func(t *testing.T) {
@@ -286,8 +288,10 @@ func TestCheck(t *testing.T) {
 		p := mustPolicy(t, 2, solo(a, b, c)...)
 		sigs := []sign.Signature{a.signed(), b.signed()}
 
-		testkit.ErrorIs(t, p.Check(message, sigs, a.id), sign.ErrThreshold,
-			"the requester's own signature must not count")
+		err := p.Check(message, sigs, a.id)
+		testkit.ErrorIs(t, err, sign.ErrThreshold, "the requester's own signature must not count")
+		testkit.True(t, strings.Contains(err.Error(), "at most 1 of 2 required parties"),
+			"the error must not count the excluded party: "+err.Error())
 		testkit.NoError(t, p.Check(message, sigs, c.id), "excluding a party that did not sign must not matter")
 	})
 

@@ -246,10 +246,13 @@ func TestNewVerifier(t *testing.T) {
 		testkit.ErrorIs(t, err, mldsa.ErrPublicKey, "a 44 key must not parse as an 87 key")
 	})
 
-	t.Run("refuses a context longer than 255 bytes", func(t *testing.T) {
+	t.Run("accepts a context of 255 bytes and refuses 256", func(t *testing.T) {
 		t.Parallel()
 		pub := mustSigner(t, mldsa.MLDSA44, testContext).PublicKey()
-		_, err := mldsa.NewVerifier(mldsa.MLDSA44, pub, strings.Repeat("c", 256))
+		_, err := mldsa.NewVerifier(mldsa.MLDSA44, pub, strings.Repeat("c", 255))
+		testkit.NoError(t, err, "a 255-byte context must be accepted")
+
+		_, err = mldsa.NewVerifier(mldsa.MLDSA44, pub, strings.Repeat("c", 256))
 		testkit.ErrorIs(t, err, mldsa.ErrContext, "a 256-byte context must be refused")
 	})
 }

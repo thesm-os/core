@@ -5,6 +5,7 @@ package sign
 
 import (
 	"fmt"
+	"math"
 	"slices"
 
 	"go.thesmos.sh/core/crypto"
@@ -69,7 +70,9 @@ type Policy struct {
 const maxStackKeys = 64
 
 // excluded marks the keys of an excluded party in Check's bookkeeping.
-const excluded = -1
+// A real entry is zero or a position plus one, so any negative value
+// is free.
+const excluded = math.MinInt
 
 // NewPolicy returns a Policy that requires valid signatures from at
 // least threshold of parties. The parties' key slices are copied.
