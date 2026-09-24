@@ -10,13 +10,18 @@ import (
 	"go.thesmos.sh/core/clock"
 )
 
-// maxDrift is the rate at which the kernel grows its maximum error:
-// 500 µs per second, its MAXFREQ of 500,000 ns/s.
-const maxDrift = 500 * time.Microsecond
+// Kernel constants, written as nanosecond literals. An operator in a
+// const declaration has no coverage counter, so a mutation tool
+// reports a mutant of it as not covered and never runs it.
+const (
+	// maxDrift is the rate at which the kernel grows its maximum error:
+	// 500 µs per second, its MAXFREQ of 500,000 ns/s.
+	maxDrift time.Duration = 500_000
 
-// phaseLimit is the maximum error past which the kernel caps the error
-// and sets STA_UNSYNC: its NTP_PHASE_LIMIT of 16 s.
-const phaseLimit = 16 * time.Second
+	// phaseLimit is the maximum error past which the kernel caps the
+	// error and sets STA_UNSYNC: its NTP_PHASE_LIMIT of 16 s.
+	phaseLimit time.Duration = 16_000_000_000
+)
 
 // status is the part of one kernel call that a reading uses.
 type status struct {
