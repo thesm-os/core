@@ -1,7 +1,8 @@
 <!--
 Thank you for contributing to core. A few reminders before submitting:
 
-  - core is stdlib-only. New imports outside `$gostd` will fail CI.
+  - core is stdlib-first. An import outside the depguard allow-lists
+    fails CI.
   - Commits should be cryptographically signed (Verified on GitHub).
   - Use Conventional Commits (`feat:`, `fix:`, `docs:`, ...).
 -->
@@ -32,7 +33,7 @@ Thank you for contributing to core. A few reminders before submitting:
 ## Verification
 
 - [ ] `make check` passes locally
-- [ ] No new non-stdlib imports introduced
+- [ ] No import outside the depguard allow-lists
 - [ ] Public-API changes documented in `CHANGELOG.md`
 - [ ] Commits are signed and show as Verified on GitHub
 

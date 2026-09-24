@@ -19,7 +19,9 @@ seams every other thesmos library and framework depends on:
   Hybrid Logical Clock instants for distributed callers and a stdlib
   `time.Time` projection for the common case. Implementations:
   `clock/hlc` (production HLC), `clock/fake` (virtual time).
-  See [RFC-0001][rfc-0001].
+  `UTCSource` returns a UTC reading with a bound on its error, and
+  `clock/kernel` reads the bound from the Linux kernel. See
+  [RFC-0001][rfc-0001] and [RFC-0036][rfc-0036].
 - **Rand** — unified randomness seam exposing both `Uint64` and
   `Read([]byte)`. Implementations: `rand/pcg` (non-crypto PCG),
   `rand/crypto` (CSPRNG over `crypto/rand`), `rand/seeded`
@@ -29,12 +31,14 @@ seams every other thesmos library and framework depends on:
   fixed-shape digests covering 256/384/512-bit outputs in one
   type, with a stable per-implementation `ID` and long-term
   `Algorithm` identifier so receipts and audit chains survive
-  algorithm rotation. `Hash(data)`, `Combine(left, right)`, and
-  `Stream` (for inputs that don't fit in memory) cover leaf
-  commitments, Merkle / chain construction, and large-payload
-  hashing. Implementations: `crypto/sha256`, `crypto/sha512`
-  (SHA-384, SHA-512), `crypto/sha3` (SHA3-256, SHA3-384,
-  SHA3-512). See [RFC-0003][rfc-0003].
+  algorithm rotation. `Hash` computes a content address.
+  `HashTagged` and `CombineTagged` hash the leaves and interior
+  nodes of a tree or chain under a one-byte role whose high bit
+  gives the arity, so a leaf hash cannot equal a node hash.
+  `Stream` hashes inputs that do not fit in memory.
+  Implementations: `crypto/sha256`, `crypto/sha512` (SHA-384,
+  SHA-512), `crypto/sha3` (SHA3-256, SHA3-384, SHA3-512). See
+  [RFC-0003][rfc-0003] and [RFC-0029][rfc-0029].
 - **HMAC** — keyed-authentication peer of the hash seam.
   `crypto.MAC` mirrors `crypto.Hasher`'s shape (same `Digest`
   output, same `ID` + `Algorithm` model, same `Stream`) with
@@ -51,7 +55,15 @@ seams every other thesmos library and framework depends on:
   Implementations: `crypto/sign/ed25519` (Ed25519 PureEdDSA per
   RFC 8032 §5.1.6), `crypto/sign/ecdsap384` (ECDSA P-384 +
   SHA-384 per FIPS 186-5, ASN.1 DER signatures, also satisfies
-  the streaming interfaces). See [RFC-0013][rfc-0013].
+  the streaming interfaces), `crypto/sign/mldsa` (ML-DSA-44,
+  ML-DSA-65 and ML-DSA-87 per FIPS 204, with the context string
+  fixed per signer). `SignContext` bounds a signer that crosses a
+  process boundary with a context. `Resolver` builds a verifier
+  from a stored algorithm name out of a table the caller writes,
+  and `Policy` requires valid signatures from k of n parties,
+  counting each key once. See [RFC-0013][rfc-0013],
+  [RFC-0033][rfc-0033], [RFC-0035][rfc-0035] and
+  [RFC-0039][rfc-0039].
 - **Framer** — unambiguous domain separation for hashed and
   signed inputs. `Domain` (name + version) plus a `Framer`
   builder that length-prefixes every part, so no two distinct
@@ -68,9 +80,11 @@ seams every other thesmos library and framework depends on:
   keys without exposing the root key, with optional `Destroyer`
   and `KeyGenerator` capability interfaces. The shape is the one
   a KMS or HSM already has, so a consumer swaps custody without
-  touching call sites. Implementation: `crypto/localkey`
-  (in-process, for development and tests). See
-  [RFC-0018][rfc-0018].
+  touching call sites. `Destroy` schedules the destruction of a
+  wrapping key and returns the time at which it becomes
+  irreversible. Implementation: `crypto/localkey` (in-process, for
+  development and tests). See [RFC-0018][rfc-0018] and
+  [RFC-0034][rfc-0034].
 - **XOF** — extendable-output-function seam. `crypto.XOF` /
   `XOFStream` produce arbitrary-length output for key
   derivation and deterministic padding, where a fixed-size
@@ -90,15 +104,19 @@ seams every other thesmos library and framework depends on:
 - **Epoch** — in-process strictly-monotonic 64-bit counter for
   leader generations, schema versions, optimistic-concurrency
   tokens. `epoch.Epoch` value type plus thread-safe
-  `epoch.Counter`. See [RFC-0005][rfc-0005].
+  `epoch.Counter`. `Admissible` and `Watermark` admit a write whose
+  fence epoch is at or above the scope's watermark, and `ErrFenced`
+  reports revoked authority. See [RFC-0005][rfc-0005] and
+  [RFC-0026][rfc-0026].
 - **Tag** — snapshot-immutable string key/value pairs used in
   place of `map[string]string` on value-type structs that cross
   async-buffered, cached, or cross-goroutine boundaries.
   See [RFC-0006][rfc-0006].
 - **Version** — opaque CAS token (`Version`), `WriteOptions`
   with IfMatch / IfNoneMatch preconditions, and `Versioned[T]`
-  for read-your-writes optimistic-concurrency loops.
-  See [RFC-0007][rfc-0007].
+  for read-your-writes optimistic-concurrency loops. A `Version`
+  proves identity, never order. See [RFC-0007][rfc-0007] and
+  [RFC-0026][rfc-0026].
 - **Page** — pagination request (`Page` with `WithDefault`
   helper) and response (`Cursor[T]`) shape with
   `SliceCursor[T]` and `MapCursor[K, V]` generic helpers.
@@ -117,8 +135,9 @@ seams every other thesmos library and framework depends on:
 - **Pool** — typed `sync.Pool` wrappers: `Pool[T any]` for
   arbitrary values, `ResetPool[T Resettable]` that
   auto-clears state on `Put` (preventing cross-tenant data
-  leaks at the type level), and `NewBufferPool` for the
-  `*bytes.Buffer` case. `Bounded[T]` is the fixed-capacity peer
+  leaks at the type level), and `NewBufferPool` for byte buffers,
+  whose `pool.Buffer` zeroes its whole capacity on `Reset`.
+  `Bounded[T]` is the fixed-capacity peer
   for objects that are scarce rather than merely reusable — a
   connection, a decoder, a hardware handle — where exhaustion
   must be reported (`ErrLimit`) rather than allocated around.
@@ -151,12 +170,38 @@ seams every other thesmos library and framework depends on:
   deduplicates concurrent loads of the same key. Not a cache —
   results are not retained past the in-flight window.
   See [RFC-0024][rfc-0024].
+- **Fixed** — `fixed.Fixed64`, a decimal at eight places stored as
+  one `int64`. `Add`, `Sub`, `Mul` and `Div` return an error on
+  overflow instead of wrapping. The text form renders all eight
+  places and round-trips exactly, and the package has no conversion
+  from `float64`. See [RFC-0025][rfc-0025].
+- **CAS** — content-addressed storage. A `cas.Store` is bound to one
+  hasher. `Put` verifies that the data hashes to its address, stores
+  nothing when it does not, and reports exactly one write per address
+  under concurrency. `cas.Store` has no `Delete`. Implementation:
+  `cas/memory`. See [RFC-0027][rfc-0027].
+- **Blob** — named object storage, streamed in both directions, with
+  conditional writes through the `version` vocabulary. A failed `Put`
+  leaves the key as it was, an open reader returns one version of the
+  object, and a listing walked to the end over an unchanging store
+  returns every object once. Implementation: `blob/memory`. See
+  [RFC-0028][rfc-0028].
+- **Conformance** — `coretest/castest` and `coretest/blobtest` check
+  any store against the rules of its package, across a restart and a
+  crash when the adapter supplies them. Core's tests run each suite
+  against a broken store for every case. `cas.AsStreamer`,
+  `crypto.AsDestroyer` and the other `As` functions find a capability
+  behind decorators that implement `Unwrap`, or `UnwrapKeeper` for a
+  `crypto.Keeper`. See [RFC-0038][rfc-0038].
 - **Task** — structured concurrency: `All`, `Each`, `Map`, `Stream`
   and `Run` return only after every goroutine they started has
   returned. The first error cancels the other tasks and is the
   result, and a task that panics crashes the process from its own
   goroutine. `Each`, `Map` and `Stream` run on a fixed set of workers
-  and do not allocate per element. See [RFC-0030][rfc-0030].
+  and do not allocate per element. `Every` calls a function
+  repeatedly with a delay and jitter between calls, and `Quorum`
+  returns as soon as k of n calls succeed. See [RFC-0030][rfc-0030]
+  and [RFC-0037][rfc-0037].
 - **FSM** — finite state machines over small integer states and
   events. A `Spec` is a transition table, built once and validated at
   construction: unreachable states, states that cannot be left and
@@ -242,8 +287,20 @@ Apache 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 [rfc-0021]: docs/rfc/0021-bounded-pool.md
 [rfc-0023]: docs/rfc/0023-resilience-primitives.md
 [rfc-0024]: docs/rfc/0024-request-coalescing.md
+[rfc-0025]: docs/rfc/0025-fixed-point-decimals.md
+[rfc-0026]: docs/rfc/0026-ordering-and-fencing.md
+[rfc-0027]: docs/rfc/0027-content-addressed-storage.md
+[rfc-0028]: docs/rfc/0028-named-object-storage.md
+[rfc-0029]: docs/rfc/0029-domain-separated-tree-hashing.md
 [rfc-0030]: docs/rfc/0030-structured-concurrency.md
 [rfc-0031]: docs/rfc/0031-finite-state-machines.md
 [rfc-0032]: docs/rfc/0032-transparency-log-trees.md
+[rfc-0033]: docs/rfc/0033-ml-dsa-signatures.md
+[rfc-0034]: docs/rfc/0034-scheduled-key-destruction.md
+[rfc-0035]: docs/rfc/0035-context-aware-signing.md
+[rfc-0036]: docs/rfc/0036-utc-error-bounds.md
+[rfc-0037]: docs/rfc/0037-periodic-and-quorum-tasks.md
+[rfc-0038]: docs/rfc/0038-conformance-for-durable-adapters.md
+[rfc-0039]: docs/rfc/0039-signature-policies.md
 [contrib]: CONTRIBUTING.md
 [sec]: SECURITY.md

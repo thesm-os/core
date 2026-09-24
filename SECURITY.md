@@ -23,7 +23,7 @@ Email **security@thesmos.sh** with:
 
 1. A description of the vulnerability and its impact.
 2. Steps to reproduce or a minimal proof of concept.
-3. The affected package (`clock`, `rand`, `reporter`, …).
+3. The affected package (`clock`, `rand`, `telemetry`, …).
 4. Your assessment of severity (Critical / High / Medium / Low).
 
 Encrypt sensitive reports with the PGP key published at

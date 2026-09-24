@@ -71,7 +71,7 @@ faults).
 func TestDigest(t *testing.T) {
     stub := hashertest.NewHasherStub(t, hashertest.HasherStubStrict())
     stub.OnHash.Returns(crypto.Digest{...})
-    stub.OnCombine.Func(func(l, r crypto.Digest) crypto.Digest {
+    stub.OnCombineTagged.Func(func(_ crypto.Role, l, _ crypto.Digest) crypto.Digest {
         return l // test-specific logic
     })
 
@@ -118,7 +118,7 @@ type Hasher interface {
     Hash(ctx context.Context, data []byte) (Digest, error)
 
     //testkit:pure
-    Combine(left, right Digest) Digest
+    CombineTagged(r Role, left, right Digest) Digest
 
     //testkit:ctx
     NewStream() (Stream, error)

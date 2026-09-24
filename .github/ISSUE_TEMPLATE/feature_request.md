@@ -27,18 +27,19 @@ assignees: []
 
 ## Why this belongs in core
 
-<!-- core is stdlib-only and a hard dependency of every thesmos
+<!-- core is stdlib-first and a hard dependency of every thesmos
      library. Justify why this seam belongs here rather than in a
      consumer package.
 
      Reasons that typically qualify:
        - Multiple downstream libraries need the same seam.
        - The interface enables determinism (clock, rand, …).
-       - The interface is part of a contract (reporter, logger, …).
+       - The interface is part of a contract (telemetry, storage, …).
 
      Reasons that typically do NOT qualify:
        - Single-consumer convenience.
-       - Anything that requires a non-stdlib dependency.
+       - Anything that requires a module outside the standard library
+         and the golang.org/x modules core admits.
        - Speculative future use ("we might want…"). -->
 
 ## Additional context

@@ -12,7 +12,7 @@ assignees: []
 
 ## Affected package
 
-<!-- e.g. clock, rand, reporter, or "build/CI" if not Go code. -->
+<!-- e.g. clock, rand, telemetry, or "build/CI" if not Go code. -->
 
 ## Reproduction
 

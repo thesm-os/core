@@ -1,11 +1,13 @@
 # Contributing to core
 
-`core` is the stdlib-only foundation that every other thesmos library
+`core` is the stdlib-first foundation that every other thesmos library
 depends on. Contributions are scrutinised against three constraints:
 
-1. **No non-stdlib imports.** Enforced by `depguard`. Adding any import
-   outside `$gostd` and `go.thesmos.sh/core` itself fails CI. See
-   [ADR-0001][adr-0001].
+1. **Stdlib first.** Production code imports the Go standard library,
+   `go.thesmos.sh/core` itself, and golang.org/x modules that have no
+   module requirements, each listed by name in `depguard`. Test code
+   may also import a closed allow-list. Any other import fails CI, and
+   extending either list takes an ADR. See [ADR-0015][adr-0015].
 2. **Stable interface contract.** Once a type or method is exported,
    removing or breaking it triggers a major version bump. Plan
    carefully.
@@ -76,7 +78,7 @@ just open the PR.
 make test          # unit tests with coverage
 make test-race     # race detector
 make test-bench    # benchmarks
-make check-vuln    # govulncheck
+make lint-vuln     # govulncheck
 ```
 
 ## Commit messages
@@ -121,5 +123,5 @@ GitHub's [signing commits guide][sign] if you prefer GPG or sigstore.
 [rfc]: docs/rfc/
 [adr-template]: docs/templates/ADR.md
 [rfc-template]: docs/templates/RFC.md
-[adr-0001]: docs/adr/0001-stdlib-only-dependencies.md
+[adr-0015]: docs/adr/0015-dependency-free-x-modules-in-production.md
 [sign]: https://docs.github.com/en/authentication/managing-commit-signature-verification/about-commit-signature-verification
