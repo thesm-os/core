@@ -29,11 +29,11 @@ type ContextSigner interface {
 
 // SignContext signs message with s.
 //
-// When s implements [ContextSigner], SignContext calls it, so ctx
-// bounds the wait. Otherwise it returns context.Cause(ctx) when ctx
-// has already ended, and calls [Signer.Sign] when it has not. An
-// in-process signer has nothing to wait for, so the check before the
-// call is the only one.
+// When [AsContextSigner] finds a [ContextSigner] in s, SignContext
+// calls it, so ctx bounds the wait. Otherwise it returns
+// context.Cause(ctx) when ctx has already ended, and calls
+// [Signer.Sign] when it has not. An in-process signer has nothing to
+// wait for, so the check before the call is the only one.
 //
 // # Allocation contract
 //
@@ -41,7 +41,7 @@ type ContextSigner interface {
 //
 //nolint:revive // named for the ContextSigner method it dispatches to, as crypto.SignMessage is for MessageSigner.SignMessage
 func SignContext(ctx context.Context, s Signer, message []byte) ([]byte, error) {
-	if cs, ok := s.(ContextSigner); ok {
+	if cs, ok := AsContextSigner(s); ok {
 		return cs.SignContext(ctx, message) //nolint:wrapcheck // returned as the signer produced it
 	}
 

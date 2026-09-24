@@ -120,11 +120,62 @@ type KeyGenerator interface {
 	GenerateKey(ctx context.Context, size int) (plaintext, wrapped []byte, err error)
 }
 
+// AsDestroyer returns the first [Destroyer] in the chain that starts at
+// k and follows each decorator's UnwrapKeeper() Keeper, and reports
+// whether it found one. A decorator that wraps a Keeper implements
+// UnwrapKeeper, so it does not hide the capability of the Keeper it
+// wraps. The method is not named Unwrap, because [Keeper.Unwrap]
+// unwraps a data key.
+//
+// A decorator that implements Destroyer itself is found before the
+// Keeper it wraps. A decorator's UnwrapKeeper must not return a value
+// earlier in its own chain.
+//
+// # Allocation contract
+//
+// Zero alloc.
+func AsDestroyer(k Keeper) (Destroyer, bool) {
+	return find[Destroyer](k)
+}
+
+// AsKeyGenerator returns the first [KeyGenerator] in the chain that
+// starts at k and follows each decorator's UnwrapKeeper() Keeper, and
+// reports whether it found one. It follows the rules of [AsDestroyer].
+//
+// # Allocation contract
+//
+// Zero alloc.
+func AsKeyGenerator(k Keeper) (KeyGenerator, bool) {
+	return find[KeyGenerator](k)
+}
+
+// find returns the first value of type T in the chain that starts at k
+// and follows UnwrapKeeper() Keeper.
+func find[T any](k Keeper) (T, bool) {
+	for k != nil {
+		if t, ok := k.(T); ok {
+			return t, true
+		}
+
+		u, ok := k.(interface{ UnwrapKeeper() Keeper })
+		if !ok {
+			break
+		}
+
+		k = u.UnwrapKeeper()
+	}
+
+	var zero T
+
+	return zero, false
+}
+
 // GenerateKey returns a fresh data key of size bytes, in the clear and
 // wrapped under k.
 //
-// When k implements [KeyGenerator], the custodian generates the key
-// and r is not read. Otherwise GenerateKey reads size bytes from r and
+// When [AsKeyGenerator] finds a [KeyGenerator] in k, the custodian
+// generates the key and r is not read. Otherwise GenerateKey reads size
+// bytes from r and
 // wraps them with [Keeper.Wrap]. A caller gets the stronger path
 // whenever the custodian offers it, without asserting for the
 // capability itself. Callers that only encrypt should zero plaintext
@@ -142,7 +193,7 @@ type KeyGenerator interface {
 // allocates. On the KeyGenerator path, whatever the custodian
 // allocates.
 func GenerateKey(ctx context.Context, k Keeper, r rand.Rand, size int) (plaintext, wrapped []byte, err error) {
-	if g, ok := k.(KeyGenerator); ok {
+	if g, ok := AsKeyGenerator(k); ok {
 		return g.GenerateKey(ctx, size) //nolint:wrapcheck // returned as the custodian produced it
 	}
 

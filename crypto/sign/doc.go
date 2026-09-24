@@ -89,6 +89,14 @@
 // The in-process signers in this module need no context and do not
 // implement it.
 //
+// # Decorators
+//
+// A decorator that wraps a [Signer] implements Unwrap() Signer, and one
+// that wraps a [Verifier] implements Unwrap() Verifier. [AsStreamingSigner],
+// [AsStreamingVerifier] and [AsContextSigner] follow Unwrap to find a
+// capability behind any number of decorators, and [SignContext] uses
+// AsContextSigner.
+//
 // # Failure semantics
 //
 // The package separates two classes of failure:

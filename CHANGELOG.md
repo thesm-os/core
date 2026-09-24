@@ -133,6 +133,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   calls succeed, cancelling the rest. It returns `task.ErrNoQuorum`,
   joined with the failures, as soon as k successes are impossible. See
   RFC-0037.
+- Capabilities behind decorators: `cas.AsStreamer`,
+  `crypto.AsDestroyer`, `crypto.AsKeyGenerator`,
+  `sign.AsStreamingSigner`, `sign.AsStreamingVerifier` and
+  `sign.AsContextSigner` find a capability through decorators that
+  implement `Unwrap`, or `UnwrapKeeper` for a `crypto.Keeper`.
+  `cas.PutStream`, `cas.GetStream`, `crypto.GenerateKey` and
+  `sign.SignContext` use them, so a tracing or metrics decorator no
+  longer hides the capability of the value it wraps. See RFC-0038.
 - `clock.UTCSource` and `clock.UTCReading`: a reading of UTC with a
   bound on its error and whether the clock is synchronised, so a caller
   can refuse to stamp a record when the clock is outside a limit.

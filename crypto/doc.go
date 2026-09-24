@@ -73,6 +73,15 @@
 // key, and the custodian's access policy enforces the same separation
 // for the process's credentials.
 //
+// # Decorators
+//
+// A decorator that wraps a [Keeper], for example to add tracing,
+// implements UnwrapKeeper() Keeper and returns the Keeper it wraps.
+// [AsDestroyer] and [AsKeyGenerator] follow UnwrapKeeper to find a
+// capability behind any number of decorators, and [GenerateKey] uses
+// AsKeyGenerator. The method is not named Unwrap, because
+// [Keeper.Unwrap] unwraps a data key.
+//
 // # Allocation contract
 //
 // [Hasher.ID], [Hasher.Algorithm], [Hasher.Hash], and

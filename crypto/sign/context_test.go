@@ -70,6 +70,17 @@ func TestSignContext(t *testing.T) {
 		testkit.Equal(t, s.signs.Load(), int32(0), "Sign must not be called")
 	})
 
+	t.Run("calls SignContext on a signer behind a decorator", func(t *testing.T) {
+		t.Parallel()
+		s := &contextual{counting{Signer: newEd25519(t)}}
+
+		sig, err := sign.SignContext(t.Context(), signerDecorator{s}, []byte("payload"))
+		testkit.NoError(t, err, "SignContext must succeed")
+		testkit.True(t, s.Verify([]byte("payload"), sig), "the signature must verify")
+		testkit.Equal(t, s.signContexts.Load(), int32(1), "SignContext must be called on the wrapped signer")
+		testkit.Equal(t, s.signs.Load(), int32(0), "Sign must not be called")
+	})
+
 	t.Run("calls Sign on a signer without SignContext", func(t *testing.T) {
 		t.Parallel()
 		s := &counting{Signer: newEd25519(t)}
@@ -92,6 +103,34 @@ func TestSignContext(t *testing.T) {
 		testkit.Equal(t, sig, []byte(nil), "SignContext must return no signature with an error")
 		testkit.Equal(t, s.signs.Load(), int32(0), "Sign must not be called")
 	})
+}
+
+// TestSignContextZeroAlloc enforces the allocation contract of
+// SignContext: it allocates what the signer allocates and nothing
+// more. testing.AllocsPerRun reads a process-global malloc counter, so
+// this test does not call t.Parallel.
+//
+//nolint:paralleltest // see comment above
+func TestSignContextZeroAlloc(t *testing.T) {
+	s := newEd25519(t)
+	msg := []byte("payload")
+	ctx := t.Context()
+
+	t.Run("SignContext allocates what Sign allocates", func(t *testing.T) {
+		sign1 := testing.AllocsPerRun(100, func() { _, _ = s.Sign(msg) })
+		signCtx := testing.AllocsPerRun(100, func() { _, _ = sign.SignContext(ctx, s, msg) })
+		testkit.Equal(t, signCtx, sign1, "SignContext must add no allocation to Sign")
+	})
+}
+
+func BenchmarkSignContext(b *testing.B) {
+	s := newEd25519(b)
+	msg := []byte("payload")
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _ = sign.SignContext(b.Context(), s, msg)
+	}
 }
 
 func TestContextSignerContract(t *testing.T) {

@@ -159,8 +159,15 @@ func KeeperForeignKeyAssertion(other func() crypto.Keeper) KeeperOption {
 	})
 }
 
+// keeperDecorator wraps a Keeper and returns it from UnwrapKeeper, as a
+// tracing decorator does.
+type keeperDecorator struct{ crypto.Keeper }
+
+func (d keeperDecorator) UnwrapKeeper() crypto.Keeper { return d.Keeper }
+
 // AssertDestroyerContract asserts the [crypto.Destroyer] capability:
 //
+//   - [crypto.AsDestroyer] finds d behind a decorator.
 //   - After Destroy returns, previously wrapped material fails to
 //     unwrap with [crypto.ErrKeyDestroyed], and new material does not
 //     wrap.
@@ -174,6 +181,9 @@ func KeeperForeignKeyAssertion(other func() crypto.Keeper) KeeperOption {
 // the data remains in place and becomes unreadable.
 func AssertDestroyerContract(t *testing.T, d crypto.Destroyer) {
 	t.Helper()
+
+	_, ok := crypto.AsDestroyer(keeperDecorator{d})
+	testkit.True(t, ok, "AsDestroyer must find the Destroyer behind a decorator")
 
 	wrapped, err := d.Wrap(t.Context(), bytes.Repeat([]byte{0x5A}, 32))
 	testkit.NoError(t, err, "Wrap must succeed")
@@ -199,10 +209,14 @@ func AssertDestroyerContract(t *testing.T, d crypto.Destroyer) {
 }
 
 // AssertKeyGeneratorContract asserts the [crypto.KeyGenerator] capability:
-// a data key the custodian generates unwraps to the plaintext returned
-// alongside it, and successive calls differ.
+// [crypto.AsKeyGenerator] finds g behind a decorator, a data key the
+// custodian generates unwraps to the plaintext returned alongside it,
+// and successive calls differ.
 func AssertKeyGeneratorContract(t *testing.T, g crypto.KeyGenerator) {
 	t.Helper()
+
+	_, ok := crypto.AsKeyGenerator(keeperDecorator{g})
+	testkit.True(t, ok, "AsKeyGenerator must find the KeyGenerator behind a decorator")
 
 	plaintext, wrapped, err := g.GenerateKey(t.Context(), 32)
 	testkit.NoError(t, err, "GenerateKey must succeed")

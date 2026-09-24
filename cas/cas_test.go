@@ -5,6 +5,7 @@ package cas_test
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"testing"
@@ -13,15 +14,90 @@ import (
 
 	"go.thesmos.sh/core/cas"
 	"go.thesmos.sh/core/cas/memory"
+	"go.thesmos.sh/core/crypto"
 	"go.thesmos.sh/core/crypto/sha256"
 	"go.thesmos.sh/core/errs"
 )
 
-// wholeValueOnly hides a store's streaming capability by embedding
-// the interface rather than the concrete type, so [cas.PutStream]
+// wholeValueOnly embeds the Store interface and has no Unwrap, so
+// [cas.AsStreamer] cannot see a Streamer behind it, and [cas.PutStream]
 // and [cas.GetStream] take their buffering branch. [memory.Store]
-// implements [cas.Streamer] natively, which covers the other one.
+// implements [cas.Streamer] natively, which covers the other branch.
 type wholeValueOnly struct{ cas.Store }
+
+// decorated wraps a store and returns it from Unwrap, as a tracing
+// decorator does.
+type decorated struct{ cas.Store }
+
+func (d decorated) Unwrap() cas.Store { return d.Store }
+
+// selfStreaming is a decorator that implements [cas.Streamer] itself,
+// by delegating to the Streamer it wraps.
+type selfStreaming struct {
+	decorated
+
+	inner cas.Streamer
+}
+
+func (s selfStreaming) PutStream(ctx context.Context, d crypto.Digest, r io.Reader) (bool, error) {
+	return s.inner.PutStream(ctx, d, r) //nolint:wrapcheck // the test double passes the error through
+}
+
+func (s selfStreaming) GetStream(ctx context.Context, d crypto.Digest) (io.ReadCloser, error) {
+	return s.inner.GetStream(ctx, d) //nolint:wrapcheck // the test double passes the error through
+}
+
+func TestAsStreamer(t *testing.T) {
+	t.Parallel()
+
+	h := sha256.New()
+
+	t.Run("finds a Streamer on the store itself", func(t *testing.T) {
+		t.Parallel()
+		s := memory.New(h)
+		st, ok := cas.AsStreamer(s)
+		testkit.True(t, ok, "a streaming store must be found")
+		testkit.True(t, st == cas.Streamer(s), "the store itself must be returned")
+	})
+
+	t.Run("finds a Streamer through two decorators", func(t *testing.T) {
+		t.Parallel()
+		s := memory.New(h)
+		st, ok := cas.AsStreamer(decorated{decorated{s}})
+		testkit.True(t, ok, "a Streamer behind decorators must be found")
+		testkit.True(t, st == cas.Streamer(s), "the wrapped store must be returned")
+	})
+
+	t.Run("finds a decorator that implements Streamer before the store it wraps", func(t *testing.T) {
+		t.Parallel()
+		s := memory.New(h)
+		outer := selfStreaming{decorated: decorated{s}, inner: s}
+		st, ok := cas.AsStreamer(outer)
+		testkit.True(t, ok, "the decorator must be found")
+		testkit.True(t, st == cas.Streamer(outer), "the outermost Streamer must be returned")
+	})
+
+	t.Run("reports false for a decorator without Unwrap", func(t *testing.T) {
+		t.Parallel()
+		_, ok := cas.AsStreamer(wholeValueOnly{memory.New(h)})
+		testkit.False(t, ok, "a decorator without Unwrap must hide the capability")
+	})
+
+	t.Run("reports false when the chain ends without a Streamer", func(t *testing.T) {
+		t.Parallel()
+		_, ok := cas.AsStreamer(decorated{wholeValueOnly{memory.New(h)}})
+		testkit.False(t, ok, "a chain without a Streamer must not report one")
+	})
+
+	t.Run("reports false for a nil store and a decorator of nil", func(t *testing.T) {
+		t.Parallel()
+		_, ok := cas.AsStreamer(nil)
+		testkit.False(t, ok, "a nil store must not report a Streamer")
+
+		_, ok = cas.AsStreamer(decorated{})
+		testkit.False(t, ok, "a decorator that wraps nothing must not report a Streamer")
+	})
+}
 
 // closeRecorder reports whether it was closed, so the wrapper's
 // Close can be shown to reach the reader it wraps.
@@ -36,32 +112,62 @@ func (c *closeRecorder) Close() error {
 	return nil
 }
 
+// TestAsStreamerZeroAlloc enforces the allocation contract of
+// AsStreamer through two decorators. testing.AllocsPerRun reads a
+// process-global malloc counter, so this test does not call
+// t.Parallel.
+//
+//nolint:paralleltest // see comment above
+func TestAsStreamerZeroAlloc(t *testing.T) {
+	var s cas.Store = decorated{decorated{memory.New(sha256.New())}}
+
+	t.Run("AsStreamer", func(t *testing.T) {
+		testkit.Equal(t, testing.AllocsPerRun(100, func() { _, _ = cas.AsStreamer(s) }), float64(0),
+			"AsStreamer must not allocate")
+	})
+}
+
+func BenchmarkAsStreamer(b *testing.B) {
+	var s cas.Store = decorated{decorated{memory.New(sha256.New())}}
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _ = cas.AsStreamer(s)
+	}
+}
+
+// TestStreamDispatch covers the two branches of PutStream and
+// GetStream. The observable difference between them is the reason a
+// remote adapter implements the capability: a store that checks
+// presence before it reads does not transfer a duplicate's bytes.
 func TestStreamDispatch(t *testing.T) {
 	t.Parallel()
 
 	h := sha256.New()
 	payload := []byte("streamed through the native path")
 
-	t.Run("a native streaming store skips a duplicate transfer", func(t *testing.T) {
-		t.Parallel()
+	for name, wrap := range map[string]func(cas.Store) cas.Store{
+		"a native streaming store":           func(s cas.Store) cas.Store { return s },
+		"a native streaming store decorated": func(s cas.Store) cas.Store { return decorated{s} },
+	} {
+		t.Run(name+" skips a duplicate transfer", func(t *testing.T) {
+			t.Parallel()
+			inner := memory.New(h)
+			s := wrap(inner)
+			d := h.Hash(payload)
 
-		// The observable difference between the two branches, and the
-		// reason a remote adapter implements the capability: a store
-		// that can ask before it reads does not move the bytes twice.
-		s := memory.New(h)
-		d := h.Hash(payload)
+			_, err := s.Put(t.Context(), d, payload)
+			testkit.NoError(t, err, "Put must succeed")
 
-		_, err := s.Put(t.Context(), d, payload)
-		testkit.NoError(t, err, "Put must succeed")
+			r := bytes.NewReader(payload)
 
-		r := bytes.NewReader(payload)
-
-		wrote, err := cas.PutStream(t.Context(), s, d, r)
-		testkit.NoError(t, err, "a duplicate streamed Put must not error")
-		testkit.False(t, wrote, "a duplicate streamed Put must report wrote=false")
-		testkit.Equal(t, r.Len(), len(payload),
-			"a native PutStream must leave a duplicate's reader untouched")
-	})
+			wrote, err := cas.PutStream(t.Context(), s, d, r)
+			testkit.NoError(t, err, "a duplicate streamed Put must not error")
+			testkit.False(t, wrote, "a duplicate streamed Put must report wrote=false")
+			testkit.Equal(t, r.Len(), len(payload),
+				"a native PutStream must leave a duplicate's reader untouched")
+		})
+	}
 
 	t.Run("the buffering fallback reads before it can ask", func(t *testing.T) {
 		t.Parallel()
@@ -77,8 +183,7 @@ func TestStreamDispatch(t *testing.T) {
 		wrote, err := cas.PutStream(t.Context(), s, d, r)
 		testkit.NoError(t, err, "the fallback must not error on a duplicate")
 		testkit.False(t, wrote, "the fallback must report wrote=false")
-		testkit.Equal(t, r.Len(), 0,
-			"the fallback has no way to ask before reading, and the reader pays for it")
+		testkit.Equal(t, r.Len(), 0, "the fallback must read the whole body before it can check presence")
 	})
 
 	t.Run("both branches round-trip the same bytes", func(t *testing.T) {
@@ -131,6 +236,14 @@ func TestStreamDispatch(t *testing.T) {
 	})
 }
 
+// TestVerify covers the verifying reader. The verdict latches, so a
+// caller that ignores the first failure cannot then observe a clean
+// EOF. A digest over a prefix proves nothing about the whole, so a
+// reader closed early reports nothing.
+//
+// drain reads to completion within 64 reads. io.ReadAll would loop
+// forever on a reader that returns (0, nil) without end, and the bound
+// turns that defect into a named failure.
 func TestVerify(t *testing.T) {
 	t.Parallel()
 
@@ -141,9 +254,6 @@ func TestVerify(t *testing.T) {
 		return io.NopCloser(bytes.NewReader(b))
 	}
 
-	// drain reads to completion under a bound. io.ReadAll would spin
-	// forever against a reader that returns (0, nil) without end,
-	// and a suite must name that defect rather than outlast it.
 	drain := func(t *testing.T, r io.Reader) ([]byte, error) {
 		t.Helper()
 
@@ -187,15 +297,12 @@ func TestVerify(t *testing.T) {
 		testkit.Equal(t, errs.Classify(err), errs.Integrity,
 			"a stream that does not hash to its address must classify as Integrity")
 		testkit.NoError(t, rc.Close(), "the stream must still close")
-		testkit.Equal(t, got, payload,
-			"the caller sees the bytes before the verdict — that is the trade streaming makes")
+		testkit.Equal(t, got, payload, "the caller must receive the bytes before the verdict")
 	})
 
 	t.Run("the verdict latches across further reads", func(t *testing.T) {
 		t.Parallel()
 
-		// A caller that ignores the first failure must not then be
-		// able to observe a clean EOF.
 		wrong := h.Hash([]byte("some other content"))
 		rc := cas.Verify(h, wrong, open(payload))
 
@@ -213,8 +320,6 @@ func TestVerify(t *testing.T) {
 	t.Run("a reader closed before EOF verifies nothing", func(t *testing.T) {
 		t.Parallel()
 
-		// A digest over a prefix proves nothing about the whole, so
-		// an early close is silent rather than a failure.
 		wrong := h.Hash([]byte("some other content"))
 		rc := cas.Verify(h, wrong, open(payload))
 
@@ -247,8 +352,8 @@ func TestVerify(t *testing.T) {
 	})
 }
 
-// errReader fails on every read, standing in for a transfer that
-// breaks part-way.
+// errReader fails on every read, as a transfer that breaks part-way
+// does.
 type errReader struct{ err error }
 
 func (e errReader) Read([]byte) (int, error) { return 0, e.err }

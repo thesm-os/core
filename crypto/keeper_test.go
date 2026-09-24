@@ -17,6 +17,92 @@ import (
 	randcrypto "go.thesmos.sh/core/rand/crypto"
 )
 
+// decorated wraps a Keeper and returns it from UnwrapKeeper, as a
+// tracing decorator does.
+type decorated struct{ crypto.Keeper }
+
+func (d decorated) UnwrapKeeper() crypto.Keeper { return d.Keeper }
+
+// opaque wraps a Keeper and has no UnwrapKeeper, so the As functions
+// cannot see past it.
+type opaque struct{ crypto.Keeper }
+
+func TestAsDestroyer(t *testing.T) {
+	t.Parallel()
+
+	t.Run("returns the Destroyer behind two decorators", func(t *testing.T) {
+		t.Parallel()
+		d := cryptotest.NewDestroyerStub(t)
+		got, ok := crypto.AsDestroyer(decorated{decorated{d}})
+		testkit.True(t, ok, "a Destroyer behind decorators must be found")
+		testkit.True(t, got == crypto.Destroyer(d), "the wrapped Destroyer must be returned")
+	})
+
+	t.Run("reports false for a decorator without UnwrapKeeper", func(t *testing.T) {
+		t.Parallel()
+		_, ok := crypto.AsDestroyer(opaque{cryptotest.NewDestroyerStub(t)})
+		testkit.False(t, ok, "a decorator without UnwrapKeeper must end the chain")
+	})
+
+	t.Run("reports false for a nil Keeper and a decorator of nil", func(t *testing.T) {
+		t.Parallel()
+		_, ok := crypto.AsDestroyer(nil)
+		testkit.False(t, ok, "a nil Keeper must not report a capability")
+
+		_, ok = crypto.AsDestroyer(decorated{})
+		testkit.False(t, ok, "a decorator of nil must not report a capability")
+	})
+}
+
+func TestAsKeyGenerator(t *testing.T) {
+	t.Parallel()
+
+	t.Run("returns the KeyGenerator behind a decorator", func(t *testing.T) {
+		t.Parallel()
+		g := cryptotest.NewKeyGeneratorStub(t)
+		got, ok := crypto.AsKeyGenerator(decorated{g})
+		testkit.True(t, ok, "a KeyGenerator behind a decorator must be found")
+		testkit.True(t, got == crypto.KeyGenerator(g), "the wrapped KeyGenerator must be returned")
+	})
+
+	t.Run("reports false for a Keeper that cannot generate", func(t *testing.T) {
+		t.Parallel()
+		_, ok := crypto.AsKeyGenerator(decorated{cryptotest.NewKeeperStub(t)})
+		testkit.False(t, ok, "a Keeper without the capability must not report it")
+	})
+}
+
+// TestKeeperZeroAlloc enforces the allocation contract of the As
+// functions through two decorators. testing.AllocsPerRun reads a
+// process-global malloc counter, so this test does not call
+// t.Parallel.
+//
+//nolint:paralleltest // see comment above
+func TestKeeperZeroAlloc(t *testing.T) {
+	var k crypto.Keeper = decorated{decorated{cryptotest.NewDestroyerStub(t)}}
+
+	for name, fn := range map[string]func(){
+		"AsDestroyer":    func() { _, _ = crypto.AsDestroyer(k) },
+		"AsKeyGenerator": func() { _, _ = crypto.AsKeyGenerator(k) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			testkit.Equal(t, testing.AllocsPerRun(100, fn), float64(0), name+" must not allocate")
+		})
+	}
+}
+
+func BenchmarkAsKeyGenerator(b *testing.B) {
+	var k crypto.Keeper = decorated{decorated{cryptotest.NewKeyGeneratorStub(b)}}
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _ = crypto.AsKeyGenerator(k)
+	}
+}
+
+// TestGenerateKey covers both paths. The generator tests pass a nil
+// source, which panics on the first read, so success proves that the
+// generator path does not read the source.
 func TestGenerateKey(t *testing.T) {
 	t.Parallel()
 
@@ -25,15 +111,23 @@ func TestGenerateKey(t *testing.T) {
 		g := cryptotest.NewKeyGeneratorStub(t)
 		g.OnGenerateKey.Returns([]byte("plain"), []byte("wrapped"), nil)
 
-		// A nil source panics on the first read, so success proves the
-		// generator path never reaches for it.
 		plain, wrapped, err := crypto.GenerateKey(t.Context(), g, nil, 5)
 		testkit.NoError(t, err, "GenerateKey must succeed")
 		testkit.Equal(t, plain, []byte("plain"), "the custodian's plaintext must be returned")
 		testkit.Equal(t, wrapped, []byte("wrapped"), "the custodian's wrapped key must be returned")
 	})
 
-	t.Run("draws from the source and wraps when the custodian cannot generate", func(t *testing.T) {
+	t.Run("uses a generator behind a decorator", func(t *testing.T) {
+		t.Parallel()
+		g := cryptotest.NewKeyGeneratorStub(t)
+		g.OnGenerateKey.Returns([]byte("plain"), []byte("wrapped"), nil)
+
+		plain, _, err := crypto.GenerateKey(t.Context(), decorated{g}, nil, 5)
+		testkit.NoError(t, err, "GenerateKey must succeed")
+		testkit.Equal(t, plain, []byte("plain"), "the decorated custodian's plaintext must be returned")
+	})
+
+	t.Run("reads from the source and wraps when the custodian cannot generate", func(t *testing.T) {
 		t.Parallel()
 		k := cryptotest.NewKeeperStub(t)
 		var seen []byte
