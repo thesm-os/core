@@ -39,9 +39,9 @@ var (
 	//
 	// An unknown version is refused outright, never parsed as far as
 	// the reader recognises. Forward-compatible parsing of a security
-	// envelope is a downgrade path: it invites a reader to act on the
-	// part of a structure it understands while ignoring the part that
-	// changed the meaning.
+	// envelope is a downgrade path. It lets a reader act on the part of
+	// a structure it understands while it ignores the part that changed
+	// the meaning.
 	ErrEnvelopeVersion = errors.New("crypto: unknown sealed-envelope version")
 
 	// ErrAlgorithmMismatch is returned by [Open] and [AppendOpen] when
@@ -65,25 +65,25 @@ var (
 	ErrAlgorithmSize = errors.New("crypto: algorithm name empty or over 255 bytes")
 
 	// ErrKeyID is returned when a key identifier is empty, or names a
-	// key the custodian does not hold. See [Keeper.KeyID] and
+	// key the custodian does not have. See [Keeper.KeyID] and
 	// [Destroyer.Destroy].
 	ErrKeyID = errors.New("crypto: unknown or empty key identifier")
 
 	// ErrKeyDestroyed is returned by a [Destroyer] whose wrapping key
-	// has been destroyed. Distinct from a corruption failure: this
-	// one is unrecoverable by design, where corrupted material
-	// suggests damaged storage, and a caller acts on them
-	// differently.
+	// has been destroyed or scheduled for destruction. It is distinct
+	// from a corruption failure. A destroyed key is unrecoverable by
+	// design, while corrupted material points to damaged storage, and
+	// a caller handles the two differently.
 	ErrKeyDestroyed = errors.New("crypto: wrapping key destroyed")
 
 	// ErrXOFSqueezing is returned by [XOFStream.Write] once Read has
-	// been called. The sponge absorbs and then squeezes; the phases
-	// do not interleave, and resuming absorption would silently
-	// produce output unrelated to what a reader expects.
+	// been called. The sponge absorbs and then squeezes, and the phases
+	// do not interleave. Resuming absorption would produce output
+	// unrelated to what a reader expects.
 	//
-	// The standard library panics on this. The seam returns an error
-	// because a caller reaches the state by threading a stream
-	// through code that does not know its phase, which is a runtime
-	// condition rather than a programmer error.
+	// The standard library panics on this. The seam returns an error,
+	// because a caller gets into this state by passing a stream through
+	// code that does not know its phase. That is a runtime condition
+	// and not a programmer error.
 	ErrXOFSqueezing = errors.New("crypto: write after read on an XOF stream")
 )

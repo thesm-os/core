@@ -8,9 +8,11 @@ import (
 	"io"
 	"strconv"
 	"testing"
+	"time"
 
 	"go.thesmos.sh/testkit"
 
+	"go.thesmos.sh/core/clock/fake"
 	"go.thesmos.sh/core/coretest/cryptotest"
 	"go.thesmos.sh/core/crypto"
 	"go.thesmos.sh/core/crypto/localkey"
@@ -22,23 +24,16 @@ const testKeyID = "local/test-root-key"
 var (
 	rootKey  = []byte("contract-test-root-key-32-bytes!")
 	otherKey = []byte("a-different-root-key-of-32-bytes")
+	origin   = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 )
 
 func mustNew(tb testing.TB, keyID string, key []byte) *localkey.Keeper {
 	tb.Helper()
 
-	k, err := localkey.New(keyID, key, randcrypto.New())
+	k, err := localkey.New(keyID, key, randcrypto.New(), fake.New(origin))
 	testkit.NoError(tb, err, "New must accept a 32-byte root key")
 
 	return k
-}
-
-func TestRootKeyFixtureLengths(t *testing.T) {
-	t.Parallel()
-
-	// A wrong-length fixture would fail far from its cause.
-	testkit.Equal(t, len(rootKey), localkey.RootKeySize, "rootKey must be RootKeySize bytes")
-	testkit.Equal(t, len(otherKey), localkey.RootKeySize, "otherKey must be RootKeySize bytes")
 }
 
 // --- testkit-driven contract layer ---
@@ -71,113 +66,132 @@ func TestKeyGeneratorContract(t *testing.T) {
 
 // --- impl-specific ---
 
-func TestNewRootKeySizes(t *testing.T) {
+// TestNew covers construction. The key ID is persisted with every
+// wrapped key, so New refuses an empty one: it would leave the material
+// without a name for the key that unwraps it. A caller must be free to
+// zero its root key as soon as New returns.
+func TestNew(t *testing.T) {
 	t.Parallel()
+
+	t.Run("the root-key fixtures are RootKeySize bytes", func(t *testing.T) {
+		t.Parallel()
+		testkit.Equal(t, len(rootKey), localkey.RootKeySize, "rootKey must be RootKeySize bytes")
+		testkit.Equal(t, len(otherKey), localkey.RootKeySize, "otherKey must be RootKeySize bytes")
+	})
 
 	t.Run("accepts a RootKeySize key", func(t *testing.T) {
 		t.Parallel()
-		_, err := localkey.New(testKeyID, make([]byte, localkey.RootKeySize), randcrypto.New())
+		_, err := localkey.New(testKeyID, make([]byte, localkey.RootKeySize), randcrypto.New(), fake.New(origin))
 		testkit.NoError(t, err, "New must accept the documented root-key size")
 	})
 
 	for _, n := range []int{0, 1, 16, 24, 31, 33, 64} {
 		t.Run("rejects a "+strconv.Itoa(n)+"-byte root key", func(t *testing.T) {
 			t.Parallel()
-			_, err := localkey.New(testKeyID, make([]byte, n), randcrypto.New())
+			_, err := localkey.New(testKeyID, make([]byte, n), randcrypto.New(), fake.New(origin))
 			testkit.ErrorIs(t, err, crypto.ErrKeySize, "only a RootKeySize root key is valid")
 		})
 	}
 
 	t.Run("rejects an empty key ID", func(t *testing.T) {
 		t.Parallel()
-		// KeyID is persisted with every wrapped key; an empty one
-		// strands the material it names.
-		_, err := localkey.New("", rootKey, randcrypto.New())
+		_, err := localkey.New("", rootKey, randcrypto.New(), fake.New(origin))
 		testkit.ErrorIs(t, err, crypto.ErrKeyID, "an empty key ID must be rejected")
+	})
+
+	t.Run("copies the root key", func(t *testing.T) {
+		t.Parallel()
+		k := bytes.Clone(rootKey)
+		keeper := mustNew(t, testKeyID, k)
+
+		wrapped, err := keeper.Wrap(t.Context(), []byte("data-key"))
+		testkit.NoError(t, err, "Wrap must succeed")
+
+		clear(k)
+
+		got, err := keeper.Unwrap(t.Context(), wrapped)
+		testkit.NoError(t, err, "zeroing the caller's root key must not affect the Keeper")
+		testkit.Equal(t, got, []byte("data-key"), "Unwrap must still return the data key")
 	})
 }
 
-func TestKeyIDIsReported(t *testing.T) {
+func TestKeyID(t *testing.T) {
 	t.Parallel()
 
-	testkit.Equal(t, mustNew(t, testKeyID, rootKey).KeyID(), testKeyID,
-		"KeyID must report the name given at construction")
+	t.Run("returns the name given at construction", func(t *testing.T) {
+		t.Parallel()
+		testkit.Equal(t, mustNew(t, testKeyID, rootKey).KeyID(), testKeyID,
+			"KeyID must report the name given at construction")
+	})
 }
 
-func TestRootKeyIsCopied(t *testing.T) {
-	t.Parallel()
-
-	// The caller must be free to zero its root key immediately after
-	// construction.
-	k := bytes.Clone(rootKey)
-	keeper := mustNew(t, testKeyID, k)
-
-	wrapped, err := keeper.Wrap(t.Context(), []byte("data-key"))
-	testkit.NoError(t, err, "Wrap must succeed")
-
-	for i := range k {
-		k[i] = 0
-	}
-
-	got, err := keeper.Unwrap(t.Context(), wrapped)
-	testkit.NoError(t, err, "zeroing the caller's root key must not affect the Keeper")
-	testkit.Equal(t, got, []byte("data-key"), "Unwrap must still return the data key")
-}
-
+// TestDestroy covers the destruction contract. Destroying another key
+// without an error would leave the caller believing data was erased
+// when it was not. After Destroy, Unwrap reports the destroyed key and
+// not corrupt material: a destroyed key is unrecoverable by design,
+// while corrupt material points to damaged storage.
 func TestDestroy(t *testing.T) {
 	t.Parallel()
 
 	t.Run("rejects an unknown key ID", func(t *testing.T) {
 		t.Parallel()
-		// Destroying the wrong key silently would leave the caller
-		// believing data was erased when it was not.
 		keeper := mustNew(t, testKeyID, rootKey)
-		testkit.ErrorIs(t, keeper.Destroy(t.Context(), "local/not-this-one"), crypto.ErrKeyID,
-			"Destroy must reject a key ID it does not hold")
+		_, err := keeper.Destroy(t.Context(), "local/not-this-one")
+		testkit.ErrorIs(t, err, crypto.ErrKeyID, "Destroy must reject a key ID it does not have")
 	})
 
-	t.Run("is idempotent", func(t *testing.T) {
+	t.Run("returns the time of the first call on every call", func(t *testing.T) {
 		t.Parallel()
-		keeper := mustNew(t, testKeyID, rootKey)
-		testkit.NoError(t, keeper.Destroy(t.Context(), testKeyID), "the first Destroy must succeed")
-		testkit.ErrorIs(t, keeper.Destroy(t.Context(), testKeyID), crypto.ErrKeyDestroyed,
-			"a second Destroy must report the key is already gone")
+		c := fake.New(origin)
+		keeper, err := localkey.New(testKeyID, rootKey, randcrypto.New(), c)
+		testkit.NoError(t, err, "New must accept a 32-byte root key")
+
+		first, err := keeper.Destroy(t.Context(), testKeyID)
+		testkit.NoError(t, err, "the first Destroy must succeed")
+		testkit.Equal(t, first, origin, "Destroy must return the clock's time")
+
+		c.Advance(time.Hour)
+		again, err := keeper.Destroy(t.Context(), testKeyID)
+		testkit.NoError(t, err, "a second Destroy must succeed")
+		testkit.Equal(t, again, first, "a second Destroy must return the first call's time")
 	})
 
 	t.Run("GenerateKey fails after Destroy", func(t *testing.T) {
 		t.Parallel()
 		keeper := mustNew(t, testKeyID, rootKey)
-		testkit.NoError(t, keeper.Destroy(t.Context(), testKeyID), "Destroy must succeed")
+		_, err := keeper.Destroy(t.Context(), testKeyID)
+		testkit.NoError(t, err, "Destroy must succeed")
 
-		_, _, err := keeper.GenerateKey(t.Context(), 32)
-		testkit.ErrorIs(t, err, crypto.ErrKeyDestroyed, "a destroyed Keeper must not mint keys")
+		_, _, err = keeper.GenerateKey(t.Context(), 32)
+		testkit.ErrorIs(t, err, crypto.ErrKeyDestroyed, "a destroyed Keeper must not generate keys")
 	})
 
 	t.Run("Unwrap reports the key is destroyed, not that material is corrupt", func(t *testing.T) {
 		t.Parallel()
-		// The two are different diagnoses and a caller acts on them
-		// differently: one is unrecoverable by design, the other
-		// suggests damaged storage.
 		keeper := mustNew(t, testKeyID, rootKey)
 		wrapped, err := keeper.Wrap(t.Context(), []byte("data-key"))
 		testkit.NoError(t, err, "Wrap must succeed")
-		testkit.NoError(t, keeper.Destroy(t.Context(), testKeyID), "Destroy must succeed")
+		_, err = keeper.Destroy(t.Context(), testKeyID)
+		testkit.NoError(t, err, "Destroy must succeed")
 
 		_, err = keeper.Unwrap(t.Context(), wrapped)
 		testkit.ErrorIs(t, err, crypto.ErrKeyDestroyed, "Unwrap must name the cause")
 	})
 }
 
-func TestGenerateKeySizes(t *testing.T) {
+// TestGenerateKey covers the sizes GenerateKey accepts and its entropy
+// failure. A data key read from a failed entropy source would be
+// predictable, so GenerateKey returns the failure and no key material.
+func TestGenerateKey(t *testing.T) {
 	t.Parallel()
 
 	for _, size := range []int{16, 32, 64} {
-		t.Run("mints a "+strconv.Itoa(size)+"-byte data key", func(t *testing.T) {
+		t.Run("returns a "+strconv.Itoa(size)+"-byte data key", func(t *testing.T) {
 			t.Parallel()
 			plaintext, wrapped, err := mustNew(t, testKeyID, rootKey).GenerateKey(t.Context(), size)
 			testkit.NoError(t, err, "GenerateKey must succeed")
 			testkit.Equal(t, len(plaintext), size, "the data key must be the requested size")
-			testkit.True(t, len(wrapped) > size, "the wrapped form carries a nonce and a tag")
+			testkit.True(t, len(wrapped) > size, "the wrapped form contains a nonce and a tag")
 		})
 	}
 
@@ -189,17 +203,14 @@ func TestGenerateKeySizes(t *testing.T) {
 		})
 	}
 
-	t.Run("propagates an entropy failure", func(t *testing.T) {
+	t.Run("returns an entropy failure without key material", func(t *testing.T) {
 		t.Parallel()
-		// A data key drawn from a failed entropy source would be
-		// predictable, so this must fail loudly rather than return
-		// short or zeroed material.
 		failing, err := localkey.New(testKeyID, rootKey,
 			randcrypto.NewWithReader(&testkit.FailingReader{
 				Source:     bytes.NewReader(nil),
 				BeforeFail: 0,
 				Err:        io.ErrUnexpectedEOF,
-			}))
+			}), fake.New(origin))
 		testkit.NoError(t, err, "New must accept a 32-byte root key")
 
 		plaintext, wrapped, err := failing.GenerateKey(t.Context(), 32)

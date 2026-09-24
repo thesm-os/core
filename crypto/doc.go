@@ -21,9 +21,6 @@
 //   - [sha512] — SHA-384 and SHA-512 backed by [crypto/sha512].
 //   - [sha3] — SHA3-256, SHA3-384, SHA3-512 backed by [crypto/sha3].
 //
-// Future seams (signing, AEAD, KEM) will land alongside these in
-// the same package family as their consumer use cases emerge.
-//
 // # Algorithm vocabulary
 //
 // [Algorithm] is an open-string vocabulary type that names the
@@ -37,10 +34,10 @@
 // # Streaming
 //
 // Every [Hasher] supports streaming via [Hasher.NewStream]. The
-// returned [Stream] is an [io.Writer] that absorbs arbitrarily
-// large inputs without holding them in memory; [Stream.Sum]
-// finalises the digest. [Stream.Reset] makes the state reusable
-// across many hashes for amortised allocation.
+// returned [Stream] is an [io.Writer] that absorbs input of any
+// length without buffering it. [Stream.Sum] finalises the digest.
+// [Stream.Reset] makes the state reusable across many hashes for
+// amortised allocation.
 //
 // # Domain separation
 //
@@ -49,6 +46,32 @@
 // Different domain bytes guarantee non-colliding digests for
 // otherwise-identical inputs. The domain string is the caller's
 // concern; this package ships no domain constants.
+//
+// # Key custody and erasure
+//
+// A [Keeper] wraps data keys under one wrapping key that the custodian
+// keeps. Erasure works at two grains, and neither needs more than one
+// wrapping key per tenant:
+//
+//   - A unit of erasure, such as a stream, a subject or a period, has
+//     its own data key from [GenerateKey], stored wrapped as one
+//     object. Deleting that object erases the unit. Backups that
+//     contain the object keep it readable until they expire, so the
+//     erasure is complete when the last of them has expired.
+//   - A tenant has one wrapping key. [Destroyer.Destroy] erases every
+//     data key wrapped under it, backups included, once the
+//     destruction is irreversible.
+//
+// Hosted custodians limit the number of keys, 100,000 per account and
+// region by default on AWS KMS, so a wrapping key per unit does not
+// scale. Creating a wrapping key is a provisioning task, and the seam
+// has no method for it.
+//
+// A process that serves several tenants builds one [Keeper] per tenant
+// and gives each component only its tenant's Keeper, when the component
+// is built. The component then has no way to name another tenant's
+// key, and the custodian's access policy enforces the same separation
+// for the process's credentials.
 //
 // # Allocation contract
 //
@@ -62,32 +85,26 @@
 //
 // # Failure semantics
 //
-// Two failure classes, two disciplines:
+// The package separates two classes of failure:
 //
-//   - Runtime errors — entropy exhaustion, IO faults, network
-//     failures, anything caused by the environment — are
-//     returned through error channels. [HashReader] wraps
-//     [io.Reader] failures with package context; future seams
-//     (signing, AEAD, KEM) follow the same shape.
-//   - Precondition violations — programmer errors that have no
-//     legitimate runtime cause — panic. The canonical example is
+//   - Runtime errors are returned. They include entropy exhaustion,
+//     I/O faults, network failures and anything else the environment
+//     causes. [HashReader] wraps [io.Reader] failures with package
+//     context. [AEAD] and [Keeper] return their runtime errors too.
+//   - Precondition violations panic. They are programmer errors with
+//     no legitimate runtime cause. The canonical example is
 //     [Hasher.CombineTagged] called with a [Digest] whose
-//     [Digest.Size] does not match the hasher's output size, or
-//     with a [Role] from the wrong arity half. Returning a
-//     silently-wrong digest is the worst possible failure mode
-//     for an audit-chain primitive; panic converts it to an
-//     immediate, unmissable test failure that the offending
-//     change cannot ship.
+//     [Digest.Size] does not match the hasher's output size, or with a
+//     [Role] from the wrong arity half. A wrong digest in an audit
+//     chain returns no error where the defect is. A panic fails the
+//     first test that exercises the defect.
 //
-// There is no admitted exception. The zero [Digest] was once one —
-// a sentinel for a hash chain's genesis anchor — and it panics now:
-// its meaning could not be read off its type, so the documentation
-// it was meant to honour was itself the trap. A chain's first link
-// is a unary [Role] over one operand, which deletes the case rather
-// than annotating it. See [Digest.IsZero].
+// There is no admitted exception. The zero [Digest] is not a valid
+// operand. A chain's first link is a unary [Role] over one operand, so
+// no chain needs a zero sentinel. See [Digest.IsZero].
 //
-// This split matches the Go standard library: I/O packages
-// return errors; [encoding/binary], [crypto/cipher],
-// [sync.Mutex], and the slice/string operators panic on
-// programmer-supplied invariants.
+// The Go standard library uses the same split. I/O packages return
+// errors, while [encoding/binary], [crypto/cipher], [sync.Mutex] and
+// the slice and string operators panic on programmer-supplied
+// invariants.
 package crypto
