@@ -4,10 +4,9 @@
 package tlog
 
 import (
+	"bytes"
 	"context"
-	"errors"
 	"fmt"
-	"io"
 	"math/bits"
 
 	"go.thesmos.sh/core/arena"
@@ -37,9 +36,11 @@ type TileReader interface {
 //
 // # Allocation contract
 //
-// One allocation for the reader. ReadTiles allocates one key per tile,
-// what the store allocates, and nothing to store the data when dst[i]
-// has room for it.
+// One allocation for the reader. ReadTiles allocates one key per tile
+// and what the store allocates. It reads each body with
+// [bytes.Buffer.ReadFrom], so it allocates nothing to store the data
+// when dst[i] has room for the tile and [bytes.MinRead] more bytes,
+// which ReadFrom needs to see the end of the body.
 func BlobTiles(s blob.Store, prefix string, limit int) TileReader {
 	return &blobTiles{s: s, prefix: prefix, limit: limit}
 }
@@ -68,7 +69,9 @@ func (r *blobTiles) ReadTiles(ctx context.Context, tiles []Tile, dst [][]byte) e
 			return fmt.Errorf("tlog: read %s: %w", key, err)
 		}
 
-		dst[i], err = appendAll(dst[i], rc)
+		buf := bytes.NewBuffer(dst[i])
+		_, err = buf.ReadFrom(rc)
+		dst[i] = buf.Bytes()
 		if cerr := rc.Close(); err == nil {
 			err = cerr
 		}
@@ -78,25 +81,6 @@ func (r *blobTiles) ReadTiles(ctx context.Context, tiles []Tile, dst [][]byte) e
 
 		return nil
 	})
-}
-
-// appendAll appends everything r returns to dst. It allocates only
-// when dst runs out of room.
-func appendAll(dst []byte, r io.Reader) ([]byte, error) {
-	for {
-		if len(dst) == cap(dst) {
-			dst = append(dst, 0)[:len(dst)]
-		}
-
-		n, err := r.Read(dst[len(dst):cap(dst)])
-		dst = dst[:len(dst)+n]
-		if errors.Is(err, io.EOF) {
-			return dst, nil
-		}
-		if err != nil {
-			return dst, err //nolint:wrapcheck // ReadTiles wraps it with the tile's key
-		}
-	}
 }
 
 // TreeRoot returns the root of the tree of size leaves stored in r. It
@@ -241,10 +225,13 @@ func prove(
 		total += int(t.Width)
 	}
 
-	mem := p.mem.Alloc(total * ds)
+	// Each tile buffer has bytes.MinRead bytes of room past the tile, so
+	// a reader that reads with bytes.Buffer.ReadFrom, as BlobTiles does,
+	// sees the end of the body without growing the buffer.
+	mem := p.mem.Alloc(total*ds + len(p.tiles)*bytes.MinRead)
 	off := 0
 	for _, t := range p.tiles {
-		end := off + int(t.Width)*ds
+		end := off + int(t.Width)*ds + bytes.MinRead
 		p.dst = append(p.dst, mem[off:off:end])
 		off = end
 	}

@@ -4,6 +4,7 @@
 package tlog_test
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
 	"math"
@@ -90,7 +91,10 @@ func TestBuilder(t *testing.T) {
 		var u tlog.Update
 		// Every batch has at least one leaf, so len(all) batches are
 		// enough, and a Builder that stops growing fails the test and does
-		// not hang it.
+		// not hang it. After each batch the root must equal the root of
+		// the tiles stored so far, which costs a few tile reads. The root
+		// in memory costs a pass over every leaf, so the test computes it
+		// once, at the end.
 		for range len(all) {
 			if b.Size() >= uint64(len(all)) {
 				break
@@ -100,15 +104,19 @@ func TestBuilder(t *testing.T) {
 			testkit.NoError(t, b.Integrate(all[b.Size():b.Size()+n], &u), "Integrate must succeed")
 			m.store(&u)
 			testkit.NoError(t, b.Commit(&u), "Commit must succeed")
-			testkit.Equal(t, b.Root(), tlog.Root(h, all[:b.Size()]), "the root at "+strconv.FormatUint(b.Size(), 10))
+
+			stored, rerr := tlog.TreeRoot(t.Context(), h, m, b.Size())
+			testkit.NoError(t, rerr, "TreeRoot must succeed")
+			testkit.Equal(t, b.Root(), stored, "the root at "+strconv.FormatUint(b.Size(), 10))
 		}
 		testkit.Equal(t, b.Size(), uint64(len(all)), "the batches must integrate every leaf")
+		testkit.Equal(t, b.Root(), tlog.Root(h, all), "the final root must equal the root in memory")
 
 		once, err := tlog.NewBuilder(t.Context(), h, 0, nil)
 		testkit.NoError(t, err, "NewBuilder must succeed")
 		testkit.NoError(t, once.Integrate(all, &u), "Integrate must succeed")
 		for tile, data := range u.Tiles() {
-			testkit.Equal(t, m.data[tile], data, "tile "+tile.Path()+" must not depend on the batching")
+			testkit.True(t, bytes.Equal(m.data[tile], data), "tile "+tile.Path()+" must not depend on the batching")
 		}
 	})
 

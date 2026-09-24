@@ -292,7 +292,9 @@ func TestProveInclusion(t *testing.T) {
 				testkit.NoError(t, err, "ProveInclusion must succeed")
 				want, err := tlog.InclusionProof(h, small[:size], i, nil)
 				testkit.NoError(t, err, "InclusionProof must succeed")
-				testkit.Equal(t, got, want, "leaf "+strconv.FormatUint(i, 10)+" of "+strconv.FormatUint(size, 10))
+				testkit.True(t, slices.Equal(got, want),
+					"the proof of leaf "+strconv.FormatUint(i, 10)+" of "+strconv.FormatUint(size, 10)+
+						" must equal the proof in memory")
 			}
 		}
 	})
@@ -353,7 +355,9 @@ func TestProveConsistency(t *testing.T) {
 				testkit.NoError(t, err, "ProveConsistency must succeed")
 				want, err := tlog.ConsistencyProof(h, small[:size], old, nil)
 				testkit.NoError(t, err, "ConsistencyProof must succeed")
-				testkit.Equal(t, got, want, strconv.FormatUint(old, 10)+" to "+strconv.FormatUint(size, 10))
+				testkit.True(t, slices.Equal(got, want),
+					"the proof from "+strconv.FormatUint(old, 10)+" to "+strconv.FormatUint(size, 10)+
+						" must equal the proof in memory")
 			}
 		}
 	})

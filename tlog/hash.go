@@ -83,7 +83,13 @@ func pairHash(s crypto.Stream, pair []byte) crypto.Digest {
 // least len(data) bytes, and hashes through s.
 func subtreeRoot(s crypto.Stream, size int, data, scratch []byte) crypto.Digest {
 	n := copy(scratch, data)
-	for n > size {
+
+	// A full tile of 256 hashes halves to one in tileHeight passes.
+	for range tileHeight {
+		if n <= size {
+			break
+		}
+
 		n /= 2
 		for j := 0; j*size < n; j++ {
 			d := pairHash(s, scratch[2*j*size:(2*j+2)*size])
