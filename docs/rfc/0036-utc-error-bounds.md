@@ -99,14 +99,15 @@ unchanged.
 // system kernel's time discipline.
 package kernel
 
-// New returns a UTCSource over the kernel's clock that calls
+// New returns a Source, a UTCSource over the kernel's clock that calls
 // adjtimex(2) at most once per refresh.
 //
 // Time is time.Now(). MaxError is the kernel's maxerror at the last
 // call, plus 500 µs for every second elapsed since that call on the
 // monotonic clock, which is the rate at which the kernel itself grows
 // maxerror. Synced is false when the last call reported STA_UNSYNC or
-// returned TIME_ERROR.
+// returned TIME_ERROR, and when MaxError passes 16 s, where the kernel
+// also marks the clock unsynchronised.
 //
 // A change the daemon makes to maxerror or to the status becomes
 // visible within one refresh interval. A reader that finds the last
@@ -122,8 +123,13 @@ package kernel
 // # Allocation contract
 //
 // ReadUTC is zero-alloc. A refresh publishes one snapshot.
-func New(refresh time.Duration) (clock.UTCSource, error)
+func New(refresh time.Duration) (*Source, error)
 ```
+
+`New` returns the concrete `*Source`, which satisfies `clock.UTCSource`.
+It makes the first kernel call before it returns. A failed call does
+not fail `New`: `ReadUTC` returns the error until a later call
+succeeds.
 
 The package calls one system call and opens no file or socket, so
 ADR-0008 admits it. A test replaces the system call through an
@@ -139,13 +145,12 @@ Measured with Go 1.27.1 on an AMD Ryzen 9 9950X3D, three runs of
 |---|---|
 | `syscall.Adjtimex` | 551-565 ns |
 | `time.Now` | 32-35 ns |
+| `kernel.Source.ReadUTC`, 100 ms refresh | 38.9-39.7 ns, 0 allocations |
 
 A source that called the kernel on every read would cost a caller that
 stamps a million records a second more than half a core. With a
 refresh of 100 ms, the kernel call happens ten times a second, and a
-read costs `time.Now()` plus an atomic load. The design target for
-`ReadUTC` is under 50 ns, to be confirmed by the benchmark that ships
-with the package.
+read costs `time.Now()` plus an atomic load.
 
 ### The daemon behind the bound
 
@@ -220,6 +225,10 @@ var ErrRefresh = errs.WithClass(errors.New("kernel: refresh must be positive"), 
 - Between refreshes, `kernel` reports the last maxerror plus 500 µs
   per elapsed second, and it calls the replaced system call once per
   refresh interval under concurrent readers.
+- A reading at 16 s stays synchronised, and a reading past it does
+  not, as in the kernel.
+- Off Linux, `ReadUTC` returns an error that classifies as
+  `errs.Unsupported`.
 - A benchmark measures `ReadUTC`, and `TestZeroAlloc` covers it.
 - On Linux, one test calls the real system call and checks that the
   reading's time is within a second of `time.Now()`.

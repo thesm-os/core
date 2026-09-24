@@ -133,6 +133,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   calls succeed, cancelling the rest. It returns `task.ErrNoQuorum`,
   joined with the failures, as soon as k successes are impossible. See
   RFC-0037.
+- `clock.UTCSource` and `clock.UTCReading`: a reading of UTC with a
+  bound on its error and whether the clock is synchronised, so a caller
+  can refuse to stamp a record when the clock is outside a limit.
+  `clock/kernel.Source` reads the bound from the Linux kernel through
+  adjtimex(2) at most once per refresh interval, and a read costs about
+  39 ns without allocating. `fake.Clock` is a `UTCSource` whose error a
+  test sets with `SetUTCError`. See RFC-0036.
 
 ### Changed
 

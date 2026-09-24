@@ -27,15 +27,26 @@ type Clock struct {
 	node    clock.NodeID
 
 	// awaitTimeout overrides the [Clock.AwaitWaiters] watchdog.
-	// Zero means the default. Per-instance rather than a
-	// package-level variable so the watchdog's own test can shorten
-	// it without mutating state other tests read — this package's
-	// tests run in parallel.
+	// Zero means the default. It is per instance, so the watchdog's
+	// own test can shorten it without changing state that other
+	// tests read. This package's tests run in parallel.
 	awaitTimeout time.Duration
+
+	// utcError is the MaxError that [Clock.ReadUTC] reports. Guarded
+	// by mu.
+	utcError time.Duration
+
+	// utcUnsynced reports whether [Clock.ReadUTC] reports an
+	// unsynchronised reading. The zero value is synchronised. Guarded
+	// by mu.
+	utcUnsynced bool
 }
 
-// Compile-time interface check.
-var _ clock.Clock = (*Clock)(nil)
+// Compile-time interface checks.
+var (
+	_ clock.Clock     = (*Clock)(nil)
+	_ clock.UTCSource = (*Clock)(nil)
+)
 
 // New returns a [Clock] initialised to origin with [clock.NodeID]
 // zero. Use [NewWithNode] when tests assert on cross-node ordering.
@@ -44,10 +55,10 @@ func New(origin time.Time) *Clock {
 }
 
 // NewWithNode returns a [Clock] initialised to origin and tagged
-// with node. Useful when a test verifies HLC ordering across
-// simulated nodes — construct two Clocks with distinct node values
-// and observe that [clock.Instant.HappensBefore] tie-breaks on Node
-// when Wall and Logical are equal.
+// with node. A test that verifies HLC ordering across simulated nodes
+// builds two Clocks with distinct node values, and
+// [clock.Instant.HappensBefore] breaks ties on Node when Wall and
+// Logical are equal.
 func NewWithNode(origin time.Time, node clock.NodeID) *Clock {
 	return &Clock{now: origin, node: node}
 }
@@ -71,11 +82,10 @@ func (c *Clock) Now() clock.Instant {
 	}
 }
 
-// Time returns the current virtual time as a stdlib [time.Time].
-// Unlike [Clock.Now], Time does not advance the logical counter —
-// Equivalent to Now().Time(); calling Time advances the HLC state
-// in the same way as [Clock.Now], so the [clock.Clock] contract
-// holds uniformly across implementations.
+// Time returns the current virtual time as a stdlib [time.Time]. It is
+// Now().Time(), so it advances the logical counter as [Clock.Now]
+// does, and the [clock.Clock] contract applies uniformly across
+// implementations.
 //
 // # Allocation contract
 //
@@ -132,11 +142,10 @@ func (c *Clock) Advance(d time.Duration) {
 
 // Set replaces the virtual time with t. Like [Clock.Advance], Set
 // fires every waiter whose deadline has been reached. Use
-// [Clock.Advance] for forward progress; reserve Set for tests that
-// need to position virtual time at a specific calendar instant
-// (e.g. "what if it is 2030-01-01?"). Setting time backward is
-// allowed and supported by the test harness, but does not retract
-// previously-fired waiters.
+// [Clock.Advance] for forward progress, and Set for a test that needs
+// virtual time at a specific calendar instant, such as 2030-01-01.
+// Setting time backward is allowed. It does not retract waiters that
+// have already fired.
 func (c *Clock) Set(t time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -154,29 +163,26 @@ func (c *Clock) Set(t time.Time) {
 //	clk.AwaitWaiters(1)            // deterministic — no real-time
 //	clk.Advance(6 * time.Second)
 //
-// AwaitWaiters yields to the scheduler between checks and is
-// therefore cheap when the goroutines are already running.
+// AwaitWaiters yields to the scheduler between checks, so it costs
+// little when the goroutines are already running.
 //
 // # Failure semantics
 //
 // Waiting for waiters that never arrive is a programmer error: the
 // awaited goroutines are not calling a blocking clock operation, or
 // n is larger than the number that ever will. AwaitWaiters panics
-// after a fixed watchdog interval rather than spinning until
-// something outside it intervenes.
+// after a watchdog interval of two seconds.
 //
-// The interval is generous by design: it bounds goroutines that will
-// never register, not slow ones. A legitimate wait completes in
-// microseconds — the awaited goroutine only has to reach its first
-// blocking clock call — so the watchdog cannot make a correct test
-// flaky even on a contended runner, while still firing far inside
-// any plausible `go test -timeout`.
+// The interval bounds goroutines that will never register, not slow
+// ones. A correct wait completes in microseconds, because the awaited
+// goroutine only has to make its first blocking clock call. The
+// watchdog therefore cannot make a correct test flaky on a contended
+// runner, and it expires far inside any plausible `go test -timeout`.
 //
-// Delegating that to the [testing] deadline, as this did previously,
-// makes the failure slow, silent, and reported against whichever
-// test happened to be running when the process died rather than the
-// one that called this. The panic names the count reached and the
-// count expected, which is the whole diagnosis.
+// The panic reports the count registered and the count expected, and
+// it fails the test that called AwaitWaiters. A hang left to the
+// [testing] deadline would fail slowly and name whichever test was
+// running when the process died.
 //
 // The bound is real elapsed time, not virtual time. It measures the
 // test process's patience with goroutines that will not start, which
@@ -187,22 +193,17 @@ func (c *Clock) Set(t time.Time) {
 // Safe for concurrent use. The spin holds c.mu only for the length
 // of a slice read.
 func (c *Clock) AwaitWaiters(n int) {
-	// Unset is the normal case: no constructor populates the field,
-	// so every ordinary Clock takes the default. Only this package's
-	// own watchdog test overrides it, per-instance, to avoid spending
-	// the whole interval proving the panic fires.
+	// No constructor sets awaitTimeout, so every ordinary Clock uses the
+	// default. Only this package's watchdog test sets it, so the test
+	// does not spend the whole interval proving that the panic occurs.
 	//
-	// The default lives here rather than in a package-level const so
-	// that it sits inside a function body, where it carries a
-	// coverage counter and its mutants are therefore reachable.
+	// The default is set in the function body, where it has a coverage
+	// counter and mutation testing can reach its mutants. A package
+	// const has neither.
 	//
-	// Two seconds, not five. A legitimate registration completes in
-	// microseconds, so the margin is still six orders of magnitude —
-	// and the panic is an escape hatch whose whole value is arriving
-	// EARLY relative to every other deadline in play. Under mutation
-	// testing the per-mutant budget is a small multiple of a suite's
-	// baseline, and a five-second escape against a six-second budget
-	// was a coin flip that made kills flake into timeouts.
+	// Two seconds is six orders of magnitude above a correct
+	// registration. It also expires before the per-mutant budget of
+	// mutation testing, which is a small multiple of a suite's baseline.
 	bound := c.awaitTimeout
 	if bound <= 0 {
 		bound = 2 * time.Second
@@ -244,9 +245,9 @@ func (c *Clock) fireWaiters() {
 	})
 }
 
-// removeWaiter unregisters w from the pending list. Returns true
-// if w was found (i.e. had not yet fired). Must be called with
-// c.mu held.
+// removeWaiter unregisters w from the pending list. Returns true if w
+// was pending, which means it had not fired. Must be called with c.mu
+// held.
 func (c *Clock) removeWaiter(w *waiter) bool {
 	i := slices.Index(c.waiters, w)
 	if i < 0 {
