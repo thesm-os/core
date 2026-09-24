@@ -73,20 +73,30 @@ type Option func(*config)
 // WithReopen gives the suite a way to open the storage behind s again,
 // as after a process restart. The suite writes through s, reopens,
 // and requires every write that returned to be readable with the
-// same version and bytes, and every refused write to be absent.
+// same version and bytes, every refused write to be absent, and no
+// version issued before the reopen to be issued again for its key.
 func WithReopen(reopen func(t *testing.T, s blob.Store) blob.Store) Option
 
 // WithCrash gives the suite a way to crash the storage behind s while
 // write runs, at a point the adapter chooses, and to open it again.
-// The suite requires the object write was putting to be absent or
-// whole in the reopened store.
+// crash calls write once and returns after write returns. The suite
+// requires each object write was putting to be as it was before write
+// or whole in the reopened store, and whole when its Put returned
+// without error.
 func WithCrash(crash func(t *testing.T, s blob.Store, write func()) blob.Store) Option
 ```
 
 `AssertStore` gains a variadic `...Option` parameter, so every existing
-call keeps compiling and keeps its meaning. An in-memory adapter passes
-no options. A durable adapter passes both, built over whatever fault
-injection its storage allows.
+call keeps compiling and keeps its meaning. A durable adapter passes
+both options, built over whatever fault injection its storage allows.
+The in-memory references pass both as well: a reopen returns the same
+store, and a crash comes after `write` returns. That runs the cases in
+core's own gate, where the broken stores of the next section fail them.
+
+The crash case requires the whole object for every `Put` that returned
+without error. A case that accepted any absent or whole object would
+pass an adapter that acknowledges a `Put` before its data is durable,
+which is the bug `CrashClone` exists to find.
 
 Storage engines already test this way. Pebble's `vfs.NewCrashableMem`
 returns an in-memory filesystem whose `CrashClone` keeps the data a
@@ -99,7 +109,10 @@ boundary of one `Put` in turn.
 
 `castest` gains one more option, `WithZeroAllocGet`, which asserts that
 `Get` into a buffer with capacity allocates nothing, for adapters that
-make that claim.
+make that claim. It measures with `testing.AllocsPerRun`, which panics
+while a parallel test runs, so the test that passes it does not call
+`t.Parallel`. The zero-allocation test of `cas/memory` moves into the
+suite as this option.
 
 ### Checking the suites
 

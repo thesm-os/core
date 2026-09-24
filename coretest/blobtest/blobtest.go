@@ -1,11 +1,12 @@
 // Copyright Thesmos 2026
 // SPDX-License-Identifier: Apache-2.0
 
-// Package blobtest holds the conformance suite for
-// [go.thesmos.sh/core/blob.Store]: atomic visibility, reader
-// snapshots, cursor-chain completeness, the conditional-write
-// table, and uniform failure classification. Hand-rolled; nothing
-// here is generated.
+// Package blobtest provides the conformance suite for
+// [go.thesmos.sh/core/blob.Store].
+//
+// [AssertStore] runs one subtest per law of the seam. [WithReopen] and
+// [WithCrash] add the laws that only a restart can test, for a store
+// over durable storage.
 package blobtest
 
 import (
@@ -28,8 +29,54 @@ import (
 	"go.thesmos.sh/core/version"
 )
 
-// failingReader yields its data and then fails, standing in for an
-// upload interrupted mid-stream.
+// maxPages bounds a walk of a cursor chain. A token that does not
+// advance fails the walk at this page instead of at the test deadline.
+const maxPages = 16
+
+// errInterrupted is the error a [failingReader] returns after its data.
+var errInterrupted = errors.New("blobtest: upload interrupted")
+
+// Option configures a run of [AssertStore].
+type Option func(*config)
+
+// config is the result of applying every [Option] of one run.
+type config struct {
+	reopen func(t *testing.T, s blob.Store) blob.Store
+	crash  func(t *testing.T, s blob.Store, write func()) blob.Store
+}
+
+// WithReopen gives the suite a way to open the storage behind s again,
+// as after a process restart, and adds a case that requires:
+//
+//   - every Put that returned to be readable with the same version,
+//     body, size and content type;
+//   - every refused Put and every deleted key to be absent;
+//   - a version issued before the reopen to guard its object after it;
+//   - no version issued before the reopen to be issued again for the
+//     same key.
+//
+// reopen returns a new Store over the storage behind s. It fails t
+// when it cannot open the storage.
+func WithReopen(reopen func(t *testing.T, s blob.Store) blob.Store) Option {
+	return func(c *config) { c.reopen = reopen }
+}
+
+// WithCrash gives the suite a way to crash the storage behind s while
+// write runs, and adds a case that requires each key that write puts to
+// be as it was before write or to hold the whole new object. A key
+// whose Put returned without error must hold the whole new object,
+// with the version that Put returned.
+//
+// crash calls write once, crashes the storage at a point the adapter
+// chooses, and returns after write returns. It returns a new Store over
+// the storage as the crash left it, and fails t when it cannot open the
+// storage.
+func WithCrash(crash func(t *testing.T, s blob.Store, write func()) blob.Store) Option {
+	return func(c *config) { c.crash = crash }
+}
+
+// failingReader returns its data and then err, as an upload that fails
+// part-way does.
 type failingReader struct {
 	err  error
 	data []byte
@@ -45,16 +92,18 @@ func (r *failingReader) Read(p []byte) (int, error) {
 	return n, nil
 }
 
-// assertSameObject compares the fields that identify one written
-// object.
-//
-// [blob.Info.ModTime] is excluded on purpose. A backend may not
-// report a timestamp on write — the S3 family returns an entity tag
-// and no last-modified — so requiring Put's Info to equal Get's in
-// full would cost such an adapter a second request per write to
-// fill in a field nothing here compares. The seam says Put MAY
-// return a zero ModTime and Get and Stat MUST report one, and the
-// cases assert exactly that.
+// object is the state of one key in a store: its body and version, or
+// absent. The fields are exported so that testkit.Equal can compare
+// them.
+type object struct {
+	Version version.Version
+	Body    string
+	Present bool
+}
+
+// assertSameObject requires got and want to describe the same written
+// object: the same key, version, size and content type. It does not
+// compare ModTime, because Put may return a zero ModTime.
 func assertSameObject(t *testing.T, got, want blob.Info, who string) {
 	t.Helper()
 
@@ -65,12 +114,45 @@ func assertSameObject(t *testing.T, got, want blob.Info, who string) {
 		who+" must carry the same content type")
 }
 
-// AssertStore drives a [blob.Store] implementation through the blob
-// laws. newStore must return an empty store reading wall time from
-// the given clock; the suite constructs a fresh one per case, so
-// cases cannot observe each other's contents.
-func AssertStore(t *testing.T, newStore func(c clock.Clock) blob.Store) {
+// AssertStore runs the laws of [blob.Store] against the stores that
+// newStore returns. newStore returns an empty store that reads wall
+// time from c. Each case builds its own store, so no case observes the
+// objects of another.
+//
+// The cases are:
+//
+//   - Put, Get and Stat agree on the body, key, version, size and
+//     content type. Put may return a zero ModTime, because the S3
+//     family reports no modification time on write. Get and Stat must
+//     report one.
+//   - Each write issues a new version. A key deleted and written again
+//     never reuses a version, so a writer with a version from before
+//     the delete cannot overwrite the new object.
+//   - IfMatch, IfNoneMatch and Delete follow the conditional table of
+//     [version.WriteOptions].
+//   - A Put that fails for a reader error, a precondition or a done
+//     context leaves the previous object in place.
+//   - An open reader serves the version its Info named, through an
+//     overwrite.
+//   - A walk of the cursor chain at page sizes 1, 2 and 10 yields every
+//     key under the prefix exactly once. The walk stops at 16 pages.
+//   - Every method rejects a key that [blob.ValidKey] rejects, as
+//     Invalid. The rules are those of [io/fs.ValidPath], so a caller can
+//     write a key without knowing the backend.
+//   - A key and a longer key it prefixes, such as "a/b" and "a/b/c",
+//     exist together. A backend whose namespace cannot store both
+//     encodes keys so that it can.
+//   - Absence classifies as NotFound, and every method returns the
+//     error of a done context.
+//
+// Each [Option] adds the cases its docblock lists.
+func AssertStore(t *testing.T, newStore func(c clock.Clock) blob.Store, options ...Option) {
 	t.Helper()
+
+	var cfg config
+	for _, o := range options {
+		o(&cfg)
+	}
 
 	fresh := func() blob.Store {
 		return newStore(fake.New(time.Unix(0, 0).UTC()))
@@ -78,7 +160,7 @@ func AssertStore(t *testing.T, newStore func(c clock.Clock) blob.Store) {
 	put := func(t *testing.T, s blob.Store, key, body string, opts blob.PutOptions) blob.Info {
 		t.Helper()
 
-		info, err := s.Put(t.Context(), key, bytes.NewReader([]byte(body)), opts)
+		info, err := s.Put(t.Context(), key, strings.NewReader(body), opts)
 		testkit.NoError(t, err, "Put must succeed")
 
 		return info
@@ -95,8 +177,18 @@ func AssertStore(t *testing.T, newStore func(c clock.Clock) blob.Store) {
 
 		return string(body), info
 	}
+	observe := func(t *testing.T, s blob.Store, key string) object {
+		t.Helper()
 
-	t.Run("round-trips body and metadata", func(t *testing.T) {
+		if _, err := s.Stat(t.Context(), key); errs.Classify(err) == errs.NotFound {
+			return object{}
+		}
+		body, info := read(t, s, key)
+
+		return object{Version: info.Version, Body: body, Present: true}
+	}
+
+	t.Run("Put, Get and Stat agree on the body and metadata", func(t *testing.T) {
 		t.Parallel()
 
 		s := fresh()
@@ -136,11 +228,11 @@ func AssertStore(t *testing.T, newStore func(c clock.Clock) blob.Store) {
 		s := fresh()
 		first := put(t, s, "k", "one", blob.PutOptions{})
 
-		_, err := s.Put(t.Context(), "k", bytes.NewReader([]byte("two")),
+		_, err := s.Put(t.Context(), "k", strings.NewReader("two"),
 			blob.PutOptions{Write: version.WriteOptions{IfMatch: first.Version}})
 		testkit.NoError(t, err, "IfMatch naming the current version must succeed")
 
-		_, err = s.Put(t.Context(), "k", bytes.NewReader([]byte("three")),
+		_, err = s.Put(t.Context(), "k", strings.NewReader("three"),
 			blob.PutOptions{Write: version.WriteOptions{IfMatch: first.Version}})
 		testkit.ErrorIs(t, err, version.ErrMismatch,
 			"IfMatch naming a superseded version must fail")
@@ -148,7 +240,7 @@ func AssertStore(t *testing.T, newStore func(c clock.Clock) blob.Store) {
 		_, err = s.Put(t.Context(), "absent", bytes.NewReader(nil),
 			blob.PutOptions{Write: version.WriteOptions{IfMatch: first.Version}})
 		testkit.ErrorIs(t, err, version.ErrMismatch,
-			"IfMatch against an absent key must fail — no version is present")
+			"IfMatch against an absent key must fail")
 	})
 
 	t.Run("IfNoneMatch wildcard creates exactly once", func(t *testing.T) {
@@ -157,10 +249,10 @@ func AssertStore(t *testing.T, newStore func(c clock.Clock) blob.Store) {
 		s := fresh()
 		opts := blob.PutOptions{Write: version.WriteOptions{IfNoneMatch: version.Wildcard}}
 
-		_, err := s.Put(t.Context(), "k", bytes.NewReader([]byte("one")), opts)
+		_, err := s.Put(t.Context(), "k", strings.NewReader("one"), opts)
 		testkit.NoError(t, err, "create-only must succeed on an absent key")
 
-		_, err = s.Put(t.Context(), "k", bytes.NewReader([]byte("two")), opts)
+		_, err = s.Put(t.Context(), "k", strings.NewReader("two"), opts)
 		testkit.ErrorIs(t, err, version.ErrExists,
 			"create-only must fail once the key exists")
 	})
@@ -171,15 +263,15 @@ func AssertStore(t *testing.T, newStore func(c clock.Clock) blob.Store) {
 		s := fresh()
 		first := put(t, s, "k", "one", blob.PutOptions{})
 
-		_, err := s.Put(t.Context(), "k", bytes.NewReader([]byte("two")),
+		_, err := s.Put(t.Context(), "k", strings.NewReader("two"),
 			blob.PutOptions{Write: version.WriteOptions{IfNoneMatch: first.Version}})
 		testkit.ErrorIs(t, err, version.ErrExists,
-			"IfNoneMatch naming the current version must fail — it is present")
+			"IfNoneMatch naming the current version must fail")
 
-		_, err = s.Put(t.Context(), "k", bytes.NewReader([]byte("two")),
+		_, err = s.Put(t.Context(), "k", strings.NewReader("two"),
 			blob.PutOptions{Write: version.WriteOptions{IfNoneMatch: "unrelated"}})
 		testkit.NoError(t, err,
-			"IfNoneMatch naming an absent version must pass — nothing matches it")
+			"IfNoneMatch naming a version that is not current must succeed")
 	})
 
 	t.Run("Delete follows the conditional table", func(t *testing.T) {
@@ -188,12 +280,12 @@ func AssertStore(t *testing.T, newStore func(c clock.Clock) blob.Store) {
 		s := fresh()
 
 		testkit.NoError(t, s.Delete(t.Context(), "absent", ""),
-			"unconditional delete of an absent key succeeds — the intent holds")
+			"an unconditional Delete of an absent key must succeed")
 
 		testkit.ErrorIs(t,
 			s.Delete(t.Context(), "absent", "v"),
 			version.ErrMismatch,
-			"a version named against an absent key is not there")
+			"a Delete naming a version of an absent key must fail")
 
 		info := put(t, s, "k", "body", blob.PutOptions{})
 
@@ -211,7 +303,7 @@ func AssertStore(t *testing.T, newStore func(c clock.Clock) blob.Store) {
 			"the object must be gone")
 	})
 
-	t.Run("visibility is atomic under every failure", func(t *testing.T) {
+	t.Run("a failed Put leaves the previous object in place", func(t *testing.T) {
 		t.Parallel()
 
 		s := fresh()
@@ -225,17 +317,15 @@ func AssertStore(t *testing.T, newStore func(c clock.Clock) blob.Store) {
 			testkit.Equal(t, info.Version, prior.Version, "the prior version must be untouched")
 		}
 
-		t.Run("a reader failing mid-stream", func(t *testing.T) {
-			boom := errors.New("blobtest: upload interrupted")
-
+		t.Run("a reader that fails part-way", func(t *testing.T) {
 			_, err := s.Put(t.Context(), "k",
-				&failingReader{data: []byte("partial"), err: boom}, blob.PutOptions{})
-			testkit.ErrorIs(t, err, boom, "the reader's own error must surface")
+				&failingReader{data: []byte("partial"), err: errInterrupted}, blob.PutOptions{})
+			testkit.ErrorIs(t, err, errInterrupted, "Put must return the reader's error")
 			assertIntact(t)
 		})
 
 		t.Run("a failed precondition", func(t *testing.T) {
-			_, err := s.Put(t.Context(), "k", bytes.NewReader([]byte("nope")),
+			_, err := s.Put(t.Context(), "k", strings.NewReader("nope"),
 				blob.PutOptions{Write: version.WriteOptions{IfMatch: "stale"}})
 			testkit.ErrorIs(t, err, version.ErrMismatch, "the precondition must fail")
 			assertIntact(t)
@@ -245,13 +335,13 @@ func AssertStore(t *testing.T, newStore func(c clock.Clock) blob.Store) {
 			ctx, cancel := context.WithCancel(t.Context())
 			cancel()
 
-			_, err := s.Put(ctx, "k", bytes.NewReader([]byte("nope")), blob.PutOptions{})
-			testkit.ErrorIs(t, err, context.Canceled, "the context must surface")
+			_, err := s.Put(ctx, "k", strings.NewReader("nope"), blob.PutOptions{})
+			testkit.ErrorIs(t, err, context.Canceled, "Put must return the context's error")
 			assertIntact(t)
 		})
 	})
 
-	t.Run("an open reader is one consistent object", func(t *testing.T) {
+	t.Run("an open reader serves the version its Info named", func(t *testing.T) {
 		t.Parallel()
 
 		s := fresh()
@@ -270,19 +360,19 @@ func AssertStore(t *testing.T, newStore func(c clock.Clock) blob.Store) {
 			"the reader must serve the version its Info named")
 	})
 
-	t.Run("an empty body is a real object", func(t *testing.T) {
+	t.Run("an empty body is an object", func(t *testing.T) {
 		t.Parallel()
 
 		s := fresh()
 
 		info := put(t, s, "k", "", blob.PutOptions{})
-		testkit.Equal(t, info.Size, int64(0), "the empty body has size zero")
+		testkit.Equal(t, info.Size, int64(0), "the empty body must have size zero")
 
 		body, _ := read(t, s, "k")
 		testkit.Len(t, body, 0, "the empty body must round-trip empty")
 	})
 
-	t.Run("a cursor chain is complete, exactly once", func(t *testing.T) {
+	t.Run("a cursor chain yields every key exactly once", func(t *testing.T) {
 		t.Parallel()
 
 		s := fresh()
@@ -291,12 +381,6 @@ func AssertStore(t *testing.T, newStore func(c clock.Clock) blob.Store) {
 		}
 		put(t, s, "b/0", "x", blob.PutOptions{})
 		put(t, s, "b/1", "x", blob.PutOptions{})
-
-		// The walk is bounded: a continuation token that fails to
-		// advance would otherwise loop forever, and a suite must
-		// convert that defect into a named failure rather than
-		// observe it by outliving the deadline.
-		const maxPages = 16
 
 		walk := func(t *testing.T, prefix string, limit int) map[string]int {
 			t.Helper()
@@ -318,7 +402,7 @@ func AssertStore(t *testing.T, newStore func(c clock.Clock) blob.Store) {
 				p.Token = tok
 			}
 
-			t.Fatalf("cursor chain exceeded %d pages — the continuation token failed to advance", maxPages)
+			t.Fatalf("the cursor chain ran past %d pages, so its token does not advance", maxPages)
 
 			return nil
 		}
@@ -326,28 +410,25 @@ func AssertStore(t *testing.T, newStore func(c clock.Clock) blob.Store) {
 		for _, limit := range []int{1, 2, 10} {
 			t.Run("page size "+strconv.Itoa(limit), func(t *testing.T) {
 				all := walk(t, "", limit)
-				testkit.Len(t, all, 7, "the empty prefix must enumerate everything")
+				testkit.Len(t, all, 7, "the empty prefix must enumerate every key")
 				for key, n := range all {
 					testkit.Equal(t, n, 1, "key "+key+" must appear exactly once")
 				}
 
 				scoped := walk(t, "a/", limit)
-				testkit.Len(t, scoped, 5, "the prefix must narrow exactly")
+				testkit.Len(t, scoped, 5, "the prefix must select exactly its keys")
 				for key := range scoped {
-					testkit.True(t, key[:2] == "a/", "no key outside the prefix may leak")
+					testkit.True(t, strings.HasPrefix(key, "a/"),
+						"key "+key+" must not appear under another prefix")
 				}
 			})
 		}
 	})
 
-	t.Run("a key the seam rejects is Invalid on every method", func(t *testing.T) {
+	t.Run("every method rejects an invalid key as Invalid", func(t *testing.T) {
 		t.Parallel()
 
-		// The rules are the standard library's so a caller can write
-		// a key without knowing the backend. A store that admitted
-		// any of these would take a key that escapes the root on one
-		// backend and works on another.
-		s0 := fresh()
+		s := fresh()
 
 		for name, key := range map[string]string{
 			"empty":             "",
@@ -363,26 +444,23 @@ func AssertStore(t *testing.T, newStore func(c clock.Clock) blob.Store) {
 		} {
 			testkit.False(t, blob.ValidKey(key), name+" must not satisfy ValidKey")
 
-			_, perr := s0.Put(t.Context(), key, bytes.NewReader(nil), blob.PutOptions{})
+			_, perr := s.Put(t.Context(), key, bytes.NewReader(nil), blob.PutOptions{})
 			testkit.Equal(t, errs.Classify(perr), errs.Invalid, "Put must reject "+name)
 
-			_, _, gerr := s0.Get(t.Context(), key)
+			_, _, gerr := s.Get(t.Context(), key)
 			testkit.Equal(t, errs.Classify(gerr), errs.Invalid, "Get must reject "+name)
 
-			_, serr := s0.Stat(t.Context(), key)
+			_, serr := s.Stat(t.Context(), key)
 			testkit.Equal(t, errs.Classify(serr), errs.Invalid, "Stat must reject "+name)
 
-			testkit.Equal(t, errs.Classify(s0.Delete(t.Context(), key, "")),
+			testkit.Equal(t, errs.Classify(s.Delete(t.Context(), key, "")),
 				errs.Invalid, "Delete must reject "+name)
 		}
 	})
 
-	t.Run("a nested key coexists with its own prefix", func(t *testing.T) {
+	t.Run("a key and a longer key it prefixes exist together", func(t *testing.T) {
 		t.Parallel()
 
-		// Object stores hold both, so the seam does. A backend whose
-		// namespace cannot must encode around it rather than refuse
-		// the caller's key.
 		s := fresh()
 
 		put(t, s, "a/b", "the shorter one", blob.PutOptions{})
@@ -407,7 +485,7 @@ func AssertStore(t *testing.T, newStore func(c clock.Clock) blob.Store) {
 		testkit.Equal(t, errs.Classify(serr), errs.NotFound, "Stat of an absent key")
 	})
 
-	t.Run("a done context surfaces on every method", func(t *testing.T) {
+	t.Run("every method returns the error of a done context", func(t *testing.T) {
 		t.Parallel()
 
 		s := fresh()
@@ -417,27 +495,24 @@ func AssertStore(t *testing.T, newStore func(c clock.Clock) blob.Store) {
 		cancel()
 
 		_, err := s.Put(ctx, "k", bytes.NewReader(nil), blob.PutOptions{})
-		testkit.ErrorIs(t, err, context.Canceled, "Put must surface the context")
+		testkit.ErrorIs(t, err, context.Canceled, "Put must return the context's error")
 
 		_, _, err = s.Get(ctx, "k")
-		testkit.ErrorIs(t, err, context.Canceled, "Get must surface the context")
+		testkit.ErrorIs(t, err, context.Canceled, "Get must return the context's error")
 
 		_, err = s.Stat(ctx, "k")
-		testkit.ErrorIs(t, err, context.Canceled, "Stat must surface the context")
+		testkit.ErrorIs(t, err, context.Canceled, "Stat must return the context's error")
 
 		testkit.ErrorIs(t, s.Delete(ctx, "k", ""), context.Canceled,
-			"Delete must surface the context")
+			"Delete must return the context's error")
 
 		_, err = s.List(ctx, "", page.Page{})
-		testkit.ErrorIs(t, err, context.Canceled, "List must surface the context")
+		testkit.ErrorIs(t, err, context.Canceled, "List must return the context's error")
 	})
 
-	t.Run("versions never recur across delete and recreate", func(t *testing.T) {
+	t.Run("a recreated key never reuses a version", func(t *testing.T) {
 		t.Parallel()
 
-		// The ABA requirement inherited from the version package: a
-		// stalled writer holding the pre-delete token must fail its
-		// conditional write against the recreated key.
 		s := fresh()
 
 		first := put(t, s, "k", "one", blob.PutOptions{})
@@ -446,11 +521,91 @@ func AssertStore(t *testing.T, newStore func(c clock.Clock) blob.Store) {
 
 		second := put(t, s, "k", "two", blob.PutOptions{})
 		testkit.NotEqual(t, second.Version, first.Version,
-			"a recreated key must not reuse a version — the ABA guard")
+			"a recreated key must not reuse a version")
 
-		_, err := s.Put(t.Context(), "k", bytes.NewReader([]byte("three")),
+		_, err := s.Put(t.Context(), "k", strings.NewReader("three"),
 			blob.PutOptions{Write: version.WriteOptions{IfMatch: first.Version}})
 		testkit.ErrorIs(t, err, version.ErrMismatch,
-			"the stalled writer's token must fail against the recreated key")
+			"a version from before the delete must not match the recreated key")
 	})
+
+	if cfg.reopen != nil {
+		t.Run("a reopened store keeps every write that returned", func(t *testing.T) {
+			t.Parallel()
+
+			s := fresh()
+			deleted := put(t, s, "deleted", "deleted before the reopen", blob.PutOptions{})
+			testkit.NoError(t, s.Delete(t.Context(), "deleted", ""), "Delete must succeed")
+			kept := put(t, s, "kept", "written before the reopen",
+				blob.PutOptions{ContentType: "text/plain"})
+
+			_, err := s.Put(t.Context(), "refused", strings.NewReader("refused"),
+				blob.PutOptions{Write: version.WriteOptions{IfMatch: "stale"}})
+			testkit.ErrorIs(t, err, version.ErrMismatch, "the precondition must fail")
+
+			_, err = s.Put(t.Context(), "interrupted",
+				&failingReader{data: []byte("partial"), err: errInterrupted}, blob.PutOptions{})
+			testkit.ErrorIs(t, err, errInterrupted, "Put must return the reader's error")
+
+			r := cfg.reopen(t, s)
+
+			body, info := read(t, r, "kept")
+			testkit.Equal(t, body, "written before the reopen", "the body must survive the reopen")
+			assertSameObject(t, info, kept, "Get's Info after the reopen")
+
+			for _, key := range []string{"deleted", "refused", "interrupted"} {
+				testkit.Equal(t, observe(t, r, key), object{},
+					"key "+key+" must be absent after the reopen")
+			}
+
+			recreated := put(t, r, "deleted", "recreated after the reopen", blob.PutOptions{})
+			testkit.NotEqual(t, recreated.Version, deleted.Version,
+				"a key recreated after the reopen must not reuse a version from before it")
+
+			overwritten, err := r.Put(t.Context(), "kept", strings.NewReader("overwritten"),
+				blob.PutOptions{Write: version.WriteOptions{IfMatch: kept.Version}})
+			testkit.NoError(t, err, "a version from before the reopen must still match its object")
+			testkit.NotEqual(t, overwritten.Version, kept.Version,
+				"an overwrite after the reopen must issue a new version")
+		})
+	}
+
+	if cfg.crash != nil {
+		t.Run("a crash leaves each key as it was or whole", func(t *testing.T) {
+			t.Parallel()
+
+			s := fresh()
+			prior := put(t, s, "overwritten", "written before the crash", blob.PutOptions{})
+
+			var (
+				created, overwritten       blob.Info
+				createdErr, overwrittenErr error
+			)
+			r := cfg.crash(t, s, func() {
+				created, createdErr = s.Put(t.Context(), "created",
+					strings.NewReader("created during the crash"), blob.PutOptions{})
+				overwritten, overwrittenErr = s.Put(t.Context(), "overwritten",
+					strings.NewReader("overwritten during the crash"), blob.PutOptions{})
+			})
+
+			assertAfterCrash := func(key string, before object, body string, info blob.Info, err error) {
+				t.Helper()
+
+				got := observe(t, r, key)
+				if err == nil {
+					testkit.Equal(t, got, object{Version: info.Version, Body: body, Present: true},
+						"key "+key+" must hold the object its returned Put wrote")
+
+					return
+				}
+				testkit.True(t, got == before || (got.Present && got.Body == body),
+					"key "+key+" must be as it was before the crash or hold the whole new body")
+			}
+
+			assertAfterCrash("created", object{}, "created during the crash", created, createdErr)
+			assertAfterCrash("overwritten",
+				object{Version: prior.Version, Body: "written before the crash", Present: true},
+				"overwritten during the crash", overwritten, overwrittenErr)
+		})
+	}
 }

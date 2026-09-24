@@ -19,24 +19,33 @@ import (
 	"go.thesmos.sh/core/page"
 )
 
+// TestMemoryStoreConformance runs the conformance suite with every
+// option. The storage of a memory Store is the Store itself, so a
+// reopen returns it unchanged and a crash comes after write returns.
 func TestMemoryStoreConformance(t *testing.T) {
 	t.Parallel()
 
-	blobtest.AssertStore(t, func(c clock.Clock) blob.Store {
-		return memory.New(c)
-	})
+	blobtest.AssertStore(t,
+		func(c clock.Clock) blob.Store { return memory.New(c) },
+		blobtest.WithReopen(func(_ *testing.T, s blob.Store) blob.Store { return s }),
+		blobtest.WithCrash(func(_ *testing.T, s blob.Store, write func()) blob.Store {
+			write()
+
+			return s
+		}),
+	)
 }
 
+// TestPut covers a contract of the memory Store beyond the seam. Its
+// docblock documents versions as a counter that starts at one and never
+// resets. The test compares the tokens by equality, never by order, as
+// the version package requires.
 func TestPut(t *testing.T) {
 	t.Parallel()
 
-	t.Run("versions are the documented monotonic counter", func(t *testing.T) {
+	t.Run("versions are the documented counter", func(t *testing.T) {
 		t.Parallel()
 
-		// Implementation contract beyond the seam: the docblock
-		// promises a counter that starts ascending from one and
-		// never resets. Asserting the concrete tokens — by equality,
-		// never by order — pins the counter's direction and start.
 		s := memory.New(fake.New(time.Unix(0, 0).UTC()))
 
 		first, err := s.Put(t.Context(), "a", bytes.NewReader(nil), blob.PutOptions{})
@@ -49,15 +58,19 @@ func TestPut(t *testing.T) {
 	})
 }
 
+// TestList covers contracts of the memory Store beyond the seam:
+//
+//   - A limit at or below zero means the default page size, as the page
+//     package documents, and the default bounds the page.
+//   - A page has a token only when the store truncated it, so a walk
+//     of six objects at page size three takes two calls and no empty
+//     third page.
 func TestList(t *testing.T) {
 	t.Parallel()
 
 	t.Run("applies the default page size to an unset limit", func(t *testing.T) {
 		t.Parallel()
 
-		// Implementation contract beyond the seam: the page package
-		// says a limit at or below zero means the implementation's
-		// default, and the default must actually bound the page.
 		s := memory.New(fake.New(time.Unix(0, 0).UTC()))
 		for i := range 60 {
 			_, err := s.Put(t.Context(), fmt.Sprintf("k/%02d", i),
@@ -77,16 +90,12 @@ func TestList(t *testing.T) {
 
 		testkit.Equal(t, n, 50, "the default page size must bound the page")
 		testkit.NotEqual(t, cur.NextPage(), "",
-			"a bounded page with a remainder must carry a continuation token")
+			"a truncated page must carry a continuation token")
 	})
 
-	t.Run("an exactly-full final page carries no token", func(t *testing.T) {
+	t.Run("an exactly full final page carries no token", func(t *testing.T) {
 		t.Parallel()
 
-		// Implementation contract beyond the seam: a token exists
-		// only when the page was truncated, so a walk over six
-		// objects at page size three costs exactly two calls — a
-		// spurious third empty page would tax every walker.
 		s := memory.New(fake.New(time.Unix(0, 0).UTC()))
 		for i := range 6 {
 			_, err := s.Put(t.Context(), fmt.Sprintf("k/%02d", i),
@@ -98,7 +107,7 @@ func TestList(t *testing.T) {
 		p := page.Page{Limit: 3}
 		for {
 			calls++
-			testkit.True(t, calls <= 3, "the walk must not exceed the minimal page count")
+			testkit.True(t, calls <= 3, "the walk must not take more than three calls")
 
 			cur, err := s.List(t.Context(), "", p)
 			testkit.NoError(t, err, "List must succeed")
@@ -114,6 +123,6 @@ func TestList(t *testing.T) {
 		}
 
 		testkit.Equal(t, calls, 2,
-			"six objects at page size three must walk in exactly two calls")
+			"six objects at page size three must take exactly two calls")
 	})
 }
