@@ -7,7 +7,7 @@
 [![Go Version](https://img.shields.io/github/go-mod/go-version/thesmos-ai/core)](go.mod)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![codecov](https://codecov.io/gh/thesmos-ai/core/graph/badge.svg)](https://codecov.io/gh/thesmos-ai/core)
-[![Mutation](https://img.shields.io/badge/mutation-100%25%20effective-brightgreen.svg)](README.md)
+[![Mutation](https://img.shields.io/badge/mutation-99%25%20effective-brightgreen.svg)](README.md)
 
 Foundational interfaces for the [thesmos][thesmos] ecosystem.
 
