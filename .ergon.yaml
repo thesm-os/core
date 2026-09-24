@@ -396,6 +396,9 @@ checks:
       - path: telemetry
         score: 86
         coverage: 85
+      - path: tlog
+        score: 99
+        coverage: 99
       - path: version
         score: 99
         coverage: 99

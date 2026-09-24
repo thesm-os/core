@@ -148,14 +148,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   adjtimex(2) at most once per refresh interval, and a read costs about
   39 ns without allocating. `fake.Clock` is a `UTCSource` whose error a
   test sets with `SetUTCError`. See RFC-0036.
+- `tlog`: the Merkle tree of RFC 9162 over any `crypto.Hasher`, stored
+  as the tiles of C2SP tlog-tiles. `LeafHash`, `NodeHash`, `Root`,
+  `InclusionProof` and `ConsistencyProof` work on a tree in memory, and
+  `VerifyInclusion` and `VerifyConsistency` check a proof against a
+  root. `Builder` and `Update` integrate batches of leaves into tiles,
+  `BlobTiles` reads tiles from a `blob.Store`, and `TreeRoot`,
+  `ProveInclusion` and `ProveConsistency` build a proof from one
+  batched read. With SHA-256 the bytes match `golang.org/x/mod/sumdb/tlog`
+  and RFC 6962. `Integrate` costs about 100 ns per leaf and allocates
+  nothing. See RFC-0032.
 - Options for `blobtest.AssertStore` and `castest.AssertStore`.
   `WithReopen` and `WithCrash` let a durable adapter prove that every
   write that returned survives a restart, that no version recurs after
   one, and that a crash leaves each object as it was or whole.
   `castest.WithZeroAllocGet` requires `Get` into a buffer with room
-  not to allocate. `castest` also requires `cas.AsStreamer` to find a
-  store's `Streamer` through a decorator. Existing calls compile
-  unchanged. See RFC-0038.
+  not to allocate. Existing calls compile unchanged. Core's tests run
+  each suite against a broken store for every case and require that
+  case to fail. See RFC-0038.
 
 ### Changed
 

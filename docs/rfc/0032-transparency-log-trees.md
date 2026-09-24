@@ -19,8 +19,8 @@ We propose a package `tlog` that implements the Merkle tree of RFC 9162
 over any `crypto.Hasher`:
 
 - `LeafHash` and `NodeHash` produce the RFC 9162 leaf and node hashes.
-- `Root`, `InclusionProof` and `ConsistencyProof` work on a tree held
-  in memory, such as the entries of one batch.
+- `Root`, `InclusionProof` and `ConsistencyProof` work on a tree in
+  memory, such as the entries of one batch.
 - `VerifyInclusion` and `VerifyConsistency` check a proof against a
   root.
 - `Tile`, `Builder` and the `TileReader` seam store a tree as the
@@ -104,12 +104,14 @@ func LeafHash(h crypto.Hasher, data []byte) crypto.Digest
 func NodeHash(h crypto.Hasher, left, right crypto.Digest) crypto.Digest
 ```
 
-A node hash through `crypto.Hasher` with pooled scratch costs 113 ns,
-against 78 ns for `crypto/sha256.Sum256` over the same 65 bytes, and
-neither allocates. The difference is the interface call, the pool and
-`HashTagged`'s own prefix handling. `Builder` keeps its scratch in its
-own state and skips the pool. Measured with Go 1.27.1 on an AMD Ryzen
-9 9950X3D, three runs of 2,000,000 hashes.
+A node hash through `crypto.Hasher` with pooled scratch costs 113 to
+119 ns, against 79 ns for `crypto/sha256.Sum256` over the same 65
+bytes, and neither allocates. The difference is the interface call,
+the pool and the copies of 65-byte `Digest` values. `Root`, the
+verifiers, `Builder` and the prove functions borrow one
+`crypto.Stream` per call and hash every node through it, so a node
+skips the pool and the per-node `HashTagged` call. Measured with Go
+1.27.1 on an AMD Ryzen 9 9950X3D, three runs of one second each.
 
 RFC 9162's prefixes are the standard's own domain separation, and
 `tlog` uses them as the standard defines them. ADR-0013 describes
@@ -129,8 +131,8 @@ keeps any two protocols apart.
 //
 // # Allocation contract
 //
-// Zero alloc on the warm path. The fold runs in pooled scratch of
-// one digest per tree level.
+// Zero alloc on the warm path. The fold keeps one digest per tree
+// level on the stack.
 func Root(h crypto.Hasher, leaves []crypto.Digest) crypto.Digest
 
 // InclusionProof appends to dst the audit path for the leaf at index
@@ -271,8 +273,9 @@ publishes the checkpoint afterwards.
 // # Allocation contract
 //
 // Integrate into a reused Update is zero-alloc once the Update's
-// buffers have grown to the batch size. Node hashes use scratch in the
-// Builder's own state.
+// buffers have grown to the batch size. Node hashes fold in scratch
+// the Builder allocates once, and an Update keeps its tile data in a
+// core arena.Arena that each Integrate resets.
 type Builder struct{ /* unexported fields */ }
 
 // NewBuilder returns a Builder for the tree of the given size, stored
@@ -285,7 +288,9 @@ func NewBuilder(ctx context.Context, h crypto.Hasher, size uint64, r TileReader)
 // into u every tile that tree has and the Builder's tree does not have
 // in the same form: the full tiles the batch completes, and the
 // partial tiles at the new right edge. The Builder does not change
-// until Commit.
+// until Commit. Returns ErrLeafSize for a leaf whose size is not the
+// digest size of the Builder's hasher, and ErrRange when the tree
+// would pass 2^64 - 1 leaves.
 func (b *Builder) Integrate(leaves []crypto.Digest, u *Update) error
 
 // Commit makes u's tree the Builder's tree. A writer calls it after
@@ -318,6 +323,11 @@ partial tiles. A batch of 4,096 leaves under SHA-256 that starts on a
 tile boundary writes 16 full level-0 tiles, 128 KiB. It also writes at
 most one partial tile per level, each at most 8 KiB.
 
+`Integrate` costs 100 to 105 ns per leaf for a batch of 4,096 leaves
+and allocates nothing, so one core integrates about ten million leaves
+a second. Hashing is 54% of the profile, as two SHA-256 compressions
+per node. A proof verifies in under 2 µs.
+
 ### Write order and crash safety
 
 A writer keeps three steps in order. A crash between any two of them
@@ -342,17 +352,18 @@ is the immutability C2SP tlog-tiles requires.
 // governs cancellation and the deadline of the whole batch.
 type TileReader interface {
     // ReadTiles appends the data of tiles[i] to dst[i] for every i:
-    // tiles[i].Width hashes of the tree's digest size. An
-    // implementation over remote storage reads the tiles
-    // concurrently. A missing tile returns an error classified
-    // errs.NotFound, and ReadTiles returns no partial result with an
+    // tiles[i].Width hashes of the tree's digest size. dst has one
+    // entry per tile. An implementation over remote storage reads the
+    // tiles concurrently. A missing tile returns an error classified
+    // errs.NotFound. The contents of dst are unspecified after an
     // error.
     ReadTiles(ctx context.Context, tiles []Tile, dst [][]byte) error
 }
 
 // BlobTiles returns a TileReader over the objects under prefix in s,
 // at the paths Tile.Path gives. It reads up to limit tiles
-// concurrently through task.Each.
+// concurrently through task.Each, and returns ErrRange when dst has
+// fewer entries than tiles.
 func BlobTiles(s blob.Store, prefix string, limit int) TileReader
 
 // TreeRoot returns the root of the tree of size leaves stored in r.
@@ -375,6 +386,15 @@ that tile's data. A proof reads at most two tiles per tile level: the
 tile on the leaf's path and the partial tile at the right edge. A tree
 of 10^9 leaves has four tile levels, since 256^4 is 4.3 x 10^9, so a
 proof reads at most eight tiles.
+
+The prove functions borrow their tile buffers from a pool of core
+`arena.Arena` values, sized with one `Alloc` per proof, so a proof
+allocates nothing beyond what the reader allocates and what `dst`
+needs to grow. Rebuilding the hashes inside the tiles is the cost of a
+proof: about 500 node hashes, 60 to 65 µs for a tree of 70,000 leaves
+read from memory. Against a storage round trip of 100 ms that is noise, and
+a server that proves at a higher rate caches the interior hashes of
+full tiles, which never change.
 
 On object storage the batch read is what makes a proof fast. AWS
 states first-byte latencies of about 100 to 200 ms for small objects
@@ -408,6 +428,11 @@ var (
     // ErrTileSize reports tile data whose length is not the tile's
     // width times the digest size. It classifies as errs.Integrity.
     ErrTileSize = errs.WithClass(errors.New("tlog: tile data has the wrong length"), errs.Integrity)
+
+    // ErrLeafSize reports a leaf hash whose size differs from the
+    // digest size of the Builder's hasher. It classifies as
+    // errs.Invalid.
+    ErrLeafSize = errs.WithClass(errors.New("tlog: leaf hash has the wrong size"), errs.Invalid)
 
     // ErrEntrySize reports an entry longer than 65,535 bytes. It
     // classifies as errs.Invalid.
@@ -471,13 +496,15 @@ return tlog.VerifyInclusion(h, index, size, tlog.LeafHash(h, entry), root, proof
 
 ### Conformance and tests
 
-- Vectors: the leaf, node and root hashes of RFC 9162's construction,
-  and inclusion and consistency proofs for every index and size up to
-  a fixed bound, recorded from `x/mod/sumdb/tlog` for SHA-256. The
-  recorded bytes are in the repository, so the tests do not import
-  x/mod.
-- A differential test builds trees of random sizes with `Builder` and
-  in memory, and requires the same roots and proofs from both.
+- Vectors recorded from `x/mod/sumdb/tlog` v0.40.0 for SHA-256: the
+  root of every tree up to 64 leaves, a digest of every inclusion and
+  consistency proof up to 64 leaves, and a digest of every tile of
+  twelve trees from 1 to 70,000 leaves. The recorded values are in
+  `tlog/testdata/vectors.txt`, so the tests do not import x/mod.
+- A differential test integrates 70,000 leaves in random batches with
+  `Builder`, and requires the root at every commit to equal the root in
+  memory and every tile to equal the tile of one batch. The prove
+  functions must return the in-memory proofs.
 - A writer that integrates a batch, stops before `Commit`, and resumes
   with `NewBuilder` at the last published size writes the same tile
   bytes to the same paths.
@@ -487,8 +514,9 @@ return tlog.VerifyInclusion(h, index, size, tlog.LeafHash(h, entry), root, proof
   the three-digit groups and the partial suffix.
 - `VerifyInclusion` and `VerifyConsistency` reject every proof with one
   hash changed, one hash removed or one hash added.
-- `TestZeroAlloc` covers `LeafHash`, `NodeHash`, `Root`, the two
-  verifiers, and `Builder.Integrate` into a reused `Update`.
+- Allocation tests cover `LeafHash`, `NodeHash`, `Root`, the two
+  verifiers, `Builder.Integrate` into a reused `Update`, and the prove
+  functions over a reader that allocates nothing.
 
 ## Alternatives considered
 
@@ -534,7 +562,7 @@ rejects. The seam is `TileReader`, where storage genuinely varies.
   role in the unary half, over two concatenated digests. This is the
   one place in core where a binary operation uses a unary role, and it
   exists because RFC 6962 predates core's arity bit.
-- The package adds about 25 exported identifiers: seven errors, the
+- The package adds about 25 exported identifiers: eight errors, the
   `Tile`, `Builder` and `Update` types, the `TileReader` seam and its
   blob adapter, and the hashing, proof and bundle functions.
 - A tree over a hasher other than SHA-256 is RFC 9162 but not C2SP, so

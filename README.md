@@ -164,6 +164,14 @@ seams every other thesmos library and framework depends on:
   status change before a compare-and-swap, and a `Machine` runs guards
   and exit, edge and entry actions for one event at a time. Neither
   allocates per event. See [RFC-0031][rfc-0031].
+- **Tlog** — the Merkle tree of RFC 9162 over any `crypto.Hasher`,
+  stored as the 256-hash tiles of C2SP tlog-tiles. With SHA-256 the
+  bytes match RFC 6962, so C2SP witnesses verify the tree. `Builder`
+  integrates batches of leaves with at most 96 KiB of state, and
+  `ProveInclusion` and `ProveConsistency` build a proof from one
+  batched read of at most two tiles per level. Hashing, verification
+  and integration into a reused `Update` do not allocate.
+  See [RFC-0032][rfc-0032].
 
 These interfaces — and the others added over time — share three
 properties:
@@ -236,5 +244,6 @@ Apache 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 [rfc-0024]: docs/rfc/0024-request-coalescing.md
 [rfc-0030]: docs/rfc/0030-structured-concurrency.md
 [rfc-0031]: docs/rfc/0031-finite-state-machines.md
+[rfc-0032]: docs/rfc/0032-transparency-log-trees.md
 [contrib]: CONTRIBUTING.md
 [sec]: SECURITY.md
