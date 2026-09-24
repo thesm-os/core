@@ -76,8 +76,10 @@ const (
 	// Min is the smallest representable value, -92233720368.54775807.
 	//
 	// Min is -[math.MaxInt64], not math.MinInt64, which makes the
-	// domain symmetric about zero. See [Fixed64.Neg].
-	Min Fixed64 = -math.MaxInt64
+	// domain symmetric about zero. See [Fixed64.Neg]. It is a literal,
+	// because an operator in a const declaration has no coverage
+	// counter and a mutation tool never runs a mutant of it.
+	Min Fixed64 = -9_223_372_036_854_775_807
 )
 
 const (
@@ -90,8 +92,10 @@ const (
 	// maxRawU is the largest in-domain magnitude, unsigned.
 	maxRawU = uint64(math.MaxInt64)
 
-	// maxWholeUnits is the largest integer [FromInt] accepts.
-	maxWholeUnits = int64(Max) / scaleFactor
+	// maxWholeUnits is the largest integer [FromInt] accepts: [Max]
+	// divided by [One], truncated. It is a literal for the reason [Min]
+	// is.
+	maxWholeUnits int64 = 92_233_720_368
 
 	// outOfDomain is math.MinInt64: representable in the underlying
 	// int64 and excluded from the domain. No constructor and no

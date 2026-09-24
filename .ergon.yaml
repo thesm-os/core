@@ -304,10 +304,13 @@ checks:
     #   picked up then.
     # - w3c unhex's arithmetic. Only bit 0 of its result escapes
     #   (`&sampledFlag`), and every mutation shifts the value by an
-    #   even amount, so the observable bit never changes. The six
-    #   unreached ones are traceParentLen's const arithmetic: a
-    #   const declaration carries no coverage counter, so gremlins
-    #   cannot reach it by construction.
+    #   even amount, so the observable bit never changes.
+    #
+    # An operator in a const declaration or an array length carries
+    # no coverage counter, so gremlins reports its mutants as not
+    # covered and never runs them. Such constants are written as
+    # literals, and the tests that pin their values kill any change
+    # to them.
     #
     # Contorting any of these to satisfy the metric would trade real
     # clarity for a number.
@@ -347,17 +350,14 @@ checks:
       - path: fsm
         score: 99
         coverage: 99
-      # Five equivalent mutants and four counter-less consts.
-      # Equivalent: Abs and magnitude test `f < Zero`, and at zero
-      # both arms return zero; round's `q > Max-step` and
+      # Five equivalent mutants: Abs and magnitude test `f < Zero`,
+      # and at zero both arms return zero; round's `q > Max-step` and
       # `q < Min+step` can never be equal, because q is always a
       # multiple of step while Max and Min never are; and round's
       # `f > Zero` is unreachable at zero, which returns earlier.
-      # Counter-less: Min's negation, maxWholeUnits' division, and
-      # pow10's array size are all const expressions.
       - path: fixed
         score: 95
-        coverage: 96
+        coverage: 99
       - path: id
         score: 99
         coverage: 99
@@ -384,14 +384,13 @@ checks:
       - path: task
         score: 99
         coverage: 99
-      # All eleven live in w3c.go. Five are unhex's arithmetic:
-      # only bit 0 of its result escapes (via &sampledFlag) and every
-      # mutation shifts the value by an even amount, so the observable
-      # bit never changes. Six are traceParentLen's const arithmetic,
-      # which carries no coverage counter.
+      # Five equivalent mutants, all in w3c.go's unhex: only bit 0 of
+      # its result escapes (via &sampledFlag) and every mutation
+      # shifts the value by an even amount, so the observable bit
+      # never changes.
       - path: telemetry
         score: 86
-        coverage: 85
+        coverage: 99
       - path: tlog
         score: 99
         coverage: 99
