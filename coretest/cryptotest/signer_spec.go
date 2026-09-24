@@ -5,6 +5,7 @@ package cryptotest
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"testing"
 
@@ -32,9 +33,9 @@ import (
 //	    )...,
 //	)
 //
-// Sign is non-deterministic for some algorithms (ECDSA P-384), so
-// these assertions never compare two consecutive Sign outputs for
-// byte equality — they only assert the Verify round-trip holds.
+// Sign is non-deterministic for some algorithms, such as ECDSA P-384,
+// so these assertions never compare two Sign outputs for byte
+// equality. They assert that each signature verifies.
 func SignerContractAssertions() []SignerOption {
 	return []SignerOption{
 		// --- Algorithm / KeyID / PublicKey stability ---
@@ -126,15 +127,14 @@ func SignerKeyIDAssertion(want sign.KeyID) SignerOption {
 
 // SignerCrossStdlibVerifyAssertion verifies that the SUT's
 // signature passes verification under the supplied stdlib
-// reference. Used to lock byte-exact wire compatibility: a
-// signature produced by the SUT under its public key must be
-// accepted by the stdlib's verifier for the same public key.
+// reference. It pins byte-exact wire compatibility: a signature
+// produced by the SUT under its public key must be accepted by the
+// stdlib's verifier for the same public key.
 //
-// stdlibVerify is `func(pub, msg, sig []byte) bool`; the consumer
-// closes over the stdlib verification primitive ([crypto/ed25519.Verify]
-// or [crypto/ecdsa.VerifyASN1]) and supplies the canonical pub
-// encoding (raw 32 bytes for Ed25519, *ecdsa.PublicKey wrapped
-// closure for ECDSA).
+// stdlibVerify is `func(pub, msg, sig []byte) bool`. The consumer
+// closes over the stdlib verification primitive, such as
+// [crypto/ed25519.Verify] or [crypto/ecdsa.VerifyASN1], and parses the
+// SUT's public-key encoding inside the closure.
 func SignerCrossStdlibVerifyAssertion(stdlibVerify func(pub, msg, sig []byte) bool) SignerOption {
 	return SignerCustom("stdlib accepts SUT-produced signature", func(t *testing.T, s sign.Signer) {
 		msg := []byte("payload that round-trips between our seam and stdlib")
@@ -145,11 +145,29 @@ func SignerCrossStdlibVerifyAssertion(stdlibVerify func(pub, msg, sig []byte) bo
 	})
 }
 
+// ContextSignerAssertion verifies that the implementation is a
+// [sign.ContextSigner] and that SignContext refuses a context that
+// has already ended, with an error that wraps the context's cause.
+// Add it for signers that cross a process boundary.
+func ContextSignerAssertion() SignerOption {
+	return SignerCustom("SignContext returns the cause of an ended context", func(t *testing.T, s sign.Signer) {
+		cs, ok := s.(sign.ContextSigner)
+		testkit.True(t, ok, "the implementation must be a sign.ContextSigner")
+
+		cause := testkit.TestError("the caller gave up")
+		ctx, cancel := context.WithCancelCause(t.Context())
+		cancel(cause)
+
+		sig, err := cs.SignContext(ctx, []byte("payload"))
+		testkit.ErrorIs(t, err, cause, "SignContext must return an error wrapping the context's cause")
+		testkit.Equal(t, sig, []byte(nil), "SignContext must return no signature with an error")
+	})
+}
+
 // SignerCrossStdlibSignAssertion verifies that the SUT accepts a
-// signature produced by the supplied stdlib signing function.
-// Used to lock byte-exact wire compatibility from the other
-// direction: a stdlib-produced signature must be accepted by the
-// SUT's verifier.
+// signature produced by the supplied stdlib signing function. It pins
+// byte-exact wire compatibility from the other direction: a
+// stdlib-produced signature must be accepted by the SUT's verifier.
 func SignerCrossStdlibSignAssertion(stdlibSign func(msg []byte) []byte) SignerOption {
 	return SignerCustom("SUT accepts stdlib-produced signature", func(t *testing.T, s sign.Signer) {
 		msg := []byte("payload from the stdlib direction")
