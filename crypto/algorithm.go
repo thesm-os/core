@@ -4,19 +4,19 @@
 package crypto
 
 // Algorithm is an open-string vocabulary type identifying a
-// cryptographic algorithm. Persisted into receipts, entry
-// headers, and signature envelopes alongside [Digest] values, so
-// verifiers can pick the matching [Hasher] (or [Signer]) offline
-// and so artefacts survive algorithm rotation.
+// cryptographic algorithm. Receipts, entry headers and signature
+// envelopes persist it alongside [Digest] values. A verifier then
+// picks the matching [Hasher] or signature verifier offline, and
+// artefacts survive algorithm rotation.
 //
 // Algorithm is the long-term, cross-build identifier. It is
 // stable across language ports, build tags, and host
 // architectures, in contrast to [ID] which is a build-local
 // identifier scoped to in-process implementation selection.
 //
-// New algorithms can be added by string literal without changing
-// any interface — consumers compare against the constants
-// declared here (or their own additions) to dispatch.
+// A new algorithm is a new string literal and changes no interface.
+// Consumers dispatch by comparing against the constants declared here
+// or their own additions.
 //
 // # Naming convention
 //
@@ -52,16 +52,16 @@ const (
 	// general-purpose digests, content addressing, and HMAC.
 	AlgSHA256 Algorithm = "sha-256"
 	// AlgSHA384 is SHA-384 per FIPS 180-4. CNSA 2.0 mandates
-	// ≥ 384-bit digests for U.S. federal traffic by 2027; AlgSHA384
-	// is the minimum-cost compliant choice.
+	// ≥ 384-bit digests for U.S. federal traffic by 2027, and AlgSHA384
+	// is the lowest-cost compliant choice.
 	AlgSHA384 Algorithm = "sha-384"
 	// AlgSHA512 is SHA-512 per FIPS 180-4. Faster than SHA-256 on
 	// 64-bit hosts for inputs above ~64 bytes; chosen when wire
 	// space is plentiful and CPU time matters.
 	AlgSHA512 Algorithm = "sha-512"
-	// AlgSHA3_256 is SHA3-256 per FIPS 202. Keccak sponge
-	// construction; preferred where length-extension resistance
-	// or NIST-approved diversity from the SHA-2 family is needed.
+	// AlgSHA3_256 is SHA3-256 per FIPS 202, a Keccak sponge
+	// construction. Use it where length-extension resistance or
+	// NIST-approved diversity from the SHA-2 family is needed.
 	AlgSHA3_256 Algorithm = "sha3-256"
 	// AlgSHA3_384 is SHA3-384 per FIPS 202. Sibling of
 	// [AlgSHA384] in the SHA-3 family for protocols that mandate
@@ -114,9 +114,7 @@ const (
 )
 
 // Public-key signature algorithms. The wire encoding follows the
-// usual lowercase-hyphenated convention. PQ-signature constants
-// (ML-DSA per FIPS 204, SLH-DSA per FIPS 205) land additively
-// when the Go stdlib promotes them out of internal/fips140.
+// usual lowercase-hyphenated convention.
 const (
 	// AlgEd25519 is Ed25519 PureEdDSA per RFC 8032 §5.1.6 (also
 	// FIPS 186-5 since 2023). The fixed 64-byte signature is
@@ -127,6 +125,16 @@ const (
 	// strength). Signatures are ASN.1 DER (the FIPS-friendly
 	// encoding produced by [crypto/ecdsa.SignASN1]).
 	AlgECDSAP384 Algorithm = "ecdsa-p384"
+	// AlgMLDSA44 is ML-DSA-44 per FIPS 204: 1,312-byte public keys
+	// and 2,420-byte signatures, NIST security category 2.
+	AlgMLDSA44 Algorithm = "ml-dsa-44"
+	// AlgMLDSA65 is ML-DSA-65 per FIPS 204: 1,952-byte public keys
+	// and 3,309-byte signatures, NIST security category 3.
+	AlgMLDSA65 Algorithm = "ml-dsa-65"
+	// AlgMLDSA87 is ML-DSA-87 per FIPS 204: 2,592-byte public keys
+	// and 4,627-byte signatures, NIST security category 5. CNSA 2.0
+	// requires it for national security systems.
+	AlgMLDSA87 Algorithm = "ml-dsa-87"
 )
 
 // Authenticated-encryption algorithms, named for the [AEAD] seam.
@@ -136,8 +144,8 @@ const (
 //
 // The ChaCha20 constants are reserved and not implemented. The
 // standard library cannot express either construction, so no
-// implementation in this module reports them; naming them now costs
-// nothing and prevents two spellings appearing if that changes.
+// implementation in this module reports them. Declaring the names
+// fixes one spelling for any implementation outside this module.
 const (
 	// AlgAES128GCM is AES-128 in Galois/Counter Mode per NIST
 	// SP 800-38D, with a 96-bit nonce and a 128-bit tag.
@@ -146,11 +154,11 @@ const (
 	// SP 800-38D, with a 96-bit nonce and a 128-bit tag.
 	AlgAES256GCM Algorithm = "aes-256-gcm"
 	// AlgChaCha20Poly1305 is ChaCha20-Poly1305 per RFC 8439, with a
-	// 96-bit nonce. Reserved; not implemented.
+	// 96-bit nonce. Reserved and not implemented.
 	AlgChaCha20Poly1305 Algorithm = "chacha20-poly1305"
 	// AlgXChaCha20Poly1305 is XChaCha20-Poly1305 with a 192-bit
-	// nonce, wide enough that random nonces carry no birthday
-	// bound worth tracking. Reserved; not implemented.
+	// nonce. At that width the birthday bound on random nonces is
+	// not worth tracking. Reserved and not implemented.
 	AlgXChaCha20Poly1305 Algorithm = "xchacha20-poly1305"
 )
 
@@ -160,7 +168,7 @@ const (
 // squeeze reproducible.
 //
 // Names follow the FIPS 202 spelling, as the hash and MAC constants
-// follow their own registries rather than being invented here.
+// follow their own registries.
 const (
 	// AlgSHAKE128 is SHAKE128 per FIPS 202, a sponge with 128-bit
 	// security strength against collisions when enough output is

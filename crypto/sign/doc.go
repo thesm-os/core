@@ -1,148 +1,130 @@
 // Copyright Thesmos 2026
 // SPDX-License-Identifier: Apache-2.0
 
-// Package sign defines the public-key signing seams used by every
-// thesmos library that produces or verifies receipts, audit
-// envelopes, batch-root attestations, or epoch-close signatures.
+// Package sign defines the public-key signing seams: [Signer], which
+// signs, and [Verifier], which checks a signature against a public key.
 //
-// The seam exists so library code can sign and verify through an
-// injected [Signer] / [Verifier] without binding to a specific
-// algorithm. Verifier-only consumers (audit services, webhook
-// receivers, offline auditors) construct a [Verifier] from raw
-// public-key bytes without ever holding a private key — a
-// load-bearing asymmetry in this package's design relative to
-// the symmetric [crypto.MAC] seam.
+// Library code signs and verifies through an injected [Signer] or
+// [Verifier] without binding to an algorithm. A verifier-only consumer,
+// such as an audit service, a webhook receiver or an offline auditor,
+// builds a [Verifier] from public-key bytes and never has a private
+// key. The symmetric [crypto.MAC] seam cannot separate the two roles.
 //
 // # Provided implementations
 //
-//   - go.thesmos.sh/core/crypto/sign/ed25519 — Ed25519 PureEdDSA
-//     per RFC 8032 §5.1.6, backed by [crypto/ed25519]. [Signer]
-//     only — see "Streaming" below.
-//   - go.thesmos.sh/core/crypto/sign/ecdsap384 — ECDSA over NIST
-//     P-384 with SHA-384 hashing per FIPS 186-5, ASN.1 DER
-//     signatures, backed by [crypto/ecdsa]. Implements both
-//     [Signer] and [StreamingSigner].
+//   - go.thesmos.sh/core/crypto/sign/ed25519: Ed25519 PureEdDSA per
+//     RFC 8032 §5.1.6, backed by [crypto/ed25519]. [Signer] only, see
+//     Streaming.
+//   - go.thesmos.sh/core/crypto/sign/ecdsap384: ECDSA over NIST P-384
+//     with SHA-384 per FIPS 186-5 and ASN.1 DER signatures, backed by
+//     [crypto/ecdsa]. Implements [Signer] and [StreamingSigner].
+//   - go.thesmos.sh/core/crypto/sign/mldsa: ML-DSA-44, ML-DSA-65 and
+//     ML-DSA-87 per FIPS 204, backed by [crypto/mldsa]. [Signer] only.
 //
-// Future additions land additively:
-//
-//   - PQ signatures (ML-DSA per FIPS 204, SLH-DSA per FIPS 205)
-//     when the stdlib promotes them out of internal/fips140.
-//     Both are hash-then-sign and will satisfy [StreamingSigner].
-//   - Threshold signing (FROST per RFC 9591) ships as its own
-//     subpackage when consumers need it; the trivial 1-of-1 case
-//     reduces to plain Ed25519.
-//
-// FIPS-gated wrappers (hard-refusal-outside-FIPS-mode) live in
-// consumer modules — they encode policy, not primitive. The
-// non-gated implementations in this package run through
-// Go's FIPS-validated module under `GODEBUG=fips140=on`
-// transparently.
+// The implementations run through Go's FIPS 140-3 module when
+// GODEBUG=fips140=on is set. This package does not refuse to run
+// outside FIPS mode. A caller that must refuse applies that policy
+// itself.
 //
 // # Algorithm vocabulary
 //
-// Each [Signer] reports its algorithm via [Verifier.Algorithm];
-// the values come from the open-string vocabulary in
-// [crypto.Algorithm] (for example [crypto.AlgEd25519],
-// [crypto.AlgECDSAP384]). Receipts persist the algorithm string
-// so verifiers select the matching [Verifier] implementation
-// offline.
+// Each [Signer] reports its algorithm through [Verifier.Algorithm] as a
+// value of the open-string vocabulary [crypto.Algorithm], for example
+// [crypto.AlgEd25519] or [crypto.AlgMLDSA87]. Receipts persist the
+// algorithm string, so a verifier selects the matching [Verifier]
+// implementation offline.
 //
 // # KeyID
 //
-// [KeyID] is a 16-byte value-type identifier for a specific
-// public key, distinct from [crypto.ID] (which identifies an
-// implementation, not a key). Each implementation derives a
-// canonical [KeyID] from its public-key bytes via a per-package
-// `KeyIDFromPub` helper:
+// [KeyID] is a 16-byte value that identifies one public key. It differs
+// from [crypto.ID], which identifies an implementation. Each
+// implementation derives a canonical [KeyID] from its public-key bytes
+// through a KeyIDFromPub function in its own package:
 //
 //   - Ed25519: SHA-256(raw 32 public-key bytes)[:16].
 //   - ECDSA P-384: SHA-256(SEC 1 uncompressed point:
 //     0x04 || X(48 BE) || Y(48 BE))[:16].
+//   - ML-DSA: SHA-256(FIPS 204 public-key encoding)[:16].
 //
-// These derivations are part of the public contract — the same
-// public key produces the same KeyID across builds, languages,
-// and verifier services. The per-package `TestKeyIDStability`
-// fixture locks the encoding via hardcoded vectors.
+// These derivations are part of the public contract. The same public
+// key produces the same KeyID across builds, languages and verifier
+// services. Each package's TestKeyIDStability pins its derivation with
+// fixed vectors.
 //
 // # Streaming
 //
-// Hash-then-sign algorithms (ECDSA P-384 today; ML-DSA, SLH-DSA,
-// Ed25519ph in the future) support streaming via the optional
-// [StreamingSigner] / [StreamingVerifier] capability interfaces.
-// Consumers signing arbitrary algorithms type-assert and fall
-// back to whole-message [Signer.Sign] otherwise.
+// A hash-then-sign algorithm can sign a stream through the optional
+// [StreamingSigner] and [StreamingVerifier] capabilities. ECDSA P-384
+// implements them. A consumer that signs with any algorithm asserts for
+// the capability and falls back to whole-message [Signer.Sign].
 //
 // Ed25519 PureEdDSA cannot stream. RFC 8032 §5.1.6 defines:
 //
 //	R = SHA-512(dom2 || prefix || M) mod L
 //	S = (r + SHA-512(R || A || M) * s) mod L
 //
-// The message M appears in two SHA-512 computations, with the
-// second depending on the first via R. A streaming API that
-// accepted M once would force the implementation to buffer it
-// internally — that's not streaming, it's "buffer and hash
-// twice at finalize." The seam refuses to ship dishonest
-// surface; Ed25519 [Signer] does not implement [StreamingSigner].
+// The message M appears in two SHA-512 computations, and the second
+// depends on the first through R. A streaming signer would have to
+// buffer M and hash it twice when the stream closes, so the Ed25519
+// [Signer] does not implement [StreamingSigner].
+//
+// # Signing across a process boundary
+//
+// A [Signer] backed by a hosted key service or a hardware module
+// implements [ContextSigner], so a caller can bound the wait with a
+// context. Callers sign through [SignContext], which uses the
+// capability when a signer has it and calls [Signer.Sign] otherwise.
+// The in-process signers in this module need no context and do not
+// implement it.
 //
 // # Failure semantics
 //
-// Two failure classes, two disciplines:
+// The package separates two classes of failure:
 //
-//   - Runtime errors — entropy exhaustion (ECDSA), transport
-//     faults (future threshold), anything caused by the
-//     environment — are returned through error channels.
-//   - Verification failure returns a single bool. Distinguishing
-//     malformed-signature from cryptographic-mismatch through
-//     separate returns risks timing-side-channel oracles;
-//     [Verifier.Verify] collapses every failure to false.
-//     Callers requiring per-failure diagnostics validate
-//     signature length and format separately before calling
-//     Verify.
+//   - Runtime errors are returned. They include entropy exhaustion in
+//     ECDSA signing and anything else the environment causes.
+//   - A failed verification returns false. Separate results for a
+//     malformed signature and a cryptographic mismatch would risk a
+//     timing side channel, so [Verifier.Verify] collapses every
+//     failure to false. A caller that needs per-failure diagnostics
+//     checks the signature's length and format before it calls Verify.
 //
-// Constructor errors are returned (wrong-curve, wrong-size key)
-// — these are runtime input, not programmer error, and panic
-// would conflict with the no-panic-in-production policy.
+// Constructors return errors for a wrong curve or a wrong key size.
+// Those are runtime input and not programmer errors, and the module
+// does not panic in production code.
 //
-// # Generate API asymmetry (Ed25519 vs ECDSA P-384)
+// # Generate API asymmetry
 //
-// The two implementations have intentionally different
-// constructors:
+// The constructors differ deliberately. Each one's signature reflects
+// what the underlying standard library function honours:
 //
-//   - [crypto/sign/ed25519.Generate] takes a [rand.Rand].
-//     Stdlib's [crypto/ed25519.GenerateKey] honours its
-//     [io.Reader] argument, so a deterministic [rand.Rand]
-//     (e.g. [rand/seeded.Rand]) produces deterministic keys
-//     for tests.
-//   - [crypto/sign/ecdsap384.Generate] takes no argument.
-//     Stdlib's [crypto/ecdsa.GenerateKey] in Go 1.26+ ignores
-//     any supplied [io.Reader] and draws from the runtime's
-//     internal entropy unless `GODEBUG=cryptocustomrand=1` is
-//     set. Accepting a [rand.Rand] that the stdlib silently
-//     ignores would be a misleading API shape — symmetry that's
-//     a lie. Tests requiring deterministic ECDSA key generation
-//     use [testing/cryptotest.SetGlobalRandom], which seeds the
-//     runtime's internal RNG.
-//
-// The asymmetry is deliberate: each constructor's signature
-// reflects what the underlying stdlib actually honours. If a
-// future Go release restores reader-honouring behaviour for
-// ECDSA, the ECDSA `Generate` signature can grow a [rand.Rand]
-// parameter non-breakingly via a separate constructor.
+//   - [go.thesmos.sh/core/crypto/sign/ed25519.Generate] and
+//     [go.thesmos.sh/core/crypto/sign/mldsa.Generate] take a
+//     [go.thesmos.sh/core/rand.Rand]. [crypto/ed25519.GenerateKey]
+//     honours its [io.Reader], and the ML-DSA Generate reads its
+//     32-byte seed from the source. A deterministic source, such as
+//     [go.thesmos.sh/core/rand/seeded.Rand], produces deterministic
+//     keys for tests.
+//   - [go.thesmos.sh/core/crypto/sign/ecdsap384.Generate] takes no
+//     argument. Since Go 1.26, [crypto/ecdsa.GenerateKey] ignores its
+//     [io.Reader] and reads the runtime's internal entropy unless
+//     GODEBUG=cryptocustomrand=1 is set. A source parameter that the
+//     standard library ignores would mislead the caller. Tests that
+//     need deterministic ECDSA keys use
+//     [testing/cryptotest.SetGlobalRandom], which seeds the runtime's
+//     internal generator.
 //
 // # Allocation contract
 //
-// [Verifier.KeyID], [Verifier.PublicKey], [Verifier.Algorithm]
-// are zero-allocation. [Verifier.Verify] is zero-allocation on
-// Ed25519 (the stdlib primitive avoids heap allocation); ECDSA
-// P-384 verification allocates because [crypto/ecdsa.VerifyASN1]
-// performs big.Int arithmetic — a stdlib constraint we can't
-// avoid without replacing the verification primitive.
+// [Verifier.KeyID], [Verifier.PublicKey] and [Verifier.Algorithm] are
+// zero-allocation. [Verifier.Verify] is zero-allocation for Ed25519 and
+// ML-DSA. ECDSA P-384 verification allocates, because
+// [crypto/ecdsa.VerifyASN1] performs big.Int arithmetic.
 // Implementations document their own allocation behaviour.
 //
-// [Signer.Sign] allocates the returned signature slice — the
-// stdlib's signing primitives ([crypto/ed25519.Sign],
-// [crypto/ecdsa.SignASN1]) do not expose buffer-passing APIs,
-// so per-call allocation is unavoidable. Hot-path consumers
-// amortise this by signing once per batch (batch-root mode)
-// rather than per entry.
+// [Signer.Sign] allocates the returned signature, because the standard
+// library's signing functions, [crypto/ed25519.Sign],
+// [crypto/ecdsa.SignASN1] and [crypto/mldsa.PrivateKey.Sign], take no
+// destination buffer. A hot-path consumer signs once per batch and not
+// once per entry.
 package sign

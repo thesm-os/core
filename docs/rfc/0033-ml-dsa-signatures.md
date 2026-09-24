@@ -19,9 +19,9 @@ We propose a package `crypto/sign/mldsa` that implements `sign.Signer`
 and `sign.Verifier` for ML-DSA-44, ML-DSA-65 and ML-DSA-87, the
 post-quantum signature scheme of FIPS 204, over the standard library's
 `crypto/mldsa`. The FIPS 204 context string is fixed when a signer or
-verifier is built. One key can therefore sign for several purposes
-without one purpose's signature verifying for another. Every file of
-the package requires Go 1.27. Core's minimum Go version remains 1.26.
+verifier is built, so one key can sign for one purpose per signer
+without one purpose's signature verifying for another. Core's minimum
+Go version is 1.27.0, the first release with `crypto/mldsa`.
 
 ## Motivation
 
@@ -40,8 +40,6 @@ the package requires Go 1.27. Core's minimum Go version remains 1.26.
 ### The package
 
 ```go
-//go:build go1.27
-
 // Package mldsa implements [sign.Signer] and [sign.Verifier] for
 // ML-DSA, the module-lattice signature scheme of FIPS 204, over
 // [crypto/mldsa].
@@ -160,16 +158,11 @@ both.
 
 ### Go version
 
-Core's module declares Go 1.26.6, and `crypto/mldsa` is new in Go
-1.27. Every file of the package, its tests included, starts with
-`//go:build go1.27`, which sets the file's Go version. The `vet`
-analyzer `stdversion` checks symbols against that version. On a Go 1.26
-toolchain the package contains no files, and importing it fails with
-"build constraints exclude all Go files". Only callers of ML-DSA need
-Go 1.27. The Go project supports each major release "until there are
-two newer major releases", so Go 1.26 leaves support when Go 1.28 is
-released. Core then raises its module minimum to 1.27 and drops the
-tags.
+Core's module declares `go 1.27.0`. The package builds wherever core
+builds and does not need a build constraint. Go 1.27.1 contains no
+security fixes, so the directive declares 1.27.0 and not 1.27.1. CI
+resolves its toolchain from the directive, so every CI run tests the
+declared minimum.
 
 ### Private keys
 
@@ -178,13 +171,13 @@ A private key is its 32-byte FIPS 204 seed. `New` takes the seed and
 signing key. RFC 9881, which defines ML-DSA keys for X.509, makes the
 seed the RECOMMENDED format for storing and transmitting a private key.
 The expansion is one-way, so a store that kept only the expanded key
-could never recover the seed. A custodian therefore stores 32 bytes per
-key, whatever the parameter set.
+could never recover the seed. A custodian stores 32 bytes per key,
+whatever the parameter set.
 
 ### Cost
 
 Measured with Go 1.27.1 on an AMD Ryzen 9 9950X3D, three runs of 2,000
-operations, 64-byte messages, while the machine carried other load:
+operations, 64-byte messages, on a machine running other work:
 
 | Parameter set | Sign | Verify | Signature | Allocations |
 |---|---|---|---|---|
@@ -211,8 +204,8 @@ var (
     // classifies as errs.Invalid.
     ErrContext = errs.WithClass(errors.New("mldsa: context longer than 255 bytes"), errs.Invalid)
 
-    // ErrParams reports a Params value that names no parameter set. It
-    // classifies as errs.Invalid.
+    // ErrParams reports a Params value other than MLDSA44, MLDSA65 and
+    // MLDSA87. It classifies as errs.Invalid.
     ErrParams = errs.WithClass(errors.New("mldsa: unknown parameter set"), errs.Invalid)
 )
 ```
@@ -221,14 +214,19 @@ var (
 
 - The conformance suite for `sign.Signer` and `sign.Verifier` runs for
   each parameter set.
-- Known-answer tests replay the ACVP vectors for ML-DSA key generation
-  and signature verification.
+- Signatures cross-verify in both directions with `crypto/mldsa` used
+  directly.
 - A signature made under one context fails verification under another,
   and under an empty one.
-- `TestKeyIDStability` pins the key ID of a fixed public key for each
-  parameter set.
+- `TestKeyIDStability` pins the key ID of the public key that a fixed
+  seed gives, for each parameter set.
 - `TestZeroAlloc` covers `Verify`, `KeyID`, `PublicKey` and
   `Algorithm`.
+
+The standard library replays the ACVP known-answer tests in
+`crypto/internal/fips140/mldsa`. Those vectors hash the expanded
+private key, which `crypto/mldsa` does not expose, so core cannot
+replay them through the public API.
 
 ## Alternatives considered
 
@@ -255,13 +253,21 @@ context fixed at construction gives each purpose its own signer value,
 which the caller already passes to the code that signs for that
 purpose.
 
-### C. Raise core's minimum Go version to 1.27
+### C. Keep Go 1.26 and put build constraints on the package
 
-The build tags would not be needed.
+Every file of the package would start with `//go:build go1.27`, and the
+rest of core would keep its Go 1.26 minimum. On a Go 1.26 toolchain the
+package would contain no files.
 
-**Why not:** Go 1.26 is supported until Go 1.28 is released. Raising
-the module minimum now would drop every caller on Go 1.26, including
-those that never sign with ML-DSA.
+**Why not:**
+
+- The constraint has to be on every file, generated tests included.
+  `testkit sentinel` writes its test file without the source's
+  constraint, so the package's own tests would fail to build on Go 1.26.
+- A caller on Go 1.26 who imports the package gets a build error either
+  way.
+- Core's CI tools already need Go 1.27. `github.com/palantir/go-license`
+  v1.50.0 declares `go 1.27.0`, and `make bootstrap` installs it.
 
 ### D. Deterministic signing
 
@@ -278,9 +284,9 @@ signatures: they verify signatures and pin keys, not signature bytes.
 
 - ML-DSA signatures are 38 to 72 times the size of an Ed25519
   signature, and signing costs 20 to 40 times as much.
-- Build tags make the package invisible on Go 1.26. A caller on Go 1.26
-  who imports it gets a build error, not a missing-feature error at
-  run time.
+- Core's minimum Go version rises to 1.27.0 for every caller, including
+  callers that never sign with ML-DSA. The Go project supports Go 1.26
+  until Go 1.28 is released.
 - A signer per purpose means a caller that signs for three purposes
   builds three signers over one seed.
 - `Signer.Seed` exposes the private seed, as the standard library's
@@ -309,13 +315,13 @@ None.
 - RFC 9881, "Internet X.509 Public Key Infrastructure -- Algorithm
   Identifiers for the Module-Lattice-Based Digital Signature Algorithm
   (ML-DSA)", <https://www.rfc-editor.org/info/rfc9881/>.
-- The Go project, release policy,
+- The Go project, release history and policy,
   <https://go.dev/doc/devel/release>.
 - NSA, "The Commercial National Security Algorithm Suite 2.0 and
   Quantum Computing FAQ",
   <https://media.defense.gov/2022/Sep/07/2003071836/-1/-1/0/CSI_CNSA_2.0_FAQ_.PDF>.
-- Go 1.27.1: `crypto/mldsa`, `api/go1.27.txt`, and the `stdversion`
-  analyzer of `go vet`.
+- Go 1.27.1: `crypto/mldsa`, `api/go1.27.txt`, and
+  `crypto/internal/fips140/mldsa/mldsa_test.go`.
 - RFC-0013, the signing seam, and its plan for post-quantum
   signatures.
 - ADR-0016, persisted encodings are frozen.
