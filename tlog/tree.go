@@ -119,14 +119,14 @@ func Root(h crypto.Hasher, leaves []crypto.Digest) crypto.Digest {
 		n++
 		for j := uint64(i); j&1 == 1; j >>= 1 {
 			n--
-			stack[n-1] = nodeHash(s, scratch[:], stack[n-1], stack[n])
+			stack[n-1] = nodeHash(s, *scratch, stack[n-1], stack[n])
 		}
 	}
 
 	//nolint:gosec // G602: leaves is not empty, so n is at least one
 	root := stack[n-1]
 	for k := n - 2; k >= 0; k-- {
-		root = nodeHash(s, scratch[:], stack[k], root)
+		root = nodeHash(s, *scratch, stack[k], root)
 	}
 
 	return root

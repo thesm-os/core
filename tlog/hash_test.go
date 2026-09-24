@@ -49,6 +49,16 @@ func TestNodeHash(t *testing.T) {
 		testkit.Equal(t, tlog.NodeHash(h, left, right).Bytes(), want[:], "the node hash must be RFC 6962's")
 	})
 
+	t.Run("is SHA-512 of 0x01 and both children over SHA-512", func(t *testing.T) {
+		t.Parallel()
+
+		h512 := coresha512.New512()
+		l512, r512 := h512.Hash([]byte("left")), h512.Hash([]byte("right"))
+		want := sha512.Sum512(append(append([]byte{0x01}, l512.Bytes()...), r512.Bytes()...))
+		testkit.Equal(t, tlog.NodeHash(h512, l512, r512).Bytes(), want[:],
+			"the node hash must cover both 64-byte children")
+	})
+
 	t.Run("depends on the order of the children", func(t *testing.T) {
 		t.Parallel()
 		testkit.NotEqual(t, tlog.NodeHash(h, right, left), tlog.NodeHash(h, left, right),

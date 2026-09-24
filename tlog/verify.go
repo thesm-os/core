@@ -32,12 +32,12 @@ func VerifyInclusion(h crypto.Hasher, index, size uint64, leaf, root crypto.Dige
 		}
 
 		if fn&1 == 1 || fn == sn {
-			r = nodeHash(s, scratch[:], p, r)
+			r = nodeHash(s, *scratch, p, r)
 			// fn equals sn here and sn is not zero, so the shift ends at
 			// a set bit.
 			fn, sn = shiftUntil(fn, sn, 1)
 		} else {
-			r = nodeHash(s, scratch[:], r, p)
+			r = nodeHash(s, *scratch, r, p)
 		}
 
 		fn >>= 1
@@ -101,11 +101,11 @@ func VerifyConsistency(
 		}
 
 		if fn&1 == 1 || fn == sn {
-			fr = nodeHash(s, scratch[:], c, fr)
-			sr = nodeHash(s, scratch[:], c, sr)
+			fr = nodeHash(s, *scratch, c, fr)
+			sr = nodeHash(s, *scratch, c, sr)
 			fn, sn = shiftUntil(fn, sn, 1)
 		} else {
-			sr = nodeHash(s, scratch[:], sr, c)
+			sr = nodeHash(s, *scratch, sr, c)
 		}
 
 		fn >>= 1

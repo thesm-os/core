@@ -21,8 +21,11 @@ var nodePrefix = [1]byte{byte(nodeRole)}
 
 // scratchPool supplies the buffer that [NodeHash] writes two digests
 // into. A digest passed to a Stream directly would escape to the heap.
-var scratchPool = pool.NewPool(func() *[2 * crypto.MaxDigestSize]byte {
-	return new([2 * crypto.MaxDigestSize]byte)
+// The size is computed in the function body, where coverage counts it.
+var scratchPool = pool.NewPool(func() *[]byte {
+	b := make([]byte, 2*crypto.MaxDigestSize)
+
+	return &b
 })
 
 // LeafHash returns the RFC 9162 hash of a leaf: HASH(0x00 || data).
@@ -49,9 +52,9 @@ func LeafHash(h crypto.Hasher, data []byte) crypto.Digest {
 // Zero alloc on the warm path. The scratch comes from a package pool.
 func NodeHash(h crypto.Hasher, left, right crypto.Digest) crypto.Digest {
 	scratch := scratchPool.Get()
-	n := copy(scratch[:], left.Bytes())
-	n += copy(scratch[n:], right.Bytes())
-	d := h.HashTagged(nodeRole, scratch[:n])
+	n := copy(*scratch, left.Bytes())
+	n += copy((*scratch)[n:], right.Bytes())
+	d := h.HashTagged(nodeRole, (*scratch)[:n])
 	scratchPool.Put(scratch)
 
 	return d
