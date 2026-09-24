@@ -141,8 +141,8 @@ does a broken store for a case the suite no longer has.
 
 This is mutation testing applied to the suite instead of the code: each
 broken store is a hand-written mutant of the reference, and the suite
-must kill it. Core's gate already requires gremlins to kill at least
-99% of the mutants of the code in 17 of its 20 gated layers. Nothing
+must kill it. Core's gate already requires gremlins to kill every
+mutant of the code in 17 of its 20 gated layers. Nothing
 checks the suites that other modules rely on, which is the gap this
 closes.
 
