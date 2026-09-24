@@ -13,11 +13,10 @@ import (
 )
 
 // HasherContractAssertions returns the generic assertions every
-// [crypto.Hasher] implementation must satisfy: determinism,
-// stream / Hash equivalence, Sum-non-resetting, Reset semantics.
-// Compose with [HasherIDAssertion], [HasherAlgorithmAssertion],
-// and [HasherCrossStdlibAssertion] at the consumer call site to
-// add impl-specific constants and byte-exact stdlib equivalence.
+// [crypto.Hasher] implementation must satisfy. Compose them with
+// [HasherIDAssertion], [HasherAlgorithmAssertion] and
+// [HasherCrossStdlibAssertion] at the call site to add the
+// implementation's constants and byte-exact stdlib equivalence.
 //
 //	cryptotest.AssertHasherContract(t, factory,
 //	    append(cryptotest.HasherContractAssertions(),
@@ -26,14 +25,37 @@ import (
 //	        cryptotest.HasherCrossStdlibAssertion(stdlibSum),
 //	    )...,
 //	)
+//
+// The assertions cover:
+//
+//   - Hash: determinism, nil equal to empty, and distinct digests for
+//     distinct inputs.
+//   - The tagged byte layout: HashTagged is one role byte followed by
+//     the data, and CombineTagged is one role byte followed by both
+//     operands, with no framing or length prefix.
+//   - Domain separation: a payload of two concatenated sibling digests,
+//     offered as a leaf, does not hash to their interior node. Distinct
+//     binary roles over one pair, such as a chain link, a batch node
+//     and an accumulator node, give distinct digests.
+//   - Each arity half refuses the other's roles at the 0x80 boundary,
+//     and the roles on either side of it are accepted. Only a refusal
+//     test proves the guard exists, and without it one role could serve
+//     both a leaf and a node.
+//   - CombineTagged refuses the zero Digest, because a chain's first
+//     link is a unary role over one operand, and refuses an operand of
+//     the wrong width.
+//   - Stream: Write and Sum equal Hash, split writes equal one write of
+//     the concatenation, Reset clears the state, and Sum does not
+//     reset it.
+//
+// The roles are example bytes. Core ships none, and a hasher that
+// passes makes no claim about the roles any protocol assigns.
 func HasherContractAssertions() []HasherOption {
 	return []HasherOption{
-		// --- Hash ---
-
 		HasherCustom("Hash is deterministic", func(t *testing.T, h crypto.Hasher) {
 			input := []byte("the quick brown fox jumps over the lazy dog")
 			testkit.True(t, h.Hash(input).Equal(h.Hash(input)),
-				"Hash(x) must equal Hash(x) — Hash must be deterministic")
+				"Hash(x) must equal Hash(x)")
 		}),
 
 		HasherCustom("Hash of nil equals Hash of empty slice", func(t *testing.T, h crypto.Hasher) {
@@ -46,18 +68,11 @@ func HasherContractAssertions() []HasherOption {
 				"distinct inputs must not collide to the same digest")
 		}),
 
-		// --- Tagged (domain-separated) ---
-		//
-		// The roles below are example bytes. Core ships none, and a
-		// hasher passing these makes no claim about which roles any
-		// protocol assigns — what is asserted is the byte layout and
-		// the arity split, both of which every implementation owes.
-
 		HasherCustom("HashTagged is the role byte followed by the data", func(t *testing.T, h crypto.Hasher) {
 			data := []byte(`{"act":"infer","id":1}`)
 			framed := append([]byte{0x01}, data...)
 			testkit.True(t, h.HashTagged(0x01, data).Equal(h.Hash(framed)),
-				"HashTagged(r, data) must equal Hash(r || data) — one role byte, no framing")
+				"HashTagged(r, data) must equal Hash(r || data), with one role byte and no framing")
 		}),
 
 		HasherCustom("CombineTagged is the role byte followed by both operands", func(t *testing.T, h crypto.Hasher) {
@@ -66,7 +81,7 @@ func HasherContractAssertions() []HasherOption {
 			framed := append([]byte{0x84}, left.Bytes()...)
 			framed = append(framed, right.Bytes()...)
 			testkit.True(t, h.CombineTagged(0x84, left, right).Equal(h.Hash(framed)),
-				"CombineTagged(r, l, x) must equal Hash(r || l || x) — no length prefixes")
+				"CombineTagged(r, l, x) must equal Hash(r || l || x), with no length prefixes")
 		}),
 
 		HasherCustom("HashTagged accepts empty data", func(t *testing.T, h crypto.Hasher) {
@@ -82,13 +97,10 @@ func HasherContractAssertions() []HasherOption {
 			testkit.True(t, h.CombineTagged(0x84, left, right).Equal(h.CombineTagged(0x84, left, right)),
 				"CombineTagged must be deterministic")
 			testkit.False(t, h.CombineTagged(0x84, left, right).Equal(h.CombineTagged(0x84, right, left)),
-				"CombineTagged must be asymmetric — operand order must matter")
+				"CombineTagged must depend on operand order")
 		}),
 
 		HasherCustom("a crafted leaf cannot collide with an interior node", func(t *testing.T, h crypto.Hasher) {
-			// The second preimage the role byte exists to close: a
-			// caller-chosen payload equal to two concatenated sibling
-			// digests, offered as a leaf.
 			left := h.Hash([]byte("left"))
 			right := h.Hash([]byte("right"))
 			payload := append(append([]byte{}, left.Bytes()...), right.Bytes()...)
@@ -97,9 +109,6 @@ func HasherContractAssertions() []HasherOption {
 		}),
 
 		HasherCustom("distinct binary roles over one pair give distinct digests", func(t *testing.T, h crypto.Hasher) {
-			// A chain link, a batch node and an accumulator node are all
-			// interior and must not collide with each other — the
-			// multiplicity a fixed two-value scheme cannot express.
 			left := h.Hash([]byte("left"))
 			right := h.Hash([]byte("right"))
 			link := h.CombineTagged(0x83, left, right)
@@ -111,14 +120,8 @@ func HasherContractAssertions() []HasherOption {
 		}),
 
 		HasherCustom("the arity halves refuse each other at 0x80", func(t *testing.T, h crypto.Hasher) {
-			// The refusal IS the mechanism: without it one role could
-			// serve both a leaf and a node, and the collision above
-			// becomes constructible again. Only a refusal test proves a
-			// guard exists.
 			d := h.Hash(nil)
 
-			// The boundary itself — these must not panic, and a panic
-			// fails the assertion directly.
 			_ = h.HashTagged(0x7F, nil)
 			_ = h.CombineTagged(0x80, d, d)
 
@@ -133,8 +136,6 @@ func HasherContractAssertions() []HasherOption {
 		}),
 
 		HasherCustom("CombineTagged refuses the zero Digest", func(t *testing.T, h crypto.Hasher) {
-			// There is no genesis sentinel in the tagged vocabulary: a
-			// chain's first link is a unary role over one operand.
 			var zero crypto.Digest
 			d := h.Hash(nil)
 
@@ -150,14 +151,12 @@ func HasherContractAssertions() []HasherOption {
 			wrong := otherWidthDigest(d.Size())
 
 			testkit.False(t, wrong.IsZero(),
-				"the wrong-width probe must not be the zero Digest — that is a distinct refusal")
+				"the wrong-width probe must not be the zero Digest, which is refused for another reason")
 			testkit.Panics(t, func() { _ = h.CombineTagged(0x84, wrong, d) },
 				"CombineTagged(r, wrong-left, correct) must panic")
 			testkit.Panics(t, func() { _ = h.CombineTagged(0x84, d, wrong) },
 				"CombineTagged(r, correct, wrong-right) must panic")
 		}),
-
-		// --- Stream ---
 
 		HasherCustom("Stream Write+Sum equals Hash over same bytes", func(t *testing.T, h crypto.Hasher) {
 			payload := []byte("the quick brown fox jumps over the lazy dog")
@@ -194,20 +193,19 @@ func HasherContractAssertions() []HasherOption {
 			s := h.NewStream()
 			defer s.Close()
 			_, _ = s.Write([]byte("ab"))
-			_ = s.Sum() // snapshot
+			_ = s.Sum()
 			_, _ = s.Write([]byte("c"))
 			testkit.True(t, s.Sum().Equal(h.Hash([]byte("abc"))),
-				`Sum must snapshot only — must not reset state`)
+				`Sum must take a snapshot and not reset the state`)
 		}),
 	}
 }
 
 // otherWidthDigest returns a non-zero [crypto.Digest] whose width is
 // not size, so a width precondition can be probed without a
-// consumer-supplied fixture. The bytes are 0xAB rather than zero
-// because an all-zero digest of the wrong width would still be
-// refused, but for the reason the zero-Digest assertion already
-// covers.
+// consumer-supplied fixture. The bytes are 0xAB: an all-zero digest of
+// the wrong width is also refused, but for the reason the zero-Digest
+// assertion already covers.
 func otherWidthDigest(size int) crypto.Digest {
 	if size == crypto.DigestSize256 {
 		var b [crypto.DigestSize512]byte
@@ -243,13 +241,10 @@ func HasherAlgorithmAssertion(want crypto.Algorithm) HasherOption {
 }
 
 // HasherCrossStdlibAssertion verifies that [crypto.Hasher.Hash]
-// produces byte-identical output to the supplied stdlib
-// reference across a sweep of test inputs (empty, short, FIPS
-// 180-4 §B-style two-block, and 4 KiB random-ish data).
-//
-// Lock byte-exact compatibility with the stdlib reference so the
-// hash implementation cannot drift silently from the published
-// algorithm.
+// produces byte-identical output to the supplied stdlib reference
+// across a sweep of inputs: empty, short, a FIPS 180-4 §B-style
+// two-block message, and 4 KiB of 0xAB. It pins the implementation to
+// the published algorithm.
 func HasherCrossStdlibAssertion(stdlib func([]byte) []byte) HasherOption {
 	return HasherCustom("Hash matches stdlib byte-for-byte", func(t *testing.T, h crypto.Hasher) {
 		cases := []struct {
@@ -269,4 +264,34 @@ func HasherCrossStdlibAssertion(stdlib func([]byte) []byte) HasherOption {
 				tc.name+": Hash output must byte-match stdlib")
 		}
 	})
+}
+
+// HasherZeroAllocCases returns one call for each zero-alloc operation
+// of [crypto.Hasher] and [crypto.Stream], keyed by name, for a test
+// that measures them with testing.AllocsPerRun.
+//
+// Every call goes through the interfaces, over data. data must be on
+// the heap, as a caller that must not allocate passes it: a slice
+// passed through an interface escapes at the call site, so stack data
+// would measure the caller and not the implementation. The stream
+// calls borrow a stream from h's pool and return it, so every call
+// after the first finds the pool warm.
+func HasherZeroAllocCases(h crypto.Hasher, data []byte) map[string]func() {
+	d := h.Hash(data)
+
+	return map[string]func(){
+		"ID and Algorithm": func() {
+			_ = h.ID()
+			_ = h.Algorithm()
+		},
+		"Hash":          func() { _ = h.Hash(data) },
+		"HashTagged":    func() { _ = h.HashTagged(SampleUnaryRole(h), data) },
+		"CombineTagged": func() { _ = h.CombineTagged(SampleBinaryRole(h), d, d) },
+		"NewStream, Write, Sum and Close": func() {
+			s := h.NewStream()
+			_, _ = s.Write(data)
+			_ = s.Sum()
+			s.Close()
+		},
+	}
 }

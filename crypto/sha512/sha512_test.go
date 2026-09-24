@@ -141,8 +141,27 @@ func BenchmarkSHA512Hasher(b *testing.B) {
 
 // --- impl-specific FIPS known-answer vectors ---
 
-// TestSHA384FIPSVectors locks the SHA-384 impl against FIPS
-// 180-4 §C.1 / §C.2 vectors.
+// TestZeroAlloc enforces the allocation contract of SHA-384 and
+// SHA-512 through the crypto.Hasher and crypto.Stream interfaces, with
+// data on the heap, as a caller that must not allocate passes it.
+// testing.AllocsPerRun reads a process-global malloc counter, so this
+// test does not call t.Parallel.
+//
+//nolint:paralleltest // see comment above
+func TestZeroAlloc(t *testing.T) {
+	data := make([]byte, 1024)
+
+	for alg, h := range map[string]crypto.Hasher{"SHA-384": newSHA384(), "SHA-512": newSHA512()} {
+		for name, fn := range cryptotest.HasherZeroAllocCases(h, data) {
+			t.Run(alg+" "+name, func(t *testing.T) {
+				testkit.Equal(t, testing.AllocsPerRun(100, fn), float64(0), name+" must not allocate on the warm path")
+			})
+		}
+	}
+}
+
+// TestSHA384FIPSVectors checks the SHA-384 implementation against the
+// FIPS 180-4 §C.1 and §C.2 vectors.
 func TestSHA384FIPSVectors(t *testing.T) {
 	t.Parallel()
 	cases := map[string]struct {
@@ -176,8 +195,8 @@ func TestSHA384FIPSVectors(t *testing.T) {
 	}
 }
 
-// TestSHA512FIPSVectors locks the SHA-512 impl against FIPS
-// 180-4 §C.3 / §C.4 vectors.
+// TestSHA512FIPSVectors checks the SHA-512 implementation against the
+// FIPS 180-4 §C.3 and §C.4 vectors.
 func TestSHA512FIPSVectors(t *testing.T) {
 	t.Parallel()
 	cases := map[string]struct {

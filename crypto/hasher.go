@@ -29,10 +29,9 @@ const IDSize = 16
 // Value type; pass by value. Zero alloc.
 type ID [IDSize]byte
 
-// String returns the hex-encoded ID. Allocates the result
-// string; intended for diagnostic output, not the hot path. Hex
-// is used (rather than ASCII trimming) so the string is
-// well-defined regardless of the byte content.
+// String returns the hex-encoded ID. It allocates the result string
+// and is meant for diagnostic output, not the hot path. Hex encoding
+// keeps the string well-defined whatever the byte content.
 func (id ID) String() string {
 	return hex.EncodeToString(id[:])
 }
@@ -70,14 +69,12 @@ func (id ID) String() string {
 //
 // There is no untagged two-operand combine. An unprefixed
 // H(left || right) is indistinguishable from the hash of a
-// caller-chosen payload of exactly two digest widths, which is how
-// a fabricated entry verifies against a shortened authentication
-// path; the operation was removed rather than documented, because
-// its only correct uses are the tagged ones. Anything building a
-// tree or a chain uses [Hasher.HashTagged] and
-// [Hasher.CombineTagged], where a [Role] byte separates the two
-// constructions and the role's high bit keeps a leaf role and a
-// node role from ever sharing one. See [Role].
+// caller-chosen payload of exactly two digest widths, which is how a
+// fabricated entry verifies against a shortened authentication path.
+// Its only correct uses are the tagged ones. Anything building a tree
+// or a chain uses [Hasher.HashTagged] and [Hasher.CombineTagged]. A
+// [Role] byte separates the two constructions, and the role's high bit
+// keeps a leaf role and a node role from ever sharing one. See [Role].
 //
 // [Hasher.Hash] survives untagged because a content address must be
 // the digest OF the bytes: prefixing it would make the address name
@@ -85,20 +82,25 @@ func (id ID) String() string {
 //
 // # Concurrency
 //
-// Implementations of [Hasher] must be safe for concurrent use;
-// consumers share one Hasher across many goroutines. The
-// returned [Stream] is NOT safe for concurrent use — each
-// goroutine that streams should hold its own.
+// Implementations of [Hasher] must be safe for concurrent use, and
+// consumers share one Hasher across many goroutines. The returned
+// [Stream] is NOT safe for concurrent use, and each goroutine that
+// streams uses its own.
 //
 // # Allocation contract
 //
-// [Hasher.ID], [Hasher.Algorithm], [Hasher.Hash],
-// [Hasher.HashTagged], and
-// [Hasher.CombineTagged] are zero-allocation on every
-// implementation in this module — [Hasher.HashTagged] on the warm
-// path, since it borrows a [Stream] from the same pool
-// [HashDomain] draws from. [Hasher.NewStream] allocates the
-// underlying hash state once.
+// [Hasher.ID], [Hasher.Algorithm], [Hasher.Hash], [Hasher.HashTagged]
+// and [Hasher.CombineTagged] do not allocate on any implementation in
+// this module. HashTagged borrows a [Stream] from the pool that
+// [HashDomain] also uses, so the first call after the pool is emptied
+// allocates one. [Hasher.NewStream] allocates the underlying hash
+// state once.
+//
+// These contracts count what an implementation allocates. A slice
+// passed through this interface escapes to the heap at the call site,
+// because the compiler cannot see the implementation. A caller that
+// must not allocate passes data that is already on the heap, such as a
+// reused buffer.
 type Hasher interface {
 	// ID returns the implementation's stable build-local
 	// identifier.
@@ -127,11 +129,11 @@ type Hasher interface {
 	// address is the digest OF the bytes, so prefixing it would
 	// make the address name something the bytes are not.
 	//
-	// r with the high bit set panics — 0x80–0xFF are binary roles,
-	// and admitting one here is exactly what would let a crafted
+	// r with the high bit set panics. The values 0x80–0xFF are
+	// binary roles, and admitting one here would let a crafted
 	// payload share bytes with an interior node. Empty data is
-	// legal: the digest of the role byte alone, which collides
-	// with nothing shorter.
+	// legal and gives the digest of the role byte alone, which
+	// collides with nothing shorter.
 	//
 	//testkit:sample SampleUnaryRole SampleBytes
 	HashTagged(r Role, data []byte) Digest
@@ -141,21 +143,20 @@ type Hasher interface {
 	// accumulator construction.
 	//
 	// r with the high bit clear panics. Both operands must have
-	// [Digest.Size] equal to this Hasher's output size; a mismatch
-	// panics, and the zero [Digest] is a mismatch here with its
-	// own diagnostic. There is no sentinel to admit — a chain's
-	// first link is its own unary role over one operand, not a
-	// combine with an absent one.
+	// [Digest.Size] equal to this Hasher's output size. A mismatch
+	// panics, and the zero [Digest] is a mismatch with its own
+	// diagnostic. A chain's first link is a unary role over one
+	// operand, so there is no sentinel to admit here.
 	//
 	//nolint:dupword // testkit directive: one builder per parameter, positional
 	//testkit:sample SampleBinaryRole SampleDigest SampleDigest
 	CombineTagged(r Role, left, right Digest) Digest
 
-	// NewStream returns a fresh [Stream] for streaming inputs
-	// that don't fit in memory or that compose multiple fields
-	// without per-field concatenation. Allocates the underlying
-	// hash state once; [Stream.Write] / [Stream.Sum] /
-	// [Stream.Reset] are zero-allocation thereafter.
+	// NewStream returns a fresh [Stream] for inputs that do not fit
+	// in memory, or that compose several fields without
+	// concatenating them. It allocates the underlying hash state
+	// once, and [Stream.Write], [Stream.Sum] and [Stream.Reset] do
+	// not allocate after that.
 	//
 	//testkit:nondeterministic
 	NewStream() Stream
@@ -182,17 +183,17 @@ type Hasher interface {
 // # Concurrency
 //
 // Streams are NOT safe for concurrent use. Each goroutine that
-// streams should hold its own [Stream].
+// streams uses its own [Stream].
 //
 // # Allocation contract
 //
-// [Stream.Write], [Stream.Sum], [Stream.Reset], and
-// [Stream.Close] are zero-allocation. The hash state and the
-// output buffer for [Stream.Sum] are allocated once by
-// [Hasher.NewStream] and reused thereafter; on impls that pool
-// streams, [Stream.Close] returns the instance to the pool, and
-// the next [Hasher.NewStream] call is zero-allocation when the
-// pool is warm.
+// [Stream.Write], [Stream.Sum], [Stream.Reset] and [Stream.Close] do
+// not allocate. [Hasher.NewStream] allocates the hash state and the
+// output buffer for [Stream.Sum] once. On implementations that pool
+// streams, [Stream.Close] returns the instance to the pool, and the
+// next [Hasher.NewStream] does not allocate while the pool is warm. A
+// slice passed to [Stream.Write] through this interface escapes to the
+// heap at the call site, as it does for [Hasher].
 type Stream interface {
 	io.Writer
 
@@ -207,17 +208,16 @@ type Stream interface {
 	// [Hasher.NewStream] result and can be reused.
 	Reset()
 
-	// Close releases the Stream back to its [Hasher]'s pool (or
-	// no-ops on impls that don't pool). The Stream MUST NOT be
-	// used after Close — subsequent Write/Sum/Reset calls have
-	// undefined behaviour.
+	// Close returns the Stream to its [Hasher]'s pool, and does
+	// nothing on implementations that do not pool. The Stream MUST
+	// NOT be used after Close, and later Write, Sum and Reset calls
+	// have undefined behaviour.
 	//
-	// One-shot consumers ([HashDomain], [HashReader]) Close
-	// after Sum to recycle the stream. Long-lived consumers —
-	// per-message hot paths that construct a Stream once and
-	// reuse it via [Stream.Reset] — never need to Close. The
-	// [Hasher]'s pool tolerates streams permanently held outside
-	// it (sync.Pool's factory creates a fresh instance on the
-	// next [Hasher.NewStream] call).
+	// One-shot consumers, such as [HashDomain] and [HashReader],
+	// Close after Sum to recycle the stream. A long-lived consumer
+	// that builds a Stream once and reuses it with [Stream.Reset]
+	// does not need to Close. The pool tolerates streams that are
+	// never returned, because sync.Pool's factory creates a fresh
+	// instance on the next [Hasher.NewStream].
 	Close()
 }

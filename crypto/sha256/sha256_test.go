@@ -16,9 +16,9 @@ import (
 	cryptosha256 "go.thesmos.sh/core/crypto/sha256"
 )
 
-// sha256ID is the canonical build-local identifier for the
-// SHA-256 [crypto.Hasher] — "sha256/v1" left-aligned with zero
-// padding to [crypto.IDSize].
+// sha256ID is the canonical build-local identifier for the SHA-256
+// [crypto.Hasher]: "sha256/v1", left-aligned and padded with zeros to
+// [crypto.IDSize].
 var sha256ID = crypto.ID{'s', 'h', 'a', '2', '5', '6', '/', 'v', '1'}
 
 // newHasher is the SUT factory shared by every testkit-driven
@@ -81,10 +81,10 @@ func FuzzSHA256HasherModel(f *testing.F) {
 	)
 }
 
-// BenchmarkSHA256Hasher runs the standard Hasher bench contract
-// — auto hot-path measurement for every method plus
-// PureAllocsWithin(0) gates for the documented zero-alloc paths
-// (Hash, the tagged pair, Algorithm, ID).
+// BenchmarkSHA256Hasher runs the standard Hasher bench contract: a
+// hot-path measurement for every method, and PureAllocsWithin(0)
+// gates for the documented zero-alloc paths (Hash, the tagged pair,
+// Algorithm and ID).
 func BenchmarkSHA256Hasher(b *testing.B) {
 	cryptotest.BenchmarkHasherContract(b, newHasher,
 		cryptotest.HasherBenchOnAlgorithm(bench.PureAllocsWithin[crypto.Hasher, crypto.Algorithm](0)),
@@ -97,12 +97,12 @@ func BenchmarkSHA256Hasher(b *testing.B) {
 
 // --- SHA-256-specific tests ---
 
-// TestSHA256FIPSVectors locks the impl against the FIPS 180-4
-// known-answer vectors. The contract suite's
-// HasherCrossStdlibAssertion covers byte-equivalence with stdlib
-// across a sweep of inputs, but the FIPS vectors are the
-// algorithm-of-record reference: failure here means our impl
-// AND stdlib have both drifted from the spec.
+// TestSHA256FIPSVectors checks the implementation against the FIPS
+// 180-4 known-answer vectors. The contract suite's
+// HasherCrossStdlibAssertion checks byte equivalence with the stdlib
+// across a sweep of inputs. The FIPS vectors are the algorithm of
+// record, so a failure here means the implementation and the stdlib
+// have both departed from the standard.
 func TestSHA256FIPSVectors(t *testing.T) {
 	t.Parallel()
 
@@ -133,15 +133,17 @@ func TestSHA256FIPSVectors(t *testing.T) {
 	}
 }
 
-// TestTaggedGoldenVectors locks the tagged byte layout against
-// accidental change. The generic conformance suite proves the shape
-// — one role byte, then operands, no framing — for every
-// implementation; these pin the resulting SHA-256 digests, so a
-// verifier written against them in another language stays in
-// agreement with this one.
+// TestTaggedGoldenVectors pins the tagged byte layout. The generic
+// conformance suite checks the shape for every implementation: one
+// role byte, then the operands, with no framing. These vectors pin the
+// resulting SHA-256 digests, so a verifier written against them in
+// another language agrees with this one.
 //
 // The role values are examples. Core ships none, and nothing here
-// binds any protocol to a registry.
+// binds any protocol to a registry. The crafted-leaf case is the
+// forgery the roles prevent: the attacker's payload is exactly the two
+// sibling digests, and its digest must differ from their interior
+// node's.
 func TestTaggedGoldenVectors(t *testing.T) {
 	t.Parallel()
 
@@ -203,8 +205,6 @@ func TestTaggedGoldenVectors(t *testing.T) {
 	t.Run("a crafted leaf and the interior node it targets differ", func(t *testing.T) {
 		t.Parallel()
 
-		// The forgery, priced: the attacker's payload is exactly the
-		// two sibling digests, and the two digests must not meet.
 		h := newHasher()
 		leaf0 := h.HashTagged(entryLeaf, payload0)
 		leaf1 := h.HashTagged(entryLeaf, payload1)
@@ -241,15 +241,33 @@ func TestTaggedGoldenVectors(t *testing.T) {
 	})
 }
 
-// TestZeroValueHasher locks the documented "zero value is
-// usable" property of [cryptosha256.Hasher] — it's a struct{}
-// type, so the zero value behaves identically to the
-// constructor's return.
+// TestZeroValueHasher checks the documented property that the zero
+// value of [cryptosha256.Hasher] is usable. The type is struct{}, so
+// the zero value behaves as the constructor's result does.
 func TestZeroValueHasher(t *testing.T) {
 	t.Parallel()
-	var z cryptosha256.Hasher
-	testkit.Equal(t, z.ID(), cryptosha256.New().ID(),
-		"zero-value Hasher must report the same ID as a constructed one")
-	testkit.Equal(t, z.Algorithm(), cryptosha256.New().Algorithm(),
-		"zero-value Hasher must report the same Algorithm as a constructed one")
+
+	t.Run("reports the constructor's ID and Algorithm", func(t *testing.T) {
+		t.Parallel()
+		var z cryptosha256.Hasher
+		testkit.Equal(t, z.ID(), cryptosha256.New().ID(),
+			"zero-value Hasher must report the same ID as a constructed one")
+		testkit.Equal(t, z.Algorithm(), cryptosha256.New().Algorithm(),
+			"zero-value Hasher must report the same Algorithm as a constructed one")
+	})
+}
+
+// TestZeroAlloc enforces the allocation contract through the
+// crypto.Hasher and crypto.Stream interfaces, with data on the heap,
+// as a caller that must not allocate passes it. testing.AllocsPerRun
+// reads a process-global malloc counter, so this test does not call
+// t.Parallel.
+//
+//nolint:paralleltest // see comment above
+func TestZeroAlloc(t *testing.T) {
+	for name, fn := range cryptotest.HasherZeroAllocCases(newHasher(), make([]byte, 1024)) {
+		t.Run(name, func(t *testing.T) {
+			testkit.Equal(t, testing.AllocsPerRun(100, fn), float64(0), name+" must not allocate on the warm path")
+		})
+	}
 }

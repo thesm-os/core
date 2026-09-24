@@ -257,6 +257,27 @@ func TestSHA3_384FIPSVectors(t *testing.T) {
 	}
 }
 
+// TestZeroAlloc enforces the allocation contract of every SHA-3
+// hasher through the crypto.Hasher and crypto.Stream interfaces, with
+// data on the heap, as a caller that must not allocate passes it.
+// testing.AllocsPerRun reads a process-global malloc counter, so this
+// test does not call t.Parallel.
+//
+//nolint:paralleltest // see comment above
+func TestZeroAlloc(t *testing.T) {
+	data := make([]byte, 1024)
+
+	for alg, h := range map[string]crypto.Hasher{
+		"SHA3-256": newSHA3_256(), "SHA3-384": newSHA3_384(), "SHA3-512": newSHA3_512(),
+	} {
+		for name, fn := range cryptotest.HasherZeroAllocCases(h, data) {
+			t.Run(alg+" "+name, func(t *testing.T) {
+				testkit.Equal(t, testing.AllocsPerRun(100, fn), float64(0), name+" must not allocate on the warm path")
+			})
+		}
+	}
+}
+
 func TestSHA3_512FIPSVectors(t *testing.T) {
 	t.Parallel()
 	cases := map[string]struct {
