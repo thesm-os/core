@@ -80,8 +80,11 @@ const (
 	EnvelopeAlgorithmLenSize = 1
 
 	// envelopeHeaderFixed is the part of the header whose width does
-	// not depend on the algorithm.
-	envelopeHeaderFixed = EnvelopeVersionSize + EnvelopeAlgorithmLenSize
+	// not depend on the algorithm: [EnvelopeVersionSize] and
+	// [EnvelopeAlgorithmLenSize], one byte each. It is a literal, because
+	// an operator in a const declaration has no coverage counter and a
+	// mutation tool never runs a mutant of it.
+	envelopeHeaderFixed = 2
 
 	// maxAlgorithmLen is what the single length byte can express.
 	maxAlgorithmLen = 255

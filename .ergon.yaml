@@ -335,13 +335,9 @@ checks:
       - path: clock
         score: 99
         coverage: 99
-      # reach 98.9, not 99: envelopeHeaderFixed in aead.go is a
-      # const, and a const declaration carries no coverage counter,
-      # so gremlins cannot reach that mutant by construction. Score
-      # stays at 99 — nothing crypto's suite reaches survives it.
       - path: crypto
         score: 99
-        coverage: 98
+        coverage: 99
       - path: epoch
         score: 99
         coverage: 99
