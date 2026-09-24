@@ -2,13 +2,13 @@
 rfc: 0038
 title: Conformance for Durable Adapters and Decorators
 author: Roy Klopper <roy.klopper@stealthscale.io>
-status: Draft
+status: Accepted
 created: 2026-09-24
 updated: 2026-09-24
 discussion: none
 supersedes: none
 superseded-by: none
-produces-adr: tbd
+produces-adr: ADR-0022
 ---
 
 # RFC-0038: Conformance for Durable Adapters and Decorators

@@ -2,13 +2,13 @@
 rfc: 0030
 title: Structured Concurrency
 author: Roy Klopper <roy.klopper@stealthscale.io>
-status: Draft
+status: Accepted
 created: 2026-09-23
-updated: 2026-09-23
+updated: 2026-09-24
 discussion: none
 supersedes: none
 superseded-by: none
-produces-adr: tbd
+produces-adr: ADR-0017
 ---
 
 # RFC-0030: Structured Concurrency

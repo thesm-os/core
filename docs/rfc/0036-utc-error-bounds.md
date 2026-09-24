@@ -2,13 +2,13 @@
 rfc: 0036
 title: UTC Readings with an Error Bound
 author: Roy Klopper <roy.klopper@stealthscale.io>
-status: Draft
+status: Accepted
 created: 2026-09-24
 updated: 2026-09-24
 discussion: none
 supersedes: none
 superseded-by: none
-produces-adr: tbd
+produces-adr: none
 ---
 
 # RFC-0036: UTC Readings with an Error Bound

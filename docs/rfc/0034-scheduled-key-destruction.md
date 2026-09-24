@@ -2,13 +2,13 @@
 rfc: 0034
 title: Scheduled Key Destruction
 author: Roy Klopper <roy.klopper@stealthscale.io>
-status: Draft
+status: Accepted
 created: 2026-09-24
 updated: 2026-09-24
 discussion: none
 supersedes: none
 superseded-by: none
-produces-adr: tbd
+produces-adr: ADR-0021
 ---
 
 # RFC-0034: Scheduled Key Destruction

@@ -2,13 +2,13 @@
 rfc: 0031
 title: Finite State Machines
 author: Roy Klopper <roy.klopper@stealthscale.io>
-status: Draft
+status: Accepted
 created: 2026-09-23
-updated: 2026-09-23
+updated: 2026-09-24
 discussion: none
 supersedes: none
 superseded-by: none
-produces-adr: tbd
+produces-adr: ADR-0018
 ---
 
 # RFC-0031: Finite State Machines

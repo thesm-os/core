@@ -2,13 +2,13 @@
 rfc: 0033
 title: ML-DSA Signatures
 author: Roy Klopper <roy.klopper@stealthscale.io>
-status: Draft
+status: Accepted
 created: 2026-09-24
 updated: 2026-09-24
 discussion: none
 supersedes: none
 superseded-by: none
-produces-adr: tbd
+produces-adr: ADR-0020
 ---
 
 # RFC-0033: ML-DSA Signatures

@@ -69,5 +69,12 @@ Start from [`docs/templates/ADR.md`](../templates/ADR.md).
 | [0014](0014-genesis-sentinel-is-deleted.md) | The Genesis Sentinel Is Deleted, Not Documented | Accepted |
 | [0015](0015-dependency-free-x-modules-in-production.md) | Dependency-Free golang.org/x Modules in Production Code | Accepted |
 | [0016](0016-persisted-encodings-are-frozen.md) | Persisted Encodings Are Frozen Before 1.0 | Accepted |
+| [0017](0017-task-panic-crashes-the-process.md) | A Task's Panic Crashes the Process | Accepted |
+| [0018](0018-mechanisms-not-lifecycles.md) | Core Ships Mechanisms, Not Lifecycles | Accepted |
+| [0019](0019-tlog-uses-rfc-6962-bytes.md) | Transparency Log Trees Use RFC 6962's Bytes | Accepted |
+| [0020](0020-core-requires-go-1-27.md) | Core Requires Go 1.27 | Accepted |
+| [0021](0021-key-destruction-is-scheduled.md) | Key Destruction Is Scheduled | Accepted |
+| [0022](0022-decorators-expose-what-they-wrap.md) | Decorators Expose What They Wrap | Accepted |
+| [0023](0023-verifiers-resolve-from-caller-table.md) | Verifiers Resolve From a Table the Caller Writes | Accepted |
 
 [nygard]: https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions

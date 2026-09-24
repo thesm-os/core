@@ -2,13 +2,13 @@
 rfc: 0032
 title: Transparency Log Trees
 author: Roy Klopper <roy.klopper@stealthscale.io>
-status: Draft
+status: Accepted
 created: 2026-09-24
 updated: 2026-09-24
 discussion: none
 supersedes: none
 superseded-by: none
-produces-adr: tbd
+produces-adr: ADR-0019
 ---
 
 # RFC-0032: Transparency Log Trees
