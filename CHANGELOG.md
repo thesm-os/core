@@ -104,12 +104,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   wrapped. It uses the custodian's `KeyGenerator` when there is one,
   and otherwise draws the key from a `rand.Rand` and calls `Wrap`.
 - `pool.Buffer`: a `bytes.Buffer` whose `Reset` zeroes its capacity.
+- `sign.ContextSigner` and `sign.SignContext`. A signer backed by a
+  hosted key service or a hardware module implements `ContextSigner`,
+  so a caller can bound the wait with a context. `SignContext` uses
+  the capability when a signer has it. Otherwise it returns the
+  context's cause when the context has ended, and calls `Sign` when it
+  has not. `cryptotest.ContextSignerAssertion` checks an
+  implementation. See RFC-0035.
+- `crypto/sign/mldsa`: ML-DSA-44, ML-DSA-65 and ML-DSA-87 signers and
+  verifiers per FIPS 204, over the standard library's `crypto/mldsa`.
+  The FIPS 204 context string is fixed when a signer or verifier is
+  built, and a private key is its 32-byte seed. `crypto` gains
+  `AlgMLDSA44`, `AlgMLDSA65` and `AlgMLDSA87`. See RFC-0033.
 
 ### Changed
 
 - **Breaking:** core requires Go 1.27.0, up from 1.26.6, so its
   packages can use the Go 1.27 standard library, including
   `crypto/mldsa`.
+- **Breaking:** `crypto.Destroyer.Destroy` returns the time at which
+  the destruction becomes irreversible, as
+  `Destroy(ctx, keyID) (time.Time, error)`. Hosted custodians schedule
+  deletion days ahead and allow cancellation until then. The zero time
+  means the custodian cannot yet say when. `Destroy` is idempotent and
+  returns the time already set, and `crypto.ErrKeyDestroyed` also
+  covers a key scheduled for destruction. See RFC-0034.
+- **Breaking:** `localkey.New` takes a `clock.Clock`, which supplies
+  the time `Keeper.Destroy` returns.
+- `cryptotest.AssertDestroyerContract` checks that a second `Destroy`
+  returns the first call's time, and that `Destroy` of an unknown key
+  returns `crypto.ErrKeyID`.
 - `batch.Loader.LoadAll` runs its batches through `task.Each`. A
   failed batch now cancels the other batches of the same call, whose
   results were discarded anyway, and the batch function receives a
