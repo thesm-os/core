@@ -5,12 +5,15 @@ package tlog
 
 import (
 	"math/bits"
+	"slices"
 
 	"go.thesmos.sh/core/crypto"
 )
 
 // maxPath bounds the number of hashes in a proof over a tree of up to
-// 2^64 leaves.
+// 2^64 leaves. It also bounds every loop that walks the levels of a
+// tree or the bits of a size, so no fault in such a loop can make it
+// run forever or grow memory without end.
 const maxPath = 66
 
 // span is the range of leaves [lo, hi) under one node of a proof.
@@ -27,40 +30,65 @@ func split(n uint64) uint64 {
 
 // inclusionSpans appends to dst the leaf ranges whose hashes form the
 // audit path of the leaf at index within [lo, hi), in proof order. It
-// follows PATH of RFC 9162, section 2.1.3.1.
+// follows PATH of RFC 9162, section 2.1.3.1, from the root down, and
+// then reverses the path so the deepest sibling comes first.
 func inclusionSpans(lo, hi, index uint64, dst []span) []span {
-	if hi-lo <= 1 {
-		return dst
+	start := len(dst)
+
+	for range maxPath {
+		if hi-lo <= 1 {
+			break
+		}
+
+		k := split(hi - lo)
+		if index < lo+k {
+			dst = append(dst, span{lo + k, hi})
+			hi = lo + k
+		} else {
+			dst = append(dst, span{lo, lo + k})
+			lo += k
+		}
 	}
 
-	k := split(hi - lo)
-	if index < lo+k {
-		return append(inclusionSpans(lo, lo+k, index, dst), span{lo + k, hi})
-	}
+	slices.Reverse(dst[start:])
 
-	return append(inclusionSpans(lo+k, hi, index, dst), span{lo, lo + k})
+	return dst
 }
 
 // consistencySpans appends to dst the leaf ranges whose hashes form the
 // consistency proof between the tree of the first old leaves and the
 // tree [lo, hi), in proof order. It follows SUBPROOF of RFC 9162,
-// section 2.1.4.1. whole reports whether [lo, hi) is the old tree
-// itself, whose root the verifier already has.
-func consistencySpans(lo, hi, old uint64, whole bool, dst []span) []span {
-	if old == hi {
-		if whole {
-			return dst
+// section 2.1.4.1, from the root down, and then reverses the proof so
+// the deepest subtree comes first. The proof leaves out the old tree's
+// root when the old tree is a subtree of the new one, because the
+// verifier has it.
+func consistencySpans(lo, hi, old uint64, dst []span) []span {
+	start := len(dst)
+	whole := true
+
+	for range maxPath {
+		if old == hi {
+			if !whole {
+				dst = append(dst, span{lo, hi})
+			}
+
+			break
 		}
 
-		return append(dst, span{lo, hi})
+		k := split(hi - lo)
+		if old <= lo+k {
+			dst = append(dst, span{lo + k, hi})
+			hi = lo + k
+		} else {
+			dst = append(dst, span{lo, lo + k})
+			lo += k
+			whole = false
+		}
 	}
 
-	k := split(hi - lo)
-	if old <= lo+k {
-		return append(consistencySpans(lo, lo+k, old, whole, dst), span{lo + k, hi})
-	}
+	slices.Reverse(dst[start:])
 
-	return append(consistencySpans(lo+k, hi, old, false, dst), span{lo, lo + k})
+	return dst
 }
 
 // Root returns the Merkle Tree Hash of the tree whose leaf hashes are
@@ -147,7 +175,7 @@ func ConsistencyProof(
 	}
 
 	var spans [maxPath]span
-	for _, s := range consistencySpans(0, uint64(len(leaves)), oldSize, true, spans[:0]) {
+	for _, s := range consistencySpans(0, uint64(len(leaves)), oldSize, spans[:0]) {
 		dst = append(dst, Root(h, leaves[s.lo:s.hi]))
 	}
 

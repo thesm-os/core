@@ -88,13 +88,21 @@ func TestBuilder(t *testing.T) {
 
 		rnd := testkit.SeededRand(t)
 		var u tlog.Update
-		for b.Size() < uint64(len(all)) {
+		// Every batch has at least one leaf, so len(all) batches are
+		// enough, and a Builder that stops growing fails the test and does
+		// not hang it.
+		for range len(all) {
+			if b.Size() >= uint64(len(all)) {
+				break
+			}
+
 			n := min(uint64(1+rnd.IntN(4000)), uint64(len(all))-b.Size())
 			testkit.NoError(t, b.Integrate(all[b.Size():b.Size()+n], &u), "Integrate must succeed")
 			m.store(&u)
 			testkit.NoError(t, b.Commit(&u), "Commit must succeed")
 			testkit.Equal(t, b.Root(), tlog.Root(h, all[:b.Size()]), "the root at "+strconv.FormatUint(b.Size(), 10))
 		}
+		testkit.Equal(t, b.Size(), uint64(len(all)), "the batches must integrate every leaf")
 
 		once, err := tlog.NewBuilder(t.Context(), h, 0, nil)
 		testkit.NoError(t, err, "NewBuilder must succeed")

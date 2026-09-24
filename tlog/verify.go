@@ -35,10 +35,7 @@ func VerifyInclusion(h crypto.Hasher, index, size uint64, leaf, root crypto.Dige
 			r = nodeHash(s, scratch[:], p, r)
 			// fn equals sn here and sn is not zero, so the shift ends at
 			// a set bit.
-			for fn&1 == 0 {
-				fn >>= 1
-				sn >>= 1
-			}
+			fn, sn = shiftUntil(fn, sn, 1)
 		} else {
 			r = nodeHash(s, scratch[:], r, p)
 		}
@@ -91,11 +88,7 @@ func VerifyConsistency(
 		fr, sr, rest = oldRoot, oldRoot, proof
 	}
 
-	fn, sn := oldSize-1, newSize-1
-	for fn&1 == 1 {
-		fn >>= 1
-		sn >>= 1
-	}
+	fn, sn := shiftUntil(oldSize-1, newSize-1, 0)
 
 	scratch := scratchPool.Get()
 	defer scratchPool.Put(scratch)
@@ -110,10 +103,7 @@ func VerifyConsistency(
 		if fn&1 == 1 || fn == sn {
 			fr = nodeHash(s, scratch[:], c, fr)
 			sr = nodeHash(s, scratch[:], c, sr)
-			for fn&1 == 0 {
-				fn >>= 1
-				sn >>= 1
-			}
+			fn, sn = shiftUntil(fn, sn, 1)
 		} else {
 			sr = nodeHash(s, scratch[:], sr, c)
 		}
@@ -127,4 +117,21 @@ func VerifyConsistency(
 	}
 
 	return nil
+}
+
+// shiftUntil shifts fn and sn right together until the low bit of fn is
+// bit, as RFC 9162 does between the steps of a verification, and
+// returns them. A uint64 has 64 bits, so the loop ends within maxPath
+// steps.
+func shiftUntil(fn, sn, bit uint64) (shiftedFn, shiftedSn uint64) {
+	for range maxPath {
+		if fn&1 == bit {
+			break
+		}
+
+		fn >>= 1
+		sn >>= 1
+	}
+
+	return fn, sn
 }

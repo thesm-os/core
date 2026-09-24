@@ -4,7 +4,7 @@
 package tlog_test
 
 import (
-	"slices"
+	"iter"
 	"testing"
 
 	"go.thesmos.sh/testkit"
@@ -75,6 +75,23 @@ func TestTile(t *testing.T) {
 	})
 }
 
+// maxTiles is more tiles than any case of TestTiles expects.
+const maxTiles = 16
+
+// firstTiles returns the tiles of seq, up to maxTiles. A Tiles that does
+// not end then fails the test and cannot exhaust memory.
+func firstTiles(seq iter.Seq[tlog.Tile]) []tlog.Tile {
+	var out []tlog.Tile
+	for t := range seq {
+		out = append(out, t)
+		if len(out) == maxTiles {
+			break
+		}
+	}
+
+	return out
+}
+
 func TestTiles(t *testing.T) {
 	t.Parallel()
 
@@ -104,7 +121,7 @@ func TestTiles(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			testkit.Equal(t, slices.Collect(tlog.Tiles(tc.old, tc.new)), tc.want,
+			testkit.Equal(t, firstTiles(tlog.Tiles(tc.old, tc.new)), tc.want,
 				"the tiles from the old size to the new")
 		})
 	}

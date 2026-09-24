@@ -237,10 +237,11 @@ func rootOf(s crypto.Stream, ds int, edge *[tileLevels][]byte, scratch []byte) c
 	var stack [64]crypto.Digest
 
 	n := 0
-	for level := tileLevels - 1; level >= 0; level-- {
-		p := edge[level]
+	for i := range tileLevels {
+		p := edge[tileLevels-1-i]
 		count, off := len(p)/ds, 0
-		for bit := tileHeight - 1; bit >= 0; bit-- {
+		for j := range tileHeight {
+			bit := tileHeight - 1 - j
 			if count&(1<<bit) == 0 {
 				continue
 			}

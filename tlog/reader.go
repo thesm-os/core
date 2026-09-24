@@ -169,7 +169,7 @@ func ProveConsistency(
 
 	var spans [maxPath]span
 
-	return prove(ctx, h, r, newSize, consistencySpans(0, newSize, oldSize, true, spans[:0]), dst)
+	return prove(ctx, h, r, newSize, consistencySpans(0, newSize, oldSize, spans[:0]), dst)
 }
 
 // prover is the state of one proof built from tiles. Proofs borrow it
@@ -219,8 +219,15 @@ func prove(
 	p := provers.Get()
 	defer provers.Put(p)
 
+	// A span splits into at most 64 perfect subtrees, one per bit of its
+	// length.
 	for _, s := range spans {
-		for lo := s.lo; lo < s.hi; {
+		lo := s.lo
+		for range maxPath {
+			if lo >= s.hi {
+				break
+			}
+
 			level := uint(bits.Len64(s.hi-lo) - 1)
 			p.add(size, level, lo>>level)
 			lo += 1 << level
