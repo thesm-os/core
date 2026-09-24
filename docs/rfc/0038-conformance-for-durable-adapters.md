@@ -116,24 +116,28 @@ suite as this option.
 
 ### Checking the suites
 
-Each suite package gains a set of broken stores, one per law, in an
-internal package so that no adapter imports them:
+Each suite package gains a broken store for every top-level case of
+its suite. The broken stores live in the package's external test file,
+`blobtest_test.go` or `castest_test.go`, so no adapter imports them.
+Each one wraps the memory store and replaces one method, for example:
 
-- A store whose `Put` is visible before the body is complete.
-- A store that ignores `IfMatch` and `IfNoneMatch`.
-- A cursor that skips an object on a page boundary.
-- A store that classifies absence as something other than
-  `errs.NotFound`.
-- For `cas`, a store that accepts bytes that do not hash to their
+- A `Put` that commits the bytes it read before its reader failed.
+- A `Put` that ignores `IfMatch` or `IfNoneMatch`.
+- A cursor that drops the first object of every page after the first.
+- A `Get` that returns an unclassified error for an absent key.
+- For `cas`, a `Put` that keeps bytes that do not hash to their
   address.
+- A reopen or a crash that returns an empty store.
 
-Core's tests run the suite against each broken store and require it to
-fail. The suites take a `*testing.T`, and `testing.TB` has unexported
-methods, so no recording double can stand in for it and observe a
-failure in process. The check therefore runs the suite in a child
-process, as the FIPS 140-only test of `aesgcm` does, and requires the
-child to exit with a failure naming the law. A law without a broken
-store fails a test that lists the laws.
+The suites take a `*testing.T`, and `testing.TB` has unexported
+methods. No test double can implement it to observe a failure in
+process. The check runs the suite in a child process, as the tests of
+`task` panics do, and reads the output of `go test -v`. It requires
+the child to fail the case that the broken store breaks.
+
+The list of cases comes from a child run against the memory store with
+every option. A case without a broken store fails the check, and so
+does a broken store for a case the suite no longer has.
 
 This is mutation testing applied to the suite instead of the code: each
 broken store is a hand-written mutant of the reference, and the suite
@@ -181,11 +185,16 @@ A `Keeper` decorator cannot implement `Unwrap() Keeper`, because
 It implements `UnwrapKeeper` instead.
 
 Core's own assertions, in `cas.PutStream`, `cas.GetStream`,
-`crypto.GenerateKey` and `sign.SignContext`, use them. Each seam's
-suite gains a decorator case: it wraps a store, custodian or signer
-that has the capability in a decorator, and requires the `As` function
-to find it. Through two decorators, each `As` function allocates
-nothing and takes 5 to 14 ns in its package benchmark.
+`crypto.GenerateKey` and `sign.SignContext`, use them. Through two
+decorators, each `As` function allocates nothing and takes 5 to 14 ns
+in its package benchmark.
+
+A suite case that wraps the store under test in the suite's own
+decorator and calls the `As` function passes for every store, because
+the result depends only on the `As` function. The check of the
+preceding section found no broken store for such a case in `castest`,
+so the suites have none. Each `As` function's own tests cover the
+chain.
 
 A decorator that also implements the capability itself, for example
 to trace streaming calls, is found first and hides the capability of
@@ -231,8 +240,9 @@ adapter supplies only the fault injection that its storage allows.
   adapter that crashes only at convenient points passes a weaker
   check.
 - Every decorator author has to know the `Unwrap` convention. A
-  decorator without `Unwrap` still hides capabilities. The decorator
-  case of the suite catches it, and no compile-time check does.
+  decorator without `Unwrap` still hides capabilities, and neither the
+  compiler nor a suite detects it. A suite sees only the store it is
+  given.
 - The `As` functions add six exported names across three packages.
 
 ## Open questions

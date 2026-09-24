@@ -63,8 +63,8 @@ func WithReopen(reopen func(t *testing.T, s blob.Store) blob.Store) Option {
 
 // WithCrash gives the suite a way to crash the storage behind s while
 // write runs, and adds a case that requires each key that write puts to
-// be as it was before write or to hold the whole new object. A key
-// whose Put returned without error must hold the whole new object,
+// be as it was before write or to contain the whole new object. A key
+// whose Put returned without error must contain the whole new object,
 // with the version that Put returned.
 //
 // crash calls write once, crashes the storage at a point the adapter
@@ -107,11 +107,11 @@ type object struct {
 func assertSameObject(t *testing.T, got, want blob.Info, who string) {
 	t.Helper()
 
-	testkit.Equal(t, got.Key, want.Key, who+" must carry the same key")
-	testkit.Equal(t, got.Version, want.Version, who+" must carry the same version")
+	testkit.Equal(t, got.Key, want.Key, who+" must name the same key")
+	testkit.Equal(t, got.Version, want.Version, who+" must report the same version")
 	testkit.Equal(t, got.Size, want.Size, who+" must report the same size")
 	testkit.Equal(t, got.ContentType, want.ContentType,
-		who+" must carry the same content type")
+		who+" must report the same content type")
 }
 
 // AssertStore runs the laws of [blob.Store] against the stores that
@@ -194,10 +194,10 @@ func AssertStore(t *testing.T, newStore func(c clock.Clock) blob.Store, options 
 		s := fresh()
 
 		info := put(t, s, "k", "hello blob", blob.PutOptions{ContentType: "text/plain"})
-		testkit.Equal(t, info.Key, "k", "Info must carry the key")
+		testkit.Equal(t, info.Key, "k", "Info must name the key")
 		testkit.Equal(t, info.Size, int64(10), "Put's Info must report the consumed size")
 		testkit.Equal(t, info.ContentType, "text/plain", "ContentType must round-trip")
-		testkit.False(t, info.Version.IsZero(), "a written object must carry a version")
+		testkit.False(t, info.Version.IsZero(), "a written object must have a version")
 
 		body, got := read(t, s, "k")
 		testkit.Equal(t, body, "hello blob", "the body must round-trip")
@@ -219,7 +219,7 @@ func AssertStore(t *testing.T, newStore func(c clock.Clock) blob.Store, options 
 		second := put(t, s, "k", "two", blob.PutOptions{})
 
 		testkit.NotEqual(t, second.Version, first.Version,
-			"each write must carry a distinct version")
+			"each write must have a distinct version")
 	})
 
 	t.Run("IfMatch guards the version it names", func(t *testing.T) {
@@ -594,12 +594,12 @@ func AssertStore(t *testing.T, newStore func(c clock.Clock) blob.Store, options 
 				got := observe(t, r, key)
 				if err == nil {
 					testkit.Equal(t, got, object{Version: info.Version, Body: body, Present: true},
-						"key "+key+" must hold the object its returned Put wrote")
+						"key "+key+" must contain the object its returned Put wrote")
 
 					return
 				}
 				testkit.True(t, got == before || (got.Present && got.Body == body),
-					"key "+key+" must be as it was before the crash or hold the whole new body")
+					"key "+key+" must be as it was before the crash or contain the whole new body")
 			}
 
 			assertAfterCrash("created", object{}, "created during the crash", created, createdErr)

@@ -59,8 +59,8 @@ func WithReopen(reopen func(t *testing.T, s cas.Store) cas.Store) Option {
 
 // WithCrash gives the suite a way to crash the storage behind s while
 // write runs, and adds a case that requires each address that write
-// puts to be absent or to hold the whole value. An address whose Put or
-// PutStream returned without error must hold the whole value.
+// puts to be absent or to contain the whole value. An address whose Put
+// or PutStream returned without error must contain the whole value.
 //
 // crash calls write once, crashes the storage at a point the adapter
 // chooses, and returns after write returns. It returns a new Store over
@@ -97,12 +97,6 @@ func (r *failingReader) Read(p []byte) (int, error) {
 	return n, nil
 }
 
-// decorator wraps a Store and returns it from Unwrap, as a tracing
-// decorator does.
-type decorator struct{ cas.Store }
-
-func (d decorator) Unwrap() cas.Store { return d.Store }
-
 // AssertStore runs the laws of [cas.Store] against the stores that
 // newStore returns. newStore returns an empty store bound to h. Each
 // case builds its own store, so no case observes the values of another.
@@ -130,8 +124,6 @@ func (d decorator) Unwrap() cas.Store { return d.Store }
 //     written by Put read back through GetStream.
 //   - A PutStream that fails for a digest mismatch, a reader error or a
 //     done context stores nothing, although it consumed the bytes.
-//   - [cas.AsStreamer] finds a Streamer through a decorator exactly
-//     when it finds one in the store.
 //
 // The streaming cases call [cas.PutStream] and [cas.GetStream], which
 // work on every Store. A store that implements [cas.Streamer] and a
@@ -166,7 +158,7 @@ func AssertStore(t *testing.T, newStore func(h crypto.Hasher) cas.Store, options
 			})
 			testkit.Equal(t, allocs, float64(0),
 				"Get into a buffer with room must not allocate")
-			testkit.Equal(t, buf, payload, "the reused buffer must hold the value")
+			testkit.Equal(t, buf, payload, "the reused buffer must contain the value")
 		})
 	}
 
@@ -501,17 +493,6 @@ func AssertStore(t *testing.T, newStore func(h crypto.Hasher) cas.Store, options
 			"an absent address on GetStream must classify as NotFound")
 	})
 
-	t.Run("AsStreamer finds a Streamer through a decorator", func(t *testing.T) {
-		t.Parallel()
-
-		s := newStore(h)
-		_, direct := cas.AsStreamer(s)
-		_, decorated := cas.AsStreamer(decorator{s})
-
-		testkit.Equal(t, decorated, direct,
-			"AsStreamer must find a Streamer through a decorator exactly when the store has one")
-	})
-
 	if cfg.reopen != nil {
 		t.Run("a reopened store keeps every write that returned", func(t *testing.T) {
 			t.Parallel()
@@ -578,7 +559,7 @@ func AssertStore(t *testing.T, newStore func(h crypto.Hasher) cas.Store, options
 					return
 				}
 				testkit.NoError(t, gerr, "an address whose write returned must be readable after the crash")
-				testkit.Equal(t, got, want, "an address present after the crash must hold the whole value")
+				testkit.Equal(t, got, want, "an address present after the crash must contain the whole value")
 			}
 
 			assertAfterCrash(d, payload, putErr)

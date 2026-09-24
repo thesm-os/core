@@ -145,20 +145,14 @@ func SignerCrossStdlibVerifyAssertion(stdlibVerify func(pub, msg, sig []byte) bo
 	})
 }
 
-// signerDecorator wraps a Signer and returns it from Unwrap, as a
-// tracing decorator does.
-type signerDecorator struct{ sign.Signer }
-
-func (d signerDecorator) Unwrap() sign.Signer { return d.Signer }
-
-// ContextSignerAssertion verifies that [sign.AsContextSigner] finds the
-// implementation behind a decorator, and that SignContext refuses a
-// context that has already ended, with an error that wraps the
-// context's cause. Add it for signers that cross a process boundary.
+// ContextSignerAssertion verifies that the signer implements
+// [sign.ContextSigner], and that SignContext refuses a context that has
+// already ended, with an error that wraps the context's cause. Add it
+// for signers that cross a process boundary.
 func ContextSignerAssertion() SignerOption {
 	return SignerCustom("SignContext returns the cause of an ended context", func(t *testing.T, s sign.Signer) {
-		cs, ok := sign.AsContextSigner(signerDecorator{s})
-		testkit.True(t, ok, "AsContextSigner must find the implementation behind a decorator")
+		cs, ok := sign.AsContextSigner(s)
+		testkit.True(t, ok, "the signer must implement ContextSigner")
 
 		cause := testkit.TestError("the caller gave up")
 		ctx, cancel := context.WithCancelCause(t.Context())
