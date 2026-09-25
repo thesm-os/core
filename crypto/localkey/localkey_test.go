@@ -5,7 +5,10 @@ package localkey_test
 
 import (
 	"bytes"
+	"crypto/fips140"
 	"io"
+	"os"
+	"os/exec"
 	"strconv"
 	"testing"
 	"time"
@@ -15,6 +18,7 @@ import (
 	"go.thesmos.sh/core/clock/fake"
 	"go.thesmos.sh/core/coretest/cryptotest"
 	"go.thesmos.sh/core/crypto"
+	"go.thesmos.sh/core/crypto/aesgcm"
 	"go.thesmos.sh/core/crypto/localkey"
 	randcrypto "go.thesmos.sh/core/rand/crypto"
 )
@@ -122,6 +126,73 @@ func TestKeyID(t *testing.T) {
 		t.Parallel()
 		testkit.Equal(t, mustNew(t, testKeyID, rootKey).KeyID(), testKeyID,
 			"KeyID must report the name given at construction")
+	})
+}
+
+// TestUnwrap covers material from the other AES-GCM construction. Both
+// constructions write the nonce at the same offset, so a Keeper opens
+// an envelope that aesgcm.New sealed under its root key.
+func TestUnwrap(t *testing.T) {
+	t.Parallel()
+
+	t.Run("opens an envelope that aesgcm.New sealed under the root key", func(t *testing.T) {
+		t.Parallel()
+		a, err := aesgcm.New(rootKey)
+		testkit.NoError(t, err, "aesgcm.New must accept the root key")
+
+		sealed, err := crypto.Seal(a, randcrypto.New(), []byte("data-key"), nil)
+		testkit.NoError(t, err, "Seal must succeed")
+
+		got, err := mustNew(t, testKeyID, rootKey).Unwrap(t.Context(), sealed)
+		testkit.NoError(t, err, "Unwrap must open an envelope from aesgcm.New")
+		testkit.Equal(t, got, []byte("data-key"), "Unwrap must return the data key")
+	})
+}
+
+// TestFIPSOnlyMode checks the Keeper under GODEBUG=fips140=only. The
+// mode is fixed when a process starts, so the test runs itself again
+// in a child process with the mode set. In the child,
+// fips140.Enforced reports true and the checks run there.
+func TestFIPSOnlyMode(t *testing.T) {
+	t.Parallel()
+
+	if !fips140.Enforced() {
+		t.Run("passes in a child process under fips140=only", func(t *testing.T) {
+			t.Parallel()
+			//nolint:gosec // G204: the child is this test binary, run again with a fixed pattern.
+			cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestFIPSOnlyMode$", "-test.v")
+			cmd.Env = append(os.Environ(), "GODEBUG=fips140=only")
+			out, err := cmd.CombinedOutput()
+			testkit.NoError(t, err, "the fips140=only child must pass:\n"+string(out))
+			testkit.True(t, bytes.Contains(out, []byte("wraps_and_unwraps_a_data_key")),
+				"the child must run the FIPS checks, not skip them")
+		})
+
+		return
+	}
+
+	t.Run("wraps and unwraps a data key", func(t *testing.T) {
+		t.Parallel()
+		keeper := mustNew(t, testKeyID, rootKey)
+
+		wrapped, err := keeper.Wrap(t.Context(), []byte("data-key"))
+		testkit.NoError(t, err, "Wrap must succeed in FIPS 140-only mode")
+
+		got, err := keeper.Unwrap(t.Context(), wrapped)
+		testkit.NoError(t, err, "Unwrap must succeed in FIPS 140-only mode")
+		testkit.Equal(t, got, []byte("data-key"), "Unwrap must return the data key")
+	})
+
+	t.Run("generates a data key that unwraps", func(t *testing.T) {
+		t.Parallel()
+		keeper := mustNew(t, testKeyID, rootKey)
+
+		plaintext, wrapped, err := keeper.GenerateKey(t.Context(), 32)
+		testkit.NoError(t, err, "GenerateKey must succeed in FIPS 140-only mode")
+
+		got, err := keeper.Unwrap(t.Context(), wrapped)
+		testkit.NoError(t, err, "Unwrap must open the generated key")
+		testkit.Equal(t, got, plaintext, "Unwrap must return the generated data key")
 	})
 }
 

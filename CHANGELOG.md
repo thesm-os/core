@@ -255,6 +255,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recognised the two standard-library sentinels — a bare mismatch
   from an adapter classified as Unspecified. `epoch.ErrFenced`
   joins the recognised set.
+- `localkey.New` succeeds in FIPS 140-only mode. The `Keeper` wraps
+  with `aesgcm.NewRandomNonce`, whose nonces the standard library's
+  FIPS 140-3 module generates. It returned the refusal of
+  caller-supplied nonces. Material wrapped before this change still
+  unwraps, because both AES-GCM constructions write the nonce at the
+  same offset. `Wrap` does not read from the `rand.Rand` given to
+  `New`, which supplies only the keys `GenerateKey` returns.
 
 ## [0.6.1] - 2026-08-05
 

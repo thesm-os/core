@@ -82,14 +82,16 @@ var (
 //
 // rootKey must be [RootKeySize] bytes. Any other length returns
 // [crypto.ErrKeySize]. An empty keyID returns [crypto.ErrKeyID]: the
-// identifier is persisted with every wrapped key, and an empty one
-// leaves no way to find the key that unwraps the material.
+// identifier is persisted with every wrapped key, and an empty one does
+// not identify the key that unwraps the material.
 //
 // rootKey is copied into the cipher's key schedule, so the caller may
-// zero its own copy immediately afterwards. r supplies the nonce for
-// each wrap and must be a cryptographically secure source. A
-// deterministic source repeats nonces and breaks the construction. c
-// supplies the time [Keeper.Destroy] reports.
+// zero its own copy immediately afterwards. The cipher is AES-256-GCM
+// from [aesgcm.NewRandomNonce], which generates every nonce inside the
+// standard library's FIPS 140-3 module, so New also succeeds in FIPS
+// 140-only mode. r supplies the data keys [Keeper.GenerateKey] returns
+// and must be a cryptographically secure source. c supplies the time
+// [Keeper.Destroy] reports.
 func New(keyID string, rootKey []byte, r rand.Rand, c clock.Clock) (*Keeper, error) {
 	if keyID == "" {
 		return nil, crypto.ErrKeyID
@@ -98,7 +100,7 @@ func New(keyID string, rootKey []byte, r rand.Rand, c clock.Clock) (*Keeper, err
 	// aesgcm validates first, so its error path is live: every length
 	// AES rejects returns here. The narrower check below then rejects
 	// the one length AES accepts and this package does not.
-	a, err := aesgcm.New(rootKey)
+	a, err := aesgcm.NewRandomNonce(rootKey)
 	if err != nil {
 		return nil, err
 	}
@@ -115,16 +117,20 @@ func (k *Keeper) KeyID() string { return k.keyID }
 
 // Wrap encrypts dek under the root key.
 //
-// Each call reads a fresh nonce from the source given to [New], so
-// wrapping one data key twice produces different bytes. Returns
-// [crypto.ErrKeyDestroyed] once [Keeper.Destroy] has run.
+// The standard library's FIPS 140-3 module generates a fresh 96-bit
+// nonce for each call, so wrapping one data key twice produces
+// different bytes. Random nonces are safe for at most 2^32 wraps under
+// one root key. Returns [crypto.ErrKeyDestroyed] once [Keeper.Destroy]
+// has run.
 func (k *Keeper) Wrap(_ context.Context, dek []byte) ([]byte, error) {
 	a, err := k.cipher()
 	if err != nil {
 		return nil, err
 	}
 
-	return crypto.Seal(a, k.rand, dek, nil)
+	// The cipher generates its own nonce, so Seal does not read from a
+	// random source.
+	return crypto.Seal(a, nil, dek, nil)
 }
 
 // Unwrap decrypts a wrapped data key.
@@ -144,7 +150,8 @@ func (k *Keeper) Unwrap(_ context.Context, wrapped []byte) ([]byte, error) {
 }
 
 // GenerateKey generates a fresh data key of size bytes and returns it
-// both in the clear and wrapped.
+// both in the clear and wrapped. The data key is read from the source
+// given to [New].
 //
 // A non-positive size returns [crypto.ErrKeySize]. Callers that only
 // encrypt should zero plaintext once the payload is sealed.
@@ -179,9 +186,9 @@ func (k *Keeper) GenerateKey(ctx context.Context, size int) (plaintext, wrapped 
 // the same time.
 //
 // The guarantee here is only as strong as process memory: this drops
-// the cipher, but Go gives no way to guarantee no copy of the key
-// schedule survives elsewhere in the heap. A real custodian destroys
-// the key inside its own boundary.
+// the cipher, but Go cannot guarantee that no copy of the key schedule
+// survives elsewhere in the heap. A real custodian destroys the key
+// inside its own boundary.
 func (k *Keeper) Destroy(_ context.Context, keyID string) (time.Time, error) {
 	if subtle.ConstantTimeCompare([]byte(keyID), []byte(k.keyID)) != 1 {
 		return time.Time{}, crypto.ErrKeyID
