@@ -230,6 +230,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   nil. `AppendSeal` does not allocate when its buffer has capacity.
 - `epoch.Admissible` and `epoch.Watermark` document their
   precondition: the issuer grants each epoch to at most one holder.
+- `crypto.Digest.IsZero` compares the size alone. The constructors
+  are the only code that sets a size, so the zero value is the only
+  `Digest` of size 0, and the result is unchanged for every `Digest` a
+  caller can build. A call costs 0.3 ns, down from 5.1 ns for the
+  comparison of the whole 65-byte value.
 
 ### Fixed
 

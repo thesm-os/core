@@ -10,19 +10,19 @@ import (
 )
 
 // Digest size constants. Every [Hasher] in this module produces a
-// digest of one of these sizes; consumers reading a stored
-// [Digest] determine the active size from the producing
-// [Hasher]'s [ID] or [Algorithm].
+// digest of one of these sizes. The size of a stored digest is the
+// length of its encoding, which [DigestFromBytes] reads. A caller that
+// knows the producing [Algorithm] compares [Digest.Size] with the
+// constant for that algorithm.
 const (
-	// DigestSize256 is the byte length of a 256-bit digest —
-	// SHA-256, SHA3-256, and any other 256-bit hash carried
-	// through this seam.
+	// DigestSize256 is the byte length of a 256-bit digest: SHA-256,
+	// SHA3-256 and any other 256-bit hash.
 	DigestSize256 = 32
-	// DigestSize384 is the byte length of a 384-bit digest —
-	// SHA-384 and SHA3-384.
+	// DigestSize384 is the byte length of a 384-bit digest: SHA-384
+	// and SHA3-384.
 	DigestSize384 = 48
-	// DigestSize512 is the byte length of a 512-bit digest —
-	// SHA-512 and SHA3-512.
+	// DigestSize512 is the byte length of a 512-bit digest: SHA-512
+	// and SHA3-512.
 	DigestSize512 = 64
 
 	// MaxDigestSize is the upper bound on [Digest.Size] across
@@ -33,30 +33,27 @@ const (
 	MaxDigestSize = DigestSize512
 )
 
-// Digest is a fixed-max-size hash output covering 256-, 384-, and
-// 512-bit digests in a single value type. The [Digest.Size]
-// method reports the active prefix length; [Digest.Bytes] returns
-// a slice over that prefix.
+// Digest is a hash output of [DigestSize256], [DigestSize384] or
+// [DigestSize512] bytes in one value type. [Digest.Size] returns the
+// length of the active prefix, and [Digest.Bytes] returns the prefix.
 //
-// Digest is comparable (`==` works) so it can be a map key, a
-// struct field participating in equality, or compared in tests
-// without `bytes.Equal`. Pass-by-value; value-typed mutations do
-// not alias previously-stored digests — important for
-// audit-chain integrity where a stored digest must stay frozen.
+// Digest is comparable, so it can be a map key or a field of a
+// comparable struct, and == compares two digests. Its fields are
+// unexported, so a stored Digest changes only when another Digest is
+// assigned to it, as [Digest.UnmarshalBinary] does.
 //
 // # Allocation contract
 //
-// Construction, comparison, and storage are zero-alloc.
-// [Digest.String] allocates the returned hex string.
+// Construction, comparison and storage do not allocate.
+// [Digest.String] allocates the returned string.
 type Digest struct {
 	bytes [MaxDigestSize]byte
 	size  uint8
 }
 
 // NewDigest256 wraps a 32-byte hash output in a [Digest] of size
-// [DigestSize256]. Used by [Hasher] implementations whose
-// underlying primitive returns a fixed-size array (for example
-// [crypto/sha256.Sum256]).
+// [DigestSize256]. [Hasher] implementations whose primitive returns an
+// array, such as [crypto/sha256.Sum256], use it.
 //
 // # Allocation contract
 //
@@ -94,18 +91,15 @@ func NewDigest512(b [DigestSize512]byte) Digest {
 	return d
 }
 
-// DigestFromBytes builds a [Digest] from a digest-shaped byte slice,
-// inferring [Digest.Size] from len(b). This is the construction path
-// for callers whose digest arrives from a wire, a database column, or
-// a proof body rather than from a [Hasher].
+// DigestFromBytes returns a [Digest] of b, with [Digest.Size] taken
+// from len(b). A digest read from a wire, a database column or a proof
+// body enters the type through it.
 //
-// Returns [ErrDigestSize] unless len(b) is exactly [DigestSize256],
-// [DigestSize384], or [DigestSize512]. The zero-length case is
-// included: the zero [Digest] is the uninitialised value and has no
-// wire form, so decoding one back from empty input would turn every
-// truncated read into a digest the caller never wrote.
+// Returns [ErrDigestSize] unless len(b) is [DigestSize256],
+// [DigestSize384] or [DigestSize512]. Empty input is an error as well,
+// so no input decodes to the zero [Digest], which has no wire form.
 //
-// b is copied; the returned Digest does not alias it.
+// The returned Digest is a copy of b and does not alias it.
 //
 // # Allocation contract
 //
@@ -131,11 +125,11 @@ func DigestFromBytes(b []byte) (Digest, error) {
 }
 
 // AppendBinary appends d's active bytes to dst with no length header.
-// The size is recoverable from the length of the encoded form, so
-// every container that carries a digest already carries its width.
+// The length of the encoding is the size, so a container that stores
+// the encoding also stores the width.
 //
-// Returns [ErrDigestZero] for the zero [Digest], which has no wire
-// form. Implements [encoding.BinaryAppender].
+// Returns dst unchanged and [ErrDigestZero] for the zero [Digest],
+// which has no wire form. Implements [encoding.BinaryAppender].
 //
 // # Allocation contract
 //
@@ -148,22 +142,22 @@ func (d Digest) AppendBinary(dst []byte) ([]byte, error) {
 	return append(dst, d.bytes[:d.size]...), nil
 }
 
-// MarshalBinary returns exactly d.Size() bytes. Implementing
-// [encoding.BinaryMarshaler] also restores [encoding/gob] support,
-// which a struct with no exported fields otherwise refuses — as a
-// value and as a map key.
+// MarshalBinary returns exactly d.Size() bytes, the encoding
+// [Digest.AppendBinary] appends. [encoding/gob] refuses a struct with
+// no exported fields, as a value and as a map key. It encodes a Digest
+// through this method.
 //
-// Returns [ErrDigestZero] for the zero [Digest].
+// Returns nil and [ErrDigestZero] for the zero [Digest].
 //
 // # Allocation contract
 //
 // One allocation for the returned slice.
 //
-// Calling this through the [encoding.BinaryMarshaler] interface
-// costs a second allocation: Digest is a value type wider than a
-// word, so converting it to an interface boxes it onto the heap.
-// [encoding.BinaryUnmarshaler] is unaffected — its receiver is a
-// *Digest, which is pointer-shaped. Hot paths use
+// A call through the [encoding.BinaryMarshaler] interface costs a
+// second allocation. Digest is a value type wider than a word, so
+// converting it to an interface copies it to the heap.
+// [encoding.BinaryUnmarshaler] does not add an allocation, because its
+// receiver is a *Digest, which is pointer-shaped. Hot paths use
 // [Digest.AppendBinary] and avoid both.
 func (d Digest) MarshalBinary() ([]byte, error) {
 	out, err := d.AppendBinary(make([]byte, 0, d.size))
@@ -174,14 +168,14 @@ func (d Digest) MarshalBinary() ([]byte, error) {
 	return out, nil
 }
 
-// UnmarshalBinary decodes exactly what [DigestFromBytes] accepts and
-// returns the same error, because two decode paths that disagree
-// about which inputs are valid is the defect this method exists to
-// avoid. Implements [encoding.BinaryUnmarshaler].
+// UnmarshalBinary accepts exactly the inputs [DigestFromBytes] accepts
+// and returns the same error, so the two decode paths agree on every
+// input. On an error d is unchanged. Implements
+// [encoding.BinaryUnmarshaler].
 //
 // # Allocation contract
 //
-// Zero alloc — decodes into the receiver the caller already owns.
+// Zero alloc. It decodes into the receiver.
 func (d *Digest) UnmarshalBinary(data []byte) error {
 	parsed, err := DigestFromBytes(data)
 	if err != nil {
@@ -192,69 +186,63 @@ func (d *Digest) UnmarshalBinary(data []byte) error {
 	return nil
 }
 
-// Size returns the number of meaningful bytes in d.
+// Size returns the length of d's active prefix: 32, 48 or 64, or 0 for
+// the zero [Digest].
 func (d Digest) Size() int {
 	return int(d.size)
 }
 
-// Bytes returns a read-only slice covering the meaningful prefix
-// of d. The returned slice aliases d's storage; callers must
-// treat it as immutable. The slice is invalidated by any
-// modification to d, but Digest is value-typed and therefore
-// effectively immutable after construction.
+// Bytes returns the active prefix of d. Bytes has a value receiver, so
+// the slice refers to a copy of d, and a write through the slice does
+// not change d.
 func (d Digest) Bytes() []byte {
 	return d.bytes[:d.size]
 }
 
-// IsZero reports whether d is the zero [Digest] (size 0, all bytes
-// zero) — the uninitialised value, valid nowhere.
+// IsZero reports whether d is the zero [Digest], the uninitialised
+// value, which is valid nowhere. [Hasher.CombineTagged] refuses it as an
+// operand, with a panic message of its own that is distinct from the
+// one for a wrong width.
 //
-// It carries no meaning beyond that. It was once the sentinel for a
-// hash chain's genesis anchor, admitted into a combine and zero-
-// padded to the hasher's width; the meaning was unreadable from the
-// type, because a reader meeting size 0 implements the hash of the
-// leaf alone while the implementation prefixed 32 zero bytes, and
-// the two verifiers disagree at a chain's first entry. Genesis is
-// now a unary [Role] over one operand, and every hashing operation
-// refuses this value.
+// IsZero compares the size only. [NewDigest256], [NewDigest384],
+// [NewDigest512] and [DigestFromBytes] are the only code that sets a
+// Digest's size. Each sets it to 32, 48 or 64 together with the bytes,
+// and [Digest.UnmarshalBinary] assigns the result of DigestFromBytes.
+// No Digest other than the zero value has size 0.
 //
-// The predicate survives the sentinel because detecting an
-// uninitialised value is ordinary, and because
-// [Hasher.CombineTagged] uses it to tell a caller that what they
-// reached for is gone rather than reporting a width mismatch.
+// The zero Digest has no binary encoding. [Digest.AppendBinary] and
+// [Digest.MarshalBinary] return [ErrDigestZero] for it, and every
+// decode path rejects empty input, so a truncated read or an absent
+// field cannot decode to a digest. Encoding absence is the containing
+// format's job, as it is for any other optional field.
 //
-// The zero Digest has no binary encoding: marshalling it returns an
-// error and every decode path rejects zero-length input, so a
-// truncated read or an absent field cannot decode to a digest.
-// Encoding absence is the containing format's job, as it is for any
-// other optional field.
+// # Allocation contract
+//
+// Zero alloc.
 func (d Digest) IsZero() bool {
-	return d == Digest{}
+	return d.size == 0
 }
 
-// Equal reports whether d and other have the same size and the
-// same active bytes. Equivalent to `d == other` but the explicit
-// method is clearer at call sites that compare digests
-// programmatically.
+// Equal reports whether d and other have the same size and the same
+// active bytes. It returns the same result as d == other.
 //
-// Equal is NOT constant-time. Use [Digest.ConstantTimeEqual] to
-// compare a [MAC] or signature digest against a value supplied
-// by an untrusted party — equality timing leaks the position of
-// the first differing byte and converts into a forgery oracle.
+// The duration of Equal depends on the position of the first differing
+// byte. An attacker who submits guesses can use that timing to recover
+// a MAC one byte at a time. Compare a [MAC] or a signature digest from
+// an untrusted party with [Digest.ConstantTimeEqual].
 func (d Digest) Equal(other Digest) bool {
 	return d == other
 }
 
-// ConstantTimeEqual reports whether d and other have the same
-// size and the same active bytes, in time independent of where
-// the bytes first differ. Use this for [MAC] and signature
-// comparisons against values supplied by untrusted parties;
-// [Digest.Equal] (and `==`) leak the first-differing-byte
-// position via timing and must not be used in that setting.
+// ConstantTimeEqual reports whether d and other have the same size and
+// the same active bytes, in time independent of where the bytes first
+// differ. Use it to compare a [MAC] or a signature digest against a
+// value from an untrusted party. [Digest.Equal] and == leak the
+// position of the first differing byte through their duration.
 //
-// Size is public information determined by the producing
-// algorithm, so the size short-circuit is not itself a timing
-// hazard.
+// A size mismatch returns false at once. The producing algorithm
+// determines the size, so the size is public and the early return does
+// not leak a secret.
 func (d Digest) ConstantTimeEqual(other Digest) bool {
 	if d.size != other.size {
 		return false
@@ -262,24 +250,20 @@ func (d Digest) ConstantTimeEqual(other Digest) bool {
 	return subtle.ConstantTimeCompare(d.bytes[:d.size], other.bytes[:other.size]) == 1
 }
 
-// Compare returns -1, 0, or +1 by lexicographic ordering of the
-// active byte prefix. Size is part of the ordering implicitly:
-// when two digests share a common prefix, [bytes.Compare] orders
-// the shorter as less than the longer. Useful when digests are
-// stored in sorted indexes (Merkle accumulators, sorted-set
-// caches).
+// Compare returns -1, 0 or +1 by the lexicographic order of the active
+// prefixes. When one prefix is a prefix of the other, [bytes.Compare]
+// orders the shorter first. Use it to keep digests in a sorted index,
+// such as a Merkle accumulator.
 func (d Digest) Compare(other Digest) int {
 	return bytes.Compare(d.bytes[:d.size], other.bytes[:other.size])
 }
 
-// String returns the hex-encoded active prefix. Allocates the
-// result string; intended for diagnostic output, not the hot
-// path.
+// String returns the active prefix in hexadecimal, for diagnostic
+// output, and the empty string for the zero [Digest]. It allocates the
+// returned string.
 func (d Digest) String() string {
-	// Encode into a stack-resident buffer sized for the largest
-	// digest, then convert to string. One alloc total — the
-	// string copy. [hex.EncodeToString] would do two (a make
-	// for the hex bytes plus the string conversion).
+	// The hex digits go into a stack buffer sized for the largest
+	// digest, so the conversion to string is the only allocation.
 	var buf [DigestSize512 * 2]byte
 	hex.Encode(buf[:d.size*2], d.bytes[:d.size])
 	return string(buf[:d.size*2])
