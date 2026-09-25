@@ -102,6 +102,9 @@ Start from [`docs/templates/RFC.md`](../templates/RFC.md).
 | [0037](0037-periodic-and-quorum-tasks.md) | Periodic and Quorum Tasks | Accepted |
 | [0038](0038-conformance-for-durable-adapters.md) | Conformance for Durable Adapters and Decorators | Accepted |
 | [0039](0039-signature-policies.md) | Signature Policies and Verifier Resolution | Accepted |
+| [0040](0040-ranged-blob-reads.md) | Ranged Reads on Named Object Storage | Draft |
+| [0041](0041-chunked-authenticated-encryption.md) | Chunked Authenticated Encryption | Draft |
+| [0042](0042-intermediate-kek.md) | Intermediate Key-Encryption Keys | Draft |
 
 ## Canonical first RFC
 
