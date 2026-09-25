@@ -217,3 +217,51 @@ func AssertKeyGeneratorContract(t *testing.T, g crypto.KeyGenerator) {
 	testkit.NoError(t, err, "GenerateKey must succeed")
 	testkit.NotEqual(t, other, plaintext, "successive data keys must differ")
 }
+
+// The associated data that [AssertAADKeeperContract] binds, and the
+// associated data it opens with to show the binding.
+var (
+	aadBound = []byte("cryptotest/tenant-a")
+	aadOther = []byte("cryptotest/tenant-b")
+)
+
+// AssertAADKeeperContract asserts the [crypto.AADKeeper] capability:
+//
+//   - A data key wrapped with an aad unwraps with the same aad.
+//   - It fails to unwrap through UnwrapAAD with other or empty aad, and
+//     through Unwrap.
+//   - Material from Wrap unwraps through UnwrapAAD with empty aad.
+//   - Wrapping one data key twice with one aad produces different bytes.
+//
+// A custodian that ignores the associated data fails the second
+// assertion, so a policy that conditions on the data would not bind
+// anything.
+func AssertAADKeeperContract(t *testing.T, k crypto.AADKeeper) {
+	t.Helper()
+
+	dek := bytes.Repeat([]byte{0x5A}, 32)
+
+	wrapped, err := k.WrapAAD(t.Context(), dek, aadBound)
+	testkit.NoError(t, err, "WrapAAD must succeed")
+
+	got, err := k.UnwrapAAD(t.Context(), wrapped, aadBound)
+	testkit.NoError(t, err, "UnwrapAAD must succeed with the aad the key was wrapped with")
+	testkit.True(t, bytes.Equal(got, dek), "UnwrapAAD must return the data key exactly")
+
+	_, err = k.UnwrapAAD(t.Context(), wrapped, aadOther)
+	testkit.Error(t, err, "material wrapped with one aad must not unwrap with another")
+	_, err = k.UnwrapAAD(t.Context(), wrapped, nil)
+	testkit.Error(t, err, "material wrapped with an aad must not unwrap with empty aad")
+	_, err = k.Unwrap(t.Context(), wrapped)
+	testkit.Error(t, err, "material wrapped with an aad must not unwrap through Unwrap")
+
+	plain, err := k.Wrap(t.Context(), dek)
+	testkit.NoError(t, err, "Wrap must succeed")
+	got, err = k.UnwrapAAD(t.Context(), plain, nil)
+	testkit.NoError(t, err, "material from Wrap must unwrap through UnwrapAAD with empty aad")
+	testkit.True(t, bytes.Equal(got, dek), "UnwrapAAD must return the data key exactly")
+
+	again, err := k.WrapAAD(t.Context(), dek, aadBound)
+	testkit.NoError(t, err, "WrapAAD must succeed")
+	testkit.NotEqual(t, again, wrapped, "wrapping one data key twice with one aad must not produce identical bytes")
+}

@@ -64,3 +64,12 @@ func TestAssertDestroyerContract(t *testing.T) {
 		cryptotest.AssertDestroyerContract(t, &scheduled{Keeper: newLocal(t)})
 	})
 }
+
+func TestAssertAADKeeperContract(t *testing.T) {
+	t.Parallel()
+
+	t.Run("accepts the local keeper", func(t *testing.T) {
+		t.Parallel()
+		cryptotest.AssertAADKeeperContract(t, newLocal(t))
+	})
+}

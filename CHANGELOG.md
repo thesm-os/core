@@ -191,6 +191,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in FIPS 140-only mode with `aesgcm.NewRandomNonce` and allocate
   nothing when `dst` has capacity. `crypto/testdata/chunk_vectors.txt`
   records the bytes. See RFC-0041.
+- `crypto/kek`: a `crypto.Keeper` over an intermediate key-encryption
+  key (KEK) that a parent `Keeper` wraps. A `kek.Keeper` unwraps its KEK
+  once and then wraps each data key in process memory, so a caller makes
+  one custodian call per KEK instead of one per data key. It derives a
+  wrapping key with HKDF-SHA-256 from the KEK and a random salt, and
+  derives the next one after 2^30 wraps. A wrap costs about 175 ns and
+  one allocation. The parent wraps a record that binds the KEK to its
+  key ID, so `kek.New` refuses a record swapped with another key ID's
+  with `kek.ErrKeyIDMismatch`. `Close` zeroes the KEK, and a cleanup
+  zeroes the KEK of a keeper dropped without `Close`. See RFC-0042.
+- `crypto.AADKeeper` and `crypto.AsAADKeeper`: the optional capability
+  of a `Keeper` whose custodian binds associated data to a wrapped key,
+  as the AWS KMS encryption context does. `kek.GenerateAAD` and
+  `kek.NewAAD` pass the key ID to such a parent, so the custodian's
+  policy can refuse a record for another tenant. `localkey.Keeper`
+  implements the capability, and `cryptotest.AssertAADKeeperContract`
+  checks an implementation. See RFC-0042.
 
 ### Changed
 

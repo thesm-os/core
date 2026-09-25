@@ -8,14 +8,28 @@ import (
 	"context"
 	"io"
 	"testing"
+	"time"
 
 	"go.thesmos.sh/testkit"
 
+	"go.thesmos.sh/core/clock/fake"
 	"go.thesmos.sh/core/coretest/cryptotest"
 	"go.thesmos.sh/core/crypto"
+	"go.thesmos.sh/core/crypto/localkey"
 	"go.thesmos.sh/core/rand/constant"
 	randcrypto "go.thesmos.sh/core/rand/crypto"
 )
+
+// newLocalKeeper returns a local keeper, which implements AADKeeper.
+func newLocalKeeper(tb testing.TB) *localkey.Keeper {
+	tb.Helper()
+
+	k, err := localkey.New("crypto-test/local", make([]byte, localkey.RootKeySize), randcrypto.New(),
+		fake.New(time.Unix(0, 0).UTC()))
+	testkit.NoError(tb, err, "localkey.New must accept a 32-byte root key")
+
+	return k
+}
 
 // decorated wraps a Keeper and returns it from UnwrapKeeper, as a
 // tracing decorator does.
@@ -70,6 +84,47 @@ func TestAsKeyGenerator(t *testing.T) {
 		_, ok := crypto.AsKeyGenerator(decorated{cryptotest.NewKeeperStub(t)})
 		testkit.False(t, ok, "a Keeper without the capability must not report it")
 	})
+}
+
+func TestAsAADKeeper(t *testing.T) {
+	t.Parallel()
+
+	t.Run("returns the AADKeeper itself, behind one decorator and behind two", func(t *testing.T) {
+		t.Parallel()
+		k := newLocalKeeper(t)
+		for name, chain := range map[string]crypto.Keeper{
+			"itself":         k,
+			"one decorator":  decorated{k},
+			"two decorators": decorated{decorated{k}},
+		} {
+			got, ok := crypto.AsAADKeeper(chain)
+			testkit.True(t, ok, "an AADKeeper behind "+name+" must be found")
+			testkit.True(t, got == crypto.AADKeeper(k), "the AADKeeper behind "+name+" must be returned")
+		}
+	})
+
+	t.Run("reports false for a Keeper without the capability", func(t *testing.T) {
+		t.Parallel()
+		_, ok := crypto.AsAADKeeper(decorated{cryptotest.NewKeeperStub(t)})
+		testkit.False(t, ok, "a Keeper without the capability must not report it")
+	})
+
+	t.Run("reports false for a decorator without UnwrapKeeper", func(t *testing.T) {
+		t.Parallel()
+		_, ok := crypto.AsAADKeeper(opaque{newLocalKeeper(t)})
+		testkit.False(t, ok, "a decorator without UnwrapKeeper must end the chain")
+	})
+}
+
+// BenchmarkAsAADKeeper reports the cost and the allocations of
+// AsAADKeeper through two decorators.
+func BenchmarkAsAADKeeper(b *testing.B) {
+	var k crypto.Keeper = decorated{decorated{newLocalKeeper(b)}}
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _ = crypto.AsAADKeeper(k)
+	}
 }
 
 // TestKeeperZeroAlloc enforces the allocation contract of the As

@@ -42,7 +42,7 @@ import (
 const RootKeySize = aesgcm.KeySize256
 
 // Keeper is an in-process [crypto.Keeper]. It also satisfies
-// [crypto.Destroyer] and [crypto.KeyGenerator].
+// [crypto.Destroyer], [crypto.KeyGenerator] and [crypto.AADKeeper].
 //
 // # Concurrency
 //
@@ -68,13 +68,14 @@ type Keeper struct {
 	mu sync.RWMutex
 }
 
-// Compile-time proof that Keeper satisfies the seam and both
+// Compile-time proof that Keeper satisfies the seam and its
 // capabilities. A caller type-asserts for these at wiring time, so a
 // method dropped by a refactor fails the build and not the assertion.
 var (
 	_ crypto.Keeper       = (*Keeper)(nil)
 	_ crypto.Destroyer    = (*Keeper)(nil)
 	_ crypto.KeyGenerator = (*Keeper)(nil)
+	_ crypto.AADKeeper    = (*Keeper)(nil)
 )
 
 // New returns a Keeper wrapping data keys under rootKey, identified by
@@ -115,14 +116,21 @@ func New(keyID string, rootKey []byte, r rand.Rand, c clock.Clock) (*Keeper, err
 // KeyID returns the identifier given at construction.
 func (k *Keeper) KeyID() string { return k.keyID }
 
-// Wrap encrypts dek under the root key.
+// Wrap encrypts dek under the root key. It is [Keeper.WrapAAD] with
+// empty aad.
+func (k *Keeper) Wrap(ctx context.Context, dek []byte) ([]byte, error) {
+	return k.WrapAAD(ctx, dek, nil)
+}
+
+// WrapAAD encrypts dek under the root key and binds aad to the result,
+// as the envelope's associated data.
 //
 // The standard library's FIPS 140-3 module generates a fresh 96-bit
 // nonce for each call, so wrapping one data key twice produces
 // different bytes. Random nonces are safe for at most 2^32 wraps under
 // one root key. Returns [crypto.ErrKeyDestroyed] once [Keeper.Destroy]
 // has run.
-func (k *Keeper) Wrap(_ context.Context, dek []byte) ([]byte, error) {
+func (k *Keeper) WrapAAD(_ context.Context, dek, aad []byte) ([]byte, error) {
 	a, err := k.cipher()
 	if err != nil {
 		return nil, err
@@ -130,23 +138,31 @@ func (k *Keeper) Wrap(_ context.Context, dek []byte) ([]byte, error) {
 
 	// The cipher generates its own nonce, so Seal does not read from a
 	// random source.
-	return crypto.Seal(a, nil, dek, nil)
+	return crypto.Seal(a, nil, dek, aad)
 }
 
-// Unwrap decrypts a wrapped data key.
+// Unwrap decrypts a wrapped data key. It is [Keeper.UnwrapAAD] with
+// empty aad.
+func (k *Keeper) Unwrap(ctx context.Context, wrapped []byte) ([]byte, error) {
+	return k.UnwrapAAD(ctx, wrapped, nil)
+}
+
+// UnwrapAAD decrypts a data key that [Keeper.WrapAAD] wrapped with the
+// same aad.
 //
-// Material corrupted in any position, truncated, or wrapped under a
-// different root key fails authentication and returns an error, never
-// wrong key material. Returns [crypto.ErrKeyDestroyed] once
-// [Keeper.Destroy] has run. That error is distinct from a corruption
-// failure, because the two have different remedies.
-func (k *Keeper) Unwrap(_ context.Context, wrapped []byte) ([]byte, error) {
+// Material wrapped with other aad, corrupted in any position,
+// truncated, or wrapped under a different root key fails authentication
+// and returns an error, never wrong key material. Returns
+// [crypto.ErrKeyDestroyed] once [Keeper.Destroy] has run. That error is
+// distinct from a corruption failure, because the two have different
+// remedies.
+func (k *Keeper) UnwrapAAD(_ context.Context, wrapped, aad []byte) ([]byte, error) {
 	a, err := k.cipher()
 	if err != nil {
 		return nil, err
 	}
 
-	return crypto.Open(a, wrapped, nil)
+	return crypto.Open(a, wrapped, aad)
 }
 
 // GenerateKey generates a fresh data key of size bytes and returns it

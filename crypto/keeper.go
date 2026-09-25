@@ -120,6 +120,30 @@ type KeyGenerator interface {
 	GenerateKey(ctx context.Context, size int) (plaintext, wrapped []byte, err error)
 }
 
+// AADKeeper is the optional capability of a [Keeper] whose custodian
+// binds associated data to a wrapped key. Material wrapped with one
+// associated data unwraps only with the same associated data.
+//
+// The associated data is not secret. A hosted custodian can log it and
+// can evaluate its access policy against it, as AWS KMS does with the
+// encryption context. A caller that relies on the binding finds the
+// capability with [AsAADKeeper] when it is wired, and fails at once when
+// the Keeper has none.
+type AADKeeper interface {
+	Keeper
+
+	// WrapAAD encrypts a data key and binds aad to the result. Wrap on
+	// the same value behaves as WrapAAD with empty aad. Implementations
+	// must not wrap deterministically, as for Wrap.
+	WrapAAD(ctx context.Context, dek, aad []byte) ([]byte, error)
+
+	// UnwrapAAD decrypts a data key that WrapAAD wrapped with the same
+	// aad. Material wrapped with other aad, under a different key, or
+	// corrupted in any position returns an error and never a wrong key.
+	// Unwrap on the same value behaves as UnwrapAAD with empty aad.
+	UnwrapAAD(ctx context.Context, wrapped, aad []byte) ([]byte, error)
+}
+
 // AsDestroyer returns the first [Destroyer] in the chain that starts at
 // k and follows each decorator's UnwrapKeeper() Keeper, and reports
 // whether it found one. A decorator that wraps a Keeper implements
@@ -147,6 +171,17 @@ func AsDestroyer(k Keeper) (Destroyer, bool) {
 // Zero alloc.
 func AsKeyGenerator(k Keeper) (KeyGenerator, bool) {
 	return find[KeyGenerator](k)
+}
+
+// AsAADKeeper returns the first [AADKeeper] in the chain that starts at
+// k and follows each decorator's UnwrapKeeper() Keeper, and reports
+// whether it found one. It follows the rules of [AsDestroyer].
+//
+// # Allocation contract
+//
+// Zero alloc.
+func AsAADKeeper(k Keeper) (AADKeeper, bool) {
+	return find[AADKeeper](k)
 }
 
 // find returns the first value of type T in the chain that starts at k

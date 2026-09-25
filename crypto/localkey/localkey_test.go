@@ -68,6 +68,12 @@ func TestKeyGeneratorContract(t *testing.T) {
 	cryptotest.AssertKeyGeneratorContract(t, mustNew(t, testKeyID, rootKey))
 }
 
+func TestAADKeeperContract(t *testing.T) {
+	t.Parallel()
+
+	cryptotest.AssertAADKeeperContract(t, mustNew(t, testKeyID, rootKey))
+}
+
 // --- impl-specific ---
 
 // TestNew covers construction. The key ID is persisted with every

@@ -1,0 +1,15 @@
+# A KEK vector for crypto/kek.
+#
+# kek <hex>: the KEK, read from seeded.New(7).
+# keyid <text>: the key ID the record binds.
+# record <hex>: the record the parent wraps, the KEK and then the SHA-256
+#   digest of the key ID framed under DomainName.
+# dek <hex>: a DEK.
+# wrapped <hex>: the DEK wrapped by a Keeper over the KEK, as the salt
+#   and then the envelope. The standard library chose its nonce, so the
+#   vector is checked by unwrapping it.
+kek 203a2a9af54cc7c7b5e364ab810f38fb88c333cde63a595588eedd647413b174
+keyid vectors/tenant
+record 203a2a9af54cc7c7b5e364ab810f38fb88c333cde63a595588eedd647413b174fcedff0ab9bdfeab96787b1d3d35263795170573fbd50d6646a514d8b054ed26
+dek 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
+wrapped b144417dcb3493ad4e88b2c2eb7b5b40010b6165732d3235362d67636dab149e0ad3e5ed5a037c856675971a3840b99261190dcbe4317d3dc84c0f9ac1c11d13c01bc285e9766d8b7b38035d667f48d90e439cdfa9b4a733ca

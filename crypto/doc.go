@@ -93,9 +93,9 @@
 //
 // A decorator that wraps a [Keeper], for example to add tracing,
 // implements UnwrapKeeper() Keeper and returns the Keeper it wraps.
-// [AsDestroyer] and [AsKeyGenerator] follow UnwrapKeeper to find a
-// capability behind any number of decorators, and [GenerateKey] uses
-// AsKeyGenerator. The method is not named Unwrap, because
+// [AsDestroyer], [AsKeyGenerator] and [AsAADKeeper] follow UnwrapKeeper
+// to find a capability behind any number of decorators, and
+// [GenerateKey] uses AsKeyGenerator. The method is not named Unwrap, because
 // [Keeper.Unwrap] unwraps a data key.
 //
 // # Allocation contract
