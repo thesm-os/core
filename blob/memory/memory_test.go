@@ -17,6 +17,7 @@ import (
 	"go.thesmos.sh/core/clock/fake"
 	"go.thesmos.sh/core/coretest/blobtest"
 	"go.thesmos.sh/core/page"
+	"go.thesmos.sh/core/version"
 )
 
 // TestMemoryStoreConformance runs the conformance suite with every
@@ -33,7 +34,32 @@ func TestMemoryStoreConformance(t *testing.T) {
 
 			return s
 		}),
+		blobtest.WithRangeReader(),
 	)
+}
+
+// benchObjectSize and benchRangeSize are the object and the range that
+// BenchmarkReadRange reads: 4 KiB from a 64 KiB object.
+const (
+	benchObjectSize = 64 << 10
+	benchRangeSize  = 4 << 10
+)
+
+// BenchmarkReadRange reports the cost and the allocations of ReadRange
+// on its happy path.
+func BenchmarkReadRange(b *testing.B) {
+	s := memory.New(fake.New(time.Unix(0, 0).UTC()))
+	_, err := s.Put(b.Context(), "k", bytes.NewReader(make([]byte, benchObjectSize)), blob.PutOptions{})
+	testkit.NoError(b, err, "Put must succeed")
+
+	ctx := b.Context()
+	dst := make([]byte, benchRangeSize)
+
+	b.ReportAllocs()
+	b.SetBytes(benchRangeSize)
+	for b.Loop() {
+		_, _, _ = s.ReadRange(ctx, "k", benchRangeSize, dst, version.Unspecified)
+	}
 }
 
 // TestPut covers a contract of the memory Store beyond the seam. Its

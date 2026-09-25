@@ -54,12 +54,17 @@ type run struct {
 type hooked struct {
 	*memory.Store
 
-	put    func(ctx context.Context, key string, r io.Reader, opts blob.PutOptions) (blob.Info, error)
-	get    func(ctx context.Context, key string) (io.ReadCloser, blob.Info, error)
-	stat   func(ctx context.Context, key string) (blob.Info, error)
-	delete func(ctx context.Context, key string, ifMatch version.Version) error
-	list   func(ctx context.Context, prefix string, p page.Page) (page.Cursor[blob.Info], error)
+	put       func(ctx context.Context, key string, r io.Reader, opts blob.PutOptions) (blob.Info, error)
+	get       func(ctx context.Context, key string) (io.ReadCloser, blob.Info, error)
+	stat      func(ctx context.Context, key string) (blob.Info, error)
+	delete    func(ctx context.Context, key string, ifMatch version.Version) error
+	list      func(ctx context.Context, prefix string, p page.Page) (page.Cursor[blob.Info], error)
+	readRange func(ctx context.Context, key string, off int64, dst []byte, ifMatch version.Version) (int, blob.Info, error)
 }
+
+// storeOnly holds a store as the Store interface and nothing else, so
+// it hides the [blob.RangeReader] of the store it holds.
+type storeOnly struct{ blob.Store }
 
 //nolint:wrapcheck // the test double passes the error through
 func (h *hooked) Put(ctx context.Context, key string, r io.Reader, opts blob.PutOptions) (blob.Info, error) {
@@ -104,6 +109,17 @@ func (h *hooked) List(ctx context.Context, prefix string, p page.Page) (page.Cur
 	}
 
 	return h.Store.List(ctx, prefix, p)
+}
+
+//nolint:wrapcheck // the test double passes the error through
+func (h *hooked) ReadRange(
+	ctx context.Context, key string, off int64, dst []byte, ifMatch version.Version,
+) (int, blob.Info, error) {
+	if h.readRange != nil {
+		return h.readRange(ctx, key, off, dst, ifMatch)
+	}
+
+	return h.Store.ReadRange(ctx, key, off, dst, ifMatch)
 }
 
 // lateReader opens the object on its first Read, so it serves the
@@ -187,8 +203,80 @@ func runs() map[string]run {
 
 					return s
 				}),
+				blobtest.WithRangeReader(),
 			},
 		},
+		"a store run with WithRangeReader implements RangeReader": {
+			newStore: func(c clock.Clock) blob.Store { return storeOnly{memory.New(c)} },
+			options:  []blobtest.Option{blobtest.WithRangeReader()},
+		},
+		"ReadRange returns what ReadAt returns over the body": breaking(func(s *memory.Store, h *hooked) {
+			h.readRange = func(
+				ctx context.Context, key string, off int64, dst []byte, ifMatch version.Version,
+			) (int, blob.Info, error) {
+				n, info, err := s.ReadRange(ctx, key, off, dst, ifMatch)
+				if errors.Is(err, io.EOF) && n > 0 {
+					err = nil
+				}
+
+				return n, info, err
+			}
+		}),
+		"ReadRange rejects a bad offset or key as Invalid and absence as NotFound": breaking(
+			func(s *memory.Store, h *hooked) {
+				h.readRange = func(
+					ctx context.Context, key string, off int64, dst []byte, ifMatch version.Version,
+				) (int, blob.Info, error) {
+					return s.ReadRange(ctx, key, max(off, 0), dst, ifMatch)
+				}
+			}),
+		"ReadRange with ifMatch reads only the version it names": breaking(func(s *memory.Store, h *hooked) {
+			h.readRange = func(
+				ctx context.Context, key string, off int64, dst []byte, _ version.Version,
+			) (int, blob.Info, error) {
+				return s.ReadRange(ctx, key, off, dst, version.Unspecified)
+			}
+		}),
+		"ReadRange returns bytes of the version its Info names": breaking(func(s *memory.Store, h *hooked) {
+			// The store serves the previous body of a key under the Info
+			// of the current one, so every read after an overwrite
+			// returns bytes of another version.
+			var (
+				mu       sync.Mutex
+				previous = map[string][]byte{}
+				current  = map[string][]byte{}
+			)
+			h.put = func(ctx context.Context, key string, r io.Reader, opts blob.PutOptions) (blob.Info, error) {
+				body, err := io.ReadAll(r)
+				if err != nil {
+					return blob.Info{}, err
+				}
+				mu.Lock()
+				previous[key], current[key] = current[key], body
+				mu.Unlock()
+
+				return s.Put(ctx, key, bytes.NewReader(body), opts)
+			}
+			h.readRange = func(
+				ctx context.Context, key string, off int64, dst []byte, ifMatch version.Version,
+			) (int, blob.Info, error) {
+				n, info, err := s.ReadRange(ctx, key, off, dst, ifMatch)
+				mu.Lock()
+				if stale := previous[key]; off >= 0 && off < int64(len(stale)) {
+					copy(dst[:n], stale[off:])
+				}
+				mu.Unlock()
+
+				return n, info, err
+			}
+		}),
+		"ReadRange returns the error of a done context": breaking(func(s *memory.Store, h *hooked) {
+			h.readRange = func(
+				ctx context.Context, key string, off int64, dst []byte, ifMatch version.Version,
+			) (int, blob.Info, error) {
+				return s.ReadRange(context.WithoutCancel(ctx), key, off, dst, ifMatch)
+			}
+		}),
 		"Put, Get and Stat agree on the body and metadata": breaking(func(s *memory.Store, h *hooked) {
 			h.stat = func(ctx context.Context, key string) (blob.Info, error) {
 				info, err := s.Stat(ctx, key)

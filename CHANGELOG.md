@@ -166,6 +166,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   not to allocate. Existing calls compile unchanged. Core's tests run
   each suite against a broken store for every case and require that
   case to fail. See RFC-0038.
+- `blob.RangeReader` and `blob.AsRangeReader`. A store that implements
+  `RangeReader` reads a byte range of an object without transferring
+  the rest. A non-zero `ifMatch` refuses a read of any other version
+  with `version.ErrMismatch`, so a caller reads two or more ranges from
+  one version. The count and the error follow `bytes.Reader.ReadAt`,
+  and an absent object classifies as NotFound whatever `ifMatch` names.
+  `AsRangeReader` finds the capability through decorators that
+  implement `Unwrap() Store`. `blob/memory` implements it without
+  allocating. `blobtest.AssertStore` runs its cases for every store
+  that implements it, and `blobtest.WithRangeReader` fails a store
+  without it. See RFC-0040.
 
 ### Changed
 

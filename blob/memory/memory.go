@@ -41,8 +41,9 @@ const defaultPageSize = 50
 // spelling; they exist so this package's own tests can assert cause
 // identity as well as class.
 var (
-	errBadKey = errors.New("memory: key is not a valid object name")
-	errAbsent = errors.New("memory: object not present")
+	errBadKey    = errors.New("memory: key is not a valid object name")
+	errAbsent    = errors.New("memory: object not present")
+	errBadOffset = errors.New("memory: negative offset")
 )
 
 // object pairs a stored body with its metadata. The body slice is
@@ -82,8 +83,8 @@ type object struct {
 // # Allocation contract
 //
 // Put allocates the buffered body; Get allocates one reader wrapper
-// and no body copy; Stat and Delete allocate nothing on their happy
-// paths; List allocates the page snapshot.
+// and no body copy; ReadRange, Stat and Delete allocate nothing on
+// their happy paths; List allocates the page snapshot.
 type Store struct {
 	m   map[string]object
 	c   clock.Clock
@@ -91,8 +92,11 @@ type Store struct {
 	mu  sync.Mutex
 }
 
-// Compile-time interface check.
-var _ blob.Store = (*Store)(nil)
+// Compile-time interface checks.
+var (
+	_ blob.Store       = (*Store)(nil)
+	_ blob.RangeReader = (*Store)(nil)
+)
 
 // New returns an empty [Store] reading wall time from c. The
 // clock is injected so a test drives [blob.Info.ModTime]
@@ -201,6 +205,66 @@ func (s *Store) Get(ctx context.Context, key string) (io.ReadCloser, blob.Info, 
 	}
 
 	return io.NopCloser(bytes.NewReader(obj.data)), obj.info, nil
+}
+
+// ReadRange copies len(dst) bytes of the stored body, starting at off,
+// into dst, with the count and the error of [bytes.Reader.ReadAt].
+//
+// The store takes the object that the key names under the lock, and
+// compares ifMatch with that object's version. Stored bodies are
+// immutable, so the bytes it copies after the lock is released belong
+// to the version the returned Info names.
+//
+// Error modes, each with the zero Info:
+//
+//   - ctx already done — the context's error, unwrapped.
+//   - key fails [blob.ValidKey] — classifies as [errs.Invalid].
+//   - off is negative — classifies as [errs.Invalid].
+//   - the key is absent — classifies as [errs.NotFound], whatever
+//     ifMatch names.
+//   - a non-zero ifMatch names a version other than the stored one —
+//     [version.ErrMismatch].
+//
+// # Allocation contract
+//
+// Zero alloc on the happy path. It copies into dst.
+func (s *Store) ReadRange(
+	ctx context.Context, key string, off int64, dst []byte, ifMatch version.Version,
+) (int, blob.Info, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, blob.Info{}, err
+	}
+
+	if !blob.ValidKey(key) {
+		return 0, blob.Info{}, errs.WithClass(errBadKey, errs.Invalid)
+	}
+
+	if off < 0 {
+		return 0, blob.Info{}, errs.WithClass(errBadOffset, errs.Invalid)
+	}
+
+	s.mu.Lock()
+	obj, ok := s.m[key]
+	s.mu.Unlock()
+
+	if !ok {
+		return 0, blob.Info{}, errs.WithClass(errAbsent, errs.NotFound)
+	}
+
+	if !ifMatch.IsZero() && obj.info.Version != ifMatch {
+		return 0, blob.Info{}, version.ErrMismatch
+	}
+
+	if off >= int64(len(obj.data)) {
+		return 0, obj.info, io.EOF
+	}
+
+	n := copy(dst, obj.data[off:])
+	if n < len(dst) {
+		return n, obj.info, io.EOF
+	}
+
+	return n, obj.info, nil
 }
 
 // Stat returns metadata without the body.

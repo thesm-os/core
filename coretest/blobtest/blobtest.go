@@ -4,18 +4,22 @@
 // Package blobtest provides the conformance suite for
 // [go.thesmos.sh/core/blob.Store].
 //
-// [AssertStore] runs one subtest per law of the seam. [WithReopen] and
-// [WithCrash] add the laws that only a restart can test, for a store
-// over durable storage.
+// [AssertStore] runs one subtest per law of the seam, and the laws of
+// [go.thesmos.sh/core/blob.RangeReader] for a store that implements it.
+// [WithReopen] and [WithCrash] add the laws that only a restart can
+// test, for a store over durable storage. [WithRangeReader] fails a
+// store that does not implement RangeReader.
 package blobtest
 
 import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -33,6 +37,16 @@ import (
 // advance fails the walk at this page instead of at the test deadline.
 const maxPages = 16
 
+// The shape of the case that overwrites an object while ReadRange runs.
+// Each writer puts overwritesPerWriter bodies, and each reader reads the
+// whole object readsPerReader times.
+const (
+	overwriteWriters    = 3
+	overwritesPerWriter = 20
+	overwriteReaders    = 3
+	readsPerReader      = 50
+)
+
 // errInterrupted is the error a [failingReader] returns after its data.
 var errInterrupted = errors.New("blobtest: upload interrupted")
 
@@ -41,8 +55,9 @@ type Option func(*config)
 
 // config is the result of applying every [Option] of one run.
 type config struct {
-	reopen func(t *testing.T, s blob.Store) blob.Store
-	crash  func(t *testing.T, s blob.Store, write func()) blob.Store
+	reopen      func(t *testing.T, s blob.Store) blob.Store
+	crash       func(t *testing.T, s blob.Store, write func()) blob.Store
+	rangeReader bool
 }
 
 // WithReopen gives the suite a way to open the storage behind s again,
@@ -73,6 +88,41 @@ func WithReopen(reopen func(t *testing.T, s blob.Store) blob.Store) Option {
 // storage.
 func WithCrash(crash func(t *testing.T, s blob.Store, write func()) blob.Store) Option {
 	return func(c *config) { c.crash = crash }
+}
+
+// WithRangeReader adds a case that requires the store to implement
+// [blob.RangeReader], found through [blob.AsRangeReader]. A store without
+// the capability fails the run.
+//
+// [AssertStore] runs the cases of RangeReader for every store that
+// implements it, with or without this option. The option catches an
+// adapter whose ReadRange no longer matches the interface, which
+// detection alone would skip.
+func WithRangeReader() Option {
+	return func(c *config) { c.rangeReader = true }
+}
+
+// invalidKeys returns keys that [blob.ValidKey] rejects, each named by
+// the rule it breaks.
+func invalidKeys() map[string]string {
+	return map[string]string{
+		"empty":             "",
+		"the root":          ".",
+		"rooted":            "/k",
+		"trailing slash":    "k/",
+		"empty element":     "a//b",
+		"dot element":       "a/./b",
+		"dot-dot element":   "a/../b",
+		"escaping the root": "../k",
+		"over the length":   strings.Repeat("a", blob.MaxKeyLen+1),
+		"over the element":  strings.Repeat("a", blob.MaxKeyElemLen+1) + "/b",
+	}
+}
+
+// overwriteBody returns the body that writer w puts on its i-th
+// overwrite. Every body is 56 bytes long, and no two are equal.
+func overwriteBody(w, i int) string {
+	return strings.Repeat(fmt.Sprintf("w%d/%03d;", w, i), 8)
 }
 
 // failingReader returns its data and then err, as an upload that fails
@@ -144,6 +194,19 @@ func assertSameObject(t *testing.T, got, want blob.Info, who string) {
 //     encodes keys so that it can.
 //   - Absence classifies as NotFound, and every method returns the
 //     error of a done context.
+//
+// For a store that implements [blob.RangeReader], found through
+// [blob.AsRangeReader], the cases also cover ReadRange:
+//
+//   - The count, the error and the bytes are those of
+//     [bytes.Reader.ReadAt] over the body, and every result returns the
+//     Info that Stat returns.
+//   - A negative offset and an invalid key classify as Invalid, and an
+//     absent object classifies as NotFound whatever ifMatch names.
+//   - A non-zero ifMatch reads only the version it names.
+//   - A read during overwrites returns the bytes of the version its Info
+//     names.
+//   - ReadRange returns the error of a done context.
 //
 // Each [Option] adds the cases its docblock lists.
 func AssertStore(t *testing.T, newStore func(c clock.Clock) blob.Store, options ...Option) {
@@ -430,18 +493,7 @@ func AssertStore(t *testing.T, newStore func(c clock.Clock) blob.Store, options 
 
 		s := fresh()
 
-		for name, key := range map[string]string{
-			"empty":             "",
-			"the root":          ".",
-			"rooted":            "/k",
-			"trailing slash":    "k/",
-			"empty element":     "a//b",
-			"dot element":       "a/./b",
-			"dot-dot element":   "a/../b",
-			"escaping the root": "../k",
-			"over the length":   strings.Repeat("a", blob.MaxKeyLen+1),
-			"over the element":  strings.Repeat("a", blob.MaxKeyElemLen+1) + "/b",
-		} {
+		for name, key := range invalidKeys() {
 			testkit.False(t, blob.ValidKey(key), name+" must not satisfy ValidKey")
 
 			_, perr := s.Put(t.Context(), key, bytes.NewReader(nil), blob.PutOptions{})
@@ -529,6 +581,19 @@ func AssertStore(t *testing.T, newStore func(c clock.Clock) blob.Store, options 
 			"a version from before the delete must not match the recreated key")
 	})
 
+	if cfg.rangeReader {
+		t.Run("a store run with WithRangeReader implements RangeReader", func(t *testing.T) {
+			t.Parallel()
+
+			_, ok := blob.AsRangeReader(fresh())
+			testkit.True(t, ok, "WithRangeReader requires the store to implement blob.RangeReader")
+		})
+	}
+
+	if _, ok := blob.AsRangeReader(fresh()); ok {
+		assertRangeReader(t, fresh)
+	}
+
 	if cfg.reopen != nil {
 		t.Run("a reopened store keeps every write that returned", func(t *testing.T) {
 			t.Parallel()
@@ -608,4 +673,201 @@ func AssertStore(t *testing.T, newStore func(c clock.Clock) blob.Store, options 
 				"overwritten during the crash", overwritten, overwrittenErr)
 		})
 	}
+}
+
+// readResult is one ReadRange that ran during overwrites: the version
+// its Info named, the bytes it returned and its error.
+type readResult struct {
+	err     error
+	version version.Version
+	body    string
+}
+
+// assertRangeReader runs the laws of [blob.RangeReader] against the
+// stores that fresh returns. Each case builds its own store.
+func assertRangeReader(t *testing.T, fresh func() blob.Store) {
+	t.Helper()
+
+	// key names the object that each case writes and reads.
+	const key = "k"
+
+	open := func(t *testing.T) (blob.Store, blob.RangeReader) {
+		t.Helper()
+
+		s := fresh()
+		rr, ok := blob.AsRangeReader(s)
+		testkit.True(t, ok, "the store must implement blob.RangeReader")
+
+		return s, rr
+	}
+	put := func(t *testing.T, s blob.Store, body string) blob.Info {
+		t.Helper()
+
+		info, err := s.Put(t.Context(), key, strings.NewReader(body), blob.PutOptions{})
+		testkit.NoError(t, err, "Put must succeed")
+
+		return info
+	}
+
+	t.Run("ReadRange returns what ReadAt returns over the body", func(t *testing.T) {
+		t.Parallel()
+
+		const body = "0123456789"
+
+		s, rr := open(t)
+		put(t, s, body)
+		stat, err := s.Stat(t.Context(), key)
+		testkit.NoError(t, err, "Stat must succeed")
+
+		ref := bytes.NewReader([]byte(body))
+		end := int64(len(body))
+
+		for name, c := range map[string]struct {
+			off int64
+			n   int
+		}{
+			"an empty range inside the object":   {off: 3},
+			"an empty range at the end":          {off: end},
+			"one byte":                           {off: 3, n: 1},
+			"the whole object":                   {n: len(body)},
+			"a range that ends at the last byte": {off: 6, n: 4},
+			"a range that ends past the end":     {off: 6, n: 8},
+			"an offset at the end":               {off: end, n: 4},
+			"an offset past the end":             {off: end + 5, n: 4},
+		} {
+			dst, want := make([]byte, c.n), make([]byte, c.n)
+			n, info, readErr := rr.ReadRange(t.Context(), key, c.off, dst, version.Unspecified)
+			wantN, wantErr := ref.ReadAt(want, c.off)
+
+			testkit.Equal(t, n, wantN, name+" must return the count of ReadAt")
+			if wantErr == nil {
+				testkit.NoError(t, readErr, name+" must return a nil error")
+			} else {
+				testkit.ErrorIs(t, readErr, io.EOF, name+" must return io.EOF")
+			}
+			testkit.Equal(t, string(dst[:n]), string(want[:wantN]), name+" must return the bytes of the body")
+			testkit.Equal(t, info, stat, name+" must return the Info that Stat returns")
+		}
+	})
+
+	t.Run("ReadRange rejects a bad offset or key as Invalid and absence as NotFound", func(t *testing.T) {
+		t.Parallel()
+
+		s, rr := open(t)
+		put(t, s, "body")
+		dst := make([]byte, 2)
+
+		_, info, err := rr.ReadRange(t.Context(), key, -1, dst, version.Unspecified)
+		testkit.Equal(t, errs.Classify(err), errs.Invalid, "a negative offset must classify as Invalid")
+		testkit.Equal(t, info, blob.Info{}, "a refused read must return the zero Info")
+
+		for name, invalid := range invalidKeys() {
+			_, _, err = rr.ReadRange(t.Context(), invalid, 0, dst, version.Unspecified)
+			testkit.Equal(t, errs.Classify(err), errs.Invalid, "ReadRange must reject "+name)
+		}
+
+		_, _, err = rr.ReadRange(t.Context(), "absent", 0, dst, version.Unspecified)
+		testkit.Equal(t, errs.Classify(err), errs.NotFound, "an absent object must classify as NotFound")
+
+		_, _, err = rr.ReadRange(t.Context(), "absent", 0, dst, "v")
+		testkit.Equal(t, errs.Classify(err), errs.NotFound,
+			"an absent object must classify as NotFound whatever ifMatch names")
+	})
+
+	t.Run("ReadRange with ifMatch reads only the version it names", func(t *testing.T) {
+		t.Parallel()
+
+		s, rr := open(t)
+		first := put(t, s, "one")
+		dst := make([]byte, len("one"))
+
+		n, _, err := rr.ReadRange(t.Context(), key, 0, dst, first.Version)
+		testkit.NoError(t, err, "a read naming the stored version must succeed")
+		testkit.Equal(t, string(dst[:n]), "one", "the read must return the stored bytes")
+
+		second := put(t, s, "two")
+
+		n, info, err := rr.ReadRange(t.Context(), key, 0, dst, first.Version)
+		testkit.ErrorIs(t, err, version.ErrMismatch, "a read naming a superseded version must fail")
+		testkit.Equal(t, n, 0, "a refused read must return no bytes")
+		testkit.Equal(t, info, blob.Info{}, "a refused read must return the zero Info")
+
+		n, _, err = rr.ReadRange(t.Context(), key, 0, dst, second.Version)
+		testkit.NoError(t, err, "a read naming the new version must succeed")
+		testkit.Equal(t, string(dst[:n]), "two", "the read must return the new bytes")
+	})
+
+	t.Run("ReadRange returns bytes of the version its Info names", func(t *testing.T) {
+		t.Parallel()
+
+		s, rr := open(t)
+		put(t, s, overwriteBody(overwriteWriters, 0))
+		latest := put(t, s, overwriteBody(overwriteWriters, 1))
+		size := len(overwriteBody(0, 0))
+
+		dst := make([]byte, size)
+		n, info, err := rr.ReadRange(t.Context(), key, 0, dst, version.Unspecified)
+		testkit.NoError(t, err, "ReadRange must succeed")
+		testkit.Equal(t, info.Version, latest.Version, "ReadRange must read the stored version")
+		testkit.Equal(t, string(dst[:n]), overwriteBody(overwriteWriters, 1),
+			"ReadRange must return the bytes of the version its Info names")
+
+		var (
+			mu      sync.Mutex
+			bodies  = map[version.Version]string{latest.Version: overwriteBody(overwriteWriters, 1)}
+			reads   []readResult
+			putErrs []error
+			wg      sync.WaitGroup
+		)
+		for w := range overwriteWriters {
+			wg.Go(func() {
+				for i := range overwritesPerWriter {
+					body := overwriteBody(w, i)
+					written, putErr := s.Put(t.Context(), key, strings.NewReader(body), blob.PutOptions{})
+					mu.Lock()
+					bodies[written.Version] = body
+					putErrs = append(putErrs, putErr)
+					mu.Unlock()
+				}
+			})
+		}
+		for range overwriteReaders {
+			wg.Go(func() {
+				buf := make([]byte, size)
+				for range readsPerReader {
+					got, gotInfo, readErr := rr.ReadRange(t.Context(), key, 0, buf, version.Unspecified)
+					// A count outside buf must fail the case, not panic
+					// the run, so the slice is clamped to buf.
+					got = min(max(got, 0), len(buf))
+					mu.Lock()
+					reads = append(reads, readResult{err: readErr, version: gotInfo.Version, body: string(buf[:got])})
+					mu.Unlock()
+				}
+			})
+		}
+		wg.Wait()
+
+		for _, err := range putErrs {
+			testkit.NoError(t, err, "a Put during the reads must succeed")
+		}
+		for _, r := range reads {
+			testkit.NoError(t, r.err, "a ReadRange during the overwrites must succeed")
+			want, ok := bodies[r.version]
+			testkit.True(t, ok, "a read must name a version that a Put returned")
+			testkit.Equal(t, r.body, want, "a read must return the bytes of the version its Info names")
+		}
+	})
+
+	t.Run("ReadRange returns the error of a done context", func(t *testing.T) {
+		t.Parallel()
+
+		s, rr := open(t)
+		put(t, s, "body")
+
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+
+		_, _, err := rr.ReadRange(ctx, key, 0, make([]byte, 2), version.Unspecified)
+		testkit.ErrorIs(t, err, context.Canceled, "ReadRange must return the context's error")
+	})
 }

@@ -23,6 +23,21 @@
 // optimisation adapters may exploit beneath the seam without
 // shaping it.
 //
+// # Ranged reads
+//
+// A store that reads part of an object without transferring the rest
+// implements the optional [RangeReader] capability. A caller that needs
+// ranged reads finds the capability with [AsRangeReader] when it wires
+// the store, and refuses a store without it.
+//
+// # Decorators
+//
+// A decorator that wraps a Store, for example to add tracing,
+// implements Unwrap() Store and returns the store it wraps.
+// [AsRangeReader] follows Unwrap to find a RangeReader behind any number
+// of decorators, so a decorator does not hide the capability of the
+// store it wraps.
+//
 // # Failure semantics
 //
 // Absence on read classifies as [go.thesmos.sh/core/errs.NotFound];
@@ -247,4 +262,84 @@ type Store interface {
 	// lifetime are yielded exactly once; objects created or
 	// deleted mid-walk may or may not appear.
 	List(ctx context.Context, prefix string, p page.Page) (page.Cursor[Info], error)
+}
+
+// RangeReader is the optional capability of a [Store] that reads part of
+// an object without transferring the rest of it.
+//
+// # Concurrency
+//
+// The same requirements as [Store]. Concurrent ReadRange calls on one
+// key are safe, as parallel [io.ReaderAt.ReadAt] calls are.
+type RangeReader interface {
+	// ReadRange reads len(dst) bytes of the object under key, starting
+	// at byte off, into dst. It returns the number of bytes read and the
+	// [Info] of the version it read.
+	//
+	// The bytes come from one version of the object, the version the
+	// returned Info names, even when the key is overwritten during the
+	// call.
+	//
+	// A non-zero ifMatch makes the read conditional. When the stored
+	// version is not ifMatch, ReadRange returns 0 and
+	// [version.ErrMismatch]. The zero Version reads the stored version.
+	//
+	// The count and the error follow [bytes.Reader.ReadAt] over the
+	// object's body:
+	//
+	//   - A range inside the object returns len(dst) and a nil error,
+	//     also when the range ends at the last byte.
+	//   - A range that ends past the end returns the bytes up to the
+	//     end and [io.EOF].
+	//   - An offset at or past the end returns 0 and io.EOF.
+	//   - An empty dst at an offset inside the object returns 0 and a
+	//     nil error.
+	//
+	// Each of these results returns the object's Info. Every other
+	// error returns the zero Info.
+	//
+	// ReadRange may write to any byte of dst during the call, as
+	// [io.ReaderAt] may. The bytes of dst past the returned count are
+	// unspecified.
+	//
+	// Error modes:
+	//
+	//   - A negative off classifies as [go.thesmos.sh/core/errs.Invalid].
+	//   - A key that [ValidKey] rejects classifies as
+	//     [go.thesmos.sh/core/errs.Invalid].
+	//   - An absent object classifies as
+	//     [go.thesmos.sh/core/errs.NotFound], whatever ifMatch is.
+	//   - A stored version other than a non-zero ifMatch returns
+	//     [version.ErrMismatch].
+	//   - A done ctx returns the context's error.
+	ReadRange(ctx context.Context, key string, off int64, dst []byte, ifMatch version.Version) (int, Info, error)
+}
+
+// AsRangeReader returns the first [RangeReader] in the chain that starts
+// at s and follows each decorator's Unwrap() Store, and reports whether
+// it found one.
+//
+// A decorator that implements RangeReader itself is found before the
+// store it wraps. A decorator's Unwrap must not return a value earlier
+// in its own chain, or AsRangeReader does not return, as errors.As does
+// not for a cyclic error chain.
+//
+// # Allocation contract
+//
+// Zero alloc.
+func AsRangeReader(s Store) (RangeReader, bool) {
+	for s != nil {
+		if rr, ok := s.(RangeReader); ok {
+			return rr, true
+		}
+
+		u, ok := s.(interface{ Unwrap() Store })
+		if !ok {
+			break
+		}
+
+		s = u.Unwrap()
+	}
+
+	return nil, false
 }
