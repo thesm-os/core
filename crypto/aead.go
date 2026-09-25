@@ -5,6 +5,7 @@ package crypto
 
 import (
 	"crypto/cipher"
+	"encoding/binary"
 	"slices"
 
 	"go.thesmos.sh/core/pool"
@@ -88,6 +89,10 @@ const (
 
 	// maxAlgorithmLen is what the single length byte can express.
 	maxAlgorithmLen = 255
+
+	// lengthPrefixSize is the width of the length that [Framer.Bytes]
+	// writes before a field.
+	lengthPrefixSize = 8
 )
 
 // aadPool pools the scratch the associated-data frame is built in. The
@@ -99,23 +104,50 @@ var aadPool = pool.NewPool(func() *[]byte {
 	return &b
 })
 
-// envelopeSize is the exact length [Seal] will produce, so its buffer
-// is sized once rather than regrown as each field is appended.
-func envelopeSize(a AEAD, plaintext []byte) int {
-	return envelopeHeaderFixed + len(a.Algorithm()) +
-		a.NonceSize() + len(plaintext) + a.Overhead()
+// SealedSize returns the length of the envelope that [AppendSeal] writes
+// for n bytes of plaintext under a. [Seal] sizes its buffer with it.
+//
+// The result is exact for an AEAD whose ciphertext is always n +
+// a.Overhead() bytes long, as the ciphertext of AES-GCM is.
+// [cipher.AEAD] documents Overhead as a maximum. [AppendSealChunk]
+// refuses a chunk whose envelope has another length, so every sealed
+// chunk has the length SealedSize returns.
+//
+// # Allocation contract
+//
+// Zero alloc.
+func SealedSize(a AEAD, n int) int {
+	return envelopeHeaderFixed + len(a.Algorithm()) + a.NonceSize() + n + a.Overhead()
 }
 
 // frameAAD builds the bytes a sealed envelope authenticates: the
 // domain tag, the algorithm name, then the caller's own associated
 // data. Both fields are length-prefixed, so no caller-supplied aad can
 // imitate a longer algorithm name.
-func frameAAD(dst, name, aad []byte) []byte {
+//
+// For a chunk, the chunk frame of chunk and aad takes the place of the
+// caller's associated data. It is built in dst after its length, so the
+// envelope frame and the chunk frame share one buffer and one copy.
+func frameAAD(dst, name, aad []byte, chunk *chunkAt) []byte {
 	f := NewFramer(dst, Domain{Name: EnvelopeDomainName, Version: EnvelopeVersion})
 	f.Bytes(name)
-	f.Bytes(aad)
 
-	return f.Frame()
+	if chunk == nil {
+		f.Bytes(aad)
+
+		return f.Frame()
+	}
+
+	// The encoding Framer.Bytes gives a field: its length, then its
+	// bytes. The length is written once the chunk frame's size is known.
+	out := f.Frame()
+	at := len(out)
+	out = binary.BigEndian.AppendUint64(out, 0)
+	out = appendChunkFrame(out, chunk, aad)
+	frame := out[at+lengthPrefixSize:]
+	binary.BigEndian.PutUint64(out[at:], uint64(len(frame)))
+
+	return out
 }
 
 // splitEnvelope parses a sealed envelope's header, returning the
@@ -186,7 +218,7 @@ func splitEnvelope(sealed []byte) (name, rest []byte, err error) {
 // regrown per field. [AppendSeal] reuses a caller's buffer and
 // allocates nothing.
 func Seal(a AEAD, r rand.Rand, plaintext, aad []byte) ([]byte, error) {
-	return AppendSeal(make([]byte, 0, envelopeSize(a, plaintext)), a, r, plaintext, aad)
+	return AppendSeal(make([]byte, 0, SealedSize(a, len(plaintext))), a, r, plaintext, aad)
 }
 
 // AppendSeal appends the sealed envelope to dst and returns the
@@ -207,6 +239,12 @@ func Seal(a AEAD, r rand.Rand, plaintext, aad []byte) ([]byte, error) {
 // one allocation per call to box it into the [rand.Rand] interface.
 // Converting r once, outside the loop, avoids it.
 func AppendSeal(dst []byte, a AEAD, r rand.Rand, plaintext, aad []byte) ([]byte, error) {
+	return appendSeal(dst, a, r, plaintext, aad, nil)
+}
+
+// appendSeal is [AppendSeal], with the chunk frame of chunk and aad as
+// the associated data when chunk is not nil.
+func appendSeal(dst []byte, a AEAD, r rand.Rand, plaintext, aad []byte, chunk *chunkAt) ([]byte, error) {
 	alg := a.Algorithm()
 	if len(alg) == 0 || len(alg) > maxAlgorithmLen {
 		return nil, ErrAlgorithmSize
@@ -238,7 +276,7 @@ func AppendSeal(dst []byte, a AEAD, r rand.Rand, plaintext, aad []byte) ([]byte,
 	name := dst[body+envelopeHeaderFixed : body+envelopeHeaderFixed+len(alg)]
 
 	scratch := aadPool.Get()
-	framed := frameAAD((*scratch)[:0], name, aad)
+	framed := frameAAD((*scratch)[:0], name, aad, chunk)
 	out := a.Seal(dst, nonce, plaintext, framed)
 	*scratch = framed[:0]
 	aadPool.Put(scratch)
@@ -290,6 +328,12 @@ func Open(a AEAD, sealed, aad []byte) ([]byte, error) {
 //
 // Zero alloc when dst has capacity for the plaintext.
 func AppendOpen(dst []byte, a AEAD, sealed, aad []byte) ([]byte, error) {
+	return appendOpen(dst, a, sealed, aad, nil)
+}
+
+// appendOpen is [AppendOpen], with the chunk frame of chunk and aad as
+// the associated data when chunk is not nil.
+func appendOpen(dst []byte, a AEAD, sealed, aad []byte, chunk *chunkAt) ([]byte, error) {
 	name, rest, err := splitEnvelope(sealed)
 	if err != nil {
 		return nil, err
@@ -307,7 +351,7 @@ func AppendOpen(dst []byte, a AEAD, sealed, aad []byte) ([]byte, error) {
 	}
 
 	scratch := aadPool.Get()
-	framed := frameAAD((*scratch)[:0], name, aad)
+	framed := frameAAD((*scratch)[:0], name, aad, chunk)
 	plaintext, err := a.Open(dst, rest[:nonceSize], rest[nonceSize:], framed)
 	*scratch = framed[:0]
 	aadPool.Put(scratch)

@@ -129,6 +129,35 @@ func TestSealSizesItsBufferExactly(t *testing.T) {
 	}
 }
 
+// aes256GCMOverhead pins the bytes an AES-256-GCM envelope adds to its
+// plaintext: 1 of version, 1 of name length, 11 of name, 12 of nonce and
+// 16 of tag.
+const aes256GCMOverhead = 41
+
+func TestSealedSize(t *testing.T) {
+	t.Parallel()
+
+	t.Run("is the length of every envelope AppendSeal writes", func(t *testing.T) {
+		t.Parallel()
+		for _, a := range []crypto.AEAD{newAEAD(t), newModuleNonceAEAD(t)} {
+			for _, n := range []int{0, 1, 1024} {
+				sealed, err := crypto.AppendSeal(nil, a, randcrypto.New(), make([]byte, n), nil)
+				testkit.NoError(t, err, "AppendSeal must succeed")
+				testkit.Equal(t, crypto.SealedSize(a, n), len(sealed),
+					"SealedSize must be the length of the envelope")
+			}
+		}
+	})
+
+	t.Run("adds 41 bytes to a plaintext under AES-256-GCM", func(t *testing.T) {
+		t.Parallel()
+		for _, a := range []crypto.AEAD{newAEAD(t), newModuleNonceAEAD(t)} {
+			testkit.Equal(t, crypto.SealedSize(a, 100), 100+aes256GCMOverhead,
+				"an AES-256-GCM envelope must add its header, nonce and tag")
+		}
+	})
+}
+
 func TestSealAcceptsTheLongestExpressibleAlgorithm(t *testing.T) {
 	t.Parallel()
 

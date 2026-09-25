@@ -177,6 +177,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   allocating. `blobtest.AssertStore` runs its cases for every store
   that implements it, and `blobtest.WithRangeReader` fails a store
   without it. See RFC-0040.
+- Chunked messages in `crypto`. `AppendSealChunk` and `AppendOpenChunk`
+  seal and open one chunk of a message at a time, so a reader of a
+  range opens only the chunks it reads. A `ChunkHeader` from
+  `NewChunkHeader` identifies the message with a random 16-byte ID and
+  fixes its chunk size. Every chunk binds the header, its index, a
+  last-chunk flag and the caller's associated data, so a reordered,
+  dropped, truncated or extended chunk fails to open, and so does a
+  chunk of another message under the same key. `AppendSealChunk`
+  refuses a chunk that breaks the size rules of its header. `SealedSize`
+  returns the length of the envelope `AppendSeal` writes, so a reader
+  computes chunk offsets without opening a chunk. Both functions work
+  in FIPS 140-only mode with `aesgcm.NewRandomNonce` and allocate
+  nothing when `dst` has capacity. `crypto/testdata/chunk_vectors.txt`
+  records the bytes. See RFC-0041.
 
 ### Changed
 

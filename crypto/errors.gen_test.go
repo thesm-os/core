@@ -23,6 +23,8 @@ func TestCryptoSentinelErrors(t *testing.T) {
 	all := []errEntry{
 		{"ErrAlgorithmMismatch", crypto.ErrAlgorithmMismatch},
 		{"ErrAlgorithmSize", crypto.ErrAlgorithmSize},
+		{"ErrChunkHeader", crypto.ErrChunkHeader},
+		{"ErrChunkSize", crypto.ErrChunkSize},
 		{"ErrCiphertextShort", crypto.ErrCiphertextShort},
 		{"ErrDigestSize", crypto.ErrDigestSize},
 		{"ErrDigestZero", crypto.ErrDigestZero},

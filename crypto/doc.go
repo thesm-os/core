@@ -73,6 +73,22 @@
 // key, and the custodian's access policy enforces the same separation
 // for the process's credentials.
 //
+// # Chunked messages
+//
+// [AppendSealChunk] and [AppendOpenChunk] seal a message as a sequence of
+// chunks, and a reader opens any chunk on its own. A [ChunkHeader] from
+// [NewChunkHeader] identifies the message with a random ID and fixes its
+// chunk size. Every chunk binds the header, its index, whether it is the
+// last chunk and the caller's associated data, so each of these changes
+// fails to open:
+//
+//   - A chunk moved to another index, or a dropped chunk.
+//   - A message truncated or extended at a chunk boundary.
+//   - A chunk of another message under the same key.
+//
+// [SealedSize] returns the length of a sealed chunk, so a reader computes
+// the offset of any chunk without opening another.
+//
 // # Decorators
 //
 // A decorator that wraps a [Keeper], for example to add tracing,

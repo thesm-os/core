@@ -86,4 +86,13 @@ var (
 	// code that does not know its phase. That is a runtime condition
 	// and not a programmer error.
 	ErrXOFSqueezing = errors.New("crypto: write after read on an XOF stream")
+
+	// ErrChunkSize is returned when a chunk breaks the size rules of its
+	// [ChunkHeader], when a chunk size is out of range, and when an [AEAD]
+	// seals a chunk to a length other than [SealedSize].
+	ErrChunkSize = errors.New("crypto: chunk size does not match its header")
+
+	// ErrChunkHeader is returned by [ChunkHeader.UnmarshalBinary] for an
+	// encoding of another length, an unknown version or a chunk size of 0.
+	ErrChunkHeader = errors.New("crypto: malformed chunk header")
 )

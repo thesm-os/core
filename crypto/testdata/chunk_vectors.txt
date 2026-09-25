@@ -1,0 +1,27 @@
+# Chunk vectors for crypto.AppendSealChunk and crypto.AppendOpenChunk,
+# sealed with crypto/aesgcm.New over AES-256-GCM.
+#
+# A message starts with a "message" line. The lines after it, up to the
+# next "message" line, belong to it:
+#
+# message <seed> <chunk size>: the random source is seeded.New(<seed>).
+#   NewChunkHeader reads the message ID from it, and each seal then
+#   reads its nonce from it, in chunk order.
+# key <hex>: the AES-256 key.
+# aad <hex>: the caller's associated data.
+# header <hex>: the encoded ChunkHeader.
+# chunk <index> <last> <nonce> <plaintext> <sealed>: <last> is 1 for the
+#   final chunk and 0 for every other chunk. The nonce, the plaintext and
+#   the sealed envelope are hex, and "-" is an empty plaintext.
+message 1 16
+key 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
+aad 766563746f72732f6f626a656374
+header 010000001046e9bfd8fe39f715d88815213e04d714
+chunk 0 0 7a99ea692deaa56104c196b9 30313233343536373839303132333435 010b6165732d3235362d67636d7a99ea692deaa56104c196b9f20c9c9adeb53a0e15020c2b280cd8760f7346731a53e841845fbefdf31e2806
+chunk 1 0 0435055a5aa4d5cd5734c6dc 36373839303132333435363738393031 010b6165732d3235362d67636d0435055a5aa4d5cd5734c6dc7dbe5792a78c13f850b6664b4046dc8989ca7afd3fe4b5fcc8e2379665b82ca2
+chunk 2 1 57c7fd8056058eb95ade160a 3233343536373839 010b6165732d3235362d67636d57c7fd8056058eb95ade160a93dab6cd4b092d7f3095f3d4c0d9be613c39a9e08cc25a9c
+message 2 16
+key 000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f
+aad 766563746f72732f6f626a656374
+header 0100000010caffee15ef7888464523a0efb2fa543d
+chunk 0 1 b9960a80e36bffe539399738 - 010b6165732d3235362d67636db9960a80e36bffe539399738b66cdbe66ecc9a3f87d03bf90b4ddc64
