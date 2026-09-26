@@ -148,7 +148,10 @@ seams every other thesmos library and framework depends on:
   `Marker` + `SliceSince` capture multi-call regions
   safely. Pool integration via `Reset` (satisfies
   `pool.Resettable`) keeps the backing buffer warm across
-  requests. See [RFC-0011][rfc-0011].
+  requests. `List` stores typed values in chunks of 4,096 that
+  do not move once the first chunk is full, so appending copies
+  no element and a truncated `List` fills again without
+  allocating. See [RFC-0011][rfc-0011].
 - **Errs** — error-classification seam: a closed eight-value
   taxonomy of what a caller should *do* about a failure, not
   what went wrong. `Classify` walks an error tree
