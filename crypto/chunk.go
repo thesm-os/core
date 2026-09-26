@@ -160,16 +160,17 @@ func (h *ChunkHeader) UnmarshalBinary(data []byte) error {
 //   - The chunk of an empty message is empty. It is the last chunk, at
 //     index 0.
 func (h ChunkHeader) fits(n int, index uint64, last bool) bool {
-	switch {
-	case h.ChunkSize == 0:
+	if h.ChunkSize == 0 {
 		return false
-	case !last:
-		return int64(n) == int64(h.ChunkSize)
-	case n == 0:
-		return index == 0
-	default:
-		return int64(n) <= int64(h.ChunkSize)
 	}
+	if !last {
+		return int64(n) == int64(h.ChunkSize)
+	}
+	if n == 0 {
+		return index == 0
+	}
+
+	return int64(n) <= int64(h.ChunkSize)
 }
 
 // chunkAt names one chunk of a chunked message: the message's header,
