@@ -3,54 +3,45 @@
 
 package arena
 
-// AppendVia lets an appender write directly into the arena's buffer
-// and adopts the result.
-//
-// fn receives the arena's backing slice and returns it extended,
-// which is exactly [encoding.BinaryAppender]'s shape — so a type
-// implementing that interface writes into arena capacity with no
-// adapter:
+// AppendVia calls fn with the arena's backing buffer and adopts the bytes
+// fn appends. fn has the signature of the AppendBinary method of
+// [encoding.BinaryAppender], so a type that implements the interface
+// writes into the arena's spare capacity without a scratch buffer:
 //
 //	region, err := a.AppendVia(digest.AppendBinary)
 //
-// That is the gap this closes. [Arena.Append] needs bytes that
-// already exist and [Arena.Alloc] needs a length known in advance, so
-// before this an appender had to encode into a scratch buffer and
-// copy — one allocation and one copy per item, which is what the
-// arena exists to avoid.
+// On success, fn must write no byte past the end of the slice it returns,
+// as an AppendBinary method does. [Arena.Reset] and [Arena.Alloc] rely on
+// the spare capacity past that slice being unchanged.
 //
-// The returned slice covers only the bytes fn wrote, three-index
-// capped like every other arena region so a downstream [append]
-// cannot write into a neighbour.
+// The returned slice covers only the bytes fn wrote, with its capacity
+// capped at its length, as for every other arena region.
 //
 // # On error
 //
-// The arena is truncated to its pre-call extent, so a failed encode
-// leaves no partial region for the next append to run into. Whatever
-// fn managed to write before failing is discarded, and no region is
-// returned.
+// The arena returns to its length before the call, so a failed encode
+// leaves no partial region for the next append. The bytes fn wrote are
+// discarded, and no region is returned.
 //
 // # Growth
 //
 // fn may write past the arena's spare capacity. Its [append] then
-// reallocates and the arena adopts the new backing array, exactly as
-// [Arena.Append] does when it grows — with the same consequence for
-// previously-returned sub-slices, which are left pointing at the
-// orphaned array. See [Arena] for that contract.
+// reallocates, and the arena uses the new backing array from then on, as
+// after an [Arena.Append] that grows. Sub-slices returned earlier keep
+// pointing at the old array. See [Arena] for that contract.
 //
 // # Allocation contract
 //
-// Zero-alloc when the backing buffer has capacity for what fn writes.
+// Zero alloc when the backing buffer has room for what fn writes.
 func (a *Arena) AppendVia(fn func(dst []byte) ([]byte, error)) ([]byte, error) {
 	start := len(a.buf)
 
 	out, err := fn(a.buf)
 	if err != nil {
-		// fn's writes went past len(a.buf) — into spare capacity or
-		// onto an array it reallocated — so the arena's own length
-		// still describes the pre-call extent. Re-slicing makes that
-		// explicit rather than relying on it. How far fn wrote into
-		// spare capacity is unknown, so Reset clears all of it.
+		// fn wrote past len(a.buf), into the spare capacity or into an
+		// array it allocated, so a.buf[:start] is the arena before the
+		// call. How far fn wrote into the spare capacity is unknown, so
+		// the dirty mark covers the whole spare capacity.
 		a.dirty = cap(a.buf)
 		a.buf = a.buf[:start]
 
@@ -63,27 +54,25 @@ func (a *Arena) AppendVia(fn func(dst []byte) ([]byte, error)) ([]byte, error) {
 	return a.buf[start:end:end], nil
 }
 
-// TruncateTo rewinds the arena to the extent captured by m,
-// discarding everything appended since.
+// TruncateTo rewinds the arena to the position m recorded and discards
+// every byte appended since.
 //
-// Returns false without modifying the arena when m is stale — from
-// before an [Arena.Reset] or [Arena.Shrink] — mirroring the epoch
-// check in [Arena.SliceSince]. Rewinding on a stale marker would cut
-// into the current lifecycle's bytes at a position that meant
-// something else.
+// It returns false and leaves the arena unchanged when m is from an
+// earlier lifecycle, before an [Arena.Reset] or [Arena.Shrink], as
+// [Arena.SliceSince] does. A stale position refers to the bytes of another
+// lifecycle.
 //
-// Unlike Reset, this does NOT advance the epoch: it rewinds within
-// one lifecycle, so markers taken before m remain valid and still
-// describe the positions they always did.
+// TruncateTo does not advance the epoch, because it rewinds within one
+// lifecycle. A Marker taken before m remains valid and records the same
+// position.
 //
-// Capacity is preserved; only the length moves. Sub-slices covering
-// discarded bytes remain readable until the next append overwrites
-// them, and must be treated as invalid from here — the same rule
-// that applies after Reset.
+// The capacity does not change. Sub-slices over the discarded bytes remain
+// readable until the next append overwrites them, and are invalid from
+// this call on, as after [Arena.Reset].
 //
 // # Allocation contract
 //
-// Zero-alloc.
+// Zero alloc.
 func (a *Arena) TruncateTo(m Marker) bool {
 	if m.epoch != a.epoch || m.pos > len(a.buf) {
 		return false

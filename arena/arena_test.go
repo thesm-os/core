@@ -92,7 +92,7 @@ func TestAlloc(t *testing.T) {
 		testkit.Equal(t, cap(got), len(got), "Alloc must cap capacity at length")
 	})
 
-	t.Run("zeroes new region after Reset reuse", func(t *testing.T) {
+	t.Run("returns a zeroed region after Reset", func(t *testing.T) {
 		t.Parallel()
 		a := arena.NewWithCapacity(64)
 		// Fill the buffer with non-zero bytes.
@@ -106,6 +106,46 @@ func TestAlloc(t *testing.T) {
 			"Alloc after Reset must zero the reused region")
 	})
 
+	t.Run("returns a zeroed region after earlier appends", func(t *testing.T) {
+		t.Parallel()
+		a := arena.NewWithCapacity(64)
+		a.Append([]byte("head"))
+		testkit.Equal(t, a.Alloc(8), make([]byte, 8), "the region past the appended bytes must be zero")
+		testkit.Equal(t, a.Bytes()[:4], []byte("head"), "the appended bytes must remain")
+	})
+
+	t.Run("zeroes the bytes a TruncateTo rewind left behind", func(t *testing.T) {
+		t.Parallel()
+		a := arena.NewWithCapacity(64)
+		m := a.Mark()
+		a.Append(bytes.Repeat([]byte{0xFF}, 16))
+		testkit.True(t, a.TruncateTo(m), "the marker is current")
+		testkit.Equal(t, a.Alloc(16), make([]byte, 16), "Alloc must clear the rewound bytes")
+	})
+
+	t.Run("zeroes a region that extends past the rewound bytes", func(t *testing.T) {
+		t.Parallel()
+		a := arena.NewWithCapacity(64)
+		a.Append([]byte("keep"))
+		m := a.Mark()
+		a.Append(bytes.Repeat([]byte{0xFF}, 8))
+		testkit.True(t, a.TruncateTo(m), "the marker is current")
+		testkit.Equal(t, a.Alloc(32), make([]byte, 32), "every byte of the region must be zero")
+		testkit.Equal(t, a.Bytes()[:4], []byte("keep"), "the bytes before the region must remain")
+	})
+
+	t.Run("zeroes the spare capacity a failed AppendVia wrote into", func(t *testing.T) {
+		t.Parallel()
+		a := arena.NewWithCapacity(64)
+		_, err := a.AppendVia(func(dst []byte) ([]byte, error) {
+			_ = append(dst, bytes.Repeat([]byte{0xFF}, 32)...)
+
+			return nil, testkit.TestError("encode failed")
+		})
+		testkit.Error(t, err, "the appender's failure must be returned")
+		testkit.Equal(t, a.Alloc(48), make([]byte, 48), "Alloc must clear what the failed appender wrote")
+	})
+
 	t.Run("grows via reallocation when capacity exceeded", func(t *testing.T) {
 		t.Parallel()
 		a := arena.NewWithCapacity(8)
@@ -115,7 +155,7 @@ func TestAlloc(t *testing.T) {
 		testkit.True(t, a.Cap() >= 104, "Cap must be ≥ requested after grow")
 	})
 
-	t.Run("uses in-place expansion at cap == needed boundary", func(t *testing.T) {
+	t.Run("keeps the buffer when the request fills the capacity exactly", func(t *testing.T) {
 		t.Parallel()
 		// Lock the >= boundary in the cap-fits check: cap
 		// exactly equals needed triggers in-place expansion,
@@ -126,7 +166,7 @@ func TestAlloc(t *testing.T) {
 			"Cap at boundary must not reallocate — in-place expansion")
 	})
 
-	t.Run("doubling growth dominates when have*2 > want", func(t *testing.T) {
+	t.Run("doubles the capacity when twice the capacity covers the request", func(t *testing.T) {
 		t.Parallel()
 		// Lock the doubling-dominant grow path: requested
 		// capacity is less than 2x current, so grown capacity
@@ -137,7 +177,7 @@ func TestAlloc(t *testing.T) {
 			"doubling must dominate when have*2 > want")
 	})
 
-	t.Run("doubling boundary: have*2 == want returns have*2", func(t *testing.T) {
+	t.Run("doubles the capacity when twice the capacity equals the request", func(t *testing.T) {
 		t.Parallel()
 		// Lock the equality boundary in growCap's doubling
 		// check: have*2 == want, growCap returns have*2.
@@ -147,7 +187,7 @@ func TestAlloc(t *testing.T) {
 			"have*2 == want must return have*2")
 	})
 
-	t.Run("requested capacity dominates when have*2 < want", func(t *testing.T) {
+	t.Run("grows to the request when it exceeds twice the capacity", func(t *testing.T) {
 		t.Parallel()
 		// Lock the want-dominant grow path: requested capacity
 		// is more than 2x current, so grown capacity is
@@ -382,6 +422,31 @@ func BenchmarkAlloc(b *testing.B) {
 			for b.Loop() {
 				a.Reset()
 				_ = a.Alloc(sz.n)
+			}
+		})
+	}
+}
+
+// BenchmarkAllocFill reserves a region in a reused arena and fills it,
+// the use Alloc exists for. On an arena that Reset cleared, the fill is
+// the only write to the region.
+func BenchmarkAllocFill(b *testing.B) {
+	for _, sz := range []struct {
+		name string
+		n    int
+	}{
+		{"4K", 4096},
+		{"64K", 65536},
+		{"1M", 1 << 20},
+	} {
+		b.Run(sz.name, func(b *testing.B) {
+			a := arena.NewWithCapacity(sz.n)
+			src := bytes.Repeat([]byte{0xA5}, sz.n)
+			b.ReportAllocs()
+			b.SetBytes(int64(sz.n))
+			for b.Loop() {
+				a.Reset()
+				copy(a.Alloc(sz.n), src)
 			}
 		})
 	}

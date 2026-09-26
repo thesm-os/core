@@ -277,6 +277,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Digest` of size 0, and the result is unchanged for every `Digest` a
   caller can build. A call costs 0.3 ns, down from 5.1 ns for the
   comparison of the whole 65-byte value.
+- `arena.Arena.Alloc` clears only the part of its region that a
+  `TruncateTo` rewind or a failed `AppendVia` left written. The other
+  bytes are already zero from the allocation or from `Reset`, so on a new
+  or reset arena `Alloc` writes nothing and the caller's fill is the first
+  write to the region. On a new arena an `Alloc` of 64 KiB takes under
+  30 ns, down from 705 ns. Reserving and filling 64 KiB in a reused arena
+  takes 784 ns, down from 1,042 ns. `AppendVia` documents that its
+  appender writes no byte past the slice it returns, which `Reset` and
+  `Alloc` rely on.
 
 ### Fixed
 
