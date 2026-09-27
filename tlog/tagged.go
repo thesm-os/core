@@ -60,9 +60,14 @@ func (t *TaggedTree) Reset(h crypto.Hasher, node crypto.Role, leaves []crypto.Di
 	t.nodes = append(t.nodes[:0], leaves...)
 
 	// start is the index in t.nodes of the first node of the level that
-	// the loop pairs.
-	var start uint64
-	for width := uint64(len(leaves)); width > 1; width = above(width) {
+	// the loop pairs, and width is the width of that level. The loop ends
+	// at the level of width one, the root.
+	start, width := uint64(0), uint64(len(leaves))
+	for range maxPath {
+		if width == 1 {
+			break
+		}
+
 		end := start + width
 		for i := start; i+1 < end; i += 2 {
 			t.nodes = append(t.nodes, h.CombineTagged(node, t.nodes[i], t.nodes[i+1]))
@@ -72,7 +77,7 @@ func (t *TaggedTree) Reset(h crypto.Hasher, node crypto.Role, leaves []crypto.Di
 			t.nodes = append(t.nodes, t.nodes[end-1])
 		}
 
-		start = end
+		start, width = end, above(width)
 	}
 
 	t.size = uint64(len(leaves))
@@ -107,13 +112,17 @@ func (t *TaggedTree) InclusionProof(index uint64, dst []crypto.Digest) ([]crypto
 		return dst, ErrRange
 	}
 
-	level := t.nodes
-	for width := t.size; width > 1; width = above(width) {
+	level, width := t.nodes, t.size
+	for range maxPath {
+		if width == 1 {
+			break
+		}
+
 		if sibling := index ^ 1; sibling < width {
 			dst = append(dst, level[sibling])
 		}
 
-		level = level[width:]
+		level, width = level[width:], above(width)
 		index >>= 1
 	}
 
