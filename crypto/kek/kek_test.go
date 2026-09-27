@@ -441,6 +441,12 @@ func TestCapabilities(t *testing.T) {
 	})
 }
 
+// childTimeout is the -test.timeout of the child process of
+// TestFIPSOnlyMode. The child runs one subtest in milliseconds. The
+// bound ends a child whose parent has died, which no context of the
+// parent can cancel.
+const childTimeout = 30 * time.Second
+
 // TestFIPSOnlyMode checks that a Keeper works in Go's FIPS 140-only mode.
 // The mode is fixed when the process starts, so the test runs itself
 // again in a child process with GODEBUG=fips140=only.
@@ -451,7 +457,8 @@ func TestFIPSOnlyMode(t *testing.T) {
 		t.Run("passes in a child process under fips140=only", func(t *testing.T) {
 			t.Parallel()
 			//nolint:gosec // G204: the child is this test binary, run again with a fixed pattern.
-			cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestFIPSOnlyMode$", "-test.v")
+			cmd := exec.CommandContext(t.Context(), os.Args[0],
+				"-test.run=^TestFIPSOnlyMode$", "-test.v", "-test.timeout="+childTimeout.String())
 			cmd.Env = append(os.Environ(), "GODEBUG=fips140=only")
 			out, err := cmd.CombinedOutput()
 			testkit.NoError(t, err, "the fips140=only child must pass:\n"+string(out))
