@@ -105,6 +105,7 @@ Start from [`docs/templates/RFC.md`](../templates/RFC.md).
 | [0040](0040-ranged-blob-reads.md) | Ranged Reads on Named Object Storage | Draft |
 | [0041](0041-chunked-authenticated-encryption.md) | Chunked Authenticated Encryption | Draft |
 | [0042](0042-intermediate-kek.md) | Intermediate Key-Encryption Keys | Draft |
+| [0043](0043-btree-ordered-maps.md) | B-Tree Ordered Maps | Accepted |
 
 ## Canonical first RFC
 
