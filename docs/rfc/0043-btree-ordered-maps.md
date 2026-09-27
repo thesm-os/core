@@ -274,8 +274,8 @@ yield keys out of order. The map does not detect it.
 - `less` compares two keys, for the bounds of a range.
 
 `Map` and `Set` use `natural`, whose `search` and `route` are binary
-searches that compare with `cmp.Less`. `MapFunc` uses `custom`, the
-caller's function, whose `search` and `route` call
+searches of six steps that compare with `cmp.Less`. `MapFunc` uses
+`custom`, the caller's function, whose `search` and `route` call
 `slices.BinarySearchFunc`. `Set` keeps its keys in a tree with values of
 type `struct{}`, which take no space, because an array of `struct{}` has
 size 0.
@@ -292,12 +292,22 @@ indirect calls. Inside the methods of `natural`, the compiler inlines
 | A function value for each comparison | 4.16-4.39 ns |
 | A type parameter method for each comparison | 9.0-9.8 ns |
 
-On 65,536 `int` keys, `Map.Get` took a median of 71.4 ns with the shared
-tree against 72.3 ns with code of its own for each type. benchstat reports
-no difference between the two (p = 0.49, 6 alternating runs). The methods
-of `natural` contain the loop of `slices.BinarySearch`. The compiler does
-not inline `slices.BinarySearch` into their GC shape instances, and the
-second call on every level made `Map.Get` 3.9% slower.
+The search of `natural` takes six steps of 32, 16, 8, 4, 2 and 1 keys. It
+moves past a step when the last key of the step sorts before the key it
+searches for. The steps add up to 63 keys, which is the most that a node
+contains. The search can end at any index from 0 to 63. The
+loop of `slices.BinarySearch` halves a range until the range is empty.
+Its count of iterations depends on the number of keys. On 65,536 `int`
+keys, `Map.Get` took a median of 64.9 ns with the six steps against
+71.0 ns with that loop. `Rank` took 105.3 ns against 112.8 ns in the same
+6 alternating runs. The loop of six steps ends whatever the keys contain.
+A mutation test that changes the arithmetic of a step cannot make a
+search run forever.
+
+With the loop of `slices.BinarySearch` in both, `Map.Get` took a median
+of 71.4 ns with the shared tree against 72.3 ns with code of its own for
+each type. The difference is within noise (p = 0.49, 6 alternating
+runs).
 
 ### Nodes
 
@@ -593,7 +603,7 @@ order without a constructor.
   keeps the deleted key's bytes reachable until a split or a merge
   replaces it. Internal nodes contain about one separator per leaf, about
   2% of the keys.
-- `MapFunc.Get` takes 1.33 times as long as `Map.Get` on 65,536 keys,
+- `MapFunc.Get` takes 1.41 times as long as `Map.Get` on 65,536 keys,
   because every comparison calls the function.
 - String keys gain little. Lookups in 1M string keys took 515.7-552.2 ns
   against tidwall's 545.6-574.6 ns, because most of their time goes to

@@ -33,6 +33,12 @@ const (
 	// than the root and the right edge has at least 32 children, so a tree
 	// of fewer than 2^63 keys has at most 12 internal levels.
 	maxDepth = 16
+
+	// searchSteps is the number of steps of a search over the keys of a
+	// node. The steps span 32, 16, 8, 4, 2 and 1 keys, 63 in all, so a
+	// search can end at any index from 0 to maxItems. maxChildren is
+	// 2^searchSteps.
+	searchSteps = 6
 )
 
 // owners issues the IDs that a clone gives to trees. The IDs start at 1.

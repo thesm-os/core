@@ -247,13 +247,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   iteration continues after the last key it yielded. A leaf has no
   pointer field, so the garbage collector marks a leaf of keys and values
   without pointers without scanning it. On 65,536 random `int` keys, a
-  `Get` takes 71.4 ns, a `Delete` and a `Set` of the same key 154 ns, and
+  `Get` takes 66.8 ns, a `Delete` and a `Set` of the same key 156 ns, and
   a full iteration 1.9 ns per key, and none of them allocates. Building
   the map allocates 1,545 objects, and a `Clone` followed by one `Set`
   allocates the 3,200 bytes of the path it copies. A `Get` on a `MapFunc`
-  takes 1.33 times as long as on a `Map`. `Reset` empties a map and keeps
+  takes 1.41 times as long as on a `Map`. `Reset` empties a map and keeps
   its nodes for the next fill: a `Reset` followed by a fill of the 65,536
-  keys takes 4.98 ms and does not allocate, against 5.28 ms and 1,545
+  keys takes 5.09 ms and does not allocate, against 5.44 ms and 1,545
   allocations for a new map. See RFC-0043 and ADR-0027.
 
 ### Changed

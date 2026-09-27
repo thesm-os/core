@@ -3,23 +3,6 @@
 
 package btree
 
-import "slices"
-
-// nextSeparator returns the separator before the leaf that follows the
-// leaf at the end of path: the separator after the child of the deepest
-// step that has a later child. Every key of the following leaf sorts at or
-// after it. It reports whether path has such a step.
-func nextSeparator[K, V any](path []step[K, V]) (K, bool) {
-	for _, s := range slices.Backward(path) {
-		if s.i < s.n.n {
-			return s.n.keys[s.i], true
-		}
-	}
-	var zero K
-
-	return zero, false
-}
-
 // removeSeparator removes the separator at index i of in and the child
 // after it in kids, the child array of in, and zeroes the slots that the
 // last separator and the last child leave.
@@ -103,7 +86,8 @@ func (t *tree[K, V, O]) delete(key K) (V, bool) {
 // deleteRange removes every key in [lo, hi), and returns the number of
 // keys it removed. It removes nothing when hi sorts at or before lo. It
 // descends once for each key it removes, and once more each time the next
-// key of the range starts a new leaf.
+// key of the range starts a new leaf. Each pass of its loop removes a key
+// or ends the loop.
 func (t *tree[K, V, O]) deleteRange(lo, hi K) int {
 	t.writes++
 	removed := 0
@@ -111,24 +95,22 @@ func (t *tree[K, V, O]) deleteRange(lo, hi K) int {
 		return removed
 	}
 	for t.len > 0 {
-		var path [maxDepth]step[K, V]
-		depth, l, i, _ := t.writePath(&path, lo)
+		var c cursor[K, V]
+		depth, l, i, _ := t.writePath(&c.path, lo)
 		if i == l.n {
 			// Every key of the leaf sorts before lo, so the next key at or
-			// after lo is the first key of the next leaf, at or after the
-			// separator before that leaf.
-			sep, ok := nextSeparator(path[:depth])
-			if !ok {
+			// after lo is the first key of the next leaf.
+			c.leaf, c.depth = l, depth
+			if !c.nextLeaf() {
 				break
 			}
-			lo = sep
-
-			continue
+			lo = c.leaf.keys[0]
+			depth, l, i, _ = t.writePath(&c.path, lo)
 		}
 		if !t.order.less(l.keys[i], hi) {
 			break
 		}
-		t.remove(path[:depth], l, i)
+		t.remove(c.path[:depth], l, i)
 		removed++
 	}
 

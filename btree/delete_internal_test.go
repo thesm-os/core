@@ -73,6 +73,12 @@ func TestDelete(t *testing.T) {
 				slices.Concat([]int{merged}, slices.Repeat([]int{lean}, 2*spare-1)),
 				[][]int{{1}, {minItems, minItems}},
 			},
+			"leaves an internal node of minItems separators alone": {
+				nodesOf(leavesOf(slices.Repeat([]int{lean}, spare+1)...), leavesOf(slices.Repeat([]int{lean}, spare+1)...)),
+				0,
+				slices.Concat([]int{merged}, slices.Repeat([]int{lean}, 2*spare)),
+				[][]int{{1}, {minItems, spare}},
+			},
 			"merges an underfull internal node with its right sibling": {
 				nodesOf(leanBottom, leanBottom, leanBottom),
 				0,

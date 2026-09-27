@@ -3,6 +3,8 @@
 
 package btree
 
+import "slices"
+
 // cursor is a position in a tree: the item at index i of leaf, and the
 // path of internal nodes from the root to the leaf. A tree write can
 // change or replace the nodes of a path, so a cursor is valid only until
@@ -17,8 +19,8 @@ type cursor[K, V any] struct {
 // nextLeaf moves c to the first item of the next leaf, and reports whether
 // there is one.
 func (c *cursor[K, V]) nextLeaf() bool {
-	for d := c.depth - 1; d >= 0; d-- {
-		if s := c.path[d]; s.i < s.n.n {
+	for d, s := range slices.Backward(c.path[:c.depth]) {
+		if s.i < s.n.n {
 			c.depth = d
 			c.downFirst(s.n, s.i+1)
 
@@ -32,8 +34,8 @@ func (c *cursor[K, V]) nextLeaf() bool {
 // prevLeaf moves c to the last item of the previous leaf, and reports
 // whether there is one.
 func (c *cursor[K, V]) prevLeaf() bool {
-	for d := c.depth - 1; d >= 0; d-- {
-		if s := c.path[d]; s.i > 0 {
+	for d, s := range slices.Backward(c.path[:c.depth]) {
+		if s.i > 0 {
 			c.depth = d
 			c.downLast(s.n, s.i-1)
 
@@ -241,20 +243,17 @@ func (t *tree[K, V, O]) seekGE(c *cursor[K, V], key K) bool {
 	return c.i < l.n || c.nextLeaf()
 }
 
-// seekGT moves c to the first key after key, and reports whether there is
-// one.
+// seekGT moves c past the keys at or before key in the leaf where key is
+// or would be, and reports whether t has a key. c can end past the last
+// item of the leaf, where forward continues at the next leaf.
 func (t *tree[K, V, O]) seekGT(c *cursor[K, V], key K) bool {
 	l := t.locate(c, key)
 	if l == nil {
 		return false
 	}
-	i, found := t.order.search(l.keys[:l.n], key)
-	if found {
-		i++
-	}
-	c.leaf, c.i = l, i
+	c.leaf, c.i = l, t.order.route(l.keys[:l.n], key)
 
-	return i < l.n || c.nextLeaf()
+	return true
 }
 
 // seekLE moves c to the last key at or before key, and reports whether
@@ -273,8 +272,9 @@ func (t *tree[K, V, O]) seekLE(c *cursor[K, V], key K) bool {
 	return i >= 0 || c.prevLeaf()
 }
 
-// seekLT moves c to the last key before key, and reports whether there is
-// one.
+// seekLT moves c to the last key before key in the leaf where key is or
+// would be, and reports whether t has a key. c can end before the first
+// item of the leaf, where backward continues at the previous leaf.
 func (t *tree[K, V, O]) seekLT(c *cursor[K, V], key K) bool {
 	l := t.locate(c, key)
 	if l == nil {
@@ -283,7 +283,7 @@ func (t *tree[K, V, O]) seekLT(c *cursor[K, V], key K) bool {
 	i, _ := t.order.search(l.keys[:l.n], key)
 	c.leaf, c.i = l, i-1
 
-	return i > 0 || c.prevLeaf()
+	return true
 }
 
 // forward calls yield for the items from c in ascending key order. It
