@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package tlog implements the Merkle tree of RFC 9162 over any
-// [crypto.Hasher], and stores it as the tiles of C2SP tlog-tiles.
+// [crypto.Hasher], stores it as the tiles of C2SP tlog-tiles, and builds
+// trees of the same shape whose interior nodes are hashed under a role
+// that a protocol assigns.
 //
 // With SHA-256 the bytes match RFC 6962, so the independent witnesses
 // of C2SP tlog-witness verify a tree this package builds. A tree over
@@ -16,6 +18,21 @@
 // leaf hashes are in memory, such as the entries of one batch.
 // [VerifyInclusion] and [VerifyConsistency] check a proof against a
 // root.
+//
+// # Tagged trees
+//
+// A protocol that builds more than one tree over one hasher keeps the
+// trees apart by hashing the interior nodes of each tree with
+// [crypto.Hasher.CombineTagged] under a binary role of its own. No
+// interior node of such a tree has the bytes of an interior node under
+// another role, or of an RFC 9162 tree. [TaggedRoot],
+// [TaggedInclusionProof] and [VerifyTaggedInclusion] give these trees RFC
+// 9162's shape and proofs. A [TaggedTree] keeps every node of one tree, so
+// the paths of all its leaves cost one hash per interior node.
+//
+// A tagged tree over no leaves has no root, and [TaggedRoot] panics
+// instead of returning one. A protocol whose tree can be empty chooses the
+// value it commits to for that case.
 //
 // # Trees in tiles
 //
@@ -69,10 +86,18 @@
 // the tree is [ErrRange], and tile data of the wrong length is
 // [ErrTileSize]. Errors from a [TileReader] keep their class.
 //
+// [VerifyInclusion] and [VerifyTaggedInclusion] return [ErrProof] for a
+// proof hash whose size differs from the leaf's. The content of a proof
+// from an untrusted source therefore never makes a verifier panic. The
+// tagged functions panic on a unary node role and on a tree without
+// leaves. Both are programmer errors, as the preconditions of
+// [crypto.Hasher.CombineTagged] are.
+//
 // # Allocation contract
 //
-// Hashing, the in-memory root and the verifiers allocate nothing on
+// Hashing, the in-memory roots and the verifiers allocate nothing on
 // the warm path. [Builder.Integrate] into a reused [Update] allocates
-// nothing once the Update has grown. The prove functions borrow their
-// tile buffers from a pool.
+// nothing once the Update has grown, and [TaggedTree.Reset] into a
+// reused TaggedTree allocates nothing once the tree has grown. The
+// prove functions borrow their tile buffers from a pool.
 package tlog

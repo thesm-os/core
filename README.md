@@ -221,7 +221,11 @@ seams every other thesmos library and framework depends on:
   `ProveInclusion` and `ProveConsistency` build a proof from one
   batched read of at most two tiles per level. Hashing, verification
   and integration into a reused `Update` do not allocate.
-  See [RFC-0032][rfc-0032].
+  `TaggedRoot`, `TaggedInclusionProof` and `VerifyTaggedInclusion`
+  build trees of the same shape whose interior nodes are hashed under a
+  binary role that a protocol assigns. A `TaggedTree` returns every
+  path of a batch after hashing each interior node once. See
+  [RFC-0032][rfc-0032] and [ADR-0025][adr-0025].
 
 These interfaces — and the others added over time — share three
 properties:
@@ -271,6 +275,7 @@ Apache 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 [adr-0005]: docs/adr/0005-primitive-set-chosen-for-coherence.md
 [adr-0015]: docs/adr/0015-dependency-free-x-modules-in-production.md
 [adr-0024]: docs/adr/0024-specs-reject-states-that-cannot-finish.md
+[adr-0025]: docs/adr/0025-tlog-builds-tagged-trees.md
 [rfc-0001]: docs/rfc/0001-clock-seam.md
 [rfc-0002]: docs/rfc/0002-rand-seam.md
 [rfc-0003]: docs/rfc/0003-crypto-seam.md

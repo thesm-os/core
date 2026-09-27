@@ -12,6 +12,7 @@ import (
 
 	"go.thesmos.sh/core/crypto"
 	coresha256 "go.thesmos.sh/core/crypto/sha256"
+	coresha512 "go.thesmos.sh/core/crypto/sha512"
 	"go.thesmos.sh/core/tlog"
 )
 
@@ -70,6 +71,17 @@ func TestVerifyInclusion(t *testing.T) {
 		testkit.ErrorIs(t, tlog.VerifyInclusion(h, 3, 7, all[4], root, p), tlog.ErrProof, "another leaf must fail")
 		testkit.ErrorIs(t, tlog.VerifyInclusion(h, 2, 7, all[3], root, p), tlog.ErrProof, "another index must fail")
 		testkit.ErrorIs(t, tlog.VerifyInclusion(h, 3, 7, all[3], all[0], p), tlog.ErrProof, "another root must fail")
+	})
+
+	t.Run("rejects a proof hash of another size", func(t *testing.T) {
+		t.Parallel()
+
+		root := tlog.Root(h, all[:7])
+		p, err := tlog.InclusionProof(h, all[:7], 3, nil)
+		testkit.NoError(t, err, "InclusionProof must succeed")
+		p[1] = coresha512.New384().Hash([]byte("wider"))
+		testkit.ErrorIs(t, tlog.VerifyInclusion(h, 3, 7, all[3], root, p), tlog.ErrProof,
+			"a SHA-384 digest in the proof must fail")
 	})
 
 	t.Run("refuses an index at or past the size", func(t *testing.T) {

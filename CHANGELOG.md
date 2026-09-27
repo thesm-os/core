@@ -223,6 +223,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   field of a 96- or 152-byte record through `At` takes 2.8 to 5.2 times
   as long as a slice index, because `At` copies the element, and `Ptr`
   narrows that to 1.4 to 1.9 times.
+- Tagged trees in `tlog`. `TaggedRoot`, `TaggedInclusionProof` and
+  `VerifyTaggedInclusion` build, prove and verify a tree of RFC 9162's
+  shape whose interior nodes are `CombineTagged` under a binary role that
+  the caller assigns. They share the split, the path and the verifier's
+  shift with the RFC 9162 functions. Tests match them against the
+  recorded vectors through RFC 9162's node hash. A `TaggedTree` keeps
+  every node of one tree. It returns the paths of all 1,000 leaves of a
+  batch in 148 µs, against 111 to 115 ms for 1,000 calls to
+  `TaggedInclusionProof`, and allocates nothing when reused. A tagged
+  tree over no leaves has no root, and `TaggedRoot` panics on one.
+  `VerifyTaggedInclusion` checks the size of each proof hash before it
+  hashes it, and returns `ErrProof` for one of the wrong size. An
+  untrusted proof never makes `CombineTagged` panic. See ADR-0025 and
+  ADR-0026.
 
 ### Changed
 
