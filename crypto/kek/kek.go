@@ -358,46 +358,46 @@ func newKeeper(kek []byte, keyID string, info []byte, r rand.Rand) *Keeper {
 // becomes unreachable without Close.
 func zero(b []byte) { clear(b) }
 
-// reserve returns the current wrapping key with one wrap reserved on it.
-// It derives the next wrapping key when the current one has reserved its
-// limit, so no wrapping key seals more than k.limit DEKs.
+// reserve returns a wrapping key with one wrap reserved on it: the current
+// key when it has room, or the key that rotate returns. A key has room
+// until it has k.limit reservations, so no wrapping key seals more than
+// k.limit DEKs.
 func (k *Keeper) reserve() (*wrappingKey, error) {
-	for {
-		w := k.current.Load()
-		if w != nil && w.wraps.Add(1) <= k.limit {
-			return w, nil
-		}
-
-		if err := k.rotate(w); err != nil {
-			return nil, err
-		}
+	if w := k.current.Load(); w != nil && w.wraps.Add(1) <= k.limit {
+		return w, nil
 	}
+
+	return k.rotate()
 }
 
-// rotate derives the next wrapping key from a new salt, unless another
-// call has already replaced exhausted, the key the caller found spent or
-// missing.
-func (k *Keeper) rotate(exhausted *wrappingKey) error {
+// rotate returns a wrapping key with one wrap reserved on it. Under
+// rotateMu, it reserves the wrap on the current key when another call has
+// already replaced the spent key and the replacement has room. Otherwise
+// it derives the next wrapping key from a new salt, with the caller's wrap
+// reserved on it. A call to rotate derives at most one key.
+func (k *Keeper) rotate() (*wrappingKey, error) {
 	k.rotateMu.Lock()
 	defer k.rotateMu.Unlock()
 
-	if k.current.Load() != exhausted {
-		return nil
+	if w := k.current.Load(); w != nil && w.wraps.Add(1) <= k.limit {
+		return w, nil
 	}
 
 	var salt [SaltSize]byte
 	if _, err := k.r.Read(salt[:]); err != nil {
-		return err //nolint:wrapcheck // returned as the source produced it
+		return nil, err //nolint:wrapcheck // returned as the source produced it
 	}
 
 	a, err := k.newCipher(salt)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
-	k.current.Store(&wrappingKey{aead: a, salt: salt})
+	w := &wrappingKey{aead: a, salt: salt}
+	w.wraps.Store(1)
+	k.current.Store(w)
 
-	return nil
+	return w, nil
 }
 
 // cipher returns the cipher of the wrapping key for salt: the current

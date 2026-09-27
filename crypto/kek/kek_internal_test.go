@@ -140,6 +140,39 @@ func TestReserve(t *testing.T) {
 	})
 }
 
+func TestRotate(t *testing.T) {
+	t.Parallel()
+
+	t.Run("reserves a wrap on a current key that has room", func(t *testing.T) {
+		t.Parallel()
+		k := newTestKeeper(t)
+		k.limit = 4
+		current, err := k.rotate()
+		testkit.NoError(t, err, "the first rotate must derive a wrapping key")
+		current.wraps.Store(k.limit - 1)
+
+		w, err := k.rotate()
+		testkit.NoError(t, err, "rotate must succeed")
+		testkit.True(t, w == current, "rotate must reserve the wrap on the current key")
+		testkit.Equal(t, w.wraps.Load(), k.limit, "the reservation must count against the limit")
+	})
+
+	t.Run("derives a new wrapping key when the current key is spent", func(t *testing.T) {
+		t.Parallel()
+		k := newTestKeeper(t)
+		k.limit = 4
+		spent, err := k.rotate()
+		testkit.NoError(t, err, "the first rotate must derive a wrapping key")
+		spent.wraps.Store(k.limit)
+
+		w, err := k.rotate()
+		testkit.NoError(t, err, "rotate must succeed")
+		testkit.True(t, w != spent, "rotate must not reserve a wrap on a spent key")
+		testkit.True(t, k.current.Load() == w, "the new key must become the current key")
+		testkit.Equal(t, w.wraps.Load(), uint64(1), "the new key must carry the caller's wrap")
+	})
+}
+
 func TestCipher(t *testing.T) {
 	t.Parallel()
 
@@ -178,19 +211,19 @@ func TestCipher(t *testing.T) {
 		testkit.Len(t, k.ciphers, 0, "a refused unwrap must not derive a cipher")
 	})
 
-	t.Run("keeps at most cipherCacheSize ciphers", func(t *testing.T) {
+	t.Run("keeps the cipher of every salt until a new one would exceed cipherCacheSize", func(t *testing.T) {
 		t.Parallel()
 		k := newTestKeeper(t)
 		k.limit = 1
 		reader := twin(t, k)
 
-		for range 2 * cipherCacheSize {
+		for i := range 2 * cipherCacheSize {
 			sealed, err := k.Wrap(t.Context(), testDEK)
 			testkit.NoError(t, err, "Wrap must succeed")
 			_, err = reader.Unwrap(t.Context(), sealed)
 			testkit.NoError(t, err, "Unwrap must succeed")
-			testkit.True(t, len(reader.ciphers) <= cipherCacheSize,
-				"the cache must hold at most cipherCacheSize ciphers")
+			testkit.Equal(t, len(reader.ciphers), i%cipherCacheSize+1,
+				"the cache must keep every cipher, and empty only when full")
 		}
 	})
 }
