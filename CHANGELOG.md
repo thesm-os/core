@@ -237,6 +237,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hashes it, and returns `ErrProof` for one of the wrong size. An
   untrusted proof never makes `CombineTagged` panic. See ADR-0025 and
   ADR-0026.
+- `btree` package: ordered maps and sets as in-memory B+ trees. `Map`
+  orders its keys by `cmp.Compare`, `MapFunc` by a function that
+  `NewMapFunc` receives, and `Set` is a `Map` without values. Each has
+  point operations, `Floor` and `Ceil`, `PopMin` and `PopMax`, `At` and
+  `Rank` in O(log n), iterators over the whole collection and over key
+  ranges in both directions, `DeleteRange`, and `Clone` in O(1) with
+  copy-on-write nodes. A write during an iteration does not end it: the
+  iteration continues after the last key it yielded. A leaf has no
+  pointer field, so the garbage collector marks a leaf of keys and values
+  without pointers without scanning it. On 65,536 random `int` keys, a
+  `Get` takes 71.4 ns, a `Delete` and a `Set` of the same key 154 ns, and
+  a full iteration 1.9 ns per key, and none of them allocates. Building
+  the map allocates 1,545 objects, and a `Clone` followed by one `Set`
+  allocates the 3,200 bytes of the path it copies. A `Get` on a `MapFunc`
+  takes 1.33 times as long as on a `Map`. See RFC-0043.
 
 ### Changed
 

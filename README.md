@@ -226,6 +226,12 @@ seams every other thesmos library and framework depends on:
   binary role that a protocol assigns. A `TaggedTree` returns every
   path of a batch after hashing each interior node once. See
   [RFC-0032][rfc-0032] and [ADR-0025][adr-0025].
+- **BTree** — ordered maps and sets as in-memory B+ trees. `Map`,
+  `MapFunc`, which orders its keys by a function of the caller, and `Set`
+  have point operations, `Floor` and `Ceil`, `At` and `Rank` in O(log n),
+  range iterators in both directions, and `Clone` in O(1) with
+  copy-on-write nodes. Lookups, iteration, and a delete and an insert at a
+  steady size do not allocate. See [RFC-0043][rfc-0043].
 
 These interfaces — and the others added over time — share three
 properties:
@@ -313,5 +319,6 @@ Apache 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 [rfc-0037]: docs/rfc/0037-periodic-and-quorum-tasks.md
 [rfc-0038]: docs/rfc/0038-conformance-for-durable-adapters.md
 [rfc-0039]: docs/rfc/0039-signature-policies.md
+[rfc-0043]: docs/rfc/0043-btree-ordered-maps.md
 [contrib]: CONTRIBUTING.md
 [sec]: SECURITY.md

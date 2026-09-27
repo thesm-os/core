@@ -332,6 +332,9 @@ checks:
       - path: blob
         score: 100
         coverage: 100
+      - path: btree
+        score: 100
+        coverage: 100
       - path: cas
         score: 100
         coverage: 100
