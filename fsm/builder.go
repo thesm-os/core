@@ -180,6 +180,9 @@ func (b *Builder[S, E, D]) Terminal(states ...S) *Builder[S, E, D] {
 //   - a terminal state with an outgoing edge;
 //   - a state that is unreachable from the initial state, with guards
 //     ignored;
+//   - when the Spec declares a terminal state, a state that has an
+//     outgoing edge but no path to a terminal state, with guards
+//     ignored;
 //   - an edge declared after an unguarded edge for the same state and
 //     event, which can never be taken;
 //   - an edge with two guards, two actions or a nil option, a state
@@ -308,7 +311,7 @@ func fillHooks[S Enum, D any](table []func(*D), known []bool, hooks []hook[S, D]
 	return problems
 }
 
-// checkShape reports states that cannot be left or reached.
+// checkShape reports states that cannot be left, reached or finished.
 func (b *Builder[S, E, D]) checkShape(sp *Spec[S, E, D]) []error {
 	var problems []error
 
@@ -332,19 +335,7 @@ func (b *Builder[S, E, D]) checkShape(sp *Spec[S, E, D]) []error {
 
 	reached := make([]bool, sp.nS)
 	reached[b.initial] = true
-	stack := []int{int(b.initial)}
-
-	for len(stack) > 0 {
-		from := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-
-		for to := range sp.nS {
-			if sp.allows[from*sp.nS+to] && !reached[to] {
-				reached[to] = true
-				stack = append(stack, to)
-			}
-		}
-	}
+	mark(reached, func(cur, next int) bool { return sp.allows[cur*sp.nS+next] })
 
 	for s := range sp.nS {
 		if sp.known[s] && !reached[s] {
@@ -352,5 +343,47 @@ func (b *Builder[S, E, D]) checkShape(sp *Spec[S, E, D]) []error {
 		}
 	}
 
+	if len(b.terminal) == 0 {
+		return problems
+	}
+
+	// finishing marks the terminal states and every state with a path to
+	// one, so the search follows the edges backwards. A state without an
+	// outgoing edge is reported above.
+	finishing := slices.Clone(sp.terminal)
+	mark(finishing, func(cur, next int) bool { return sp.allows[next*sp.nS+cur] })
+
+	for s := range sp.nS {
+		if outgoing[s] && !finishing[s] {
+			problems = append(problems, fmt.Errorf("%w: state %v has no path to a terminal state", ErrSpec, S(s)))
+		}
+	}
+
 	return problems
+}
+
+// mark sets marked[s] for every state s that a path of steps connects to
+// a state already marked. step(cur, next) reports whether the search
+// moves from state cur to state next. mark tests each pair of states at
+// most once, so it costs O(n²) for n states.
+func mark(marked []bool, step func(cur, next int) bool) {
+	var stack []int
+
+	for s, m := range marked {
+		if m {
+			stack = append(stack, s)
+		}
+	}
+
+	for len(stack) > 0 {
+		cur := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+
+		for next := range len(marked) {
+			if step(cur, next) && !marked[next] {
+				marked[next] = true
+				stack = append(stack, next)
+			}
+		}
+	}
 }

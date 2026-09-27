@@ -13,6 +13,10 @@ import (
 	"go.thesmos.sh/core/fsm"
 )
 
+// unfinishable pins the text that follows the name of a state in the
+// error Build reports for a state with no path to a terminal state.
+const unfinishable = " has no path to a terminal state"
+
 // wide is a state or event type that uses all 256 values, for the
 // tests that fill the transition table.
 type wide uint8
@@ -147,6 +151,58 @@ func TestBuilder(t *testing.T) {
 			// failed state that is not terminal and has no edge.
 			testkit.True(t, strings.Count(err.Error(), "fsm: invalid spec") >= 3,
 				"every problem must be reported: "+err.Error())
+		})
+
+		t.Run("rejects every state with no path to a terminal state", func(t *testing.T) {
+			t.Parallel()
+			// Running and Failed lead only to each other. Pending can still
+			// be cancelled.
+			_, err := fsm.NewBuilder[state, event, job](pending).
+				Edge(pending, start, running).
+				Edge(pending, cancel, cancelled).
+				Edge(running, fail, failed).
+				Edge(failed, start, running).
+				Terminal(cancelled).
+				Build()
+			testkit.ErrorIs(t, err, fsm.ErrSpec, "a cycle without an exit must be rejected")
+			testkit.Contains(t, err.Error(), running.String()+unfinishable, "Running must be reported")
+			testkit.Contains(t, err.Error(), failed.String()+unfinishable, "Failed must be reported")
+			testkit.Equal(t, strings.Count(err.Error(), fsm.ErrSpec.Error()), 2,
+				"only Running and Failed must be reported: "+err.Error())
+		})
+
+		t.Run("accepts a cycle whose only exit is guarded", func(t *testing.T) {
+			t.Parallel()
+			_, err := fsm.NewBuilder[state, event, job](pending).
+				Edge(pending, start, running).
+				Edge(running, fail, pending).
+				Edge(running, finish, succeeded, fsm.If(func(*job) bool { return false })).
+				Terminal(succeeded).
+				Build()
+			testkit.NoError(t, err, "a guarded exit must count as a path to a terminal state")
+		})
+
+		t.Run("accepts a cycle without an exit when no state is terminal", func(t *testing.T) {
+			t.Parallel()
+			_, err := fsm.NewBuilder[state, event, job](pending).
+				Edge(pending, start, running).
+				Edge(running, fail, pending).
+				Build()
+			testkit.NoError(t, err, "a Spec without terminal states must not need one")
+		})
+
+		t.Run("reports a state without an outgoing edge once", func(t *testing.T) {
+			t.Parallel()
+			_, err := fsm.NewBuilder[state, event, job](pending).
+				Edge(pending, start, running).
+				Edge(pending, cancel, cancelled).
+				Terminal(cancelled).
+				Build()
+			testkit.ErrorIs(t, err, fsm.ErrSpec, "a state without an outgoing edge must be rejected")
+			testkit.NotContains(t, err.Error(), running.String()+unfinishable,
+				"a state without an outgoing edge must not also be reported as unable to finish")
+			testkit.Equal(t, strings.Count(err.Error(), fsm.ErrSpec.Error()), 1,
+				"the state must be reported once: "+err.Error())
 		})
 
 		t.Run("accepts as many edges as 16-bit offsets address", func(t *testing.T) {

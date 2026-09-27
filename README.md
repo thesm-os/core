@@ -208,10 +208,12 @@ seams every other thesmos library and framework depends on:
 - **FSM** — finite state machines over small integer states and
   events. A `Spec` is a transition table, built once and validated at
   construction: unreachable states, states that cannot be left and
-  edges that can never be taken are errors. `Allows` checks a stored
+  edges that can never be taken are errors. In a Spec with terminal
+  states, so is a state with no path to one. `Allows` checks a stored
   status change before a compare-and-swap, and a `Machine` runs guards
   and exit, edge and entry actions for one event at a time. Neither
-  allocates per event. See [RFC-0031][rfc-0031].
+  allocates per event. See [RFC-0031][rfc-0031] and
+  [ADR-0024][adr-0024].
 - **Tlog** — the Merkle tree of RFC 9162 over any `crypto.Hasher`,
   stored as the 256-hash tiles of C2SP tlog-tiles. With SHA-256 the
   bytes match RFC 6962, so C2SP witnesses verify the tree. `Builder`
@@ -268,6 +270,7 @@ Apache 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 [adr-0003]: docs/adr/0003-apache-2-0-with-spdx-headers.md
 [adr-0005]: docs/adr/0005-primitive-set-chosen-for-coherence.md
 [adr-0015]: docs/adr/0015-dependency-free-x-modules-in-production.md
+[adr-0024]: docs/adr/0024-specs-reject-states-that-cannot-finish.md
 [rfc-0001]: docs/rfc/0001-clock-seam.md
 [rfc-0002]: docs/rfc/0002-rand-seam.md
 [rfc-0003]: docs/rfc/0003-crypto-seam.md

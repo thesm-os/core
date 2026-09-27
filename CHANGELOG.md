@@ -226,6 +226,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Breaking:** `fsm.Builder.Build` rejects a state that has an outgoing
+  edge but no path to a terminal state, when the Spec declares a
+  terminal state. A cycle of states without an exit built before. A Spec
+  without terminal states, such as the circuit of `resilience.Breaker`,
+  builds as before. See ADR-0024.
 - **Breaking:** core requires Go 1.27.0, up from 1.26.6, so its
   packages can use the Go 1.27 standard library, including
   `crypto/mldsa`.
