@@ -222,11 +222,17 @@ func TestScope(t *testing.T) {
 					cause error
 					err   error
 				)
+				// Task 1 fails only after task 0 has started, so task 0 is
+				// running when the failure cancels it.
+				started := make(chan struct{})
 				within(t, func() {
 					err = e.run(t.Context(), 2, 2, func(ctx context.Context, i int) error {
 						if i == 1 {
+							<-started
+
 							return errBoom
 						}
+						close(started)
 						cause = awaitCancel(ctx)
 
 						return cause
