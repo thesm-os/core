@@ -76,5 +76,8 @@ Start from [`docs/templates/ADR.md`](../templates/ADR.md).
 | [0021](0021-key-destruction-is-scheduled.md) | Key Destruction Is Scheduled | Accepted |
 | [0022](0022-decorators-expose-what-they-wrap.md) | Decorators Expose What They Wrap | Accepted |
 | [0023](0023-verifiers-resolve-from-caller-table.md) | Verifiers Resolve From a Table the Caller Writes | Accepted |
+| [0024](0024-specs-reject-states-that-cannot-finish.md) | A Spec With a Terminal State Rejects States That Cannot Finish | Accepted |
+| [0025](0025-tlog-builds-tagged-trees.md) | tlog Builds Tagged Trees | Accepted |
+| [0026](0026-tagged-trees-have-no-empty-root.md) | A Tagged Tree Over No Leaves Has No Root | Accepted |
 
 [nygard]: https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions
