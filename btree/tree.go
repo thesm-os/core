@@ -23,7 +23,10 @@ const (
 	// keeps in the node it splits: half of a full node and the new item.
 	splitAt = 32
 
-	// maxFree is the capacity of each of a tree's two free lists.
+	// maxFree is the number of nodes that a merge keeps on each of a
+	// tree's three free lists, one for each kind of node. reset puts every
+	// node on the free lists, past maxFree, and clear trims each list to
+	// maxFree.
 	maxFree = 64
 
 	// maxDepth is the capacity of a path in internal nodes. A node other
@@ -63,14 +66,15 @@ type order[K any] interface {
 // when root and leaf are both nil, and at most one of them is set. The
 // zero tree is an empty tree, ready to use when the zero O is an order.
 type tree[K, V any, O order[K]] struct {
-	order      O
-	root       *inner[K, V] // the root when the tree has internal nodes
-	leaf       *leaf[K, V]  // the root when the tree is one leaf
-	freeLeaves []*leaf[K, V]
-	freeInners []*inner[K, V]
-	owner      uint64 // the ID of the nodes the tree may change in place
-	len        int
-	writes     uint64 // incremented by every write, for iterators
+	order            O
+	root             *inner[K, V] // the root when the tree has internal nodes
+	leaf             *leaf[K, V]  // the root when the tree is one leaf
+	freeLeaves       []*leaf[K, V]
+	freeLeafParents  []*inner[K, V] // free internal nodes over leaves
+	freeInnerParents []*inner[K, V] // free internal nodes over internal nodes
+	owner            uint64         // the ID of the nodes the tree may change in place
+	len              int
+	writes           uint64 // incremented by every write, for iterators
 }
 
 // get returns the value of key, and reports whether key is present.

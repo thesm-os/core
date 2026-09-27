@@ -168,7 +168,131 @@ func TestDelete(t *testing.T) {
 			tr := build(leavesOf(lean, lean))
 			root := tr.root
 			tr.delete(0)
-			testkit.True(t, len(tr.freeInners) == 1 && tr.freeInners[0] == root, "the old root must be free")
+			testkit.True(t, len(tr.freeLeafParents) == 1 && tr.freeLeafParents[0] == root, "the old root must be free")
+			requireValid(t, tr)
+		})
+	})
+
+	// threeLevels returns a tree with a root over three bottom nodes of
+	// spare lean leaves each.
+	threeLevels := func() *ints {
+		return build(nodesOf(leanBottom, leanBottom, leanBottom))
+	}
+
+	t.Run("clear", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("counts one write", func(t *testing.T) {
+			t.Parallel()
+			tr := build(leavesOf(lean, lean))
+			tr.clear()
+			testkit.Equal(t, tr.writes, uint64(1), "clear must add one to the count")
+		})
+
+		t.Run("keeps at most maxFree free nodes of each kind and zeroes the slots of the others", func(t *testing.T) {
+			t.Parallel()
+			tr := threeLevels()
+			tr.reset()
+			leaves := tr.freeLeaves
+			testkit.Len(t, leaves, 3*spare, "reset must have kept every leaf")
+			tr.clear()
+			testkit.Len(t, tr.freeLeaves, maxFree, "clear must keep maxFree leaves")
+			testkit.True(t, len(tr.freeLeafParents) == 3 && len(tr.freeInnerParents) == 1,
+				"clear must keep a shorter free list whole")
+			for _, l := range leaves[maxFree:] {
+				testkit.True(t, l == nil, "clear must zero the slot of a leaf that it drops")
+			}
+			requireValid(t, tr)
+		})
+	})
+
+	t.Run("reset", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("counts one write and leaves an empty tree", func(t *testing.T) {
+			t.Parallel()
+			tr := threeLevels()
+			tr.reset()
+			testkit.Equal(t, tr.writes, uint64(1), "reset must add one to the count")
+			testkit.True(t, tr.root == nil && tr.leaf == nil && tr.len == 0, "reset must remove every item")
+			var empty ints
+			empty.reset()
+			testkit.True(t, empty.writes == 1 && len(empty.freeLeaves) == 0, "reset of an empty tree must keep nothing")
+		})
+
+		t.Run("keeps every node on the free list of its kind, zeroed", func(t *testing.T) {
+			t.Parallel()
+			tr := threeLevels()
+			tr.reset()
+			testkit.Len(t, tr.freeLeaves, 3*spare, "reset must keep every leaf")
+			testkit.Len(t, tr.freeLeafParents, 3, "reset must keep every parent of leaves")
+			testkit.Len(t, tr.freeInnerParents, 1, "reset must keep the root")
+			requireValid(t, tr)
+			root := build(shape{n: 3})
+			leaf := root.leaf
+			root.reset()
+			testkit.True(t, len(root.freeLeaves) == 1 && root.freeLeaves[0] == leaf, "reset must keep a root leaf")
+			requireValid(t, root)
+		})
+
+		t.Run("keeps only the nodes that the tree wrote after a clone", func(t *testing.T) {
+			t.Parallel()
+			tr := threeLevels()
+			want := keysOf(tr)
+			c := tr.clone()
+			tr.set(1, -1)
+			tr.reset()
+			testkit.True(t, len(tr.freeLeaves) == 1 && len(tr.freeLeafParents) == 1 && len(tr.freeInnerParents) == 1,
+				"reset must keep the three nodes of the path that the write copied")
+			requireValid(t, &c)
+			testkit.Equal(t, keysOf(&c), want, "the clone must keep its items")
+		})
+
+		t.Run("keeps no node right after a clone", func(t *testing.T) {
+			t.Parallel()
+			for _, s := range []shape{nodesOf(leanBottom, leanBottom, leanBottom), {n: 3}} {
+				tr := build(s)
+				want := keysOf(tr)
+				c := tr.clone()
+				tr.reset()
+				testkit.True(t, len(tr.freeLeaves)+len(tr.freeLeafParents)+len(tr.freeInnerParents) == 0,
+					"every node belongs to the clone too")
+				requireValid(t, &c)
+				testkit.Equal(t, keysOf(&c), want, "the clone must keep its items")
+			}
+		})
+
+		t.Run("gives the kept nodes to the inserts that follow", func(t *testing.T) {
+			t.Parallel()
+			tr := threeLevels()
+			tr.reset()
+			kept := map[any]bool{}
+			for _, l := range tr.freeLeaves {
+				kept[l] = true
+			}
+			for _, in := range slices.Concat(tr.freeLeafParents, tr.freeInnerParents) {
+				kept[in] = true
+			}
+			// One key more than maxChildren full leaves splits the root, so
+			// the refill takes nodes of every kind.
+			for k := range maxItems*maxChildren + 1 {
+				tr.set(k, -k)
+			}
+			testkit.True(t, tr.root.inners != nil, "the refill must have a root over internal nodes")
+			var walk func(in *inner[int, int])
+			walk = func(in *inner[int, int]) {
+				testkit.True(t, kept[in], "every internal node of the refill must be a kept one")
+				if in.leaves != nil {
+					for _, l := range in.leaves[:in.n+1] {
+						testkit.True(t, kept[l], "every leaf of the refill must be a kept one")
+					}
+				} else {
+					for _, c := range in.inners[:in.n+1] {
+						walk(c)
+					}
+				}
+			}
+			walk(tr.root)
 			requireValid(t, tr)
 		})
 	})
@@ -178,7 +302,6 @@ func TestDelete(t *testing.T) {
 		"deleteRange": func(tr *ints) { tr.deleteRange(0, 10) },
 		"popMin":      func(tr *ints) { tr.popMin() },
 		"popMax":      func(tr *ints) { tr.popMax() },
-		"clear":       func(tr *ints) { tr.clear() },
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()

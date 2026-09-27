@@ -69,14 +69,24 @@ func (s *Set[K]) Len() int {
 	return s.t.len
 }
 
-// Clear removes every key. The set keeps its free lists, and every node
-// that no clone shares becomes garbage.
+// Clear removes every key, and drops the nodes of the set but up to 64 of
+// each kind. See [Map.Clear].
 //
 // # Allocation contract
 //
 // Zero alloc.
 func (s *Set[K]) Clear() {
 	s.t.clear()
+}
+
+// Reset removes every key, and keeps the nodes of the set for the inserts
+// that follow. See [Map.Reset].
+//
+// # Allocation contract
+//
+// As [Map.Reset].
+func (s *Set[K]) Reset() {
+	s.t.reset()
 }
 
 // Min returns the smallest key, and reports whether the set has a key.

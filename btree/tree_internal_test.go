@@ -138,22 +138,22 @@ func (c *checker[K, V, O]) order(keys []K, lo, hi *K) error {
 // the separators above them, node fill between minItems and maxItems
 // outside the root and the right edge, correct subtree counts and length,
 // the child array of each level, every leaf at the same depth, zero slots
-// past the used ones, and free lists of at most maxFree zeroed nodes.
+// past the used ones, and free nodes that are zeroed and on the free list
+// of their kind.
 func check[K, V any, O order[K]](t *tree[K, V, O]) error {
-	if len(t.freeLeaves) > maxFree || len(t.freeInners) > maxFree {
-		return fmt.Errorf("%w: free lists of %d leaves and %d internal nodes", errInvariant,
-			len(t.freeLeaves), len(t.freeInners))
-	}
 	for _, l := range t.freeLeaves {
 		if l.n != 0 || l.owner != 0 || !zeroFrom(l.keys[:], 0) || !zeroFrom(l.vals[:], 0) {
 			return fmt.Errorf("%w: a free leaf that is not zeroed", errInvariant)
 		}
 	}
-	for _, in := range t.freeInners {
-		if in.n != 0 || in.count != 0 || in.owner != 0 || !zeroFrom(in.keys[:], 0) ||
-			(in.leaves != nil && !zeroFrom(in.leaves[:], 0)) || (in.inners != nil && !zeroFrom(in.inners[:], 0)) {
-
-			return fmt.Errorf("%w: a free internal node that is not zeroed", errInvariant)
+	for _, in := range t.freeLeafParents {
+		if in.inners != nil || in.leaves == nil || !zeroFrom(in.leaves[:], 0) || !zeroInner(in) {
+			return fmt.Errorf("%w: a free parent of leaves that is not zeroed", errInvariant)
+		}
+	}
+	for _, in := range t.freeInnerParents {
+		if in.leaves != nil || in.inners == nil || !zeroFrom(in.inners[:], 0) || !zeroInner(in) {
+			return fmt.Errorf("%w: a free parent of internal nodes that is not zeroed", errInvariant)
 		}
 	}
 	if t.root != nil && t.leaf != nil {
@@ -197,6 +197,11 @@ func zeroFrom[T any](s []T, i int) bool {
 	}
 
 	return true
+}
+
+// zeroInner reports whether in has no separator, count or ID.
+func zeroInner[K, V any](in *inner[K, V]) bool {
+	return in.n == 0 && in.count == 0 && in.owner == 0 && zeroFrom(in.keys[:], 0)
 }
 
 // requireValid fails the test when t breaks an invariant of its tree.
@@ -257,7 +262,9 @@ func reverse(a, b int) int {
 // or when a clone of tr differs from the model at the time of the clone
 // after the next cloneEvery operations. It also fails unless tr had one
 // level of internal nodes at one of those checks and two at another.
-// value returns the value that operation op sets.
+// churn resets tr at the start of every phase of inserts after the first,
+// so the tree refills from the nodes that it kept. value returns the value
+// that operation op sets.
 func churn[V comparable, O order[int]](t *testing.T, tr *tree[int, V, O], value func(op int) V) {
 	t.Helper()
 	r := testkit.SeededRand(t)
@@ -271,6 +278,10 @@ func churn[V comparable, O order[int]](t *testing.T, tr *tree[int, V, O], value 
 	var clone tree[int, V, O]
 	var cloned map[int]V
 	for op := range operations {
+		if op > 0 && op%(2*phase) == 0 {
+			tr.reset()
+			clear(model)
+		}
 		k := r.IntN(keySpace)
 		sets := 80
 		if op/phase%2 == 1 {
@@ -364,8 +375,8 @@ func replay[O order[int]](t *testing.T, tr *tree[int, int, O], ops []byte) {
 	ahead := direction(tr)
 	for i := 0; i+2 < len(ops); i += 3 {
 		k := int(ops[i+1])<<8 | int(ops[i+2])
-		n := int(ops[i]) / 6
-		switch ops[i] % 6 {
+		n := int(ops[i]) / 7
+		switch ops[i] % 7 {
 		case 0:
 			tr.set(k, i)
 			model[k] = i
@@ -386,10 +397,13 @@ func replay[O order[int]](t *testing.T, tr *tree[int, int, O], ops []byte) {
 			if k, _, ok := tr.popMin(); ok {
 				delete(model, k)
 			}
-		default:
+		case 5:
 			if k, _, ok := tr.popMax(); ok {
 				delete(model, k)
 			}
+		default:
+			tr.reset()
+			clear(model)
 		}
 		if err := check(tr); err != nil {
 			t.Fatalf("operation %d: %v", i/3, err)
@@ -500,7 +514,10 @@ func TestTreeModel(t *testing.T) {
 // Go map at the end. An operation is 3 bytes: the operation and its count,
 // and a key of 2 bytes.
 func FuzzTreeModel(f *testing.F) {
-	f.Add([]byte{255, 0, 0, 255, 1, 80, 255, 2, 160, 255, 3, 240, 242, 0, 100, 1, 0, 50, 0, 0, 51, 4, 0, 0, 5, 0, 0})
+	f.Add([]byte{
+		255, 0, 0, 255, 1, 80, 255, 2, 160, 255, 3, 240, 240, 0, 100, 1, 0, 50, 0, 0, 51, 4, 0, 0, 5, 0, 0,
+		6, 0, 0, 255, 0, 0,
+	})
 	f.Fuzz(func(t *testing.T, ops []byte) {
 		replay(t, &ints{}, ops)
 		replay(t, &tree[int, int, custom[int]]{order: reverse}, ops)

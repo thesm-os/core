@@ -414,6 +414,43 @@ func TestMap(t *testing.T) {
 		})
 	})
 
+	t.Run("Reset", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("removes every key and leaves a map that refills with every key in order", func(t *testing.T) {
+			t.Parallel()
+			m, keys := filled(t, big)
+			m.Reset()
+			testkit.Equal(t, m.Len(), 0, "Reset must remove every key")
+			testkit.Len(t, items(t, m.All()), 0, "a reset map has no item")
+			for _, k := range evens(t, big) {
+				m.Set(k, -k)
+			}
+			testkit.Equal(t, items(t, m.All()), keys, "the refilled map must hold every key in order")
+		})
+
+		t.Run("leaves a clone unchanged", func(t *testing.T) {
+			t.Parallel()
+			m, keys := filled(t, big)
+			c := m.Clone()
+			m.Set(1, -1)
+			m.Reset()
+			m.Set(3, -3)
+			testkit.Equal(t, items(t, c.All()), keys, "the clone must keep its keys")
+		})
+
+		t.Run("ends an iteration whose loop resets the map", func(t *testing.T) {
+			t.Parallel()
+			m, _ := filled(t, big)
+			n := 0
+			for range m.All() {
+				n++
+				m.Reset()
+			}
+			testkit.Equal(t, n, 1, "the iteration must end once the map is empty")
+		})
+	})
+
 	t.Run("Min", func(t *testing.T) {
 		t.Parallel()
 
@@ -881,8 +918,9 @@ func TestMap(t *testing.T) {
 // BenchmarkMap reports the cost of the operations of a Map of 65,536 int
 // keys set in random order. Lookups, iteration, and a Delete and Set of
 // the same key allocate nothing. A map built from empty allocates one
-// object for each leaf and two for each internal node. A clone followed by
-// a Set allocates the new map and the copied path.
+// object for each leaf and two for each internal node, and a map that
+// Reset emptied refills without allocating. A clone followed by a Set
+// allocates the new map and the copied path.
 func BenchmarkMap(b *testing.B) {
 	keys := evens(b, benchKeys)
 	var m btree.Map[int, int]
@@ -936,6 +974,26 @@ func BenchmarkMap(b *testing.B) {
 			var fresh btree.Map[int, int]
 			for k := range benchKeys {
 				fresh.Set(k, k)
+			}
+		}
+	})
+
+	b.Run("Reset then Set of 65,536 keys in random order", func(b *testing.B) {
+		// The first Reset grows the free lists, so the loop measures the
+		// fills that follow it.
+		var reused btree.Map[int, int]
+		for _, k := range keys {
+			reused.Set(k, k)
+		}
+		reused.Reset()
+		for _, k := range keys {
+			reused.Set(k, k)
+		}
+		b.ReportAllocs()
+		for b.Loop() {
+			reused.Reset()
+			for _, k := range keys {
+				reused.Set(k, k)
 			}
 		}
 	})

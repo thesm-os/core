@@ -204,11 +204,50 @@ func (t *tree[K, V, O]) popMax() (K, V, bool) {
 	return k, v, true
 }
 
-// clear removes every item. The free lists keep their nodes. The tree drops
-// its other nodes, which become garbage unless a clone shares them.
+// clear removes every item. It keeps at most maxFree nodes on each free
+// list, and drops the other free nodes and the nodes of the tree, which
+// become garbage unless a clone shares them.
 func (t *tree[K, V, O]) clear() {
 	t.writes++
 	t.root, t.leaf, t.len = nil, nil, 0
+	t.freeLeaves = trim(t.freeLeaves)
+	t.freeLeafParents = trim(t.freeLeafParents)
+	t.freeInnerParents = trim(t.freeInnerParents)
+}
+
+// reset removes every item, and puts every node with the ID of t on the
+// free list of its kind, zeroed, for the inserts that follow. It drops the
+// nodes with another ID, which a clone may still read.
+func (t *tree[K, V, O]) reset() {
+	t.writes++
+	if t.root != nil {
+		t.keepAll(t.root)
+	} else if t.leaf != nil && t.leaf.owner == t.owner {
+		t.keepLeaf(t.leaf)
+	}
+	t.root, t.leaf, t.len = nil, nil, 0
+}
+
+// keepAll puts in and every node under it that has the ID of t on the
+// free lists. A tree copies a node with another ID before it changes the
+// node, so no node under such a node has the ID of t, and keepAll does not
+// descend into it.
+func (t *tree[K, V, O]) keepAll(in *inner[K, V]) {
+	if in.owner != t.owner {
+		return
+	}
+	if in.leaves != nil {
+		for _, l := range in.leaves[:in.n+1] {
+			if l.owner == t.owner {
+				t.keepLeaf(l)
+			}
+		}
+	} else {
+		for _, c := range in.inners[:in.n+1] {
+			t.keepAll(c)
+		}
+	}
+	t.keepInner(in)
 }
 
 // remove removes the item at index i of leaf l, at the end of path, and

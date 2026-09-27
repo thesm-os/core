@@ -113,63 +113,42 @@ func TestNode(t *testing.T) {
 	t.Run("newLeafParent", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("replaces the array of internal nodes of a free node with an array of leaves", func(t *testing.T) {
+		t.Run("takes a free parent of leaves and gives it the ID of the tree", func(t *testing.T) {
 			t.Parallel()
-			tr := ints{freeInners: []*inner[int, int]{{inners: new([maxChildren]*inner[int, int])}}}
-			in := tr.newLeafParent()
-			testkit.True(
-				t,
-				in.leaves != nil && in.inners == nil,
-				"a parent of leaves must have only an array of leaves",
-			)
+			free := &inner[int, int]{leaves: new([maxChildren]*leaf[int, int])}
+			tr := ints{owner: 7, freeLeafParents: []*inner[int, int]{free}}
+			testkit.True(t, tr.newLeafParent() == free && free.owner == 7, "newLeafParent must take the free node")
+			testkit.Len(t, tr.freeLeafParents, 0, "the free list must give up the node")
 		})
 
-		t.Run("keeps the array of leaves of a free node", func(t *testing.T) {
+		t.Run("allocates a node with an array of leaves when its free list is empty", func(t *testing.T) {
 			t.Parallel()
-			kept := new([maxChildren]*leaf[int, int])
-			tr := ints{freeInners: []*inner[int, int]{{leaves: kept}}}
-			testkit.True(t, tr.newLeafParent().leaves == kept, "a free node must keep an array of leaves")
+			tr := ints{owner: 7, freeInnerParents: []*inner[int, int]{{inners: new([maxChildren]*inner[int, int])}}}
+			in := tr.newLeafParent()
+			testkit.True(t, in.owner == 7 && in.leaves != nil && in.inners == nil,
+				"newLeafParent must allocate a parent of leaves")
+			testkit.Len(t, tr.freeInnerParents, 1, "a free parent of internal nodes must remain on its list")
 		})
 	})
 
 	t.Run("newInnerParent", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("replaces the array of leaves of a free node with an array of internal nodes", func(t *testing.T) {
+		t.Run("takes a free parent of internal nodes and gives it the ID of the tree", func(t *testing.T) {
 			t.Parallel()
-			tr := ints{freeInners: []*inner[int, int]{{leaves: new([maxChildren]*leaf[int, int])}}}
+			free := &inner[int, int]{inners: new([maxChildren]*inner[int, int])}
+			tr := ints{owner: 7, freeInnerParents: []*inner[int, int]{free}}
+			testkit.True(t, tr.newInnerParent() == free && free.owner == 7, "newInnerParent must take the free node")
+			testkit.Len(t, tr.freeInnerParents, 0, "the free list must give up the node")
+		})
+
+		t.Run("allocates a node with an array of internal nodes when its free list is empty", func(t *testing.T) {
+			t.Parallel()
+			tr := ints{owner: 7, freeLeafParents: []*inner[int, int]{{leaves: new([maxChildren]*leaf[int, int])}}}
 			in := tr.newInnerParent()
-			testkit.True(
-				t,
-				in.inners != nil && in.leaves == nil,
-				"a parent of internal nodes must have only their array",
-			)
-		})
-
-		t.Run("keeps the array of internal nodes of a free node", func(t *testing.T) {
-			t.Parallel()
-			kept := new([maxChildren]*inner[int, int])
-			tr := ints{freeInners: []*inner[int, int]{{inners: kept}}}
-			testkit.True(t, tr.newInnerParent().inners == kept, "a free node must keep an array of internal nodes")
-		})
-	})
-
-	t.Run("newInner", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("takes a free node and gives it the ID of the tree", func(t *testing.T) {
-			t.Parallel()
-			free := &inner[int, int]{}
-			tr := ints{owner: 7, freeInners: []*inner[int, int]{free}}
-			testkit.True(t, tr.newInner() == free && free.owner == 7, "newInner must take the free node")
-			testkit.Len(t, tr.freeInners, 0, "the free list must give up the node")
-		})
-
-		t.Run("allocates a node without a child array when the free list is empty", func(t *testing.T) {
-			t.Parallel()
-			tr := ints{owner: 7}
-			in := tr.newInner()
-			testkit.True(t, in.owner == 7 && in.leaves == nil && in.inners == nil, "newInner must allocate a bare node")
+			testkit.True(t, in.owner == 7 && in.inners != nil && in.leaves == nil,
+				"newInnerParent must allocate a parent of internal nodes")
+			testkit.Len(t, tr.freeLeafParents, 1, "a free parent of leaves must remain on its list")
 		})
 	})
 
@@ -208,7 +187,7 @@ func TestNode(t *testing.T) {
 	t.Run("releaseInner", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("zeroes an internal node of the tree with either child array and keeps it", func(t *testing.T) {
+		t.Run("zeroes an internal node of the tree and keeps it on the free list of its kind", func(t *testing.T) {
 			t.Parallel()
 			tr := ints{owner: 3}
 			parent := &inner[int, int]{owner: 3, n: 1, count: 2, keys: [maxItems]int{4}}
@@ -217,17 +196,24 @@ func TestNode(t *testing.T) {
 			upper.inners = &[maxChildren]*inner[int, int]{{}, {}}
 			tr.releaseInner(parent)
 			tr.releaseInner(upper)
-			testkit.Len(t, tr.freeInners, 2, "both nodes must be on the free list")
+			testkit.True(t, len(tr.freeLeafParents) == 1 && tr.freeLeafParents[0] == parent,
+				"the parent of leaves must be on its free list")
+			testkit.True(t, len(tr.freeInnerParents) == 1 && tr.freeInnerParents[0] == upper,
+				"the parent of internal nodes must be on its free list")
 			requireValid(t, &tr)
 		})
 
-		t.Run("keeps at most maxFree internal nodes", func(t *testing.T) {
+		t.Run("keeps at most maxFree internal nodes of each kind", func(t *testing.T) {
 			t.Parallel()
 			var tr ints
 			for range maxFree + 1 {
 				tr.releaseInner(&inner[int, int]{leaves: new([maxChildren]*leaf[int, int])})
 			}
-			testkit.Len(t, tr.freeInners, maxFree, "the free list must stop at maxFree internal nodes")
+			testkit.Len(t, tr.freeLeafParents, maxFree, "the list of parents of leaves must stop at maxFree")
+			for range maxFree + 1 {
+				tr.releaseInner(&inner[int, int]{inners: new([maxChildren]*inner[int, int])})
+			}
+			testkit.Len(t, tr.freeInnerParents, maxFree, "the list of parents of internal nodes must stop at maxFree")
 		})
 
 		t.Run("leaves an internal node of another tree as it is", func(t *testing.T) {
@@ -236,7 +222,7 @@ func TestNode(t *testing.T) {
 			in := &inner[int, int]{owner: 2, n: 1, keys: [maxItems]int{4}}
 			in.leaves = &[maxChildren]*leaf[int, int]{{n: 1}, {n: 1}}
 			tr.releaseInner(in)
-			testkit.Len(t, tr.freeInners, 0, "a node of another tree may be part of a clone")
+			testkit.Len(t, tr.freeLeafParents, 0, "a node of another tree may be part of a clone")
 			testkit.True(t, in.n == 1 && in.leaves[1] != nil, "a clone's node must keep its children")
 		})
 	})

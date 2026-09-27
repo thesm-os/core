@@ -231,7 +231,8 @@ seams every other thesmos library and framework depends on:
   have point operations, `Floor` and `Ceil`, `At` and `Rank` in O(log n),
   range iterators in both directions, and `Clone` in O(1) with
   copy-on-write nodes. Lookups, iteration, and a delete and an insert at a
-  steady size do not allocate. See [RFC-0043][rfc-0043].
+  steady size do not allocate, and a map that `Reset` empties refills from
+  its own nodes. See [RFC-0043][rfc-0043] and [ADR-0027][adr-0027].
 
 These interfaces — and the others added over time — share three
 properties:
@@ -282,6 +283,7 @@ Apache 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 [adr-0015]: docs/adr/0015-dependency-free-x-modules-in-production.md
 [adr-0024]: docs/adr/0024-specs-reject-states-that-cannot-finish.md
 [adr-0025]: docs/adr/0025-tlog-builds-tagged-trees.md
+[adr-0027]: docs/adr/0027-btree-reset-keeps-nodes.md
 [rfc-0001]: docs/rfc/0001-clock-seam.md
 [rfc-0002]: docs/rfc/0002-rand-seam.md
 [rfc-0003]: docs/rfc/0003-crypto-seam.md

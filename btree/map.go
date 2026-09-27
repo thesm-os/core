@@ -92,14 +92,35 @@ func (m *Map[K, V]) Len() int {
 	return m.t.len
 }
 
-// Clear removes every key. The map keeps its free lists, and every node
-// that no clone shares becomes garbage.
+// Clear removes every key. The map keeps up to 64 free nodes of each kind
+// for later inserts, and drops its other nodes, including the ones that
+// [Map.Reset] kept. A dropped node becomes garbage unless a clone shares
+// it.
 //
 // # Allocation contract
 //
 // Zero alloc.
 func (m *Map[K, V]) Clear() {
 	m.t.clear()
+}
+
+// Reset removes every key, and keeps the nodes of the map for the inserts
+// that follow. An insert takes a kept node before it allocates one, so a
+// fill after Reset allocates only the nodes that it needs beyond those
+// that the map kept. Reset visits every node and zeroes the items of every
+// node that it keeps, so it runs in O(n).
+//
+// Reset keeps only the nodes that the map may change in place. A node that
+// the map shares with a clone remains the clone's, so right after
+// [Map.Clone], Reset keeps no node. The kept nodes remain allocated until
+// [Map.Clear], or until the map becomes garbage.
+//
+// # Allocation contract
+//
+// Zero alloc, except when Reset keeps more nodes than any earlier Reset of
+// the map: it then grows the lists that it keeps them on.
+func (m *Map[K, V]) Reset() {
+	m.t.reset()
 }
 
 // Min returns the smallest key and its value, and reports whether the map

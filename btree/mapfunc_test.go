@@ -171,6 +171,21 @@ func TestMapFunc(t *testing.T) {
 		})
 	})
 
+	t.Run("Reset", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("removes every key and keeps the order", func(t *testing.T) {
+			t.Parallel()
+			m, keys := descending(t, small)
+			m.Reset()
+			testkit.Equal(t, m.Len(), 0, "Reset must remove every key")
+			for _, k := range evens(t, small) {
+				m.Set(k, -k)
+			}
+			testkit.Equal(t, items(t, m.All()), keys, "the refilled map must keep the order of the function")
+		})
+	})
+
 	t.Run("Min", func(t *testing.T) {
 		t.Parallel()
 

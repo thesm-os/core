@@ -89,6 +89,12 @@ func (m *MapFunc[K, V]) Clear() {
 	m.t.clear()
 }
 
+// Reset removes every key, and keeps the nodes of the map for the inserts
+// that follow. See [Map.Reset].
+func (m *MapFunc[K, V]) Reset() {
+	m.t.reset()
+}
+
 // Min returns the smallest key and its value, and reports whether the map
 // has a key. See [Map.Min].
 func (m *MapFunc[K, V]) Min() (K, V, bool) {

@@ -127,6 +127,21 @@ func TestSet(t *testing.T) {
 		})
 	})
 
+	t.Run("Reset", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("removes every key and leaves a set that refills with every key in order", func(t *testing.T) {
+			t.Parallel()
+			s, keys := filledSet(t, small)
+			s.Reset()
+			testkit.True(t, s.Len() == 0 && !s.Has(0), "Reset must remove every key")
+			for _, k := range evens(t, small) {
+				s.Add(k)
+			}
+			testkit.Equal(t, slices.Collect(s.All()), keys, "the refilled set must hold every key in order")
+		})
+	})
+
 	t.Run("Min", func(t *testing.T) {
 		t.Parallel()
 

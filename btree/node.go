@@ -75,13 +75,34 @@ func total[C sized](kids []C) int {
 	return n
 }
 
+// take removes the last node of the free list at list and returns it, or
+// returns nil when the list is empty. It zeroes the slot that the node
+// leaves, so the list does not keep the node reachable.
+func take[N any](list *[]*N) *N {
+	k := len(*list) - 1
+	if k < 0 {
+		return nil
+	}
+	n := (*list)[k]
+	(*list)[k] = nil
+	*list = (*list)[:k]
+
+	return n
+}
+
+// trim returns the first maxFree nodes of the free list list, and zeroes
+// the slots past them, so the nodes it drops become garbage.
+func trim[N any](list []*N) []*N {
+	n := min(len(list), maxFree)
+	clear(list[n:])
+
+	return list[:n]
+}
+
 // newLeaf returns an empty leaf with the ID of t, from the free list when
 // the list has one.
 func (t *tree[K, V, O]) newLeaf() *leaf[K, V] {
-	if k := len(t.freeLeaves) - 1; k >= 0 {
-		l := t.freeLeaves[k]
-		t.freeLeaves[k] = nil
-		t.freeLeaves = t.freeLeaves[:k]
+	if l := take(&t.freeLeaves); l != nil {
 		l.owner = t.owner
 
 		return l
@@ -90,26 +111,28 @@ func (t *tree[K, V, O]) newLeaf() *leaf[K, V] {
 	return &leaf[K, V]{owner: t.owner}
 }
 
-// newLeafParent returns an empty internal node with the ID of t, for
-// children that are leaves.
+// newLeafParent returns an empty internal node with the ID of t and an
+// array of leaves, from its free list when the list has one.
 func (t *tree[K, V, O]) newLeafParent() *inner[K, V] {
-	in := t.newInner()
-	if in.leaves == nil {
-		in.leaves, in.inners = new([maxChildren]*leaf[K, V]), nil
+	if in := take(&t.freeLeafParents); in != nil {
+		in.owner = t.owner
+
+		return in
 	}
 
-	return in
+	return &inner[K, V]{leaves: new([maxChildren]*leaf[K, V]), owner: t.owner}
 }
 
-// newInnerParent returns an empty internal node with the ID of t, for
-// children that are internal nodes.
+// newInnerParent returns an empty internal node with the ID of t and an
+// array of internal nodes, from its free list when the list has one.
 func (t *tree[K, V, O]) newInnerParent() *inner[K, V] {
-	in := t.newInner()
-	if in.inners == nil {
-		in.inners, in.leaves = new([maxChildren]*inner[K, V]), nil
+	if in := take(&t.freeInnerParents); in != nil {
+		in.owner = t.owner
+
+		return in
 	}
 
-	return in
+	return &inner[K, V]{inners: new([maxChildren]*inner[K, V]), owner: t.owner}
 }
 
 // newSibling returns an empty internal node with the ID of t, for children
@@ -122,54 +145,52 @@ func (t *tree[K, V, O]) newSibling(in *inner[K, V]) *inner[K, V] {
 	return t.newInnerParent()
 }
 
-// newInner returns an empty internal node with the ID of t. A node from
-// the free list keeps the child array it had, and a new node has none.
-func (t *tree[K, V, O]) newInner() *inner[K, V] {
-	if k := len(t.freeInners) - 1; k >= 0 {
-		in := t.freeInners[k]
-		t.freeInners[k] = nil
-		t.freeInners = t.freeInners[:k]
-		in.owner = t.owner
-
-		return in
-	}
-
-	return &inner[K, V]{owner: t.owner}
-}
-
-// releaseLeaf zeroes a leaf that t removed from the tree, and keeps it on
-// the free list when it has the ID of t and the list has room. A leaf with
-// another ID may still be part of a clone, so releaseLeaf leaves it as it
-// is.
+// releaseLeaf keeps a leaf that the tree dropped, in a merge or when the
+// root leaf lost its last item, when the leaf has the ID of t and the free
+// list has fewer than maxFree leaves. A leaf with another ID may still be
+// part of a clone, so releaseLeaf leaves it as it is.
 func (t *tree[K, V, O]) releaseLeaf(l *leaf[K, V]) {
-	if l.owner != t.owner {
-		return
-	}
-	clear(l.keys[:l.n])
-	clear(l.vals[:l.n])
-	l.n, l.owner = 0, 0
-	if len(t.freeLeaves) < maxFree {
-		t.freeLeaves = append(t.freeLeaves, l)
+	if l.owner == t.owner && len(t.freeLeaves) < maxFree {
+		t.keepLeaf(l)
 	}
 }
 
-// releaseInner zeroes an internal node that t removed from the tree, and
-// keeps it with its child array on the free list when it has the ID of t
-// and the list has room.
+// releaseInner keeps an internal node that a merge or the shrink of the
+// root removed from the tree when it has the ID of t and the free list of
+// its kind has fewer than maxFree nodes.
 func (t *tree[K, V, O]) releaseInner(in *inner[K, V]) {
 	if in.owner != t.owner {
 		return
 	}
+	free := t.freeInnerParents
+	if in.leaves != nil {
+		free = t.freeLeafParents
+	}
+	if len(free) < maxFree {
+		t.keepInner(in)
+	}
+}
+
+// keepLeaf zeroes the items of l and puts it on the free list.
+func (t *tree[K, V, O]) keepLeaf(l *leaf[K, V]) {
+	clear(l.keys[:l.n])
+	clear(l.vals[:l.n])
+	l.n, l.owner = 0, 0
+	t.freeLeaves = append(t.freeLeaves, l)
+}
+
+// keepInner zeroes the separators and children of in, and puts it with
+// its child array on the free list of its kind.
+func (t *tree[K, V, O]) keepInner(in *inner[K, V]) {
 	clear(in.keys[:in.n])
 	if in.leaves != nil {
 		clear(in.leaves[:in.n+1])
+		t.freeLeafParents = append(t.freeLeafParents, in)
 	} else {
 		clear(in.inners[:in.n+1])
+		t.freeInnerParents = append(t.freeInnerParents, in)
 	}
 	in.n, in.count, in.owner = 0, 0, 0
-	if len(t.freeInners) < maxFree {
-		t.freeInners = append(t.freeInners, in)
-	}
 }
 
 // mutLeaf returns the leaf that *p points to, after replacing it with a

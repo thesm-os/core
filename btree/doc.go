@@ -42,9 +42,10 @@
 //     items in each half. An insert at the right edge of the tree keeps the
 //     node it splits full, so keys inserted in ascending order fill every
 //     leaf.
-//   - A merge puts the freed node on a free list of the map, which keeps up
-//     to 64 leaves and 64 internal nodes, and a split takes a node from the
-//     free list before it allocates.
+//   - A merge puts the freed node on a free list of the map, one for each
+//     kind of node, which keeps up to 64 nodes of that kind. A split takes
+//     a node from the free list before it allocates. [Map.Reset] puts
+//     every node of the map on the free lists.
 //
 // # Writes during an iteration
 //
@@ -80,6 +81,8 @@
 //     split of an internal node that finds the free list empty. A map whose
 //     size does not change reuses the nodes that its deletes free, and
 //     does not allocate.
+//   - A fill after [Map.Reset] allocates only the nodes that it needs
+//     beyond those that the map kept.
 //   - [Map.Clone] allocates the new map. After a clone, a write allocates
 //     1 object for each leaf and 2 for each internal node that it copies.
 package btree
