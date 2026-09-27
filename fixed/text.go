@@ -142,7 +142,7 @@ func parseFrac(s string, hasPoint bool) (uint64, error) {
 		}
 	}
 
-	for ; digits < Scale; digits++ {
+	for range Scale - digits {
 		v *= 10
 	}
 
