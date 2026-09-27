@@ -79,5 +79,6 @@ Start from [`docs/templates/ADR.md`](../templates/ADR.md).
 | [0024](0024-specs-reject-states-that-cannot-finish.md) | A Spec With a Terminal State Rejects States That Cannot Finish | Accepted |
 | [0025](0025-tlog-builds-tagged-trees.md) | tlog Builds Tagged Trees | Accepted |
 | [0026](0026-tagged-trees-have-no-empty-root.md) | A Tagged Tree Over No Leaves Has No Root | Accepted |
+| [0027](0027-btree-reset-keeps-nodes.md) | A Reset Map Keeps Its Nodes for Its Next Fill | Accepted |
 
 [nygard]: https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions

@@ -8,7 +8,7 @@ updated: 2026-09-27
 discussion: none
 supersedes: none
 superseded-by: none
-produces-adr: none
+produces-adr: ADR-0027
 ---
 
 # RFC-0043: B-Tree Ordered Maps
@@ -33,11 +33,14 @@ Each collection offers:
   directions, as `iter.Seq2` and `iter.Seq`. A write during an iteration
   neither ends it nor panics.
 - `DeleteRange`, and `Clone` in O(1) with copy-on-write nodes.
+- `Reset`, which empties a collection and keeps its nodes for the next
+  fill.
 
 When the keys and values contain no pointers, the garbage collector marks
 a leaf without scanning it. Only leaves contain values, and a leaf has no
 pointer fields. A map reuses the nodes that its merges free. A map of
-constant size does not allocate.
+constant size does not allocate, and a map that `Reset` empties refills
+from its own nodes.
 
 We measured a prototype against tidwall/btree v1.8.1, the fastest Go
 B-tree we measured, on 1M `int64` keys. The prototype inserts 22 to 36%
@@ -167,8 +170,13 @@ func (m *Map[K, V]) DeleteRange(lo, hi K) int
 // Len returns the number of keys.
 func (m *Map[K, V]) Len() int
 
-// Clear removes every key.
+// Clear removes every key, and drops the map's nodes but up to 64 free
+// nodes of each kind.
 func (m *Map[K, V]) Clear()
+
+// Reset removes every key, and keeps the map's nodes for the inserts that
+// follow. An insert takes a kept node before it allocates one.
+func (m *Map[K, V]) Reset()
 
 // Min returns the smallest key, and Max the largest.
 func (m *Map[K, V]) Min() (K, V, bool)
@@ -231,9 +239,9 @@ func (s *Set[K]) Has(key K) bool
 // Delete removes key, and reports whether key was present.
 func (s *Set[K]) Delete(key K) bool
 
-// Set also has the Len, Clear, Min, Max, Floor, Ceil, PopMin, PopMax, At,
-// Rank, DeleteRange and Clone methods of Map. Its All, Backward, Range,
-// Ascend and Descend methods return iter.Seq[K].
+// Set also has the Len, Clear, Reset, Min, Max, Floor, Ceil, PopMin,
+// PopMax, At, Rank, DeleteRange and Clone methods of Map. Its All,
+// Backward, Range, Ascend and Descend methods return iter.Seq[K].
 ```
 
 ### Order
@@ -361,9 +369,13 @@ type inner[K, V any] struct {
 - `Update` calls its function during the descent. When the function
   writes to the map, `Update` stores the result with a second descent
   instead of through its path.
-- A merge puts the freed node on the map's free list, which keeps up to
-  64 leaves and 64 internal nodes. A split takes a node from the free list
-  before it allocates.
+- A map has a free list for each kind of node: leaves, parents of leaves
+  and parents of internal nodes. A merge puts the freed node on the list
+  of its kind, which keeps up to 64 nodes, and a split takes a node from
+  the list before it allocates.
+- `Reset` puts every node that the map may change in place on the free
+  lists, zeroed, past the bound of 64. `Clear` trims each list to 64
+  nodes. ADR-0027 records this decision.
 - Each node records the ID of the map that may change it in place.
   `Clone` gives both maps new IDs from an atomic counter. A write copies
   every node on its path that has another map's ID, and it copies only
@@ -397,6 +409,8 @@ type inner[K, V any] struct {
 | Iteration, including the descents after writes | 0 |
 | `Set`, `Update`, `Add` | 0, plus 1 for each leaf split and 2 for each internal split that find the free list empty |
 | `Delete`, `DeleteRange`, `PopMin`, `PopMax`, `Clear` | 0 |
+| `Reset` | 0, except when it keeps more nodes than any earlier `Reset` of the map and grows the free lists |
+| A fill after `Reset` | 1 for each leaf and 2 for each internal node that it needs beyond the kept nodes |
 | `Clone` | 1, the new map |
 | The first write after `Clone` | 1 for each leaf and 2 for each internal node on the write's path |
 
@@ -586,12 +600,12 @@ order without a constructor.
   comparisons that read string bytes elsewhere on the heap.
 - `iter.Seq2` adds 0.4 to 0.6 ns per key to a callback, and the write
   check adds 0.1 to 0.3 ns.
-- A map keeps up to 64 free leaves and 64 free internal nodes after
-  deletes.
+- A map keeps up to 64 free nodes of each kind after deletes, and every
+  node that it may change in place after `Reset`, until `Clear`.
 - Leaves and internal nodes are two types, so a split, a borrow and a
   merge each have a leaf form and an internal form.
-- The package adds three types. `Map` and `MapFunc` have 24 methods each,
-  and `Set` has 20. Each method calls one method of the tree, so the
+- The package adds three types. `Map` and `MapFunc` have 25 methods each,
+  and `Set` has 21. Each method calls one method of the tree, so the
   three types repeat one another's method lists.
 
 ## Open questions
@@ -624,5 +638,6 @@ None.
   `sizeclasses.go`: the 8-byte header of an object with pointers larger
   than 512 bytes, and the allocation size classes.
 - ADR-0015, the dependency rule.
+- ADR-0027, a reset map keeps its nodes for its next fill.
 - `blob/memory/memory.go`, `Store.List`.
 - `arena/list.go`, `List`.
