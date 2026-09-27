@@ -135,13 +135,12 @@ func TestRead(t *testing.T) {
 // TestReadTerminates pins the one property of Read no other test can
 // observe: that it returns at all.
 //
-// Read's fill loop is correct, but a mutated bound — `<` to `<=`, or
-// the refill condition inverted — leaves `written` stuck and the
-// loop spinning forever. Every other Read test calls it directly, so
-// under such a mutant they do not fail; they hang, and the binary
-// dies by deadline attributed to whichever test was running. Running
-// Read on a watchdogged goroutine converts that hang into a named
-// failure here.
+// Read's fill loop runs once for each whole block of the read, a count
+// fixed before the loop starts. Every other Read test calls Read
+// directly, so a Read that did not return would hang them, and the
+// binary would stop at its deadline with the failure attributed to
+// whichever test was running. Running Read on a watchdogged goroutine
+// converts that hang into a named failure here.
 //
 // The bound is real time and generous: a legitimate Read of these
 // sizes completes in microseconds, so one second cannot flake on a

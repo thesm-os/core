@@ -114,19 +114,27 @@ func (r *Rand) Seed() rand.Seed {
 	return r.seed
 }
 
-// readLocked fills p from the buffered HMAC output, refilling as
-// needed. Caller holds r.mu.
+// readLocked fills p from the buffered HMAC output, then refills the
+// buffer once for each whole block of the rest of p, and once more for
+// a shorter tail, which leaves the unread bytes of that block buffered.
+// The loop count is fixed before the loop starts. Caller holds r.mu.
 func (r *Rand) readLocked(p []byte) {
-	written := 0
-	for written < len(p) {
-		if r.bufLen == 0 {
-			r.refillLocked()
-		}
-		take := min(len(p)-written, r.bufLen)
-		copy(p[written:written+take], r.buf[r.bufHead:r.bufHead+take])
-		written += take
-		r.bufHead += take
-		r.bufLen -= take
+	n := copy(p, r.buf[r.bufHead:r.bufHead+r.bufLen])
+	r.bufHead += n
+	r.bufLen -= n
+	p = p[n:]
+
+	for range len(p) / blockSize {
+		r.refillLocked()
+		copy(p, r.buf[:])
+		p = p[blockSize:]
+		r.bufHead, r.bufLen = blockSize, 0
+	}
+
+	if len(p) != 0 {
+		r.refillLocked()
+		r.bufHead = copy(p, r.buf[:])
+		r.bufLen = blockSize - r.bufHead
 	}
 }
 
