@@ -189,6 +189,28 @@ func TestBuilder(t *testing.T) {
 		testkit.Equal(t, u.Size(), uint64(0), "the update must describe the unchanged tree")
 	})
 
+	t.Run("Integrate/accepts the leaf that brings a tree to 2^64 - 1 leaves", func(t *testing.T) {
+		t.Parallel()
+
+		// A tree of 2^64 - 2 leaves has a partial tile of 254 hashes at
+		// level 0 and of 255 hashes at every other level. Their content
+		// does not matter here.
+		m := newMemTiles()
+		for level := range uint8(8) {
+			tile := tlog.Tile{Level: level, Index: math.MaxUint64 >> (8 * (uint(level) + 1)), Width: 255}
+			if level == 0 {
+				tile.Width = 254
+			}
+			m.data[tile] = make([]byte, int(tile.Width)*h.Hash(nil).Size())
+		}
+		b, err := tlog.NewBuilder(t.Context(), h, math.MaxUint64-1, m)
+		testkit.NoError(t, err, "NewBuilder must succeed")
+
+		var u tlog.Update
+		testkit.NoError(t, b.Integrate(all[:1], &u), "the leaf that reaches 2^64 - 1 must be accepted")
+		testkit.Equal(t, u.Size(), uint64(math.MaxUint64), "the tree must have 2^64 - 1 leaves")
+	})
+
 	t.Run("Integrate/refuses a tree past 2^64 - 1 leaves", func(t *testing.T) {
 		t.Parallel()
 

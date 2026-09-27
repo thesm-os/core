@@ -166,8 +166,13 @@ type prover struct {
 	// ends[i] is the end in nodes of the nodes of span i.
 	ends []int
 
-	// mem contains the data of every tile and one tile of scratch.
+	// mem contains the data of every tile.
 	mem arena.Arena
+
+	// scratch folds the hashes of one perfect subtree. A subtree of a
+	// proof covers at most half a tile, 128 hashes of at most
+	// crypto.MaxDigestSize, 64 bytes.
+	scratch [8192]byte
 }
 
 // nodeRef locates the hashes under one perfect subtree in a tile.
@@ -220,14 +225,15 @@ func prove(
 	}
 
 	ds := h.Hash(nil).Size()
-	total := tileWidth
+	total := 0
 	for _, t := range p.tiles {
 		total += int(t.Width)
 	}
 
 	// Each tile buffer has bytes.MinRead bytes of room past the tile, so
 	// a reader that reads with bytes.Buffer.ReadFrom, as BlobTiles does,
-	// sees the end of the body without growing the buffer.
+	// sees the end of the body without growing the buffer. The buffers
+	// fill mem exactly.
 	mem := p.mem.Alloc(total*ds + len(p.tiles)*bytes.MinRead)
 	off := 0
 	for _, t := range p.tiles {
@@ -235,7 +241,7 @@ func prove(
 		p.dst = append(p.dst, mem[off:off:end])
 		off = end
 	}
-	scratch := mem[off:]
+	scratch := p.scratch[:]
 
 	if err := r.ReadTiles(ctx, p.tiles, p.dst); err != nil {
 		return dst, err //nolint:wrapcheck // the reader's error passes through with its class

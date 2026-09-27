@@ -57,6 +57,20 @@ func TestBundleEntries(t *testing.T) {
 		testkit.Equal(t, got, [][]byte{[]byte("one"), {}, bytes.Repeat([]byte{7}, 300)}, "the entries must round-trip")
 	})
 
+	t.Run("yields an empty entry that ends the data", func(t *testing.T) {
+		t.Parallel()
+
+		data, err := tlog.AppendBundleEntry([]byte{0x00, 0x01, 'a'}, nil)
+		testkit.NoError(t, err, "AppendBundleEntry must succeed")
+
+		var got [][]byte
+		for e, err := range tlog.BundleEntries(data) {
+			testkit.NoError(t, err, "a bundle that ends with an empty entry must iterate")
+			got = append(got, e)
+		}
+		testkit.Equal(t, got, [][]byte{[]byte("a"), {}}, "the empty entry must follow the first")
+	})
+
 	t.Run("yields ErrBundle for a length that runs past the data", func(t *testing.T) {
 		t.Parallel()
 

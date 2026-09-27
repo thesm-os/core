@@ -18,6 +18,10 @@ const (
 	// tileWidth is the number of hashes in a full tile.
 	tileWidth = 1 << tileHeight
 
+	// maxPartialWidth is the number of hashes in the widest partial tile,
+	// one below tileWidth.
+	maxPartialWidth = 255
+
 	// tileLevels is the number of tile levels a tree of up to 2^64
 	// leaves has.
 	tileLevels = 8
@@ -120,32 +124,35 @@ func appendIndex(b []byte, index uint64, width uint16) []byte {
 // One allocation to check the path against [Tile.Path].
 func ParseTilePath(path string) (Tile, error) {
 	rest, ok := strings.CutPrefix(path, tilePrefix)
-	if !ok || len(rest) < 2 || rest[0] < '0' || rest[0] > '7' || rest[1] != '/' {
+	level, rest, found := strings.Cut(rest, "/")
+	if !ok || !found || len(level) != 1 || level[0] < '0' || level[0] > '7' {
 		return Tile{}, ErrTilePath
 	}
 
-	t := Tile{Level: rest[0] - '0', Width: tileWidth}
-	rest = rest[2:]
+	t := Tile{Level: level[0] - '0', Width: tileWidth}
 
-	if i := strings.Index(rest, partialInfix); i >= 0 {
-		w, err := strconv.ParseUint(rest[i+len(partialInfix):], 10, 16)
-		if err != nil || w == 0 || w >= tileWidth {
+	if index, width, partial := strings.Cut(rest, partialInfix); partial {
+		w, err := strconv.ParseUint(width, 10, 16)
+		if err != nil || w == 0 {
 			return Tile{}, ErrTilePath
 		}
 		t.Width = uint16(w)
-		rest = rest[:i]
+		rest = index
 	}
 
 	for group := range strings.SplitSeq(rest, "/") {
 		g, err := strconv.ParseUint(strings.TrimPrefix(group, "x"), 10, 64)
-		if err != nil || g >= pathBase || t.Index > (math.MaxUint64-g)/pathBase {
+		if err != nil {
 			return Tile{}, ErrTilePath
 		}
 		t.Index = t.Index*pathBase + g
 	}
 
-	// Leading zeros, a missing or misplaced x and a width with a sign
-	// all parse, and none of them survive the round trip.
+	// Leading zeros, a missing or misplaced x, a group of more than three
+	// digits, a width of 256 or more and a width with a sign all parse,
+	// and the round trip rejects each of them. It also rejects an index
+	// past 2^64, which wraps: Path writes every uint64 in one form, so the
+	// wrapped index has another path.
 	if t.Index > maxTileIndex(t.Level) || t.Path() != path {
 		return Tile{}, ErrTilePath
 	}
@@ -170,14 +177,13 @@ func maxTileIndex(level uint8) uint64 {
 // One closure per call.
 func Tiles(oldSize, newSize uint64) iter.Seq[Tile] {
 	return func(yield func(Tile) bool) {
-		if oldSize >= newSize {
-			return
-		}
-
+		// The sizes agree from some level up, and above it no tile
+		// changes. An old size at or past the new one agrees or passes it
+		// at level 0.
 		for level := range uint8(tileLevels) {
 			shift := tileHeight * uint(level)
 			oldN, newN := oldSize>>shift, newSize>>shift
-			if oldN == newN {
+			if oldN >= newN {
 				return
 			}
 

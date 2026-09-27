@@ -381,7 +381,7 @@ checks:
         score: 85
         coverage: 100
       - path: tlog
-        score: 94
+        score: 100
         coverage: 100
       - path: version
         score: 100

@@ -55,16 +55,21 @@ type Builder struct {
 // # Allocation contract
 //
 // Allocates the Builder's state once: its right edge and one tile of
-// scratch.
+// scratch. ReadTiles appends each partial tile to a buffer of its own,
+// and NewBuilder copies the tiles into the state once their lengths
+// check.
 func NewBuilder(ctx context.Context, h crypto.Hasher, size uint64, r TileReader) (*Builder, error) {
 	empty := h.Hash(nil)
 	ds := empty.Size()
 
-	state := make([]byte, (tileLevels*(tileWidth-1)+tileWidth)*ds)
+	// state is one tile of scratch, then room for the widest partial tile
+	// at each level. Only the Builder writes an edge, and never more than
+	// its room.
+	state := make([]byte, (tileLevels*maxPartialWidth+tileWidth)*ds)
 	b := &Builder{h: h, root: empty, size: size, digestSize: ds, scratch: state[:tileWidth*ds]}
 	for level := range b.edge {
-		off := (tileWidth + level*(tileWidth-1)) * ds
-		b.edge[level] = state[off:off:(off + (tileWidth-1)*ds)]
+		off := (tileWidth + level*maxPartialWidth) * ds
+		b.edge[level] = state[off:off]
 	}
 
 	if size == 0 {
@@ -80,7 +85,6 @@ func NewBuilder(ctx context.Context, h crypto.Hasher, size uint64, r TileReader)
 		row := size >> (tileHeight * uint(level))
 		if w := row % tileWidth; w > 0 {
 			tiles[n] = Tile{Level: level, Index: row >> tileHeight, Width: uint16(w)}
-			dst[n] = b.edge[level]
 			n++
 		}
 	}
