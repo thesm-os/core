@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"go.thesmos.sh/testkit"
 )
@@ -17,6 +18,11 @@ import (
 // crashEnv names the environment variable that tells a child test
 // process which entry to crash.
 const crashEnv = "TASK_TEST_CRASH"
+
+// childTimeout is the -test.timeout of a child process of TestCrash. A
+// child crashes in milliseconds. The bound ends a child whose parent
+// has died, which no context of the parent can cancel.
+const childTimeout = 30 * time.Second
 
 // returnedMarker is printed by a child process whose call returned
 // after its task panicked, which the contract forbids.
@@ -50,7 +56,8 @@ func TestCrash(t *testing.T) {
 			}
 
 			pattern := "^" + strings.ReplaceAll(regexp.QuoteMeta(t.Name()), "/", "$/^") + "$"
-			cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run="+pattern)
+			cmd := exec.CommandContext(t.Context(), os.Args[0],
+				"-test.run="+pattern, "-test.timeout="+childTimeout.String())
 			cmd.Env = append(os.Environ(), crashEnv+"="+e.name)
 
 			out, err := cmd.CombinedOutput()

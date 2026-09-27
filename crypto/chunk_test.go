@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"go.thesmos.sh/testkit"
 
@@ -684,6 +685,12 @@ func BenchmarkChunk(b *testing.B) {
 	})
 }
 
+// chunkChildTimeout is the -test.timeout of the child process of
+// TestChunkFIPSOnlyMode. The child runs one subtest in milliseconds.
+// The bound ends a child whose parent has died, which no context of the
+// parent can cancel.
+const chunkChildTimeout = 30 * time.Second
+
 // TestChunkFIPSOnlyMode checks that the chunk functions work in Go's
 // FIPS 140-only mode with the module's nonces. The mode is fixed when
 // the process starts, so the test runs itself again in a child process
@@ -695,7 +702,8 @@ func TestChunkFIPSOnlyMode(t *testing.T) {
 		t.Run("passes in a child process under fips140=only", func(t *testing.T) {
 			t.Parallel()
 			//nolint:gosec // G204: the child is this test binary, run again with a fixed pattern.
-			cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestChunkFIPSOnlyMode$", "-test.v")
+			cmd := exec.CommandContext(t.Context(), os.Args[0],
+				"-test.run=^TestChunkFIPSOnlyMode$", "-test.v", "-test.timeout="+chunkChildTimeout.String())
 			cmd.Env = append(os.Environ(), "GODEBUG=fips140=only")
 			out, err := cmd.CombinedOutput()
 			testkit.NoError(t, err, "the fips140=only child must pass:\n"+string(out))

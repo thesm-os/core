@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"go.thesmos.sh/testkit"
 
@@ -34,6 +35,12 @@ const brokenEnv = "CASTEST_BROKEN"
 
 // reference names the run against the memory store with every option.
 const reference = "reference"
+
+// childTimeout is the -test.timeout of a child process of runSuite. A
+// child runs the suite against one store in well under a second. The
+// bound ends a child whose parent has died, which no context of the
+// parent can cancel.
+const childTimeout = 30 * time.Second
 
 // caseLine matches the line that go test -v prints when a top-level
 // case of the suite starts.
@@ -377,7 +384,8 @@ func runs() map[string]run {
 func runSuite(t *testing.T, name string) (string, error) {
 	t.Helper()
 
-	cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestAssertStore$", "-test.v")
+	cmd := exec.CommandContext(t.Context(), os.Args[0],
+		"-test.run=^TestAssertStore$", "-test.v", "-test.timeout="+childTimeout.String())
 	cmd.Env = append(os.Environ(), brokenEnv+"="+name)
 	out, err := cmd.CombinedOutput()
 
