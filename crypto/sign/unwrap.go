@@ -45,9 +45,10 @@ func AsContextSigner(s Signer) (ContextSigner, bool) {
 }
 
 // find returns the first value of type T in the chain that starts at v
-// and follows Unwrap() Signer or Unwrap() Verifier.
+// and follows Unwrap() Signer or Unwrap() Verifier. The chain ends at a
+// nil value or at a value without Unwrap, where find returns false.
 func find[T any](v Verifier) (T, bool) {
-	for v != nil {
+	for {
 		if t, ok := v.(T); ok {
 			return t, true
 		}
@@ -58,11 +59,9 @@ func find[T any](v Verifier) (T, bool) {
 		case interface{ Unwrap() Verifier }:
 			v = u.Unwrap()
 		default:
-			v = nil
+			var zero T
+
+			return zero, false
 		}
 	}
-
-	var zero T
-
-	return zero, false
 }
