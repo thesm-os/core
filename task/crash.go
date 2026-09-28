@@ -12,10 +12,9 @@ package task
 // the function that started the task cannot return before the process
 // exits.
 //
-// Only a process that dies of this panic can observe it. The coverage
-// and mutation gates skip crash for that reason, and a test in a child
-// process covers it. crash is alone in its file because mutation
-// testing applies a skip to a whole file.
+// The crash of a worker kills the process, so a test observes it from a
+// parent process. A test that calls crash directly and recovers the
+// panic covers crash itself.
 func crash(x any) {
 	if x != nil {
 		panic(x)

@@ -168,16 +168,7 @@ checks:
   # AND whose file matches file_glob is exempt from every gate.
   # Used for assertion / contract branches the verifier framework
   # only exercises against broken implementations.
-  #
-  # task's crash raises a task's panic again on the task's own
-  # goroutine, which kills the process, so no in-process test can
-  # cover its panic statement. TestCrash covers it in a child process
-  # for every function of the package. crash is alone in its file
-  # because mutation honours a skip per file.
-  skips:
-    - label: task-crash
-      func_glob: "crash"
-      file_glob: "task/crash.go"
+  skips: []
   # Example:
   #   skips:
   #     - label: suite
