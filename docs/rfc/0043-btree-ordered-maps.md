@@ -629,7 +629,6 @@ None.
 - Inline key prefixes, so that a string search compares fewer bytes on
   the heap.
 - A `SetFunc`, for sets with a custom order.
-- A follow-up change that moves `blob/memory.Store.List` to a `Map`.
 
 ## References
 

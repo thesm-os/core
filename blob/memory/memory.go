@@ -16,12 +16,12 @@ import (
 	"context"
 	"errors"
 	"io"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
 
 	"go.thesmos.sh/core/blob"
+	"go.thesmos.sh/core/btree"
 	"go.thesmos.sh/core/clock"
 	"go.thesmos.sh/core/errs"
 	"go.thesmos.sh/core/page"
@@ -74,20 +74,24 @@ type object struct {
 // The clock is injected because [blob.Info.ModTime] is an instant
 // and this module never reads wall time ambiently.
 //
+// The objects are in a [btree.Map] ordered by key, so [Store.List]
+// reads a page in O(log n + p) for n objects and a page of p.
+//
 // # Concurrency
 //
-// Safe for concurrent use. One mutex guards the map and the
-// counter; bodies are buffered outside it, so the lock is held only
-// for pointer-sized work.
+// Safe for concurrent use. One mutex guards the map and the counter.
+// Put buffers a body before it locks the mutex, so each method locks
+// it only around the map operation.
 //
 // # Allocation contract
 //
-// Put allocates the buffered body; Get allocates one reader wrapper
-// and no body copy; ReadRange, Stat and Delete allocate nothing on
-// their happy paths; List allocates the page snapshot.
+//   - Put allocates the buffered body, and map nodes as the map grows.
+//   - Get allocates one reader wrapper and does not copy the body.
+//   - ReadRange, Stat and Delete allocate nothing on their happy paths.
+//   - List allocates the page snapshot.
 type Store struct {
-	m   map[string]object
 	c   clock.Clock
+	m   btree.Map[string, object]
 	seq uint64
 	mu  sync.Mutex
 }
@@ -102,7 +106,7 @@ var (
 // clock is injected so a test drives [blob.Info.ModTime]
 // deterministically; the value is stdlib time, not an instant.
 func New(c clock.Clock) *Store {
-	return &Store{c: c, m: map[string]object{}}
+	return &Store{c: c}
 }
 
 // Put stores the object under key, consuming r to EOF.
@@ -146,7 +150,7 @@ func (s *Store) Put(ctx context.Context, key string, r io.Reader, opts blob.PutO
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	cur, exists := s.m[key]
+	cur, exists := s.m.Get(key)
 
 	if m := opts.Write.IfMatch; !m.IsZero() {
 		if !exists || cur.info.Version != m {
@@ -168,7 +172,7 @@ func (s *Store) Put(ctx context.Context, key string, r io.Reader, opts blob.PutO
 		ModTime:     s.c.Time(),
 		ContentType: opts.ContentType,
 	}
-	s.m[key] = object{data: data, info: info}
+	s.m.Set(key, object{data: data, info: info})
 
 	return info, nil
 }
@@ -199,7 +203,7 @@ func (s *Store) Get(ctx context.Context, key string) (io.ReadCloser, blob.Info, 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	obj, ok := s.m[key]
+	obj, ok := s.m.Get(key)
 	if !ok {
 		return nil, blob.Info{}, errs.WithClass(errAbsent, errs.NotFound)
 	}
@@ -244,7 +248,7 @@ func (s *Store) ReadRange(
 	}
 
 	s.mu.Lock()
-	obj, ok := s.m[key]
+	obj, ok := s.m.Get(key)
 	s.mu.Unlock()
 
 	if !ok {
@@ -288,7 +292,7 @@ func (s *Store) Stat(ctx context.Context, key string) (blob.Info, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	obj, ok := s.m[key]
+	obj, ok := s.m.Get(key)
 	if !ok {
 		return blob.Info{}, errs.WithClass(errAbsent, errs.NotFound)
 	}
@@ -322,7 +326,7 @@ func (s *Store) Delete(ctx context.Context, key string, ifMatch version.Version)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	cur, exists := s.m[key]
+	cur, exists := s.m.Get(key)
 
 	if m := ifMatch; !m.IsZero() {
 		if !exists || cur.info.Version != m {
@@ -330,7 +334,7 @@ func (s *Store) Delete(ctx context.Context, key string, ifMatch version.Version)
 		}
 	}
 
-	delete(s.m, key)
+	s.m.Delete(key)
 
 	return nil
 }
@@ -345,6 +349,10 @@ func (s *Store) Delete(ctx context.Context, key string, ifMatch version.Version)
 // mid-walk mutation shifts only which not-yet-visited objects
 // appear, never re-yielding a visited one.
 //
+// List reads the keys in order from the first key after the token
+// that has the prefix, and stops at the first key without it, so a
+// page of p objects costs O(log n + p).
+//
 // Error modes: a done ctx returns the context's error.
 //
 // # Allocation contract
@@ -358,35 +366,28 @@ func (s *Store) List(ctx context.Context, prefix string, p page.Page) (page.Curs
 	p = p.WithDefault(defaultPageSize)
 
 	s.mu.Lock()
+	defer s.mu.Unlock()
 
-	keys := make([]string, 0, len(s.m))
-	for k := range s.m {
-		if strings.HasPrefix(k, prefix) && k > p.Token {
-			keys = append(keys, k)
-		}
-	}
-	sort.Strings(keys)
-
-	truncated := len(keys) > p.Limit
-	if truncated {
-		keys = keys[:p.Limit]
-	}
-
-	infos := make([]blob.Info, 0, len(keys))
-	for _, k := range keys {
-		infos = append(infos, s.m[k].info)
-	}
-
-	s.mu.Unlock()
-
-	// A continuation token exists only when this page was truncated:
-	// the pre-truncation set was every remaining match, so an
+	// A continuation token exists only when this page was truncated,
+	// that is when a matching key follows its last object. An
 	// untruncated page — even an exactly-full one — is the last, and
 	// emitting a token for it would cost every walker one spurious
 	// empty round trip.
+	infos := make([]blob.Info, 0, min(p.Limit, s.m.Len()))
 	next := ""
-	if truncated {
-		next = keys[len(keys)-1]
+	for k, obj := range s.m.Ascend(max(prefix, p.Token)) {
+		if !strings.HasPrefix(k, prefix) {
+			break
+		}
+		if k == p.Token {
+			continue
+		}
+		if len(infos) == p.Limit {
+			next = infos[len(infos)-1].Key
+
+			break
+		}
+		infos = append(infos, obj.info)
 	}
 
 	return page.NewSliceCursor(infos, next), nil

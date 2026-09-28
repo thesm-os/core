@@ -338,6 +338,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   takes 784 ns, down from 1,042 ns. `AppendVia` documents that its
   appender writes no byte past the slice it returns, which `Reset` and
   `Alloc` rely on.
+- `blob/memory.Store` keeps its objects in a `btree.Map` ordered by
+  key, so `List` reads a page of p objects in O(log n + p) instead of
+  sorting all n keys on every call. Reading one page of 50 from the
+  middle of 65,536 objects takes 826 to 864 ns and 2 allocations of
+  4,144 bytes, down from 4.1 to 4.5 ms and 3 allocations of 1,052,720
+  bytes.
 
 ### Fixed
 

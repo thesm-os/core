@@ -62,6 +62,29 @@ func BenchmarkReadRange(b *testing.B) {
 	}
 }
 
+// benchListObjects is the number of objects that BenchmarkList stores.
+const benchListObjects = 65536
+
+// BenchmarkList reports the cost and the allocations of List for one
+// page of the default size, from the middle of a store of 65,536
+// objects.
+func BenchmarkList(b *testing.B) {
+	s := memory.New(fake.New(time.Unix(0, 0).UTC()))
+	for i := range benchListObjects {
+		_, err := s.Put(b.Context(), fmt.Sprintf("k/%05d", i), bytes.NewReader(nil), blob.PutOptions{})
+		testkit.NoError(b, err, "Put must succeed")
+	}
+
+	ctx := b.Context()
+	p := page.Page{Token: fmt.Sprintf("k/%05d", benchListObjects/2)}
+
+	b.ReportAllocs()
+	for b.Loop() {
+		cur, _ := s.List(ctx, "k/", p)
+		_ = cur.Close()
+	}
+}
+
 // TestPut covers a contract of the memory Store beyond the seam. Its
 // docblock documents versions as a counter that starts at one and never
 // resets. The test compares the tokens by equality, never by order, as
