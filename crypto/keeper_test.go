@@ -59,12 +59,15 @@ func TestAsDestroyer(t *testing.T) {
 		testkit.False(t, ok, "a decorator without UnwrapKeeper must end the chain")
 	})
 
-	t.Run("reports false for a nil Keeper and a decorator of nil", func(t *testing.T) {
+	t.Run("reports false for a nil Keeper", func(t *testing.T) {
 		t.Parallel()
 		_, ok := crypto.AsDestroyer(nil)
 		testkit.False(t, ok, "a nil Keeper must not report a capability")
+	})
 
-		_, ok = crypto.AsDestroyer(decorated{})
+	t.Run("reports false for a decorator of nil", func(t *testing.T) {
+		t.Parallel()
+		_, ok := crypto.AsDestroyer(decorated{})
 		testkit.False(t, ok, "a decorator of nil must not report a capability")
 	})
 }
@@ -90,7 +93,7 @@ func TestAsKeyGenerator(t *testing.T) {
 func TestAsAADKeeper(t *testing.T) {
 	t.Parallel()
 
-	t.Run("returns the AADKeeper itself, behind one decorator and behind two", func(t *testing.T) {
+	t.Run("returns the AADKeeper behind any number of decorators", func(t *testing.T) {
 		t.Parallel()
 		k := newLocalKeeper(t)
 		for name, chain := range map[string]crypto.Keeper{
@@ -183,7 +186,7 @@ func TestGenerateKey(t *testing.T) {
 		testkit.Equal(t, plain, []byte("plain"), "the decorated custodian's plaintext must be returned")
 	})
 
-	t.Run("reads from the source and wraps when the custodian cannot generate", func(t *testing.T) {
+	t.Run("wraps a key read from the source when the custodian cannot generate", func(t *testing.T) {
 		t.Parallel()
 		k := cryptotest.NewKeeperStub(t)
 		var seen []byte
@@ -200,7 +203,7 @@ func TestGenerateKey(t *testing.T) {
 		testkit.Equal(t, wrapped, []byte("wrapped"), "Wrap's output must be returned")
 	})
 
-	t.Run("rejects a non-positive size", func(t *testing.T) {
+	t.Run("returns ErrKeySize for a size that is not positive", func(t *testing.T) {
 		t.Parallel()
 		for _, size := range []int{0, -1} {
 			_, _, err := crypto.GenerateKey(t.Context(), cryptotest.NewKeeperStub(t), randcrypto.New(), size)
@@ -209,7 +212,7 @@ func TestGenerateKey(t *testing.T) {
 		}
 	})
 
-	t.Run("returns the source's failure and no key material", func(t *testing.T) {
+	t.Run("returns the source's failure without key material", func(t *testing.T) {
 		t.Parallel()
 		failing := randcrypto.NewWithReader(&testkit.FailingReader{
 			Source: bytes.NewReader(nil), Err: io.ErrUnexpectedEOF,
@@ -221,7 +224,7 @@ func TestGenerateKey(t *testing.T) {
 		testkit.Equal(t, wrapped, []byte(nil), "no wrapped key may accompany an error")
 	})
 
-	t.Run("returns the custodian's failure and zeroes the drawn bytes", func(t *testing.T) {
+	t.Run("zeroes the drawn key when Wrap fails", func(t *testing.T) {
 		t.Parallel()
 		k := cryptotest.NewKeeperStub(t)
 		var seen []byte

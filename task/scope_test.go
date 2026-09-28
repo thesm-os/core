@@ -197,7 +197,7 @@ func TestScope(t *testing.T) {
 		t.Run(e.name, func(t *testing.T) {
 			t.Parallel()
 
-			t.Run("runs every task once and returns nil", func(t *testing.T) {
+			t.Run("returns nil after running every task once", func(t *testing.T) {
 				t.Parallel()
 
 				runs := make([]atomic.Int32, 500)
@@ -216,7 +216,7 @@ func TestScope(t *testing.T) {
 				}
 			})
 
-			t.Run("returns the first error and cancels the other tasks with it", func(t *testing.T) {
+			t.Run("cancels the other tasks with the first error", func(t *testing.T) {
 				t.Parallel()
 
 				var (
@@ -259,7 +259,7 @@ func TestScope(t *testing.T) {
 				testkit.ErrorIs(t, err, task.ErrExited, "a task that did not return must not count as a success")
 			})
 
-			t.Run("passes the values and the deadline of ctx to every task", func(t *testing.T) {
+			t.Run("derives the context of every task from ctx", func(t *testing.T) {
 				t.Parallel()
 
 				deadline := time.Now().Add(time.Hour)
@@ -328,7 +328,7 @@ func TestScope(t *testing.T) {
 				return
 			}
 
-			t.Run("runs limit tasks at once and never more", func(t *testing.T) {
+			t.Run("runs limit tasks at once", func(t *testing.T) {
 				t.Parallel()
 
 				var p peak
@@ -363,7 +363,7 @@ func TestScope(t *testing.T) {
 			})
 
 			for _, limit := range []int{0, -1} {
-				t.Run("rejects a limit of "+strconv.Itoa(limit)+" without running a task", func(t *testing.T) {
+				t.Run("returns ErrLimit for a limit of "+strconv.Itoa(limit), func(t *testing.T) {
 					t.Parallel()
 
 					var runs atomic.Int32

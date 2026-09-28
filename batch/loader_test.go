@@ -175,7 +175,7 @@ func TestNewLoader(t *testing.T) {
 		}},
 	}
 	for _, tc := range invalid {
-		t.Run("rejects a "+tc.name, func(t *testing.T) {
+		t.Run("returns ErrConfig for a "+tc.name, func(t *testing.T) {
 			t.Parallel()
 			_, err := batch.NewLoader(tc.cfg, tc.fn)
 			testkit.ErrorIs(t, err, batch.ErrConfig, "an invalid config must be rejected")
@@ -187,7 +187,7 @@ func TestNewLoader(t *testing.T) {
 func TestLoad(t *testing.T) {
 	t.Parallel()
 
-	t.Run("one key dispatches after the window", func(t *testing.T) {
+	t.Run("dispatches one key after the window", func(t *testing.T) {
 		t.Parallel()
 		c := fake.New(originUTC)
 		var r resolve
@@ -205,7 +205,7 @@ func TestLoad(t *testing.T) {
 		testkit.Equal(t, r.calls(), 1, "one key is still one call")
 	})
 
-	t.Run("concurrent distinct keys coalesce into one call", func(t *testing.T) {
+	t.Run("coalesces concurrent distinct keys into one call", func(t *testing.T) {
 		t.Parallel()
 		// Four concurrent loads cost one round trip instead of four.
 		c := fake.New(originUTC)
@@ -228,7 +228,7 @@ func TestLoad(t *testing.T) {
 		testkit.Equal(t, r.sizes(), []int{4}, "four keys must have travelled as one batch")
 	})
 
-	t.Run("concurrent loads of one key share a result", func(t *testing.T) {
+	t.Run("returns one result to concurrent loads of one key", func(t *testing.T) {
 		t.Parallel()
 		c := fake.New(originUTC)
 		var r resolve
@@ -250,7 +250,7 @@ func TestLoad(t *testing.T) {
 		testkit.Equal(t, r.sizes(), []int{1}, "the key must travel once")
 	})
 
-	t.Run("a full batch dispatches without waiting", func(t *testing.T) {
+	t.Run("dispatches a full batch without waiting for the window", func(t *testing.T) {
 		t.Parallel()
 		// MaxBatch bounds the call size so one burst does not produce
 		// a request larger than the dependency accepts.
@@ -268,7 +268,7 @@ func TestLoad(t *testing.T) {
 		testkit.Equal(t, r.sizes(), []int{2}, "the batch must fire at its limit")
 	})
 
-	t.Run("a later load starts a fresh batch", func(t *testing.T) {
+	t.Run("starts a fresh batch for a later load", func(t *testing.T) {
 		t.Parallel()
 		// Not a cache: a key loaded once is fetched again.
 		c := fake.New(originUTC)
@@ -289,7 +289,7 @@ func TestLoad(t *testing.T) {
 func TestLoadFailure(t *testing.T) {
 	t.Parallel()
 
-	t.Run("a missing key is a NotFound", func(t *testing.T) {
+	t.Run("returns ErrNotFound for a key missing from the result", func(t *testing.T) {
 		t.Parallel()
 		c := fake.New(originUTC)
 		l := mustLoader(t, c, 10, func(context.Context, []int) (map[int]int, error) {
@@ -306,7 +306,7 @@ func TestLoadFailure(t *testing.T) {
 		testkit.Equal(t, got.v, 0, "an unresolved key yields the zero value")
 	})
 
-	t.Run("a failed batch reaches every waiter", func(t *testing.T) {
+	t.Run("returns the error of a failed batch to every waiter", func(t *testing.T) {
 		t.Parallel()
 		// The error describes the call rather than any one key, so it
 		// is not wrapped per key.
@@ -326,7 +326,7 @@ func TestLoadFailure(t *testing.T) {
 func TestLoadContext(t *testing.T) {
 	t.Parallel()
 
-	t.Run("a caller that gives up returns its own error", func(t *testing.T) {
+	t.Run("returns the context error to a caller that gives up", func(t *testing.T) {
 		t.Parallel()
 		c := fake.New(originUTC)
 		var r resolve
@@ -341,7 +341,7 @@ func TestLoadContext(t *testing.T) {
 		testkit.ErrorIs(t, got.err, context.Canceled, "the caller's own context must be reported")
 	})
 
-	t.Run("the batch continues for whoever remains", func(t *testing.T) {
+	t.Run("serves the callers that remain after one leaves", func(t *testing.T) {
 		t.Parallel()
 		c := fake.New(originUTC)
 		var r resolve
@@ -362,7 +362,7 @@ func TestLoadContext(t *testing.T) {
 		testkit.Equal(t, got.v, 4, "the batch must have run")
 	})
 
-	t.Run("a departing caller does not abandon the batch", func(t *testing.T) {
+	t.Run("keeps the batch context live while a caller remains", func(t *testing.T) {
 		t.Parallel()
 		// The batch is abandoned only when the LAST caller goes. One
 		// leaving early must not cancel work the others still want.
@@ -393,7 +393,7 @@ func TestLoadContext(t *testing.T) {
 		testkit.True(t, <-live, "the batch must stay live while a caller remains")
 	})
 
-	t.Run("the batch is abandoned once every caller is gone", func(t *testing.T) {
+	t.Run("cancels the batch context once every caller is gone", func(t *testing.T) {
 		t.Parallel()
 		// Otherwise a cancellation storm leaves the dependency serving
 		// work nobody is waiting for.
@@ -426,7 +426,7 @@ func TestLoadContext(t *testing.T) {
 		}
 	})
 
-	t.Run("the batch context carries no caller's values", func(t *testing.T) {
+	t.Run("passes no caller's values to the batch function", func(t *testing.T) {
 		t.Parallel()
 		// A batch serves several callers, so taking values from one of
 		// them would attribute its span to whichever caller happened
@@ -502,7 +502,7 @@ func TestLoadAll(t *testing.T) {
 		testkit.Equal(t, r.calls(), 0, "there is nothing to call")
 	})
 
-	t.Run("a missing key is absent from the result", func(t *testing.T) {
+	t.Run("omits a key missing from the result", func(t *testing.T) {
 		t.Parallel()
 		// LoadAll returns a map, so absence is representable without
 		// an error; Load has no such option.
@@ -516,7 +516,7 @@ func TestLoadAll(t *testing.T) {
 		testkit.Len(t, got, 1, "only the resolved key must be returned")
 	})
 
-	t.Run("a failed batch fails the call", func(t *testing.T) {
+	t.Run("returns the error of a failed batch", func(t *testing.T) {
 		t.Parallel()
 		c := fake.New(originUTC)
 		l := mustLoader(t, c, 1, failOn(2, errDown))
@@ -526,7 +526,7 @@ func TestLoadAll(t *testing.T) {
 		testkit.Equal(t, got, map[int]int(nil), "a partial result would be a trap")
 	})
 
-	t.Run("a failed batch cancels the other batches of the call", func(t *testing.T) {
+	t.Run("cancels the other batches of the call when one fails", func(t *testing.T) {
 		t.Parallel()
 		// The result of the other batches is discarded, so their calls
 		// stop as soon as one batch fails. The failing batch waits for
@@ -586,13 +586,13 @@ func TestLoaderClose(t *testing.T) {
 		return l
 	}
 
-	t.Run("Load after Close is refused", func(t *testing.T) {
+	t.Run("Load returns ErrClosed after Close", func(t *testing.T) {
 		t.Parallel()
 		_, err := newClosed(t).Load(t.Context(), 1)
 		testkit.ErrorIs(t, err, batch.ErrClosed, "a closed loader must refuse work")
 	})
 
-	t.Run("LoadAll after Close is refused", func(t *testing.T) {
+	t.Run("LoadAll returns ErrClosed after Close", func(t *testing.T) {
 		t.Parallel()
 		_, err := newClosed(t).LoadAll(t.Context(), []int{1})
 		testkit.ErrorIs(t, err, batch.ErrClosed, "a closed loader must refuse work")
@@ -605,7 +605,7 @@ func TestLoaderClose(t *testing.T) {
 		testkit.NoError(t, newClosed(t).Close(), "closing twice must be safe")
 	})
 
-	t.Run("an accumulating batch still runs", func(t *testing.T) {
+	t.Run("Close lets an accumulating batch run", func(t *testing.T) {
 		t.Parallel()
 		c := fake.New(originUTC)
 		var r resolve

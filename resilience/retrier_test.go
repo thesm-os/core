@@ -147,23 +147,23 @@ func TestNewRetrier(t *testing.T) {
 		name  string
 		spoil func(*resilience.RetryConfig)
 	}{
-		{"nil clock", func(c *resilience.RetryConfig) { c.Clock = nil }},
-		{"nil rand", func(c *resilience.RetryConfig) { c.Rand = nil }},
+		{"a nil clock", func(c *resilience.RetryConfig) { c.Clock = nil }},
+		{"a nil rand", func(c *resilience.RetryConfig) { c.Rand = nil }},
 		{"zero attempts", func(c *resilience.RetryConfig) { c.Attempts = 0 }},
 		{"negative attempts", func(c *resilience.RetryConfig) { c.Attempts = -1 }},
-		{"zero base", func(c *resilience.RetryConfig) { c.Base = 0 }},
-		{"zero max", func(c *resilience.RetryConfig) { c.Max = 0 }},
-		{"max below base", func(c *resilience.RetryConfig) { c.Max = c.Base - 1 }},
-		{"negative delay ceiling", func(c *resilience.RetryConfig) { c.MaxRetryAfter = -1 }},
-		{"negative budget", func(c *resilience.RetryConfig) { c.Budget = -1 }},
-		{"negative floor", func(c *resilience.RetryConfig) { c.MinRetries = -1 }},
-		{"budget without a window", func(c *resilience.RetryConfig) { c.BudgetWindow = 0 }},
+		{"a zero base", func(c *resilience.RetryConfig) { c.Base = 0 }},
+		{"a zero max", func(c *resilience.RetryConfig) { c.Max = 0 }},
+		{"a max below the base", func(c *resilience.RetryConfig) { c.Max = c.Base - 1 }},
+		{"a negative delay ceiling", func(c *resilience.RetryConfig) { c.MaxRetryAfter = -1 }},
+		{"a negative budget", func(c *resilience.RetryConfig) { c.Budget = -1 }},
+		{"a negative floor", func(c *resilience.RetryConfig) { c.MinRetries = -1 }},
+		{"a budget without a window", func(c *resilience.RetryConfig) { c.BudgetWindow = 0 }},
 		{"a floor without a window", func(c *resilience.RetryConfig) {
 			c.Budget, c.MinRetries, c.BudgetWindow = 0, 1, 0
 		}},
 	}
 	for _, tc := range invalid {
-		t.Run("rejects a "+tc.name, func(t *testing.T) {
+		t.Run("returns ErrConfig for "+tc.name, func(t *testing.T) {
 			t.Parallel()
 			cfg := retryConfig(fake.New(originUTC), noJitter)
 			tc.spoil(&cfg)
@@ -174,7 +174,7 @@ func TestNewRetrier(t *testing.T) {
 		})
 	}
 
-	t.Run("accepts a cap equal to the base", func(t *testing.T) {
+	t.Run("returns a Retrier for a cap equal to the base", func(t *testing.T) {
 		t.Parallel()
 		// Max must be >= Base, not > Base: a caller wanting a constant
 		// interval rather than an exponential one sets them equal.
@@ -185,7 +185,7 @@ func TestNewRetrier(t *testing.T) {
 		testkit.NoError(t, err, "an equal cap and base is a constant interval")
 	})
 
-	t.Run("accepts no allowance at all without a window", func(t *testing.T) {
+	t.Run("returns a Retrier for no allowance without a window", func(t *testing.T) {
 		t.Parallel()
 		// A zero budget and a zero floor disable retrying, so there is
 		// no window to measure them over.
@@ -196,7 +196,7 @@ func TestNewRetrier(t *testing.T) {
 		testkit.NoError(t, err, "no allowance needs no window")
 	})
 
-	t.Run("accepts a delay ceiling of zero", func(t *testing.T) {
+	t.Run("returns a Retrier for a delay ceiling of zero", func(t *testing.T) {
 		t.Parallel()
 		// Zero is a policy, not a missing value: never wait for a delay
 		// a failure asks for.
@@ -211,7 +211,7 @@ func TestNewRetrier(t *testing.T) {
 func TestDo(t *testing.T) {
 	t.Parallel()
 
-	t.Run("a success is not retried", func(t *testing.T) {
+	t.Run("returns a success without a retry", func(t *testing.T) {
 		t.Parallel()
 		r := mustRetrier(t, retryConfig(fake.New(originUTC), noJitter))
 		fn, calls := failFor(0, errTransient)
@@ -222,7 +222,7 @@ func TestDo(t *testing.T) {
 		testkit.Equal(t, *calls, 1, "a success must not be retried")
 	})
 
-	t.Run("a transient failure is retried", func(t *testing.T) {
+	t.Run("retries a transient failure", func(t *testing.T) {
 		t.Parallel()
 		r := mustRetrier(t, retryConfig(fake.New(originUTC), noJitter))
 		fn, calls := failFor(1, errTransient)
@@ -233,7 +233,7 @@ func TestDo(t *testing.T) {
 		testkit.Equal(t, *calls, 2, "one retry must have been spent")
 	})
 
-	t.Run("a non-retryable failure stops at once", func(t *testing.T) {
+	t.Run("returns a non-retryable failure at once", func(t *testing.T) {
 		t.Parallel()
 		// Retrying an error the producer has classified as the
 		// caller's own fault burns the budget on a call that cannot
@@ -246,7 +246,7 @@ func TestDo(t *testing.T) {
 		testkit.Equal(t, *calls, 1, "a non-retryable error must not be retried")
 	})
 
-	t.Run("an unclassified failure stops at once", func(t *testing.T) {
+	t.Run("returns an unclassified failure at once", func(t *testing.T) {
 		t.Parallel()
 		// Unspecified is not retryable: retrying an error nobody has
 		// reasoned about is a guess.
@@ -258,7 +258,7 @@ func TestDo(t *testing.T) {
 		testkit.Equal(t, *calls, 1, "an unclassified error must not be retried")
 	})
 
-	t.Run("attempts are exhausted", func(t *testing.T) {
+	t.Run("returns the last error once the attempts run out", func(t *testing.T) {
 		t.Parallel()
 		r := mustRetrier(t, retryConfig(fake.New(originUTC), noJitter))
 		fn, calls := failFor(99, errTransient)
@@ -272,7 +272,7 @@ func TestDo(t *testing.T) {
 func TestDoContext(t *testing.T) {
 	t.Parallel()
 
-	t.Run("a cancelled context stops the retry", func(t *testing.T) {
+	t.Run("stops retrying once the context is cancelled", func(t *testing.T) {
 		t.Parallel()
 		// The dependency did not refuse; the caller stopped asking.
 		r := mustRetrier(t, retryConfig(fake.New(originUTC), noJitter))
@@ -290,7 +290,7 @@ func TestDoContext(t *testing.T) {
 		testkit.Equal(t, calls, 1, "a call whose context ended must not be retried")
 	})
 
-	t.Run("a context ending during the backoff stops the retry", func(t *testing.T) {
+	t.Run("returns the context error when the context ends during the backoff", func(t *testing.T) {
 		t.Parallel()
 		c := fake.New(originUTC)
 		r := mustRetrier(t, retryConfig(c, halfJitter))
@@ -316,7 +316,7 @@ func TestDoContext(t *testing.T) {
 		}
 	})
 
-	t.Run("the backoff elapses before the next attempt", func(t *testing.T) {
+	t.Run("waits the backoff before the next attempt", func(t *testing.T) {
 		t.Parallel()
 		c := fake.New(originUTC)
 		r := mustRetrier(t, retryConfig(c, halfJitter))
@@ -354,7 +354,7 @@ func TestDoBudget(t *testing.T) {
 		return cfg
 	}
 
-	t.Run("a retry is refused without the traffic to pay for it", func(t *testing.T) {
+	t.Run("returns ErrBudget without the traffic to pay for a retry", func(t *testing.T) {
 		t.Parallel()
 		r := mustRetrier(t, halfBudget(fake.New(originUTC)))
 		fn, calls := failFor(99, errTransient)
@@ -365,7 +365,7 @@ func TestDoBudget(t *testing.T) {
 		testkit.Equal(t, *calls, 1, "the retry must not have run")
 	})
 
-	t.Run("accumulated calls pay for a retry", func(t *testing.T) {
+	t.Run("pays for a retry with the calls in the window", func(t *testing.T) {
 		t.Parallel()
 		r := mustRetrier(t, halfBudget(fake.New(originUTC)))
 
@@ -381,7 +381,7 @@ func TestDoBudget(t *testing.T) {
 		testkit.Equal(t, *calls, 2, "the retry must have run")
 	})
 
-	t.Run("the window forgets", func(t *testing.T) {
+	t.Run("forgets calls older than the window", func(t *testing.T) {
 		t.Parallel()
 		// The budget measures the recent call rate. Traffic that has
 		// aged out of the window cannot pay for a retry now.
@@ -402,7 +402,7 @@ func TestDoBudget(t *testing.T) {
 		testkit.Equal(t, *calls, 1, "the retry must not have run")
 	})
 
-	t.Run("a partial roll keeps the traffic still in the window", func(t *testing.T) {
+	t.Run("keeps the calls still in the window after a partial roll", func(t *testing.T) {
 		t.Parallel()
 		c := fake.New(originUTC)
 		r := mustRetrier(t, halfBudget(c))
@@ -422,7 +422,7 @@ func TestDoBudget(t *testing.T) {
 		testkit.Equal(t, *calls, 2, "the retry must have run")
 	})
 
-	t.Run("the window forgets one bucket at a time", func(t *testing.T) {
+	t.Run("forgets old calls one bucket at a time", func(t *testing.T) {
 		t.Parallel()
 		// A live system's time arrives in small increments, not in one
 		// jump past the whole window. Traffic must age out either way.
@@ -446,7 +446,7 @@ func TestDoBudget(t *testing.T) {
 		testkit.Equal(t, *calls, 1, "the retry must not have run")
 	})
 
-	t.Run("repeated rolls age the window only once", func(t *testing.T) {
+	t.Run("ages the window once across repeated rolls", func(t *testing.T) {
 		t.Parallel()
 		// The ring advances from where it left off. A roll that lost
 		// its place would re-age the same traffic on every call and
@@ -472,7 +472,7 @@ func TestDoBudget(t *testing.T) {
 		testkit.Equal(t, *calls, 2, "the retry must have run")
 	})
 
-	t.Run("no budget and no floor disables retrying", func(t *testing.T) {
+	t.Run("returns ErrBudget when both allowances are zero", func(t *testing.T) {
 		t.Parallel()
 		cfg := retryConfig(fake.New(originUTC), noJitter)
 		cfg.Budget, cfg.MinRetries, cfg.BudgetWindow = 0, 0, 0
@@ -496,7 +496,7 @@ func TestDoMinRetries(t *testing.T) {
 		return cfg
 	}
 
-	t.Run("the floor pays where the ratio cannot", func(t *testing.T) {
+	t.Run("pays for a retry from the floor when the ratio cannot", func(t *testing.T) {
 		t.Parallel()
 		// Without MinRetries this same call is refused outright: one
 		// call cannot pay for one retry at any fraction under 1.0.
@@ -508,7 +508,7 @@ func TestDoMinRetries(t *testing.T) {
 		testkit.Equal(t, *calls, 2, "the retry must have run")
 	})
 
-	t.Run("the floor is a floor, not an allowance per call", func(t *testing.T) {
+	t.Run("returns ErrBudget once a call exceeds the floor", func(t *testing.T) {
 		t.Parallel()
 		// Attempts would allow three retries; the window affords one.
 		r := mustRetrier(t, floored(fake.New(originUTC)))
@@ -519,7 +519,7 @@ func TestDoMinRetries(t *testing.T) {
 		testkit.Equal(t, *calls, 2, "exactly one retry must have run")
 	})
 
-	t.Run("the ratio takes over once the traffic is there", func(t *testing.T) {
+	t.Run("pays from the ratio above the floor", func(t *testing.T) {
 		t.Parallel()
 		// Eleven calls at 0.5 afford five retries, well above the floor.
 		r := mustRetrier(t, floored(fake.New(originUTC)))
@@ -536,7 +536,7 @@ func TestDoMinRetries(t *testing.T) {
 		testkit.Equal(t, *calls, 3, "both retries must have run")
 	})
 
-	t.Run("the floor ages out with the window", func(t *testing.T) {
+	t.Run("restores the floor in a fresh window", func(t *testing.T) {
 		t.Parallel()
 		// A floor that never reset would be an unbounded retry
 		// allowance spread thinly over time.
@@ -707,7 +707,7 @@ func TestBackoff(t *testing.T) {
 		peak = time.Second
 	)
 
-	t.Run("there is no delay before the first attempt", func(t *testing.T) {
+	t.Run("returns 0 before the first retry", func(t *testing.T) {
 		t.Parallel()
 		for _, attempt := range []int{-1, 0} {
 			got := resilience.Backoff(halfJitter, attempt, base, peak)
@@ -715,7 +715,7 @@ func TestBackoff(t *testing.T) {
 		}
 	})
 
-	t.Run("the ceiling doubles per retry", func(t *testing.T) {
+	t.Run("doubles the ceiling with each retry", func(t *testing.T) {
 		t.Parallel()
 		// halfJitter draws the midpoint, so the result is half the
 		// ceiling and the growth is visible.
@@ -731,7 +731,7 @@ func TestBackoff(t *testing.T) {
 		}
 	})
 
-	t.Run("the ceiling is capped", func(t *testing.T) {
+	t.Run("caps the ceiling at the maximum", func(t *testing.T) {
 		t.Parallel()
 		for _, attempt := range []int{5, 6, 40, 1 << 20} {
 			got := resilience.Backoff(halfJitter, attempt, base, peak)
@@ -739,13 +739,13 @@ func TestBackoff(t *testing.T) {
 		}
 	})
 
-	t.Run("a base above the cap is capped", func(t *testing.T) {
+	t.Run("caps a base above the maximum", func(t *testing.T) {
 		t.Parallel()
 		got := resilience.Backoff(halfJitter, 1, 10*peak, peak)
 		testkit.Equal(t, got, peak/2, "the cap wins over the base")
 	})
 
-	t.Run("jitter spans the whole interval", func(t *testing.T) {
+	t.Run("draws jitter across the whole interval", func(t *testing.T) {
 		t.Parallel()
 		// Full jitter, not a fixed fraction: an unjittered backoff
 		// keeps a fleet's retries synchronised, which is the failure

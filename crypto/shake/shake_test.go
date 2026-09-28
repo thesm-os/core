@@ -52,13 +52,13 @@ func TestSHAKE256Contract(t *testing.T) {
 func TestConstructionsDiffer(t *testing.T) {
 	t.Parallel()
 
-	t.Run("SHAKE128 and SHAKE256 have distinct IDs", func(t *testing.T) {
+	t.Run("returns a distinct ID for each construction", func(t *testing.T) {
 		t.Parallel()
 		testkit.NotEqual(t, shake.New128().ID(), shake.New256().ID(),
 			"the two constructions must not share an ID")
 	})
 
-	t.Run("SHAKE128 and SHAKE256 produce distinct output", func(t *testing.T) {
+	t.Run("squeezes distinct output from each construction", func(t *testing.T) {
 		t.Parallel()
 		// Same input, same length, different security strength: the
 		// outputs must not coincide, or the Algorithm recorded with

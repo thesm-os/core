@@ -150,7 +150,7 @@ func TestKeeperContract(t *testing.T) {
 func TestGenerate(t *testing.T) {
 	t.Parallel()
 
-	t.Run("reads the KEK from the source and wraps the documented record", func(t *testing.T) {
+	t.Run("wraps the documented record of a KEK read from the source", func(t *testing.T) {
 		t.Parallel()
 		parent := newParent(t)
 		_, wrapped := mustGenerate(t, parent, seeded.New(1), keyIDA)
@@ -173,7 +173,7 @@ func TestGenerate(t *testing.T) {
 		testkit.Equal(t, got, dek, "Unwrap must return the DEK")
 	})
 
-	t.Run("refuses an empty key ID", func(t *testing.T) {
+	t.Run("returns ErrKeyID for an empty key ID", func(t *testing.T) {
 		t.Parallel()
 		k, wrapped, err := kek.Generate(t.Context(), newParent(t), randcrypto.New(), "")
 		testkit.ErrorIs(t, err, crypto.ErrKeyID, "an empty key ID must be refused")
@@ -217,7 +217,7 @@ func TestNew(t *testing.T) {
 	_, wrappedA := mustGenerate(t, parent, randcrypto.New(), keyIDA)
 	_, wrappedB := mustGenerate(t, parent, randcrypto.New(), keyIDB)
 
-	t.Run("refuses a record bound to another key ID", func(t *testing.T) {
+	t.Run("returns ErrKeyIDMismatch for a record bound to another key ID", func(t *testing.T) {
 		t.Parallel()
 		k, err := kek.New(t.Context(), parent, randcrypto.New(), keyIDA, wrappedB)
 		testkit.ErrorIs(t, err, kek.ErrKeyIDMismatch, "a swapped record must be refused")
@@ -225,7 +225,7 @@ func TestNew(t *testing.T) {
 		testkit.True(t, k == nil, "a refusal must return no Keeper")
 	})
 
-	t.Run("refuses a record of another length", func(t *testing.T) {
+	t.Run("returns ErrKeySize for a record of another length", func(t *testing.T) {
 		t.Parallel()
 		short, err := parent.Wrap(t.Context(), make([]byte, kek.KeySize))
 		testkit.NoError(t, err, "Wrap must succeed")
@@ -240,7 +240,7 @@ func TestNew(t *testing.T) {
 		testkit.Error(t, err, "a record the parent cannot unwrap must fail")
 	})
 
-	t.Run("refuses an empty key ID", func(t *testing.T) {
+	t.Run("returns ErrKeyID for an empty key ID", func(t *testing.T) {
 		t.Parallel()
 		_, err := kek.New(t.Context(), parent, randcrypto.New(), "", wrappedA)
 		testkit.ErrorIs(t, err, crypto.ErrKeyID, "an empty key ID must be refused")
@@ -263,7 +263,7 @@ func TestGenerateAAD(t *testing.T) {
 		testkit.Error(t, err, "the parent must not unwrap the record without the key ID")
 	})
 
-	t.Run("opens with NewAAD and not with New", func(t *testing.T) {
+	t.Run("returns a record that only NewAAD opens", func(t *testing.T) {
 		t.Parallel()
 		k, err := kek.NewAAD(t.Context(), parent, randcrypto.New(), keyIDA, wrappedAAD)
 		testkit.NoError(t, err, "NewAAD must open a record from GenerateAAD")
@@ -286,11 +286,15 @@ func TestGenerateAAD(t *testing.T) {
 		testkit.ErrorIsNot(t, err, kek.ErrKeyIDMismatch, "the refusal must come from the parent")
 	})
 
-	t.Run("both refuse an empty key ID", func(t *testing.T) {
+	t.Run("GenerateAAD returns ErrKeyID for an empty key ID", func(t *testing.T) {
 		t.Parallel()
 		_, _, err := kek.GenerateAAD(t.Context(), parent, randcrypto.New(), "")
 		testkit.ErrorIs(t, err, crypto.ErrKeyID, "GenerateAAD must refuse an empty key ID")
-		_, err = kek.NewAAD(t.Context(), parent, randcrypto.New(), "", wrappedAAD)
+	})
+
+	t.Run("NewAAD returns ErrKeyID for an empty key ID", func(t *testing.T) {
+		t.Parallel()
+		_, err := kek.NewAAD(t.Context(), parent, randcrypto.New(), "", wrappedAAD)
 		testkit.ErrorIs(t, err, crypto.ErrKeyID, "NewAAD must refuse an empty key ID")
 	})
 }
@@ -306,7 +310,7 @@ func TestWrap(t *testing.T) {
 		testkit.Equal(t, len(sealed), wrappedDEKSize, "a wrapped DEK must be a salt and an envelope")
 	})
 
-	t.Run("binds the key ID, so another key ID over the same KEK fails", func(t *testing.T) {
+	t.Run("binds the key ID into every wrapped DEK", func(t *testing.T) {
 		t.Parallel()
 		parent := newParent(t)
 		k, _ := mustGenerate(t, parent, seeded.New(1), keyIDA)
@@ -339,7 +343,7 @@ func TestWrap(t *testing.T) {
 func TestUnwrap(t *testing.T) {
 	t.Parallel()
 
-	t.Run("refuses material with no envelope after its salt", func(t *testing.T) {
+	t.Run("returns ErrCiphertextShort for material with no envelope after its salt", func(t *testing.T) {
 		t.Parallel()
 		k, _ := mustGenerate(t, newParent(t), randcrypto.New(), keyIDA)
 		for _, n := range []int{0, kek.SaltSize - 1, kek.SaltSize} {
@@ -352,7 +356,7 @@ func TestUnwrap(t *testing.T) {
 func TestClose(t *testing.T) {
 	t.Parallel()
 
-	t.Run("makes Wrap and Unwrap return ErrClosed, classified Invalid", func(t *testing.T) {
+	t.Run("makes every later call return ErrClosed", func(t *testing.T) {
 		t.Parallel()
 		k, _ := mustGenerate(t, newParent(t), randcrypto.New(), keyIDA)
 		sealed, err := k.Wrap(t.Context(), dek)
@@ -374,7 +378,7 @@ func TestClose(t *testing.T) {
 		testkit.NoError(t, k.Close(), "a second Close must succeed")
 	})
 
-	t.Run("lets each wrap in progress complete or return ErrClosed", func(t *testing.T) {
+	t.Run("fails a concurrent wrap only with ErrClosed", func(t *testing.T) {
 		t.Parallel()
 		parent := newParent(t)
 		k, wrapped := mustGenerate(t, parent, randcrypto.New(), keyIDA)
@@ -420,7 +424,7 @@ func TestClose(t *testing.T) {
 func TestCapabilities(t *testing.T) {
 	t.Parallel()
 
-	t.Run("reports no KeyGenerator, Destroyer or AADKeeper", func(t *testing.T) {
+	t.Run("reports no optional capability", func(t *testing.T) {
 		t.Parallel()
 		k, _ := mustGenerate(t, newParent(t), randcrypto.New(), keyIDA)
 		_, ok := crypto.AsKeyGenerator(k)
@@ -431,7 +435,7 @@ func TestCapabilities(t *testing.T) {
 		testkit.False(t, ok, "the Keeper must not report an AADKeeper")
 	})
 
-	t.Run("crypto.GenerateKey over the Keeper does not call the parent", func(t *testing.T) {
+	t.Run("serves crypto.GenerateKey without a call to the parent", func(t *testing.T) {
 		t.Parallel()
 		spy := &generatorSpy{Keeper: newParent(t), t: t}
 		k, _ := mustGenerate(t, spy, randcrypto.New(), keyIDA)
@@ -463,14 +467,14 @@ func TestFIPSOnlyMode(t *testing.T) {
 			cmd.Env = append(os.Environ(), "GODEBUG=fips140=only")
 			out, err := cmd.CombinedOutput()
 			testkit.NoError(t, err, "the fips140=only child must pass:\n"+string(out))
-			testkit.True(t, bytes.Contains(out, []byte("generates_a_KEK_and_wraps_a_DEK")),
+			testkit.True(t, bytes.Contains(out, []byte("wraps_a_DEK_under_a_generated_KEK")),
 				"the child must run the FIPS checks, not skip them")
 		})
 
 		return
 	}
 
-	t.Run("generates a KEK and wraps a DEK", func(t *testing.T) {
+	t.Run("wraps a DEK under a generated KEK", func(t *testing.T) {
 		t.Parallel()
 		parent := newParent(t)
 		k, wrapped := mustGenerate(t, parent, randcrypto.New(), keyIDA)
@@ -528,7 +532,7 @@ func TestVectors(t *testing.T) {
 	keyID := v[vectorKeyID]
 	rec := testkit.MustDecodeHex(t, v[vectorRecord])
 
-	t.Run("the record is the KEK and its binding to the key ID", func(t *testing.T) {
+	t.Run("matches the documented record layout", func(t *testing.T) {
 		t.Parallel()
 		testkit.Equal(t, kekBytes, seededKEK(t, vectorSeed), "the KEK must be the one the seeded source gives")
 		testkit.Equal(t, rec, record(kekBytes, keyID), "the record must follow the documented layout")
@@ -544,7 +548,7 @@ func TestVectors(t *testing.T) {
 		testkit.Equal(t, got, rec, "Generate must wrap the recorded record")
 	})
 
-	t.Run("a Keeper over the record unwraps the recorded DEK", func(t *testing.T) {
+	t.Run("unwraps the recorded DEK", func(t *testing.T) {
 		t.Parallel()
 		parent := newParent(t)
 		wrapped, err := parent.Wrap(t.Context(), rec)

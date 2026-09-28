@@ -67,7 +67,7 @@ func mustBounded(tb testing.TB, limit int) (*pool.Bounded[*int], *atomic.Int64) 
 func TestNewBounded(t *testing.T) {
 	t.Parallel()
 
-	t.Run("accepts a positive limit", func(t *testing.T) {
+	t.Run("returns a pool for a positive limit", func(t *testing.T) {
 		t.Parallel()
 		p, err := pool.NewBounded(1, func() int { return 0 })
 		testkit.NoError(t, err, "a positive limit must be accepted")
@@ -75,7 +75,7 @@ func TestNewBounded(t *testing.T) {
 	})
 
 	for _, limit := range []int{0, -1, -100} {
-		t.Run("rejects limit "+strconv.Itoa(limit), func(t *testing.T) {
+		t.Run("returns ErrLimit for limit "+strconv.Itoa(limit), func(t *testing.T) {
 			t.Parallel()
 			// A zero-capacity pool would block every Get forever,
 			// which is a configuration error rather than a runtime
@@ -206,7 +206,7 @@ func TestBoundedGetBlocksAtCapacity(t *testing.T) {
 			"a cancelled Get must report the context error, not block")
 	})
 
-	t.Run("an already-cancelled context still serves an available value", func(t *testing.T) {
+	t.Run("returns an available value under a cancelled context", func(t *testing.T) {
 		t.Parallel()
 		// The fast path checks the free list first. A caller with a
 		// cancelled context asking for a value that is sitting right
@@ -247,7 +247,7 @@ func TestBoundedAccessors(t *testing.T) {
 		testkit.Equal(t, p.Len(), 1, "a returned value is available again")
 	})
 
-	t.Run("Created never falls", func(t *testing.T) {
+	t.Run("Created keeps its count after Put", func(t *testing.T) {
 		t.Parallel()
 		p, _ := mustBounded(t, 2)
 

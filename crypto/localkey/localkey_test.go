@@ -84,27 +84,27 @@ func TestAADKeeperContract(t *testing.T) {
 func TestNew(t *testing.T) {
 	t.Parallel()
 
-	t.Run("the root-key fixtures are RootKeySize bytes", func(t *testing.T) {
+	t.Run("has fixture root keys of RootKeySize bytes", func(t *testing.T) {
 		t.Parallel()
 		testkit.Equal(t, len(rootKey), localkey.RootKeySize, "rootKey must be RootKeySize bytes")
 		testkit.Equal(t, len(otherKey), localkey.RootKeySize, "otherKey must be RootKeySize bytes")
 	})
 
-	t.Run("accepts a RootKeySize key", func(t *testing.T) {
+	t.Run("returns a Keeper for a RootKeySize root key", func(t *testing.T) {
 		t.Parallel()
 		_, err := localkey.New(testKeyID, make([]byte, localkey.RootKeySize), randcrypto.New(), fake.New(origin))
 		testkit.NoError(t, err, "New must accept the documented root-key size")
 	})
 
 	for _, n := range []int{0, 1, 16, 24, 31, 33, 64} {
-		t.Run("rejects a "+strconv.Itoa(n)+"-byte root key", func(t *testing.T) {
+		t.Run("returns ErrKeySize for a "+strconv.Itoa(n)+"-byte root key", func(t *testing.T) {
 			t.Parallel()
 			_, err := localkey.New(testKeyID, make([]byte, n), randcrypto.New(), fake.New(origin))
 			testkit.ErrorIs(t, err, crypto.ErrKeySize, "only a RootKeySize root key is valid")
 		})
 	}
 
-	t.Run("rejects an empty key ID", func(t *testing.T) {
+	t.Run("returns ErrKeyID for an empty key ID", func(t *testing.T) {
 		t.Parallel()
 		_, err := localkey.New("", rootKey, randcrypto.New(), fake.New(origin))
 		testkit.ErrorIs(t, err, crypto.ErrKeyID, "an empty key ID must be rejected")
@@ -178,14 +178,14 @@ func TestFIPSOnlyMode(t *testing.T) {
 			cmd.Env = append(os.Environ(), "GODEBUG=fips140=only")
 			out, err := cmd.CombinedOutput()
 			testkit.NoError(t, err, "the fips140=only child must pass:\n"+string(out))
-			testkit.True(t, bytes.Contains(out, []byte("wraps_and_unwraps_a_data_key")),
+			testkit.True(t, bytes.Contains(out, []byte("round-trips_a_data_key")),
 				"the child must run the FIPS checks, not skip them")
 		})
 
 		return
 	}
 
-	t.Run("wraps and unwraps a data key", func(t *testing.T) {
+	t.Run("round-trips a data key", func(t *testing.T) {
 		t.Parallel()
 		keeper := mustNew(t, testKeyID, rootKey)
 
@@ -218,7 +218,7 @@ func TestFIPSOnlyMode(t *testing.T) {
 func TestDestroy(t *testing.T) {
 	t.Parallel()
 
-	t.Run("rejects an unknown key ID", func(t *testing.T) {
+	t.Run("returns ErrKeyID for an unknown key ID", func(t *testing.T) {
 		t.Parallel()
 		keeper := mustNew(t, testKeyID, rootKey)
 		_, err := keeper.Destroy(t.Context(), "local/not-this-one")
@@ -252,7 +252,7 @@ func TestDestroy(t *testing.T) {
 		testkit.ErrorIs(t, err, crypto.ErrKeyDestroyed, "a destroyed Keeper must not generate keys")
 	})
 
-	t.Run("Unwrap reports the key is destroyed, not that material is corrupt", func(t *testing.T) {
+	t.Run("Unwrap returns ErrKeyDestroyed after Destroy", func(t *testing.T) {
 		t.Parallel()
 		keeper := mustNew(t, testKeyID, rootKey)
 		wrapped, err := keeper.Wrap(t.Context(), []byte("data-key"))
@@ -283,7 +283,7 @@ func TestGenerateKey(t *testing.T) {
 	}
 
 	for _, size := range []int{0, -1} {
-		t.Run("rejects size "+strconv.Itoa(size), func(t *testing.T) {
+		t.Run("returns ErrKeySize for size "+strconv.Itoa(size), func(t *testing.T) {
 			t.Parallel()
 			_, _, err := mustNew(t, testKeyID, rootKey).GenerateKey(t.Context(), size)
 			testkit.ErrorIs(t, err, crypto.ErrKeySize, "a non-positive size must be rejected")

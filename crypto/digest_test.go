@@ -97,7 +97,7 @@ func TestDigestEqual(t *testing.T) {
 func TestDigestConstantTimeEqual(t *testing.T) {
 	t.Parallel()
 
-	t.Run("identical digests compare equal", func(t *testing.T) {
+	t.Run("reports true for identical digests", func(t *testing.T) {
 		t.Parallel()
 		a := crypto.NewDigest256(fill256(0x42))
 		b := crypto.NewDigest256(fill256(0x42))
@@ -105,7 +105,7 @@ func TestDigestConstantTimeEqual(t *testing.T) {
 			"identical digests must compare equal under ConstantTimeEqual")
 	})
 
-	t.Run("differing single byte returns false", func(t *testing.T) {
+	t.Run("reports false for digests that differ in one byte", func(t *testing.T) {
 		t.Parallel()
 		a256 := fill256(0x42)
 		b256 := fill256(0x42)
@@ -116,7 +116,7 @@ func TestDigestConstantTimeEqual(t *testing.T) {
 			"digests differing in one byte must not compare equal")
 	})
 
-	t.Run("different sizes return false", func(t *testing.T) {
+	t.Run("reports false for digests of different sizes", func(t *testing.T) {
 		t.Parallel()
 		a := crypto.NewDigest256(fill256(0x00))
 		b := crypto.NewDigest384(fill384(0x00))
@@ -126,7 +126,7 @@ func TestDigestConstantTimeEqual(t *testing.T) {
 			"ConstantTimeEqual must be symmetric on size mismatch")
 	})
 
-	t.Run("both zero-Digest values compare equal", func(t *testing.T) {
+	t.Run("reports true for two zero Digests", func(t *testing.T) {
 		t.Parallel()
 		var a, b crypto.Digest
 		testkit.True(t, a.ConstantTimeEqual(b),
@@ -155,14 +155,14 @@ func TestDigestConstantTimeEqual(t *testing.T) {
 func TestDigestCompare(t *testing.T) {
 	t.Parallel()
 
-	t.Run("identical digests compare equal", func(t *testing.T) {
+	t.Run("returns 0 for identical digests", func(t *testing.T) {
 		t.Parallel()
 		a := crypto.NewDigest256(fill256(0x42))
 		b := crypto.NewDigest256(fill256(0x42))
 		testkit.Equal(t, a.Compare(b), 0, "Compare on equal digests must return 0")
 	})
 
-	t.Run("smaller bytes compare less", func(t *testing.T) {
+	t.Run("returns -1 for smaller bytes", func(t *testing.T) {
 		t.Parallel()
 		a := crypto.NewDigest256(fill256(0x01))
 		b := crypto.NewDigest256(fill256(0x02))
@@ -170,7 +170,7 @@ func TestDigestCompare(t *testing.T) {
 		testkit.Equal(t, b.Compare(a), 1, "Compare b>a must return 1")
 	})
 
-	t.Run("smaller size compares less when prefixes match", func(t *testing.T) {
+	t.Run("returns -1 for a shorter digest with a matching prefix", func(t *testing.T) {
 		t.Parallel()
 		short := crypto.NewDigest256([crypto.DigestSize256]byte{})
 		long := crypto.NewDigest384([crypto.DigestSize384]byte{})
@@ -180,7 +180,7 @@ func TestDigestCompare(t *testing.T) {
 			"larger size with matching prefix must compare greater")
 	})
 
-	t.Run("equal sizes equal bytes returns 0", func(t *testing.T) {
+	t.Run("returns 0 for identical 384-bit digests", func(t *testing.T) {
 		t.Parallel()
 		// Two distinct Digest values that compare byte-equal AND
 		// size-equal — exercises the size-tie-breaker fall-through
@@ -195,13 +195,13 @@ func TestDigestCompare(t *testing.T) {
 func TestDigestString(t *testing.T) {
 	t.Parallel()
 
-	t.Run("zero digest hex-encodes to empty", func(t *testing.T) {
+	t.Run("returns an empty string for the zero Digest", func(t *testing.T) {
 		t.Parallel()
 		testkit.Equal(t, (crypto.Digest{}).String(), "",
 			"zero Digest.String must be empty")
 	})
 
-	t.Run("specific 256-bit digest hex-encodes in order", func(t *testing.T) {
+	t.Run("returns the bytes in hex in order", func(t *testing.T) {
 		t.Parallel()
 		var b [crypto.DigestSize256]byte
 		b[0], b[1], b[2] = 0x01, 0x23, 0x45
@@ -289,7 +289,7 @@ func TestDigestFromBytes(t *testing.T) {
 		{"DigestSize512", crypto.DigestSize512},
 	}
 	for _, tc := range sizes {
-		t.Run("accepts "+tc.name, func(t *testing.T) {
+		t.Run("returns a digest of "+tc.name+" bytes", func(t *testing.T) {
 			t.Parallel()
 			b := make([]byte, tc.size)
 			for i := range b {
@@ -306,13 +306,13 @@ func TestDigestFromBytes(t *testing.T) {
 		name string
 		size int
 	}{
-		{"empty", 0},
-		{"one short of DigestSize256", crypto.DigestSize256 - 1},
-		{"between DigestSize256 and DigestSize384", 40},
-		{"one past DigestSize512", crypto.DigestSize512 + 1},
+		{"an empty slice", 0},
+		{"a slice one short of DigestSize256", crypto.DigestSize256 - 1},
+		{"a slice of 40 bytes", 40},
+		{"a slice one past DigestSize512", crypto.DigestSize512 + 1},
 	}
 	for _, tc := range bad {
-		t.Run("rejects "+tc.name, func(t *testing.T) {
+		t.Run("returns ErrDigestSize for "+tc.name, func(t *testing.T) {
 			t.Parallel()
 			got, err := crypto.DigestFromBytes(make([]byte, tc.size))
 			testkit.ErrorIs(t, err, crypto.ErrDigestSize, "DigestFromBytes must reject an invalid length")
@@ -392,7 +392,7 @@ func TestDigestAppendBinary(t *testing.T) {
 func TestDigestZeroHasNoBinaryEncoding(t *testing.T) {
 	t.Parallel()
 
-	t.Run("MarshalBinary reports ErrDigestZero", func(t *testing.T) {
+	t.Run("MarshalBinary returns ErrDigestZero", func(t *testing.T) {
 		t.Parallel()
 		var zero crypto.Digest
 		got, err := zero.MarshalBinary()
@@ -401,7 +401,7 @@ func TestDigestZeroHasNoBinaryEncoding(t *testing.T) {
 		testkit.Equal(t, got, []byte(nil), "MarshalBinary must return nil on error")
 	})
 
-	t.Run("AppendBinary reports ErrDigestZero and leaves dst untouched", func(t *testing.T) {
+	t.Run("AppendBinary returns dst unchanged with ErrDigestZero", func(t *testing.T) {
 		t.Parallel()
 		var zero crypto.Digest
 		got, err := zero.AppendBinary([]byte{0xAA})
@@ -409,7 +409,7 @@ func TestDigestZeroHasNoBinaryEncoding(t *testing.T) {
 		testkit.Equal(t, got, []byte{0xAA}, "AppendBinary must leave dst unchanged on error")
 	})
 
-	t.Run("UnmarshalBinary rejects empty input rather than decoding the zero value", func(t *testing.T) {
+	t.Run("UnmarshalBinary returns ErrDigestSize for empty input", func(t *testing.T) {
 		t.Parallel()
 		// A truncated read must not decode back into a digest the
 		// caller never wrote — the zero Digest has no wire form.

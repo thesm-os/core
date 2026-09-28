@@ -92,7 +92,7 @@ func BenchmarkList(b *testing.B) {
 func TestPut(t *testing.T) {
 	t.Parallel()
 
-	t.Run("versions are the documented counter", func(t *testing.T) {
+	t.Run("numbers versions from one upward", func(t *testing.T) {
 		t.Parallel()
 
 		s := memory.New(fake.New(time.Unix(0, 0).UTC()))
@@ -142,7 +142,7 @@ func TestList(t *testing.T) {
 			"a truncated page must carry a continuation token")
 	})
 
-	t.Run("an exactly full final page carries no token", func(t *testing.T) {
+	t.Run("returns no token after an exactly full final page", func(t *testing.T) {
 		t.Parallel()
 
 		s := memory.New(fake.New(time.Unix(0, 0).UTC()))

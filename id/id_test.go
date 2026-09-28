@@ -97,14 +97,14 @@ func TestIDEqual(t *testing.T) {
 func TestIDCompare(t *testing.T) {
 	t.Parallel()
 
-	t.Run("identical IDs compare equal", func(t *testing.T) {
+	t.Run("returns 0 for identical IDs", func(t *testing.T) {
 		t.Parallel()
 		a := id.New128(fill128(0x42))
 		b := id.New128(fill128(0x42))
 		testkit.Equal(t, a.Compare(b), 0, "Compare on equal IDs must return 0")
 	})
 
-	t.Run("smaller bytes compare less", func(t *testing.T) {
+	t.Run("returns -1 for smaller bytes", func(t *testing.T) {
 		t.Parallel()
 		a := id.New128(fill128(0x01))
 		b := id.New128(fill128(0x02))
@@ -112,7 +112,7 @@ func TestIDCompare(t *testing.T) {
 		testkit.Equal(t, b.Compare(a), 1, "Compare b>a must return 1")
 	})
 
-	t.Run("smaller size compares less when prefixes match", func(t *testing.T) {
+	t.Run("returns -1 for a shorter ID with a matching prefix", func(t *testing.T) {
 		t.Parallel()
 		short := id.New128([id.Size128]byte{})
 		long := id.New160([id.Size160]byte{})
@@ -129,7 +129,7 @@ func TestIDString(t *testing.T) {
 		testkit.Equal(t, id.Zero.String(), "id:", "Zero must encode to bare 'id:' prefix")
 	})
 
-	t.Run("128-bit ID encodes as id:<32-hex-chars>", func(t *testing.T) {
+	t.Run("returns the hex of a 128-bit ID after id:", func(t *testing.T) {
 		t.Parallel()
 		var b [id.Size128]byte
 		b[0], b[1], b[2] = 0x01, 0x23, 0x45
@@ -139,7 +139,7 @@ func TestIDString(t *testing.T) {
 		testkit.Equal(t, id.New128(b).String(), want, "String must encode hex with 'id:' prefix")
 	})
 
-	t.Run("prefix is visually distinct from algorithm encodings", func(t *testing.T) {
+	t.Run("starts with the prefix id:", func(t *testing.T) {
 		t.Parallel()
 		// Canonical algorithm encodings start with alphanumeric
 		// characters: ULID Crockford base32 ("0..9A-Z"), UUIDv4
@@ -254,7 +254,7 @@ func TestFromBytes(t *testing.T) {
 		{"Size256", id.Size256},
 	}
 	for _, tc := range sizes {
-		t.Run("accepts "+tc.name, func(t *testing.T) {
+		t.Run("returns an ID of "+tc.name+" bytes", func(t *testing.T) {
 			t.Parallel()
 			b := make([]byte, tc.size)
 			for i := range b {
@@ -271,13 +271,13 @@ func TestFromBytes(t *testing.T) {
 		name string
 		size int
 	}{
-		{"empty", 0},
-		{"one short of Size128", id.Size128 - 1},
-		{"between Size128 and Size160", 18},
-		{"one past Size256", id.Size256 + 1},
+		{"an empty slice", 0},
+		{"a slice one short of Size128", id.Size128 - 1},
+		{"a slice of 18 bytes", 18},
+		{"a slice one past Size256", id.Size256 + 1},
 	}
 	for _, tc := range bad {
-		t.Run("rejects "+tc.name, func(t *testing.T) {
+		t.Run("returns ErrSize for "+tc.name, func(t *testing.T) {
 			t.Parallel()
 			got, err := id.FromBytes(make([]byte, tc.size))
 			testkit.ErrorIs(t, err, id.ErrSize, "FromBytes must reject an invalid length")

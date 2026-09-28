@@ -24,14 +24,14 @@ func TestFormat(t *testing.T) {
 		testkit.Equal(t, uuidv4.Format(id.Zero), "", "Format(Zero) must be empty")
 	})
 
-	t.Run("all-zero 128-bit ID formats with the canonical layout", func(t *testing.T) {
+	t.Run("returns the canonical layout for an all-zero ID", func(t *testing.T) {
 		t.Parallel()
 		testkit.Equal(t, uuidv4.Format(id.New128([id.Size128]byte{})),
 			"00000000-0000-0000-0000-000000000000",
 			"all-zero ID must format with canonical hyphen layout")
 	})
 
-	t.Run("specific bytes format with hyphens", func(t *testing.T) {
+	t.Run("returns the hyphenated form of specific bytes", func(t *testing.T) {
 		t.Parallel()
 		u := idFromBytes(
 			0x12, 0x34, 0x56, 0x78,
@@ -45,7 +45,7 @@ func TestFormat(t *testing.T) {
 			"specific bytes must format with hyphens at canonical positions")
 	})
 
-	t.Run("output is exactly 36 chars with hyphens at fixed positions", func(t *testing.T) {
+	t.Run("returns 36 characters with hyphens at fixed positions", func(t *testing.T) {
 		t.Parallel()
 		rng := seeded.New(rand.Seed(7))
 		g := uuidv4.New(rng)
@@ -93,39 +93,36 @@ func TestParse(t *testing.T) {
 		testkit.Equal(t, got, want, "Parse must decode to the expected bytes")
 	})
 
-	t.Run("rejects wrong length", func(t *testing.T) {
+	t.Run("returns ErrInvalidLength for a string of the wrong length", func(t *testing.T) {
 		t.Parallel()
 		cases := []string{
 			"",
 			"12345678-9abc-4def-8012-3456789abcd",   // 35
 			"12345678-9abc-4def-8012-3456789abcdef", // 37
-			strings.Repeat("0", 36),                 // 36 chars but no hyphens
 		}
 		for _, s := range cases {
 			_, err := uuidv4.Parse(s)
-			if len(s) == 36 {
-				testkit.ErrorIs(t, err, uuidv4.ErrInvalidFormat,
-					"36 chars without hyphens must return ErrInvalidFormat")
-			} else {
-				testkit.ErrorIs(t, err, uuidv4.ErrInvalidLength,
-					"wrong-length input must return ErrInvalidLength")
-				testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrInvalidLength must classify as Invalid")
-			}
+			testkit.ErrorIs(t, err, uuidv4.ErrInvalidLength,
+				"wrong-length input must return ErrInvalidLength")
+			testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrInvalidLength must classify as Invalid")
 		}
 	})
 
-	t.Run("rejects misplaced hyphens", func(t *testing.T) {
+	t.Run("returns ErrInvalidFormat for a string without a hyphen at position 8", func(t *testing.T) {
 		t.Parallel()
-		// 36 chars but a non-hyphen at position 8.
-		s := "12345678X9abc-4def-8012-3456789abcde"
-		testkit.Equal(t, len(s), 36, "test fixture must be 36 chars")
-		_, err := uuidv4.Parse(s)
-		testkit.ErrorIs(t, err, uuidv4.ErrInvalidFormat,
-			"misplaced hyphen must return ErrInvalidFormat")
-		testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrInvalidFormat must classify as Invalid")
+		for _, s := range []string{
+			"12345678X9abc-4def-8012-3456789abcde",
+			strings.Repeat("0", 36),
+		} {
+			testkit.Equal(t, len(s), 36, "test fixture must be 36 chars")
+			_, err := uuidv4.Parse(s)
+			testkit.ErrorIs(t, err, uuidv4.ErrInvalidFormat,
+				"misplaced hyphen must return ErrInvalidFormat")
+			testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrInvalidFormat must classify as Invalid")
+		}
 	})
 
-	t.Run("rejects non-hex character in hex segment", func(t *testing.T) {
+	t.Run("returns ErrInvalidChar for a non-hex character in each segment", func(t *testing.T) {
 		t.Parallel()
 		segments := []struct {
 			input string

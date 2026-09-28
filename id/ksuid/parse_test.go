@@ -26,7 +26,7 @@ func TestFormat(t *testing.T) {
 		testkit.Equal(t, ksuid.Format(id.Zero), "", "Format(Zero) must be empty")
 	})
 
-	t.Run("all-zero 160-bit ID encodes to 27 zeros", func(t *testing.T) {
+	t.Run("returns 27 zeros for an all-zero ID", func(t *testing.T) {
 		t.Parallel()
 		u := id.New160([id.Size160]byte{})
 		const want = "000000000000000000000000000"
@@ -35,7 +35,7 @@ func TestFormat(t *testing.T) {
 
 	// Frozen-output vector cross-checked against the segmentio/ksuid
 	// reference encoding for the same byte payload.
-	t.Run("known KSUID encodes to the canonical form", func(t *testing.T) {
+	t.Run("returns the reference encoding of a known KSUID", func(t *testing.T) {
 		t.Parallel()
 		// Bytes 0..3: timestamp 107608047 (offset from KSUID epoch
 		// → 2017-10-09T21:46:47Z absolute).
@@ -86,7 +86,7 @@ func TestParse(t *testing.T) {
 		testkit.Equal(t, got, want, "Parse must decode to the segmentio reference bytes")
 	})
 
-	t.Run("rejects wrong length", func(t *testing.T) {
+	t.Run("returns ErrInvalidLength for a string of the wrong length", func(t *testing.T) {
 		t.Parallel()
 		cases := []string{
 			"",
@@ -103,7 +103,7 @@ func TestParse(t *testing.T) {
 		}
 	})
 
-	t.Run("rejects characters outside base62 alphabet", func(t *testing.T) {
+	t.Run("returns ErrInvalidChar for a character outside the base62 alphabet", func(t *testing.T) {
 		t.Parallel()
 		// '!' at position 0 is not alphanumeric.
 		_, err := ksuid.Parse("!" + strings.Repeat("0", 26))
@@ -117,7 +117,7 @@ func TestParse(t *testing.T) {
 			"hyphen mid-string must return ErrInvalidChar")
 	})
 
-	t.Run("rejects values exceeding 2^160", func(t *testing.T) {
+	t.Run("returns ErrOverflow for a value above 2^160", func(t *testing.T) {
 		t.Parallel()
 		// 27 'z' chars = 62^27 - 1, the maximum representable
 		// base62 27-character value (~2.66e48), well above 2^160
@@ -133,7 +133,7 @@ func TestParse(t *testing.T) {
 	// suffixes. Collectively the suffix bytes exercise every
 	// branch of the base62 decoder ([decodeChar]) — digits,
 	// uppercase A-Z, lowercase a-z.
-	t.Run("real-world corpus parses without error", func(t *testing.T) {
+	t.Run("parses every KSUID of a real-world corpus", func(t *testing.T) {
 		t.Parallel()
 		corpus := []string{
 			"3DMNSJaqdg8XxB3ebyUCpTsfLua",

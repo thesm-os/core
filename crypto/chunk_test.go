@@ -121,7 +121,7 @@ func TestNewChunkHeader(t *testing.T) {
 			"two headers from a random source must not share an ID")
 	})
 
-	t.Run("accepts the smallest and the largest chunk size", func(t *testing.T) {
+	t.Run("returns a header for each bound of the chunk size", func(t *testing.T) {
 		t.Parallel()
 		for _, size := range []int{1, math.MaxUint32} {
 			h, err := crypto.NewChunkHeader(randcrypto.New(), size)
@@ -130,7 +130,7 @@ func TestNewChunkHeader(t *testing.T) {
 		}
 	})
 
-	t.Run("refuses a chunk size outside 1 to MaxUint32", func(t *testing.T) {
+	t.Run("returns ErrChunkSize for a chunk size outside 1 to MaxUint32", func(t *testing.T) {
 		t.Parallel()
 		for _, size := range []int{-1, 0, math.MaxUint32 + 1} {
 			h, err := crypto.NewChunkHeader(randcrypto.New(), size)
@@ -158,7 +158,7 @@ func TestChunkHeaderBinary(t *testing.T) {
 	h := crypto.ChunkHeader{ChunkSize: 0x00010000}
 	copy(h.MessageID[:], testkit.MustDecodeHex(t, "000102030405060708090a0b0c0d0e0f"))
 
-	t.Run("encodes the version, the chunk size and the message ID", func(t *testing.T) {
+	t.Run("encodes the documented layout", func(t *testing.T) {
 		t.Parallel()
 		got, err := h.MarshalBinary()
 		testkit.NoError(t, err, "MarshalBinary must succeed")
@@ -170,7 +170,7 @@ func TestChunkHeaderBinary(t *testing.T) {
 		testkit.Equal(t, len(got), crypto.ChunkHeaderSize, "the encoding must be ChunkHeaderSize bytes")
 	})
 
-	t.Run("appends to dst and leaves its prefix alone", func(t *testing.T) {
+	t.Run("appends after the bytes of dst", func(t *testing.T) {
 		t.Parallel()
 		got, err := h.AppendBinary([]byte("prefix"))
 		testkit.NoError(t, err, "AppendBinary must succeed")
@@ -188,7 +188,7 @@ func TestChunkHeaderBinary(t *testing.T) {
 		testkit.Equal(t, got, h, "the header must round-trip")
 	})
 
-	t.Run("refuses to encode a chunk size of 0", func(t *testing.T) {
+	t.Run("returns ErrChunkSize for a chunk size of 0", func(t *testing.T) {
 		t.Parallel()
 		zero := crypto.ChunkHeader{MessageID: h.MessageID}
 
@@ -201,7 +201,7 @@ func TestChunkHeaderBinary(t *testing.T) {
 		testkit.Equal(t, out, []byte(nil), "MarshalBinary must return nil with its error")
 	})
 
-	t.Run("UnmarshalBinary refuses a malformed header and leaves the receiver alone", func(t *testing.T) {
+	t.Run("UnmarshalBinary returns ErrChunkHeader for a malformed header", func(t *testing.T) {
 		t.Parallel()
 		valid, err := h.MarshalBinary()
 		testkit.NoError(t, err, "MarshalBinary must succeed")
@@ -239,7 +239,7 @@ func TestAppendSealChunk(t *testing.T) {
 	h := newHeader(t)
 	full := make([]byte, testChunkSize)
 
-	t.Run("refuses a chunk that breaks the size rules of its header", func(t *testing.T) {
+	t.Run("returns ErrChunkSize for a chunk that breaks the size rules of its header", func(t *testing.T) {
 		t.Parallel()
 		for name, c := range map[string]struct {
 			h     crypto.ChunkHeader
@@ -261,7 +261,7 @@ func TestAppendSealChunk(t *testing.T) {
 		}
 	})
 
-	t.Run("accepts every chunk the size rules allow", func(t *testing.T) {
+	t.Run("seals every chunk the size rules allow", func(t *testing.T) {
 		t.Parallel()
 		for name, c := range map[string]struct {
 			chunk []byte
@@ -280,7 +280,7 @@ func TestAppendSealChunk(t *testing.T) {
 		}
 	})
 
-	t.Run("refuses an envelope whose length is not SealedSize", func(t *testing.T) {
+	t.Run("returns ErrChunkSize for an envelope whose length is not SealedSize", func(t *testing.T) {
 		t.Parallel()
 		got, err := crypto.AppendSealChunk(nil, overstated{a}, randcrypto.New(), h, 0, true, full, nil)
 		testkit.ErrorIs(t, err, crypto.ErrChunkSize,
@@ -302,7 +302,7 @@ func TestAppendSealChunk(t *testing.T) {
 		testkit.ErrorIs(t, err, io.ErrUnexpectedEOF, "an entropy failure must be returned")
 	})
 
-	t.Run("appends to dst and leaves its prefix alone", func(t *testing.T) {
+	t.Run("appends after the bytes of dst", func(t *testing.T) {
 		t.Parallel()
 		prefix := []byte("keep me")
 		dst := append(make([]byte, 0, 256), prefix...)
@@ -316,7 +316,7 @@ func TestAppendSealChunk(t *testing.T) {
 		testkit.Equal(t, got, full, "the chunk must round-trip")
 	})
 
-	t.Run("matches the documented layout, rebuilt with the standard library", func(t *testing.T) {
+	t.Run("matches the documented layout", func(t *testing.T) {
 		t.Parallel()
 		const index = 7
 
@@ -365,7 +365,7 @@ func TestAppendOpenChunk(t *testing.T) {
 
 	a := newAEAD(t)
 
-	t.Run("seals and opens messages of every length around the chunk size", func(t *testing.T) {
+	t.Run("round-trips messages of every length around the chunk size", func(t *testing.T) {
 		t.Parallel()
 		for _, n := range []int{0, 1, testChunkSize - 1, testChunkSize, testChunkSize + 1, 3 * testChunkSize} {
 			h := newHeader(t)
@@ -433,7 +433,7 @@ func TestAppendOpenChunk(t *testing.T) {
 		}
 	})
 
-	t.Run("fails a chunk opened with another index, flag or aad", func(t *testing.T) {
+	t.Run("fails a chunk opened with values other than the sealed ones", func(t *testing.T) {
 		t.Parallel()
 		h := newHeader(t)
 		chunk := make([]byte, testChunkSize)
@@ -459,7 +459,7 @@ func TestAppendOpenChunk(t *testing.T) {
 		testkit.Equal(t, got, []byte(nil), "a refused chunk must return nil")
 	})
 
-	t.Run("a chunk is an envelope that Open opens with the chunk frame", func(t *testing.T) {
+	t.Run("Open opens a chunk with the chunk frame as associated data", func(t *testing.T) {
 		t.Parallel()
 		h := newHeader(t)
 		sealed, err := crypto.AppendSealChunk(nil, a, randcrypto.New(), h, 0, true, []byte("chunk"), chunkAAD)
@@ -568,7 +568,7 @@ func TestChunkVectors(t *testing.T) {
 	t.Parallel()
 
 	for _, v := range loadChunkVectors(t) {
-		t.Run("message "+strconv.FormatInt(int64(v.seed), 10)+" seals and opens to its record", func(t *testing.T) {
+		t.Run("reproduces the record of message "+strconv.FormatInt(int64(v.seed), 10), func(t *testing.T) {
 			t.Parallel()
 
 			a, err := aesgcm.New(v.key)
@@ -711,14 +711,14 @@ func TestChunkFIPSOnlyMode(t *testing.T) {
 			cmd.Env = append(os.Environ(), "GODEBUG=fips140=only")
 			out, err := cmd.CombinedOutput()
 			testkit.NoError(t, err, "the fips140=only child must pass:\n"+string(out))
-			testkit.True(t, bytes.Contains(out, []byte("seals_and_opens_a_message")),
+			testkit.True(t, bytes.Contains(out, []byte("round-trips_a_message")),
 				"the child must run the FIPS checks, not skip them")
 		})
 
 		return
 	}
 
-	t.Run("seals and opens a message", func(t *testing.T) {
+	t.Run("round-trips a message", func(t *testing.T) {
 		t.Parallel()
 		a := newModuleNonceAEAD(t)
 		h := newHeader(t)

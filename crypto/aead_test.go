@@ -99,7 +99,7 @@ func TestSealEnvelopeLayout(t *testing.T) {
 func TestSealEnvelopeVector(t *testing.T) {
 	t.Parallel()
 
-	t.Run("a fixed key, nonce, plaintext and aad give the recorded envelope", func(t *testing.T) {
+	t.Run("returns the recorded envelope for fixed inputs", func(t *testing.T) {
 		t.Parallel()
 		sealed, err := crypto.Seal(newAEAD(t), constant.New(0x0706050403020100), []byte("payload"), []byte("aad"))
 		testkit.NoError(t, err, "Seal must succeed")
@@ -248,7 +248,7 @@ func TestPeekAlgorithm(t *testing.T) {
 		testkit.Equal(t, got, a.Algorithm(), "the name must be the one that sealed it")
 	})
 
-	t.Run("rejects a truncated envelope", func(t *testing.T) {
+	t.Run("returns ErrCiphertextShort for a truncated envelope", func(t *testing.T) {
 		t.Parallel()
 		for _, n := range []int{0, 1} {
 			_, err := crypto.PeekAlgorithm(make([]byte, n))
@@ -262,21 +262,21 @@ func TestPeekAlgorithm(t *testing.T) {
 		testkit.Equal(t, errs.Classify(err), errs.Integrity, "ErrCiphertextShort must classify as Integrity")
 	})
 
-	t.Run("rejects an unknown version", func(t *testing.T) {
+	t.Run("returns ErrEnvelopeVersion for an unknown version", func(t *testing.T) {
 		t.Parallel()
 		_, err := crypto.PeekAlgorithm([]byte{crypto.EnvelopeVersion + 1, 1, 'x'})
 		testkit.ErrorIs(t, err, crypto.ErrEnvelopeVersion, "an unknown layout must be refused")
 		testkit.Equal(t, errs.Classify(err), errs.Unsupported, "ErrEnvelopeVersion must classify as Unsupported")
 	})
 
-	t.Run("rejects a zero-length name", func(t *testing.T) {
+	t.Run("returns ErrAlgorithmSize for a zero-length name", func(t *testing.T) {
 		t.Parallel()
 		_, err := crypto.PeekAlgorithm([]byte{crypto.EnvelopeVersion, 0})
 		testkit.ErrorIs(t, err, crypto.ErrAlgorithmSize, "an envelope must name something")
 		testkit.Equal(t, errs.Classify(err), errs.Integrity, "ErrAlgorithmSize must classify as Integrity")
 	})
 
-	t.Run("accepts a header with nothing after it", func(t *testing.T) {
+	t.Run("returns the name of a header with nothing after it", func(t *testing.T) {
 		t.Parallel()
 		// The name ends exactly at the end of the input. Peeking reads
 		// only the header, so there is nothing further to require.
@@ -293,7 +293,7 @@ func TestOpenRejections(t *testing.T) {
 	sealed, err := crypto.Seal(a, randcrypto.New(), []byte("payload"), []byte("aad"))
 	testkit.NoError(t, err, "Seal must succeed")
 
-	t.Run("an unknown version", func(t *testing.T) {
+	t.Run("returns ErrEnvelopeVersion for an unknown version", func(t *testing.T) {
 		t.Parallel()
 		forged := bytes.Clone(sealed)
 		forged[0]++
@@ -303,7 +303,7 @@ func TestOpenRejections(t *testing.T) {
 			"an unknown layout is refused before any key is used")
 	})
 
-	t.Run("a truncated envelope", func(t *testing.T) {
+	t.Run("returns ErrCiphertextShort for a truncated envelope", func(t *testing.T) {
 		t.Parallel()
 		// Every prefix short of a complete header and nonce.
 		for n := range len(header(t, sealed)) + a.NonceSize() {
@@ -313,7 +313,7 @@ func TestOpenRejections(t *testing.T) {
 		}
 	})
 
-	t.Run("a different algorithm", func(t *testing.T) {
+	t.Run("returns ErrAlgorithmMismatch for a different algorithm", func(t *testing.T) {
 		t.Parallel()
 		// Sealed under AES-256-GCM, opened with AES-128-GCM.
 		other := newAEADOfSize(t, aesgcm.KeySize128)
@@ -324,13 +324,13 @@ func TestOpenRejections(t *testing.T) {
 		testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrAlgorithmMismatch must classify as Invalid")
 	})
 
-	t.Run("a zero-length name", func(t *testing.T) {
+	t.Run("returns ErrAlgorithmSize for a zero-length name", func(t *testing.T) {
 		t.Parallel()
 		_, err := crypto.Open(a, []byte{crypto.EnvelopeVersion, 0}, nil)
 		testkit.ErrorIs(t, err, crypto.ErrAlgorithmSize, "an envelope must name something")
 	})
 
-	t.Run("a nonce with no body", func(t *testing.T) {
+	t.Run("returns an authentication error for a nonce with no body", func(t *testing.T) {
 		t.Parallel()
 		// Long enough to attempt, so it must fail authentication rather
 		// than report a size error — the two are different failures and
@@ -341,7 +341,7 @@ func TestOpenRejections(t *testing.T) {
 			"a full-length nonce is not a size error")
 	})
 
-	t.Run("the wrong associated data", func(t *testing.T) {
+	t.Run("returns an authentication error for other associated data", func(t *testing.T) {
 		t.Parallel()
 		_, err := crypto.Open(a, sealed, []byte("other"))
 		testkit.Error(t, err, "associated data is authenticated")
@@ -349,7 +349,7 @@ func TestOpenRejections(t *testing.T) {
 		testkit.ErrorIsNot(t, err, crypto.ErrAlgorithmMismatch, "not a name failure")
 	})
 
-	t.Run("a tampered body", func(t *testing.T) {
+	t.Run("returns an authentication error for a tampered tag", func(t *testing.T) {
 		t.Parallel()
 		forged := bytes.Clone(sealed)
 		forged[len(forged)-1] ^= 0xFF
@@ -358,7 +358,7 @@ func TestOpenRejections(t *testing.T) {
 		testkit.Error(t, err, "a modified tag must not authenticate")
 	})
 
-	t.Run("a tampered nonce", func(t *testing.T) {
+	t.Run("returns an authentication error for a tampered nonce", func(t *testing.T) {
 		t.Parallel()
 		forged := bytes.Clone(sealed)
 		forged[len(header(t, sealed))] ^= 0xFF
@@ -367,7 +367,7 @@ func TestOpenRejections(t *testing.T) {
 		testkit.Error(t, err, "a modified nonce must not authenticate")
 	})
 
-	t.Run("a headerless ciphertext", func(t *testing.T) {
+	t.Run("returns an error for a ciphertext without a header", func(t *testing.T) {
 		t.Parallel()
 		// The pre-envelope framing. Open must not fall back to it: a
 		// reader that does is one an attacker forces into the weaker
@@ -432,7 +432,7 @@ func TestAppendSealAndAppendOpen(t *testing.T) {
 
 	a := newAEAD(t)
 
-	t.Run("append into a used buffer", func(t *testing.T) {
+	t.Run("appends after the bytes already in dst", func(t *testing.T) {
 		t.Parallel()
 		prefix := []byte("keep me")
 		dst := make([]byte, len(prefix), 512)
@@ -448,7 +448,7 @@ func TestAppendSealAndAppendOpen(t *testing.T) {
 		testkit.Equal(t, out, []byte("payload"), "AppendOpen must recover the plaintext")
 	})
 
-	t.Run("a failure leaves the destination alone", func(t *testing.T) {
+	t.Run("leaves dst unchanged on failure", func(t *testing.T) {
 		t.Parallel()
 		prefix := []byte("keep me")
 		dst := make([]byte, len(prefix), 512)
@@ -493,7 +493,7 @@ func TestAppendSealZeroAlloc(t *testing.T) {
 		{newModuleNonceAEAD(t), "a module nonce"},
 	}
 	for _, tt := range aeads {
-		t.Run("AppendSeal with "+tt.name+" costs nothing", func(t *testing.T) {
+		t.Run("AppendSeal allocates nothing with "+tt.name, func(t *testing.T) {
 			plaintext := make([]byte, 64)
 			dst := make([]byte, 0, 256)
 
@@ -506,7 +506,7 @@ func TestAppendSealZeroAlloc(t *testing.T) {
 			}), float64(0), "AppendSeal must not allocate when dst has capacity")
 		})
 
-		t.Run("AppendOpen with "+tt.name+" costs nothing", func(t *testing.T) {
+		t.Run("AppendOpen allocates nothing with "+tt.name, func(t *testing.T) {
 			sealed, err := crypto.Seal(tt.a, randcrypto.New(), make([]byte, 64), nil)
 			testkit.NoError(t, err, "Seal must succeed")
 			dst := make([]byte, 0, 256)

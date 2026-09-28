@@ -157,13 +157,13 @@ func BenchmarkECDSAP384VerifyStream(b *testing.B) {
 func TestStreamingImplemented(t *testing.T) {
 	t.Parallel()
 
-	t.Run("the Signer is a StreamingSigner", func(t *testing.T) {
+	t.Run("Signer implements sign.StreamingSigner", func(t *testing.T) {
 		t.Parallel()
 		_, ok := any(mustSigner(t, cryptotest.NewECDSAP384Sample())).(sign.StreamingSigner)
 		testkit.True(t, ok, "ECDSA P-384 Signer must implement sign.StreamingSigner")
 	})
 
-	t.Run("the Verifier is a StreamingVerifier", func(t *testing.T) {
+	t.Run("Verifier implements sign.StreamingVerifier", func(t *testing.T) {
 		t.Parallel()
 		_, ok := any(mustSigner(t, cryptotest.NewECDSAP384Sample()).Verifier).(sign.StreamingVerifier)
 		testkit.True(t, ok, "ECDSA P-384 Verifier must implement sign.StreamingVerifier")
@@ -176,14 +176,14 @@ func TestStreamingImplemented(t *testing.T) {
 func TestNewVerifier(t *testing.T) {
 	t.Parallel()
 
-	t.Run("rejects nil public key", func(t *testing.T) {
+	t.Run("returns ErrNilKey for a nil public key", func(t *testing.T) {
 		t.Parallel()
 		_, err := signecdsa.NewVerifier(nil)
 		testkit.ErrorIs(t, err, signecdsa.ErrNilKey, "nil pub must return ErrNilKey")
 		testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrNilKey must classify as Invalid")
 	})
 
-	t.Run("rejects non-P-384 curve", func(t *testing.T) {
+	t.Run("returns ErrWrongCurve for a P-256 public key", func(t *testing.T) {
 		t.Parallel()
 		priv, err := ecdsa.GenerateKey(elliptic.P256(), randReader{r: seeded.New(rand.Seed(1))})
 		testkit.NoError(t, err, "GenerateKey(P-256)")
@@ -192,7 +192,7 @@ func TestNewVerifier(t *testing.T) {
 		testkit.Equal(t, errs.Classify(verr), errs.Invalid, "ErrWrongCurve must classify as Invalid")
 	})
 
-	t.Run("rejects an off-curve point through KeyIDFromPub", func(t *testing.T) {
+	t.Run("returns ErrOffCurve for a point off the curve", func(t *testing.T) {
 		t.Parallel()
 		//nolint:staticcheck // raw coordinates are deprecated because they
 		// can build an invalid key. An invalid key is the subject here.
@@ -219,7 +219,7 @@ func TestNewVerifierFromPKIX(t *testing.T) {
 		testkit.Equal(t, v.KeyID(), fix.KeyID, "KeyID round-trip must preserve identity")
 	})
 
-	t.Run("rejects malformed bytes", func(t *testing.T) {
+	t.Run("returns ErrInvalidPublicKey for malformed bytes", func(t *testing.T) {
 		t.Parallel()
 		cases := [][]byte{nil, {}, {0x00}, []byte("not asn.1 der at all")}
 		for _, c := range cases {
@@ -229,7 +229,7 @@ func TestNewVerifierFromPKIX(t *testing.T) {
 		}
 	})
 
-	t.Run("rejects PKIX of a non-ECDSA key (Ed25519)", func(t *testing.T) {
+	t.Run("returns ErrInvalidPublicKey for the PKIX of an Ed25519 key", func(t *testing.T) {
 		t.Parallel()
 		pubBytes := buildEd25519PKIX(t)
 		_, verr := signecdsa.NewVerifierFromPKIX(pubBytes)
@@ -237,7 +237,7 @@ func TestNewVerifierFromPKIX(t *testing.T) {
 			"Ed25519 PKIX must return ErrInvalidPublicKey")
 	})
 
-	t.Run("rejects PKIX of a non-P-384 key", func(t *testing.T) {
+	t.Run("returns ErrWrongCurve for the PKIX of a P-256 key", func(t *testing.T) {
 		t.Parallel()
 		priv, err := ecdsa.GenerateKey(elliptic.P256(), randReader{r: seeded.New(rand.Seed(1))})
 		testkit.NoError(t, err, "GenerateKey(P-256)")
@@ -273,7 +273,7 @@ func TestResolve(t *testing.T) {
 		testkit.True(t, v.Verify(fix.Message, fix.Signature), "the Verifier must accept the key's signature")
 	})
 
-	t.Run("returns ErrInvalidPublicKey and a nil Verifier", func(t *testing.T) {
+	t.Run("returns a nil Verifier with ErrInvalidPublicKey", func(t *testing.T) {
 		t.Parallel()
 		v, err := signecdsa.Resolve([]byte("not a PKIX key"))
 		testkit.ErrorIs(t, err, signecdsa.ErrInvalidPublicKey, "malformed bytes must be refused")
@@ -285,13 +285,13 @@ func TestResolve(t *testing.T) {
 func TestNew(t *testing.T) {
 	t.Parallel()
 
-	t.Run("rejects nil private key", func(t *testing.T) {
+	t.Run("returns ErrNilKey for a nil private key", func(t *testing.T) {
 		t.Parallel()
 		_, err := signecdsa.New(nil)
 		testkit.ErrorIs(t, err, signecdsa.ErrNilKey, "nil priv must return ErrNilKey")
 	})
 
-	t.Run("rejects non-P-384 private key", func(t *testing.T) {
+	t.Run("returns ErrWrongCurve for a P-256 private key", func(t *testing.T) {
 		t.Parallel()
 		priv, err := ecdsa.GenerateKey(elliptic.P256(), randReader{r: seeded.New(rand.Seed(1))})
 		testkit.NoError(t, err, "GenerateKey(P-256)")
@@ -308,7 +308,7 @@ func TestNew(t *testing.T) {
 func TestGenerate(t *testing.T) {
 	t.Parallel()
 
-	t.Run("successive calls produce different keypairs", func(t *testing.T) {
+	t.Run("returns a different keypair on each call", func(t *testing.T) {
 		t.Parallel()
 		a, err := signecdsa.Generate()
 		testkit.NoError(t, err, "Generate (a)")
@@ -343,7 +343,7 @@ func TestKeyIDStability(t *testing.T) {
 			"KeyID encoding must match SEC 1 + SHA-256[:16]")
 	})
 
-	t.Run("rejects off-curve point", func(t *testing.T) {
+	t.Run("returns ErrOffCurve for a point off the curve", func(t *testing.T) {
 		t.Parallel()
 		//nolint:staticcheck // raw coordinates are deprecated because they
 		// can build an invalid key. An invalid key is the subject here.

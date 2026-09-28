@@ -30,14 +30,14 @@ func TestFormat(t *testing.T) {
 	// ULID Crockford base32 layout (50 bits of timestamp, 80
 	// bits of randomness). The vectors lock the arithmetic in
 	// the shift-calculation loops against silent regression.
-	t.Run("all-zero 128-bit ID encodes to 26 zeros", func(t *testing.T) {
+	t.Run("returns 26 zeros for an all-zero ID", func(t *testing.T) {
 		t.Parallel()
 		u := id.New128([id.Size128]byte{})
 		testkit.Equal(t, ulid.Format(u), "00000000000000000000000000",
 			"all-zero ID must encode to 26 zeros")
 	})
 
-	t.Run("timestamp byte 0 = 0x01 encodes to leading '04'", func(t *testing.T) {
+	t.Run("returns a leading 04 for a first timestamp byte of 0x01", func(t *testing.T) {
 		t.Parallel()
 		// 48-bit timestamp 0x010000000000 = 2^40; shifted
 		// left by 2 = 2^42. Top 5 bits (49..45) of a 50-bit
@@ -48,7 +48,7 @@ func TestFormat(t *testing.T) {
 			"timestamp byte 0 = 0x01 must encode to leading '04'")
 	})
 
-	t.Run("random half all-ones encodes to 16 Zs", func(t *testing.T) {
+	t.Run("returns 16 Zs for a random half of all ones", func(t *testing.T) {
 		t.Parallel()
 		// Timestamp half zero → 10 zero chars. Random half:
 		// hi = 0xFFFFFFFFFFFFFFFF, tail = 0xFFFFF — both
@@ -61,7 +61,7 @@ func TestFormat(t *testing.T) {
 			"random half all-ones must encode to 16 Zs")
 	})
 
-	t.Run("asymmetric random half locks per-char arithmetic", func(t *testing.T) {
+	t.Run("returns the recorded encoding of an asymmetric random half", func(t *testing.T) {
 		t.Parallel()
 		// Asymmetric bytes so that each 5-bit chunk maps to a
 		// distinct char: a regression in the per-iteration
@@ -75,7 +75,7 @@ func TestFormat(t *testing.T) {
 			"asymmetric random half must encode to expected vector")
 	})
 
-	t.Run("mixed timestamp + random locks both halves", func(t *testing.T) {
+	t.Run("returns the recorded encoding of an asymmetric ID", func(t *testing.T) {
 		t.Parallel()
 		// Both halves carry asymmetric bytes — defends against
 		// the timestamp-half shift mutations as well.
@@ -103,7 +103,7 @@ func TestFormat(t *testing.T) {
 			"all-ones must encode timestamp prefix 'ZZZZZZZZZW'")
 	})
 
-	t.Run("output is exactly 26 base32 characters", func(t *testing.T) {
+	t.Run("returns 26 characters of the Crockford alphabet", func(t *testing.T) {
 		t.Parallel()
 		const alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 		origin := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
@@ -152,7 +152,7 @@ func TestParseULID(t *testing.T) {
 		testkit.Equal(t, got, want, "asymmetric vector must round-trip")
 	})
 
-	t.Run("accepts lowercase input", func(t *testing.T) {
+	t.Run("returns the same ID for lowercase input", func(t *testing.T) {
 		t.Parallel()
 		upper, err := ulid.ParseULID("04HMASW9NC04HMASW9NF6YZZPW")
 		testkit.NoError(t, err, "ParseULID upper")
@@ -171,7 +171,7 @@ func TestParseULID(t *testing.T) {
 		testkit.NoError(t, err, "ParseULID with L")
 	})
 
-	t.Run("rejects wrong length", func(t *testing.T) {
+	t.Run("returns ErrInvalidLength for a string of the wrong length", func(t *testing.T) {
 		t.Parallel()
 		cases := []string{
 			"",
@@ -188,7 +188,7 @@ func TestParseULID(t *testing.T) {
 		}
 	})
 
-	t.Run("rejects characters outside Crockford alphabet", func(t *testing.T) {
+	t.Run("returns ErrInvalidChar for a character outside the Crockford alphabet", func(t *testing.T) {
 		t.Parallel()
 		// 'U' is excluded from Crockford to avoid V/U confusion.
 		_, err := ulid.ParseULID("U" + strings.Repeat("0", 25))
@@ -202,7 +202,7 @@ func TestParseULID(t *testing.T) {
 			"punctuation must return ErrInvalidChar")
 	})
 
-	t.Run("rejects timestamp overflow (first char > '7')", func(t *testing.T) {
+	t.Run("returns ErrInvalidTimestamp for a first character above '7'", func(t *testing.T) {
 		t.Parallel()
 		// First char '8' (Crockford value 8) means timestamp bits
 		// 49..45 = 01000, which sets bit 48 — beyond the 48-bit
@@ -218,7 +218,7 @@ func TestParseULID(t *testing.T) {
 			"first char 'Z' must return ErrInvalidTimestamp")
 	})
 
-	t.Run("accepts maximum valid first char '7'", func(t *testing.T) {
+	t.Run("decodes a first character of '7'", func(t *testing.T) {
 		t.Parallel()
 		// Locks the boundary: first char '7' (Crockford value 7)
 		// means timestamp bits 49..45 = 00111, which leaves bit
@@ -229,7 +229,7 @@ func TestParseULID(t *testing.T) {
 		testkit.False(t, got.IsZero(), "first char '7' must produce non-Zero ID")
 	})
 
-	t.Run("rejects invalid char inside timestamp half", func(t *testing.T) {
+	t.Run("returns ErrInvalidChar for an invalid character in the timestamp half", func(t *testing.T) {
 		t.Parallel()
 		// '!' at position 5 — inside the timestamp half (chars
 		// 0..9), past the leading-char check. Exercises the
@@ -247,7 +247,7 @@ func TestParseULID(t *testing.T) {
 	// a third covers the I/L/O substitutions and lowercase
 	// variants.
 
-	t.Run("uppercase chars 0-S decode", func(t *testing.T) {
+	t.Run("decodes the uppercase characters 0 to S", func(t *testing.T) {
 		t.Parallel()
 		// 26 distinct chars: 0..9, A-H, J, K, M, N, P, Q, R, S
 		// (covers Crockford values 0..25). First char '0' so the
@@ -256,7 +256,7 @@ func TestParseULID(t *testing.T) {
 		testkit.NoError(t, err, "uppercase chars 0-S must decode")
 	})
 
-	t.Run("uppercase chars T-Z decode", func(t *testing.T) {
+	t.Run("decodes the uppercase characters T to Z", func(t *testing.T) {
 		t.Parallel()
 		// Covers the T, V, W, X, Y, Z branches (values 26..31)
 		// plus padding.
@@ -264,7 +264,7 @@ func TestParseULID(t *testing.T) {
 		testkit.NoError(t, err, "uppercase chars T-Z must decode")
 	})
 
-	t.Run("lowercase chars a-z decode", func(t *testing.T) {
+	t.Run("decodes the lowercase characters", func(t *testing.T) {
 		t.Parallel()
 		// 25 lowercase chars covering a..h, j, k, m, n, p..t,
 		// v..z plus one '0' padder.
@@ -272,7 +272,7 @@ func TestParseULID(t *testing.T) {
 		testkit.NoError(t, err, "lowercase chars a-z must decode")
 	})
 
-	t.Run("I L O substitutions decode", func(t *testing.T) {
+	t.Run("decodes the Crockford substitute letters", func(t *testing.T) {
 		t.Parallel()
 		// The ULID spec retroactively accepts I/L → 1 and O → 0
 		// to handle handwritten or transcribed identifiers; both

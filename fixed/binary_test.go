@@ -65,7 +65,7 @@ func TestMarshalBinary(t *testing.T) {
 		}
 	})
 
-	t.Run("refuses the excluded value", func(t *testing.T) {
+	t.Run("returns ErrRange for the excluded value", func(t *testing.T) {
 		t.Parallel()
 
 		_, err := outOfDomain.MarshalBinary()
@@ -74,7 +74,7 @@ func TestMarshalBinary(t *testing.T) {
 			"nothing outside the domain may reach the wire")
 	})
 
-	t.Run("byte order is not numeric order", func(t *testing.T) {
+	t.Run("encodes a negative value to sort above a positive one", func(t *testing.T) {
 		t.Parallel()
 
 		// The documented caveat, asserted so it cannot regress into a
@@ -106,7 +106,7 @@ func TestAppendBinary(t *testing.T) {
 			"AppendBinary must append rather than replace")
 	})
 
-	t.Run("leaves dst untouched when it refuses", func(t *testing.T) {
+	t.Run("returns dst unchanged with ErrRange", func(t *testing.T) {
 		t.Parallel()
 
 		got, err := outOfDomain.AppendBinary([]byte{0xAA})
@@ -140,7 +140,7 @@ func TestUnmarshalBinary(t *testing.T) {
 		}
 	})
 
-	t.Run("rejects any length but Size", func(t *testing.T) {
+	t.Run("returns ErrSize for any length but Size", func(t *testing.T) {
 		t.Parallel()
 
 		cases := map[string][]byte{
@@ -167,7 +167,7 @@ func TestUnmarshalBinary(t *testing.T) {
 		}
 	})
 
-	t.Run("rejects the excluded value on the wire", func(t *testing.T) {
+	t.Run("returns ErrRange for the encoding of the excluded value", func(t *testing.T) {
 		t.Parallel()
 
 		// The bit pattern of math.MinInt64. No encoder in this package

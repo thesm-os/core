@@ -73,24 +73,24 @@ var byRank = []errs.Class{
 func TestClassify(t *testing.T) {
 	t.Parallel()
 
-	t.Run("nil is Unspecified", func(t *testing.T) {
+	t.Run("returns Unspecified for nil", func(t *testing.T) {
 		t.Parallel()
 		testkit.Equal(t, errs.Classify(nil), errs.Unspecified, "Classify(nil) must be Unspecified")
 	})
 
-	t.Run("an unclassified error is Unspecified", func(t *testing.T) {
+	t.Run("returns Unspecified for an unclassified error", func(t *testing.T) {
 		t.Parallel()
 		testkit.Equal(t, errs.Classify(errSentinel), errs.Unspecified,
 			"an error nobody classified must be Unspecified")
 	})
 
-	t.Run("a Classifier reports its own class", func(t *testing.T) {
+	t.Run("returns the class of a Classifier", func(t *testing.T) {
 		t.Parallel()
 		testkit.Equal(t, errs.Classify(stubError{class: errs.Denied}), errs.Denied,
 			"Classify must return the Classifier's class")
 	})
 
-	t.Run("the core sentinels classify without wrapping", func(t *testing.T) {
+	t.Run("returns the class of each recognised core sentinel", func(t *testing.T) {
 		t.Parallel()
 
 		// The recognised set, asserted one by one: these are plain
@@ -117,7 +117,7 @@ func TestClassify(t *testing.T) {
 		}
 	})
 
-	t.Run("an explicit Classifier beats a recognised sentinel", func(t *testing.T) {
+	t.Run("prefers a Classifier to a recognised core sentinel", func(t *testing.T) {
 		t.Parallel()
 
 		// A producer that classified its own error has reasoned about
@@ -127,7 +127,7 @@ func TestClassify(t *testing.T) {
 			"WithClass must win over sentinel recognition")
 	})
 
-	t.Run("a wrapped Classifier is found through the tree", func(t *testing.T) {
+	t.Run("finds a Classifier beneath a wrap", func(t *testing.T) {
 		t.Parallel()
 		wrapped := fmt.Errorf("outer: %w", stubError{class: errs.Integrity})
 		testkit.Equal(t, errs.Classify(wrapped), errs.Integrity,
@@ -197,21 +197,21 @@ func TestClassify(t *testing.T) {
 	// Classify walks a tree, not just a chain: errors.Join produces
 	// an error whose Unwrap returns []error, and a Classifier in any
 	// branch must be found.
-	t.Run("a Classifier in the first join branch is found", func(t *testing.T) {
+	t.Run("finds a Classifier in the first join branch", func(t *testing.T) {
 		t.Parallel()
 		joined := errors.Join(stubError{class: errs.Denied}, errSentinel)
 		testkit.Equal(t, errs.Classify(joined), errs.Denied,
 			"Classify must search join branches")
 	})
 
-	t.Run("a Classifier in a later join branch is found", func(t *testing.T) {
+	t.Run("finds a Classifier in a later join branch", func(t *testing.T) {
 		t.Parallel()
 		joined := errors.Join(errSentinel, stubError{class: errs.Integrity})
 		testkit.Equal(t, errs.Classify(joined), errs.Integrity,
 			"Classify must search past an unclassified branch")
 	})
 
-	t.Run("a Classifier nested inside a join branch is found", func(t *testing.T) {
+	t.Run("finds a Classifier nested inside a join branch", func(t *testing.T) {
 		t.Parallel()
 		joined := errors.Join(
 			errSentinel,
@@ -221,7 +221,7 @@ func TestClassify(t *testing.T) {
 			"Classify must recurse into join branches")
 	})
 
-	t.Run("a join with no Classifier is Unspecified", func(t *testing.T) {
+	t.Run("returns Unspecified for a join without a Classifier", func(t *testing.T) {
 		t.Parallel()
 		joined := errors.Join(errSentinel, errors.New("errs_test: other"))
 		testkit.Equal(t, errs.Classify(joined), errs.Unspecified,
@@ -284,7 +284,7 @@ func TestClassify(t *testing.T) {
 			"a join without a class of the eight must be Unspecified")
 	})
 
-	t.Run("an error unwrapping to nil is Unspecified", func(t *testing.T) {
+	t.Run("returns Unspecified for an error that unwraps to nil", func(t *testing.T) {
 		t.Parallel()
 		// Unwrap returning nil ends the walk without a Classifier
 		// and without hitting the switch's default.
@@ -292,7 +292,7 @@ func TestClassify(t *testing.T) {
 			"a chain ending in nil must be Unspecified")
 	})
 
-	t.Run("an explicit Classifier wins over a recognised sentinel", func(t *testing.T) {
+	t.Run("prefers a Classifier to a recognised standard library sentinel", func(t *testing.T) {
 		t.Parallel()
 		// The producer classified this deliberately; fs.ErrNotExist
 		// is incidental to how it was implemented.
@@ -305,7 +305,7 @@ func TestClassify(t *testing.T) {
 func TestRetryable(t *testing.T) {
 	t.Parallel()
 
-	t.Run("Transient is retryable", func(t *testing.T) {
+	t.Run("reports true for Transient", func(t *testing.T) {
 		t.Parallel()
 		testkit.True(t, errs.Retryable(stubError{class: errs.Transient}),
 			"Transient must be retryable")
@@ -321,14 +321,14 @@ func TestRetryable(t *testing.T) {
 		errs.Integrity,
 	}
 	for _, class := range nonRetryable {
-		t.Run(class.String()+" is not retryable", func(t *testing.T) {
+		t.Run("reports false for "+class.String(), func(t *testing.T) {
 			t.Parallel()
 			testkit.False(t, errs.Retryable(stubError{class: class}),
 				class.String()+" must not be retryable")
 		})
 	}
 
-	t.Run("nil is not retryable", func(t *testing.T) {
+	t.Run("reports false for nil", func(t *testing.T) {
 		t.Parallel()
 		testkit.False(t, errs.Retryable(nil), "Retryable(nil) must be false")
 	})
@@ -349,33 +349,33 @@ func TestRetryable(t *testing.T) {
 func TestWithClass(t *testing.T) {
 	t.Parallel()
 
-	t.Run("nil stays nil", func(t *testing.T) {
+	t.Run("returns nil for nil", func(t *testing.T) {
 		t.Parallel()
 		testkit.Equal(t, errs.WithClass(nil, errs.Transient), nil,
 			"tagging the absence of an error must not produce one")
 	})
 
-	t.Run("the result carries the class", func(t *testing.T) {
+	t.Run("sets the class of the result", func(t *testing.T) {
 		t.Parallel()
 		testkit.Equal(t, errs.Classify(errs.WithClass(errSentinel, errs.Conflict)), errs.Conflict,
 			"WithClass must set the class")
 	})
 
-	t.Run("errors.Is still reaches the wrapped error", func(t *testing.T) {
+	t.Run("keeps the wrapped error visible to errors.Is", func(t *testing.T) {
 		t.Parallel()
 		tagged := errs.WithClass(errSentinel, errs.Conflict)
 		testkit.ErrorIs(t, tagged, errSentinel,
 			"tagging must not break matching on the underlying sentinel")
 	})
 
-	t.Run("the message is unchanged", func(t *testing.T) {
+	t.Run("keeps the message of the error", func(t *testing.T) {
 		t.Parallel()
 		tagged := errs.WithClass(errSentinel, errs.Denied)
 		testkit.Equal(t, tagged.Error(), errSentinel.Error(),
 			"the class must not leak into the error text")
 	})
 
-	t.Run("tagging survives further wrapping", func(t *testing.T) {
+	t.Run("keeps the class beneath a further wrap", func(t *testing.T) {
 		t.Parallel()
 		outer := fmt.Errorf("outer: %w", errs.WithClass(errSentinel, errs.Integrity))
 		testkit.Equal(t, errs.Classify(outer), errs.Integrity,
@@ -383,7 +383,7 @@ func TestWithClass(t *testing.T) {
 		testkit.ErrorIs(t, outer, errSentinel, "the chain must stay intact")
 	})
 
-	t.Run("the outermost tag wins when tagged twice", func(t *testing.T) {
+	t.Run("returns the outermost class for an error tagged twice", func(t *testing.T) {
 		t.Parallel()
 		inner := errs.WithClass(errSentinel, errs.Transient)
 		outer := errs.WithClass(inner, errs.Denied)

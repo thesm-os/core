@@ -54,13 +54,13 @@ func TestClassString(t *testing.T) {
 		})
 	}
 
-	t.Run("an out-of-range value renders numerically", func(t *testing.T) {
+	t.Run("returns Class(N) for a value outside the eight", func(t *testing.T) {
 		t.Parallel()
 		testkit.Equal(t, errs.Class(99).String(), "Class(99)",
 			"an unrecognised class must stay distinguishable in a log line")
 	})
 
-	t.Run("every defined class has a distinct name", func(t *testing.T) {
+	t.Run("returns a distinct name for each class", func(t *testing.T) {
 		t.Parallel()
 		seen := make(map[string]errs.Class, len(names))
 		for _, tc := range names {

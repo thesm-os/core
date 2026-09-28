@@ -99,13 +99,13 @@ func BenchmarkEd25519Signer(b *testing.B) {
 func TestStreamingNotImplemented(t *testing.T) {
 	t.Parallel()
 
-	t.Run("the Signer is not a StreamingSigner", func(t *testing.T) {
+	t.Run("Signer does not implement sign.StreamingSigner", func(t *testing.T) {
 		t.Parallel()
 		_, ok := any(mustSigner(t, cryptotest.NewEd25519Sample())).(sign.StreamingSigner)
 		testkit.False(t, ok, "Ed25519 Signer must not implement sign.StreamingSigner")
 	})
 
-	t.Run("the Verifier is not a StreamingVerifier", func(t *testing.T) {
+	t.Run("Verifier does not implement sign.StreamingVerifier", func(t *testing.T) {
 		t.Parallel()
 		_, ok := any(mustSigner(t, cryptotest.NewEd25519Sample()).Verifier).(sign.StreamingVerifier)
 		testkit.False(t, ok, "Ed25519 Verifier must not implement sign.StreamingVerifier")
@@ -115,7 +115,7 @@ func TestStreamingNotImplemented(t *testing.T) {
 func TestNewVerifier(t *testing.T) {
 	t.Parallel()
 
-	t.Run("rejects wrong-size public key", func(t *testing.T) {
+	t.Run("returns ErrInvalidPublicKeySize for a public key of the wrong size", func(t *testing.T) {
 		t.Parallel()
 		cases := [][]byte{nil, {}, make([]byte, 16), make([]byte, 31), make([]byte, 33), make([]byte, 64)}
 		for _, c := range cases {
@@ -145,7 +145,7 @@ func TestNewVerifierFromBytes(t *testing.T) {
 			"zeroing the caller's buffer must not change the Verifier's key")
 	})
 
-	t.Run("rejects wrong-size byte slice", func(t *testing.T) {
+	t.Run("returns ErrInvalidPublicKeySize for a 16-byte slice", func(t *testing.T) {
 		t.Parallel()
 		_, err := signed25519.NewVerifierFromBytes(make([]byte, 16))
 		testkit.ErrorIs(t, err, signed25519.ErrInvalidPublicKeySize,
@@ -165,7 +165,7 @@ func TestResolve(t *testing.T) {
 		testkit.True(t, v.Verify(fix.Message, fix.Signature), "the Verifier must accept the key's signature")
 	})
 
-	t.Run("returns ErrInvalidPublicKeySize and a nil Verifier", func(t *testing.T) {
+	t.Run("returns a nil Verifier with ErrInvalidPublicKeySize", func(t *testing.T) {
 		t.Parallel()
 		v, err := signed25519.Resolve(make([]byte, 31))
 		testkit.ErrorIs(t, err, signed25519.ErrInvalidPublicKeySize, "a 31-byte key must be refused")
@@ -177,7 +177,7 @@ func TestResolve(t *testing.T) {
 func TestNew(t *testing.T) {
 	t.Parallel()
 
-	t.Run("rejects wrong-size private key", func(t *testing.T) {
+	t.Run("returns ErrInvalidPrivateKeySize for a private key of the wrong size", func(t *testing.T) {
 		t.Parallel()
 		cases := [][]byte{nil, {}, make([]byte, 32), make([]byte, 63), make([]byte, 65), make([]byte, 128)}
 		for _, c := range cases {
@@ -209,7 +209,7 @@ func TestNew(t *testing.T) {
 func TestGenerate(t *testing.T) {
 	t.Parallel()
 
-	t.Run("two seeds produce different keypairs", func(t *testing.T) {
+	t.Run("returns different keypairs for different seeds", func(t *testing.T) {
 		t.Parallel()
 		a, err := signed25519.Generate(seeded.New(rand.Seed(1)))
 		testkit.NoError(t, err, "Generate(seed=1)")

@@ -156,7 +156,7 @@ func TestMul(t *testing.T) {
 		}
 	})
 
-	t.Run("rejects a product too wide for the 128-bit divide", func(t *testing.T) {
+	t.Run("returns ErrOverflow for a product too wide for the 128-bit divide", func(t *testing.T) {
 		t.Parallel()
 
 		// |a|*|b| >= 2^64 * 10^Scale, so the quotient cannot fit in 64
@@ -168,7 +168,7 @@ func TestMul(t *testing.T) {
 		testkit.Equal(t, got, fixed.Zero, "an overflow must return Zero")
 	})
 
-	t.Run("rejects a representable quotient beyond the domain", func(t *testing.T) {
+	t.Run("returns ErrOverflow for a representable quotient beyond the domain", func(t *testing.T) {
 		t.Parallel()
 
 		// The divide succeeds — the quotient fits in 64 bits — but the
@@ -273,7 +273,7 @@ func TestDiv(t *testing.T) {
 		}
 	})
 
-	t.Run("rejects division by zero", func(t *testing.T) {
+	t.Run("returns ErrDivZero for a zero divisor", func(t *testing.T) {
 		t.Parallel()
 
 		got, err := fixed.One.Div(fixed.Zero)
@@ -286,7 +286,7 @@ func TestDiv(t *testing.T) {
 		testkit.Equal(t, got, fixed.Zero, "a rejected divide must return Zero")
 	})
 
-	t.Run("rejects a quotient too wide for the 128-bit divide", func(t *testing.T) {
+	t.Run("returns ErrOverflow for a quotient too wide for the 128-bit divide", func(t *testing.T) {
 		t.Parallel()
 
 		// Dividing by the smallest step multiplies by 10^8 twice over;
@@ -298,7 +298,7 @@ func TestDiv(t *testing.T) {
 			"a quotient beyond the 128-bit divide must overflow")
 	})
 
-	t.Run("rejects a representable quotient beyond the domain", func(t *testing.T) {
+	t.Run("returns ErrOverflow for a representable quotient beyond the domain", func(t *testing.T) {
 		t.Parallel()
 
 		// The divide succeeds but the result exceeds Max: the bound
@@ -349,7 +349,7 @@ func TestDivAway(t *testing.T) {
 		}
 	})
 
-	t.Run("rejects division by zero", func(t *testing.T) {
+	t.Run("returns ErrDivZero for a zero divisor", func(t *testing.T) {
 		t.Parallel()
 
 		_, err := fixed.One.DivAway(fixed.Zero)
@@ -404,7 +404,7 @@ func TestDivAway(t *testing.T) {
 func TestArithmeticProperties(t *testing.T) {
 	t.Parallel()
 
-	t.Run("Mul and Div invert for exact operands", func(t *testing.T) {
+	t.Run("Div inverts Mul for exact operands", func(t *testing.T) {
 		t.Parallel()
 
 		for _, v := range []fixed.Fixed64{fixed.One, 2 * fixed.One, 250 * fixed.One} {
@@ -418,7 +418,7 @@ func TestArithmeticProperties(t *testing.T) {
 		}
 	})
 
-	t.Run("a checked sum is order-dependent", func(t *testing.T) {
+	t.Run("returns ErrOverflow for one order of a sum that fits in another", func(t *testing.T) {
 		t.Parallel()
 
 		// The drawback the Add doc states, asserted so it stays true:

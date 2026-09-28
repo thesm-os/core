@@ -57,7 +57,7 @@ func TestString(t *testing.T) {
 func TestParse(t *testing.T) {
 	t.Parallel()
 
-	t.Run("accepts the grammar", func(t *testing.T) {
+	t.Run("returns the value of every input in the grammar", func(t *testing.T) {
 		t.Parallel()
 
 		cases := map[string]struct {
@@ -97,7 +97,7 @@ func TestParse(t *testing.T) {
 		}
 	})
 
-	t.Run("rejects everything outside the grammar", func(t *testing.T) {
+	t.Run("returns ErrSyntax for every input outside the grammar", func(t *testing.T) {
 		t.Parallel()
 
 		cases := map[string]string{
@@ -136,7 +136,7 @@ func TestParse(t *testing.T) {
 		}
 	})
 
-	t.Run("rejects a significant digit past the scale", func(t *testing.T) {
+	t.Run("returns ErrPrecision for a significant digit past the scale", func(t *testing.T) {
 		t.Parallel()
 
 		cases := map[string]string{
@@ -161,7 +161,7 @@ func TestParse(t *testing.T) {
 		}
 	})
 
-	t.Run("rejects a magnitude beyond the domain", func(t *testing.T) {
+	t.Run("returns ErrRange for a magnitude beyond the domain", func(t *testing.T) {
 		t.Parallel()
 
 		cases := map[string]string{
@@ -192,7 +192,7 @@ func TestParse(t *testing.T) {
 		}
 	})
 
-	t.Run("never produces the excluded value", func(t *testing.T) {
+	t.Run("returns Min for the most negative input", func(t *testing.T) {
 		t.Parallel()
 
 		// The domain is symmetric, so the most negative parseable
@@ -239,7 +239,7 @@ func TestMarshalText(t *testing.T) {
 			"MarshalText must match String")
 	})
 
-	t.Run("refuses the excluded value", func(t *testing.T) {
+	t.Run("returns ErrRange for the excluded value", func(t *testing.T) {
 		t.Parallel()
 
 		_, err := outOfDomain.MarshalText()
@@ -262,7 +262,7 @@ func TestAppendText(t *testing.T) {
 			"AppendText must append rather than replace")
 	})
 
-	t.Run("leaves dst untouched when it refuses", func(t *testing.T) {
+	t.Run("returns dst unchanged with ErrRange", func(t *testing.T) {
 		t.Parallel()
 
 		got, err := outOfDomain.AppendText([]byte("value="))
@@ -277,7 +277,7 @@ func TestAppendText(t *testing.T) {
 func TestUnmarshalText(t *testing.T) {
 	t.Parallel()
 
-	t.Run("accepts what Parse accepts", func(t *testing.T) {
+	t.Run("decodes the text form of a value", func(t *testing.T) {
 		t.Parallel()
 
 		var got fixed.Fixed64
@@ -289,7 +289,7 @@ func TestUnmarshalText(t *testing.T) {
 			"UnmarshalText must decode the value")
 	})
 
-	t.Run("returns Parse's errors and leaves the receiver alone", func(t *testing.T) {
+	t.Run("returns the error of Parse without changing the receiver", func(t *testing.T) {
 		t.Parallel()
 
 		cases := map[string]struct {
@@ -320,7 +320,7 @@ func TestUnmarshalText(t *testing.T) {
 func TestJSON(t *testing.T) {
 	t.Parallel()
 
-	t.Run("encodes as a string, not a number", func(t *testing.T) {
+	t.Run("encodes as a JSON string", func(t *testing.T) {
 		t.Parallel()
 
 		// The consequence of implementing TextMarshaler, and the point
@@ -351,7 +351,7 @@ func TestJSON(t *testing.T) {
 			"the value must survive a JSON round trip exactly")
 	})
 
-	t.Run("rejects a malformed value on decode", func(t *testing.T) {
+	t.Run("returns ErrPrecision from json.Unmarshal of a value past the scale", func(t *testing.T) {
 		t.Parallel()
 
 		var got fixed.Fixed64

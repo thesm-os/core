@@ -63,7 +63,7 @@ func TestInstantOrdering(t *testing.T) {
 		})
 	}
 
-	t.Run("identical instants compare equal", func(t *testing.T) {
+	t.Run("Compare returns 0 for identical instants", func(t *testing.T) {
 		t.Parallel()
 		// Construct two equal instants from independent literals
 		// so the assertion does not look like a self-comparison
@@ -86,7 +86,7 @@ func TestInstantArithmetic(t *testing.T) {
 		testkit.Equal(t, b.Sub(a), -time.Second, "b.Sub(a) must equal -1 second")
 	})
 
-	t.Run("Add advances Wall, preserves Logical and Node", func(t *testing.T) {
+	t.Run("Add advances Wall alone", func(t *testing.T) {
 		t.Parallel()
 		in := clock.Instant{Wall: 1_000_000_000, Logical: 5, Node: 3}
 		got := in.Add(time.Second)
@@ -111,7 +111,7 @@ func TestInstantRange(t *testing.T) {
 	b := clock.Instant{Wall: 200}
 	c := clock.Instant{Wall: 300}
 
-	t.Run("zero range contains every Instant", func(t *testing.T) {
+	t.Run("Contains reports true for every Instant in the zero range", func(t *testing.T) {
 		t.Parallel()
 		var r clock.InstantRange
 		testkit.True(t, r.IsZero(), "zero range must report IsZero")
@@ -120,7 +120,7 @@ func TestInstantRange(t *testing.T) {
 		}
 	})
 
-	t.Run("bounded range respects half-open semantics", func(t *testing.T) {
+	t.Run("Contains applies a half-open interval", func(t *testing.T) {
 		t.Parallel()
 		r := clock.InstantRange{Since: a, Until: c}
 		testkit.False(t, r.IsZero(), "bounded range must not report IsZero")
@@ -138,7 +138,7 @@ func TestInstantRange(t *testing.T) {
 			"must not contain instant above Until")
 	})
 
-	t.Run("zero Since means no lower bound", func(t *testing.T) {
+	t.Run("Contains applies no lower bound for a zero Since", func(t *testing.T) {
 		t.Parallel()
 		r := clock.InstantRange{Until: b}
 		testkit.False(t, r.IsZero(), "range with Until set must not report IsZero")
@@ -148,7 +148,7 @@ func TestInstantRange(t *testing.T) {
 		testkit.False(t, r.Contains(b), "must not contain Until itself")
 	})
 
-	t.Run("zero Until means no upper bound", func(t *testing.T) {
+	t.Run("Contains applies no upper bound for a zero Until", func(t *testing.T) {
 		t.Parallel()
 		r := clock.InstantRange{Since: b}
 		testkit.False(t, r.IsZero(), "range with Since set must not report IsZero")
@@ -280,7 +280,7 @@ func TestInstantBinaryRoundTrip(t *testing.T) {
 func TestInstantAppendBinary(t *testing.T) {
 	t.Parallel()
 
-	t.Run("layout is Wall then Logical then Node, big-endian", func(t *testing.T) {
+	t.Run("encodes Wall then Logical then Node in big-endian order", func(t *testing.T) {
 		t.Parallel()
 		i := clock.Instant{Wall: 1, Logical: 2, Node: 3}
 		got, err := i.AppendBinary(nil)
@@ -301,7 +301,7 @@ func TestInstantAppendBinary(t *testing.T) {
 		testkit.Equal(t, got[0], byte(0xFF), "existing dst bytes must be preserved")
 	})
 
-	t.Run("post-epoch instants sort bytewise in Compare order", func(t *testing.T) {
+	t.Run("encodes post-epoch instants in Compare order", func(t *testing.T) {
 		t.Parallel()
 		lo := clock.Instant{Wall: 100, Logical: 1, Node: 1}
 		hi := clock.Instant{Wall: 100, Logical: 2, Node: 0}
@@ -316,7 +316,7 @@ func TestInstantUnmarshalBinaryRejectsWrongLength(t *testing.T) {
 	t.Parallel()
 
 	for _, n := range []int{0, 1, clock.InstantSize - 1, clock.InstantSize + 1} {
-		t.Run("rejects length "+strconv.Itoa(n), func(t *testing.T) {
+		t.Run("returns ErrInstantSize for length "+strconv.Itoa(n), func(t *testing.T) {
 			t.Parallel()
 			var i clock.Instant
 			err := i.UnmarshalBinary(make([]byte, n))
@@ -342,13 +342,13 @@ func TestInstantUnixAccessors(t *testing.T) {
 		testkit.Equal(t, i.UnixMicro(), int64(1_500_000), "UnixMicro must divide Wall by 1e3")
 	})
 
-	t.Run("truncation is toward zero for a pre-epoch instant", func(t *testing.T) {
+	t.Run("UnixMilli truncates a pre-epoch instant toward zero", func(t *testing.T) {
 		t.Parallel()
 		i := clock.Instant{Wall: -1_500_000}
 		testkit.Equal(t, i.UnixMilli(), int64(-1), "UnixMilli must truncate toward zero, not floor")
 	})
 
-	t.Run("the zero Instant reports zero", func(t *testing.T) {
+	t.Run("returns 0 for the zero Instant", func(t *testing.T) {
 		t.Parallel()
 		var i clock.Instant
 		testkit.Equal(t, i.UnixMilli(), int64(0), "the zero Instant must report 0 ms")

@@ -56,7 +56,7 @@ func BenchmarkQuorum(b *testing.B) {
 func TestQuorum(t *testing.T) {
 	t.Parallel()
 
-	t.Run("returns nil at k successes and cancels the calls still running", func(t *testing.T) {
+	t.Run("cancels the calls still running once k succeed", func(t *testing.T) {
 		t.Parallel()
 		start := barrier(5)
 

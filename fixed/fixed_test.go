@@ -23,7 +23,7 @@ const outOfDomain = fixed.Fixed64(math.MinInt64)
 func TestConstants(t *testing.T) {
 	t.Parallel()
 
-	t.Run("the zero value is the number zero", func(t *testing.T) {
+	t.Run("defines the zero value as Zero", func(t *testing.T) {
 		t.Parallel()
 
 		var f fixed.Fixed64
@@ -45,7 +45,7 @@ func TestConstants(t *testing.T) {
 			"Smallest must be a single raw unit")
 	})
 
-	t.Run("the domain is symmetric about zero", func(t *testing.T) {
+	t.Run("defines a domain symmetric about zero", func(t *testing.T) {
 		t.Parallel()
 		testkit.Equal(t, fixed.Min, -fixed.Max,
 			"Min must be the exact negation of Max")
@@ -77,7 +77,7 @@ func TestFromInt(t *testing.T) {
 		testkit.Equal(t, got.Raw(), int64(3e8), "3 must be 3 * 10^Scale")
 	})
 
-	t.Run("accepts the bounds", func(t *testing.T) {
+	t.Run("round-trips each bound of the range through Int", func(t *testing.T) {
 		t.Parallel()
 
 		for _, v := range []int64{0, -1, 92233720368, -92233720368} {
@@ -88,7 +88,7 @@ func TestFromInt(t *testing.T) {
 		}
 	})
 
-	t.Run("rejects a count beyond the range", func(t *testing.T) {
+	t.Run("returns ErrOverflow for a count beyond the range", func(t *testing.T) {
 		t.Parallel()
 
 		for _, v := range []int64{92233720369, -92233720369, math.MaxInt64, math.MinInt64} {
@@ -114,7 +114,7 @@ func TestFromRaw(t *testing.T) {
 		}
 	})
 
-	t.Run("rejects math.MinInt64", func(t *testing.T) {
+	t.Run("returns ErrRange for math.MinInt64", func(t *testing.T) {
 		t.Parallel()
 
 		got, err := fixed.FromRaw(math.MinInt64)
@@ -190,7 +190,7 @@ func TestInspection(t *testing.T) {
 		}
 	})
 
-	t.Run("sorts with slices.Sort and no comparison function", func(t *testing.T) {
+	t.Run("sorts with slices.Sort without a comparison function", func(t *testing.T) {
 		t.Parallel()
 
 		// The claim in the type doc: the underlying int64 satisfies
@@ -254,7 +254,7 @@ func TestNegAndAbs(t *testing.T) {
 		}
 	})
 
-	t.Run("the documented sharp edge on the excluded value", func(t *testing.T) {
+	t.Run("returns the excluded value unchanged", func(t *testing.T) {
 		t.Parallel()
 
 		// Neg documents that it returns math.MinInt64 unchanged, which
