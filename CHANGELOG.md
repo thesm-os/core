@@ -267,6 +267,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that names none. `encoding/json` and the JSON handler of `log/slog`
   wrote a class as its number and now write its name. The names are
   frozen. See ADR-0030.
+- `version.ErrOutcomeUnknown` for a write that may or may not have taken
+  effect, because the store lost its connection or the caller's
+  deadline passed after the write left the process. `errs.Classify`
+  recognises it as `Transient`, since a retry of the identical write
+  with the same idempotency key returns the original outcome. See
+  ADR-0032.
 
 ### Changed
 

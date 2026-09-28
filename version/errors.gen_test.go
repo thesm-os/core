@@ -23,6 +23,7 @@ func TestVersionSentinelErrors(t *testing.T) {
 	all := []errEntry{
 		{"ErrExists", version.ErrExists},
 		{"ErrMismatch", version.ErrMismatch},
+		{"ErrOutcomeUnknown", version.ErrOutcomeUnknown},
 	}
 
 	t.Run("prefix", func(t *testing.T) {

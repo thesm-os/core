@@ -84,5 +84,6 @@ Start from [`docs/templates/ADR.md`](../templates/ADR.md).
 | [0029](0029-errors-report-a-retry-delay.md) | An Error Can Report a Retry Delay | Accepted |
 | [0030](0030-a-class-encodes-as-its-name.md) | A Class Encodes as Its Name | Accepted |
 | [0031](0031-classify-recognises-fs-sentinels.md) | Classify Recognises the File-System Sentinels | Accepted |
+| [0032](0032-write-outcome-unknown-is-transient.md) | A Write Whose Outcome Is Unknown Classifies as Transient | Accepted |
 
 [nygard]: https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions

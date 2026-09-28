@@ -100,9 +100,10 @@ func TestClassify(t *testing.T) {
 			err  error
 			want errs.Class
 		}{
-			"version mismatch": {version.ErrMismatch, errs.Conflict},
-			"version exists":   {version.ErrExists, errs.Conflict},
-			"epoch fenced":     {epoch.ErrFenced, errs.Conflict},
+			"version mismatch":        {version.ErrMismatch, errs.Conflict},
+			"version exists":          {version.ErrExists, errs.Conflict},
+			"version outcome unknown": {version.ErrOutcomeUnknown, errs.Transient},
+			"epoch fenced":            {epoch.ErrFenced, errs.Conflict},
 		}
 		for name, tc := range cases {
 			t.Run(name, func(t *testing.T) {

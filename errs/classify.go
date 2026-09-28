@@ -76,6 +76,7 @@ var byJoinRank = [...]Class{
 //   - [fs.ErrExist] — [Conflict]
 //   - [version.ErrMismatch], [version.ErrExists] — [Conflict]
 //   - [epoch.ErrFenced] — [Conflict]
+//   - [version.ErrOutcomeUnknown] — [Transient]
 //
 // A syscall.Errno matches the fs sentinels through its Is method, so
 // EACCES and EPERM classify as [Denied], EEXIST and ENOTEMPTY as
@@ -134,6 +135,8 @@ func Classify(err error) Class {
 		errors.Is(err, version.ErrExists),
 		errors.Is(err, epoch.ErrFenced):
 		return Conflict
+	case errors.Is(err, version.ErrOutcomeUnknown):
+		return Transient
 	default:
 		return Unspecified
 	}
