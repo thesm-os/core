@@ -344,6 +344,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   middle of 65,536 objects takes 826 to 864 ns and 2 allocations of
   4,144 bytes, down from 4.1 to 4.5 ms and 3 allocations of 1,052,720
   bytes.
+- **Breaking:** `page.MapCursor[K, V]` is an alias of
+  `page.SliceCursor[page.Entry[K, V]]`, so the two are one type. The
+  methods and their contracts are unchanged. A type switch with a case
+  for each no longer compiles.
 
 ### Fixed
 

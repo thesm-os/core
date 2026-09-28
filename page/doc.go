@@ -19,6 +19,7 @@
 //   - [SliceCursor] wraps an in-memory slice as a [Cursor]. The
 //     canonical concrete impl for tests, fixtures, and adapters
 //     that already have all results in memory.
+//   - [MapCursor] is a [SliceCursor] over [Entry] key/value pairs.
 //
 // External implementations live in consumer modules — every
 // storage adapter that streams results from a remote backend
