@@ -9,6 +9,7 @@ import (
 
 	"go.thesmos.sh/testkit"
 
+	"go.thesmos.sh/core/errs"
 	"go.thesmos.sh/core/id"
 )
 
@@ -280,6 +281,7 @@ func TestFromBytes(t *testing.T) {
 			t.Parallel()
 			got, err := id.FromBytes(make([]byte, tc.size))
 			testkit.ErrorIs(t, err, id.ErrSize, "FromBytes must reject an invalid length")
+			testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrSize must classify as Invalid")
 			testkit.True(t, got.IsZero(), "FromBytes must return Zero on error")
 		})
 	}

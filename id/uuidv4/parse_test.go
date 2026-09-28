@@ -9,6 +9,7 @@ import (
 
 	"go.thesmos.sh/testkit"
 
+	"go.thesmos.sh/core/errs"
 	"go.thesmos.sh/core/id"
 	"go.thesmos.sh/core/id/uuidv4"
 	"go.thesmos.sh/core/rand"
@@ -108,6 +109,7 @@ func TestParse(t *testing.T) {
 			} else {
 				testkit.ErrorIs(t, err, uuidv4.ErrInvalidLength,
 					"wrong-length input must return ErrInvalidLength")
+				testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrInvalidLength must classify as Invalid")
 			}
 		}
 	})
@@ -120,6 +122,7 @@ func TestParse(t *testing.T) {
 		_, err := uuidv4.Parse(s)
 		testkit.ErrorIs(t, err, uuidv4.ErrInvalidFormat,
 			"misplaced hyphen must return ErrInvalidFormat")
+		testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrInvalidFormat must classify as Invalid")
 	})
 
 	t.Run("rejects non-hex character in hex segment", func(t *testing.T) {
@@ -138,6 +141,7 @@ func TestParse(t *testing.T) {
 			_, err := uuidv4.Parse(tc.input)
 			testkit.ErrorIs(t, err, uuidv4.ErrInvalidChar,
 				tc.label+" segment with non-hex char must return ErrInvalidChar")
+			testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrInvalidChar must classify as Invalid")
 		}
 	})
 }

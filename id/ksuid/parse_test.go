@@ -11,6 +11,7 @@ import (
 	"go.thesmos.sh/testkit"
 
 	"go.thesmos.sh/core/clock/fake"
+	"go.thesmos.sh/core/errs"
 	"go.thesmos.sh/core/id"
 	"go.thesmos.sh/core/id/ksuid"
 	"go.thesmos.sh/core/rand"
@@ -98,6 +99,7 @@ func TestParse(t *testing.T) {
 			_, err := ksuid.Parse(s)
 			testkit.ErrorIs(t, err, ksuid.ErrInvalidLength,
 				"wrong-length input must return ErrInvalidLength")
+			testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrInvalidLength must classify as Invalid")
 		}
 	})
 
@@ -107,6 +109,7 @@ func TestParse(t *testing.T) {
 		_, err := ksuid.Parse("!" + strings.Repeat("0", 26))
 		testkit.ErrorIs(t, err, ksuid.ErrInvalidChar,
 			"non-alphanumeric input must return ErrInvalidChar")
+		testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrInvalidChar must classify as Invalid")
 
 		// Hyphen mid-string.
 		_, err = ksuid.Parse(strings.Repeat("0", 13) + "-" + strings.Repeat("0", 13))
@@ -122,6 +125,7 @@ func TestParse(t *testing.T) {
 		_, err := ksuid.Parse(strings.Repeat("z", 27))
 		testkit.ErrorIs(t, err, ksuid.ErrOverflow,
 			"value above 2^160 must return ErrOverflow")
+		testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrOverflow must classify as Invalid")
 	})
 
 	// Alphabet-coverage corpus. Real-world KSUIDs sampled at a

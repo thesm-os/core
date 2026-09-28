@@ -22,6 +22,7 @@ import (
 	"go.thesmos.sh/core/crypto"
 	"go.thesmos.sh/core/crypto/sign"
 	signecdsa "go.thesmos.sh/core/crypto/sign/ecdsap384"
+	"go.thesmos.sh/core/errs"
 	"go.thesmos.sh/core/rand"
 	"go.thesmos.sh/core/rand/seeded"
 )
@@ -179,6 +180,7 @@ func TestNewVerifier(t *testing.T) {
 		t.Parallel()
 		_, err := signecdsa.NewVerifier(nil)
 		testkit.ErrorIs(t, err, signecdsa.ErrNilKey, "nil pub must return ErrNilKey")
+		testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrNilKey must classify as Invalid")
 	})
 
 	t.Run("rejects non-P-384 curve", func(t *testing.T) {
@@ -187,6 +189,7 @@ func TestNewVerifier(t *testing.T) {
 		testkit.NoError(t, err, "GenerateKey(P-256)")
 		_, verr := signecdsa.NewVerifier(&priv.PublicKey)
 		testkit.ErrorIs(t, verr, signecdsa.ErrWrongCurve, "P-256 pub must return ErrWrongCurve")
+		testkit.Equal(t, errs.Classify(verr), errs.Invalid, "ErrWrongCurve must classify as Invalid")
 	})
 
 	t.Run("rejects an off-curve point through KeyIDFromPub", func(t *testing.T) {
@@ -200,6 +203,7 @@ func TestNewVerifier(t *testing.T) {
 		}
 		_, err := signecdsa.NewVerifier(pub)
 		testkit.ErrorIs(t, err, signecdsa.ErrOffCurve, "off-curve point must return ErrOffCurve")
+		testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrOffCurve must classify as Invalid")
 	})
 }
 
@@ -273,6 +277,7 @@ func TestResolve(t *testing.T) {
 		t.Parallel()
 		v, err := signecdsa.Resolve([]byte("not a PKIX key"))
 		testkit.ErrorIs(t, err, signecdsa.ErrInvalidPublicKey, "malformed bytes must be refused")
+		testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrInvalidPublicKey must classify as Invalid")
 		testkit.True(t, v == nil, "the Verifier must be a nil interface")
 	})
 }

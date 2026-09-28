@@ -14,6 +14,7 @@ import (
 	"go.thesmos.sh/testkit"
 
 	"go.thesmos.sh/core/clock"
+	"go.thesmos.sh/core/errs"
 )
 
 func TestInstantIsZero(t *testing.T) {
@@ -318,8 +319,10 @@ func TestInstantUnmarshalBinaryRejectsWrongLength(t *testing.T) {
 		t.Run("rejects length "+strconv.Itoa(n), func(t *testing.T) {
 			t.Parallel()
 			var i clock.Instant
-			testkit.ErrorIs(t, i.UnmarshalBinary(make([]byte, n)), clock.ErrInstantSize,
+			err := i.UnmarshalBinary(make([]byte, n))
+			testkit.ErrorIs(t, err, clock.ErrInstantSize,
 				"UnmarshalBinary must reject a wrong-length encoding")
+			testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrInstantSize must classify as Invalid")
 		})
 	}
 }

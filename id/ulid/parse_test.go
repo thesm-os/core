@@ -11,6 +11,7 @@ import (
 	"go.thesmos.sh/testkit"
 
 	"go.thesmos.sh/core/clock/fake"
+	"go.thesmos.sh/core/errs"
 	"go.thesmos.sh/core/id"
 	"go.thesmos.sh/core/id/ulid"
 	"go.thesmos.sh/core/rand"
@@ -183,6 +184,7 @@ func TestParseULID(t *testing.T) {
 			_, err := ulid.ParseULID(s)
 			testkit.ErrorIs(t, err, ulid.ErrInvalidLength,
 				"wrong-length input must return ErrInvalidLength")
+			testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrInvalidLength must classify as Invalid")
 		}
 	})
 
@@ -192,6 +194,7 @@ func TestParseULID(t *testing.T) {
 		_, err := ulid.ParseULID("U" + strings.Repeat("0", 25))
 		testkit.ErrorIs(t, err, ulid.ErrInvalidChar,
 			"'U' (excluded from Crockford) must return ErrInvalidChar")
+		testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrInvalidChar must classify as Invalid")
 
 		// Punctuation: not in alphabet at any position.
 		_, err = ulid.ParseULID(strings.Repeat("0", 10) + "!" + strings.Repeat("0", 15))
@@ -207,6 +210,7 @@ func TestParseULID(t *testing.T) {
 		_, err := ulid.ParseULID("8" + strings.Repeat("0", 25))
 		testkit.ErrorIs(t, err, ulid.ErrInvalidTimestamp,
 			"first char '8' must return ErrInvalidTimestamp")
+		testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrInvalidTimestamp must classify as Invalid")
 
 		// 'Z' (value 31): top 2 bits non-zero.
 		_, err = ulid.ParseULID("Z" + strings.Repeat("0", 25))

@@ -179,6 +179,7 @@ func TestNewLoader(t *testing.T) {
 			t.Parallel()
 			_, err := batch.NewLoader(tc.cfg, tc.fn)
 			testkit.ErrorIs(t, err, batch.ErrConfig, "an invalid config must be rejected")
+			testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrConfig must classify as Invalid")
 		})
 	}
 }

@@ -16,6 +16,7 @@ import (
 	"go.thesmos.sh/core/crypto"
 	"go.thesmos.sh/core/crypto/sign"
 	signed25519 "go.thesmos.sh/core/crypto/sign/ed25519"
+	"go.thesmos.sh/core/errs"
 	"go.thesmos.sh/core/rand"
 	"go.thesmos.sh/core/rand/seeded"
 )
@@ -168,6 +169,7 @@ func TestResolve(t *testing.T) {
 		t.Parallel()
 		v, err := signed25519.Resolve(make([]byte, 31))
 		testkit.ErrorIs(t, err, signed25519.ErrInvalidPublicKeySize, "a 31-byte key must be refused")
+		testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrInvalidPublicKeySize must classify as Invalid")
 		testkit.True(t, v == nil, "the Verifier must be a nil interface")
 	})
 }
@@ -182,6 +184,7 @@ func TestNew(t *testing.T) {
 			_, err := signed25519.New(stded25519.PrivateKey(c))
 			testkit.ErrorIs(t, err, signed25519.ErrInvalidPrivateKeySize,
 				fmt.Sprintf("len %d must be rejected as wrong-size", len(c)))
+			testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrInvalidPrivateKeySize must classify as Invalid")
 		}
 	})
 

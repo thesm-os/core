@@ -15,8 +15,8 @@ import (
 var (
 	// ErrLimit is returned by [Each], [Map], [Stream], [Quorum] and
 	// [Run] when limit is below one, before they start a goroutine or
-	// call the caller's function.
-	ErrLimit = errors.New("task: limit must be greater than zero")
+	// call the caller's function. It classifies as Invalid.
+	ErrLimit = errs.WithClass(errors.New("task: limit must be greater than zero"), errs.Invalid)
 
 	// ErrPeriod is returned by [Every] for a period that is not
 	// positive, a negative jitter, or a positive jitter without a

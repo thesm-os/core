@@ -14,6 +14,7 @@ import (
 
 	"go.thesmos.sh/testkit"
 
+	"go.thesmos.sh/core/errs"
 	"go.thesmos.sh/core/task"
 )
 
@@ -373,6 +374,7 @@ func TestScope(t *testing.T) {
 					})
 
 					testkit.ErrorIs(t, err, task.ErrLimit, "a limit below one must be rejected")
+					testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrLimit must classify as Invalid")
 					testkit.Equal(t, runs.Load(), int32(0), "a rejected call must not run a task")
 				})
 			}

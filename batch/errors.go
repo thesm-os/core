@@ -16,7 +16,11 @@ var (
 	// ErrConfig is returned by [NewLoader] when a required field is
 	// missing or out of range. A window left at zero would coalesce
 	// nothing, which looks exactly like a loader that is working.
-	ErrConfig = errors.New("batch: invalid configuration")
+	//
+	// Classifies as Invalid under
+	// [go.thesmos.sh/core/errs.Classify]: the caller's configuration is
+	// wrong, and retrying cannot help.
+	ErrConfig = errs.WithClass(errors.New("batch: invalid configuration"), errs.Invalid)
 
 	// ErrClosed reports a [Loader.Load] or [Loader.LoadAll] on a
 	// Loader whose [Loader.Close] has returned.

@@ -13,6 +13,7 @@ import (
 
 	"go.thesmos.sh/testkit"
 
+	"go.thesmos.sh/core/errs"
 	"go.thesmos.sh/core/pool"
 )
 
@@ -81,6 +82,7 @@ func TestNewBounded(t *testing.T) {
 			// condition.
 			_, err := pool.NewBounded(limit, func() int { return 0 })
 			testkit.ErrorIs(t, err, pool.ErrLimit, "a non-positive limit must be rejected")
+			testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrLimit must classify as Invalid")
 		})
 	}
 }
