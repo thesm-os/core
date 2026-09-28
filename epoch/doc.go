@@ -41,7 +41,7 @@
 // within-producer position.
 //
 // A typical leader composition uses both: a ULID-shaped identifier
-// names the leadership tenure across the cluster; an [Epoch.Counter]
+// names the leadership tenure across the cluster; a [Counter]
 // issues sequence positions within the tenure.
 //
 // # Comparison with version

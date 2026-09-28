@@ -375,6 +375,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unwraps, because both AES-GCM constructions write the nonce at the
   same offset. `Wrap` does not read from the `rand.Rand` given to
   `New`, which supplies only the keys `GenerateKey` returns.
+- The package documentation of `rand`, `epoch`, `id` and
+  `crypto/sign/ecdsap384` refers only to packages and symbols that
+  exist: `rand/constant` for the renamed `rand/fixed`, `Counter` for
+  `Epoch.Counter`, and `tlog.LeafHash` and `tlog.Root` for the removed
+  `crypto.Hasher.Combine`. The `id` documentation no longer refers to
+  a `crypto/kem` package.
 
 ## [0.6.1] - 2026-08-05
 

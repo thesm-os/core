@@ -28,9 +28,9 @@
 // # Cost vs Ed25519: prefer BatchRoot for ECDSA P-384
 //
 // ECDSA P-384 [Signer.Sign] is approximately 10× slower than
-// [crypto/sign/ed25519.Signer.Sign] and allocates ~60 times per
-// call (~6 KiB of garbage). Both costs are structural: stdlib's
-// [crypto/ecdsa.SignASN1] uses [math/big] arithmetic that
+// [go.thesmos.sh/core/crypto/sign/ed25519.Signer.Sign] and allocates
+// ~60 times per call (~6 KiB of garbage). Both costs are structural:
+// stdlib's [crypto/ecdsa.SignASN1] uses [math/big] arithmetic that
 // allocates per-operation, and the verification path
 // [crypto/ecdsa.VerifyASN1] is similarly allocation-heavy
 // (~17 allocs / call). These are not addressable from this
@@ -39,8 +39,9 @@
 // Hot-path consumers signing many records under ECDSA P-384
 // MUST use a batch-root pattern instead of per-record signing:
 //
-//   - Compute a Merkle root over the records via
-//     [crypto.Hasher.NewStream] / [crypto.Hasher.Combine].
+//   - Compute the Merkle root of the records with
+//     [go.thesmos.sh/core/tlog.LeafHash] and
+//     [go.thesmos.sh/core/tlog.Root].
 //   - Sign the root once.
 //   - Verifiers re-derive the root from the records and verify
 //     the single signature.

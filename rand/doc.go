@@ -7,22 +7,25 @@
 // The seam exists so libraries can be tested deterministically: the
 // production source draws bytes from [crypto/rand] (cryptographic)
 // or a PCG generator (non-cryptographic); under test, callers
-// substitute a deterministic [seeded.Rand] that produces the same
-// byte stream from a known seed.
+// substitute a deterministic [go.thesmos.sh/core/rand/seeded.Rand]
+// that produces the same byte stream from a known seed.
 //
 // # Crypto-grade vs. non-crypto-grade
 //
 // [Rand] is a shape, not a strength claim. Some implementations are
-// cryptographically secure ([crypto], [seeded]); others are not
-// ([pcg], [fixed]). Implementations document their security
-// properties in their own godoc — pick the right implementation for
-// your use case:
+// cryptographically secure ([go.thesmos.sh/core/rand/crypto],
+// [go.thesmos.sh/core/rand/seeded]); others are not
+// ([go.thesmos.sh/core/rand/pcg], [go.thesmos.sh/core/rand/constant]).
+// Implementations document their security properties in their own
+// godoc — pick the right implementation for your use case:
 //
 //   - Key generation, nonces, tokens, anything an attacker would
-//     benefit from predicting → use [crypto] or [seeded].
+//     benefit from predicting → use [go.thesmos.sh/core/rand/crypto]
+//     or [go.thesmos.sh/core/rand/seeded].
 //   - Sampling, shuffling, A/B variant assignment, fault injection
-//     → [pcg] is faster and adequate.
-//   - Tests asserting on specific randomness branches → [fixed].
+//     → [go.thesmos.sh/core/rand/pcg] is faster and adequate.
+//   - Tests asserting on specific randomness branches →
+//     [go.thesmos.sh/core/rand/constant].
 //
 // # Interface shape
 //

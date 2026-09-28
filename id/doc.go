@@ -16,12 +16,11 @@
 // slice-allocation, slice-aliasing, and map-key-incompatibility
 // problems of a `[]byte`-shaped identifier.
 //
-// Identifiers shorter than 128 bits (uint64 counters) belong to
-// [go.thesmos.sh/core/epoch]. Identifiers larger than 256 bits
-// (Ed25519 public keys at 32 B fit in [Size256]; ML-DSA
-// signatures and ML-KEM key shares are key material, not
-// identifiers — those land in [crypto/sign] and [crypto/kem]
-// when those seams ship).
+// Identifiers shorter than 128 bits, such as uint64 counters, belong
+// to [go.thesmos.sh/core/epoch]. A 32-byte Ed25519 public key fits in
+// [Size256]. Values wider than 256 bits, such as ML-DSA public keys
+// and signatures, are key material rather than identifiers, and
+// [go.thesmos.sh/core/crypto/sign] handles them.
 //
 // # Provided implementations
 //
