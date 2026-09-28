@@ -85,5 +85,6 @@ Start from [`docs/templates/ADR.md`](../templates/ADR.md).
 | [0030](0030-a-class-encodes-as-its-name.md) | A Class Encodes as Its Name | Accepted |
 | [0031](0031-classify-recognises-fs-sentinels.md) | Classify Recognises the File-System Sentinels | Accepted |
 | [0032](0032-write-outcome-unknown-is-transient.md) | A Write Whose Outcome Is Unknown Classifies as Transient | Accepted |
+| [0033](0033-every-sentinel-has-a-class.md) | Every Core Sentinel Has a Class or a Stated Reason | Accepted |
 
 [nygard]: https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions

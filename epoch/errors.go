@@ -7,7 +7,10 @@ package epoch
 
 import "errors"
 
-// Sentinel errors for the fencing laws and the binary encoding.
+// Sentinel errors returned by the fence checks and the binary encoding.
+// They are plain sentinels, because [go.thesmos.sh/core/errs] imports
+// this package, and [go.thesmos.sh/core/errs.Classify] recognises each
+// of them on an error's chain.
 var (
 	// ErrFenced reports that a write's fence epoch is behind the
 	// scope's watermark: another holder has been granted a later
@@ -18,13 +21,14 @@ var (
 	// writing, release state derived from the revoked tenure, and
 	// re-acquire authority through whatever election issued the
 	// epoch. Only then is retry sound. The sentinel is distinct from
-	// [go.thesmos.sh/core/version.ErrMismatch] — both classify as
-	// Conflict, but errors.Is must be able to separate "re-read and
-	// retry" from "abdicate and re-elect".
+	// [go.thesmos.sh/core/version.ErrMismatch]. Both classify as
+	// Conflict, and errors.Is separates "re-read and retry" from
+	// "abdicate and re-elect".
 	ErrFenced = errors.New("epoch: fence epoch superseded")
 
 	// ErrSize is returned by [Epoch.UnmarshalBinary] when the input
-	// is not exactly [EpochSize] bytes. A truncated read is a decode
-	// error, never a panic and never a partial value.
+	// is not exactly [EpochSize] bytes. A truncated read returns this
+	// error instead of a panic or a partial value. Classifies as
+	// Invalid under [go.thesmos.sh/core/errs.Classify].
 	ErrSize = errors.New("epoch: encoded epoch must be 8 bytes")
 )

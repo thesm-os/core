@@ -14,6 +14,7 @@ import (
 
 	"go.thesmos.sh/core/crypto"
 	"go.thesmos.sh/core/crypto/aesgcm"
+	"go.thesmos.sh/core/errs"
 	"go.thesmos.sh/core/rand/constant"
 	randcrypto "go.thesmos.sh/core/rand/crypto"
 )
@@ -258,18 +259,21 @@ func TestPeekAlgorithm(t *testing.T) {
 		// Declares a name longer than the bytes that follow.
 		_, err := crypto.PeekAlgorithm([]byte{crypto.EnvelopeVersion, 8, 'a', 'b'})
 		testkit.ErrorIs(t, err, crypto.ErrCiphertextShort, "the name must fit")
+		testkit.Equal(t, errs.Classify(err), errs.Integrity, "ErrCiphertextShort must classify as Integrity")
 	})
 
 	t.Run("rejects an unknown version", func(t *testing.T) {
 		t.Parallel()
 		_, err := crypto.PeekAlgorithm([]byte{crypto.EnvelopeVersion + 1, 1, 'x'})
 		testkit.ErrorIs(t, err, crypto.ErrEnvelopeVersion, "an unknown layout must be refused")
+		testkit.Equal(t, errs.Classify(err), errs.Unsupported, "ErrEnvelopeVersion must classify as Unsupported")
 	})
 
 	t.Run("rejects a zero-length name", func(t *testing.T) {
 		t.Parallel()
 		_, err := crypto.PeekAlgorithm([]byte{crypto.EnvelopeVersion, 0})
 		testkit.ErrorIs(t, err, crypto.ErrAlgorithmSize, "an envelope must name something")
+		testkit.Equal(t, errs.Classify(err), errs.Integrity, "ErrAlgorithmSize must classify as Integrity")
 	})
 
 	t.Run("accepts a header with nothing after it", func(t *testing.T) {
@@ -317,6 +321,7 @@ func TestOpenRejections(t *testing.T) {
 		_, err := crypto.Open(other, sealed, []byte("aad"))
 		testkit.ErrorIs(t, err, crypto.ErrAlgorithmMismatch,
 			"the envelope names an algorithm this AEAD is not")
+		testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrAlgorithmMismatch must classify as Invalid")
 	})
 
 	t.Run("a zero-length name", func(t *testing.T) {

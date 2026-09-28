@@ -170,6 +170,7 @@ func TestNewRetrier(t *testing.T) {
 
 			_, err := resilience.NewRetrier(cfg)
 			testkit.ErrorIs(t, err, resilience.ErrConfig, "an invalid config must be rejected")
+			testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrConfig must classify as Invalid")
 		})
 	}
 

@@ -24,6 +24,7 @@ import (
 
 	"go.thesmos.sh/core/crypto"
 	"go.thesmos.sh/core/crypto/aesgcm"
+	"go.thesmos.sh/core/errs"
 	"go.thesmos.sh/core/rand"
 	"go.thesmos.sh/core/rand/constant"
 	randcrypto "go.thesmos.sh/core/rand/crypto"
@@ -134,6 +135,7 @@ func TestNewChunkHeader(t *testing.T) {
 		for _, size := range []int{-1, 0, math.MaxUint32 + 1} {
 			h, err := crypto.NewChunkHeader(randcrypto.New(), size)
 			testkit.ErrorIs(t, err, crypto.ErrChunkSize, "an unrepresentable chunk size must be refused")
+			testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrChunkSize must classify as Invalid")
 			testkit.Equal(t, h, crypto.ChunkHeader{}, "a refused header must be the zero header")
 		}
 	})
@@ -222,7 +224,9 @@ func TestChunkHeaderBinary(t *testing.T) {
 			"a header of zeroes": make([]byte, crypto.ChunkHeaderSize),
 		} {
 			got := h
-			testkit.ErrorIs(t, got.UnmarshalBinary(data), crypto.ErrChunkHeader, name+" must be refused")
+			err = got.UnmarshalBinary(data)
+			testkit.ErrorIs(t, err, crypto.ErrChunkHeader, name+" must be refused")
+			testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrChunkHeader must classify as Invalid")
 			testkit.Equal(t, got, h, name+" must leave the receiver unchanged")
 		}
 	})

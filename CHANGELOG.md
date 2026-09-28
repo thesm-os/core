@@ -400,6 +400,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Do` return every failure with a delay. The documentation of `Do`
   states that a transient failure does not mean `fn` had no effect. See
   ADR-0029.
+- The sentinels of `crypto` classify under `errs.Classify`.
+  `ErrCiphertextShort` and `ErrAlgorithmSize` classify as `Integrity`,
+  `ErrEnvelopeVersion` as `Unsupported`, `ErrKeyID` as `NotFound` and
+  `ErrKeyDestroyed` as `Denied`. `ErrDigestSize`, `ErrDigestZero`,
+  `ErrKeySize`, `ErrAlgorithmMismatch`, `ErrXOFSqueezing`, `ErrChunkSize`
+  and `ErrChunkHeader` classify as `Invalid`. `kek.ErrKeyIDMismatch`
+  classifies as `Integrity`, `resilience.ErrConfig` as `Invalid`, and
+  `errs.Classify` recognises `epoch.ErrSize` as `Invalid`. They
+  classified as Unspecified, so a `resilience.Breaker` whose `TripOn`
+  lists `errs.Unspecified` no longer counts them as dependency failures.
+  Every exported sentinel of core has a class, apart from
+  `task.ErrNoQuorum`, `resilience.ErrFull` and `resilience.ErrWaitTimeout`,
+  whose documentation states why. See ADR-0033.
 
 ### Fixed
 

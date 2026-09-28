@@ -23,5 +23,9 @@ var (
 	// ErrKeyIDMismatch is returned by [New] and [NewAAD] when the
 	// unwrapped record is bound to another key ID: the stored record was
 	// swapped, or the caller named the wrong key ID.
-	ErrKeyIDMismatch = errors.New("kek: record bound to another key ID")
+	//
+	// Classifies as Integrity under [go.thesmos.sh/core/errs.Classify]:
+	// the record failed the check of its binding, and a retry reads the
+	// same record.
+	ErrKeyIDMismatch = errs.WithClass(errors.New("kek: record bound to another key ID"), errs.Integrity)
 )

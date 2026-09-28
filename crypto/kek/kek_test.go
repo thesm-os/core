@@ -221,6 +221,7 @@ func TestNew(t *testing.T) {
 		t.Parallel()
 		k, err := kek.New(t.Context(), parent, randcrypto.New(), keyIDA, wrappedB)
 		testkit.ErrorIs(t, err, kek.ErrKeyIDMismatch, "a swapped record must be refused")
+		testkit.Equal(t, errs.Classify(err), errs.Integrity, "ErrKeyIDMismatch must classify as Integrity")
 		testkit.True(t, k == nil, "a refusal must return no Keeper")
 	})
 

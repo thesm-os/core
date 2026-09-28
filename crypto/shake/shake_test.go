@@ -13,6 +13,7 @@ import (
 	"go.thesmos.sh/core/coretest/cryptotest"
 	"go.thesmos.sh/core/crypto"
 	"go.thesmos.sh/core/crypto/shake"
+	"go.thesmos.sh/core/errs"
 )
 
 var (
@@ -125,6 +126,7 @@ func TestWriteAfterReadDoesNotPanic(t *testing.T) {
 
 			n, err := s.Write([]byte("too late"))
 			testkit.ErrorIs(t, err, crypto.ErrXOFSqueezing, "a write after a read must be an error")
+			testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrXOFSqueezing must classify as Invalid")
 			testkit.Equal(t, n, 0, "a rejected write must absorb nothing")
 
 			// The stream stays usable for reading afterwards — a

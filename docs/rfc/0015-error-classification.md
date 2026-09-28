@@ -290,6 +290,3 @@ is a value and not an error.
 
 - A `slog.Attr` bridge so a classified error logs its class without the
   caller extracting it, once ADR-0009's bridge lands.
-- Whether other `core` packages should declare their own sentinels and
-  document a class, as `version` does here. `page` and `id` both have
-  candidates.

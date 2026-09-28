@@ -71,6 +71,7 @@ var byJoinRank = [...]Class{
 //
 //   - [fs.ErrPermission] — [Denied]
 //   - [fs.ErrInvalid], [fs.ErrClosed] — [Invalid]
+//   - [epoch.ErrSize] — [Invalid]
 //   - [errors.ErrUnsupported] — [Unsupported]
 //   - [fs.ErrNotExist] — [NotFound]
 //   - [fs.ErrExist] — [Conflict]
@@ -124,7 +125,7 @@ func Classify(err error) Class {
 	switch {
 	case errors.Is(err, fs.ErrPermission):
 		return Denied
-	case errors.Is(err, fs.ErrInvalid), errors.Is(err, fs.ErrClosed):
+	case errors.Is(err, fs.ErrInvalid), errors.Is(err, fs.ErrClosed), errors.Is(err, epoch.ErrSize):
 		return Invalid
 	case errors.Is(err, errors.ErrUnsupported):
 		return Unsupported

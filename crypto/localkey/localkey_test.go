@@ -20,6 +20,7 @@ import (
 	"go.thesmos.sh/core/crypto"
 	"go.thesmos.sh/core/crypto/aesgcm"
 	"go.thesmos.sh/core/crypto/localkey"
+	"go.thesmos.sh/core/errs"
 	randcrypto "go.thesmos.sh/core/rand/crypto"
 )
 
@@ -222,6 +223,7 @@ func TestDestroy(t *testing.T) {
 		keeper := mustNew(t, testKeyID, rootKey)
 		_, err := keeper.Destroy(t.Context(), "local/not-this-one")
 		testkit.ErrorIs(t, err, crypto.ErrKeyID, "Destroy must reject a key ID it does not have")
+		testkit.Equal(t, errs.Classify(err), errs.NotFound, "ErrKeyID must classify as NotFound")
 	})
 
 	t.Run("returns the time of the first call on every call", func(t *testing.T) {
@@ -260,6 +262,7 @@ func TestDestroy(t *testing.T) {
 
 		_, err = keeper.Unwrap(t.Context(), wrapped)
 		testkit.ErrorIs(t, err, crypto.ErrKeyDestroyed, "Unwrap must name the cause")
+		testkit.Equal(t, errs.Classify(err), errs.Denied, "ErrKeyDestroyed must classify as Denied")
 	})
 }
 

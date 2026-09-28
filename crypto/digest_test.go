@@ -10,6 +10,7 @@ import (
 	"go.thesmos.sh/testkit"
 
 	"go.thesmos.sh/core/crypto"
+	"go.thesmos.sh/core/errs"
 )
 
 func TestDigestSizeConstants(t *testing.T) {
@@ -315,6 +316,7 @@ func TestDigestFromBytes(t *testing.T) {
 			t.Parallel()
 			got, err := crypto.DigestFromBytes(make([]byte, tc.size))
 			testkit.ErrorIs(t, err, crypto.ErrDigestSize, "DigestFromBytes must reject an invalid length")
+			testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrDigestSize must classify as Invalid")
 			testkit.True(t, got.IsZero(), "DigestFromBytes must return the zero Digest on error")
 		})
 	}
@@ -395,6 +397,7 @@ func TestDigestZeroHasNoBinaryEncoding(t *testing.T) {
 		var zero crypto.Digest
 		got, err := zero.MarshalBinary()
 		testkit.ErrorIs(t, err, crypto.ErrDigestZero, "the zero Digest must not marshal")
+		testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrDigestZero must classify as Invalid")
 		testkit.Equal(t, got, []byte(nil), "MarshalBinary must return nil on error")
 	})
 

@@ -16,6 +16,7 @@ import (
 	"go.thesmos.sh/core/coretest/cryptotest"
 	"go.thesmos.sh/core/crypto"
 	"go.thesmos.sh/core/crypto/localkey"
+	"go.thesmos.sh/core/errs"
 	"go.thesmos.sh/core/rand/constant"
 	randcrypto "go.thesmos.sh/core/rand/crypto"
 )
@@ -204,6 +205,7 @@ func TestGenerateKey(t *testing.T) {
 		for _, size := range []int{0, -1} {
 			_, _, err := crypto.GenerateKey(t.Context(), cryptotest.NewKeeperStub(t), randcrypto.New(), size)
 			testkit.ErrorIs(t, err, crypto.ErrKeySize, "a non-positive size must be refused")
+			testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrKeySize must classify as Invalid")
 		}
 	})
 
