@@ -356,6 +356,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `page.SliceCursor[page.Entry[K, V]]`, so the two are one type. The
   methods and their contracts are unchanged. A type switch with a case
   for each no longer compiles.
+- `errs.Classify` classifies an error whose `Unwrap` returns `[]error`,
+  such as one from `errors.Join`, as the class of highest rank among its
+  branches: `Integrity`, `Denied`, `Invalid`, `Unsupported`, `NotFound`,
+  `Conflict`, then `Transient`. It took the class of the first
+  classified branch, so the class of a `task.Quorum` failure depended on
+  which call failed first, and `errs.Retryable` could report true for a
+  join with an `Integrity` failure in it. See ADR-0028.
 
 ### Fixed
 

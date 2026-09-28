@@ -175,7 +175,7 @@ func TestQuorum(t *testing.T) {
 		testkit.ErrorIs(t, err, cause, "the end of ctx must be the result")
 	})
 
-	t.Run("classifies ErrNoQuorum as its first classified failure", func(t *testing.T) {
+	t.Run("classifies ErrNoQuorum as the class of its only failure", func(t *testing.T) {
 		t.Parallel()
 		err := task.Quorum(t.Context(), 1, 1, indices(1), func(context.Context, int, int) error {
 			return errs.WithClass(errBoom, errs.Transient)
@@ -183,6 +183,24 @@ func TestQuorum(t *testing.T) {
 
 		testkit.ErrorIs(t, err, task.ErrNoQuorum, "the only call failing must make the quorum impossible")
 		testkit.Equal(t, errs.Classify(err), errs.Transient, "the failure's class must be the result's class")
+	})
+
+	t.Run("classifies ErrNoQuorum as the class of highest rank among its failures", func(t *testing.T) {
+		t.Parallel()
+		busy := errs.WithClass(errBoom, errs.Transient)
+		corrupt := errs.WithClass(testkit.TestError("corrupt"), errs.Integrity)
+
+		// One worker claims the items in order, so the failures are
+		// recorded in the order of the slice.
+		for _, failures := range [][]error{{busy, corrupt}, {corrupt, busy}} {
+			err := task.Quorum(t.Context(), 1, 1, failures, func(_ context.Context, _ int, f error) error {
+				return f
+			})
+
+			testkit.ErrorIs(t, err, task.ErrNoQuorum, "two failures of two must make a quorum of one impossible")
+			testkit.Equal(t, errs.Classify(err), errs.Integrity,
+				"the class must not depend on the order of the failures")
+		}
 	})
 
 	for _, k := range []int{-1, 0, 4} {

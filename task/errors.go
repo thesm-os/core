@@ -33,8 +33,9 @@ var (
 	// ErrNoQuorum is returned by [Quorum], joined with the failures
 	// that decided it, when fewer than k calls can still succeed. It
 	// has no class of its own, so
-	// [go.thesmos.sh/core/errs.Classify] returns the class of the
-	// first classified failure joined with it.
+	// [go.thesmos.sh/core/errs.Classify] returns the class of highest
+	// rank among the failures joined with it, whatever order they
+	// failed in.
 	ErrNoQuorum = errors.New("task: quorum not met")
 
 	// ErrClosed is returned by [Group.Go] when it is called after [Run]

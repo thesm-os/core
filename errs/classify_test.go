@@ -36,6 +36,19 @@ func (nilUnwrapError) Unwrap() error { return nil }
 
 var errSentinel = errors.New("errs_test: sentinel")
 
+// byRank lists the classes from the lowest rank to the highest, in the
+// order that the documentation of [errs.Classify] gives for joins.
+var byRank = []errs.Class{
+	errs.Unspecified,
+	errs.Transient,
+	errs.Conflict,
+	errs.NotFound,
+	errs.Unsupported,
+	errs.Invalid,
+	errs.Denied,
+	errs.Integrity,
+}
+
 func TestClassify(t *testing.T) {
 	t.Parallel()
 
@@ -152,6 +165,62 @@ func TestClassify(t *testing.T) {
 			"a tree without a Classifier must be Unspecified")
 	})
 
+	t.Run("returns the class of higher rank for a join of any two classes", func(t *testing.T) {
+		t.Parallel()
+
+		// Every ordered pair, so both branch orders of each pair are
+		// covered and the result cannot depend on the order.
+		for i, a := range byRank {
+			for j, b := range byRank {
+				joined := errors.Join(stubError{class: a}, stubError{class: b})
+				testkit.Equal(t, errs.Classify(joined), byRank[max(i, j)],
+					"a join of "+a.String()+" and "+b.String()+" must take the class of higher rank")
+			}
+		}
+	})
+
+	t.Run("returns the class of a recognised sentinel in a join branch", func(t *testing.T) {
+		t.Parallel()
+		joined := errors.Join(stubError{class: errs.Transient}, fmt.Errorf("lookup: %w", fs.ErrNotExist))
+		testkit.Equal(t, errs.Classify(joined), errs.NotFound,
+			"a branch must classify as it would alone, recognition included")
+	})
+
+	t.Run("returns the class of higher rank for a join inside a join", func(t *testing.T) {
+		t.Parallel()
+		inner := errors.Join(stubError{class: errs.Transient}, stubError{class: errs.Denied})
+		joined := errors.Join(inner, stubError{class: errs.Conflict})
+		testkit.Equal(t, errs.Classify(joined), errs.Denied, "a nested join must classify as its branches rank")
+	})
+
+	t.Run("returns the class of higher rank for a join beneath a wrap", func(t *testing.T) {
+		t.Parallel()
+		joined := errors.Join(stubError{class: errs.Transient}, stubError{class: errs.Integrity})
+		testkit.Equal(t, errs.Classify(fmt.Errorf("op: %w", joined)), errs.Integrity,
+			"Classify must find a join through a wrap")
+	})
+
+	t.Run("returns the class of a Classifier above a join", func(t *testing.T) {
+		t.Parallel()
+		joined := errors.Join(stubError{class: errs.Integrity})
+		testkit.Equal(t, errs.Classify(errs.WithClass(joined, errs.Transient)), errs.Transient,
+			"a layer that tags a join must reclassify it")
+	})
+
+	t.Run("ignores a class outside the eight in a join", func(t *testing.T) {
+		t.Parallel()
+		joined := errors.Join(stubError{class: errs.Class(99)}, stubError{class: errs.Transient})
+		testkit.Equal(t, errs.Classify(joined), errs.Transient,
+			"an out-of-range class must rank with Unspecified")
+	})
+
+	t.Run("returns Unspecified for a join whose only class is outside the eight", func(t *testing.T) {
+		t.Parallel()
+		joined := errors.Join(stubError{class: errs.Class(99)})
+		testkit.Equal(t, errs.Classify(joined), errs.Unspecified,
+			"a join without a class of the eight must be Unspecified")
+	})
+
 	t.Run("an error unwrapping to nil is Unspecified", func(t *testing.T) {
 		t.Parallel()
 		// Unwrap returning nil ends the walk without a Classifier
@@ -200,6 +269,18 @@ func TestRetryable(t *testing.T) {
 		t.Parallel()
 		testkit.False(t, errs.Retryable(nil), "Retryable(nil) must be false")
 	})
+
+	t.Run("reports true for a join whose classified branches are all Transient", func(t *testing.T) {
+		t.Parallel()
+		joined := errors.Join(stubError{class: errs.Transient}, errSentinel, stubError{class: errs.Transient})
+		testkit.True(t, errs.Retryable(joined), "an unclassified branch must not stop the retry")
+	})
+
+	t.Run("reports false for a join with an Integrity branch after a Transient one", func(t *testing.T) {
+		t.Parallel()
+		joined := errors.Join(stubError{class: errs.Transient}, stubError{class: errs.Integrity})
+		testkit.False(t, errs.Retryable(joined), "one Integrity failure must stop the retry")
+	})
 }
 
 func TestWithClass(t *testing.T) {
@@ -244,12 +325,26 @@ func TestWithClass(t *testing.T) {
 		inner := errs.WithClass(errSentinel, errs.Transient)
 		outer := errs.WithClass(inner, errs.Denied)
 		testkit.Equal(t, errs.Classify(outer), errs.Denied,
-			"Classify must return the first Classifier in the tree")
+			"Classify must return the outermost Classifier on the chain")
 	})
 }
 
 func BenchmarkClassify(b *testing.B) {
 	err := fmt.Errorf("outer: %w", stubError{class: errs.Transient})
+	b.ReportAllocs()
+	var sink errs.Class
+	for b.Loop() {
+		sink = errs.Classify(err)
+	}
+	runtime.KeepAlive(sink)
+}
+
+func BenchmarkClassifyJoin(b *testing.B) {
+	err := errors.Join(
+		fmt.Errorf("item 0: %w", stubError{class: errs.Transient}),
+		fmt.Errorf("item 1: %w", fs.ErrNotExist),
+		fmt.Errorf("item 2: %w", stubError{class: errs.Integrity}),
+	)
 	b.ReportAllocs()
 	var sink errs.Class
 	for b.Loop() {
