@@ -232,11 +232,11 @@ func (l *List[T]) Truncate(n int) {
 		))
 	}
 
-	for i := n; i < end; {
+	// Each pass clears the dropped elements of one chunk and moves i to
+	// the start of the next chunk, so i grows on every pass.
+	for i := n; i < end; i = (i>>listShift + 1) << listShift {
 		c := l.chunks[i>>listShift][i&listMask:]
-		c = c[:min(len(c), end-i)]
-		clear(c)
-		i += len(c)
+		clear(c[:min(len(c), end-i)])
 	}
 
 	l.cur, l.base, l.off, l.end = nil, n, 0, 0
