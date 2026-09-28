@@ -106,6 +106,7 @@ Start from [`docs/templates/RFC.md`](../templates/RFC.md).
 | [0041](0041-chunked-authenticated-encryption.md) | Chunked Authenticated Encryption | Draft |
 | [0042](0042-intermediate-kek.md) | Intermediate Key-Encryption Keys | Draft |
 | [0043](0043-btree-ordered-maps.md) | B-Tree Ordered Maps | Accepted |
+| [0044](0044-nested-signature-policies.md) | Nested Signature Policies | Accepted |
 
 ## Canonical first RFC
 
