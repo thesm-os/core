@@ -281,6 +281,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `encoding/gob`, now encode an `ID`, whose fields are unexported.
   `AppendBinary` into a buffer with room and `UnmarshalBinary` do not
   allocate.
+- `sign.AllOf`, `sign.AtLeast` and `sign.NewPolicyTree`. A `sign.Policy`
+  is a tree of key sets and of thresholds over them, such as the nested
+  groups of a C2SP tlog-policy, and `NewPolicy` builds the tree of one
+  level. `Check` verifies at most one signature per key of the tree, and
+  none when the signatures it received cannot satisfy the root. The
+  children of the root are the parties that an excluded key removes. A
+  tree is at most 64 rules deep, and `Check` does not allocate on
+  success for up to 64 keys and 128 rules. See RFC-0044 and ADR-0034.
 
 ### Changed
 

@@ -74,11 +74,14 @@
 // table of the algorithms the caller trusts. It has no default entries,
 // so a stored name selects only an algorithm the caller listed.
 //
-// A [Policy] requires valid signatures from a threshold of parties. A
-// party is one or more keys that must all sign, which expresses a
-// threshold of approvers, a quorum of witnesses and a hybrid
-// signature. [Policy.Check] counts each key once and verifies at most
-// one signature per key of the policy.
+// A [Policy] requires valid signatures from a tree of rules. An [AllOf]
+// rule is a set of keys that must all sign: one signer, or a hybrid
+// signer with a classical and a post-quantum key. An [AtLeast] rule
+// requires a threshold of its children: a quorum of parties, or the
+// alternatives of one party. [NewPolicy] builds a threshold of parties,
+// and [NewPolicyTree] builds any tree, such as the nested groups of a
+// C2SP tlog-policy. [Policy.Check] counts each key once and verifies at
+// most one signature per key of the policy.
 //
 // # Signing across a process boundary
 //
@@ -86,8 +89,8 @@
 // implements [ContextSigner], so a caller can bound the wait with a
 // context. Callers sign through [SignContext], which uses the
 // capability when a signer has it and calls [Signer.Sign] otherwise.
-// The in-process signers in this module need no context and do not
-// implement it.
+// The in-process signers in this module do not take a context and do
+// not implement it.
 //
 // # Decorators
 //

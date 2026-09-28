@@ -60,10 +60,11 @@ seams every other thesmos library and framework depends on:
   fixed per signer). `SignContext` bounds a signer that crosses a
   process boundary with a context. `Resolver` builds a verifier
   from a stored algorithm name out of a table the caller writes,
-  and `Policy` requires valid signatures from k of n parties,
-  counting each key once. See [RFC-0013][rfc-0013],
-  [RFC-0033][rfc-0033], [RFC-0035][rfc-0035] and
-  [RFC-0039][rfc-0039].
+  and `Policy` requires valid signatures from a tree of key sets
+  and thresholds over them, such as k of n parties, counting each
+  key once. See [RFC-0013][rfc-0013], [RFC-0033][rfc-0033],
+  [RFC-0035][rfc-0035], [RFC-0039][rfc-0039] and
+  [RFC-0044][rfc-0044].
 - **Framer** — unambiguous domain separation for hashed and
   signed inputs. `Domain` (name + version) plus a `Framer`
   builder that length-prefixes every part, so no two distinct
@@ -322,5 +323,6 @@ Apache 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 [rfc-0038]: docs/rfc/0038-conformance-for-durable-adapters.md
 [rfc-0039]: docs/rfc/0039-signature-policies.md
 [rfc-0043]: docs/rfc/0043-btree-ordered-maps.md
+[rfc-0044]: docs/rfc/0044-nested-signature-policies.md
 [contrib]: CONTRIBUTING.md
 [sec]: SECURITY.md

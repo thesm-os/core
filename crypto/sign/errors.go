@@ -17,13 +17,14 @@ var (
 	// [errs.Unsupported].
 	ErrUnknownAlgorithm = errs.WithClass(errors.New("sign: unknown algorithm"), errs.Unsupported)
 
-	// ErrPolicy is returned by [NewPolicy] for a policy that cannot be
-	// satisfied or that lists a key twice, and by [Policy.Check] on the
-	// zero Policy. It classifies as [errs.Invalid].
+	// ErrPolicy is returned by [NewPolicy] and [NewPolicyTree] for a
+	// policy that cannot be satisfied, that lists a key twice or that is
+	// deeper than 64 rules, and by [Policy.Check] on the zero Policy. It
+	// classifies as [errs.Invalid].
 	ErrPolicy = errs.WithClass(errors.New("sign: invalid policy"), errs.Invalid)
 
-	// ErrThreshold is returned by [Policy.Check] when the signatures
-	// satisfy fewer parties than the threshold. It classifies as
+	// ErrThreshold is returned by [Policy.Check] when the signatures do
+	// not make the root of the policy count. It classifies as
 	// [errs.Integrity].
 	ErrThreshold = errs.WithClass(errors.New("sign: signature threshold not met"), errs.Integrity)
 )
