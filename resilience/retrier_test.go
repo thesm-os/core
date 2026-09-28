@@ -75,6 +75,9 @@ func retryConfig(c clock.Clock, r rand.Rand) resilience.RetryConfig {
 		Attempts: 3,
 		Base:     100 * time.Millisecond,
 		Max:      time.Second,
+		// Longer than any delay a test attaches, apart from the tests
+		// of TestDoRetryAfter that set their own.
+		MaxRetryAfter: time.Minute,
 		// Two retries per call: enough that the attempt count is what
 		// bounds these tests, not the budget. TestDoBudget lowers it.
 		Budget:       2,
@@ -107,6 +110,36 @@ func failFor(n int, err error) (fn func(context.Context) (int, error), calls *in
 	}, calls
 }
 
+// failWith returns a function that fails with each of failures in turn
+// and then succeeds, counting its calls.
+func failWith(failures ...error) (fn func(context.Context) (int, error), calls *int) {
+	calls = new(int)
+
+	return func(context.Context) (int, error) {
+		*calls++
+		if *calls <= len(failures) {
+			return 0, failures[*calls-1]
+		}
+
+		return *calls, nil
+	}, calls
+}
+
+// awaitDo waits for the result of a Do that runs on another goroutine,
+// and fails the test when none arrives within a second.
+func awaitDo(tb testing.TB, got <-chan error) error {
+	tb.Helper()
+
+	select {
+	case err := <-got:
+		return err
+	case <-time.After(time.Second):
+		tb.Fatal("Do never returned")
+
+		return nil
+	}
+}
+
 func TestNewRetrier(t *testing.T) {
 	t.Parallel()
 
@@ -121,6 +154,7 @@ func TestNewRetrier(t *testing.T) {
 		{"zero base", func(c *resilience.RetryConfig) { c.Base = 0 }},
 		{"zero max", func(c *resilience.RetryConfig) { c.Max = 0 }},
 		{"max below base", func(c *resilience.RetryConfig) { c.Max = c.Base - 1 }},
+		{"negative delay ceiling", func(c *resilience.RetryConfig) { c.MaxRetryAfter = -1 }},
 		{"negative budget", func(c *resilience.RetryConfig) { c.Budget = -1 }},
 		{"negative floor", func(c *resilience.RetryConfig) { c.MinRetries = -1 }},
 		{"budget without a window", func(c *resilience.RetryConfig) { c.BudgetWindow = 0 }},
@@ -159,6 +193,17 @@ func TestNewRetrier(t *testing.T) {
 
 		_, err := resilience.NewRetrier(cfg)
 		testkit.NoError(t, err, "no allowance needs no window")
+	})
+
+	t.Run("accepts a delay ceiling of zero", func(t *testing.T) {
+		t.Parallel()
+		// Zero is a policy, not a missing value: never wait for a delay
+		// a failure asks for.
+		cfg := retryConfig(fake.New(originUTC), noJitter)
+		cfg.MaxRetryAfter = 0
+
+		_, err := resilience.NewRetrier(cfg)
+		testkit.NoError(t, err, "a zero delay ceiling must be accepted")
 	})
 }
 
@@ -507,6 +552,149 @@ func TestDoMinRetries(t *testing.T) {
 		_, err = resilience.Do(bounded(t), r, fn)
 		testkit.NoError(t, err, "a fresh window must restore the floor")
 		testkit.Equal(t, *calls, 2, "the retry must have run")
+	})
+}
+
+func TestDoRetryAfter(t *testing.T) {
+	t.Parallel()
+
+	// asksFor returns a transient failure that asks for the delay d.
+	asksFor := func(d time.Duration) error { return errs.WithRetryAfter(errTransient, d) }
+
+	t.Run("waits the delay of a failure when the delay exceeds the backoff", func(t *testing.T) {
+		t.Parallel()
+		c := fake.New(originUTC)
+		r := mustRetrier(t, retryConfig(c, noJitter))
+		fn, calls := failFor(1, asksFor(30*time.Second))
+
+		got := make(chan error, 1)
+		go func() {
+			_, err := resilience.Do(bounded(t), r, fn)
+			got <- err
+		}()
+
+		c.AwaitWaiters(1)
+		c.Advance(30*time.Second - time.Nanosecond)
+		// The wait is still registered, so it has not fired.
+		c.AwaitWaiters(1)
+		testkit.Equal(t, *calls, 1, "the retry must wait out the delay")
+
+		c.Advance(time.Nanosecond)
+		testkit.NoError(t, awaitDo(t, got), "the retry must run once the delay elapsed")
+		testkit.Equal(t, *calls, 2, "exactly one retry must have run")
+	})
+
+	t.Run("waits its own backoff when the backoff exceeds the delay", func(t *testing.T) {
+		t.Parallel()
+		// halfJitter makes the first backoff 50ms.
+		c := fake.New(originUTC)
+		r := mustRetrier(t, retryConfig(c, halfJitter))
+		fn, calls := failFor(1, asksFor(10*time.Millisecond))
+
+		got := make(chan error, 1)
+		go func() {
+			_, err := resilience.Do(bounded(t), r, fn)
+			got <- err
+		}()
+
+		c.AwaitWaiters(1)
+		c.Advance(10 * time.Millisecond)
+		c.AwaitWaiters(1)
+		testkit.Equal(t, *calls, 1, "the retry must wait out the backoff")
+
+		c.Advance(40 * time.Millisecond)
+		testkit.NoError(t, awaitDo(t, got), "the retry must run once the backoff elapsed")
+		testkit.Equal(t, *calls, 2, "exactly one retry must have run")
+	})
+
+	t.Run("applies a delay only to the attempt after its failure", func(t *testing.T) {
+		t.Parallel()
+		// halfJitter makes the second backoff 100ms.
+		c := fake.New(originUTC)
+		r := mustRetrier(t, retryConfig(c, halfJitter))
+		fn, calls := failWith(asksFor(30*time.Second), errTransient)
+
+		got := make(chan error, 1)
+		go func() {
+			_, err := resilience.Do(bounded(t), r, fn)
+			got <- err
+		}()
+
+		c.AwaitWaiters(1)
+		c.Advance(30 * time.Second)
+		c.AwaitWaiters(1)
+		c.Advance(100 * time.Millisecond)
+		testkit.NoError(t, awaitDo(t, got), "the second retry must wait only its backoff")
+		testkit.Equal(t, *calls, 3, "both retries must have run")
+	})
+
+	t.Run("returns a failure whose delay exceeds MaxRetryAfter without waiting", func(t *testing.T) {
+		t.Parallel()
+		cfg := retryConfig(fake.New(originUTC), noJitter)
+		cfg.MaxRetryAfter = 29 * time.Second
+		r := mustRetrier(t, cfg)
+		fn, calls := failFor(1, asksFor(30*time.Second))
+
+		_, err := resilience.Do(bounded(t), r, fn)
+		testkit.ErrorIs(t, err, errTransient, "Do must return the failure")
+		d, _ := errs.RetryAfter(err)
+		testkit.Equal(t, d, 30*time.Second, "the caller must still read the delay")
+		testkit.Equal(t, *calls, 1, "the retry must not have run")
+	})
+
+	t.Run("waits a delay equal to MaxRetryAfter", func(t *testing.T) {
+		t.Parallel()
+		c := fake.New(originUTC)
+		cfg := retryConfig(c, noJitter)
+		cfg.MaxRetryAfter = 30 * time.Second
+		r := mustRetrier(t, cfg)
+		fn, calls := failFor(1, asksFor(30*time.Second))
+
+		got := make(chan error, 1)
+		go func() {
+			_, err := resilience.Do(bounded(t), r, fn)
+			got <- err
+		}()
+
+		c.AwaitWaiters(1)
+		c.Advance(30 * time.Second)
+		testkit.NoError(t, awaitDo(t, got), "a delay at the ceiling must be waited")
+		testkit.Equal(t, *calls, 2, "the retry must have run")
+	})
+
+	t.Run("returns a failure with a delay when MaxRetryAfter is zero", func(t *testing.T) {
+		t.Parallel()
+		cfg := retryConfig(fake.New(originUTC), noJitter)
+		cfg.MaxRetryAfter = 0
+		r := mustRetrier(t, cfg)
+		fn, calls := failFor(1, asksFor(time.Nanosecond))
+
+		_, err := resilience.Do(bounded(t), r, fn)
+		testkit.ErrorIs(t, err, errTransient, "Do must return the failure")
+		testkit.Equal(t, *calls, 1, "the retry must not have run")
+	})
+
+	t.Run("retries a failure without a delay when MaxRetryAfter is zero", func(t *testing.T) {
+		t.Parallel()
+		cfg := retryConfig(fake.New(originUTC), noJitter)
+		cfg.MaxRetryAfter = 0
+		r := mustRetrier(t, cfg)
+		fn, calls := failFor(1, errTransient)
+
+		_, err := resilience.Do(bounded(t), r, fn)
+		testkit.NoError(t, err, "a failure without a delay must be retried")
+		testkit.Equal(t, *calls, 2, "the retry must have run")
+	})
+
+	t.Run("does not retry an unclassified failure with a delay", func(t *testing.T) {
+		t.Parallel()
+		// The class decides whether to retry, and the delay only when.
+		r := mustRetrier(t, retryConfig(fake.New(originUTC), noJitter))
+		fn, calls := failFor(1, errs.WithRetryAfter(testkit.TestError("unclassified"), time.Second))
+
+		_, err := resilience.Do(bounded(t), r, fn)
+		testkit.Error(t, err, "Do must return the failure")
+		testkit.Equal(t, *calls, 1, "a delay must not make a failure retryable")
 	})
 }
 

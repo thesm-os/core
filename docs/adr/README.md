@@ -81,5 +81,6 @@ Start from [`docs/templates/ADR.md`](../templates/ADR.md).
 | [0026](0026-tagged-trees-have-no-empty-root.md) | A Tagged Tree Over No Leaves Has No Root | Accepted |
 | [0027](0027-btree-reset-keeps-nodes.md) | A Reset Map Keeps Its Nodes for Its Next Fill | Accepted |
 | [0028](0028-joined-errors-classify-by-rank.md) | A Joined Error Classifies as Its Branch of Highest Rank | Accepted |
+| [0029](0029-errors-report-a-retry-delay.md) | An Error Can Report a Retry Delay | Accepted |
 
 [nygard]: https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions

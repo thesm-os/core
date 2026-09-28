@@ -46,6 +46,12 @@
 // that do neither still classify usefully when they wrap one of the
 // standard library sentinels [Classify] recognises.
 //
+// A producer that knows when a retry can succeed, such as a transport
+// that read a server's Retry-After header, attaches the delay with
+// [WithRetryAfter] or a RetryAfter method on its own error type, and
+// [RetryAfter] reads it. [Retryable] reports whether a caller retries,
+// and the delay sets when.
+//
 // # Joined errors
 //
 // An error joined from more than one failure classifies as the failure
@@ -56,6 +62,6 @@
 // # Allocation contract
 //
 // [Class] is a value type, and [Class.String] returns a constant.
-// [Classify] and [Retryable] are zero-allocation. [WithClass]
-// allocates one wrapper.
+// [Classify], [Retryable] and [RetryAfter] are zero-allocation.
+// [WithClass] and [WithRetryAfter] allocate one wrapper.
 package errs

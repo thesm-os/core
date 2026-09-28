@@ -22,17 +22,16 @@ import (
 // the whole window in one cache line's worth of counters.
 const budgetBuckets = 12
 
-// RetryConfig has no defaults. Every field is required, because a
-// retry policy that is wrong is wrong under load, which is the one
-// time nobody is reading the code.
+// RetryConfig configures a [Retrier], and none of its fields has a
+// default, because a wrong retry policy shows only under load, when
+// nobody is reading the code.
 type RetryConfig struct {
 	// Clock times the backoff. Under a virtual clock the intervals
 	// are exact, so a retry test costs no wall-clock time.
 	Clock clock.Clock
 
-	// Rand draws the jitter. Any implementation will do: [Retrier]
-	// serialises the draw, so a source that is not safe for concurrent
-	// use is still safe here.
+	// Rand draws the jitter, and [Retrier] serialises the draw, so a
+	// source that is not safe for concurrent use works too.
 	Rand rand.Rand
 
 	// Attempts is the total number of calls, not the number of
@@ -46,6 +45,12 @@ type RetryConfig struct {
 	// Max caps that ceiling. Must be >= Base.
 	Max time.Duration
 
+	// MaxRetryAfter is the longest delay that Do waits for when
+	// [errs.RetryAfter] reports one for a failure. Do returns a failure
+	// whose delay is longer instead of waiting. Must be >= 0. Zero makes
+	// Do return every failure with a delay.
+	MaxRetryAfter time.Duration
+
 	// Budget is the fraction of calls that may become retries, across
 	// every caller sharing this Retrier, measured over BudgetWindow.
 	// Must be >= 0.
@@ -57,7 +62,7 @@ type RetryConfig struct {
 	Budget float64
 
 	// MinRetries is the floor beneath that fraction: this many retries
-	// are affordable within the window whatever the ratio says. Must
+	// are affordable within the window whatever the ratio allows. Must
 	// be >= 0.
 	//
 	// Without it a Retrier refuses the first retry it is ever asked
@@ -89,9 +94,9 @@ type RetryConfig struct {
 // in-flight call into Attempts calls, so the moment it is least able
 // to serve traffic is the moment it receives several times as much,
 // and the retries are what keep it down. The budget caps retries as a
-// fraction of the overall call rate: a failure affecting one call in a
-// thousand retries freely, one affecting everything retries almost not
-// at all.
+// fraction of the overall call rate. A failure that affects one call in
+// a thousand retries freely, and a failure that affects every call
+// retries almost never.
 //
 // The allowance over the window is max(MinRetries, Budget×calls): a
 // floor while the traffic is too thin for a ratio to mean anything,
@@ -111,11 +116,12 @@ type Retrier struct {
 	// start is the beginning of the bucket at cur.
 	start time.Time
 
-	attempts   int
-	base       time.Duration
-	max        time.Duration
-	budget     float64
-	minRetries int
+	attempts      int
+	base          time.Duration
+	max           time.Duration
+	maxRetryAfter time.Duration
+	budget        float64
+	minRetries    int
 
 	// bucket is BudgetWindow/budgetBuckets: the resolution at which
 	// old traffic ages out.
@@ -133,15 +139,16 @@ type Retrier struct {
 // NewRetrier returns a Retrier over cfg.
 //
 // Returns [ErrConfig] when Clock or Rand is nil, Attempts is not
-// positive, Base is not positive, Max is below Base, Budget or
-// MinRetries is negative, or BudgetWindow is not positive while either
-// of those is.
+// positive, Base is not positive, Max is below Base, MaxRetryAfter,
+// Budget or MinRetries is negative, or BudgetWindow is not positive
+// while Budget or MinRetries is positive.
 func NewRetrier(cfg RetryConfig) (*Retrier, error) {
 	if cfg.Clock == nil ||
 		cfg.Rand == nil ||
 		cfg.Attempts <= 0 ||
 		cfg.Base <= 0 ||
 		cfg.Max < cfg.Base ||
+		cfg.MaxRetryAfter < 0 ||
 		cfg.Budget < 0 ||
 		cfg.MinRetries < 0 ||
 		((cfg.Budget > 0 || cfg.MinRetries > 0) && cfg.BudgetWindow <= 0) {
@@ -150,13 +157,14 @@ func NewRetrier(cfg RetryConfig) (*Retrier, error) {
 	}
 
 	return &Retrier{
-		clock:      cfg.Clock,
-		rand:       cfg.Rand,
-		attempts:   cfg.Attempts,
-		base:       cfg.Base,
-		max:        cfg.Max,
-		budget:     cfg.Budget,
-		minRetries: cfg.MinRetries,
+		clock:         cfg.Clock,
+		rand:          cfg.Rand,
+		attempts:      cfg.Attempts,
+		base:          cfg.Base,
+		max:           cfg.Max,
+		maxRetryAfter: cfg.MaxRetryAfter,
+		budget:        cfg.Budget,
+		minRetries:    cfg.MinRetries,
 		// A window shorter than the bucket count would divide to zero.
 		bucket: max(cfg.BudgetWindow/budgetBuckets, 1),
 		start:  cfg.Clock.Time(),
@@ -171,13 +179,29 @@ func NewRetrier(cfg RetryConfig) (*Retrier, error) {
 // caller's own fault cannot succeed, and spends budget that a call
 // which might succeed then cannot have.
 //
-// A call whose context ended is never retried — the dependency did not
-// refuse, the caller stopped asking — and the attempt's own error is
-// what reaches the caller.
+// Do never retries a call whose context ended, because the caller
+// stopped asking and the dependency did not refuse. Do returns that
+// attempt's own error.
 //
 // When the budget refuses a retry, the returned error wraps both
 // [ErrBudget] and the failure that prompted it, so a caller sees why
 // it stopped and what it stopped on.
+//
+// # Delays
+//
+// When [errs.RetryAfter] reports a delay for a failure, Do waits at
+// least that long before the next attempt: the longer of the delay and
+// its own backoff. Do returns a failure whose delay exceeds
+// MaxRetryAfter at once, and errs.RetryAfter still reports the delay
+// of the returned error, so the caller can schedule the attempt itself.
+//
+// # Idempotency
+//
+// A failure that [errs.Classify] reports as [errs.Transient] does not
+// mean that fn had no effect. A timeout can arrive after the dependency
+// applied a write, and Do then calls fn again. fn must be safe to
+// repeat, for example by sending the same idempotency key on every
+// attempt.
 //
 // # Composing with a breaker
 //
@@ -198,8 +222,9 @@ func Do[T any](
 	r.observe()
 
 	var (
-		v   T
-		err error
+		v     T
+		err   error
+		delay time.Duration
 	)
 
 	for attempt := range r.attempts {
@@ -208,7 +233,7 @@ func Do[T any](
 				return v, fmt.Errorf("%w: %w", ErrBudget, err)
 			}
 
-			if werr := clock.Wait(ctx, r.clock, r.backoff(attempt)); werr != nil {
+			if werr := clock.Wait(ctx, r.clock, max(r.backoff(attempt), delay)); werr != nil {
 				return v, werr
 			}
 		}
@@ -219,6 +244,11 @@ func Do[T any](
 		}
 
 		if ctx.Err() != nil || !errs.Retryable(err) {
+			return v, err
+		}
+
+		delay, _ = errs.RetryAfter(err)
+		if delay > r.maxRetryAfter {
 			return v, err
 		}
 	}

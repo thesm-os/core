@@ -255,6 +255,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its nodes for the next fill: a `Reset` followed by a fill of the 65,536
   keys takes 5.09 ms and does not allocate, against 5.44 ms and 1,545
   allocations for a new map. See RFC-0043 and ADR-0027.
+- `errs.RetryAfter` and `errs.WithRetryAfter`. An error reports the
+  delay that a server set through a `RetryAfter() time.Duration` method,
+  which `RetryAfter` finds in the error tree as `errs.Classify` finds a
+  class, and `WithRetryAfter` attaches a delay to an error whose type
+  the producer did not define. `errs.Retryable` still reports whether
+  to retry. `RetryAfter` does not allocate. See ADR-0029.
 
 ### Changed
 
@@ -363,6 +369,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   classified branch, so the class of a `task.Quorum` failure depended on
   which call failed first, and `errs.Retryable` could report true for a
   join with an `Integrity` failure in it. See ADR-0028.
+- `resilience.Do` waits the longer of its backoff and the delay of a
+  failure, and returns at once a failure whose delay exceeds the new
+  `RetryConfig.MaxRetryAfter`. The zero value of `MaxRetryAfter` makes
+  `Do` return every failure with a delay. The documentation of `Do`
+  states that a transient failure does not mean `fn` had no effect. See
+  ADR-0029.
 
 ### Fixed
 
