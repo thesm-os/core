@@ -8,6 +8,7 @@ import (
 
 	"go.thesmos.sh/testkit"
 
+	"go.thesmos.sh/core/errs"
 	"go.thesmos.sh/core/fixed"
 )
 
@@ -59,6 +60,7 @@ func TestAdd(t *testing.T) {
 		got, err := fixed.Max.Add(fixed.Smallest)
 
 		testkit.ErrorIs(t, err, fixed.ErrOverflow, "Add past Max must overflow")
+		testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrOverflow must classify as Invalid")
 		testkit.Equal(t, got, fixed.Zero, "an overflow must return Zero")
 	})
 
@@ -278,6 +280,7 @@ func TestDiv(t *testing.T) {
 
 		testkit.ErrorIs(t, err, fixed.ErrDivZero,
 			"dividing by Zero must report ErrDivZero")
+		testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrDivZero must classify as Invalid")
 		testkit.ErrorIsNot(t, err, fixed.ErrOverflow,
 			"a zero divisor is not an overflow")
 		testkit.Equal(t, got, fixed.Zero, "a rejected divide must return Zero")

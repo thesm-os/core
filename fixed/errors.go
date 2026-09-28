@@ -5,7 +5,11 @@ package fixed
 
 //go:generate testkit sentinel -o errors.gen_test.go
 
-import "errors"
+import (
+	"errors"
+
+	"go.thesmos.sh/core/errs"
+)
 
 // Sentinel errors returned by construction, arithmetic, and decoding.
 //
@@ -25,7 +29,7 @@ var (
 	// applied: no value is returned alongside it. Saturation would
 	// produce a plausible number with no signal, and [Max] is a value
 	// somebody will store.
-	ErrOverflow = errors.New("fixed: result out of range")
+	ErrOverflow = errs.WithClass(errors.New("fixed: result out of range"), errs.Invalid)
 
 	// ErrDivZero reports division by [Zero], from [Fixed64.Div] or
 	// [Fixed64.DivAway].
@@ -33,7 +37,7 @@ var (
 	// Distinct from [ErrOverflow] because the causes do not overlap:
 	// an overflow means the model chose too small a type, a division
 	// by zero means a denominator was never checked.
-	ErrDivZero = errors.New("fixed: division by zero")
+	ErrDivZero = errs.WithClass(errors.New("fixed: division by zero"), errs.Invalid)
 
 	// ErrRange reports a value outside the representable domain that
 	// did not arise from arithmetic: a decoded or parsed magnitude
@@ -42,14 +46,14 @@ var (
 	//
 	// Separate from [ErrOverflow] so a caller can tell "the input you
 	// handed me is unrepresentable" from "the sum you asked for is".
-	ErrRange = errors.New("fixed: value out of range")
+	ErrRange = errs.WithClass(errors.New("fixed: value out of range"), errs.Invalid)
 
 	// ErrSyntax reports that [Parse] was handed something outside its
 	// grammar — an empty string, a stray sign or exponent, an
 	// embedded space, a missing digit either side of the point.
 	//
 	// The grammar is deliberately narrow; see [Parse].
-	ErrSyntax = errors.New("fixed: malformed decimal")
+	ErrSyntax = errs.WithClass(errors.New("fixed: malformed decimal"), errs.Invalid)
 
 	// ErrPrecision reports that [Parse] was handed a significant
 	// digit beyond the eighth decimal place.
@@ -59,12 +63,12 @@ var (
 	// wrote a ninth significant digit meant it. Trailing zeroes are
 	// not significant and are accepted, so "1.000000000" parses and
 	// "0.000000001" does not.
-	ErrPrecision = errors.New("fixed: more than 8 decimal places")
+	ErrPrecision = errs.WithClass(errors.New("fixed: more than 8 decimal places"), errs.Invalid)
 
 	// ErrSize reports that [Fixed64.UnmarshalBinary] was handed
 	// other than [Size] bytes.
 	//
 	// A short read is a decode error, never a panic and never a
 	// partially-filled value.
-	ErrSize = errors.New("fixed: encoded value must be 8 bytes")
+	ErrSize = errs.WithClass(errors.New("fixed: encoded value must be 8 bytes"), errs.Invalid)
 )

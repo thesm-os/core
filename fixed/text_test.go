@@ -10,6 +10,7 @@ import (
 
 	"go.thesmos.sh/testkit"
 
+	"go.thesmos.sh/core/errs"
 	"go.thesmos.sh/core/fixed"
 )
 
@@ -128,6 +129,7 @@ func TestParse(t *testing.T) {
 
 				testkit.ErrorIs(t, err, fixed.ErrSyntax,
 					"Parse must reject input outside the grammar")
+				testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrSyntax must classify as Invalid")
 				testkit.Equal(t, got, fixed.Zero,
 					"a rejected parse must return Zero")
 			})
@@ -150,6 +152,7 @@ func TestParse(t *testing.T) {
 
 				testkit.ErrorIs(t, err, fixed.ErrPrecision,
 					"Parse must refuse to truncate a significant digit")
+				testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrPrecision must classify as Invalid")
 				testkit.ErrorIsNot(t, err, fixed.ErrSyntax,
 					"a precision loss is not a syntax error")
 				testkit.Equal(t, got, fixed.Zero,

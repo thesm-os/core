@@ -10,6 +10,7 @@ import (
 
 	"go.thesmos.sh/testkit"
 
+	"go.thesmos.sh/core/errs"
 	"go.thesmos.sh/core/fixed"
 )
 
@@ -159,6 +160,7 @@ func TestUnmarshalBinary(t *testing.T) {
 
 				testkit.ErrorIs(t, err, fixed.ErrSize,
 					"a wrong-length input must be a decode error")
+				testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrSize must classify as Invalid")
 				testkit.Equal(t, got, fixed.One,
 					"a rejected decode must not modify the receiver")
 			})

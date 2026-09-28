@@ -10,6 +10,7 @@ import (
 
 	"go.thesmos.sh/testkit"
 
+	"go.thesmos.sh/core/errs"
 	"go.thesmos.sh/core/fixed"
 )
 
@@ -120,6 +121,7 @@ func TestFromRaw(t *testing.T) {
 
 		testkit.ErrorIs(t, err, fixed.ErrRange,
 			"FromRaw must reject the one out-of-domain int64")
+		testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrRange must classify as Invalid")
 		testkit.Equal(t, got, fixed.Zero, "a rejected value must return Zero")
 	})
 }
