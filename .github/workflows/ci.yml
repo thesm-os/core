@@ -101,18 +101,19 @@ jobs:
   mutation:
     name: Mutation
     runs-on: ubuntu-latest
-    # Mutation re-runs the suite once per mutant across fifteen
-    # layers. It is the one stage deliberately kept out of the local
-    # hooks, so this job is where it actually gates.
+    # Mutation runs the suite once per mutant across the 21 layers
+    # that .ergon.yaml gates. It is the one stage kept out of the
+    # local hooks, so this job is where it gates.
     #
-    # The budget assumes timeout_coefficient 400 in .ergon.yaml: the
-    # per-mutant deadline scales off the package's own baseline as
-    # measured on THIS runner, so a slower machine gets a
-    # proportionally larger budget and the sweep degrades linearly,
-    # not cliff-wise. A run hitting this ceiling means a new
-    # unbounded wait got in, not a slow runner — find it with
-    # `ergon check mutation --mutants` before raising anything.
-    timeout-minutes: 25
+    # gremlins sets the deadline of each mutant to
+    # timeout_coefficient, 120 in .ergon.yaml, times the package's
+    # own test time on this runner, so a slower runner gets a
+    # proportionally longer deadline. On this runner btree and crypto
+    # take about 8 minutes each, and the whole sweep about 30. A run
+    # cancelled at this limit has a mutant that hangs or a layer that
+    # grew. The log gives the time and the count of timed-out mutants
+    # of each layer.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
