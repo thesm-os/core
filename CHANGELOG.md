@@ -273,6 +273,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   recognises it as `Transient`, since a retry of the identical write
   with the same idempotency key returns the original outcome. See
   ADR-0032.
+- `id.ID.AppendBinary`, `MarshalBinary` and `UnmarshalBinary`. An ID
+  encodes as its bytes, with the size given by their length, the layout
+  that ADR-0016 freezes, and the zero ID encodes as no bytes.
+  `UnmarshalBinary` accepts empty data as the zero ID, which `FromBytes`
+  rejects. Codecs that use a type's binary methods, such as
+  `encoding/gob`, now encode an `ID`, whose fields are unexported.
+  `AppendBinary` into a buffer with room and `UnmarshalBinary` do not
+  allocate.
 
 ### Changed
 

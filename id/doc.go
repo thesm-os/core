@@ -58,25 +58,33 @@
 //
 // A defined type inherits no methods, so [ID.IsZero],
 // [ID.Bytes], [ID.Compare], [ID.Equal], and [ID.String] are all
-// lost — and because [ID]'s fields are unexported, the defined
-// type cannot be constructed outside this package either.
+// lost. Because [ID]'s fields are unexported, the defined type
+// cannot be constructed outside this package either.
 //
-// The [Generator] interface still produces [ID]; the consumer
-// owns the wrapping.
+// The [Generator] interface still produces [ID], and the consumer
+// wraps it.
 //
 // # Decoding an identifier
 //
 // [FromBytes] builds an [ID] from a byte slice for callers whose
 // identifier arrives from a wire or a database rather than from a
-// [Generator]. Each subpackage additionally ships a Parse
-// function for its own canonical text encoding.
+// [Generator]. Each subpackage also has a Parse function for its
+// own canonical text encoding.
+//
+// # Binary encoding
+//
+// [ID.AppendBinary], [ID.MarshalBinary] and [ID.UnmarshalBinary]
+// encode an ID as its bytes, with the size given by their length, and
+// the zero ID as no bytes. Codecs that use a type's binary methods,
+// such as encoding/gob, encode an ID through them.
 //
 // # Allocation contract
 //
 // [ID] is a value type ([MaxSize]byte + uint8). Pass by value,
 // comparable. [ID.IsZero], [ID.Size], [ID.Bytes], [ID.Compare],
-// and [ID.Equal] are zero-allocation. [ID.String] allocates the
-// encoded string.
+// [ID.Equal], [ID.AppendBinary] into a buffer with room and
+// [ID.UnmarshalBinary] are zero-allocation. [ID.String] and
+// [ID.MarshalBinary] allocate their results.
 //
 // [Generator] implementations document their own allocation
 // contracts; the canonical implementations in this module are
