@@ -261,6 +261,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   class, and `WithRetryAfter` attaches a delay to an error whose type
   the producer did not define. `errs.Retryable` still reports whether
   to retry. `RetryAfter` does not allocate. See ADR-0029.
+- A text encoding for `errs.Class`: `AppendText`, `MarshalText` and
+  `UnmarshalText` over the names `String` returns, and
+  `errs.ErrUnknownClass` for a value outside the eight classes or text
+  that names none. `encoding/json` and the JSON handler of `log/slog`
+  wrote a class as its number and now write its name. The names are
+  frozen. See ADR-0030.
 
 ### Changed
 

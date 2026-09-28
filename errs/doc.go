@@ -59,9 +59,15 @@
 // are in, so a retry loop retries a join only when every classified
 // failure in it is [Transient]. [Classify] states the order.
 //
+// # Encoding
+//
+// A [Class] encodes as its name, so JSON, the JSON handler of log/slog
+// and other text formats show "Transient" rather than a number.
+//
 // # Allocation contract
 //
-// [Class] is a value type, and [Class.String] returns a constant.
-// [Classify], [Retryable] and [RetryAfter] are zero-allocation.
+// [Class] is a value type. [Class.String] returns a constant, and
+// [Class.AppendText] does not allocate into a buffer with room for the
+// name. [Classify], [Retryable] and [RetryAfter] are zero-allocation.
 // [WithClass] and [WithRetryAfter] allocate one wrapper.
 package errs

@@ -82,5 +82,6 @@ Start from [`docs/templates/ADR.md`](../templates/ADR.md).
 | [0027](0027-btree-reset-keeps-nodes.md) | A Reset Map Keeps Its Nodes for Its Next Fill | Accepted |
 | [0028](0028-joined-errors-classify-by-rank.md) | A Joined Error Classifies as Its Branch of Highest Rank | Accepted |
 | [0029](0029-errors-report-a-retry-delay.md) | An Error Can Report a Retry Delay | Accepted |
+| [0030](0030-a-class-encodes-as-its-name.md) | A Class Encodes as Its Name | Accepted |
 
 [nygard]: https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions
