@@ -69,10 +69,19 @@ var byJoinRank = [...]Class{
 // recognises a small closed set of sentinels on it, so a producer that
 // has never heard of this package still classifies usefully:
 //
-//   - [fs.ErrNotExist] — [NotFound]
+//   - [fs.ErrPermission] — [Denied]
+//   - [fs.ErrInvalid], [fs.ErrClosed] — [Invalid]
 //   - [errors.ErrUnsupported] — [Unsupported]
+//   - [fs.ErrNotExist] — [NotFound]
+//   - [fs.ErrExist] — [Conflict]
 //   - [version.ErrMismatch], [version.ErrExists] — [Conflict]
 //   - [epoch.ErrFenced] — [Conflict]
+//
+// A syscall.Errno matches the fs sentinels through its Is method, so
+// EACCES and EPERM classify as [Denied], EEXIST and ENOTEMPTY as
+// [Conflict], and ENOENT as [NotFound]. An error that matches more than
+// one sentinel takes the class that comes first in the list, which is
+// the class of higher rank.
 //
 // The core sentinels are recognised here rather than wrapped at
 // their producers because the producers are plain sentinels by
@@ -88,7 +97,9 @@ var byJoinRank = [...]Class{
 // retrying inside a context that is already done cannot succeed, so
 // non-retryable is already the right answer. Classifying them
 // [Transient] would produce a loop that spins until something else
-// notices.
+// notices. For the same reason Classify does not read the Timeout and
+// Temporary methods of an error: context.DeadlineExceeded reports true
+// for both.
 //
 // An explicit [Classifier] takes precedence over a recognised sentinel,
 // even one nearer the start of the chain, because a producer that
@@ -110,13 +121,18 @@ func Classify(err error) Class {
 	}
 
 	switch {
-	case errors.Is(err, fs.ErrNotExist):
-		return NotFound
+	case errors.Is(err, fs.ErrPermission):
+		return Denied
+	case errors.Is(err, fs.ErrInvalid), errors.Is(err, fs.ErrClosed):
+		return Invalid
 	case errors.Is(err, errors.ErrUnsupported):
 		return Unsupported
-	case errors.Is(err, version.ErrMismatch), errors.Is(err, version.ErrExists):
-		return Conflict
-	case errors.Is(err, epoch.ErrFenced):
+	case errors.Is(err, fs.ErrNotExist):
+		return NotFound
+	case errors.Is(err, fs.ErrExist),
+		errors.Is(err, version.ErrMismatch),
+		errors.Is(err, version.ErrExists),
+		errors.Is(err, epoch.ErrFenced):
 		return Conflict
 	default:
 		return Unspecified

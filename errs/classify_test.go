@@ -8,7 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"os"
+	"path/filepath"
 	"runtime"
+	"syscall"
 	"testing"
 
 	"go.thesmos.sh/testkit"
@@ -16,6 +19,14 @@ import (
 	"go.thesmos.sh/core/epoch"
 	"go.thesmos.sh/core/errs"
 	"go.thesmos.sh/core/version"
+)
+
+// File names and the directory mode of the tests that classify the
+// failures of real file-system calls.
+const (
+	missingFile = "missing"
+	closedFile  = "closed"
+	dirMode     = 0o750
 )
 
 // stubError is an error type that classifies itself, the shape a
@@ -33,6 +44,16 @@ type nilUnwrapError struct{}
 
 func (nilUnwrapError) Error() string { return "nil unwrap" }
 func (nilUnwrapError) Unwrap() error { return nil }
+
+// twoSentinelsError matches both fs.ErrNotExist and fs.ErrPermission,
+// as an error of a layer that reports one failure under two names can.
+type twoSentinelsError struct{}
+
+func (twoSentinelsError) Error() string { return "errs_test: two sentinels" }
+
+func (twoSentinelsError) Is(target error) bool {
+	return target == fs.ErrNotExist || target == fs.ErrPermission
+}
 
 var errSentinel = errors.New("errs_test: sentinel")
 
@@ -117,9 +138,18 @@ func TestClassify(t *testing.T) {
 		want errs.Class
 	}{
 		{"fs.ErrNotExist is NotFound", fs.ErrNotExist, errs.NotFound},
+		{"fs.ErrExist is Conflict", fs.ErrExist, errs.Conflict},
+		{"fs.ErrPermission is Denied", fs.ErrPermission, errs.Denied},
+		{"fs.ErrInvalid is Invalid", fs.ErrInvalid, errs.Invalid},
+		{"fs.ErrClosed is Invalid", fs.ErrClosed, errs.Invalid},
 		{"errors.ErrUnsupported is Unsupported", errors.ErrUnsupported, errs.Unsupported},
 		{"context.Canceled is Unspecified", context.Canceled, errs.Unspecified},
 		{"context.DeadlineExceeded is Unspecified", context.DeadlineExceeded, errs.Unspecified},
+		{"EACCES is Denied", syscall.EACCES, errs.Denied},
+		{"EPERM is Denied", syscall.EPERM, errs.Denied},
+		{"EEXIST is Conflict", syscall.EEXIST, errs.Conflict},
+		{"ENOTEMPTY is Conflict", syscall.ENOTEMPTY, errs.Conflict},
+		{"ENOENT is NotFound", syscall.ENOENT, errs.NotFound},
 	}
 	for _, tc := range stdlib {
 		t.Run(tc.name, func(t *testing.T) {
@@ -130,6 +160,37 @@ func TestClassify(t *testing.T) {
 				"recognition must survive wrapping")
 		})
 	}
+
+	t.Run("returns Conflict for os.Mkdir of a directory that exists", func(t *testing.T) {
+		t.Parallel()
+		err := os.Mkdir(t.TempDir(), dirMode)
+		testkit.Error(t, err, "the directory must exist already")
+		testkit.Equal(t, errs.Classify(err), errs.Conflict,
+			"a create-only call that finds its target must classify as Conflict")
+	})
+
+	t.Run("returns NotFound for os.Open of a missing file", func(t *testing.T) {
+		t.Parallel()
+		_, err := os.Open(filepath.Join(t.TempDir(), missingFile))
+		testkit.Error(t, err, "the file must not exist")
+		testkit.Equal(t, errs.Classify(err), errs.NotFound, "a missing file must classify as NotFound")
+	})
+
+	t.Run("returns Invalid for a second Close of a file", func(t *testing.T) {
+		t.Parallel()
+		f, err := os.Create(filepath.Join(t.TempDir(), closedFile))
+		testkit.NoError(t, err, "os.Create must succeed")
+		testkit.NoError(t, f.Close(), "the first Close must succeed")
+
+		err = f.Close()
+		testkit.Equal(t, errs.Classify(err), errs.Invalid, "a use after Close must classify as Invalid")
+	})
+
+	t.Run("returns the class of higher rank for an error that matches two sentinels", func(t *testing.T) {
+		t.Parallel()
+		testkit.Equal(t, errs.Classify(twoSentinelsError{}), errs.Denied,
+			"fs.ErrPermission must outrank fs.ErrNotExist")
+	})
 
 	// Classify walks a tree, not just a chain: errors.Join produces
 	// an error whose Unwrap returns []error, and a Classifier in any

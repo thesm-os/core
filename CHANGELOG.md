@@ -375,6 +375,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   classified branch, so the class of a `task.Quorum` failure depended on
   which call failed first, and `errs.Retryable` could report true for a
   join with an `Integrity` failure in it. See ADR-0028.
+- `errs.Classify` recognises `fs.ErrPermission` as `Denied`,
+  `fs.ErrExist` as `Conflict`, and `fs.ErrInvalid` and `fs.ErrClosed` as
+  `Invalid`, so `EACCES`, `EPERM`, `EEXIST` and `ENOTEMPTY` classify
+  through `syscall.Errno`. An error that matches two recognised
+  sentinels takes the class of higher rank. See ADR-0031.
 - `resilience.Do` waits the longer of its backoff and the delay of a
   failure, and returns at once a failure whose delay exceeds the new
   `RetryConfig.MaxRetryAfter`. The zero value of `MaxRetryAfter` makes

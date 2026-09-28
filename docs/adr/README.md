@@ -83,5 +83,6 @@ Start from [`docs/templates/ADR.md`](../templates/ADR.md).
 | [0028](0028-joined-errors-classify-by-rank.md) | A Joined Error Classifies as Its Branch of Highest Rank | Accepted |
 | [0029](0029-errors-report-a-retry-delay.md) | An Error Can Report a Retry Delay | Accepted |
 | [0030](0030-a-class-encodes-as-its-name.md) | A Class Encodes as Its Name | Accepted |
+| [0031](0031-classify-recognises-fs-sentinels.md) | Classify Recognises the File-System Sentinels | Accepted |
 
 [nygard]: https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions
