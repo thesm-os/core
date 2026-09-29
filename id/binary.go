@@ -35,6 +35,18 @@ func (i ID) MarshalBinary() ([]byte, error) {
 	return i.AppendBinary(make([]byte, 0, i.size))
 }
 
+// SizeKanon returns the length of the binary form of i, the bytes that
+// [ID.AppendBinary] appends: [ID.Size], and 0 for [Zero]. kanon's
+// generated code sizes an ID with it and writes the binary form once,
+// in place. Implements [go.thesmos.sh/kanon.Sizer].
+//
+// # Allocation contract
+//
+// Zero alloc.
+func (i ID) SizeKanon() int {
+	return int(i.size)
+}
+
 // UnmarshalBinary sets i to the ID that data encodes: [Zero] for empty
 // data, and otherwise the ID that [FromBytes] builds from data.
 //

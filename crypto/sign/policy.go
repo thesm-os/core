@@ -8,8 +8,6 @@ import (
 	"math"
 	"slices"
 	"strings"
-
-	"go.thesmos.sh/core/crypto"
 )
 
 const (
@@ -32,20 +30,6 @@ const (
 // A real entry is zero or a position plus one, so any negative value
 // is free.
 const excluded = math.MinInt
-
-// Signature is one signature with the identity of the key that made
-// it, as a [Policy] receives it.
-type Signature struct {
-	// Algorithm is the algorithm the signature claims. [Policy.Check]
-	// counts the signature only when it equals its key's algorithm.
-	Algorithm crypto.Algorithm
-
-	// Value is the signature bytes.
-	Value []byte
-
-	// KeyID names the key that made the signature.
-	KeyID KeyID
-}
 
 // Party is a signer that counts once toward the threshold of a policy
 // that [NewPolicy] builds. A party has one or more keys and counts only

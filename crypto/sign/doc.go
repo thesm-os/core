@@ -83,6 +83,12 @@
 // C2SP tlog-policy. [Policy.Check] counts each key once and verifies at
 // most one signature per key of the policy.
 //
+// # Encoding
+//
+// kanon generates the codec of [Signature], so a signature in the
+// record of any consumer encodes with the field numbers that this
+// package records. [Signature] explains the encoding.
+//
 // # Signing across a process boundary
 //
 // A [Signer] backed by a hosted key service or a hardware module

@@ -1,14 +1,12 @@
 // Copyright Thesmos 2026
 // SPDX-License-Identifier: Apache-2.0
 
-// Package core is the stdlib-only foundation of the thesmos ecosystem.
+// Package core is the foundation module of the thesmos ecosystem.
 //
-// core defines the contract seams (Clock, Rand, Reporter, …) that
-// every other thesmos library imports. It depends on nothing outside
-// the Go standard library; consumer-specific implementations
-// (OpenTelemetry, Prometheus, crypto/rand, HLC, …) live in consumer
-// repositories such as testkit, thesmos, and space.
-//
-// The constraints governing this module are documented as Architecture
-// Decision Records under docs/adr/.
+// core defines the contract seams, such as Clock, Rand and Reporter,
+// that every other thesmos library imports, and the value types that
+// they share. Its production code imports the Go standard library,
+// golang.org/x modules without module requirements, and the runtime
+// packages of kanon, which the generated encodings of core's types
+// import.
 package core

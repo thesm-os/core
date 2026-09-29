@@ -8,60 +8,55 @@ import (
 	"encoding/hex"
 )
 
-// Identifier sizes. Every [ID] returned by a [Generator] in this
-// module reports one of these via [ID.Size].
+// Identifier sizes. Every [ID] that a [Generator] of this module
+// returns has one of these sizes, which [ID.Size] reports.
 const (
-	// Size128 is the byte length of a 128-bit identifier — ULID,
-	// UUIDv4, and any other 128-bit identifier carried through
-	// this seam.
+	// Size128 is the byte length of a 128-bit identifier, such as a
+	// ULID or a UUIDv4.
 	Size128 = 16
 
-	// Size160 is the byte length of a 160-bit identifier —
-	// KSUID, and any other 160-bit identifier.
+	// Size160 is the byte length of a 160-bit identifier, such as a
+	// KSUID.
 	Size160 = 20
 
-	// Size256 is the byte length of a 256-bit identifier —
-	// content-addressed identifiers derived from a 256-bit hash
-	// (SHA-256, SHA-3-256), public-key fingerprints, and similar
-	// hash-based identifier shapes.
+	// Size256 is the byte length of a 256-bit identifier, such as a
+	// content address derived from a 256-bit hash (SHA-256,
+	// SHA3-256) or a public-key fingerprint.
 	Size256 = 32
 
-	// MaxSize is the upper bound on [ID.Size] across every
-	// identifier shape this seam carries. The underlying byte
-	// array of [ID] is sized to this constant so a single [ID]
-	// type holds 128-, 160-, or 256-bit identifiers without
-	// per-shape value types.
+	// MaxSize is the largest [ID.Size] of any identifier. The byte
+	// array of [ID] has MaxSize bytes, so one [ID] type stores 128-,
+	// 160- and 256-bit identifiers without a value type per size.
 	MaxSize = Size256
 )
 
-// ID is a fixed-max-size identifier covering 128-, 160-, and
-// 256-bit shapes in a single value type. The [ID.Size] method
-// reports the active prefix length; [ID.Bytes] returns a slice
-// over that prefix.
+// ID is an identifier of 128, 160 or 256 bits in one value type.
+// [ID.Size] returns the length of the active prefix, and [ID.Bytes]
+// returns the prefix.
 //
-// ID is comparable (`==` works) so it can be a map key, a struct
-// field participating in equality, or compared in tests without
-// [bytes.Equal]. Pass-by-value; value-typed mutations do not
-// alias previously-stored identifiers — important for audit
-// records where a stored identifier must stay frozen.
+// ID is comparable, so it can be a map key or a field of a
+// comparable struct, and == compares two IDs. An ID is a value: a
+// copy does not share storage with the original, so an identifier
+// stored in an audit record does not change when the caller's
+// variable does.
 //
 // # Allocation contract
 //
-// Construction, comparison, and storage are zero-alloc. [String]
-// allocates the returned hex string.
+// Construction, comparison and storage do not allocate. [ID.String]
+// allocates the returned string.
 type ID struct {
 	bytes [MaxSize]byte
 	size  uint8
 }
 
-// Zero is the reserved zero value. Generators MUST NOT produce
-// [Zero] except via [id/constant] explicitly seeded with it;
-// consumers treat [Zero] as "no identifier."
+// Zero is the zero ID, which consumers read as "no identifier". A
+// [Generator] must not return Zero, except an [id/constant]
+// generator that the caller seeds with it.
 var Zero = ID{}
 
-// New128 wraps a 16-byte identifier in an [ID] of size [Size128].
-// Used by [Generator] implementations whose underlying primitive
-// returns a fixed-size 16-byte array (ULID, UUIDv4).
+// New128 returns an [ID] of size [Size128] with the bytes of b. A
+// [Generator] whose primitive returns a 16-byte array, such as ULID
+// or UUIDv4, builds its IDs with it.
 //
 // # Allocation contract
 //
@@ -73,7 +68,7 @@ func New128(b [Size128]byte) ID {
 	return i
 }
 
-// New160 wraps a 20-byte identifier in an [ID] of size [Size160].
+// New160 returns an [ID] of size [Size160] with the bytes of b.
 //
 // # Allocation contract
 //
@@ -85,7 +80,7 @@ func New160(b [Size160]byte) ID {
 	return i
 }
 
-// New256 wraps a 32-byte identifier in an [ID] of size [Size256].
+// New256 returns an [ID] of size [Size256] with the bytes of b.
 //
 // # Allocation contract
 //
@@ -97,13 +92,13 @@ func New256(b [Size256]byte) ID {
 	return i
 }
 
-// FromBytes builds an [ID] from a byte slice, inferring the size
-// from len(b). This is the construction path for callers whose
-// identifier arrives from a wire, a database column, or a proof
-// body rather than from a [Generator].
+// FromBytes returns an [ID] of b, with the size taken from len(b).
+// An identifier read from a wire, a database column or a proof body
+// enters the type through it.
 //
-// Returns [ErrSize] unless len(b) is exactly [Size128], [Size160],
-// or [Size256]. b is copied; the returned ID does not alias it.
+// Returns [Zero] and [ErrSize] unless len(b) is [Size128],
+// [Size160] or [Size256]. The returned ID is a copy of b and does
+// not alias it.
 //
 // # Allocation contract
 //
@@ -128,61 +123,63 @@ func FromBytes(b []byte) (ID, error) {
 	return i, nil
 }
 
-// Size returns the number of meaningful bytes in i. Returns 0 for
-// [Zero].
+// Size returns the length of the active prefix of i: 16, 20 or 32,
+// or 0 for [Zero].
 func (i ID) Size() int {
 	return int(i.size)
 }
 
-// Bytes returns a read-only slice covering the meaningful prefix
-// of i. The returned slice aliases i's storage; callers must
-// treat it as immutable. The slice is invalidated by any
-// modification to i, but [ID] is value-typed and therefore
-// effectively immutable after construction.
+// Bytes returns the active prefix of i. Bytes has a value receiver,
+// so the slice refers to a copy of i, and a write through the slice
+// does not change i.
 func (i ID) Bytes() []byte {
 	return i.bytes[:i.size]
 }
 
-// IsZero reports whether i is the zero [ID] (size 0, all bytes
-// zero). The zero ID is the conventional sentinel for "no
-// identifier."
+// IsZero reports whether i is the zero [ID], which consumers read as
+// "no identifier".
+//
+// IsZero compares the size only. [New128], [New160], [New256] and
+// [FromBytes] are the only code that sets an ID's size. Each sets it
+// to 16, 20 or 32 together with the bytes, and [ID.UnmarshalBinary]
+// assigns [Zero] or the result of FromBytes. No ID other than the
+// zero value has size 0.
+//
+// # Allocation contract
+//
+// Zero alloc.
 func (i ID) IsZero() bool {
-	return i == Zero
+	return i.size == 0
 }
 
 // Equal reports whether i and other have the same size and the
-// same active bytes. Equivalent to `i == other`; the explicit
-// method aids call sites that compare identifiers
-// programmatically.
+// same active bytes. It returns the same result as i == other, for
+// call sites that compare identifiers through a method.
 func (i ID) Equal(other ID) bool {
 	return i == other
 }
 
-// Compare returns -1, 0, or +1 by lexicographic ordering of the
-// active byte prefix. Bytewise compare; for ULID-shaped
-// identifiers this matches chronological order, for UUIDv4 the
-// order is meaningless (random bytes), and for KSUID it matches
-// chronological order at second granularity.
+// Compare returns -1, 0 or +1 by the lexicographic order of the
+// active prefixes. When one prefix is a prefix of the other,
+// [bytes.Compare] orders the shorter first. ULIDs sort by their
+// creation time to the millisecond, and KSUIDs to the second.
+// UUIDv4s sort in no useful order, because their bytes are random.
 func (i ID) Compare(other ID) int {
 	return bytes.Compare(i.bytes[:i.size], other.bytes[:other.size])
 }
 
-// String returns the diagnostic encoding "id:<hex>" of the
-// active prefix. The "id:" prefix is deliberate: it visually
-// distinguishes the diagnostic encoding from every canonical
-// algorithm encoding (ULID Crockford base32, UUIDv4 hyphenated
-// hex, KSUID base62), so that a stray `fmt.Sprintf("%v", anID)`
-// in logs is recognisable as the diagnostic form rather than
-// silently passing for a canonical one.
+// String returns "id:" followed by the active prefix in
+// hexadecimal, for diagnostic output, and "id:" for [Zero].
 //
-// Consumers needing the producing generator's canonical
-// encoding call the matching Format helper in that subpackage:
+// No canonical encoding of an identifier starts with "id:", so an
+// ID that fmt writes into a log line cannot pass for one. ULIDs use
+// Crockford base32, UUIDv4s hyphenated hexadecimal and KSUIDs
+// base62. The Format function of each generator's package returns
+// the canonical encoding:
 //
 //   - [id/ulid.Format] for ULIDs
 //   - [id/uuidv4.Format] for UUIDv4s
 //   - [id/ksuid.Format] for KSUIDs
-//
-// Returns "id:" (with empty hex) for [id.Zero].
 //
 // # Allocation contract
 //

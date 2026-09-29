@@ -289,6 +289,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   children of the root are the parties that an excluded key removes. A
   tree is at most 64 rules deep, and `Check` does not allocate on
   success for up to 64 keys and 128 rules. See RFC-0044 and ADR-0034.
+- `epoch.Epoch`, `fixed.Fixed64` and `errs.Class` have a `ValidateKanon`
+  method that kanon generates, so a kanon record encodes each of them as
+  its integer: an epoch as a varint, a `Fixed64` as a zigzag varint of
+  its raw value, and a class as its number. An epoch of 7 takes 2 bytes
+  of a record instead of 10, and a class 2 bytes instead of 8 to 13. A
+  record with one field of each encodes in 6.4 ns instead of 14.5 ns.
+  The binary and text forms of the types do not change. See RFC-0045
+  and ADR-0036.
+- `sign.Signature` has a codec that kanon generates. It records the
+  field numbers `Algorithm` 1, `Value` 2 and `KeyID` 3, so the record of
+  every consumer encodes a signature alike. The codec adds nine methods
+  to `*Signature`: `SizeKanon`, `EncodeKanon`, `AppendBinary`,
+  `MarshalBinary`, `UnmarshalBinary`, `DecodeKanon`, `MergeKanon`,
+  `Reset` and `CloneKanon`. See RFC-0045.
+- `crypto.Digest.SizeKanon`, `id.ID.SizeKanon` and
+  `clock.Instant.SizeKanon` return the length of the binary form, so
+  kanon writes a field of these types once, in place. A record with a
+  digest, an ID and an instant encodes in 10.5 ns instead of 20.6 ns,
+  with the same bytes.
 
 ### Changed
 
@@ -363,6 +382,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Digest` of size 0, and the result is unchanged for every `Digest` a
   caller can build. A call costs 0.3 ns, down from 5.1 ns for the
   comparison of the whole 65-byte value.
+- `id.ID.IsZero` compares the size alone, as `crypto.Digest.IsZero`
+  does. The constructors are the only code that sets a size, so the zero
+  value is the only `ID` of size 0, and the result is unchanged for every
+  `ID` a caller can build. A call takes 0.36 ns, down from 3.25 ns for
+  the zero `ID`. For an `ID` whose first byte is not zero, the
+  comparison of the whole 33-byte value took 1.26 to 1.28 ns.
 - `arena.Arena.Alloc` clears only the part of its region that a
   `TruncateTo` rewind or a failed `AppendVia` left written. The other
   bytes are already zero from the allocation or from `Reset`, so on a new
@@ -421,6 +446,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Every exported sentinel of core has a class, apart from
   `task.ErrNoQuorum`, `resilience.ErrFull` and `resilience.ErrWaitTimeout`,
   whose documentation states why. See ADR-0033.
+- **Breaking:** once a consumer regenerates its kanon code, its records
+  encode a field of type `epoch.Epoch`, `fixed.Fixed64` or `errs.Class`
+  as the integer, and records written with the binary or text form of
+  the type do not decode. See RFC-0045.
+- **Breaking:** `encoding/gob` encodes a `sign.Signature` through its
+  kanon codec, whose methods have pointer receivers. gob fails for a
+  `Signature` in a value that it cannot address, such as a struct passed
+  to `Encode` by value. A pointer to the struct and a slice of
+  signatures encode.
+- Core's production code imports `go.thesmos.sh/kanon` and
+  `go.thesmos.sh/kanon/wire` at the pseudo-version of kanon's commit
+  cb05b4d, and its tests import kanon's conformance suite and
+  `go.dokimi.dev/assert`. CI checks that the generated files are current
+  and that a pull request keeps every recorded field number. See
+  ADR-0035.
 
 ### Fixed
 

@@ -11,29 +11,53 @@ import (
 	"testing"
 	"time"
 
+	"go.thesmos.sh/kanon"
 	"go.thesmos.sh/testkit"
 
 	"go.thesmos.sh/core/clock"
 	"go.thesmos.sh/core/errs"
 )
 
+// kanon sizes an Instant with its SizeKanon. A missing method is a
+// build failure.
+var _ kanon.Sizer = clock.Instant{}
+
+// roundTrips are instants at the limits of each field, whose binary
+// forms the tests encode and decode.
+var roundTrips = []struct {
+	name string
+	in   clock.Instant
+}{
+	{"the zero Instant", clock.Instant{}},
+	{"an instant of 2026", clock.Instant{Wall: 1_767_225_600_000_000_000, Logical: 7, Node: 42}},
+	{"an instant before the Unix epoch", clock.Instant{Wall: -1_000_000_000, Logical: 1, Node: 1}},
+	{"the instant of the smallest Wall", clock.Instant{Wall: math.MinInt64}},
+	{"the instant of the largest Wall", clock.Instant{Wall: math.MaxInt64}},
+	{"the instant of the largest Logical and Node", clock.Instant{Logical: math.MaxUint32, Node: math.MaxUint32}},
+}
+
 func TestInstantIsZero(t *testing.T) {
 	t.Parallel()
 
-	cases := map[string]struct {
-		in   clock.Instant
+	tests := []struct {
+		name string
+		give clock.Instant
 		want bool
 	}{
-		"zero value":          {clock.Instant{}, true},
-		"non-zero Wall":       {clock.Instant{Wall: 1}, false},
-		"non-zero Logical":    {clock.Instant{Logical: 1}, false},
-		"non-zero Node":       {clock.Instant{Node: 1}, false},
-		"all fields non-zero": {clock.Instant{Wall: 1, Logical: 1, Node: 1}, false},
+		{name: "reports true for the zero value", give: clock.Instant{}, want: true},
+		{name: "reports false for a Wall that is not zero", give: clock.Instant{Wall: 1}, want: false},
+		{name: "reports false for a Logical that is not zero", give: clock.Instant{Logical: 1}, want: false},
+		{name: "reports false for a Node that is not zero", give: clock.Instant{Node: 1}, want: false},
+		{
+			name: "reports false for an instant with no field zero",
+			give: clock.Instant{Wall: 1, Logical: 1, Node: 1},
+			want: false,
+		},
 	}
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			testkit.Equal(t, tc.in.IsZero(), tc.want, "IsZero must match expectation")
+			testkit.Equal(t, tt.give.IsZero(), tt.want, "IsZero must match expectation")
 		})
 	}
 }
@@ -43,18 +67,28 @@ func TestInstantOrdering(t *testing.T) {
 
 	// Lexicographic (Wall, Logical, Node) ordering. Each row is a
 	// (a, b) pair where a is causally before b.
-	pairs := map[string]struct {
+	pairs := []struct {
+		name string
 		a, b clock.Instant
 	}{
-		"earlier Wall":              {clock.Instant{Wall: 1}, clock.Instant{Wall: 2}},
-		"same Wall earlier Logical": {clock.Instant{Wall: 1, Logical: 1}, clock.Instant{Wall: 1, Logical: 2}},
-		"same Wall+Logical, lower Node": {
-			clock.Instant{Wall: 1, Logical: 1, Node: 1},
-			clock.Instant{Wall: 1, Logical: 1, Node: 2},
+		{
+			name: "orders the earlier Wall first",
+			a:    clock.Instant{Wall: 1},
+			b:    clock.Instant{Wall: 2},
+		},
+		{
+			name: "orders the earlier Logical first within one Wall",
+			a:    clock.Instant{Wall: 1, Logical: 1},
+			b:    clock.Instant{Wall: 1, Logical: 2},
+		},
+		{
+			name: "orders the lower Node first within one Wall and Logical",
+			a:    clock.Instant{Wall: 1, Logical: 1, Node: 1},
+			b:    clock.Instant{Wall: 1, Logical: 1, Node: 2},
 		},
 	}
-	for name, p := range pairs {
-		t.Run(name, func(t *testing.T) {
+	for _, p := range pairs {
+		t.Run(p.name, func(t *testing.T) {
 			t.Parallel()
 			testkit.Equal(t, p.a.Compare(p.b), -1, "a.Compare(b) must equal -1")
 			testkit.Equal(t, p.b.Compare(p.a), 1, "b.Compare(a) must equal 1")
@@ -251,19 +285,8 @@ func BenchmarkInstantRangeContains(b *testing.B) {
 func TestInstantBinaryRoundTrip(t *testing.T) {
 	t.Parallel()
 
-	cases := []struct {
-		name string
-		in   clock.Instant
-	}{
-		{"zero", clock.Instant{}},
-		{"typical", clock.Instant{Wall: 1_767_225_600_000_000_000, Logical: 7, Node: 42}},
-		{"pre-epoch wall", clock.Instant{Wall: -1_000_000_000, Logical: 1, Node: 1}},
-		{"min wall", clock.Instant{Wall: math.MinInt64}},
-		{"max wall", clock.Instant{Wall: math.MaxInt64}},
-		{"max logical and node", clock.Instant{Logical: math.MaxUint32, Node: math.MaxUint32}},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, tc := range roundTrips {
+		t.Run("returns "+tc.name+" from its encoding", func(t *testing.T) {
 			t.Parallel()
 
 			encoded, err := tc.in.MarshalBinary()
@@ -273,6 +296,19 @@ func TestInstantBinaryRoundTrip(t *testing.T) {
 			var got clock.Instant
 			testkit.NoError(t, got.UnmarshalBinary(encoded), "UnmarshalBinary must accept its own output")
 			testkit.Equal(t, got, tc.in, "round-trip must preserve every field")
+		})
+	}
+}
+
+func TestInstantSizeKanon(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range roundTrips {
+		t.Run("returns the length of the binary form of "+tc.name, func(t *testing.T) {
+			t.Parallel()
+			encoded, err := tc.in.MarshalBinary()
+			testkit.NoError(t, err, "MarshalBinary must not fail")
+			testkit.Equal(t, tc.in.SizeKanon(), len(encoded), "SizeKanon must equal the length of the binary form")
 		})
 	}
 }

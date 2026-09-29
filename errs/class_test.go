@@ -48,7 +48,7 @@ func TestClassString(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range names {
-		t.Run(tc.name, func(t *testing.T) {
+		t.Run("returns "+tc.name, func(t *testing.T) {
 			t.Parallel()
 			testkit.Equal(t, tc.class.String(), tc.name, "String must name the class")
 		})
@@ -83,6 +83,16 @@ func TestClassOrdering(t *testing.T) {
 		t.Parallel()
 		var zero errs.Class
 		testkit.Equal(t, zero, errs.Unspecified, "the zero Class must be Unspecified")
+	})
+
+	// A kanon record encodes a class as its number, so the numbers are
+	// a persisted encoding, as the names are. names lists the classes
+	// in the order of their constants.
+	t.Run("numbers the classes from 0 to 7 in the order of the constants", func(t *testing.T) {
+		t.Parallel()
+		for i, tc := range names {
+			testkit.Equal(t, int(tc.class), i, tc.name+" must keep its number")
+		}
 	})
 }
 

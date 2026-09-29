@@ -186,6 +186,19 @@ func (d *Digest) UnmarshalBinary(data []byte) error {
 	return nil
 }
 
+// SizeKanon returns the length of the binary form of d, the bytes that
+// [Digest.AppendBinary] appends: [Digest.Size], and 0 for the zero
+// [Digest]. kanon's generated code sizes a digest with it and writes
+// the binary form once, in place. Implements
+// [go.thesmos.sh/kanon.Sizer].
+//
+// # Allocation contract
+//
+// Zero alloc.
+func (d Digest) SizeKanon() int {
+	return int(d.size)
+}
+
 // Size returns the length of d's active prefix: 32, 48 or 64, or 0 for
 // the zero [Digest].
 func (d Digest) Size() int {

@@ -16,10 +16,22 @@ import (
 func TestSizeConstants(t *testing.T) {
 	t.Parallel()
 
-	testkit.Equal(t, id.Size128, 16, "Size128 must equal 16 bytes")
-	testkit.Equal(t, id.Size160, 20, "Size160 must equal 20 bytes")
-	testkit.Equal(t, id.Size256, 32, "Size256 must equal 32 bytes")
-	testkit.Equal(t, id.MaxSize, id.Size256, "MaxSize must equal Size256")
+	tests := []struct {
+		name string
+		give int
+		want int
+	}{
+		{name: "Size128 is 16 bytes", give: id.Size128, want: 16},
+		{name: "Size160 is 20 bytes", give: id.Size160, want: 20},
+		{name: "Size256 is 32 bytes", give: id.Size256, want: 32},
+		{name: "MaxSize is Size256", give: id.MaxSize, want: id.Size256},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testkit.Equal(t, tt.give, tt.want, "the size constant must keep its value")
+		})
+	}
 }
 
 func TestNewConstructors(t *testing.T) {
@@ -62,21 +74,46 @@ func TestNewConstructors(t *testing.T) {
 func TestIDIsZero(t *testing.T) {
 	t.Parallel()
 
-	cases := map[string]struct {
-		in   id.ID
+	tests := []struct {
+		name string
+		give id.ID
 		want bool
 	}{
-		"zero value":          {id.ID{}, true},
-		"Zero sentinel":       {id.Zero, true},
-		"size-128 with bytes": {id.New128([id.Size128]byte{1}), false},
-		"size-160 with bytes": {id.New160([id.Size160]byte{2}), false},
-		"size-256 with bytes": {id.New256([id.Size256]byte{3}), false},
-		"all-zero size-128":   {id.New128([id.Size128]byte{}), false},
+		{
+			name: "reports true for the zero value",
+			give: id.ID{},
+			want: true,
+		},
+		{
+			name: "reports true for Zero",
+			give: id.Zero,
+			want: true,
+		},
+		{
+			name: "reports false for an ID of Size128",
+			give: id.New128([id.Size128]byte{1}),
+			want: false,
+		},
+		{
+			name: "reports false for an ID of Size160",
+			give: id.New160([id.Size160]byte{2}),
+			want: false,
+		},
+		{
+			name: "reports false for an ID of Size256",
+			give: id.New256([id.Size256]byte{3}),
+			want: false,
+		},
+		{
+			name: "reports false for an ID of Size128 whose bytes are all zero",
+			give: id.New128([id.Size128]byte{}),
+			want: false,
+		},
 	}
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			testkit.Equal(t, tc.in.IsZero(), tc.want, "IsZero must match expected")
+			testkit.Equal(t, tt.give.IsZero(), tt.want, "IsZero must report whether the ID is Zero")
 		})
 	}
 }
@@ -85,13 +122,33 @@ func TestIDEqual(t *testing.T) {
 	t.Parallel()
 
 	a := id.New128(fill128(0x42))
-	b := id.New128(fill128(0x42))
-	c := id.New128(fill128(0x43))
-	d160 := id.New160(fill160(0x42))
-
-	testkit.True(t, a.Equal(b), "identical IDs must compare Equal")
-	testkit.False(t, a.Equal(c), "differing IDs must not compare Equal")
-	testkit.False(t, a.Equal(d160), "IDs of different sizes must not compare Equal")
+	tests := []struct {
+		name string
+		give id.ID
+		want bool
+	}{
+		{
+			name: "reports true for an ID with the same size and bytes",
+			give: id.New128(fill128(0x42)),
+			want: true,
+		},
+		{
+			name: "reports false for an ID with other bytes",
+			give: id.New128(fill128(0x43)),
+			want: false,
+		},
+		{
+			name: "reports false for an ID of another size",
+			give: id.New160(fill160(0x42)),
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testkit.Equal(t, a.Equal(tt.give), tt.want, "Equal must report whether the IDs match")
+		})
+	}
 }
 
 func TestIDCompare(t *testing.T) {
@@ -124,7 +181,7 @@ func TestIDCompare(t *testing.T) {
 func TestIDString(t *testing.T) {
 	t.Parallel()
 
-	t.Run("Zero encodes to bare 'id:' prefix", func(t *testing.T) {
+	t.Run("returns id: for Zero", func(t *testing.T) {
 		t.Parallel()
 		testkit.Equal(t, id.Zero.String(), "id:", "Zero must encode to bare 'id:' prefix")
 	})
@@ -151,7 +208,7 @@ func TestIDString(t *testing.T) {
 	})
 }
 
-// TestIDZeroAlloc cannot run in parallel — testing.AllocsPerRun
+// TestIDZeroAlloc cannot run in parallel. testing.AllocsPerRun
 // panics if any other test is running.
 //
 //nolint:paralleltest // see comment above
@@ -221,6 +278,28 @@ func BenchmarkCompare(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
 				_ = tc.a.Compare(tc.c)
+			}
+		})
+	}
+}
+
+// BenchmarkIsZero exercises [ID.IsZero] on the zero ID and on an ID
+// of each supported width.
+func BenchmarkIsZero(b *testing.B) {
+	cases := []struct {
+		name string
+		a    id.ID
+	}{
+		{"zero", id.Zero},
+		{"128", id.New128(fill128(0x42))},
+		{"160", id.New160(fill160(0x42))},
+		{"256", id.New256(fill256(0x42))},
+	}
+	for _, tc := range cases {
+		b.Run(tc.name, func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				_ = tc.a.IsZero()
 			}
 		})
 	}

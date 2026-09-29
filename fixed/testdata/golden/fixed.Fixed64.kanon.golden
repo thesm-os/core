@@ -1,0 +1,8 @@
+value 0: 
+value 1: 0802
+value 2: 0801
+value 3: 088002
+value 4: 08808080808002
+value 5: 08ffffffffff01
+value 6: 08feffffffffffffffff01
+value 7: fails: fixed: value out of range

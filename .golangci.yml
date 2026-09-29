@@ -74,10 +74,11 @@ linters:
       disable-dec-order-check: true
       disable-init-func-first-check: false
 
-    # Production code imports the stdlib, this module, and golang.org/x
-    # modules without requirements, each listed by name (ADR-0015). Any
-    # other import fails lint. Adding a module to either list takes a
-    # new ADR.
+    # Production code imports the stdlib, this module, golang.org/x
+    # modules without requirements (ADR-0015) and the runtime packages of
+    # kanon (ADR-0035), each listed by name. Test code may also import
+    # kanon's conformance suite and the assertions it uses. Any other
+    # import fails lint. Adding a module to either list takes a new ADR.
     depguard:
       rules:
         main:
@@ -90,6 +91,8 @@ linters:
             - $gostd
             - go.thesmos.sh/core
             - golang.org/x/sync
+            - go.thesmos.sh/kanon$
+            - go.thesmos.sh/kanon/wire$
         test:
           # Files in coretest/ are non-_test.go but they are test
           # infrastructure (hand-rolled spec / model / stub
@@ -106,6 +109,8 @@ linters:
             - go.thesmos.sh/testkit
             - go.thesmos.sh/testkit/model
             - pgregory.net/rapid
+            - go.thesmos.sh/kanon
+            - go.dokimi.dev/assert
 
     forbidigo:
       analyze-types: true

@@ -46,6 +46,39 @@ jobs:
       - uses: ./.github/actions/setup-ergon
       - run: make check-tidy
 
+  # Every generated file must match the output of the kanon version
+  # that go.mod requires.
+  generated:
+    name: Generated code is current
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: make check-generated
+
+  # A pull request must not renumber a field that its base branch
+  # records, since data that the base branch encoded would decode into
+  # another field. The full history makes the base branch available as
+  # a remote branch.
+  numbers:
+    name: Field numbers are kept
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - env:
+          BASE: origin/${{ github.base_ref }}
+        run: make check-numbers BASE="$BASE"
+
   lint:
     name: Lint
     runs-on: ubuntu-latest

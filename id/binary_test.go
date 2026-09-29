@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"testing"
 
+	"go.thesmos.sh/kanon"
 	"go.thesmos.sh/testkit"
 
 	"go.thesmos.sh/core/errs"
@@ -20,6 +21,7 @@ var (
 	_ encoding.BinaryAppender    = id.Zero
 	_ encoding.BinaryMarshaler   = id.Zero
 	_ encoding.BinaryUnmarshaler = (*id.ID)(nil)
+	_ kanon.Sizer                = id.Zero
 )
 
 // shapes are an ID of every size, with the bytes the encoding must
@@ -114,6 +116,17 @@ func TestUnmarshalBinary(t *testing.T) {
 		data[0] = 0
 		testkit.Equal(t, got.Bytes()[0], byte(0x88), "changing the input must not change the ID")
 	})
+}
+
+func TestSizeKanon(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range shapes {
+		t.Run("returns the length of the encoding of an ID of "+tc.name, func(t *testing.T) {
+			t.Parallel()
+			testkit.Equal(t, tc.id.SizeKanon(), len(tc.want), "SizeKanon must equal the length of the encoding")
+		})
+	}
 }
 
 func BenchmarkAppendBinary(b *testing.B) {

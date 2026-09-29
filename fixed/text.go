@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// Parse returns the [Fixed64] denoted by s.
+// Parse returns the [Fixed64] that s denotes.
 //
 // The accepted grammar is exactly:
 //
@@ -17,19 +17,16 @@ import (
 //	frac    = digit { digit }
 //	digit   = "0" … "9"
 //
-// Concretely: no leading "+", no exponent, no underscores, no
-// surrounding whitespace, and at least one digit on each side of the
-// point — ".5" and "1." are both [ErrSyntax]. "-0" parses to [Zero].
-// This is a trust boundary, so the accepted language is part of the
-// contract rather than a property of the implementation.
+// The grammar has no leading "+", no exponent, no underscore and no
+// surrounding white space, and requires a digit on each side of the
+// point, so ".5" and "1." are [ErrSyntax]. "-0" parses to [Zero].
+// Parse is a trust boundary, and the grammar is part of its contract.
 //
-// A significant digit beyond the eighth decimal place is
-// [ErrPrecision] rather than a silent truncation. Trailing zeroes are
-// not significant, so "1.000000000" parses and "0.000000001" does
-// not.
-//
-// Anything outside the grammar is [ErrSyntax]; a magnitude beyond
-// [Max] is [ErrRange].
+// Returns [ErrPrecision] for a significant digit beyond the eighth
+// decimal place, which Parse never truncates. Trailing zeroes are not
+// significant, so "1.000000000" parses and "0.000000001" does not.
+// Returns [ErrSyntax] for any other text outside the grammar, and
+// [ErrRange] for a magnitude beyond [Max].
 //
 // # Allocation contract
 //
@@ -52,11 +49,11 @@ func Parse(s string) (Fixed64, error) {
 		return Zero, err
 	}
 
-	// parseWhole guarantees whole <= maxWholeUnits and parseFrac
-	// guarantees frac < 10^Scale, so this product and sum cannot wrap
-	// a uint64 — the largest reachable raw is 9,223,372,036,899,999,999
-	// against a uint64 ceiling of ~1.8e19. What remains reachable is
-	// exceeding the DOMAIN bound, which is what is tested.
+	// parseWhole returns at most maxWholeUnits and parseFrac less than
+	// 10^Scale, so the product and the sum do not wrap a uint64. The
+	// largest raw value here is 9,223,372,036,899,999,999, against a
+	// uint64 maximum of about 1.8e19. The check below tests the bound
+	// of the domain.
 	raw := whole*scaleFactorU + frac
 	if raw > maxRawU {
 		return Zero, ErrRange
@@ -69,18 +66,11 @@ func Parse(s string) (Fixed64, error) {
 	return Fixed64(raw), nil
 }
 
-// parseWhole reads the integer part as a count of whole units.
-//
-// The bound is tested after each accumulation, which is what keeps
-// the return value inside maxWholeUnits rather than one digit past
-// it. Testing before instead lets v reach maxWholeUnits*10+9, and
-// that value times 10^Scale wraps a uint64 — so an input of twelve
-// digits could wrap back under the domain bound and parse as a small
-// number instead of being rejected.
-//
-// Testing after is also safe against wrapping in the accumulation
-// itself: entering an iteration v is at most maxWholeUnits, so
-// v*10+9 is at most 922,337,203,689 — nowhere near a uint64.
+// parseWhole reads the integer part as a count of whole units, and
+// tests the bound after each digit. Its result is at most
+// maxWholeUnits, whose product with 10^Scale fits a uint64. The
+// accumulation fits too: v is at most maxWholeUnits when an iteration
+// starts, so v*10+9 is at most 922,337,203,689.
 func parseWhole(s string) (uint64, error) {
 	if s == "" {
 		return 0, ErrSyntax
@@ -106,8 +96,8 @@ func parseWhole(s string) (uint64, error) {
 // parseFrac reads the fractional part as a count of 10⁻⁸ units,
 // left-aligned and zero-padded to [Scale] digits.
 //
-// A non-digit anywhere — including a second "." — is [ErrSyntax],
-// which is what keeps the grammar closed without a separate scan.
+// It returns [ErrSyntax] for a non-digit anywhere in s, a second "."
+// included, so the grammar does not need a separate scan.
 func parseFrac(s string, hasPoint bool) (uint64, error) {
 	if !hasPoint {
 		return 0, nil
@@ -135,8 +125,8 @@ func parseFrac(s string, hasPoint bool) (uint64, error) {
 			continue
 		}
 
-		// Past the eighth place. A zero here carries no information
-		// and is accepted; anything else is a digit the caller meant.
+		// A digit past the eighth place must be a zero. Any other
+		// digit is one that the caller wrote, so it fails.
 		if c != '0' {
 			return 0, ErrPrecision
 		}
@@ -149,18 +139,16 @@ func parseFrac(s string, hasPoint bool) (uint64, error) {
 	return v, nil
 }
 
-// String returns f rendered at all [Scale] places — "1.00000000",
-// never "1".
+// String returns f at all [Scale] places, such as "1.00000000" for
+// one, and never "1".
 //
-// Rendering every place is what makes the round trip unconditional:
-// for every in-domain f, Parse(f.String()) yields f again, and two
-// renderings of one number cannot differ. Trimming would make the
-// text shorter and the guarantee conditional.
+// Because String writes every place, Parse(f.String()) returns f for
+// every f of the domain, and two renderings of one number are
+// identical.
 //
-// String is total. Unlike [Fixed64.MarshalText] it renders the
-// out-of-contract math.MinInt64 rather than refusing it, because a
-// diagnostic that fails when a value is unusual fails exactly when it
-// is needed.
+// String accepts every value, math.MinInt64 included, which
+// [Fixed64.MarshalText] rejects, so a diagnostic of a value outside the
+// domain still renders it.
 //
 // # Allocation contract
 //
@@ -171,16 +159,16 @@ func (f Fixed64) String() string {
 
 // AppendText appends the [Fixed64.String] rendering of f to dst.
 //
-// Returns [ErrRange] for the out-of-contract math.MinInt64, so that
-// nothing outside the domain reaches a wire or a log sink that a
-// decoder will later reject. Implements [encoding.TextAppender].
+// Returns [ErrRange] for math.MinInt64, which the domain excludes, so
+// no text that a decoder rejects enters a wire format or a log.
+// Implements [encoding.TextAppender].
 //
 // # Allocation contract
 //
 // Zero alloc when dst has capacity for 21 more bytes.
 func (f Fixed64) AppendText(dst []byte) ([]byte, error) {
-	if f == outOfDomain {
-		return dst, ErrRange
+	if err := f.valid(); err != nil {
+		return dst, err
 	}
 
 	return appendDecimal(dst, f), nil
@@ -188,25 +176,19 @@ func (f Fixed64) AppendText(dst []byte) ([]byte, error) {
 
 // MarshalText returns the [Fixed64.String] rendering of f.
 //
-// Because this exists, [encoding/json] encodes a Fixed64 as a JSON
-// string rather than a number. That is deliberate: JSON numbers
-// decode to float64 by default, so a numeric encoding would hand the
-// value back to the type this package exists to displace, at the one
-// boundary where it is hardest to notice.
+// Through this method, [encoding/json] encodes a Fixed64 as a JSON
+// string and not as a number. A JSON number decodes to a float64 by
+// default, which would lose the exact value.
 //
 // Implements [encoding.TextMarshaler].
 func (f Fixed64) MarshalText() ([]byte, error) {
 	return f.AppendText(make([]byte, 0, maxTextLen))
 }
 
-// UnmarshalText sets f to the value denoted by data.
-//
-// Accepts exactly what [Parse] accepts and returns exactly its
-// errors, sharing one implementation — two decode paths that disagree
-// about which inputs are valid is the defect this package exists to
-// close. f is left unmodified when data is rejected.
-//
-// Implements [encoding.TextUnmarshaler].
+// UnmarshalText sets f to the value that data denotes, through
+// [Parse]. It accepts exactly what Parse accepts and returns its
+// errors, so the two decode paths agree on every input. On an error f
+// is unchanged. Implements [encoding.TextUnmarshaler].
 func (f *Fixed64) UnmarshalText(data []byte) error {
 	v, err := Parse(string(data))
 	if err != nil {
@@ -220,10 +202,10 @@ func (f *Fixed64) UnmarshalText(data []byte) error {
 
 // appendDecimal renders f at exactly [Scale] places.
 //
-// The fractional digits are emitted right-to-left into a stack array
-// because they must be zero-padded to a fixed width, which
-// [strconv.AppendUint] on the remainder alone would not do — 0.5 has
-// a remainder of 50000000 but 0.00000005 has one of 5.
+// It writes the fractional digits right to left into a stack array,
+// which pads them with zeroes to a fixed width: the remainder of 0.5 is
+// 50000000, and that of 0.00000005 is 5. [strconv.AppendUint] on the
+// remainder does not pad.
 func appendDecimal(dst []byte, f Fixed64) []byte {
 	if f < Zero {
 		dst = append(dst, '-')

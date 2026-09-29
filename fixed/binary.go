@@ -3,68 +3,57 @@
 
 package fixed
 
+//go:generate go tool kanon -type=Fixed64 -validate=valid
+
 import "encoding/binary"
 
-// AppendBinary appends the canonical [Size]-byte encoding of f's raw
-// value to dst:
+// AppendBinary appends the binary form of f to dst: the [Size] bytes
+// of its raw value, big-endian, in two's complement.
 //
-//	Raw   int64   8 bytes, big-endian, two's complement
-//
-// The encoding is a stable wire contract. Fixed64 values are signed
-// over and persisted in artefacts that must verify across builds and
-// across years; the layout will not change within a major version.
-//
-// # The scale is not encoded
-//
-// [Scale] is a constant of the type, not a property of a value. A
-// decoder that could disagree with an encoder about the scale is the
-// bug this package prevents, and a field that can disagree is one
-// somebody will set. When the scale changes, the major version
-// changes with it.
-//
-// # Byte order is not numeric order
+// The binary form never changes, so a Fixed64 that a consumer signs or
+// persists reads back to the same value in every build. The form
+// contains no scale, because [Scale] is a constant of the type. When
+// the scale changes, the major version of the module changes with it.
 //
 // Two's complement puts -1 at 0xffff_ffff_ffff_ffff and +1 at
-// 0x0000_0000_0000_0001, so the encoded form sorts negatives above
-// positives. A caller needing an order-preserving key must flip the
-// sign bit itself. The alternative — offset-binary, so that byte
-// order is
-// numeric order — was rejected because it makes the wire form
-// something other than the obvious int64 encoding, which every
-// cross-language port would then have to be told about. Ordering in
-// memory is already available through the operators and
-// [Fixed64.Compare].
+// 0x0000_0000_0000_0001, so the binary form of a negative value sorts
+// above that of a positive one. A caller that needs a key in numeric
+// order flips the sign bit. The operators and [Fixed64.Compare] order
+// values in memory.
 //
-// Returns [ErrRange] for the out-of-contract math.MinInt64, so every
-// value on the wire is one a decoder will accept. Implements
-// [encoding.BinaryAppender].
+// A kanon record does not use the binary form. It encodes a Fixed64
+// as a zigzag varint of its raw value, through [Fixed64.ValidateKanon],
+// so 12.34 takes 6 bytes of the record.
+//
+// Returns [ErrRange] for math.MinInt64, which the domain excludes, so
+// a decoder accepts every binary form that AppendBinary writes.
+// Implements [encoding.BinaryAppender].
 //
 // # Allocation contract
 //
 // Zero alloc when dst has capacity for [Size] more bytes.
 func (f Fixed64) AppendBinary(dst []byte) ([]byte, error) {
-	if f == outOfDomain {
-		return dst, ErrRange
+	if err := f.valid(); err != nil {
+		return dst, err
 	}
 
-	//nolint:gosec // G115: a bit-pattern reinterpretation, not a
-	// numeric conversion — UnmarshalBinary reverses it exactly.
+	//nolint:gosec // G115: the conversion keeps the bit pattern, and
+	// UnmarshalBinary reverses it.
 	return binary.BigEndian.AppendUint64(dst, uint64(f)), nil
 }
 
-// MarshalBinary returns the canonical [Size]-byte encoding of f.
-// Implements [encoding.BinaryMarshaler]; see [Fixed64.AppendBinary]
-// for the layout and the contract.
+// MarshalBinary returns the binary form of f, which
+// [Fixed64.AppendBinary] describes. Implements
+// [encoding.BinaryMarshaler].
 func (f Fixed64) MarshalBinary() ([]byte, error) {
 	return f.AppendBinary(make([]byte, 0, Size))
 }
 
-// UnmarshalBinary sets f from the canonical encoding.
+// UnmarshalBinary sets f to the value whose binary form is data.
 //
-// Returns [ErrSize] unless len(data) is exactly [Size], and
-// [ErrRange] when the decoded value is the excluded math.MinInt64. A
-// truncated read is a decode error, never a panic and never a
-// partially-filled value: f is left unmodified when data is rejected.
+// Returns [ErrSize] unless len(data) is [Size], and [ErrRange] for the
+// binary form of math.MinInt64, which the domain excludes. On an error
+// f is unchanged, so a truncated read never leaves a partial value.
 //
 // Implements [encoding.BinaryUnmarshaler].
 func (f *Fixed64) UnmarshalBinary(data []byte) error {
@@ -72,8 +61,8 @@ func (f *Fixed64) UnmarshalBinary(data []byte) error {
 		return ErrSize
 	}
 
-	//nolint:gosec // G115: the inverse reinterpretation of the one in
-	// AppendBinary; FromRaw rejects the single out-of-domain result.
+	//nolint:gosec // G115: the conversion reverses the one in
+	// AppendBinary, and FromRaw rejects math.MinInt64.
 	v, err := FromRaw(int64(binary.BigEndian.Uint64(data)))
 	if err != nil {
 		return err

@@ -12,9 +12,11 @@
         test test-race test-bench test-fuzz test-coverage test-e2e \
         bench-baseline bench-regression bench-profile \
         check check-coverage check-uncovered check-mutation check-branch \
+        check-generated check-numbers \
         release
 
 ERGON ?= ergon
+BASE ?= origin/main
 
 # gobco, which backs the branch gate, resolves types through go/types
 # directly and cannot read the generic type alias in
@@ -102,6 +104,13 @@ check-mutation: ## Run gremlins mutation testing per layer (slow)
 	$(ERGON) check mutation
 check-branch: ## Run gobco branch-coverage gating per layer (slow)
 	$(ERGON) check branch
+check-generated: ## Fail when a fresh kanon generation changes a committed *.kanon.go or *.kanon_test.go, or writes one that git does not track
+	go generate -run 'go tool kanon' ./...
+	git diff --exit-code -- '*.kanon.go' '*.kanon_test.go'
+	@untracked="$$(git ls-files --others --exclude-standard -- '*.kanon.go' '*.kanon_test.go')"; \
+		if [ -n "$$untracked" ]; then echo "untracked generated files:"; echo "$$untracked"; exit 1; fi
+check-numbers: ## Fail when a change renumbers a field that BASE (default origin/main) records
+	KANON_CHECK=$(BASE) go generate -run 'go tool kanon' ./...
 
 release: ## Bump versions and tag (MESSAGE="..." FLAGS=--major)
 	$(ERGON) release $(if $(MESSAGE),-m "$(MESSAGE)",) $(FLAGS)

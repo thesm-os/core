@@ -3,6 +3,8 @@
 
 package errs
 
+//go:generate go tool kanon -type=Class -validate=valid
+
 import "strconv"
 
 // Class is a single value, so contradictory classifications are
@@ -18,13 +20,18 @@ import "strconv"
 // A Class encodes as its name, the string [Class.String] returns, through
 // [Class.AppendText], [Class.MarshalText] and [Class.UnmarshalText].
 // encoding/json and the JSON handler of log/slog use the text form, so
-// a class in a log line or a message reads as "Transient" rather than
-// as its number. The names are a persisted encoding and never change.
+// a class in a log line or a message reads as "Transient", not as its
+// number. The names are a persisted encoding and never change.
+//
+// A kanon record encodes a Class as a varint of its number, through
+// [Class.ValidateKanon], so a class takes 2 bytes of the record. The
+// numbers never change either, because a new class takes the number
+// after the last one.
 //
 // # Allocation contract
 //
-// Value type; pass by value. [Class.String] returns a constant for
-// every defined Class.
+// Class is a value type. [Class.String] returns a constant for every
+// defined Class.
 type Class uint8
 
 const (
@@ -40,10 +47,10 @@ const (
 	Transient
 
 	// Conflict means the state the operation was based on has
-	// moved. Retrying identically fails identically; the caller
-	// must re-read, re-apply, and retry — the optimistic-
-	// concurrency loop documented on
-	// [go.thesmos.sh/core/version.Versioned].
+	// moved. Retrying the same operation fails the same way. The
+	// caller re-reads, re-applies and retries, the
+	// optimistic-concurrency loop that
+	// [go.thesmos.sh/core/version.Versioned] documents.
 	Conflict
 
 	// NotFound means the addressed resource does not exist.
@@ -54,31 +61,31 @@ const (
 	Invalid
 
 	// Unsupported means the implementation cannot honour a method
-	// its interface declares. Distinct from Invalid: the request is
-	// well-formed, the implementation is narrower than the
+	// its interface declares. It differs from Invalid: the request
+	// is well-formed, and the implementation is narrower than the
 	// contract. Producers SHOULD also satisfy
 	// errors.Is(err, errors.ErrUnsupported).
 	Unsupported
 
-	// Denied means refusal by policy rather than technical failure.
-	// Automated retry cannot succeed; the remedy is escalation or a
+	// Denied means a refusal by policy, not a technical failure. An
+	// automated retry cannot succeed. The remedy is escalation or a
 	// policy change.
 	Denied
 
-	// Integrity means data failed verification. Never retry —
-	// retrying a corrupt read yields the same corruption, and
-	// automated recovery risks propagating it.
+	// Integrity means data failed verification. A caller never
+	// retries it, because a retried read of corrupt data returns the
+	// same corruption, and an automated recovery can spread it.
 	Integrity
 )
 
 // String returns the class name, and "Class(N)" for a value outside
 // the closed set, so a log line shows an unrecognised value as distinct
-// from every class rather than as a bare number.
+// from every class, and not as a bare number.
 //
 // # Allocation contract
 //
-// Zero alloc for every defined Class — the returned strings are
-// constants. An out-of-range value allocates the formatted result.
+// Zero alloc for every defined Class, whose names are constants. An
+// out-of-range value allocates the formatted result.
 func (c Class) String() string {
 	switch c {
 	case Unspecified:
@@ -112,8 +119,8 @@ func (c Class) String() string {
 //
 // Zero alloc when b has room for the name.
 func (c Class) AppendText(b []byte) ([]byte, error) {
-	if c > Integrity {
-		return b, ErrUnknownClass
+	if err := c.valid(); err != nil {
+		return b, err
 	}
 
 	return append(b, c.String()...), nil
@@ -152,8 +159,20 @@ func (c *Class) UnmarshalText(text []byte) error {
 	return ErrUnknownClass
 }
 
+// valid returns [ErrUnknownClass] for a value above [Integrity], and
+// nil for each of the eight classes. [Class.AppendText] and
+// [Class.ValidateKanon] call it, so the text form and the kanon form
+// accept the same values.
+func (c Class) valid() error {
+	if c > Integrity {
+		return ErrUnknownClass
+	}
+
+	return nil
+}
+
 // Classifier is implemented by errors that have a Class.
 //
-// Implement it on an error type that already knows its own handling
-// answer; use [WithClass] to tag an error that does not.
+// An error type that knows its own class implements it. [WithClass]
+// tags an error that does not.
 type Classifier interface{ Class() Class }

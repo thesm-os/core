@@ -239,11 +239,12 @@ These interfaces — and the others added over time — share three
 properties:
 
 1. **Stdlib first.** Production code imports the Go standard library,
-   the module itself, and golang.org/x modules that have no module
-   requirements, each listed by name in the dependency guard. The
-   guard fails CI on any other import. Test code may draw on a closed
-   allow-list. Extending either list takes an ADR.
-   ([ADR-0015][adr-0015])
+   the module itself, golang.org/x modules that have no module
+   requirements, and the runtime packages of kanon, which the
+   generated encodings of core's types import. The dependency guard
+   lists each by name and fails CI on any other import. Test code may
+   import from a closed allow-list. Extending either list takes an ADR.
+   ([ADR-0015][adr-0015], [ADR-0035][adr-0035])
 2. **Single module.** One `go.mod`. Submodules are not needed because
    there are no heavy deps to isolate. ([ADR-0002][adr-0002])
 3. **Apache 2.0.** Unencumbered for production and downstream
@@ -282,6 +283,7 @@ Apache 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 [adr-0003]: docs/adr/0003-apache-2-0-with-spdx-headers.md
 [adr-0005]: docs/adr/0005-primitive-set-chosen-for-coherence.md
 [adr-0015]: docs/adr/0015-dependency-free-x-modules-in-production.md
+[adr-0035]: docs/adr/0035-core-imports-the-kanon-runtime.md
 [adr-0024]: docs/adr/0024-specs-reject-states-that-cannot-finish.md
 [adr-0025]: docs/adr/0025-tlog-builds-tagged-trees.md
 [adr-0027]: docs/adr/0027-btree-reset-keeps-nodes.md

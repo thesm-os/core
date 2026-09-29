@@ -3,20 +3,24 @@
 
 package epoch
 
+//go:generate go tool kanon -type=Epoch
+
 import "encoding/binary"
 
-// EpochSize is the width in bytes of the binary encoding.
+// EpochSize is the length in bytes of the binary form of an [Epoch].
 const EpochSize = 8
 
-// AppendBinary appends the canonical [EpochSize]-byte big-endian
-// encoding of e to dst.
+// AppendBinary appends the binary form of e to dst: the [EpochSize]
+// bytes of its value, big-endian.
 //
-// The encoding is a stable wire contract: a persisted watermark or
-// a fence carried in a message must read back identically across
-// builds and years; the layout will not change within a major
-// version. The zero [Epoch] has a wire form — it is
-// the number zero, and a freshly-created scope legitimately persists
-// it as its watermark seed.
+// The binary form never changes, so a persisted watermark, or a
+// fence in a message, reads back to the same epoch in every build.
+// The zero [Epoch] has a binary form, the number zero, which a new
+// scope persists as the seed of its watermark.
+//
+// A kanon record does not use the binary form. It encodes an Epoch
+// as a varint of its value, through [Epoch.ValidateKanon], so an
+// epoch of 7 takes 2 bytes of the record.
 //
 // Implements [encoding.BinaryAppender].
 //
@@ -27,18 +31,18 @@ func (e Epoch) AppendBinary(dst []byte) ([]byte, error) {
 	return binary.BigEndian.AppendUint64(dst, uint64(e)), nil
 }
 
-// MarshalBinary returns the canonical [EpochSize]-byte encoding of
-// e. Implements [encoding.BinaryMarshaler]; see [Epoch.AppendBinary]
-// for the layout and the contract.
+// MarshalBinary returns the binary form of e, which
+// [Epoch.AppendBinary] describes. Implements
+// [encoding.BinaryMarshaler].
 func (e Epoch) MarshalBinary() ([]byte, error) {
 	return e.AppendBinary(make([]byte, 0, EpochSize))
 }
 
-// UnmarshalBinary sets e from the canonical encoding.
+// UnmarshalBinary sets e to the epoch whose binary form is data.
 //
-// Returns [ErrSize] unless len(data) is exactly [EpochSize]. A
-// truncated read is a decode error, never a panic and never a
-// partial value: e is left unmodified when data is rejected.
+// Returns [ErrSize] unless len(data) is [EpochSize], and leaves e
+// unchanged. A truncated read is a decode error, never a panic and
+// never a partial value.
 //
 // Implements [encoding.BinaryUnmarshaler].
 func (e *Epoch) UnmarshalBinary(data []byte) error {
