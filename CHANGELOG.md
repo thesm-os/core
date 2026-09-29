@@ -308,6 +308,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   kanon writes a field of these types once, in place. A record with a
   digest, an ID and an instant encodes in 10.5 ns instead of 20.6 ns,
   with the same bytes.
+- `telemetry.GaugeAggregation` and `InstrumentSpec.Aggregation`. A gauge
+  declares whether the values of its attribute sets combine as a sum,
+  as for a depth, or as a maximum, as for a lag, so an adapter that
+  caps the attribute sets of an instrument gives the gauge's overflow
+  series a defined value. In a sum gauge each bound instrument has a
+  value of its own, and the value of a set is the sum of its
+  instruments' values. The zero value, `GaugeAggregationUnspecified`,
+  leaves the meaning of an existing gauge unchanged. See RFC-0046 and
+  ADR-0038.
+- `telemetrytest.ReleaseAllocsWithin`, a benchmark plug-in that fails
+  when the first `Release` of a bound instrument allocates more than a
+  given number of times. It binds a new instrument for every call that
+  it measures.
 
 ### Changed
 
@@ -461,6 +474,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `go.dokimi.dev/assert`. CI checks that the generated files are current
   and that a pull request keeps every recorded field number. See
   ADR-0035.
+- **Breaking:** `telemetry.Counter`, `telemetry.Gauge` and
+  `telemetry.Histogram` declare `Release`, which ends a bound instrument
+  that `With` returned. A released instrument records nothing, and an
+  adapter that keeps state per attribute set may forget a set after the
+  last instrument bound to it is released. Every implementation adds the
+  method. `telemetry/noop` implements it as an empty method, and the
+  contract assertions of `coretest/telemetrytest` check it. See RFC-0046
+  and ADR-0037.
 
 ### Fixed
 

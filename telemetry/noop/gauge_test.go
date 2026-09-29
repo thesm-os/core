@@ -13,8 +13,8 @@ import (
 	"go.thesmos.sh/core/telemetry/noop"
 )
 
-// newGauge is the SUT factory for the testkit-driven Gauge
-// contract suite.
+// newGauge returns a Gauge of a new no-op Reporter, for the contract
+// assertions and the benchmark.
 func newGauge() telemetry.Gauge {
 	return noop.New().Gauge(telemetry.InstrumentSpec{Name: "n"})
 }
@@ -33,5 +33,7 @@ func BenchmarkNoopGauge(b *testing.B) {
 		telemetrytest.GaugeBenchOnSet(bench.MutatorAllocsWithin[telemetry.Gauge, float64](1.0, 0)),
 		telemetrytest.GaugeBenchOnAdd(bench.MutatorAllocsWithin[telemetry.Gauge, float64](0.1, 0)),
 		telemetrytest.GaugeBenchOnWith(bench.PureAllocsWithin[telemetry.Gauge, telemetry.Gauge](0)),
+		telemetrytest.GaugeBenchOnRelease(telemetrytest.ReleaseAllocsWithin(
+			func(g telemetry.Gauge) telemetry.Gauge { return g.With(nil) }, 0)),
 	)
 }

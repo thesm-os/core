@@ -14,8 +14,8 @@ import (
 	"go.thesmos.sh/core/telemetry/noop"
 )
 
-// newCounter is the SUT factory for the testkit-driven Counter
-// contract suite.
+// newCounter returns a Counter of a new no-op Reporter, for the contract
+// assertions and the benchmark.
 func newCounter() telemetry.Counter {
 	return noop.New().Counter(telemetry.InstrumentSpec{Name: "n"})
 }
@@ -33,6 +33,8 @@ func BenchmarkNoopCounter(b *testing.B) {
 	telemetrytest.BenchmarkCounterContract(b, newCounter,
 		telemetrytest.CounterBenchOnAdd(bench.MutatorAllocsWithin[telemetry.Counter, int64](1, 0)),
 		telemetrytest.CounterBenchOnWith(bench.PureAllocsWithin[telemetry.Counter, telemetry.Counter](0)),
+		telemetrytest.CounterBenchOnRelease(telemetrytest.ReleaseAllocsWithin(
+			func(c telemetry.Counter) telemetry.Counter { return c.With(nil) }, 0)),
 	)
 }
 
@@ -42,11 +44,7 @@ func TestCounter(t *testing.T) {
 	t.Parallel()
 	c := newCounter()
 
-	t.Run("Add discards negative values rather than panicking", func(t *testing.T) {
-		// Locks the documented noop contract: noop discards
-		// monotonic-precondition violations because it produces
-		// no observable signal regardless. Production-grade
-		// implementations panic; noop deliberately does not.
+	t.Run("Add discards a negative value without a panic", func(t *testing.T) {
 		t.Parallel()
 		testkit.AssertNilSafe(t, func() {
 			c.Add(t.Context(), -1)

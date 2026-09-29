@@ -3,48 +3,74 @@
 
 package telemetry
 
-// InstrumentName is a typed string naming a metric instrument.
-// Use named [InstrumentName] constants in the package that emits
-// the metric instead of inline string literals — typo'd metric
-// names are a deployment-time discovery rather than a compile-time
-// failure, so the type discipline matters.
+// InstrumentName is the name of a metric instrument. A package that
+// emits a metric declares its names as InstrumentName constants, so the
+// compiler rejects a misspelt name.
 type InstrumentName string
 
-// InstrumentSpec carries the parameters that describe a metric
-// instrument at construction time. The same value type is consumed
-// by [Reporter.Counter], [Reporter.Gauge], and [Reporter.Histogram]
-// — instrument metadata (Name, Description, Unit) is the same
-// vocabulary across the three primitives, and the
-// [InstrumentSpec.Bounds] field is histogram-only by intent.
+// GaugeAggregation states how the values of a gauge's attribute sets
+// combine, in the overflow series of an adapter that caps the attribute
+// sets of an instrument, and in any total across sets. [Gauge]
+// describes each value.
+type GaugeAggregation uint8
+
+const (
+	// GaugeAggregationUnspecified defines no combination: the values of
+	// different attribute sets are non-additive, and an overflow series
+	// has no defined value. It is the zero value, so it applies to every
+	// gauge whose InstrumentSpec leaves Aggregation unset.
+	GaugeAggregationUnspecified GaugeAggregation = 0
+
+	// GaugeAggregationSum adds the values, as for a depth or a count.
+	// The OpenTelemetry API calls an instrument of additive values an
+	// UpDownCounter.
+	GaugeAggregationSum GaugeAggregation = 1
+
+	// GaugeAggregationMax takes the largest value recorded in an export
+	// interval, as for a lag or an age.
+	GaugeAggregationMax GaugeAggregation = 2
+)
+
+// InstrumentSpec describes a metric instrument when a [Reporter]
+// constructs it. [Reporter.Counter], [Reporter.Gauge] and
+// [Reporter.Histogram] take the same type. Name, Description and Unit
+// apply to every instrument, [InstrumentSpec.Bounds] only to a
+// histogram, and [InstrumentSpec.Aggregation] only to a gauge.
 //
-// Mirrors OpenTelemetry's option-pattern for instrument metadata
-// collapsed into a single value-type so consumers don't have to
-// learn three parallel option chains.
+// It collapses the option functions that OpenTelemetry uses for
+// instrument metadata into one value type, so a caller learns one type
+// instead of three chains of options.
 //
 // # Allocation contract
 //
-// Value type. The [InstrumentSpec.Bounds] slice header aliases the
-// caller's buffer. Instrument creation is a cold path; the returned
-// instrument's hot-path methods (Add / Set / Record) are zero-alloc.
+// InstrumentSpec is a value type. The [InstrumentSpec.Bounds] slice
+// header aliases the caller's buffer. Constructing an instrument is a
+// cold path, and the methods that emit, Add, Set and Record, are
+// zero-alloc.
 type InstrumentSpec struct {
-	// Name is the instrument's identifier. Required. Subsequent
-	// constructions with the same Name on the same Reporter must
-	// return the same underlying instrument.
+	// Name identifies the instrument, and is required. A second
+	// construction with the same Name on the same Reporter returns the
+	// same instrument.
 	Name InstrumentName
 
-	// Description is human-prose documentation surfaced by
-	// observability backends (Prometheus HELP text, OTLP
-	// Instrument.Description). Optional.
+	// Description documents the instrument for observability backends,
+	// as the HELP text of Prometheus or the Description of an OTLP
+	// instrument. It is optional.
 	Description string
 
-	// Unit is the UCUM-encoded unit of measure (for example "ms",
-	// "By", "{request}"). Surfaced as the Prometheus _unit suffix
-	// and OTLP Instrument.Unit. Optional.
+	// Unit is the UCUM unit of measure, such as "ms", "By" or
+	// "{request}", which becomes the unit suffix of Prometheus and the
+	// Unit of an OTLP instrument. It is optional.
 	Unit string
 
-	// Bounds is the explicit bucket boundary set for histogram
-	// instruments. Ignored by [Reporter.Counter] and
-	// [Reporter.Gauge]. When nil, [Histogram] implementations apply
-	// their default bucket schema.
+	// Bounds is the set of explicit bucket boundaries of a histogram.
+	// [Reporter.Counter] and [Reporter.Gauge] ignore it. When Bounds is
+	// nil, a [Histogram] uses its default buckets.
 	Bounds []float64
+
+	// Aggregation states how the values of a gauge's attribute sets
+	// combine. [Reporter.Counter] and [Reporter.Histogram] ignore it. A
+	// value above [GaugeAggregationMax] means
+	// [GaugeAggregationUnspecified].
+	Aggregation GaugeAggregation
 }

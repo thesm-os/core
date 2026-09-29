@@ -5,20 +5,26 @@ package telemetry
 
 import "context"
 
-// Histogram records a distribution of values (request latencies,
-// payload sizes, queue waits).
+// Histogram records the distribution of values, such as request
+// latencies, payload sizes or queue waits.
 //
 // # Allocation contract
 //
-// [Histogram.Record] is zero-alloc. [Histogram.With] allocates.
+// [Histogram.Record] and [Histogram.Release] are zero-alloc.
+// [Histogram.With] allocates.
 type Histogram interface {
-	// Record adds a value to the distribution against the bound
-	// attribute set.
+	// Record adds value to the distribution of the bound attribute set.
 	//
 	//testkit:mutator
 	Record(ctx context.Context, value float64)
 
-	// With returns a [Histogram] sharing this instrument but bound
-	// to the given attributes. Slice semantics follow [Counter.With].
+	// With returns a Histogram of the same instrument, bound to attrs,
+	// with the slice semantics of [Counter.With].
 	With(attrs []Attr) Histogram
+
+	// Release ends this bound instrument, with the contract of
+	// [Counter.Release].
+	//
+	//testkit:mutator
+	Release()
 }

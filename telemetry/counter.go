@@ -5,51 +5,70 @@ package telemetry
 
 import "context"
 
-// Counter is a monotonically-increasing metric instrument.
+// Counter is a metric instrument whose value only increases.
 //
-// The lifecycle is:
+// An instrument goes through four steps:
 //
-//  1. [Reporter.Counter] resolves the named instrument once at init.
-//     Allocates.
-//  2. [Counter.With] pre-binds the attribute set for one
-//     time-series. Allocates.
-//  3. [Counter.Add] is called many times per request and is
-//     zero-allocation by contract on every implementation in this
-//     module.
+//  1. [Reporter.Counter] resolves the named instrument once, at
+//     initialisation. It allocates.
+//  2. [Counter.With] binds an attribute set for one time series. It
+//     allocates.
+//  3. [Counter.Add] records a value, many times per request, and does
+//     not allocate on any implementation in this module.
+//  4. [Counter.Release] ends the bound instrument when its caller stops
+//     using the attribute set.
 //
 // # ctx semantics
 //
-// The [context.Context] is not used for cancellation — atomic adds
-// have no I/O — but adapters read the active OpenTelemetry span
-// from ctx for exemplar correlation, the W3C baggage entries for
-// per-request label enrichment, and the trace ID for cross-signal
-// correlation. Drop ctx and these capabilities are permanently
-// disabled for this instrument; the cost of carrying ctx is one
-// interface-pointer pass per call.
+// Add does not use its [context.Context] for cancellation, because an
+// atomic add does no I/O. Adapters read three values from ctx:
+//
+//   - The active OpenTelemetry span, which an exemplar links to.
+//   - The W3C baggage entries, which add labels per request.
+//   - The trace ID, which correlates metrics with logs and traces.
+//
+// Without ctx an adapter loses these for the instrument. Passing ctx
+// costs one interface value per call.
 //
 // # Allocation contract
 //
-// [Counter.Add] is zero-alloc. [Counter.With] allocates.
+// [Counter.Add] and [Counter.Release] are zero-alloc. [Counter.With]
+// allocates.
 type Counter interface {
-	// Add increments the counter by value against the bound
-	// attribute set. Negative values violate the monotonic
-	// precondition: production-grade implementations panic with a
-	// diagnostic message (matching the precondition-violation
-	// discipline used elsewhere in this module); the [noop]
-	// implementation discards as it produces no observable signal
-	// regardless. Consumers writing portable code must not pass
-	// negative values.
+	// Add increments the counter by value against the bound attribute
+	// set. A negative value violates the monotonic precondition:
+	// production-grade implementations panic with a diagnostic message,
+	// and [go.thesmos.sh/core/telemetry/noop] discards it, as it
+	// discards every value. Portable code never passes a negative value.
 	//
 	//testkit:mutator
 	Add(ctx context.Context, value int64)
 
-	// With returns a [Counter] sharing this instrument but bound
-	// to the given attributes. Subsequent [Counter.Add] calls on
-	// the returned counter emit against that attribute set.
+	// With returns a Counter of the same instrument, bound to attrs.
+	// Later calls of Add on the returned Counter record against that
+	// attribute set.
 	//
-	// The attribute slice is taken by reference; callers must
-	// not mutate it after the call. Implementations may copy
-	// for their own state; the slice is not retained as the
-	// canonical store.
+	// With takes the slice by reference, so the caller does not change
+	// it after the call. An implementation may copy it, and does not
+	// keep the slice as its store.
 	With(attrs []Attr) Counter
+
+	// Release ends this bound instrument, which [Counter.With] returned.
+	// After Release returns, Add records nothing. A second Release, and
+	// Release on a Counter that a [Reporter] method returned, do
+	// nothing. Releasing one Counter does not end another, including a
+	// Counter that its own With returned.
+	//
+	// Release is safe for concurrent use with every method of every
+	// instrument. An Add on the same Counter that runs concurrently with
+	// Release may record or may not. An adapter that keeps state per
+	// attribute set may forget a set after the last Counter bound to it
+	// is released and the adapter has exported the set's last
+	// measurement. A later With of the set then starts a new series,
+	// from zero, with a new start time.
+	//
+	// Release does not allocate.
+	//
+	//testkit:mutator
+	Release()
 }

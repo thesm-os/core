@@ -92,16 +92,18 @@ seams every other thesmos library and framework depends on:
   `Digest` cannot. Implementation: `crypto/shake` (SHAKE128,
   SHAKE256). See [RFC-0019][rfc-0019].
 - **Telemetry** — metric and trace seams for hot-path
-  observability emission, with attribute pre-binding via
-  `.With([]Attr)` keeping the emit path zero-allocation while
-  preserving `context.Context` for OTel exemplar correlation,
-  baggage, and trace-stitching. Kind-tagged `Attr` bridges to
-  stdlib `log/slog`. `Propagator` / `Carrier` carry a
+  observability. An instrument binds its attributes once with
+  `.With([]Attr)`, so the emit path does not allocate. The emit
+  methods take a `context.Context` for OTel exemplars, baggage and
+  trace correlation. `Release` ends a bound instrument, so an
+  adapter can forget its attribute set. A gauge declares whether
+  its sets combine as a sum or a maximum. Kind-tagged `Attr` bridges to
+  stdlib `log/slog`. `Propagator` and `Carrier` transport a
   `SpanContext` across a process boundary, with `MapCarrier` for
   the common case. Implementations: `telemetry/noop`,
   `telemetry/w3c` (W3C Trace Context `traceparent` /
-  `tracestate`). See [RFC-0004][rfc-0004] and
-  [RFC-0020][rfc-0020].
+  `tracestate`). See [RFC-0004][rfc-0004], [RFC-0020][rfc-0020]
+  and [RFC-0046][rfc-0046].
 - **Epoch** — in-process strictly-monotonic 64-bit counter for
   leader generations, schema versions, optimistic-concurrency
   tokens. `epoch.Epoch` value type plus thread-safe
@@ -326,5 +328,6 @@ Apache 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 [rfc-0039]: docs/rfc/0039-signature-policies.md
 [rfc-0043]: docs/rfc/0043-btree-ordered-maps.md
 [rfc-0044]: docs/rfc/0044-nested-signature-policies.md
+[rfc-0046]: docs/rfc/0046-released-instruments-and-gauge-aggregation.md
 [contrib]: CONTRIBUTING.md
 [sec]: SECURITY.md

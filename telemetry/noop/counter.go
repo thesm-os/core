@@ -9,17 +9,21 @@ import (
 	"go.thesmos.sh/core/telemetry"
 )
 
-// counter is the empty-struct no-op [telemetry.Counter]. The zero
-// value is the only useful value; stateless and safe for
-// concurrent use.
+// counter is the no-op [telemetry.Counter]. It has no state, so its zero
+// value is its only value, and it is safe for concurrent use.
 type counter struct{}
 
 // Compile-time interface check.
 var _ telemetry.Counter = counter{}
 
-// Add discards value.
+// Add discards value. It does not check the monotonic precondition of
+// [telemetry.Counter.Add], so it also discards a negative value.
 func (counter) Add(context.Context, int64) {}
 
-// With returns the receiver — attribute pre-binding has no effect
-// on a no-op counter.
+// With returns the receiver, because binding attributes has no effect on
+// a no-op counter.
 func (c counter) With([]telemetry.Attr) telemetry.Counter { return c }
+
+// Release does nothing, because a no-op counter keeps no state per
+// attribute set.
+func (counter) Release() {}

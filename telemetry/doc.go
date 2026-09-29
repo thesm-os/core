@@ -1,106 +1,121 @@
 // Copyright Thesmos 2026
 // SPDX-License-Identifier: Apache-2.0
 
-// Package telemetry defines the metric and trace seams used by every
-// thesmos library that needs to emit observation signals from a
-// hot-path code path.
+// Package telemetry defines the seams through which every thesmos
+// library emits metrics and traces from a hot path.
 //
-// The seam exists so library code can construct counters, gauges,
-// histograms, and spans through an injected [Reporter] without
-// binding to OpenTelemetry, Prometheus, or any other backend at
-// compile time. Tests inject a noop reporter; production deployments
-// inject an OTel- or Prometheus-backed adapter constructed in the
-// consumer module.
+// Library code constructs counters, gauges, histograms and spans
+// through an injected [Reporter], and does not bind to OpenTelemetry,
+// Prometheus or another backend at compile time. Tests inject a no-op
+// reporter. A production deployment injects an adapter for
+// OpenTelemetry or Prometheus that the consumer's module constructs.
 //
-// # Hot-path zero-allocation discipline
+// # Instrument lifecycle
 //
-// Metric instruments separate two phases:
+// A metric instrument goes through three steps:
 //
-//   - Init: [Reporter.Counter] / [Reporter.Gauge] / [Reporter.Histogram]
-//     resolve a named instrument, and [Counter.With] / [Gauge.With] /
-//     [Histogram.With] pre-bind attributes for one specific
-//     time-series. Both may allocate.
-//   - Emit: [Counter.Add] / [Gauge.Set] / [Gauge.Add] /
-//     [Histogram.Record] are called many times per request and must
-//     be zero-allocation on every implementation in this module.
+//   - Bind: [Reporter.Counter], [Reporter.Gauge] and [Reporter.Histogram]
+//     resolve a named instrument, and [Counter.With], [Gauge.With] and
+//     [Histogram.With] bind an attribute set for one time series. Both
+//     may allocate.
+//   - Emit: [Counter.Add], [Gauge.Set], [Gauge.Add] and
+//     [Histogram.Record] run many times per request, and do not allocate
+//     on any implementation in this module.
+//   - Release: [Counter.Release], [Gauge.Release] and
+//     [Histogram.Release] end a bound instrument when its caller stops
+//     using the attribute set, so that an adapter can forget the set.
 //
-// Pre-binding attributes at init is what eliminates the dominant
-// allocation cost under real OTel-grade adapters: attribute
-// resolution happens once, not per call. The hot path is
-// `c.Add(ctx, 1)` — one method call, no slice construction, no
-// attribute walking.
+// Binding at initialisation keeps attribute resolution off the hot
+// path: the adapter resolves the attributes once, not per call. The hot
+// path is c.Add(ctx, 1), one method call without a slice to build or
+// attributes to walk.
+//
+// # Overflow
+//
+// An adapter that caps the attribute sets of an instrument aggregates
+// the measurements of every set beyond the cap into one overflow
+// series. The overflow series of a counter or a histogram has a correct
+// total, because their measurements add. [InstrumentSpec.Aggregation]
+// states how the values of a gauge's attribute sets combine, and [Gauge]
+// describes the overflow series of each aggregation.
 //
 // # ctx on the hot path
 //
-// [Counter.Add] and the other emission methods take a
-// [context.Context]. ctx is not used for cancellation here — atomic
-// adds have no I/O — but it carries observability state that
-// adapters use:
+// [Counter.Add] and the other methods that emit take a
+// [context.Context]. They do not use it for cancellation, because an
+// atomic add does no I/O. Adapters read three values from it:
 //
-//   - The active OpenTelemetry [Span], so adapters can attach
-//     exemplars linking metric data points back to the traces that
-//     produced them.
-//   - W3C [baggage] entries, so adapters can enrich metrics with
-//     per-request labels propagated across services.
-//   - The trace ID, so logs / metrics / traces correlate in
-//     OTel-shaped backends without manual stitching.
+//   - The active OpenTelemetry span, so that an exemplar links a data
+//     point of a metric to the trace that produced it.
+//   - The W3C baggage entries, which add labels per request across
+//     services.
+//   - The trace ID, which correlates logs, metrics and traces in an
+//     OpenTelemetry backend.
 //
-// Dropping ctx would save a single interface-pointer pass per call
-// and permanently break exemplar correlation. The cost is paid; the
-// capability is preserved.
+// Without ctx, exemplar correlation would end for every instrument.
+// Passing ctx costs one interface value per call.
 //
 // # Tracing
 //
-// [Tracer.Start] returns a child [Span] for cold-path operations.
-// Spans are NOT subject to the zero-allocation contract — span
-// creation, attribute mutation, and event recording all allocate by
-// design (the OTel SDK records into a span buffer, samplers may
-// emit, exporters batch). Library code emits a span per request,
-// not per loop iteration.
+// [Tracer.Start] returns a child [Span] for cold-path operations. Spans
+// are outside the zero-allocation contract: creating a span, changing
+// its attributes and recording its events allocate, because the
+// OpenTelemetry SDK records into a span buffer, samplers may emit and
+// exporters batch. Library code emits a span per request, not per
+// iteration of a loop.
 //
 // # Provided implementations
 //
-//   - [telemetry/noop] — discards every signal; suitable for tests
-//     and for libraries running outside an observability deployment.
+//   - [go.thesmos.sh/core/telemetry/noop] discards every signal. Tests
+//     and libraries that run outside an observability deployment use it.
 //
 // # Failure semantics
 //
-// Telemetry emission cannot fail in a way callers can act on —
-// metric SDKs queue and drop on overflow, exporters retry
-// internally. No method on [Reporter], [Counter], [Gauge],
-// [Histogram], or [Span] returns an error.
+// A caller cannot act on a failure of telemetry: metric SDKs queue and
+// drop on overflow, and exporters retry internally. No method of
+// [Reporter], [Counter], [Gauge], [Histogram] or [Span] returns an
+// error.
 //
 // # Allocation contract
 //
-// Hot-path methods that must be zero-allocation:
+// These methods do not allocate:
 //
-//   - [Counter.Add], [Gauge.Set], [Gauge.Add], [Histogram.Record].
+//   - [Counter.Add], [Gauge.Set], [Gauge.Add] and [Histogram.Record],
+//     on the hot path.
+//   - [Counter.Release], [Gauge.Release] and [Histogram.Release].
 //
-// Init-path methods that may allocate (cold path):
+// These methods may allocate, on a cold path: [Reporter.Counter],
+// [Reporter.Gauge], [Reporter.Histogram], [Reporter.Tracer],
+// [Counter.With], [Gauge.With], [Histogram.With], [Tracer.Start] and
+// every method of [Span].
 //
-//   - [Reporter.Counter], [Reporter.Gauge], [Reporter.Histogram],
-//     [Reporter.Tracer], the various [Counter.With] /
-//     [Gauge.With] / [Histogram.With] constructors,
-//     [Tracer.Start], every [Span] method.
-//
-// Implementations carry a TestZeroAlloc suite enforcing the hot-path
-// contract via [testing.AllocsPerRun].
+// The benchmarks of each implementation in this module check the
+// contract through the plug-ins of the conformance suites in
+// go.thesmos.sh/core/coretest/telemetrytest.
 //
 // # Bridging to log/slog
 //
-// [Attr.SlogAttr] converts a [telemetry.Attr] to a [slog.Attr]
-// without boxing primitive values. Consumers that want one
-// attribute construction across metrics, traces, and logs build a
-// [telemetry.Attr] slice once and pass it through:
+// [Attr.SlogAttr] converts a [telemetry.Attr] to a [slog.Attr] without
+// boxing a primitive value. A consumer can build one attribute slice
+// when it binds an instrument, and use it for the metric, the span and
+// the log record of every request:
 //
+//	// Once per region, at initialisation:
 //	attrs := []telemetry.Attr{
-//	    telemetry.AttrString("user_id", uid),
-//	    telemetry.AttrInt("retry", retries),
+//	    telemetry.AttrString("operation", "create"),
+//	    telemetry.AttrString("region", region),
 //	}
-//	counter.With(attrs).Add(ctx, 1)
-//	span.SetAttributes(attrs)
+//	requests := counter.With(attrs)
+//	slogAttrs := make([]slog.Attr, len(attrs))
 //	for i, a := range attrs {
 //	    slogAttrs[i] = a.SlogAttr()
 //	}
+//
+//	// On every request:
+//	requests.Add(ctx, 1)
+//	span.SetAttributes(attrs)
 //	logger.LogAttrs(ctx, slog.LevelInfo, "request", slogAttrs...)
+//
+//	// When the region is retired:
+//	requests.Release()
 package telemetry
