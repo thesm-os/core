@@ -89,5 +89,7 @@ Start from [`docs/templates/ADR.md`](../templates/ADR.md).
 | [0034](0034-root-children-are-policy-parties.md) | The Root's Children Are the Parties of a Policy | Accepted |
 | [0035](0035-core-imports-the-kanon-runtime.md) | Core Imports the kanon Runtime | Accepted |
 | [0036](0036-core-types-have-frozen-kanon-forms.md) | Core Types Have Frozen kanon Forms | Accepted |
+| [0037](0037-a-bound-instrument-is-released.md) | A Bound Instrument Is Released | Accepted |
+| [0038](0038-a-gauge-declares-its-set-aggregation.md) | A Gauge Declares the Aggregation of Its Attribute Sets | Accepted |
 
 [nygard]: https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions

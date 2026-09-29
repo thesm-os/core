@@ -108,6 +108,7 @@ Start from [`docs/templates/RFC.md`](../templates/RFC.md).
 | [0043](0043-btree-ordered-maps.md) | B-Tree Ordered Maps | Accepted |
 | [0044](0044-nested-signature-policies.md) | Nested Signature Policies | Accepted |
 | [0045](0045-kanon-forms-of-core-types.md) | kanon Forms of Core Types | Accepted |
+| [0046](0046-released-instruments-and-gauge-aggregation.md) | Released Instruments and Gauge Aggregation | Accepted |
 
 ## Canonical first RFC
 
