@@ -91,5 +91,6 @@ Start from [`docs/templates/ADR.md`](../templates/ADR.md).
 | [0036](0036-core-types-have-frozen-kanon-forms.md) | Core Types Have Frozen kanon Forms | Accepted |
 | [0037](0037-a-bound-instrument-is-released.md) | A Bound Instrument Is Released | Accepted |
 | [0038](0038-a-gauge-declares-its-set-aggregation.md) | A Gauge Declares the Aggregation of Its Attribute Sets | Accepted |
+| [0039](0039-emit-methods-do-not-panic.md) | Emit Methods Do Not Panic | Accepted |
 
 [nygard]: https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions

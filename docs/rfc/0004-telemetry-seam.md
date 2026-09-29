@@ -4,7 +4,7 @@ title: Telemetry Seam
 author: Roy Klopper <roy.klopper@stealthscale.io>
 status: Accepted
 created: 2026-05-06
-updated: 2026-05-06
+updated: 2026-09-29
 discussion: none
 supersedes: none
 superseded-by: none
@@ -171,6 +171,10 @@ the wrong parameter. The cost is three type aliases; the
 benefit is compile-time discipline at every call site.
 
 ### `Counter.Add` and the monotonic precondition
+
+**Note:** ADR-0039 replaces the contract in this section.
+`Counter.Add` discards a negative value, and no method that emits
+panics for any argument.
 
 `Counter.Add` requires `value >= 0`. Negative values violate
 the monotonic precondition. The contract:
