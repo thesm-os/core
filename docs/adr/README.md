@@ -87,5 +87,7 @@ Start from [`docs/templates/ADR.md`](../templates/ADR.md).
 | [0032](0032-write-outcome-unknown-is-transient.md) | A Write Whose Outcome Is Unknown Classifies as Transient | Accepted |
 | [0033](0033-every-sentinel-has-a-class.md) | Every Core Sentinel Has a Class or a Stated Reason | Accepted |
 | [0034](0034-root-children-are-policy-parties.md) | The Root's Children Are the Parties of a Policy | Accepted |
+| [0035](0035-core-imports-the-kanon-runtime.md) | Core Imports the kanon Runtime | Accepted |
+| [0036](0036-core-types-have-frozen-kanon-forms.md) | Core Types Have Frozen kanon Forms | Accepted |
 
 [nygard]: https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions
