@@ -37,13 +37,16 @@ import "context"
 // [Gauge.With] allocates.
 type Gauge interface {
 	// Set records value, an absolute value, against the bound attribute
-	// set.
+	// set. Set does not panic for any value. The backend of the
+	// implementation defines how Set treats NaN and an infinity.
 	//
 	//testkit:mutator
 	Set(ctx context.Context, value float64)
 
 	// Add records delta, a change: a positive delta increases the value,
-	// and a negative one decreases it.
+	// and a negative one decreases it. Add does not panic for any delta.
+	// The backend of the implementation defines how Add treats NaN and an
+	// infinity.
 	//
 	//testkit:mutator
 	Add(ctx context.Context, delta float64)

@@ -6,7 +6,6 @@ package noop_test
 import (
 	"testing"
 
-	"go.thesmos.sh/testkit"
 	"go.thesmos.sh/testkit/bench"
 
 	"go.thesmos.sh/core/coretest/telemetrytest"
@@ -36,19 +35,4 @@ func BenchmarkNoopCounter(b *testing.B) {
 		telemetrytest.CounterBenchOnRelease(telemetrytest.ReleaseAllocsWithin(
 			func(c telemetry.Counter) telemetry.Counter { return c.With(nil) }, 0)),
 	)
-}
-
-// --- noop-specific tests ---
-
-func TestCounter(t *testing.T) {
-	t.Parallel()
-	c := newCounter()
-
-	t.Run("Add discards a negative value without a panic", func(t *testing.T) {
-		t.Parallel()
-		testkit.AssertNilSafe(t, func() {
-			c.Add(t.Context(), -1)
-			c.Add(t.Context(), -1_000_000)
-		})
-	})
 }

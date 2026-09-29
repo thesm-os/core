@@ -4,6 +4,7 @@
 package telemetrytest
 
 import (
+	"math"
 	"testing"
 
 	"go.thesmos.sh/testkit"
@@ -14,7 +15,7 @@ import (
 // CounterContractAssertions returns the assertions that every
 // [telemetry.Counter] implementation satisfies:
 //
-//   - Add returns for a positive value and for a zero value.
+//   - Add returns for a positive, a zero and a negative value.
 //   - With returns a usable Counter for nil attributes, for empty
 //     attributes and when called on a bound Counter.
 //   - Release returns for a bound Counter and for a released one.
@@ -37,6 +38,12 @@ func CounterContractAssertions() []CounterOption {
 
 		CounterCustom("Add returns for a zero value", func(t *testing.T, c telemetry.Counter) {
 			testkit.AssertNilSafe(t, func() { c.Add(t.Context(), 0) })
+		}),
+
+		CounterCustom("Add returns for a negative value", func(t *testing.T, c telemetry.Counter) {
+			for _, v := range []int64{-1, math.MinInt64} {
+				testkit.AssertNilSafe(t, func() { c.Add(t.Context(), v) })
+			}
 		}),
 
 		CounterCustom(

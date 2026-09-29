@@ -482,6 +482,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   method. `telemetry/noop` implements it as an empty method, and the
   contract assertions of `coretest/telemetrytest` check it. See RFC-0046
   and ADR-0037.
+- **Breaking:** `telemetry.Counter.Add` discards a negative value, and a
+  method that emits does not panic for any argument. The contract asked
+  production-grade implementations to panic for a negative increment.
+  The backend of an implementation defines how `Gauge.Set`, `Gauge.Add`
+  and `Histogram.Record` treat NaN, an infinity and a negative histogram
+  value. The contract assertions of `coretest/telemetrytest` pass these
+  values, so an adapter that panics for one of them fails. See ADR-0039.
 
 ### Fixed
 

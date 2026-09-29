@@ -4,6 +4,7 @@
 package telemetrytest
 
 import (
+	"math"
 	"testing"
 
 	"go.thesmos.sh/testkit"
@@ -14,7 +15,8 @@ import (
 // GaugeContractAssertions returns the assertions that every
 // [telemetry.Gauge] implementation satisfies:
 //
-//   - Set and Add return for a value of any sign.
+//   - Set and Add return for a value of any sign, for NaN and for an
+//     infinity.
 //   - With returns a usable Gauge for nil attributes, for empty
 //     attributes and when called on a bound Gauge.
 //   - Release returns for a bound Gauge and for a released one.
@@ -39,6 +41,18 @@ func GaugeContractAssertions() []GaugeOption {
 
 		GaugeCustom("Add returns for a delta of any sign", func(t *testing.T, g telemetry.Gauge) {
 			for _, v := range []float64{0, 1, -1, 1e9, -1e9} {
+				testkit.AssertNilSafe(t, func() { g.Add(t.Context(), v) })
+			}
+		}),
+
+		GaugeCustom("Set returns for a value that is not finite", func(t *testing.T, g telemetry.Gauge) {
+			for _, v := range []float64{math.NaN(), math.Inf(1), math.Inf(-1)} {
+				testkit.AssertNilSafe(t, func() { g.Set(t.Context(), v) })
+			}
+		}),
+
+		GaugeCustom("Add returns for a delta that is not finite", func(t *testing.T, g telemetry.Gauge) {
+			for _, v := range []float64{math.NaN(), math.Inf(1), math.Inf(-1)} {
 				testkit.AssertNilSafe(t, func() { g.Add(t.Context(), v) })
 			}
 		}),

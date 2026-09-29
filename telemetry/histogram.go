@@ -14,6 +14,10 @@ import "context"
 // [Histogram.With] allocates.
 type Histogram interface {
 	// Record adds value to the distribution of the bound attribute set.
+	// A caller records a non-negative value, as the OpenTelemetry API
+	// expects. Record does not panic for any value. The backend of the
+	// implementation defines how Record treats a negative value, NaN and
+	// an infinity.
 	//
 	//testkit:mutator
 	Record(ctx context.Context, value float64)

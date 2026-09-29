@@ -36,10 +36,10 @@ import "context"
 // allocates.
 type Counter interface {
 	// Add increments the counter by value against the bound attribute
-	// set. A negative value violates the monotonic precondition:
-	// production-grade implementations panic with a diagnostic message,
-	// and [go.thesmos.sh/core/telemetry/noop] discards it, as it
-	// discards every value. Portable code never passes a negative value.
+	// set. A counter only increases, so Add discards a negative value.
+	// An implementation may report the discarded value through its own
+	// diagnostics, such as a rate-limited log line. Add does not panic
+	// for any value.
 	//
 	//testkit:mutator
 	Add(ctx context.Context, value int64)

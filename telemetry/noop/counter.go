@@ -16,8 +16,7 @@ type counter struct{}
 // Compile-time interface check.
 var _ telemetry.Counter = counter{}
 
-// Add discards value. It does not check the monotonic precondition of
-// [telemetry.Counter.Add], so it also discards a negative value.
+// Add discards value.
 func (counter) Add(context.Context, int64) {}
 
 // With returns the receiver, because binding attributes has no effect on

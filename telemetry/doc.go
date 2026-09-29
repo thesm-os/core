@@ -76,6 +76,17 @@
 // [Reporter], [Counter], [Gauge], [Histogram] or [Span] returns an
 // error.
 //
+// A method that emits does not panic for any argument:
+//
+//   - [Counter.Add] discards a negative value, because a counter only
+//     increases.
+//   - The backend of an implementation defines how [Gauge.Set],
+//     [Gauge.Add] and [Histogram.Record] treat NaN and an infinity, and
+//     how [Histogram.Record] treats a negative value.
+//
+// An implementation may report such a value through its own
+// diagnostics, such as a rate-limited log line.
+//
 // # Allocation contract
 //
 // These methods do not allocate:

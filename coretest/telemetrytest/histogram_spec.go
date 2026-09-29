@@ -4,6 +4,7 @@
 package telemetrytest
 
 import (
+	"math"
 	"testing"
 
 	"go.thesmos.sh/testkit"
@@ -14,7 +15,8 @@ import (
 // HistogramContractAssertions returns the assertions that every
 // [telemetry.Histogram] implementation satisfies:
 //
-//   - Record returns for a non-negative value.
+//   - Record returns for a value of any sign, for NaN and for an
+//     infinity.
 //   - With returns a usable Histogram for nil attributes, for empty
 //     attributes and when called on a bound Histogram.
 //   - Release returns for a bound Histogram and for a released one.
@@ -39,6 +41,18 @@ func HistogramContractAssertions() []HistogramOption {
 				}
 			},
 		),
+
+		HistogramCustom("Record returns for a negative value", func(t *testing.T, h telemetry.Histogram) {
+			for _, v := range []float64{-0.5, -1, -1e9} {
+				testkit.AssertNilSafe(t, func() { h.Record(t.Context(), v) })
+			}
+		}),
+
+		HistogramCustom("Record returns for a value that is not finite", func(t *testing.T, h telemetry.Histogram) {
+			for _, v := range []float64{math.NaN(), math.Inf(1), math.Inf(-1)} {
+				testkit.AssertNilSafe(t, func() { h.Record(t.Context(), v) })
+			}
+		}),
 
 		HistogramCustom(
 			"With returns a usable Histogram for nil attributes",
