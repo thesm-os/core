@@ -109,8 +109,10 @@ seams every other thesmos library and framework depends on:
   tokens. `epoch.Epoch` value type plus thread-safe
   `epoch.Counter`. `Admissible` and `Watermark` admit a write whose
   fence epoch is at or above the scope's watermark, and `ErrFenced`
-  reports revoked authority. See [RFC-0005][rfc-0005] and
-  [RFC-0026][rfc-0026].
+  reports revoked authority. Goroutines wait on an `epoch.EventCount`
+  until its count is at least a position, with a context and without
+  an allocation per wait. See [RFC-0005][rfc-0005],
+  [RFC-0026][rfc-0026] and [ADR-0040][adr-0040].
 - **Tag** — snapshot-immutable string key/value pairs used in
   place of `map[string]string` on value-type structs that cross
   async-buffered, cached, or cross-goroutine boundaries.
@@ -289,6 +291,7 @@ Apache 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 [adr-0024]: docs/adr/0024-specs-reject-states-that-cannot-finish.md
 [adr-0025]: docs/adr/0025-tlog-builds-tagged-trees.md
 [adr-0027]: docs/adr/0027-btree-reset-keeps-nodes.md
+[adr-0040]: docs/adr/0040-an-event-count-is-awaited-with-a-context.md
 [rfc-0001]: docs/rfc/0001-clock-seam.md
 [rfc-0002]: docs/rfc/0002-rand-seam.md
 [rfc-0003]: docs/rfc/0003-crypto-seam.md

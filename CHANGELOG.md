@@ -321,6 +321,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   when the first `Release` of a bound instrument allocates more than a
   given number of times. It binds a new instrument for every call that
   it measures.
+- `epoch.EventCount`, a monotonically increasing `Epoch` that goroutines
+  wait on. `Wait` blocks until the count is at least a target, and
+  returns the error of `Fail` or the context's error when either comes
+  first. `Wait` does not allocate, and `Advance` allocates one channel
+  when a waiter is blocked. A `Wait` on a met target takes 10 ns. See
+  ADR-0040.
 
 ### Changed
 
