@@ -10,26 +10,26 @@ import (
 	"go.thesmos.sh/core/rand"
 )
 
-// Generator produces RFC 4122 version-4 UUIDs from an injected
-// [rand.Rand] entropy source.
+// Generator produces version-4 UUIDs of RFC 9562 from an injected
+// [rand.Rand].
 //
 // # Concurrency
 //
-// Safe for concurrent use when the underlying [rand.Rand] is.
-// [rand/crypto.Rand] and [rand/seeded.Rand] are both safe;
-// [rand/pcg.Rand] is not — wrap with a mutex or use one
-// generator per goroutine when the source is non-concurrent-safe.
+// Safe for concurrent use when the [rand.Rand] is.
+// [go.thesmos.sh/core/rand/crypto.Rand] and
+// [go.thesmos.sh/core/rand/seeded.Rand] are.
+// [go.thesmos.sh/core/rand/pcg.Rand] is not, so a caller wraps it in a
+// mutex or uses one Generator per goroutine.
 //
 // # Allocation contract
 //
-// [Generator.Generate] reads entropy via [rand.Rand.Uint64]
-// (returning uint64 by value) rather than [rand.Rand.Read]
-// (which would escape a slice through the interface boundary).
-// [Generator.Generate] inherits the underlying source's
-// [rand.Rand.Uint64] allocation contract: zero-alloc for
-// [rand/seeded], [rand/pcg], and [rand/constant]; one alloc per
-// call for [rand/crypto] (an unavoidable cost of the
-// [io.Reader] indirection in [rand/crypto.Rand.Uint64]).
+// [Generator.Generate] reads entropy with [rand.Rand.Uint64], which
+// returns a value, and not with [rand.Rand.Read], whose slice would
+// escape through the interface. Generate does not allocate when Uint64
+// does not. [go.thesmos.sh/core/rand/seeded],
+// [go.thesmos.sh/core/rand/pcg] and [go.thesmos.sh/core/rand/constant]
+// never allocate in Uint64, and [go.thesmos.sh/core/rand/crypto]
+// allocates only when its pool of scratch buffers is empty.
 type Generator struct {
 	src rand.Rand
 }
@@ -37,27 +37,26 @@ type Generator struct {
 // Compile-time interface check.
 var _ id.Generator = (*Generator)(nil)
 
-// New returns a [Generator] backed by src. src must produce
-// CSPRNG-grade output for security-sensitive call sites.
+// New returns a [Generator] that reads entropy from src. A caller that
+// needs unguessable identifiers passes a cryptographically secure source,
+// such as [go.thesmos.sh/core/rand/crypto.Rand].
 func New(src rand.Rand) *Generator {
 	return &Generator{src: src}
 }
 
-// Generate returns a fresh UUIDv4. Layout (RFC 4122):
+// Generate returns a new version-4 UUID, laid out as RFC 9562 specifies:
 //
-//	bytes  0..3: random
-//	bytes  4..5: random
-//	byte   6   : (random & 0x0F) | 0x40   — version 4
-//	byte   7   : random
-//	byte   8   : (random & 0x3F) | 0x80   — variant 10
-//	bytes  9..15: random
+//	bytes 0-5:  random
+//	byte  6:    version 4 in the high 4 bits, random in the low 4 bits
+//	byte  7:    random
+//	byte  8:    variant 10 in the high 2 bits, random in the low 6 bits
+//	bytes 9-15: random
 //
-// The version (4) and variant (10) bits are stamped in-place
-// over the random bytes; the remaining 122 bits are random.
+// 122 of the 128 bits are random.
 //
 // # Allocation contract
 //
-// Inherits the underlying [rand.Rand.Uint64] allocation contract.
+// Zero alloc when [rand.Rand.Uint64] does not allocate.
 func (g *Generator) Generate() id.ID {
 	hi := g.src.Uint64()
 	lo := g.src.Uint64()

@@ -337,6 +337,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `blob.ValidContentType` and `blob.MaxContentTypeLen`: a content type of
   at most 255 bytes of printable ASCII, which every store accepts. See
   ADR-0042.
+- `id/uuidv7`: a generator of the version-7 UUIDs of RFC 9562, whose
+  bytes sort in the order of their creation. `Generate` writes the Unix
+  milliseconds, the fraction of the millisecond in 12 bits, and 62
+  random bits. The IDs of one `Generator` increase in byte order, also
+  when its clock repeats a time or moves backwards. With `clock/hlc` and
+  `rand/crypto`, `Generate` takes 91 ns and does not allocate.
+  `TimestampMillis` returns the milliseconds of an ID, `Valid` checks
+  its version and variant, and `Format` and `Parse` convert the text
+  form. `Parse` does not allocate.
 
 ### Changed
 
@@ -515,6 +524,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `aesgcm.New` in FIPS 140-only mode returns the standard library's
   refusal of caller-supplied nonces, classified `errs.Unsupported`. It
   reported `crypto.ErrKeySize` for a valid key.
+- `uuidv4.Format` returns the empty string for an ID that is not 128
+  bits, as RFC-0009 specifies. It returned the text form of the first 16
+  bytes of a 160- or 256-bit ID.
 - Converting a `rand/crypto.Rand` to `rand.Rand` no longer allocates.
   `Rand` holds its reader behind a pointer, so the interface stores it
   directly. Every call that passed `randcrypto.New()` to a function

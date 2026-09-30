@@ -19,9 +19,15 @@ import (
 func TestFormat(t *testing.T) {
 	t.Parallel()
 
-	t.Run("Zero formats to empty (size 0)", func(t *testing.T) {
+	t.Run("returns the empty string for an ID that is not 128 bits", func(t *testing.T) {
 		t.Parallel()
-		testkit.Equal(t, uuidv4.Format(id.Zero), "", "Format(Zero) must be empty")
+		for name, u := range map[string]id.ID{
+			"the zero ID":  id.Zero,
+			"a 160-bit ID": id.New160([id.Size160]byte{1}),
+			"a 256-bit ID": id.New256([id.Size256]byte{1}),
+		} {
+			testkit.Equal(t, uuidv4.Format(u), "", "Format must return the empty string for "+name)
+		}
 	})
 
 	t.Run("returns the canonical layout for an all-zero ID", func(t *testing.T) {
@@ -62,7 +68,7 @@ func TestFormat(t *testing.T) {
 func TestParse(t *testing.T) {
 	t.Parallel()
 
-	t.Run("round-trips Format", func(t *testing.T) {
+	t.Run("returns the ID that Format encodes", func(t *testing.T) {
 		t.Parallel()
 		g := uuidv4.New(seeded.New(rand.Seed(99)))
 		want := g.Generate()
@@ -71,7 +77,7 @@ func TestParse(t *testing.T) {
 		testkit.Equal(t, got, want, "Parse(Format(x)) must round-trip")
 	})
 
-	t.Run("decodes the canonical zero encoding", func(t *testing.T) {
+	t.Run("returns the all-zero ID for the all-zero text form", func(t *testing.T) {
 		t.Parallel()
 		got, err := uuidv4.Parse("00000000-0000-0000-0000-000000000000")
 		testkit.NoError(t, err, "Parse")
@@ -79,7 +85,7 @@ func TestParse(t *testing.T) {
 			"all-zero parse must decode to all-zero ID")
 	})
 
-	t.Run("decodes a known UUID into the right bytes", func(t *testing.T) {
+	t.Run("returns the bytes that the text form encodes", func(t *testing.T) {
 		t.Parallel()
 		got, err := uuidv4.Parse("12345678-9abc-4def-8012-3456789abcde")
 		testkit.NoError(t, err, "Parse")
@@ -143,11 +149,8 @@ func TestParse(t *testing.T) {
 	})
 }
 
-// FuzzParse asserts [uuidv4.Parse] never panics on arbitrary
-// input, and that successful parses round-trip case-insensitively
-// through Format. The stdlib hex decoder accepts both upper and
-// lower case; Format always emits lowercase. The case-insensitive
-// equality is the right round-trip shape.
+// FuzzParse checks that Parse does not panic, and that the text form of
+// every ID it returns equals its input apart from case.
 func FuzzParse(f *testing.F) {
 	f.Add("12345678-9abc-4def-8012-3456789abcde")
 	f.Add("00000000-0000-0000-0000-000000000000")
@@ -164,10 +167,8 @@ func FuzzParse(f *testing.F) {
 	})
 }
 
-// FuzzRoundTrip asserts the Format → Parse round-trip on
-// arbitrary 128-bit payloads: any [id.ID] produced from 16
-// bytes must Format to a string that Parse decodes back to the
-// original ID.
+// FuzzRoundTrip checks that Parse returns every 128-bit ID from the text
+// form that Format returns for it.
 func FuzzRoundTrip(f *testing.F) {
 	f.Add(make([]byte, id.Size128))
 	f.Add([]byte{

@@ -131,9 +131,11 @@ seams every other thesmos library and framework depends on:
   syntactically impossible. See [RFC-0008][rfc-0008].
 - **ID** — fixed-max-size identifier value type (`id.ID`)
   covering 128-, 160-, and 256-bit shapes in one comparable
-  type, with four generator subpackages: `id/ulid`
+  type, with five generator subpackages: `id/ulid`
   (128-bit time-sortable Crockford base32), `id/uuidv4`
-  (128-bit random RFC 4122), `id/ksuid` (160-bit K-sortable
+  (128-bit random, RFC 9562), `id/uuidv7` (128-bit ordered by
+  creation time, RFC 9562, generated without allocating),
+  `id/ksuid` (160-bit K-sortable
   base62 — alphanumeric encoding and 128-bit entropy floor
   for gov / defense / fintech / health consumers), `id/constant`
   (constant for fixtures). Every subpackage ships `Format`

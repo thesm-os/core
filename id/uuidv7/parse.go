@@ -1,7 +1,7 @@
 // Copyright Thesmos 2026
 // SPDX-License-Identifier: Apache-2.0
 
-package uuidv4
+package uuidv7
 
 import (
 	"go.thesmos.sh/core/id"
@@ -15,9 +15,9 @@ var parseErrors = uuidtext.Errors{
 	Char:   ErrInvalidChar,
 }
 
-// Format returns the text form of u, "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx",
+// Format returns the text form of u, "xxxxxxxx-xxxx-7xxx-yxxx-xxxxxxxxxxxx",
 // in lowercase hexadecimal, or the empty string when u is not 128 bits.
-// Format does not check the version or the variant of u.
+// Format does not check the version or the variant of u. [Valid] does.
 //
 // # Allocation contract
 //
@@ -28,7 +28,7 @@ func Format(u id.ID) string {
 
 // Parse returns the 128-bit [id.ID] whose text form is s. It accepts
 // uppercase and lowercase hexadecimal digits, and does not check the
-// version or the variant.
+// version or the variant. [Valid] does.
 //
 // It returns [id.Zero] and [ErrInvalidLength] when s is not 36 bytes long,
 // [ErrInvalidFormat] when a hyphen is missing from byte 8, 13, 18 or 23,

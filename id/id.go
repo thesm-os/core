@@ -12,7 +12,7 @@ import (
 // returns has one of these sizes, which [ID.Size] reports.
 const (
 	// Size128 is the byte length of a 128-bit identifier, such as a
-	// ULID or a UUIDv4.
+	// ULID or a UUID.
 	Size128 = 16
 
 	// Size160 is the byte length of a 160-bit identifier, such as a
@@ -161,8 +161,8 @@ func (i ID) Equal(other ID) bool {
 
 // Compare returns -1, 0 or +1 by the lexicographic order of the
 // active prefixes. When one prefix is a prefix of the other,
-// [bytes.Compare] orders the shorter first. ULIDs sort by their
-// creation time to the millisecond, and KSUIDs to the second.
+// [bytes.Compare] orders the shorter first. ULIDs and UUIDv7s sort by
+// their creation time to the millisecond, and KSUIDs to the second.
 // UUIDv4s sort in no useful order, because their bytes are random.
 func (i ID) Compare(other ID) int {
 	return bytes.Compare(i.bytes[:i.size], other.bytes[:other.size])
@@ -173,13 +173,14 @@ func (i ID) Compare(other ID) int {
 //
 // No canonical encoding of an identifier starts with "id:", so an
 // ID that fmt writes into a log line cannot pass for one. ULIDs use
-// Crockford base32, UUIDv4s hyphenated hexadecimal and KSUIDs
-// base62. The Format function of each generator's package returns
-// the canonical encoding:
+// Crockford base32, UUIDs hyphenated hexadecimal and KSUIDs base62.
+// The Format function of each generator's package returns the
+// canonical encoding:
 //
-//   - [id/ulid.Format] for ULIDs
-//   - [id/uuidv4.Format] for UUIDv4s
-//   - [id/ksuid.Format] for KSUIDs
+//   - [go.thesmos.sh/core/id/ulid.Format] for ULIDs
+//   - [go.thesmos.sh/core/id/uuidv4.Format] for UUIDv4s
+//   - [go.thesmos.sh/core/id/uuidv7.Format] for UUIDv7s
+//   - [go.thesmos.sh/core/id/ksuid.Format] for KSUIDs
 //
 // # Allocation contract
 //
