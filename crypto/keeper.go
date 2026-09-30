@@ -144,6 +144,46 @@ type AADKeeper interface {
 	UnwrapAAD(ctx context.Context, wrapped, aad []byte) ([]byte, error)
 }
 
+// KeyCreator is the optional capability of a custodian that creates
+// wrapping keys and opens them by key ID. It supports rotation of the
+// wrapping key: create a key, rewrap every data key under it, and destroy
+// the previous key with [Destroyer.Destroy].
+//
+// The custodian assigns the key ID. AWS KMS assigns a key ID, Cloud KMS
+// the next CryptoKeyVersion, and a PKCS#11 token a CKA_UNIQUE_ID. Azure
+// Key Vault cannot delete a single key version, so an implementation over
+// it creates a new key name on each call.
+//
+// # Scope
+//
+// A KeyCreator operates only on the keys in its scope, which are the keys
+// its configuration can create, for example the keys with its tag. OpenKey
+// returns [ErrKeyID] for any other key. Tenant isolation within one
+// process requires one KeyCreator per tenant, each with its own scope.
+//
+// # Capabilities and decorators
+//
+// A Keeper that CreateKey or OpenKey returns implements every optional
+// capability of its KeyCreator. A decorator that implements KeyCreator
+// wraps the Keepers it returns, and [AsKeyCreator] finds the decorator
+// before the Keeper it wraps. Keepers obtained through a decorator that
+// does not implement KeyCreator bypass that decorator.
+type KeyCreator interface {
+	Keeper
+
+	// CreateKey creates a wrapping key at the custodian and returns its
+	// Keeper. The new key ID is unique at the custodian. Key type, access
+	// policy and destruction delay come from the KeyCreator's
+	// configuration.
+	CreateKey(ctx context.Context) (Keeper, error)
+
+	// OpenKey returns the Keeper of the key that keyID names. It returns
+	// [ErrKeyID] for a key outside the scope or unknown to the custodian.
+	// The Keeper of a destroyed key fails Wrap and Unwrap with
+	// [ErrKeyDestroyed].
+	OpenKey(ctx context.Context, keyID string) (Keeper, error)
+}
+
 // AsDestroyer returns the first [Destroyer] in the chain that starts at
 // k and follows each decorator's UnwrapKeeper() Keeper, and reports
 // whether it found one. A decorator that wraps a Keeper implements
@@ -182,6 +222,17 @@ func AsKeyGenerator(k Keeper) (KeyGenerator, bool) {
 // Zero alloc.
 func AsAADKeeper(k Keeper) (AADKeeper, bool) {
 	return find[AADKeeper](k)
+}
+
+// AsKeyCreator returns the first [KeyCreator] in the chain that starts at
+// k and follows each decorator's UnwrapKeeper() Keeper, and reports
+// whether it found one. It follows the rules of [AsDestroyer].
+//
+// # Allocation contract
+//
+// Zero alloc.
+func AsKeyCreator(k Keeper) (KeyCreator, bool) {
+	return find[KeyCreator](k)
 }
 
 // find returns the first value of type T in the chain that starts at k

@@ -194,7 +194,7 @@ func AssertDestroyerContract(t *testing.T, d crypto.Destroyer) {
 		testkit.Equal(t, again, first, "a second Destroy must return the first call's time")
 	}
 
-	_, err = d.Destroy(t.Context(), "cryptotest/a-key-the-custodian-does-not-have")
+	_, err = d.Destroy(t.Context(), unknownKeyID)
 	testkit.ErrorIs(t, err, crypto.ErrKeyID, "Destroy of an unknown key must return ErrKeyID")
 }
 
@@ -264,4 +264,101 @@ func AssertAADKeeperContract(t *testing.T, k crypto.AADKeeper) {
 	again, err := k.WrapAAD(t.Context(), dek, aadBound)
 	testkit.NoError(t, err, "WrapAAD must succeed")
 	testkit.NotEqual(t, again, wrapped, "wrapping one data key twice with one aad must not produce identical bytes")
+}
+
+// unknownKeyID is a key ID that no custodian under test has.
+const unknownKeyID = "cryptotest/a-key-the-custodian-does-not-have"
+
+// AssertKeyCreatorContract asserts the [crypto.KeyCreator] contract:
+//
+//   - A created Keeper passes every assertion of
+//     [KeeperContractAssertions].
+//   - Created key IDs differ from each other and from the creator's.
+//   - Material wrapped under one created key does not unwrap under
+//     another.
+//   - OpenKey of a created key ID returns a Keeper with that key ID,
+//     which unwraps the created key's material.
+//   - OpenKey of an unknown key ID returns [crypto.ErrKeyID].
+//   - Created and opened Keepers implement every optional capability of
+//     the creator.
+//   - If the creator is a [crypto.Destroyer], it destroys a created key by
+//     key ID. Wrap and Unwrap through every opened Keeper then return
+//     [crypto.ErrKeyDestroyed].
+func AssertKeyCreatorContract(t *testing.T, c crypto.KeyCreator) {
+	t.Helper()
+
+	first, err := c.CreateKey(t.Context())
+	testkit.NoError(t, err, "CreateKey must succeed")
+	second, err := c.CreateKey(t.Context())
+	testkit.NoError(t, err, "CreateKey must succeed")
+
+	for _, opt := range KeeperContractAssertions() {
+		t.Run(opt.name, func(t *testing.T) { opt.fn(t, first) })
+	}
+
+	testkit.NotEqual(t, first.KeyID(), c.KeyID(), "a created key must not reuse the creator's name")
+	testkit.NotEqual(t, second.KeyID(), first.KeyID(), "two created keys must not share a name")
+
+	dek := bytes.Repeat([]byte{0x5A}, 32)
+	wrapped, err := first.Wrap(t.Context(), dek)
+	testkit.NoError(t, err, "Wrap must succeed")
+
+	_, err = second.Unwrap(t.Context(), wrapped)
+	testkit.Error(t, err, "material wrapped under one created key must not unwrap under another")
+
+	opened, err := c.OpenKey(t.Context(), first.KeyID())
+	testkit.NoError(t, err, "OpenKey must open a created key")
+	testkit.Equal(t, opened.KeyID(), first.KeyID(), "the opened Keeper must name the created key")
+
+	got, err := opened.Unwrap(t.Context(), wrapped)
+	testkit.NoError(t, err, "the opened Keeper must unwrap what the created key wrapped")
+	testkit.True(t, bytes.Equal(got, dek), "the opened Keeper must return the data key exactly")
+
+	_, err = c.OpenKey(t.Context(), unknownKeyID)
+	testkit.ErrorIs(t, err, crypto.ErrKeyID, "OpenKey of an unknown key must return ErrKeyID")
+
+	assertCapabilitiesOf(t, c, first)
+	assertCapabilitiesOf(t, c, opened)
+
+	d, ok := crypto.AsDestroyer(c)
+	if !ok {
+		return
+	}
+
+	_, err = d.Destroy(t.Context(), first.KeyID())
+	testkit.NoError(t, err, "the creator must destroy a created key by its name")
+
+	reopened, err := c.OpenKey(t.Context(), first.KeyID())
+	testkit.NoError(t, err, "OpenKey must open a destroyed key")
+
+	for _, k := range []crypto.Keeper{opened, reopened} {
+		_, err = k.Unwrap(t.Context(), wrapped)
+		testkit.ErrorIs(t, err, crypto.ErrKeyDestroyed, "a destroyed key must not unwrap")
+		_, err = k.Wrap(t.Context(), dek)
+		testkit.ErrorIs(t, err, crypto.ErrKeyDestroyed, "a destroyed key must not wrap")
+	}
+}
+
+// assertCapabilitiesOf asserts that k implements every optional
+// capability of its creator c, including KeyCreator.
+func assertCapabilitiesOf(t *testing.T, c crypto.KeyCreator, k crypto.Keeper) {
+	t.Helper()
+
+	if _, ok := crypto.AsDestroyer(c); ok {
+		_, has := crypto.AsDestroyer(k)
+		testkit.True(t, has, "a Keeper of a Destroyer's KeyCreator must be a Destroyer")
+	}
+
+	if _, ok := crypto.AsKeyGenerator(c); ok {
+		_, has := crypto.AsKeyGenerator(k)
+		testkit.True(t, has, "a Keeper of a KeyGenerator's KeyCreator must be a KeyGenerator")
+	}
+
+	if _, ok := crypto.AsAADKeeper(c); ok {
+		_, has := crypto.AsAADKeeper(k)
+		testkit.True(t, has, "a Keeper of an AADKeeper's KeyCreator must be an AADKeeper")
+	}
+
+	_, has := crypto.AsKeyCreator(k)
+	testkit.True(t, has, "a Keeper that a KeyCreator returns must be a KeyCreator")
 }

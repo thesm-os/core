@@ -6,9 +6,9 @@
 //
 // # This is not custody
 //
-// The root key is stored in this process's memory. It can be read from a
-// core dump, from /proc, by a debugger, and by any code in the same
-// address space. Nothing here is a hardware module or a hosted key
+// The root keys are stored in this process's memory. They can be read
+// from a core dump, from /proc, by a debugger, and by any code in the
+// same address space. Nothing here is a hardware module or a hosted key
 // service. Do not use it to protect production data.
 //
 // It exists so the conformance suite has a subject, and so a caller
@@ -23,11 +23,20 @@
 // permanently unreadable. Code written against this Keeper works
 // unchanged against a real custodian. Only the guarantee behind it
 // differs.
+//
+// # Key creation
+//
+// [Keeper.CreateKey] reads a root key from the source passed to [New] and
+// names it keyID/n, where keyID is the ID passed to New and n counts from
+// 1. A Keeper from New and every Keeper that CreateKey or [Keeper.OpenKey]
+// returns share one key table. The table is the scope of OpenKey, and a
+// key destroyed through any of these Keepers is destroyed for all. The
+// table is in process memory, and a restart discards it.
 package localkey
 
 import (
 	"context"
-	"crypto/subtle"
+	"strconv"
 	"sync"
 	"time"
 
@@ -41,31 +50,26 @@ import (
 // as the wrapping construction.
 const RootKeySize = aesgcm.KeySize256
 
-// Keeper is an in-process [crypto.Keeper]. It also satisfies
-// [crypto.Destroyer], [crypto.KeyGenerator] and [crypto.AADKeeper].
+// keySeparator separates the key ID passed to [New] from the number of a
+// created key.
+const keySeparator = "/"
+
+// Keeper is an in-process [crypto.Keeper] over one root key of a shared
+// key table. It also implements [crypto.Destroyer], [crypto.KeyGenerator],
+// [crypto.AADKeeper] and [crypto.KeyCreator].
 //
 // # Concurrency
 //
 // Safe for concurrent use. Destroy races against in-flight Wrap and
 // Unwrap calls without either observing a half-destroyed key.
-// Field order groups the pointer-bearing fields ahead of the mutex,
-// which narrows the range the garbage collector scans.
 type Keeper struct {
-	rand  rand.Rand
-	clock clock.Clock
+	// ring is the key table that this Keeper shares.
+	ring *ring
 
-	// aead is guarded by mu, which Destroy takes to clear it. Wrap
-	// and Unwrap read it under the lock and use the value
-	// afterwards: crypto.AEAD is itself safe for concurrent use, so
-	// only the pointer swap needs guarding.
-	aead crypto.AEAD
-
-	// destroyedAt is the time of the first Destroy, guarded by mu.
-	destroyedAt time.Time
+	// key is this Keeper's root key in ring.
+	key *key
 
 	keyID string
-
-	mu sync.RWMutex
 }
 
 // Compile-time proof that Keeper satisfies the seam and its
@@ -76,6 +80,7 @@ var (
 	_ crypto.Destroyer    = (*Keeper)(nil)
 	_ crypto.KeyGenerator = (*Keeper)(nil)
 	_ crypto.AADKeeper    = (*Keeper)(nil)
+	_ crypto.KeyCreator   = (*Keeper)(nil)
 )
 
 // New returns a Keeper wrapping data keys under rootKey, identified by
@@ -90,30 +95,27 @@ var (
 // zero its own copy immediately afterwards. The cipher is AES-256-GCM
 // from [aesgcm.NewRandomNonce], which generates every nonce inside the
 // standard library's FIPS 140-3 module, so New also succeeds in FIPS
-// 140-only mode. r supplies the data keys [Keeper.GenerateKey] returns
-// and must be a cryptographically secure source. c supplies the time
-// [Keeper.Destroy] reports.
+// 140-only mode. r supplies the data keys of [Keeper.GenerateKey] and the
+// root keys of [Keeper.CreateKey], and must be a cryptographically secure
+// source. c supplies the time that [Keeper.Destroy] returns.
 func New(keyID string, rootKey []byte, r rand.Rand, c clock.Clock) (*Keeper, error) {
 	if keyID == "" {
 		return nil, crypto.ErrKeyID
 	}
 
-	// aesgcm validates first, so its error path is live: every length
-	// AES rejects returns here. The narrower check below then rejects
-	// the one length AES accepts and this package does not.
-	a, err := aesgcm.NewRandomNonce(rootKey)
+	a, err := cipherFor(rootKey)
 	if err != nil {
 		return nil, err
 	}
 
-	if len(rootKey) != RootKeySize {
-		return nil, crypto.ErrKeySize
-	}
+	k := &key{aead: a}
+	table := &ring{rand: r, clock: c, keys: map[string]*key{keyID: k}, base: keyID}
 
-	return &Keeper{keyID: keyID, rand: r, clock: c, aead: a}, nil
+	return &Keeper{ring: table, key: k, keyID: keyID}, nil
 }
 
-// KeyID returns the identifier given at construction.
+// KeyID returns the key ID: the one passed to [New], or the one that
+// [Keeper.CreateKey] assigned.
 func (k *Keeper) KeyID() string { return k.keyID }
 
 // Wrap encrypts dek under the root key. It is [Keeper.WrapAAD] with
@@ -128,8 +130,8 @@ func (k *Keeper) Wrap(ctx context.Context, dek []byte) ([]byte, error) {
 // The standard library's FIPS 140-3 module generates a fresh 96-bit
 // nonce for each call, so wrapping one data key twice produces
 // different bytes. Random nonces are safe for at most 2^32 wraps under
-// one root key. Returns [crypto.ErrKeyDestroyed] once [Keeper.Destroy]
-// has run.
+// one root key. Returns [crypto.ErrKeyDestroyed] after the key is
+// destroyed.
 func (k *Keeper) WrapAAD(_ context.Context, dek, aad []byte) ([]byte, error) {
 	a, err := k.cipher()
 	if err != nil {
@@ -153,7 +155,7 @@ func (k *Keeper) Unwrap(ctx context.Context, wrapped []byte) ([]byte, error) {
 // Material wrapped with other aad, corrupted in any position,
 // truncated, or wrapped under a different root key fails authentication
 // and returns an error, never wrong key material. Returns
-// [crypto.ErrKeyDestroyed] once [Keeper.Destroy] has run. That error is
+// [crypto.ErrKeyDestroyed] after the key is destroyed. That error is
 // distinct from a corruption failure, because the two have different
 // remedies.
 func (k *Keeper) UnwrapAAD(_ context.Context, wrapped, aad []byte) ([]byte, error) {
@@ -179,7 +181,7 @@ func (k *Keeper) GenerateKey(ctx context.Context, size int) (plaintext, wrapped 
 	// Reading before the destroyed check is harmless: the key material
 	// is discarded if Wrap then fails.
 	dek := make([]byte, size)
-	if _, err = k.rand.Read(dek); err != nil {
+	if _, err = k.ring.rand.Read(dek); err != nil {
 		return nil, nil, err
 	}
 
@@ -191,45 +193,166 @@ func (k *Keeper) GenerateKey(ctx context.Context, size int) (plaintext, wrapped 
 	return dek, wrapped, nil
 }
 
-// Destroy destroys the root key at once and returns the time of the
-// call, read from the clock given to [New]. No material wrapped under
-// the key can be recovered by this Keeper afterwards.
+// Destroy destroys the root key that keyID names and returns the time of
+// the first call, read from the clock passed to [New]. Destruction is
+// immediate and applies to every Keeper of the key table.
 //
-// keyID must name this Keeper's key. Any other value returns
-// [crypto.ErrKeyID], because silent success would leave a caller
-// believing data was erased when it was not. Destroying the key again
-// returns the time of the first call, so a caller that retries learns
-// the same time.
+// keyID must name the key passed to New or a key that [Keeper.CreateKey]
+// created. Any other key ID returns [crypto.ErrKeyID], because a silent
+// success would report an erasure that did not happen. Repeated calls
+// return the time of the first call.
 //
-// The guarantee here is only as strong as process memory: this drops
-// the cipher, but Go cannot guarantee that no copy of the key schedule
-// survives elsewhere in the heap. A real custodian destroys the key
-// inside its own boundary.
+// The guarantee is only as strong as process memory. Destroy drops the
+// cipher, but Go cannot guarantee that no copy of the key schedule
+// remains in the heap. A real custodian destroys the key inside its own
+// boundary.
 func (k *Keeper) Destroy(_ context.Context, keyID string) (time.Time, error) {
-	if subtle.ConstantTimeCompare([]byte(keyID), []byte(k.keyID)) != 1 {
+	found, ok := k.ring.lookup(keyID)
+	if !ok {
 		return time.Time{}, crypto.ErrKeyID
 	}
 
-	k.mu.Lock()
-	defer k.mu.Unlock()
-
-	if k.aead != nil {
-		k.aead = nil
-		k.destroyedAt = k.clock.Time()
-	}
-
-	return k.destroyedAt, nil
+	return k.ring.destroy(found), nil
 }
 
-// cipher returns the wrapping cipher, or [crypto.ErrKeyDestroyed] if
-// the key is gone.
-func (k *Keeper) cipher() (crypto.AEAD, error) {
-	k.mu.RLock()
-	defer k.mu.RUnlock()
+// CreateKey reads a root key from the source passed to [New] and returns
+// its Keeper. The key ID is keyID/n, where keyID is the ID passed to New
+// and n is the number of keys created so far, so the first key created
+// from "local/root" is "local/root/1". The new Keeper shares the key
+// table, so it has every capability of this Keeper and the same scope.
+//
+// A failure of the random source returns its error, and CreateKey does
+// not create a key.
+func (k *Keeper) CreateKey(_ context.Context) (crypto.Keeper, error) {
+	a, err := k.ring.newCipher()
+	if err != nil {
+		return nil, err
+	}
 
-	if k.aead == nil {
+	return k.ring.add(a), nil
+}
+
+// OpenKey returns the Keeper of the key that keyID names in the key
+// table: the key passed to [New], or one that [Keeper.CreateKey] created.
+// Any other key ID returns [crypto.ErrKeyID]. The Keeper of a destroyed
+// key fails Wrap and Unwrap with [crypto.ErrKeyDestroyed].
+func (k *Keeper) OpenKey(_ context.Context, keyID string) (crypto.Keeper, error) {
+	found, ok := k.ring.lookup(keyID)
+	if !ok {
+		return nil, crypto.ErrKeyID
+	}
+
+	return &Keeper{ring: k.ring, key: found, keyID: keyID}, nil
+}
+
+// cipher returns the wrapping cipher, or [crypto.ErrKeyDestroyed] after
+// the key is destroyed.
+func (k *Keeper) cipher() (crypto.AEAD, error) {
+	k.ring.mu.RLock()
+	defer k.ring.mu.RUnlock()
+
+	if k.key.aead == nil {
 		return nil, crypto.ErrKeyDestroyed
 	}
 
-	return k.aead, nil
+	return k.key.aead, nil
+}
+
+// ring is the key table that a Keeper from [New] shares with every Keeper
+// it creates or opens.
+type ring struct {
+	rand  rand.Rand
+	clock clock.Clock
+
+	// keys maps a key ID to its root key.
+	keys map[string]*key
+
+	// base is the key ID passed to New. It prefixes every created key ID.
+	base string
+
+	// created counts the keys that CreateKey has created.
+	created uint64
+
+	// mu guards keys, created, and the aead and destroyedAt fields of
+	// every key.
+	mu sync.RWMutex
+}
+
+// newCipher reads a root key from the random source, returns the cipher
+// over it, and zeroes the root key.
+func (r *ring) newCipher() (crypto.AEAD, error) {
+	rootKey := make([]byte, RootKeySize)
+	defer clear(rootKey)
+
+	if _, err := r.rand.Read(rootKey); err != nil {
+		return nil, err
+	}
+
+	return cipherFor(rootKey)
+}
+
+// add registers a created key with cipher a and returns its Keeper.
+func (r *ring) add(a crypto.AEAD) *Keeper {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.created++
+	keyID := r.base + keySeparator + strconv.FormatUint(r.created, 10)
+	k := &key{aead: a}
+	r.keys[keyID] = k
+
+	return &Keeper{ring: r, key: k, keyID: keyID}
+}
+
+// lookup returns the key that keyID names and whether the table has it.
+func (r *ring) lookup(keyID string) (*key, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	k, ok := r.keys[keyID]
+
+	return k, ok
+}
+
+// destroy clears the cipher of k on the first call and returns the time
+// of that call.
+func (r *ring) destroy(k *key) time.Time {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if k.aead != nil {
+		k.aead = nil
+		k.destroyedAt = r.clock.Time()
+	}
+
+	return k.destroyedAt
+}
+
+// key is one root key of a ring.
+type key struct {
+	// aead is the wrapping cipher, or nil after destruction. Wrap and
+	// Unwrap read it under the ring's lock and use it afterwards, which
+	// is safe because crypto.AEAD supports concurrent use.
+	aead crypto.AEAD
+
+	// destroyedAt is the time of the first Destroy.
+	destroyedAt time.Time
+}
+
+// cipherFor returns the wrapping cipher over rootKey, or an error for a
+// root key that is not [RootKeySize] bytes.
+func cipherFor(rootKey []byte) (crypto.AEAD, error) {
+	// aesgcm validates first and returns the error for every length that
+	// AES rejects. The check below then rejects the one length that AES
+	// accepts and this package does not.
+	a, err := aesgcm.NewRandomNonce(rootKey)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(rootKey) != RootKeySize {
+		return nil, crypto.ErrKeySize
+	}
+
+	return a, nil
 }

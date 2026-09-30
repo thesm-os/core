@@ -83,9 +83,11 @@ seams every other thesmos library and framework depends on:
   a KMS or HSM already has, so a consumer swaps custody without
   touching call sites. `Destroy` schedules the destruction of a
   wrapping key and returns the time at which it becomes
-  irreversible. Implementation: `crypto/localkey` (in-process, for
-  development and tests). See [RFC-0018][rfc-0018] and
-  [RFC-0034][rfc-0034].
+  irreversible. `KeyCreator` creates wrapping keys and opens them by
+  key ID, so a caller rotates its wrapping key without an operator.
+  Implementation: `crypto/localkey` (in-process, for development and
+  tests). See [RFC-0018][rfc-0018], [RFC-0034][rfc-0034] and
+  [ADR-0041][adr-0041].
 - **XOF** — extendable-output-function seam. `crypto.XOF` /
   `XOFStream` produce arbitrary-length output for key
   derivation and deterministic padding, where a fixed-size
@@ -292,6 +294,7 @@ Apache 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 [adr-0025]: docs/adr/0025-tlog-builds-tagged-trees.md
 [adr-0027]: docs/adr/0027-btree-reset-keeps-nodes.md
 [adr-0040]: docs/adr/0040-an-event-count-is-awaited-with-a-context.md
+[adr-0041]: docs/adr/0041-a-custodian-creates-wrapping-keys.md
 [rfc-0001]: docs/rfc/0001-clock-seam.md
 [rfc-0002]: docs/rfc/0002-rand-seam.md
 [rfc-0003]: docs/rfc/0003-crypto-seam.md

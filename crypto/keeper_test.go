@@ -120,6 +120,71 @@ func TestAsAADKeeper(t *testing.T) {
 	})
 }
 
+// creator is a decorator that implements KeyCreator, and wraps every
+// Keeper that the KeyCreator behind it returns.
+type creator struct{ crypto.KeyCreator }
+
+func (c creator) UnwrapKeeper() crypto.Keeper { return c.KeyCreator }
+
+func (c creator) CreateKey(ctx context.Context) (crypto.Keeper, error) {
+	k, err := c.KeyCreator.CreateKey(ctx)
+
+	return decorated{k}, err //nolint:wrapcheck // the decorator passes the error through
+}
+
+func (c creator) OpenKey(ctx context.Context, keyID string) (crypto.Keeper, error) {
+	k, err := c.KeyCreator.OpenKey(ctx, keyID)
+
+	return decorated{k}, err //nolint:wrapcheck // the decorator passes the error through
+}
+
+func TestAsKeyCreator(t *testing.T) {
+	t.Parallel()
+
+	t.Run("returns the KeyCreator behind two decorators", func(t *testing.T) {
+		t.Parallel()
+		k := newLocalKeeper(t)
+		got, ok := crypto.AsKeyCreator(decorated{decorated{k}})
+		testkit.True(t, ok, "a KeyCreator behind decorators must be found")
+		testkit.True(t, got == crypto.KeyCreator(k), "the wrapped KeyCreator must be returned")
+	})
+
+	t.Run("returns a decorator that implements KeyCreator before the KeyCreator it wraps", func(t *testing.T) {
+		t.Parallel()
+		d := creator{newLocalKeeper(t)}
+		got, ok := crypto.AsKeyCreator(decorated{d})
+		testkit.True(t, ok, "the decorating KeyCreator must be found")
+
+		created, err := got.CreateKey(t.Context())
+		testkit.NoError(t, err, "CreateKey must succeed")
+		_, wrapped := created.(decorated)
+		testkit.True(t, wrapped, "the decorator must wrap the Keeper it returns")
+	})
+
+	t.Run("reports false for a Keeper without the capability", func(t *testing.T) {
+		t.Parallel()
+		_, ok := crypto.AsKeyCreator(decorated{cryptotest.NewKeeperStub(t)})
+		testkit.False(t, ok, "a Keeper without the capability must not report it")
+	})
+
+	t.Run("reports false for a decorator without UnwrapKeeper", func(t *testing.T) {
+		t.Parallel()
+		_, ok := crypto.AsKeyCreator(opaque{newLocalKeeper(t)})
+		testkit.False(t, ok, "a decorator without UnwrapKeeper must end the chain")
+	})
+}
+
+// BenchmarkAsKeyCreator reports the cost and the allocations of
+// AsKeyCreator through two decorators.
+func BenchmarkAsKeyCreator(b *testing.B) {
+	var k crypto.Keeper = decorated{decorated{newLocalKeeper(b)}}
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_, _ = crypto.AsKeyCreator(k)
+	}
+}
+
 // BenchmarkAsAADKeeper reports the cost and the allocations of
 // AsAADKeeper through two decorators.
 func BenchmarkAsAADKeeper(b *testing.B) {

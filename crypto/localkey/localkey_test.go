@@ -5,11 +5,14 @@ package localkey_test
 
 import (
 	"bytes"
+	"context"
 	"crypto/fips140"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -24,14 +27,33 @@ import (
 	randcrypto "go.thesmos.sh/core/rand/crypto"
 )
 
+// testKeyID is the key ID that the tests pass to New.
 const testKeyID = "local/test-root-key"
 
+// concurrentCallers is the number of goroutines that call the Keepers of
+// one key table concurrently.
+const concurrentCallers = 32
+
 var (
+	// rootKey and otherKey are two distinct root keys of RootKeySize bytes.
 	rootKey  = []byte("contract-test-root-key-32-bytes!")
 	otherKey = []byte("a-different-root-key-of-32-bytes")
-	origin   = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	// origin is the start time of every fake clock in the tests.
+	origin = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	// errUnwrapped is the error of useCreatedKey when Unwrap returns a data
+	// key other than the one it wrapped.
+	errUnwrapped = testkit.TestError("unwrapped data key differs")
+
+	// errStillWraps is the error of useCreatedKey when a destroyed key
+	// still wraps.
+	errStillWraps = testkit.TestError("destroyed key still wraps")
 )
 
+// mustNew returns a Keeper over key, named keyID, with a cryptographic
+// random source and a fake clock at origin. It fails tb when New returns
+// an error.
 func mustNew(tb testing.TB, keyID string, key []byte) *localkey.Keeper {
 	tb.Helper()
 
@@ -75,12 +97,16 @@ func TestAADKeeperContract(t *testing.T) {
 	cryptotest.AssertAADKeeperContract(t, mustNew(t, testKeyID, rootKey))
 }
 
+func TestKeyCreatorContract(t *testing.T) {
+	t.Parallel()
+
+	cryptotest.AssertKeyCreatorContract(t, mustNew(t, testKeyID, rootKey))
+}
+
 // --- impl-specific ---
 
-// TestNew covers construction. The key ID is persisted with every
-// wrapped key, so New refuses an empty one: it would leave the material
-// without a name for the key that unwraps it. A caller must be free to
-// zero its root key as soon as New returns.
+// TestNew covers the root-key sizes and key IDs that New validates, and
+// its copy of the root key.
 func TestNew(t *testing.T) {
 	t.Parallel()
 
@@ -129,16 +155,16 @@ func TestNew(t *testing.T) {
 func TestKeyID(t *testing.T) {
 	t.Parallel()
 
-	t.Run("returns the name given at construction", func(t *testing.T) {
+	t.Run("returns the key ID passed to New", func(t *testing.T) {
 		t.Parallel()
 		testkit.Equal(t, mustNew(t, testKeyID, rootKey).KeyID(), testKeyID,
-			"KeyID must report the name given at construction")
+			"KeyID must return the key ID passed to New")
 	})
 }
 
-// TestUnwrap covers material from the other AES-GCM construction. Both
-// constructions write the nonce at the same offset, so a Keeper opens
-// an envelope that aesgcm.New sealed under its root key.
+// TestUnwrap covers envelopes that aesgcm.New sealed. Both AES-GCM
+// constructions write the nonce at one offset, so a Keeper opens an
+// envelope that aesgcm.New sealed under its root key.
 func TestUnwrap(t *testing.T) {
 	t.Parallel()
 
@@ -208,13 +234,24 @@ func TestFIPSOnlyMode(t *testing.T) {
 		testkit.NoError(t, err, "Unwrap must open the generated key")
 		testkit.Equal(t, got, plaintext, "Unwrap must return the generated data key")
 	})
+
+	t.Run("creates a key that round-trips a data key", func(t *testing.T) {
+		t.Parallel()
+		created, err := mustNew(t, testKeyID, rootKey).CreateKey(t.Context())
+		testkit.NoError(t, err, "CreateKey must succeed in FIPS 140-only mode")
+
+		wrapped, err := created.Wrap(t.Context(), []byte("data-key"))
+		testkit.NoError(t, err, "a created key must wrap in FIPS 140-only mode")
+
+		got, err := created.Unwrap(t.Context(), wrapped)
+		testkit.NoError(t, err, "a created key must unwrap in FIPS 140-only mode")
+		testkit.Equal(t, got, []byte("data-key"), "Unwrap must return the data key")
+	})
 }
 
-// TestDestroy covers the destruction contract. Destroying another key
-// without an error would leave the caller believing data was erased
-// when it was not. After Destroy, Unwrap reports the destroyed key and
-// not corrupt material: a destroyed key is unrecoverable by design,
-// while corrupt material points to damaged storage.
+// TestDestroy covers the key IDs that Destroy validates and the time that
+// it returns. It also covers the errors of a destroyed key, and Destroy of
+// a key in concurrent use.
 func TestDestroy(t *testing.T) {
 	t.Parallel()
 
@@ -242,7 +279,7 @@ func TestDestroy(t *testing.T) {
 		testkit.Equal(t, again, first, "a second Destroy must return the first call's time")
 	})
 
-	t.Run("GenerateKey fails after Destroy", func(t *testing.T) {
+	t.Run("makes GenerateKey return ErrKeyDestroyed", func(t *testing.T) {
 		t.Parallel()
 		keeper := mustNew(t, testKeyID, rootKey)
 		_, err := keeper.Destroy(t.Context(), testKeyID)
@@ -252,7 +289,7 @@ func TestDestroy(t *testing.T) {
 		testkit.ErrorIs(t, err, crypto.ErrKeyDestroyed, "a destroyed Keeper must not generate keys")
 	})
 
-	t.Run("Unwrap returns ErrKeyDestroyed after Destroy", func(t *testing.T) {
+	t.Run("makes Unwrap return ErrKeyDestroyed", func(t *testing.T) {
 		t.Parallel()
 		keeper := mustNew(t, testKeyID, rootKey)
 		wrapped, err := keeper.Wrap(t.Context(), []byte("data-key"))
@@ -261,14 +298,201 @@ func TestDestroy(t *testing.T) {
 		testkit.NoError(t, err, "Destroy must succeed")
 
 		_, err = keeper.Unwrap(t.Context(), wrapped)
-		testkit.ErrorIs(t, err, crypto.ErrKeyDestroyed, "Unwrap must name the cause")
+		testkit.ErrorIs(t, err, crypto.ErrKeyDestroyed, "Unwrap must return ErrKeyDestroyed")
 		testkit.Equal(t, errs.Classify(err), errs.Denied, "ErrKeyDestroyed must classify as Denied")
+	})
+
+	t.Run("destroys a created key without destroying its creator's key", func(t *testing.T) {
+		t.Parallel()
+		creator := mustNew(t, testKeyID, rootKey)
+		created, err := creator.CreateKey(t.Context())
+		testkit.NoError(t, err, "CreateKey must succeed")
+
+		_, err = creator.Destroy(t.Context(), created.KeyID())
+		testkit.NoError(t, err, "the creator must destroy a created key")
+
+		_, err = created.Wrap(t.Context(), []byte("data-key"))
+		testkit.ErrorIs(t, err, crypto.ErrKeyDestroyed, "the created key must be destroyed")
+		_, err = creator.Wrap(t.Context(), []byte("data-key"))
+		testkit.NoError(t, err, "the creator's own key must still wrap")
+	})
+
+	t.Run("destroys a key in concurrent use", func(t *testing.T) {
+		t.Parallel()
+		keeper := mustNew(t, testKeyID, rootKey)
+		wrapped, err := keeper.Wrap(t.Context(), []byte("data-key"))
+		testkit.NoError(t, err, "Wrap must succeed")
+
+		failures := make([]error, concurrentCallers)
+		var wg sync.WaitGroup
+		for i := range concurrentCallers {
+			wg.Go(func() { failures[i] = useDuringDestroy(t.Context(), keeper, wrapped) })
+		}
+
+		_, err = keeper.Destroy(t.Context(), testKeyID)
+		wg.Wait()
+		testkit.NoError(t, err, "Destroy must succeed while callers use the key")
+		for _, failure := range failures {
+			testkit.NoError(t, failure, "a call that races Destroy must succeed or return ErrKeyDestroyed")
+		}
+
+		_, err = keeper.Wrap(t.Context(), []byte("data-key"))
+		testkit.ErrorIs(t, err, crypto.ErrKeyDestroyed, "Wrap must return ErrKeyDestroyed once Destroy returns")
 	})
 }
 
-// TestGenerateKey covers the sizes GenerateKey accepts and its entropy
-// failure. A data key read from a failed entropy source would be
-// predictable, so GenerateKey returns the failure and no key material.
+// useDuringDestroy wraps a data key under k and unwraps wrapped. It returns
+// the first error other than [crypto.ErrKeyDestroyed], which both calls
+// return for a key destroyed before them.
+func useDuringDestroy(ctx context.Context, k *localkey.Keeper, wrapped []byte) error {
+	if _, err := k.Wrap(ctx, []byte("data-key")); err != nil && !errors.Is(err, crypto.ErrKeyDestroyed) {
+		return err
+	}
+
+	if _, err := k.Unwrap(ctx, wrapped); err != nil && !errors.Is(err, crypto.ErrKeyDestroyed) {
+		return err
+	}
+
+	return nil
+}
+
+// TestCreateKey covers the key IDs that CreateKey assigns, the keys that it
+// returns to concurrent callers, and its failure on an exhausted random
+// source.
+func TestCreateKey(t *testing.T) {
+	t.Parallel()
+
+	t.Run("names created keys after the key ID passed to New", func(t *testing.T) {
+		t.Parallel()
+		creator := mustNew(t, testKeyID, rootKey)
+		for _, want := range []string{testKeyID + "/1", testKeyID + "/2"} {
+			created, err := creator.CreateKey(t.Context())
+			testkit.NoError(t, err, "CreateKey must succeed")
+			testkit.Equal(t, created.KeyID(), want, "CreateKey must number the keys it creates from 1")
+		}
+	})
+
+	t.Run("numbers keys across every Keeper of the table", func(t *testing.T) {
+		t.Parallel()
+		creator := mustNew(t, testKeyID, rootKey)
+		first, err := creator.CreateKey(t.Context())
+		testkit.NoError(t, err, "CreateKey must succeed")
+
+		kc, ok := crypto.AsKeyCreator(first)
+		testkit.True(t, ok, "a created Keeper must be a KeyCreator")
+
+		second, err := kc.CreateKey(t.Context())
+		testkit.NoError(t, err, "a created Keeper must create keys")
+		testkit.Equal(t, second.KeyID(), testKeyID+"/2", "a created Keeper must share its creator's numbering")
+	})
+
+	t.Run("returns the random source's failure without creating a key", func(t *testing.T) {
+		t.Parallel()
+		creator, err := localkey.New(testKeyID, rootKey,
+			randcrypto.NewWithReader(&testkit.FailingReader{
+				Source: bytes.NewReader(nil),
+				Err:    io.ErrUnexpectedEOF,
+			}), fake.New(origin))
+		testkit.NoError(t, err, "New must accept a 32-byte root key")
+
+		created, err := creator.CreateKey(t.Context())
+		testkit.ErrorIs(t, err, io.ErrUnexpectedEOF, "CreateKey must return the entropy failure")
+		testkit.True(t, created == nil, "no Keeper may accompany an error")
+
+		_, err = creator.OpenKey(t.Context(), testKeyID+"/1")
+		testkit.ErrorIs(t, err, crypto.ErrKeyID, "a failed CreateKey must not add a key")
+	})
+
+	t.Run("returns a distinct key to each concurrent caller", func(t *testing.T) {
+		t.Parallel()
+		creator := mustNew(t, testKeyID, rootKey)
+		keyIDs := make([]string, concurrentCallers)
+		failures := make([]error, concurrentCallers)
+		var wg sync.WaitGroup
+		for i := range concurrentCallers {
+			wg.Go(func() { keyIDs[i], failures[i] = useCreatedKey(t.Context(), creator) })
+		}
+		wg.Wait()
+
+		seen := make(map[string]bool, concurrentCallers)
+		for i, keyID := range keyIDs {
+			testkit.NoError(t, failures[i], "every caller must use and destroy its own key")
+			testkit.False(t, seen[keyID], "no two callers may receive one key ID")
+			seen[keyID] = true
+		}
+	})
+}
+
+// useCreatedKey creates a key through creator and wraps a data key under
+// it. It unwraps the data key through the Keeper that OpenKey returns for
+// the new key ID. It then destroys the key through creator and checks that
+// Wrap returns [crypto.ErrKeyDestroyed]. It returns the new key ID, or the
+// first error.
+func useCreatedKey(ctx context.Context, creator *localkey.Keeper) (string, error) {
+	created, err := creator.CreateKey(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	wrapped, err := created.Wrap(ctx, []byte("data-key"))
+	if err != nil {
+		return "", err
+	}
+
+	opened, err := creator.OpenKey(ctx, created.KeyID())
+	if err != nil {
+		return "", err
+	}
+
+	got, err := opened.Unwrap(ctx, wrapped)
+	if err != nil {
+		return "", err
+	}
+
+	if !bytes.Equal(got, []byte("data-key")) {
+		return "", errUnwrapped
+	}
+
+	if _, err = creator.Destroy(ctx, created.KeyID()); err != nil {
+		return "", err
+	}
+
+	if _, err = created.Wrap(ctx, []byte("data-key")); !errors.Is(err, crypto.ErrKeyDestroyed) {
+		return "", errStillWraps
+	}
+
+	return created.KeyID(), nil
+}
+
+// TestOpenKey covers OpenKey of the key passed to New and of a key in
+// another table.
+func TestOpenKey(t *testing.T) {
+	t.Parallel()
+
+	t.Run("returns a Keeper of the key passed to New", func(t *testing.T) {
+		t.Parallel()
+		creator := mustNew(t, testKeyID, rootKey)
+		wrapped, err := creator.Wrap(t.Context(), []byte("data-key"))
+		testkit.NoError(t, err, "Wrap must succeed")
+
+		opened, err := creator.OpenKey(t.Context(), testKeyID)
+		testkit.NoError(t, err, "OpenKey must open the key passed to New")
+		got, err := opened.Unwrap(t.Context(), wrapped)
+		testkit.NoError(t, err, "the opened Keeper must unwrap the creator's material")
+		testkit.Equal(t, got, []byte("data-key"), "the opened Keeper must return the data key")
+	})
+
+	t.Run("returns ErrKeyID for a key of another table", func(t *testing.T) {
+		t.Parallel()
+		other := mustNew(t, "local/other-root-key", otherKey)
+		_, err := mustNew(t, testKeyID, rootKey).OpenKey(t.Context(), other.KeyID())
+		testkit.ErrorIs(t, err, crypto.ErrKeyID, "OpenKey must not open a key outside its table")
+		testkit.Equal(t, errs.Classify(err), errs.NotFound, "ErrKeyID must classify as NotFound")
+	})
+}
+
+// TestGenerateKey covers the data-key sizes that GenerateKey validates and
+// its failure on an exhausted random source.
 func TestGenerateKey(t *testing.T) {
 	t.Parallel()
 

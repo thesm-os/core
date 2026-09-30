@@ -73,3 +73,12 @@ func TestAssertAADKeeperContract(t *testing.T) {
 		cryptotest.AssertAADKeeperContract(t, newLocal(t))
 	})
 }
+
+func TestAssertKeyCreatorContract(t *testing.T) {
+	t.Parallel()
+
+	t.Run("accepts the local keeper", func(t *testing.T) {
+		t.Parallel()
+		cryptotest.AssertKeyCreatorContract(t, newLocal(t))
+	})
+}

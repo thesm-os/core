@@ -327,6 +327,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   first. `Wait` does not allocate, and `Advance` allocates one channel
   when a waiter is blocked. A `Wait` on a met target takes 10 ns. See
   ADR-0040.
+- `crypto.KeyCreator` and `crypto.AsKeyCreator`: the optional capability
+  of a custodian that creates wrapping keys and opens them by key ID, so
+  a caller rotates its wrapping key without an operator.
+  `crypto/localkey` implements it with a key table that all its Keepers
+  share, and `Keeper.Destroy` destroys any key of that table.
+  `cryptotest.AssertKeyCreatorContract` checks an implementation. See
+  ADR-0041.
 
 ### Changed
 
