@@ -4,7 +4,7 @@ title: Named Object Storage
 author: Roy Klopper <roy.klopper@stealthscale.io>
 status: Accepted
 created: 2026-08-05
-updated: 2026-08-05
+updated: 2026-09-30
 discussion: none
 supersedes: none
 superseded-by: none
@@ -66,6 +66,11 @@ the ADR-0012 charter names, after `cas`.
 ## Detailed design
 
 ### The interface
+
+**Note:** ADR-0042 bounds `PutOptions.ContentType`. `Put` classifies a
+content type that `ValidContentType` rejects as `errs.Invalid`: one of
+more than 255 bytes, or one with a byte outside printable ASCII. No store
+parses or normalises a content type.
 
 ```go
 // Package blob is the named-object storage seam: caller-keyed
