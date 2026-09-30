@@ -119,6 +119,34 @@ func invalidKeys() map[string]string {
 	}
 }
 
+// invalidContentTypes returns content types that [blob.ValidContentType]
+// rejects, each named by the rule it breaks.
+func invalidContentTypes() map[string]string {
+	return map[string]string{
+		"a content type over MaxContentTypeLen bytes": strings.Repeat("a", blob.MaxContentTypeLen+1),
+		"a line break":         "text/plain\r\n",
+		"a horizontal tab":     "text/plain;\tcharset=utf-8",
+		"the delete byte":      "text/plain\x7f",
+		"a byte outside ASCII": "text/pl\xc3\xa4in",
+	}
+}
+
+// validContentTypes returns content types that [blob.ValidContentType]
+// accepts, each named by the edge of the rule that it tests.
+func validContentTypes() map[string]string {
+	printable := make([]byte, 0, '~'-' '+1)
+	for c := byte(' '); c <= '~'; c++ {
+		printable = append(printable, c)
+	}
+
+	return map[string]string{
+		"the empty content type":                    "",
+		"a media type with a parameter":             "text/plain; charset=utf-8",
+		"every printable ASCII character":           string(printable),
+		"a content type of MaxContentTypeLen bytes": strings.Repeat("a", blob.MaxContentTypeLen),
+	}
+}
+
 // overwriteBody returns the body that writer w puts on its i-th
 // overwrite. Every body is 56 bytes long, and no two are equal.
 func overwriteBody(w, i int) string {
@@ -132,6 +160,8 @@ type failingReader struct {
 	data []byte
 }
 
+// Read copies the data that remains into p, and returns r.err once no
+// data remains.
 func (r *failingReader) Read(p []byte) (int, error) {
 	if len(r.data) == 0 {
 		return 0, r.err
@@ -189,6 +219,11 @@ func assertSameObject(t *testing.T, got, want blob.Info, who string) {
 //   - Every method rejects a key that [blob.ValidKey] rejects, as
 //     Invalid. The rules are those of [io/fs.ValidPath], so a caller can
 //     write a key without knowing the backend.
+//   - Put rejects a content type that [blob.ValidContentType] rejects as
+//     Invalid. It leaves the previous object in place.
+//   - Put stores every content type that ValidContentType accepts as
+//     given, one of [blob.MaxContentTypeLen] bytes included. Get and Stat
+//     return it.
 //   - A key and a longer key it prefixes, such as "a/b" and "a/b/c",
 //     exist together. A backend whose namespace cannot store both
 //     encodes keys so that it can.
@@ -507,6 +542,43 @@ func AssertStore(t *testing.T, newStore func(c clock.Clock) blob.Store, options 
 
 			testkit.Equal(t, errs.Classify(s.Delete(t.Context(), key, "")),
 				errs.Invalid, "Delete must reject "+name)
+		}
+	})
+
+	t.Run("Put rejects an invalid content type as Invalid", func(t *testing.T) {
+		t.Parallel()
+
+		s := fresh()
+		prior := put(t, s, "k", "committed", blob.PutOptions{})
+		want := object{Version: prior.Version, Body: "committed", Present: true}
+
+		for name, contentType := range invalidContentTypes() {
+			testkit.False(t, blob.ValidContentType(contentType), name+" must not satisfy ValidContentType")
+
+			_, err := s.Put(t.Context(), "k", strings.NewReader("refused"),
+				blob.PutOptions{ContentType: contentType})
+			testkit.Equal(t, errs.Classify(err), errs.Invalid, "Put must reject "+name)
+			testkit.Equal(t, observe(t, s, "k"), want, "Put must leave the object in place for "+name)
+		}
+	})
+
+	t.Run("Put stores a valid content type as given", func(t *testing.T) {
+		t.Parallel()
+
+		s := fresh()
+
+		for name, contentType := range validContentTypes() {
+			testkit.True(t, blob.ValidContentType(contentType), name+" must satisfy ValidContentType")
+
+			info := put(t, s, "k", "body", blob.PutOptions{ContentType: contentType})
+			testkit.Equal(t, info.ContentType, contentType, "Put must return "+name+" as given")
+
+			_, got := read(t, s, "k")
+			testkit.Equal(t, got.ContentType, contentType, "Get must return "+name+" as given")
+
+			stat, err := s.Stat(t.Context(), "k")
+			testkit.NoError(t, err, "Stat must succeed")
+			testkit.Equal(t, stat.ContentType, contentType, "Stat must return "+name+" as given")
 		}
 	})
 

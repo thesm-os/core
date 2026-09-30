@@ -24,8 +24,8 @@ type decorated struct{ blob.Store }
 
 func (d decorated) Unwrap() blob.Store { return d.Store }
 
-// storeOnly holds a store as the Store interface and has no Unwrap, so
-// [blob.AsRangeReader] cannot see a RangeReader behind it.
+// storeOnly embeds a store as the Store interface and has no Unwrap, so
+// [blob.AsRangeReader] cannot find a RangeReader behind it.
 type storeOnly struct{ blob.Store }
 
 // selfRanging is a decorator that implements [blob.RangeReader] itself,
@@ -112,7 +112,7 @@ func BenchmarkAsRangeReader(b *testing.B) {
 func TestValidKey(t *testing.T) {
 	t.Parallel()
 
-	t.Run("accepts the keys a caller can write anywhere", func(t *testing.T) {
+	t.Run("reports true for a key that every backend stores", func(t *testing.T) {
 		t.Parallel()
 
 		for _, key := range []string{
@@ -130,7 +130,7 @@ func TestValidKey(t *testing.T) {
 		}
 	})
 
-	t.Run("rejects what no backend agrees on", func(t *testing.T) {
+	t.Run("reports false for a key outside io/fs.ValidPath or the bounds", func(t *testing.T) {
 		t.Parallel()
 
 		// Each of these means something different on a filesystem
@@ -158,7 +158,7 @@ func TestValidKey(t *testing.T) {
 		}
 	})
 
-	t.Run("the bounds are the ones backends impose", func(t *testing.T) {
+	t.Run("uses the S3 key length and the filesystem component length as bounds", func(t *testing.T) {
 		t.Parallel()
 
 		testkit.Equal(t, blob.MaxKeyLen, 1024,
@@ -166,6 +166,59 @@ func TestValidKey(t *testing.T) {
 		testkit.Equal(t, blob.MaxKeyElemLen, 255,
 			"the element bound is the common filesystem component length")
 	})
+}
+
+func TestValidContentType(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		give string
+		want bool
+	}{
+		{name: "reports true for the empty content type", give: "", want: true},
+		{name: "reports true for a media type with a parameter", give: "text/plain; charset=utf-8", want: true},
+		{name: "reports true for a space and a tilde", give: " ~", want: true},
+		{
+			name: "reports true for MaxContentTypeLen bytes",
+			give: strings.Repeat("a", blob.MaxContentTypeLen),
+			want: true,
+		},
+		{
+			name: "reports false for one byte over MaxContentTypeLen",
+			give: strings.Repeat("a", blob.MaxContentTypeLen+1),
+			want: false,
+		},
+		{name: "reports false for a byte below a space", give: "text/plain\x1f", want: false},
+		{name: "reports false for a horizontal tab", give: "text/plain;\tcharset=utf-8", want: false},
+		{name: "reports false for a line break", give: "text/plain\r\n", want: false},
+		{name: "reports false for the delete byte", give: "text/plain\x7f", want: false},
+		{name: "reports false for a byte outside ASCII", give: "text/pl\xc3\xa4in", want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			testkit.Equal(t, blob.ValidContentType(tt.give), tt.want,
+				fmt.Sprintf("ValidContentType(%q) must report %v", tt.give, tt.want))
+		})
+	}
+
+	t.Run("uses 255 bytes as the bound", func(t *testing.T) {
+		t.Parallel()
+		testkit.Equal(t, blob.MaxContentTypeLen, 255,
+			"the bound fits every type and subtype pair of RFC 6838")
+	})
+}
+
+// BenchmarkValidContentType reports the cost and the allocations of
+// ValidContentType for a content type of MaxContentTypeLen bytes.
+func BenchmarkValidContentType(b *testing.B) {
+	contentType := strings.Repeat("a", blob.MaxContentTypeLen)
+	b.ReportAllocs()
+
+	for b.Loop() {
+		_ = blob.ValidContentType(contentType)
+	}
 }
 
 // maxLengthKey builds a key of exactly [blob.MaxKeyLen] bytes whose

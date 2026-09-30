@@ -1,27 +1,24 @@
 // Copyright Thesmos 2026
 // SPDX-License-Identifier: Apache-2.0
 
-// Package blob is the named-object storage seam: caller-keyed
-// objects, streamed in both directions, with conditional writes
-// supplied by the version vocabulary. It is the write half [io/fs]
-// never defined.
+// Package blob defines named object storage. The caller chooses the key of
+// each object, a body streams in both directions, and the version package
+// makes a write conditional.
 //
 // # The kind
 //
-// blob answers the storage-kind discriminators as its own kind:
-// absence is an error; bodies stream in both directions, because
-// the key is independent of the content and a body can flow
-// through without ever being held whole; the caller mints the key;
-// and anything may change after a write, guarded by the proof
-// token carried on [Info].
+// A blob store has these properties:
 //
-// Queries, TTLs, lifecycle policy, and batch surfaces are
-// deliberately absent. [Store.List] narrows by key prefix only —
-// anything with a predicate over values or metadata needs an
-// expression language, which is domain vocabulary; expiry is
-// policy over a store, not a store; and batching is a transport
-// optimisation adapters may exploit beneath the seam without
-// shaping it.
+//   - Reading an absent key is an error.
+//   - A body streams in both directions, because the key does not depend
+//     on the content. A store never needs a whole body in memory.
+//   - The caller chooses the key.
+//   - A write can replace any object. The version on [Info] makes a write
+//     conditional on the object that it replaces.
+//
+// The seam has no queries, expiry, lifecycle policy or batch methods.
+// [Store.List] narrows by key prefix only. An adapter may batch the
+// requests that it sends to its backend.
 //
 // # Ranged reads
 //
@@ -40,13 +37,17 @@
 //
 // # Failure semantics
 //
-// Absence on read classifies as [go.thesmos.sh/core/errs.NotFound];
-// a failed IfMatch precondition returns
-// [go.thesmos.sh/core/version.ErrMismatch]; a failed create-only
-// precondition returns [go.thesmos.sh/core/version.ErrExists]; a
-// key [ValidKey] rejects classifies as
-// [go.thesmos.sh/core/errs.Invalid] on every method. The seam
-// introduces no sentinels of its own.
+//   - Absence on a read classifies as [go.thesmos.sh/core/errs.NotFound].
+//   - A failed IfMatch precondition returns
+//     [go.thesmos.sh/core/version.ErrMismatch].
+//   - A failed create-only precondition returns
+//     [go.thesmos.sh/core/version.ErrExists].
+//   - A key that [ValidKey] rejects classifies as
+//     [go.thesmos.sh/core/errs.Invalid] on every method.
+//   - A content type that [ValidContentType] rejects classifies as
+//     [go.thesmos.sh/core/errs.Invalid] on [Store.Put].
+//
+// The package defines no sentinel errors of its own.
 package blob
 
 import (
@@ -60,37 +61,38 @@ import (
 	"go.thesmos.sh/core/version"
 )
 
-// Key bounds, chosen so a key that satisfies [ValidKey] travels
-// between the backends this seam is meant to sit in front of.
+// Key bounds. The backends of the seam, the object stores of the S3
+// family and filesystems, store every key within them.
 const (
-	// MaxKeyLen is the longest key in bytes. Object stores in the
-	// S3 family cap a key at this length.
+	// MaxKeyLen is the longest key in bytes. Object stores in the S3
+	// family limit a key to this length.
 	MaxKeyLen = 1024
 
-	// MaxKeyElemLen is the longest single slash-separated element
-	// in bytes. Most filesystems cap one path component here, and a
-	// key that ignores it cannot be laid out on disk at all.
+	// MaxKeyElemLen is the longest slash-separated element of a key in
+	// bytes. Most filesystems limit a path component to this length, and
+	// cannot store a key with a longer element.
 	MaxKeyElemLen = 255
 )
 
+// MaxContentTypeLen is the longest content type in bytes that
+// [ValidContentType] accepts. RFC 6838 limits the type name and the
+// subtype name of a media type to 127 characters each, so every type and
+// subtype pair fits.
+const MaxContentTypeLen = 255
+
 // ValidKey reports whether key names an object.
 //
-// A key is a slash-separated path in the [io/fs.ValidPath] sense:
-// UTF-8, unrooted, with no empty element and no "." or ".."
-// element. The root itself is excluded, because "." names a place
-// rather than an object. Beyond that a key is at most [MaxKeyLen]
-// bytes and each element is at most [MaxKeyElemLen] bytes.
+// A key is a slash-separated path that [io/fs.ValidPath] accepts: UTF-8,
+// unrooted, with no empty element and no "." or ".." element. The root,
+// ".", is not a key, because it names a place and not an object. A key
+// has at most [MaxKeyLen] bytes, and each of its elements at most
+// [MaxKeyElemLen] bytes.
 //
-// The rules are the standard library's because a key has to be
-// writable by a caller who does not know which backend is behind
-// the seam. Left to each backend, a key that works against an
-// object store escapes the root on a filesystem, and no consumer
-// can write a portable one.
+// Every backend of the seam stores a key that ValidKey accepts, so a
+// caller writes a key without knowing the backend.
 //
-// This governs keys, not [Store.List] prefixes. A prefix may end
-// part-way through an element — "pho" is a legal prefix and not a
-// legal key — so validating a prefix with this predicate rejects
-// the narrowing a caller is entitled to ask for.
+// ValidKey checks keys, not the prefixes of [Store.List]. A prefix may
+// end inside an element: "pho" is a valid prefix and not a valid key.
 //
 // # Allocation contract
 //
@@ -109,64 +111,87 @@ func ValidKey(key string) bool {
 	return true
 }
 
-// Info is an object's metadata, without its body.
+// ValidContentType reports whether contentType can be the content type of
+// an object: at most [MaxContentTypeLen] bytes, each a printable ASCII
+// character from space (0x20) to tilde (0x7E). The empty string is valid
+// and means unspecified.
 //
-// Info carries no digest. Content identity paired with a name is
-// consumer vocabulary: a consumer that wants verified blobs
-// composes this seam with [go.thesmos.sh/core/cas], or hashes at
-// its own boundary and records the (name → digest) pairing in its
-// own types.
+// Every backend of the seam stores a content type that ValidContentType
+// accepts. ValidContentType does not parse the media type.
+//
+// # Allocation contract
+//
+// Zero alloc.
+func ValidContentType(contentType string) bool {
+	if len(contentType) > MaxContentTypeLen {
+		return false
+	}
+
+	for i := range len(contentType) {
+		if contentType[i] < ' ' || contentType[i] > '~' {
+			return false
+		}
+	}
+
+	return true
+}
+
+// Info is the metadata of an object, without its body.
+//
+// Info has no digest. A caller that verifies the bodies of its objects
+// composes this seam with [go.thesmos.sh/core/cas], or hashes each body
+// itself and records the key and the digest in its own types.
 //
 // # Allocation contract
 //
 // Value type; pass by value.
 type Info struct {
-	// Key is the object's name, as the caller minted it.
+	// Key is the name of the object, as the caller chose it.
 	Key string
 
-	// Version is the proof token for conditional writes, per the
-	// version package's contract: equality-only, and unique across
-	// deletion cycles, so a stalled writer holding a token from
-	// before a delete-and-recreate cannot clobber the successor.
+	// Version is the token of conditional writes, as the version package
+	// defines it: compared by equality only, and unique across deletions.
+	// A writer with a version from before a key was deleted and written
+	// again cannot overwrite the new object.
 	Version version.Version
 
-	// ModTime is the backend's record of the last write, and is
-	// stdlib time rather than an instant: it is an external fact
-	// reported by storage, not an event in this deployment's causal
-	// chain. Precision is whatever the backend affords.
+	// ModTime is the time of the last write, as the backend records it,
+	// with the backend's precision. It is a time.Time and not a clock
+	// instant, because the backend reports it and no event of this
+	// deployment produced it.
 	//
-	// On the Info returned by [Store.Put] it MAY be zero. A backend
-	// that does not report a timestamp on write — the S3 family
-	// returns an entity tag and no last-modified — would otherwise
-	// have to read the object back to fill the field in. [Store.Get]
-	// and [Store.Stat] MUST report it.
+	// The Info that [Store.Put] returns MAY have a zero ModTime, because
+	// the S3 family does not report a modification time on a write.
+	// [Store.Get] and [Store.Stat] MUST report it.
 	ModTime time.Time
 
-	// ContentType is carried opaquely: stored as given on Put,
-	// returned as stored, never inferred. Empty means unspecified.
+	// ContentType is the content type that [Store.Put] stored, as given.
+	// No store infers or normalises it, and the empty string means
+	// unspecified. A store that writers outside the seam also fill can
+	// return a content type that [ValidContentType] rejects.
 	ContentType string
 
-	// Size is the body's byte length; -1 when the backend cannot
-	// report it without reading the body. On the Info returned by
-	// [Store.Put] it is never -1: the store just consumed the
-	// body, so it knows.
+	// Size is the length of the body in bytes, or -1 when the backend
+	// cannot report it without reading the body. The Info that
+	// [Store.Put] returns never has -1, because the store read the body.
 	Size int64
 }
 
-// PutOptions carries a Put's metadata and preconditions.
+// PutOptions are the metadata and the preconditions of a Put.
 //
 // # Allocation contract
 //
 // Value type; pass by value.
 type PutOptions struct {
-	// ContentType is stored with the object and round-trips on
-	// Get and Stat. Empty means unspecified.
+	// ContentType is stored with the object, and [Store.Get] and
+	// [Store.Stat] return it. It must satisfy [ValidContentType]. The
+	// empty string means unspecified.
 	ContentType string
 
-	// Write carries the conditional-write preconditions. The zero
-	// value is an unconditional overwrite. A failing IfMatch
-	// returns [version.ErrMismatch]; a failing IfNoneMatch
-	// returns [version.ErrExists].
+	// Write is the precondition of a conditional write. The zero value
+	// overwrites unconditionally. A failed IfMatch returns
+	// [version.ErrMismatch], and a failed IfNoneMatch returns
+	// [version.ErrExists].
 	Write version.WriteOptions
 }
 
@@ -174,32 +199,33 @@ type PutOptions struct {
 //
 // # Keys
 //
-// A key satisfies [ValidKey]. One that does not classifies as
-// [go.thesmos.sh/core/errs.Invalid] on every method, and the
-// method rejects it before touching storage.
+// A key satisfies [ValidKey]. Every method classifies a key that does not
+// as [go.thesmos.sh/core/errs.Invalid], and returns before it touches
+// storage.
 //
-// Nesting is not restricted. A store may hold "a/b" and "a/b/c" at
-// once, because the object stores this seam fronts do. A backend
-// whose native namespace cannot hold both — a filesystem, where a
-// file cannot sit inside a file — MUST encode keys so that it can,
-// by giving each key its own directory or sharding under a hash
-// rather than mapping a key onto a path. Pushing the restriction
-// up into the contract would narrow the seam to its least capable
-// backend, cost a lookup and a prefix scan on every write, and
-// still not hold: two concurrent writes of "a/b" and "a/b/c" each
-// pass their own check.
+// A store may contain "a/b" and "a/b/c" at once, because the object
+// stores behind the seam do. A backend whose namespace cannot, such as a
+// filesystem, where a file cannot contain a file, MUST encode its keys so
+// that it can: for example, with a directory per key, or with a layout by
+// a hash of the key. The contract cannot forbid the pair instead, because
+// two concurrent writes of "a/b" and "a/b/c" would each pass their own
+// check.
 //
-// Prefix narrowing in [Store.List] is byte-prefix and is not
-// governed by [ValidKey]. A prefix may end part-way through an
-// element.
+// The prefix of [Store.List] is a byte prefix and need not satisfy
+// [ValidKey]. A prefix may end inside an element.
+//
+// # Content types
+//
+// [PutOptions.ContentType] satisfies [ValidContentType]. Put classifies a
+// content type that does not as [go.thesmos.sh/core/errs.Invalid], and
+// returns before it touches storage.
 //
 // # Context
 //
-// ctx cancels the call and bounds its duration. A method returns
-// the context's error when it is already done, and abandons work
-// in progress when it becomes done mid-call. It carries no
-// authorisation and selects no backend; an implementation that
-// reads values from it is adding vocabulary this seam does not
+// ctx cancels the call and bounds its duration. A method returns the
+// context's error when ctx is already done, and abandons its work when
+// ctx is done during the call. The seam does not read values from ctx. An
+// implementation that reads one adds vocabulary that the seam does not
 // define.
 //
 // # Fencing
@@ -211,25 +237,24 @@ type PutOptions struct {
 //
 // # Concurrency
 //
-// Implementations must be safe for concurrent use. Concurrent
-// writers to one key are serialised by the backend in some order;
-// conditional writes are how a caller makes that order matter.
+// Implementations must be safe for concurrent use. The backend orders
+// concurrent writes to one key, and a conditional write makes that order
+// matter to the caller.
 type Store interface {
-	// Put stores the object under key, consuming r to EOF.
+	// Put stores the object under key, and reads r to EOF.
 	//
-	// Visibility is atomic even where the upload is not: a Put
-	// that fails for ANY reason — a reader error mid-stream,
-	// cancellation, a failed precondition — MUST leave the key
-	// exactly as it was, and a concurrent Get during a Put MUST
-	// observe the previous object or its absence, never a
+	// A Put is visible atomically, also when the upload is not. A Put
+	// that fails for any reason, such as an error of r, cancellation or
+	// a failed precondition, MUST leave the key as it was. A concurrent
+	// Get MUST return the previous object or its absence, and never a
 	// truncated body. The returned [Info] describes the object as
-	// written, including its new Version.
+	// written, with its new Version.
 	Put(ctx context.Context, key string, r io.Reader, opts PutOptions) (Info, error)
 
-	// Get opens the object for reading; the caller closes the
-	// reader. The bytes read are one consistent object — the
-	// version named by the returned [Info] — even if the key is
-	// overwritten while the reader is open. Absence classifies as
+	// Get opens the object for reading, and the caller closes the
+	// reader. The reader returns the bytes of one object, the version
+	// that the returned [Info] names, also when the key is overwritten
+	// while the reader is open. Absence classifies as
 	// [go.thesmos.sh/core/errs.NotFound].
 	Get(ctx context.Context, key string) (io.ReadCloser, Info, error)
 
@@ -240,27 +265,23 @@ type Store interface {
 	// Delete removes the object, subject to ifMatch.
 	//
 	// The zero [version.Version] deletes unconditionally, and an
-	// unconditional Delete of an absent key succeeds: the caller's
-	// intent — that it be gone — holds. A non-zero ifMatch naming
-	// any other version, including against an absent key, returns
-	// [version.ErrMismatch].
+	// unconditional Delete of an absent key succeeds. A non-zero ifMatch
+	// that names any other version returns [version.ErrMismatch], also
+	// for an absent key.
 	//
-	// The parameter is one version rather than the full
-	// [version.WriteOptions] because only one of that struct's
-	// fields means anything here. A create-only precondition on a
-	// removal is a category error, and a parameter that accepts one
-	// in order to reject it is a mistake the caller can write.
+	// Delete takes one version and not a [version.WriteOptions], because
+	// a create-only precondition has no meaning for a removal.
 	Delete(ctx context.Context, key string, ifMatch version.Version) error
 
-	// List enumerates objects whose keys begin with prefix, one
-	// page per call; the empty prefix enumerates everything.
+	// List returns one page of the objects whose keys begin with prefix.
+	// The empty prefix lists every object.
 	//
-	// Order is unpromised, but a cursor chain is complete: over a
-	// store with no concurrent mutation, walking pages to
-	// exhaustion yields every matching object exactly once. Under
-	// concurrent mutation, objects present for the walk's whole
-	// lifetime are yielded exactly once; objects created or
-	// deleted mid-walk may or may not appear.
+	// The order is unspecified, but a cursor chain is complete. Over a
+	// store without concurrent writes, a walk of the pages to the end
+	// yields every matching object exactly once. Under concurrent
+	// writes, a walk yields exactly once each object that exists for the
+	// whole walk. An object created or deleted during the walk may or
+	// may not appear.
 	List(ctx context.Context, prefix string, p page.Page) (page.Cursor[Info], error)
 }
 

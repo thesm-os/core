@@ -334,9 +334,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   share, and `Keeper.Destroy` destroys any key of that table.
   `cryptotest.AssertKeyCreatorContract` checks an implementation. See
   ADR-0041.
+- `blob.ValidContentType` and `blob.MaxContentTypeLen`: a content type of
+  at most 255 bytes of printable ASCII, which every store accepts. See
+  ADR-0042.
 
 ### Changed
 
+- **Breaking:** `blob.Store.Put` classifies a content type that
+  `blob.ValidContentType` rejects as `errs.Invalid`, and returns before
+  it touches storage. `blob/memory` implements the check, and
+  `coretest/blobtest` fails a store without it. See ADR-0042.
 - **Breaking:** `fsm.Builder.Build` rejects a state that has an outgoing
   edge but no path to a terminal state, when the Spec declares a
   terminal state. A cycle of states without an exit built before. A Spec

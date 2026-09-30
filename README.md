@@ -194,8 +194,10 @@ seams every other thesmos library and framework depends on:
   conditional writes through the `version` vocabulary. A failed `Put`
   leaves the key as it was, an open reader returns one version of the
   object, and a listing walked to the end over an unchanging store
-  returns every object once. Implementation: `blob/memory`. See
-  [RFC-0028][rfc-0028].
+  returns every object once. `Put` returns an invalid-argument error for
+  a content type of more than 255 bytes or with a byte outside printable
+  ASCII. Implementation: `blob/memory`. See [RFC-0028][rfc-0028] and
+  [ADR-0042][adr-0042].
 - **Conformance** — `coretest/castest` and `coretest/blobtest` check
   any store against the rules of its package, across a restart and a
   crash when the adapter supplies them. Core's tests run each suite
@@ -295,6 +297,7 @@ Apache 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 [adr-0027]: docs/adr/0027-btree-reset-keeps-nodes.md
 [adr-0040]: docs/adr/0040-an-event-count-is-awaited-with-a-context.md
 [adr-0041]: docs/adr/0041-a-custodian-creates-wrapping-keys.md
+[adr-0042]: docs/adr/0042-a-content-type-is-bounded.md
 [rfc-0001]: docs/rfc/0001-clock-seam.md
 [rfc-0002]: docs/rfc/0002-rand-seam.md
 [rfc-0003]: docs/rfc/0003-crypto-seam.md

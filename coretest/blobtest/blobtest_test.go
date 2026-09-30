@@ -45,6 +45,11 @@ const reference = "reference"
 // parent can cancel.
 const childTimeout = 30 * time.Second
 
+// truncatedContentTypeLen is the number of bytes of a content type that
+// a broken store keeps, as an adapter over a smaller metadata field
+// would.
+const truncatedContentTypeLen = 127
+
 // caseLine matches the line that go test -v prints when a top-level
 // case of the suite starts.
 var caseLine = regexp.MustCompile(`(?m)^=== RUN\s+TestAssertStore/([^/\s]+)$`)
@@ -68,8 +73,8 @@ type hooked struct {
 	readRange func(ctx context.Context, key string, off int64, dst []byte, ifMatch version.Version) (int, blob.Info, error)
 }
 
-// storeOnly holds a store as the Store interface and nothing else, so
-// it hides the [blob.RangeReader] of the store it holds.
+// storeOnly embeds a store as the Store interface and nothing else, so
+// it hides the [blob.RangeReader] of the store that it embeds.
 type storeOnly struct{ blob.Store }
 
 //nolint:wrapcheck // the test double passes the error through
@@ -382,6 +387,22 @@ func runs() map[string]run {
 				}
 
 				return s.Stat(ctx, key)
+			}
+		}),
+		"Put rejects an invalid content type as Invalid": breaking(func(s *memory.Store, h *hooked) {
+			h.put = func(ctx context.Context, key string, r io.Reader, opts blob.PutOptions) (blob.Info, error) {
+				if !blob.ValidContentType(opts.ContentType) {
+					opts.ContentType = ""
+				}
+
+				return s.Put(ctx, key, r, opts)
+			}
+		}),
+		"Put stores a valid content type as given": breaking(func(s *memory.Store, h *hooked) {
+			h.put = func(ctx context.Context, key string, r io.Reader, opts blob.PutOptions) (blob.Info, error) {
+				opts.ContentType = opts.ContentType[:min(len(opts.ContentType), truncatedContentTypeLen)]
+
+				return s.Put(ctx, key, r, opts)
 			}
 		}),
 		"a key and a longer key it prefixes exist together": breaking(func(s *memory.Store, h *hooked) {

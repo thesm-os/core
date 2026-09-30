@@ -1,14 +1,12 @@
 // Copyright Thesmos 2026
 // SPDX-License-Identifier: Apache-2.0
 
-// Package memory provides an in-process [blob.Store] for tests and
-// local development — the role [go.thesmos.sh/core/crypto/localkey]
-// plays for key custody. It is also the conformance suite's first
-// subject, which keeps the blob laws tested inside this module's
-// own gates rather than deferred to the first external adapter.
+// Package memory provides an in-process [blob.Store] for tests and local
+// development. Core runs the conformance suite of
+// [go.thesmos.sh/core/coretest/blobtest] against it.
 //
-// memory is for wiring tests and local runs only. Contents live in
-// process memory with no durability and no capacity bound.
+// A Store keeps its objects in process memory, with no durability and no
+// capacity bound.
 package memory
 
 import (
@@ -28,54 +26,47 @@ import (
 	"go.thesmos.sh/core/version"
 )
 
-// defaultPageSize bounds a List page when the request leaves the
-// limit unset, per the page package's convention that a limit at or
-// below zero means "the implementation's default".
+// defaultPageSize is the size of a List page whose limit is zero or
+// negative, which the page package defines as the implementation's
+// default.
 const defaultPageSize = 50
 
-// Sentinel causes for this implementation's failures.
-//
-// The seam's contract is the classification — and, for conditional
-// writes, the version package's sentinels — not these causes. They
-// are unexported so no consumer couples to one implementation's
-// spelling; they exist so this package's own tests can assert cause
-// identity as well as class.
+// These are the causes of the errors that this package returns. The
+// contract of the seam is the class of an error, and for a conditional
+// write the sentinel of the version package. The causes are unexported,
+// so no caller depends on them.
 var (
-	errBadKey    = errors.New("memory: key is not a valid object name")
-	errAbsent    = errors.New("memory: object not present")
-	errBadOffset = errors.New("memory: negative offset")
+	errBadKey         = errors.New("memory: key is not a valid object name")
+	errBadContentType = errors.New("memory: content type is not a valid content type")
+	errAbsent         = errors.New("memory: object not present")
+	errBadOffset      = errors.New("memory: negative offset")
 )
 
-// object pairs a stored body with its metadata. The body slice is
-// never mutated after the object is constructed — overwrites
-// replace the whole object — which is what lets an open reader keep
-// serving its version after the key moves on, with no copy.
+// object is a stored body and its metadata. No code writes to the body
+// after the object is built. An overwrite replaces the whole object, so
+// an open reader returns its version without a copy.
 type object struct {
 	data []byte
 	info blob.Info
 }
 
-// Store is a mutex-guarded in-process [blob.Store].
+// Store is an in-process [blob.Store] behind one mutex.
 //
-// Atomic visibility falls out of the shape: Put buffers the entire
-// body BEFORE taking the lock, so the map only ever holds complete
-// objects, and a failed read, precondition, or context leaves the
-// previous object untouched because nothing was swapped. Reader
-// snapshots fall out of immutability: Get wraps the stored slice,
-// and since overwrites replace objects rather than mutating them,
-// an open reader keeps its version for free.
+// Put reads the whole body before it takes the lock, so the map contains
+// only complete objects, and a failed Put leaves the previous object as
+// it was. Get returns a reader over the stored body. An overwrite
+// replaces the object and leaves the body unchanged, so an open reader
+// returns its version.
 //
-// Versions come from a monotonic counter that never resets and
-// never reuses a value — including across delete-and-recreate of
-// the same key — per the version package's uniqueness requirement.
-// The tokens are equality-only like every Version; their numeric
-// look carries no ordering contract.
+// Versions come from a counter that never resets, so no version repeats
+// for a key, also after the key is deleted and written again. A version
+// is compared by equality only, and its digits define no order.
 //
-// The clock is injected because [blob.Info.ModTime] is an instant
-// and this module never reads wall time ambiently.
+// The clock passed to [New] supplies [blob.Info.ModTime]. The package
+// does not read the wall clock itself.
 //
-// The objects are in a [btree.Map] ordered by key, so [Store.List]
-// reads a page in O(log n + p) for n objects and a page of p.
+// A [btree.Map] orders the objects by key, so [Store.List] reads a page
+// of p objects in O(log n + p) for n objects.
 //
 // # Concurrency
 //
@@ -102,37 +93,37 @@ var (
 	_ blob.RangeReader = (*Store)(nil)
 )
 
-// New returns an empty [Store] reading wall time from c. The
-// clock is injected so a test drives [blob.Info.ModTime]
-// deterministically; the value is stdlib time, not an instant.
+// New returns an empty [Store] that reads the time of each write from c.
+// A test that passes a fake clock controls [blob.Info.ModTime].
 func New(c clock.Clock) *Store {
 	return &Store{c: c}
 }
 
-// Put stores the object under key, consuming r to EOF.
+// Put stores the object under key, and reads r to EOF.
 //
-// The body is buffered in full before any state is examined, so
-// every failure — a reader error mid-stream, a failed precondition,
-// a done context — leaves the key exactly as it was, and a
-// concurrent Get can never observe a partial body.
+// Put reads the whole body before it examines the store. A failed Put
+// leaves the key as it was, and a concurrent Get returns the previous
+// object or its absence.
 //
-// Error modes, all leaving the store untouched:
+// Error modes, each of which leaves the store unchanged:
 //
-//   - ctx already done — the context's error, unwrapped.
-//   - key fails [blob.ValidKey] — classifies as [errs.Invalid].
-//   - r fails mid-stream — the reader's error, unwrapped; the
-//     bytes consumed so far are discarded.
-//   - opts.Write.IfMatch names a version other than the stored one,
-//     or names any version while the key is absent —
+//   - A done ctx returns the context's error, unwrapped.
+//   - A key that [blob.ValidKey] rejects classifies as [errs.Invalid].
+//     Put does not read r.
+//   - A content type that [blob.ValidContentType] rejects classifies as
+//     [errs.Invalid]. Put does not read r.
+//   - An error of r returns that error, unwrapped. Put discards the bytes
+//     that it read.
+//   - An opts.Write.IfMatch that names a version other than the stored
+//     one, or any version of an absent key, returns
 //     [version.ErrMismatch].
-//   - opts.Write.IfNoneMatch is the wildcard and the key exists, or
-//     names the version the key currently holds —
-//     [version.ErrExists].
+//   - An opts.Write.IfNoneMatch that is the wildcard for an existing key,
+//     or that names the stored version, returns [version.ErrExists].
 //
 // # Allocation contract
 //
-// One buffer for the body, one Info; nothing further on error
-// paths.
+// One buffer for the body and one Info. An error path does not allocate
+// more.
 func (s *Store) Put(ctx context.Context, key string, r io.Reader, opts blob.PutOptions) (blob.Info, error) {
 	if err := ctx.Err(); err != nil {
 		return blob.Info{}, err
@@ -140,6 +131,10 @@ func (s *Store) Put(ctx context.Context, key string, r io.Reader, opts blob.PutO
 
 	if !blob.ValidKey(key) {
 		return blob.Info{}, errs.WithClass(errBadKey, errs.Invalid)
+	}
+
+	if !blob.ValidContentType(opts.ContentType) {
+		return blob.Info{}, errs.WithClass(errBadContentType, errs.Invalid)
 	}
 
 	data, err := io.ReadAll(r)
@@ -177,20 +172,20 @@ func (s *Store) Put(ctx context.Context, key string, r io.Reader, opts blob.PutO
 	return info, nil
 }
 
-// Get opens the object for reading.
+// Get opens the object for reading. The reader reads the stored body
+// without a copy. An overwrite replaces the object and leaves the body
+// unchanged, so the reader returns the version that the returned Info
+// names.
 //
-// The returned reader wraps the stored body directly — no copy —
-// which is safe because stored bodies are immutable: an overwrite
-// replaces the object, so an open reader keeps serving the version
-// named by the Info it was returned with.
+// Error modes:
 //
-// Error modes: a done ctx returns the context's error; a key
-// [blob.ValidKey] rejects classifies as [errs.Invalid]; absence
-// classifies as [errs.NotFound].
+//   - A done ctx returns the context's error.
+//   - A key that [blob.ValidKey] rejects classifies as [errs.Invalid].
+//   - An absent key classifies as [errs.NotFound].
 //
 // # Allocation contract
 //
-// One reader wrapper; the body is not copied.
+// One reader. Get does not copy the body.
 func (s *Store) Get(ctx context.Context, key string) (io.ReadCloser, blob.Info, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, blob.Info{}, err
@@ -215,19 +210,19 @@ func (s *Store) Get(ctx context.Context, key string) (io.ReadCloser, blob.Info, 
 // into dst, with the count and the error of [bytes.Reader.ReadAt].
 //
 // The store takes the object that the key names under the lock, and
-// compares ifMatch with that object's version. Stored bodies are
-// immutable, so the bytes it copies after the lock is released belong
-// to the version the returned Info names.
+// compares ifMatch with that object's version. No code writes to a stored
+// body, so the bytes that ReadRange copies after it releases the lock
+// belong to the version that the returned Info names.
 //
 // Error modes, each with the zero Info:
 //
-//   - ctx already done — the context's error, unwrapped.
-//   - key fails [blob.ValidKey] — classifies as [errs.Invalid].
-//   - off is negative — classifies as [errs.Invalid].
-//   - the key is absent — classifies as [errs.NotFound], whatever
-//     ifMatch names.
-//   - a non-zero ifMatch names a version other than the stored one —
-//     [version.ErrMismatch].
+//   - A done ctx returns the context's error, unwrapped.
+//   - A key that [blob.ValidKey] rejects classifies as [errs.Invalid].
+//   - A negative off classifies as [errs.Invalid].
+//   - An absent key classifies as [errs.NotFound], whatever ifMatch
+//     names.
+//   - A non-zero ifMatch that names a version other than the stored one
+//     returns [version.ErrMismatch].
 //
 // # Allocation contract
 //
@@ -273,9 +268,11 @@ func (s *Store) ReadRange(
 
 // Stat returns metadata without the body.
 //
-// Error modes: a done ctx returns the context's error; a key
-// [blob.ValidKey] rejects classifies as [errs.Invalid]; absence
-// classifies as [errs.NotFound].
+// Error modes:
+//
+//   - A done ctx returns the context's error.
+//   - A key that [blob.ValidKey] rejects classifies as [errs.Invalid].
+//   - An absent key classifies as [errs.NotFound].
 //
 // # Allocation contract
 //
@@ -303,13 +300,14 @@ func (s *Store) Stat(ctx context.Context, key string) (blob.Info, error) {
 // Delete removes the object, subject to ifMatch.
 //
 // The zero [version.Version] deletes unconditionally, and an
-// unconditional delete of an absent key succeeds — the caller's
-// intent holds. Error modes:
+// unconditional Delete of an absent key succeeds.
 //
-//   - ctx already done — the context's error, unwrapped.
-//   - key fails [blob.ValidKey] — classifies as [errs.Invalid].
-//   - ifMatch set while the key is absent, or naming a version
-//     other than the stored one — [version.ErrMismatch].
+// Error modes:
+//
+//   - A done ctx returns the context's error, unwrapped.
+//   - A key that [blob.ValidKey] rejects classifies as [errs.Invalid].
+//   - A non-zero ifMatch for an absent key, or one that names a version
+//     other than the stored one, returns [version.ErrMismatch].
 //
 // # Allocation contract
 //
@@ -339,25 +337,23 @@ func (s *Store) Delete(ctx context.Context, key string, ifMatch version.Version)
 	return nil
 }
 
-// List enumerates objects under prefix in key order, one page per
-// call.
+// List returns one page of the objects under prefix, in key order.
 //
-// Key order is an implementation detail, not a seam promise — it
-// exists so the continuation token (the last key of the page) is
-// stable across calls, which is what makes a walked cursor chain
-// complete over a quiescent store. The token names a key, so a
-// mid-walk mutation shifts only which not-yet-visited objects
-// appear, never re-yielding a visited one.
+// The seam promises no order. This store lists in key order, and the
+// token of a page is its last key, so a walk over a store without
+// concurrent writes returns every object once. A write during a walk
+// changes only which of the objects that the walk has not reached
+// appear. A walk returns each object at most once.
 //
-// List reads the keys in order from the first key after the token
-// that has the prefix, and stops at the first key without it, so a
-// page of p objects costs O(log n + p).
+// List reads from the first key after the token that has the prefix, and
+// stops at the first key without it, so a page of p objects costs
+// O(log n + p).
 //
 // Error modes: a done ctx returns the context's error.
 //
 // # Allocation contract
 //
-// One snapshot of the matching page per call.
+// One copy of the page per call.
 func (s *Store) List(ctx context.Context, prefix string, p page.Page) (page.Cursor[blob.Info], error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
