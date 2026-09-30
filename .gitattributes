@@ -1,3 +1,8 @@
+# Text files check out with LF line endings on every platform, so that the
+# generated files and the golden files match the bytes that the generator
+# and the tests write, which end lines with LF.
+* text=auto eol=lf
+
 # Generated code — collapse in GitHub PRs
 *.gen.go linguist-generated=true
 *.gen_test.go linguist-generated=true
