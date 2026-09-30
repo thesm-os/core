@@ -93,5 +93,6 @@ Start from [`docs/templates/ADR.md`](../templates/ADR.md).
 | [0038](0038-a-gauge-declares-its-set-aggregation.md) | A Gauge Declares the Aggregation of Its Attribute Sets | Accepted |
 | [0039](0039-emit-methods-do-not-panic.md) | Emit Methods Do Not Panic | Accepted |
 | [0040](0040-an-event-count-is-awaited-with-a-context.md) | An Event Count Is Awaited With a Context | Accepted |
+| [0041](0041-a-custodian-creates-wrapping-keys.md) | A Custodian Creates Wrapping Keys | Accepted |
 
 [nygard]: https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions

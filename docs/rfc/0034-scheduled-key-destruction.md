@@ -4,7 +4,7 @@ title: Scheduled Key Destruction
 author: Roy Klopper <roy.klopper@stealthscale.io>
 status: Accepted
 created: 2026-09-24
-updated: 2026-09-24
+updated: 2026-09-30
 discussion: none
 supersedes: none
 superseded-by: none
@@ -137,6 +137,10 @@ describes two layers, and neither needs a new interface:
    Destroying a wrapping key is the tool for removing a whole tenant,
    and a bound on how long a deleted data key can survive in a
    backup.
+
+**Note:** ADR-0041 replaces the next paragraph. `crypto.KeyCreator`
+creates wrapping keys, for a caller that bounds how long deleted bytes on
+its device can be decrypted.
 
 Creating a wrapping key is a provisioning task, done where the
 custodian's keys and permissions are managed. The seam therefore has no
