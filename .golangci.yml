@@ -274,9 +274,9 @@ linters:
         text: "TestZeroAlloc"
         linters: [paralleltest]
 
-      # Ad-hoc {name, fn} subtest table struct in TestZeroAlloc.
-      # Reordering fields does not change the ptr-byte count — the
-      # linter's suggested arrangement matches the current one.
+      # fieldalignment checks production code only. A table or fixture
+      # struct in a test file exists once per test, so its layout is
+      # not worth optimizing.
       - path: '_test\.go'
         linters: [govet]
         text: "fieldalignment:.*"
