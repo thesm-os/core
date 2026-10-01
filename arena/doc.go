@@ -2,8 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package arena provides allocation primitives for hot paths: [Arena], a
-// contiguous byte buffer for variable-length binary output, and [List], an
-// append-only sequence of typed values in chunks that never move.
+// contiguous byte buffer for variable-length binary output, [List], an
+// append-only sequence of typed values in chunks that never move, and
+// [Slabs], which allocates byte slices from slabs and takes single slices
+// back for reuse.
 //
 // # Arena
 //
@@ -31,6 +33,19 @@
 // Truncate keeps the chunks. A List that is emptied and filled again
 // reuses them without allocating.
 //
+// # Slabs
+//
+// An Arena frees all its bytes at once, and a List drops a suffix. With
+// either, a store that removes its values one at a time, in any order,
+// cannot reuse the space of a removed value. [Slabs.Alloc] returns a slice
+// whose capacity is a power-of-two size class of at least [MinClass]
+// bytes, carved from slabs of a size that the caller chooses. [Slabs.Free]
+// zeroes the class of a slice and keeps it for the next Alloc of the
+// class. A store whose values come and go then reuses the space of a
+// removed value without an allocation. [Slabs.All] yields every slab with
+// its free space, for a test that searches all the memory of the Slabs
+// for a removed value.
+//
 // # Pool integration
 //
 // [Arena.Reset] satisfies [pool.Resettable], so a pool of arenas is one
@@ -55,4 +70,10 @@
 //
 // [List.Append] allocates only when a List grows past [List.Cap]. No other
 // List method allocates.
+//
+// [Slabs.Alloc] allocates only a new slab, when the free list of its class
+// is empty and the current slab has no room for the class. [Slabs.Free]
+// allocates only when the free list of a class grows past its capacity.
+// Once the free lists have grown to the working set, an Alloc followed by
+// a Free does not allocate.
 package arena
