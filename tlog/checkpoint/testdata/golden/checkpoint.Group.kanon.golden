@@ -1,0 +1,51 @@
+the zero value: 
+table sample 0: 0a056b616e6f6e12880107c3a9e29c93cf897f61616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161188002
+table sample 1: 0a07c3a9e29c93cf8918808002
+table sample 2: 0a7f6161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616112820180016262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262188102
+table sample 3: 0a8001626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626212b402056b616e6f6eac0263636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636318feffffff0f
+table sample 4: 0a056b616e6f6e18ffffffff0f
+table sample 5: 0aac02636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363636363120302fffe
+table sample 6: 0a02fffe120c056b616e6f6e056b616e6f6e1802
+table sample 7: 0a056b616e6f6e1801
+the sample of field Name: 0a056b616e6f6e
+the sample of field Members: 1206056b616e6f6e
+the sample of field Threshold: 1802
+table sample 0 that fails at value 0: fails: kanon: Group.Name (field 1): checkpoint: invalid policy: "\x00" is not a name of a policy
+table sample 0 that fails at value 1: fails: kanon: Group.Members (field 2): checkpoint: invalid policy: "\x00" is not a name of a policy
+table sample 0 that fails at value 2: fails: kanon: Group.Members (field 2): checkpoint: invalid policy: "\x00" is not a name of a policy
+table sample 1 that fails at value 0: fails: kanon: Group.Name (field 1): checkpoint: invalid policy: "\x00" is not a name of a policy
+table sample 2 that fails at value 0: fails: kanon: Group.Name (field 1): checkpoint: invalid policy: "\x00" is not a name of a policy
+table sample 2 that fails at value 1: fails: kanon: Group.Members (field 2): checkpoint: invalid policy: "\x00" is not a name of a policy
+table sample 3 that fails at value 0: fails: kanon: Group.Name (field 1): checkpoint: invalid policy: "\x00" is not a name of a policy
+table sample 3 that fails at value 1: fails: kanon: Group.Members (field 2): checkpoint: invalid policy: "\x00" is not a name of a policy
+table sample 3 that fails at value 2: fails: kanon: Group.Members (field 2): checkpoint: invalid policy: "\x00" is not a name of a policy
+table sample 4 that fails at value 0: fails: kanon: Group.Name (field 1): checkpoint: invalid policy: "\x00" is not a name of a policy
+table sample 5 that fails at value 0: fails: kanon: Group.Name (field 1): checkpoint: invalid policy: "\x00" is not a name of a policy
+table sample 5 that fails at value 1: fails: kanon: Group.Members (field 2): checkpoint: invalid policy: "\x00" is not a name of a policy
+table sample 6 that fails at value 0: fails: kanon: Group.Name (field 1): checkpoint: invalid policy: "\x00" is not a name of a policy
+table sample 6 that fails at value 1: fails: kanon: Group.Members (field 2): checkpoint: invalid policy: "\x00" is not a name of a policy
+table sample 6 that fails at value 2: fails: kanon: Group.Members (field 2): checkpoint: invalid policy: "\x00" is not a name of a policy
+table sample 7 that fails at value 0: fails: kanon: Group.Name (field 1): checkpoint: invalid policy: "\x00" is not a name of a policy
+wide sample 0: 0a02773112030277321806
+wide sample 1: 0a02773212030277331808
+the key sample: 0a07c3a9e29c93cf8918808002
+DecodeKanon/decodes each prefix of a field as the reference decode: 1244 probes, digest 1e75e60f83e0a844
+DecodeKanon/decodes a field with one value written wrong as the reference decode: 1778 probes, digest a125bb518a0a34cc
+DecodeKanon/decodes a field with a value that its ValidateKanon rejects as the reference decode: 15 probes, digest fddaeb0c9f4389f0
+DecodeKanon/decodes a field with one changed byte as the reference decode: 3669 probes, digest 45536bc8cc610253
+DecodeKanon/decodes a field with its tag in another wire format as the reference decode: 63 probes, digest 5b4142b6c6f3b85d
+DecodeKanon/decodes a field written twice as the reference decode: 21 probes, digest 66a7edd15e3d3931
+DecodeKanon/decodes a field under each depth limit as the reference decode: 190 probes, digest c8eed19863419f1d
+DecodeKanon/decodes an encoding that writes every field twice as the reference decode: 15 probes, digest 35ee6997ca5b75c2
+DecodeKanon/decodes two concatenated encodings as the reference decode: 64 probes, digest b931394042d9731
+DecodeKanon/decodes an encoding in a slab at its offset as the reference decode: 15 probes, digest 83d39e403106c40d
+DecodeKanon/decodes a field with a varint one byte longer than its shortest form as the reference decode: 51 probes, digest c708c81f8d00140b
+DecodeKanon/decodes an encoding with two adjacent fields swapped as the reference decode: 12 probes, digest 9cce2dd5e4912063
+DecodeKanon/decodes an encoding with two adjacent map entries swapped as the reference decode: 0 probes, digest cbf29ce484222325
+DecodeKanon/decodes an encoding with unknown fields at a field boundary as the reference decode: 35 probes, digest fddfab0e97c7b780
+DecodeKanon/decodes an encoding with a field written at its zero value as the reference decode: 36 probes, digest 150722c5eb488b5c
+DecodeKanon/decodes an encoding with a malformed tag at a field boundary as the reference decode: 105 probes, digest 9ba8935a11b9ef0c
+DecodeKanon/decodes an encoding with a float component of a map key of -0.0 as the reference decode: 0 probes, digest cbf29ce484222325
+DecodeKanon/decodes an encoding with a value written as zero bytes as the reference decode: 24 probes, digest bf63cedc52502ad6
+the samples that the encode allocation checks measure: 12 samples, digest 2774ca608d65f4d2
+the samples that the decode allocation check measures: 12 samples, digest 2774ca608d65f4d2
