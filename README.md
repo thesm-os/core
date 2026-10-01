@@ -62,9 +62,12 @@ seams every other thesmos library and framework depends on:
   from a stored algorithm name out of a table the caller writes,
   and `Policy` requires valid signatures from a tree of key sets
   and thresholds over them, such as k of n parties, counting each
-  key once. See [RFC-0013][rfc-0013], [RFC-0033][rfc-0033],
-  [RFC-0035][rfc-0035], [RFC-0039][rfc-0039] and
-  [RFC-0044][rfc-0044].
+  key once. `AppendSign` writes a signature into a buffer of the
+  caller, which the Ed25519 signer fills without an allocation, and
+  `Rules` and `Policy.Reset` build a policy again in its own memory.
+  See [RFC-0013][rfc-0013], [RFC-0033][rfc-0033],
+  [RFC-0035][rfc-0035], [RFC-0039][rfc-0039],
+  [RFC-0044][rfc-0044] and [RFC-0047][rfc-0047].
 - **Framer** — unambiguous domain separation for hashed and
   signed inputs. `Domain` (name + version) plus a `Framer`
   builder that length-prefixes every part, so no two distinct
@@ -239,6 +242,15 @@ seams every other thesmos library and framework depends on:
   binary role that a protocol assigns. A `TaggedTree` returns every
   path of a batch after hashing each interior node once. See
   [RFC-0032][rfc-0032] and [ADR-0025][adr-0025].
+- **Notes and checkpoints** — C2SP signed-note in `note`, and the
+  checkpoints, cosignatures and policy files of a transparency log in
+  `tlog/checkpoint`. A note key is a `sign.Verifier`, so a
+  `sign.Policy` verifies a note with at most one verification per key,
+  and a tlog-policy file becomes one policy per log origin. The caller
+  lists the signature types that it accepts in a `note.Resolver`,
+  including ML-DSA types that signed-note assigns no byte. Verifying a
+  checkpoint, cosigning into a reused note and reloading an unchanged
+  policy file allocate nothing. See [RFC-0047][rfc-0047].
 - **BTree** — ordered maps and sets as in-memory B+ trees. `Map`,
   `MapFunc`, which orders its keys by a function of the caller, and `Set`
   have point operations, `Floor` and `Ceil`, `At` and `Rank` in O(log n),
@@ -343,5 +355,6 @@ Apache 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 [rfc-0043]: docs/rfc/0043-btree-ordered-maps.md
 [rfc-0044]: docs/rfc/0044-nested-signature-policies.md
 [rfc-0046]: docs/rfc/0046-released-instruments-and-gauge-aggregation.md
+[rfc-0047]: docs/rfc/0047-signed-notes-and-checkpoints.md
 [contrib]: CONTRIBUTING.md
 [sec]: SECURITY.md

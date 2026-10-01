@@ -370,6 +370,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   persists a signature calls it to refuse one that no verifier can check.
   It does not verify the signature, and a nil `*Signature` is not
   complete.
+- `note` package: C2SP signed-note. A `Key` is a verifier key, a `Name`
+  a key name and a `Type` a signature type, and `NewType` encodes a type
+  that signed-note assigns no byte as 0xff, a length byte and an
+  identifier. A note key is a `sign.Verifier` whose `KeyID` follows from
+  its name and its key ID, so `Note.Check` converts each signature line
+  to a `sign.Signature` and verifies a note against any `sign.Policy` of
+  note keys, with at most one verification per key. A `Resolver`, a
+  table that the caller writes, builds the `Verifier` of a key from a
+  `sign.Resolver` entry through `Text` or a format of `tlog/checkpoint`.
+  `Parse` accepts exactly the notes that `Note.AppendText` writes. Every
+  operation has a path without an allocation through memory of the
+  caller: `Key.Set` and `Key.UnmarshalText` into a `Key` of the same key,
+  `Note.UnmarshalText` into a `Note` of the same keys, `Note.Sign` into a
+  reused `Note`, `TextSigner.Reset` into a signer of the caller, and a
+  `Keyring` that keeps the `Verifier` of each key across the reloads of
+  a configuration. `Key`, `Signature` and `Note` have canonical kanon
+  codecs. See RFC-0047.
+- `tlog/checkpoint` package: the C2SP formats of the signed tree heads
+  of a transparency log. `Body` is the text of tlog-checkpoint, with a
+  root of 32, 48 or 64 bytes. `CosignatureV1` and `SubtreeV1` build the
+  `note.Resolver` entries of the two timestamped messages of
+  tlog-cosignature, and `CosignatureV1Signer` and `SubtreeV1Signer` sign
+  them with the time of a `clock.UTCSource` within an error bound.
+  `Policy` is a tlog-policy file. A `Verifier` keeps one `sign.Policy`
+  per log origin, which requires one of the origin's log keys and the
+  quorum. `Verifier.Verify` checks a checkpoint without an allocation,
+  and `Verifier.Reset` rebuilds the trees of a reloaded policy without
+  one. `Policy.UnmarshalText` of an unchanged file allocates nothing,
+  `ParsePolicy` allocates six times for tlog-policy's example, and
+  `NewVerifier` 18 times for one log and three witnesses. See RFC-0047.
+- `sign.AppendSigner`, `sign.AppendSign` and `sign.AsAppendSigner`. A
+  signer with the capability appends its signature to a buffer of the
+  caller. `AppendSign` uses the capability when a signer has it, also
+  behind decorators, and otherwise signs through `SignContext` and
+  appends a copy. The signers of `ed25519`, `mldsa` and `ecdsap384`
+  implement it, and the Ed25519 signer appends without an allocation.
+  `cryptotest.AppendSignerAssertion` and
+  `cryptotest.AppendSignerContextAssertion` check an implementation.
+- `sign.Rules` and `sign.Policy.Reset`. `Rules` keeps the memory of the
+  keys and the children of a tree of rules, and its `AllOf` and
+  `AtLeast` copy into it, so a caller that builds a tree of the same
+  size again allocates nothing. `Policy.Reset` builds a policy again in
+  its own memory, and allocates nothing for a tree of up to 64 keys that
+  fits the memory of the policy before.
+- `mldsa.Verifier.Context` returns the FIPS 204 context string of a key.
+  The signer of type 0x06 of `tlog/checkpoint` refuses an ML-DSA-44 key
+  under any context other than the empty one.
 
 ### Changed
 
@@ -561,6 +608,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `Histogram.Record` treat NaN, an infinity and a negative histogram
   value. The contract assertions of `coretest/telemetrytest` pass these
   values, so an adapter that panics for one of them fails. See ADR-0039.
+- `sign.NewPolicyTree` checks the shape of a tree and counts its keys
+  and rules before it copies the tree, and sizes its memory once: four
+  allocations for the tree of tlog-policy's example, down from 29.
+  `sign.NewPolicy` builds the rules of up to 16 parties on the stack.
+- `ed25519.NewVerifier`, `ed25519.NewVerifierFromBytes` and
+  `ed25519.Resolve` copy the 32-byte public key into the `Verifier`, so
+  a caller may reuse the source buffer, and allocate once instead of
+  twice.
+- `mldsa.NewVerifier` and the entries of `mldsa.Resolver` allocate three
+  times instead of four: a `Verifier` keeps its FIPS 204 options by
+  value.
+- `ecdsap384.NewVerifierFromPKIX` and `ecdsap384.Resolve` parse the PKIX
+  key once and do not encode it again: 22 allocations instead of 50.
 
 ### Fixed
 
