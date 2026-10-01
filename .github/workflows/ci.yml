@@ -134,7 +134,7 @@ jobs:
   mutation:
     name: Mutation
     runs-on: ubuntu-latest
-    # Mutation runs the suite once per mutant across the 21 layers
+    # Mutation runs the suite once per mutant across the 22 layers
     # that .ergon.yaml gates. It is the one stage kept out of the
     # local hooks, so this job is where it gates.
     #

@@ -360,6 +360,9 @@ checks:
       - path: id
         score: 100
         coverage: 100
+      - path: note
+        score: 100
+        coverage: 100
       - path: page
         score: 100
         coverage: 100
