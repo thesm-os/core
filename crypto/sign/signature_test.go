@@ -30,6 +30,10 @@ const (
 		"1a10" + "0102030405060708090a0b0c0d0e0f10"
 )
 
+// benchRuns is the number of calls over which a benchmark averages the
+// allocations that it checks.
+const benchRuns = 100
+
 // recordedSignature is the signature whose encoding signatureHex pins.
 func recordedSignature() sign.Signature {
 	return sign.Signature{
@@ -39,8 +43,58 @@ func recordedSignature() sign.Signature {
 	}
 }
 
+// recordedSignatureWith returns recordedSignature after change has
+// changed it.
+func recordedSignatureWith(change func(*sign.Signature)) *sign.Signature {
+	s := recordedSignature()
+	change(&s)
+
+	return &s
+}
+
 func TestSignature(t *testing.T) {
 	t.Parallel()
+
+	t.Run("Complete", func(t *testing.T) {
+		t.Parallel()
+
+		complete := recordedSignature()
+		tests := []struct {
+			name string
+			give *sign.Signature
+			want bool
+		}{
+			{name: "reports true for a signature with every field", give: &complete, want: true},
+			{
+				name: "reports false for a signature without an algorithm",
+				give: recordedSignatureWith(func(s *sign.Signature) { s.Algorithm = "" }),
+				want: false,
+			},
+			{
+				name: "reports false for a signature with a nil value",
+				give: recordedSignatureWith(func(s *sign.Signature) { s.Value = nil }),
+				want: false,
+			},
+			{
+				name: "reports false for a signature with an empty value",
+				give: recordedSignatureWith(func(s *sign.Signature) { s.Value = []byte{} }),
+				want: false,
+			},
+			{
+				name: "reports false for a signature with the zero key ID",
+				give: recordedSignatureWith(func(s *sign.Signature) { s.KeyID = sign.KeyID{} }),
+				want: false,
+			},
+			{name: "reports false for the zero Signature", give: &sign.Signature{}, want: false},
+			{name: "reports false for a nil Signature", give: nil, want: false},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				testkit.Equal(t, tt.give.Complete(), tt.want, "Complete must report whether every field is set")
+			})
+		}
+	})
 
 	t.Run("AppendBinary", func(t *testing.T) {
 		t.Parallel()
@@ -76,4 +130,20 @@ func TestSignature(t *testing.T) {
 				"UnmarshalBinary must reject an encoding that the encode does not write")
 		})
 	})
+}
+
+// BenchmarkComplete reports the cost of Complete, and fails when it
+// allocates. The allocation check calls a signature of its own, so the
+// closure that captures it does not change the code of the timed loop.
+func BenchmarkComplete(b *testing.B) {
+	probe := recordedSignature()
+	if allocs := testing.AllocsPerRun(benchRuns, func() { _ = probe.Complete() }); allocs != 0 {
+		b.Fatalf("Complete allocates %v times per call, want 0", allocs)
+	}
+
+	s := recordedSignature()
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = s.Complete()
+	}
 }

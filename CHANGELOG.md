@@ -365,6 +365,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   position, the elements of a slice, the values of a map and the target of
   a pointer included. `AppendBinary` appends the bytes of `AppendKanon`,
   and `kanontest.RunExact` checks that the two agree for every value.
+- `sign.Signature.Complete` reports whether a signature has an algorithm,
+  a value and a key ID, the fields that a verifier reads. A record that
+  persists a signature calls it to refuse one that no verifier can check.
+  It does not verify the signature, and a nil `*Signature` is not
+  complete.
 
 ### Changed
 

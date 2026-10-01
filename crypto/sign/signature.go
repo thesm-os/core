@@ -48,3 +48,16 @@ type Signature struct {
 	// KeyID names the key that made the signature.
 	KeyID KeyID
 }
+
+// Complete reports whether s has an algorithm, a value and a key ID, the
+// fields that a verifier reads to check s. A record that persists a
+// signature calls it to refuse a signature that no verifier can check.
+// Complete does not verify s, and it accepts any algorithm name, because
+// a [Policy] resolves the algorithm. A nil s is not complete.
+//
+// # Allocation contract
+//
+// Zero alloc.
+func (s *Signature) Complete() bool {
+	return s != nil && s.Algorithm != "" && len(s.Value) != 0 && s.KeyID != (KeyID{})
+}
