@@ -47,6 +47,20 @@ func (i ID) SizeKanon() int {
 	return int(i.size)
 }
 
+// ExactKanon declares ID a [go.thesmos.sh/kanon.Exact] type. kanon's
+// generated code then writes an ID field without an error path, and a
+// canonical decode does not encode the decoded ID a second time. No code
+// calls the method.
+//
+// An ID keeps the two guarantees of the declaration:
+//
+//   - [ID.AppendBinary] returns no error and appends [ID.SizeKanon] bytes
+//     for every ID.
+//   - [ID.UnmarshalBinary] accepts only the bytes that AppendBinary writes
+//     for the ID that it decodes: no bytes for [Zero], and the 16, 20 or
+//     32 bytes of an ID of that size.
+func (ID) ExactKanon() {}
+
 // UnmarshalBinary sets i to the ID that data encodes: [Zero] for empty
 // data, and otherwise the ID that [FromBytes] builds from data.
 //

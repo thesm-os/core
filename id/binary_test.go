@@ -8,7 +8,7 @@ import (
 	"runtime"
 	"testing"
 
-	"go.thesmos.sh/kanon"
+	"go.thesmos.sh/kanon/kanontest"
 	"go.thesmos.sh/testkit"
 
 	"go.thesmos.sh/core/errs"
@@ -21,7 +21,6 @@ var (
 	_ encoding.BinaryAppender    = id.Zero
 	_ encoding.BinaryMarshaler   = id.Zero
 	_ encoding.BinaryUnmarshaler = (*id.ID)(nil)
-	_ kanon.Sizer                = id.Zero
 )
 
 // shapes are an ID of every size, with the bytes the encoding must
@@ -127,6 +126,14 @@ func TestSizeKanon(t *testing.T) {
 			testkit.Equal(t, tc.id.SizeKanon(), len(tc.want), "SizeKanon must equal the length of the encoding")
 		})
 	}
+}
+
+// TestExactKanon checks the two guarantees that ExactKanon declares with
+// kanon's conformance suite. An ID without the methods of kanon.Exact does
+// not compile here.
+func TestExactKanon(t *testing.T) {
+	t.Parallel()
+	kanontest.RunExact[id.ID](t)
 }
 
 func BenchmarkAppendBinary(b *testing.B) {

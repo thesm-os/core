@@ -7,16 +7,12 @@ import (
 	"runtime"
 	"testing"
 
-	"go.thesmos.sh/kanon"
+	"go.thesmos.sh/kanon/kanontest"
 	"go.thesmos.sh/testkit"
 
 	"go.thesmos.sh/core/crypto"
 	"go.thesmos.sh/core/errs"
 )
-
-// kanon sizes a Digest with its SizeKanon. A missing method is a build
-// failure.
-var _ kanon.Sizer = crypto.Digest{}
 
 // sizedDigests are a digest of each size, whose binary forms the tests
 // encode and decode.
@@ -495,6 +491,14 @@ func TestDigestSizeKanon(t *testing.T) {
 		var zero crypto.Digest
 		testkit.Equal(t, zero.SizeKanon(), 0, "the zero Digest must have no encoding")
 	})
+}
+
+// TestDigestExactKanon checks the two guarantees that ExactKanon declares
+// with kanon's conformance suite. A Digest without the methods of
+// kanon.Exact does not compile here.
+func TestDigestExactKanon(t *testing.T) {
+	t.Parallel()
+	kanontest.RunExact[crypto.Digest](t)
 }
 
 func BenchmarkDigestFromBytes(b *testing.B) {

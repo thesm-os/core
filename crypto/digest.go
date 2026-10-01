@@ -199,6 +199,20 @@ func (d Digest) SizeKanon() int {
 	return int(d.size)
 }
 
+// ExactKanon declares Digest a [go.thesmos.sh/kanon.Exact] type. kanon's
+// generated code then writes a Digest field without an error path, and a
+// canonical decode does not encode the decoded Digest a second time. No
+// code calls the method.
+//
+// A Digest keeps the two guarantees of the declaration:
+//
+//   - [Digest.AppendBinary] returns no error and appends [Digest.SizeKanon]
+//     bytes for every Digest but the zero one.
+//   - [Digest.UnmarshalBinary] accepts only the bytes that AppendBinary
+//     writes for the Digest that it decodes: the 32, 48 or 64 bytes of a
+//     digest of that size.
+func (Digest) ExactKanon() {}
+
 // Size returns the length of d's active prefix: 32, 48 or 64, or 0 for
 // the zero [Digest].
 func (d Digest) Size() int {

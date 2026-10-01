@@ -11,16 +11,12 @@ import (
 	"testing"
 	"time"
 
-	"go.thesmos.sh/kanon"
+	"go.thesmos.sh/kanon/kanontest"
 	"go.thesmos.sh/testkit"
 
 	"go.thesmos.sh/core/clock"
 	"go.thesmos.sh/core/errs"
 )
-
-// kanon sizes an Instant with its SizeKanon. A missing method is a
-// build failure.
-var _ kanon.Sizer = clock.Instant{}
 
 // roundTrips are instants at the limits of each field, whose binary
 // forms the tests encode and decode.
@@ -311,6 +307,14 @@ func TestInstantSizeKanon(t *testing.T) {
 			testkit.Equal(t, tc.in.SizeKanon(), len(encoded), "SizeKanon must equal the length of the binary form")
 		})
 	}
+}
+
+// TestInstantExactKanon checks the two guarantees that ExactKanon declares
+// with kanon's conformance suite. An Instant without the methods of
+// kanon.Exact does not compile here.
+func TestInstantExactKanon(t *testing.T) {
+	t.Parallel()
+	kanontest.RunExact[clock.Instant](t)
 }
 
 func TestInstantAppendBinary(t *testing.T) {

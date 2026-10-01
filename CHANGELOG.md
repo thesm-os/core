@@ -346,6 +346,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `TimestampMillis` returns the milliseconds of an ID, `Valid` checks
   its version and variant, and `Format` and `Parse` convert the text
   form. `Parse` does not allocate.
+- `crypto.Digest`, `id.ID` and `clock.Instant` declare `kanon.Exact` with
+  an `ExactKanon` method. The append method of each returns no error and
+  appends `SizeKanon` bytes for every value but the zero `Digest`, and its
+  decode method accepts only the bytes that the append method writes for
+  the decoded value. kanon's generated code then writes a field of these
+  types without an error path, and a canonical decode does not encode the
+  value a second time. `kanontest.RunExact` checks both guarantees.
 
 ### Changed
 

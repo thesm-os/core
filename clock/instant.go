@@ -156,6 +156,19 @@ func (Instant) SizeKanon() int {
 	return InstantSize
 }
 
+// ExactKanon declares Instant a [go.thesmos.sh/kanon.Exact] type. kanon's
+// generated code then writes an Instant field without an error path, and a
+// canonical decode does not encode the decoded Instant a second time. No
+// code calls the method.
+//
+// An Instant keeps the two guarantees of the declaration:
+//
+//   - [Instant.AppendBinary] returns no error and appends
+//     [Instant.SizeKanon] bytes, [InstantSize], for every Instant.
+//   - [Instant.UnmarshalBinary] accepts only the [InstantSize] bytes that
+//     AppendBinary writes for the Instant that it decodes.
+func (Instant) ExactKanon() {}
+
 // UnixMilli returns Wall truncated toward zero to milliseconds, so an
 // instant before the Unix epoch rounds up.
 func (i Instant) UnixMilli() int64 {
