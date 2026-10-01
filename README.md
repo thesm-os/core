@@ -117,8 +117,10 @@ seams every other thesmos library and framework depends on:
   [RFC-0026][rfc-0026] and [ADR-0040][adr-0040].
 - **Tag** — snapshot-immutable string key/value pairs used in
   place of `map[string]string` on value-type structs that cross
-  async-buffered, cached, or cross-goroutine boundaries.
-  See [RFC-0006][rfc-0006].
+  async-buffered, cached, or cross-goroutine boundaries. A kanon
+  record encodes a `Tag` through the codec that core generates, with
+  `Key` 1 and `Value` 2, and its decode accepts only that encoding.
+  See [RFC-0006][rfc-0006] and [ADR-0043][adr-0043].
 - **Version** — opaque CAS token (`Version`), `WriteOptions`
   with IfMatch / IfNoneMatch preconditions, and `Versioned[T]`
   for read-your-writes optimistic-concurrency loops. A `Version`
@@ -300,6 +302,7 @@ Apache 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 [adr-0040]: docs/adr/0040-an-event-count-is-awaited-with-a-context.md
 [adr-0041]: docs/adr/0041-a-custodian-creates-wrapping-keys.md
 [adr-0042]: docs/adr/0042-a-content-type-is-bounded.md
+[adr-0043]: docs/adr/0043-core-structs-have-canonical-codecs.md
 [rfc-0001]: docs/rfc/0001-clock-seam.md
 [rfc-0002]: docs/rfc/0002-rand-seam.md
 [rfc-0003]: docs/rfc/0003-crypto-seam.md

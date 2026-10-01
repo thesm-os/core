@@ -353,6 +353,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the decoded value. kanon's generated code then writes a field of these
   types without an error path, and a canonical decode does not encode the
   value a second time. `kanontest.RunExact` checks both guarantees.
+- `tag.Tag` has a kanon codec that core generates, with the fields `Key` 1
+  and `Value` 2, so the record of every consumer encodes a tag alike. Its
+  decode accepts only the canonical encoding. The codec adds nine methods
+  to `*Tag`: `SizeKanon`, `EncodeKanon`, `AppendBinary`, `MarshalBinary`,
+  `UnmarshalBinary`, `DecodeKanon`, `MergeKanon`, `Reset` and
+  `CloneKanon`. See ADR-0043.
 
 ### Changed
 
@@ -367,6 +373,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fields in another order or a field number that core does not record. A
   consumer's canonical record can then contain a signature. The encoding
   does not change. See ADR-0043.
+- **Breaking:** `encoding/gob` encodes a `tag.Tag` through its kanon
+  codec, whose methods have pointer receivers. gob fails for a `Tag` in a
+  value that it cannot address, such as a struct passed to `Encode` by
+  value. A pointer to the struct and a `tag.Tags` slice encode.
 - **Breaking:** `fsm.Builder.Build` rejects a state that has an outgoing
   edge but no path to a terminal state, when the Spec declares a
   terminal state. A cycle of states without an exit built before. A Spec
