@@ -16,6 +16,7 @@ var kanonSpecSignature = kanontest.Spec[Signature]{
 		{Name: "Value", Number: 2},
 		{Name: "KeyID", Number: 3},
 	},
+	Canonical: true,
 }
 
 // TestKanonSignature runs the conformance suite on Signature.

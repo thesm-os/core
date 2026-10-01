@@ -15,10 +15,10 @@ import (
 	"go.thesmos.sh/kanon/wire"
 )
 
-// The file compiles against a runtime that supports version 1 of the generator.
+// The file compiles against a runtime that supports version 2 of the generator.
 const (
-	_ = kanon.EnforceVersion(1 - kanon.MinVersion)
-	_ = kanon.EnforceVersion(kanon.MaxVersion - 1)
+	_ = kanon.EnforceVersion(2 - kanon.MinVersion)
+	_ = kanon.EnforceVersion(kanon.MaxVersion - 2)
 )
 
 // The generated types implement kanon.Cloner.
@@ -111,7 +111,10 @@ func (m *Signature) UnmarshalBinary(data []byte) error {
 // the values that its pointers point at, its nested structs, the capacity of
 // its slices and maps, and up to 16 values of each map whose values refer to
 // memory. It first clears the fields that the encoding leaves out, as Reset
-// does. Every decoded string is a substring of the slab of opts. It returns a
+// does. Every decoded string is a substring of the slab of opts. It accepts
+// only the canonical encoding of a value, the input that EncodeKanon writes for
+// it, and returns a *kanon.DecodeError that wraps kanon.ErrNotCanonical for any
+// other input that the wire format lets a decoder accept. It returns a
 // *kanon.DecodeError for malformed input, after which m contains the fields
 // decoded before the error.
 func (m *Signature) DecodeKanon(data []byte, opts kanon.Options) error {
@@ -146,56 +149,66 @@ func (m *Signature) decodeKanon(data []byte, slab string, off, depth int) error 
 // MergeKanon and the decode of the structs of the package that contain
 // Signature call it.
 func (m *Signature) mergeKanon(data []byte, slab string, off, depth int) error {
-	for i := 0; i < len(data); {
+	var prior uint64
+	i := 0
+	if i < len(data) && data[i] == 1<<3|wire.Bytes {
 		at := i
-		tag, n := wire.Uvarint(data[i:])
-		if n <= 0 {
-			return wire.ReadError(n, "Signature", 0, off+i)
+		i++
+		prior = 1
+		l, n := wire.Uvarint(data[i:])
+		if n <= 0 || uint64(len(data)-i-n) < l {
+			return wire.ReadError(n, "Signature.Algorithm", 1, off+i)
+		}
+		if n > 1 && data[i+n-1] == 0 {
+			return wire.LongFormError(n, "Signature.Algorithm", 1, off+i)
 		}
 		i += n
-		switch tag >> 3 {
-		case 1:
-			if tag != 1<<3|wire.Bytes {
-				return wire.FormatError(tag, wire.Bytes, "Signature.Algorithm", off+at)
-			}
-			l, n := wire.Uvarint(data[i:])
-			if n <= 0 || uint64(len(data)-i-n) < l {
-				return wire.ReadError(n, "Signature.Algorithm", 1, off+i)
-			}
-			i += n
-			m.Algorithm = crypto.Algorithm(slab[off+i : off+i+int(l)])
-			i += int(l)
-		case 2:
-			if tag != 2<<3|wire.Bytes {
-				return wire.FormatError(tag, wire.Bytes, "Signature.Value", off+at)
-			}
-			l, n := wire.Uvarint(data[i:])
-			if n <= 0 || uint64(len(data)-i-n) < l {
-				return wire.ReadError(n, "Signature.Value", 2, off+i)
-			}
-			i += n
-			m.Value = append(m.Value[:0], data[i:i+int(l)]...)
-			i += int(l)
-		case 3:
-			if tag != 3<<3|wire.Bytes {
-				return wire.FormatError(tag, wire.Bytes, "Signature.KeyID", off+at)
-			}
-			l, n := wire.Uvarint(data[i:])
-			if n > 0 && l != 16 {
-				return wire.LengthError(l, 16, "Signature.KeyID", 3, off+i)
-			}
-			if n <= 0 || uint64(len(data)-i-n) < l {
-				return wire.ReadError(n, "Signature.KeyID", 3, off+i)
-			}
-			i += n
-			i += copy(m.KeyID[:], data[i:])
-		default:
-			n, err := wire.Skip(data[i:], tag, "Signature", 0, off+at)
-			if err != nil {
-				return err
-			}
-			i += n
+		m.Algorithm = crypto.Algorithm(slab[off+i : off+i+int(l)])
+		i += int(l)
+		if l == 0 {
+			return wire.AbsentError("Signature.Algorithm", 1, off+at)
 		}
+	}
+	if i < len(data) && data[i] == 2<<3|wire.Bytes {
+		at := i
+		i++
+		prior = 2
+		l, n := wire.Uvarint(data[i:])
+		if n <= 0 || uint64(len(data)-i-n) < l {
+			return wire.ReadError(n, "Signature.Value", 2, off+i)
+		}
+		if n > 1 && data[i+n-1] == 0 {
+			return wire.LongFormError(n, "Signature.Value", 2, off+i)
+		}
+		i += n
+		m.Value = append(m.Value[:0], data[i:i+int(l)]...)
+		i += int(l)
+		if l == 0 {
+			return wire.AbsentError("Signature.Value", 2, off+at)
+		}
+	}
+	if i < len(data) && data[i] == 3<<3|wire.Bytes {
+		at := i
+		i++
+		prior = 3
+		l, n := wire.Uvarint(data[i:])
+		if n > 0 && l != 16 {
+			return wire.LengthError(l, 16, "Signature.KeyID", 3, off+i)
+		}
+		if n <= 0 || uint64(len(data)-i-n) < l {
+			return wire.ReadError(n, "Signature.KeyID", 3, off+i)
+		}
+		if n > 1 && data[i+n-1] == 0 {
+			return wire.LongFormError(n, "Signature.KeyID", 3, off+i)
+		}
+		i += n
+		i += copy(m.KeyID[:], data[i:])
+		if m.KeyID == (KeyID{}) {
+			return wire.AbsentError("Signature.KeyID", 3, off+at)
+		}
+	}
+	if i != len(data) {
+		return _signature_tagSignature(data, i, prior, off)
 	}
 	return nil
 }
@@ -236,4 +249,32 @@ func (m *Signature) cloneKanon(c *Signature) {
 	c.Algorithm = crypto.Algorithm(strings.Clone(string(m.Algorithm)))
 	c.Value = slices.Clone(m.Value)
 	c.KeyID = m.KeyID
+}
+
+// _signature_tagSignature returns the error of the canonical decode of
+// Signature for the tag at data[i], which begins no field after the fields that
+// the decode read before it. data starts at offset off of the slab.
+func _signature_tagSignature(data []byte, i int, prior uint64, off int) error {
+	tag, n := wire.Uvarint(data[i:])
+	if n <= 0 {
+		return wire.ReadError(n, "Signature", 0, off+i)
+	}
+	if n > 1 && data[i+n-1] == 0 {
+		return wire.LongFormError(n, "Signature", 0, off+i)
+	}
+	if tag>>3 == 0 {
+		return wire.TagError(tag, "Signature", 0, off+i)
+	}
+	if tag>>3 <= prior {
+		return wire.OrderError(tag>>3, prior, "Signature", 0, off+i)
+	}
+	switch tag >> 3 {
+	case 1:
+		return wire.FormatError(tag, wire.Bytes, "Signature.Algorithm", off+i)
+	case 2:
+		return wire.FormatError(tag, wire.Bytes, "Signature.Value", off+i)
+	case 3:
+		return wire.FormatError(tag, wire.Bytes, "Signature.KeyID", off+i)
+	}
+	return wire.UnknownFieldError(tag>>3, "Signature", 0, off+i)
 }

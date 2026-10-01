@@ -353,6 +353,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `blob.ValidContentType` rejects as `errs.Invalid`, and returns before
   it touches storage. `blob/memory` implements the check, and
   `coretest/blobtest` fails a store without it. See ADR-0042.
+- **Breaking:** the kanon codec of `sign.Signature` decodes only the
+  canonical encoding of a signature. `DecodeKanon`, `MergeKanon` and
+  `UnmarshalBinary` return an error that wraps `kanon.ErrNotCanonical` for
+  any other input that the wire format lets a decoder accept, such as
+  fields in another order or a field number that core does not record. A
+  consumer's canonical record can then contain a signature. The encoding
+  does not change. See ADR-0043.
 - **Breaking:** `fsm.Builder.Build` rejects a state that has an outgoing
   edge but no path to a terminal state, when the Spec declares a
   terminal state. A cycle of states without an exit built before. A Spec
@@ -499,10 +506,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   signatures encode.
 - Core's production code imports `go.thesmos.sh/kanon` and
   `go.thesmos.sh/kanon/wire` at the pseudo-version of kanon's commit
-  cb05b4d, and its tests import kanon's conformance suite and
-  `go.dokimi.dev/assert`. CI checks that the generated files are current
-  and that a pull request keeps every recorded field number. See
-  ADR-0035.
+  f6f835e, and its tests import kanon's conformance suite and
+  `go.dokimi.dev/assert`. The generated files declare version 2 of the
+  generator. CI checks that the generated files are current and that a
+  pull request keeps every recorded field number. See ADR-0035.
 - **Breaking:** `telemetry.Counter`, `telemetry.Gauge` and
   `telemetry.Histogram` declare `Release`, which ends a bound instrument
   that `With` returned. A released instrument records nothing, and an

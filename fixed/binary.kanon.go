@@ -7,10 +7,10 @@ import (
 	"go.thesmos.sh/kanon"
 )
 
-// The file compiles against a runtime that supports version 1 of the generator.
+// The file compiles against a runtime that supports version 2 of the generator.
 const (
-	_ = kanon.EnforceVersion(1 - kanon.MinVersion)
-	_ = kanon.EnforceVersion(kanon.MaxVersion - 1)
+	_ = kanon.EnforceVersion(2 - kanon.MinVersion)
+	_ = kanon.EnforceVersion(kanon.MaxVersion - 2)
 )
 
 // ValidateKanon returns the error of x.valid. kanon encodes a value of Fixed64

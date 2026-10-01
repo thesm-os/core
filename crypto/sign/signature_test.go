@@ -7,18 +7,28 @@ import (
 	"encoding/hex"
 	"testing"
 
+	"go.thesmos.sh/kanon"
 	"go.thesmos.sh/testkit"
 
 	"go.thesmos.sh/core/crypto"
 	"go.thesmos.sh/core/crypto/sign"
 )
 
-// signatureHex pins the kanon encoding of recordedSignature, which a
-// consumer persists, so it never changes: field 1 is the algorithm
-// ed25519, field 2 the value 01 02 03, and field 3 the key ID 01 to 10.
-const signatureHex = "0a07" + "65643235353139" +
-	"1203" + "010203" +
-	"1a10" + "0102030405060708090a0b0c0d0e0f10"
+// The recorded encodings of recordedSignature.
+const (
+	// signatureHex pins the kanon encoding of recordedSignature, which a
+	// consumer persists, so it never changes: field 1 is the algorithm
+	// ed25519, field 2 the value 01 02 03, and field 3 the key ID 01 to 10.
+	signatureHex = "0a07" + "65643235353139" +
+		"1203" + "010203" +
+		"1a10" + "0102030405060708090a0b0c0d0e0f10"
+
+	// swappedHex is signatureHex with field 2 before field 1, which the
+	// canonical decode rejects.
+	swappedHex = "1203" + "010203" +
+		"0a07" + "65643235353139" +
+		"1a10" + "0102030405060708090a0b0c0d0e0f10"
+)
 
 // recordedSignature is the signature whose encoding signatureHex pins.
 func recordedSignature() sign.Signature {
@@ -55,6 +65,15 @@ func TestSignature(t *testing.T) {
 			var got sign.Signature
 			testkit.NoError(t, got.UnmarshalBinary(data), "UnmarshalBinary must decode the recorded encoding")
 			testkit.Equal(t, got, recordedSignature(), "UnmarshalBinary must return the recorded signature")
+		})
+
+		t.Run("returns ErrNotCanonical for the recorded fields in another order", func(t *testing.T) {
+			t.Parallel()
+			data, err := hex.DecodeString(swappedHex)
+			testkit.NoError(t, err, "the swapped encoding must be hexadecimal")
+			var got sign.Signature
+			testkit.ErrorIs(t, got.UnmarshalBinary(data), kanon.ErrNotCanonical,
+				"UnmarshalBinary must reject an encoding that the encode does not write")
 		})
 	})
 }
