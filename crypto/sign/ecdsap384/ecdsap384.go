@@ -4,6 +4,8 @@
 package ecdsap384
 
 import (
+	"bytes"
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	stdrand "crypto/rand"
@@ -54,19 +56,18 @@ func NewVerifier(pub *ecdsa.PublicKey) (*Verifier, error) {
 	// types or malformed-curve keys, neither of which
 	// applies here.
 	pubBytes, _ := x509.MarshalPKIXPublicKey(pub)
-	keyID, err := KeyIDFromPub(pub)
-	if err != nil {
-		// An off-curve point. Return the error so callers see the cause.
-		return nil, err
-	}
-	return &Verifier{pub: pub, pubBytes: pubBytes, keyID: keyID}, nil
+	return newVerifier(pub, pubBytes)
 }
 
 // NewVerifierFromPKIX parses PKIX-encoded public-key bytes
 // (X.509 SubjectPublicKeyInfo DER, the format returned by
 // [Verifier.PublicKey]) and wraps the result in a [Verifier].
 // Returns [ErrInvalidPublicKey] for bytes that are not a valid
-// ECDSA P-384 PKIX encoding.
+// ECDSA P-384 PKIX encoding, and [ErrWrongCurve] for an ECDSA key
+// of another curve.
+//
+// The Verifier keeps a copy of pubBytes, which [Verifier.PublicKey]
+// returns. It does not encode the parsed key again.
 func NewVerifierFromPKIX(pubBytes []byte) (*Verifier, error) {
 	parsed, err := x509.ParsePKIXPublicKey(pubBytes)
 	if err != nil {
@@ -76,22 +77,21 @@ func NewVerifierFromPKIX(pubBytes []byte) (*Verifier, error) {
 	if !ok {
 		return nil, ErrInvalidPublicKey
 	}
-	// NewVerifier validates the curve and derives the KeyID, so both
-	// constructors share one tested implementation. Its errors
-	// include [ErrWrongCurve] for P-256 and other curves, and the
-	// off-curve error from KeyIDFromPub.
-	v, err := NewVerifier(pub)
+	if pub.Curve != elliptic.P384() {
+		return nil, ErrWrongCurve
+	}
+	return newVerifier(pub, bytes.Clone(pubBytes))
+}
+
+// newVerifier returns the Verifier of pub, a key on P-384, whose PKIX
+// encoding is pubBytes. It derives the KeyID, whose error for an
+// off-curve point it returns.
+func newVerifier(pub *ecdsa.PublicKey, pubBytes []byte) (*Verifier, error) {
+	keyID, err := KeyIDFromPub(pub)
 	if err != nil {
 		return nil, err
 	}
-	// Keep a copy of the caller's bytes in place of NewVerifier's
-	// own PKIX encoding. The two are byte-identical for canonical
-	// input and may differ for non-canonical PKIX, and PublicKey
-	// returns what the caller supplied.
-	keep := make([]byte, len(pubBytes))
-	copy(keep, pubBytes)
-	v.pubBytes = keep
-	return v, nil
+	return &Verifier{pub: pub, pubBytes: pubBytes, keyID: keyID}, nil
 }
 
 // Resolve returns a [sign.Verifier] for a PKIX-encoded P-384 public
@@ -148,6 +148,7 @@ type Signer struct {
 var (
 	_ sign.Signer          = (*Signer)(nil)
 	_ sign.StreamingSigner = (*Signer)(nil)
+	_ sign.AppendSigner    = (*Signer)(nil)
 )
 
 // New wraps an existing P-384 private key in a [Signer].
@@ -208,6 +209,39 @@ func (s *Signer) Sign(msg []byte) ([]byte, error) {
 	// [ecdsa.SignASN1] uses an internal secure RNG and cannot fail in
 	// default mode.
 	return wrapSign(ecdsa.SignASN1(stdrand.Reader, s.priv, digest[:]))
+}
+
+// AppendSign appends the ECDSA P-384 + SHA-384 signature for msg, in
+// ASN.1 DER encoding, to dst and returns the extended slice. It
+// implements [sign.AppendSigner].
+//
+// Returns dst unchanged and context.Cause(ctx) when ctx has ended, and
+// dst unchanged and the error of [Signer.Sign]. The signature is
+// computed in process, so the check before signing is the only one.
+//
+// # Allocation contract
+//
+// What [crypto/ecdsa.SignASN1] allocates, which returns a new slice and
+// computes with big.Int values, and the growth of dst.
+func (s *Signer) AppendSign(ctx context.Context, dst, msg []byte) ([]byte, error) {
+	if err := context.Cause(ctx); err != nil {
+		return dst, err
+	}
+
+	sig, err := s.Sign(msg)
+
+	return appendSignature(dst, sig, err)
+}
+
+// appendSignature appends sig to dst, or returns dst unchanged and err
+// when Sign failed. Extracted so tests can drive the error branch, which
+// [crypto/ecdsa.SignASN1] does not reach in default mode.
+func appendSignature(dst, sig []byte, err error) ([]byte, error) {
+	if err != nil {
+		return dst, err
+	}
+
+	return append(dst, sig...), nil
 }
 
 // wrapSign attaches package context to a stdlib-supplied

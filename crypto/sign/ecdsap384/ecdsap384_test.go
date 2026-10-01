@@ -98,6 +98,8 @@ func TestECDSAP384SignerContract(t *testing.T) {
 			cryptotest.SignerKeyIDAssertion(fix.KeyID),
 			cryptotest.SignerCrossStdlibVerifyAssertion(stdlibVerify),
 			cryptotest.SignerCrossStdlibSignAssertion(stdlibSign(t, fix.StdlibPriv)),
+			cryptotest.AppendSignerAssertion(),
+			cryptotest.AppendSignerContextAssertion(),
 		)...,
 	)
 }
@@ -147,6 +149,26 @@ func BenchmarkECDSAP384VerifyStream(b *testing.B) {
 	cryptotest.BenchmarkVerifyStreamContract(b,
 		func() sign.VerifyStream { return signer.NewVerifyStream() },
 	)
+}
+
+// sinkVerifier receives the Verifiers of BenchmarkResolve, so that the
+// compiler keeps every call that it measures.
+var sinkVerifier sign.Verifier
+
+func BenchmarkResolve(b *testing.B) {
+	pub := mustSigner(b, cryptotest.NewECDSAP384Sample()).PublicKey()
+
+	// crypto/x509 parses the key and crypto/ecdsa encodes its point for
+	// the KeyID, and Resolve allocates its copy of the encoding and the
+	// Verifier.
+	if allocs := testing.AllocsPerRun(100, func() { sinkVerifier, _ = signecdsa.Resolve(pub) }); allocs != 22 {
+		b.Fatalf("Resolve allocates %v times per call, want 22", allocs)
+	}
+
+	b.ReportAllocs()
+	for b.Loop() {
+		sinkVerifier, _ = signecdsa.Resolve(pub)
+	}
 }
 
 // --- impl-specific tests ---

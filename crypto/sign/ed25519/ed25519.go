@@ -4,6 +4,7 @@
 package ed25519
 
 import (
+	"context"
 	stded25519 "crypto/ed25519"
 	"crypto/sha256"
 	"fmt"
@@ -16,39 +17,53 @@ import (
 // Verifier verifies Ed25519 signatures against a fixed public
 // key. Safe for concurrent use.
 //
+// A Verifier keeps its 32-byte public key in its own memory, so it is
+// one allocation.
+//
 // # Allocation contract
 //
 // [Verifier.KeyID], [Verifier.PublicKey], [Verifier.Algorithm]
 // are zero-alloc. [Verifier.Verify] is zero-alloc, because
 // [crypto/ed25519.Verify] does not allocate.
 type Verifier struct {
-	pub   stded25519.PublicKey
+	pub   [stded25519.PublicKeySize]byte
 	keyID sign.KeyID
 }
 
 // Compile-time interface check.
 var _ sign.Verifier = (*Verifier)(nil)
 
-// NewVerifier wraps a public key in a [Verifier]. The Verifier keeps a
-// reference to the public-key bytes, so callers must not mutate the
-// underlying buffer afterwards.
+// NewVerifier wraps a public key in a [Verifier]. The bytes are copied,
+// so callers may zero or reuse the source buffer immediately.
+//
+// Returns [ErrInvalidPublicKeySize] for a key that is not 32 bytes.
+//
+// # Allocation contract
+//
+// Allocates the Verifier once.
 func NewVerifier(pub stded25519.PublicKey) (*Verifier, error) {
-	if len(pub) != stded25519.PublicKeySize {
-		return nil, ErrInvalidPublicKeySize
-	}
-	return &Verifier{pub: pub, keyID: KeyIDFromPub(pub)}, nil
+	return NewVerifierFromBytes(pub)
 }
 
 // NewVerifierFromBytes wraps a 32-byte public-key slice as a
 // [Verifier]. The bytes are copied, so callers may zero or reuse
 // the source buffer immediately.
+//
+// Returns [ErrInvalidPublicKeySize] for a slice that is not 32 bytes.
+//
+// # Allocation contract
+//
+// Allocates the Verifier once.
 func NewVerifierFromBytes(pubBytes []byte) (*Verifier, error) {
 	if len(pubBytes) != stded25519.PublicKeySize {
 		return nil, ErrInvalidPublicKeySize
 	}
-	pub := make(stded25519.PublicKey, stded25519.PublicKeySize)
-	copy(pub, pubBytes)
-	return &Verifier{pub: pub, keyID: KeyIDFromPub(pub)}, nil
+
+	v := &Verifier{}
+	copy(v.pub[:], pubBytes)
+	v.keyID = KeyIDFromPub(v.pub[:])
+
+	return v, nil
 }
 
 // Resolve returns a [sign.Verifier] for a 32-byte public key, as
@@ -57,6 +72,10 @@ func NewVerifierFromBytes(pubBytes []byte) (*Verifier, error) {
 //
 // Returns [ErrInvalidPublicKeySize] for a key of another length, with
 // a nil Verifier.
+//
+// # Allocation contract
+//
+// Allocates the Verifier once.
 func Resolve(pub []byte) (sign.Verifier, error) {
 	v, err := NewVerifierFromBytes(pub)
 	if err != nil {
@@ -73,7 +92,7 @@ func (v *Verifier) KeyID() sign.KeyID { return v.keyID }
 // PublicKey returns the 32-byte raw Ed25519 public key. The
 // returned slice aliases internal storage, and callers must treat
 // it as immutable.
-func (v *Verifier) PublicKey() []byte { return v.pub }
+func (v *Verifier) PublicKey() []byte { return v.pub[:] }
 
 // Algorithm returns [crypto.AlgEd25519].
 func (*Verifier) Algorithm() crypto.Algorithm { return crypto.AlgEd25519 }
@@ -83,7 +102,7 @@ func (*Verifier) Algorithm() crypto.Algorithm { return crypto.AlgEd25519 }
 // verification cannot succeed (wrong key, malformed signature,
 // length mismatch, cryptographic invalidity).
 func (v *Verifier) Verify(msg, sig []byte) bool {
-	return stded25519.Verify(v.pub, msg, sig)
+	return stded25519.Verify(v.pub[:], msg, sig)
 }
 
 // Signer signs messages with a fixed Ed25519 private key. Safe
@@ -93,8 +112,11 @@ type Signer struct {
 	priv stded25519.PrivateKey
 }
 
-// Compile-time interface check.
-var _ sign.Signer = (*Signer)(nil)
+// Compile-time interface checks.
+var (
+	_ sign.Signer       = (*Signer)(nil)
+	_ sign.AppendSigner = (*Signer)(nil)
+)
 
 // New wraps an existing Ed25519 private key in a [Signer]. The
 // private-key bytes are copied, so a caller may zero or reuse the
@@ -135,14 +157,36 @@ func Generate(r rand.Rand) (*Signer, error) {
 }
 
 // Sign returns the Ed25519 signature for msg per RFC 8032
-// §5.1.6 (PureEdDSA). The 64-byte signature is freshly
-// allocated, because the stdlib offers no buffer-passing API.
+// §5.1.6 (PureEdDSA). It allocates the 64-byte signature.
+// [Signer.AppendSign] writes the signature into a buffer of the
+// caller instead.
 //
 // Always returns a nil error. Ed25519 signing is deterministic and
 // has no failure path, and the error result exists to satisfy
 // [sign.Signer].
 func (s *Signer) Sign(msg []byte) ([]byte, error) {
 	return stded25519.Sign(s.priv, msg), nil
+}
+
+// AppendSign appends the Ed25519 signature for msg to dst and returns
+// the extended slice. It implements [sign.AppendSigner]. The signature
+// is the one that [Signer.Sign] returns.
+//
+// Returns dst unchanged and context.Cause(ctx) when ctx has ended. The
+// signature is computed in process, so the check before signing is the
+// only one.
+//
+// # Allocation contract
+//
+// Zero-alloc when dst has room for the 64-byte signature.
+// [crypto/ed25519.Sign] returns a signature that the compiler keeps on
+// the stack of AppendSign, which copies it into dst.
+func (s *Signer) AppendSign(ctx context.Context, dst, msg []byte) ([]byte, error) {
+	if err := context.Cause(ctx); err != nil {
+		return dst, err
+	}
+
+	return append(dst, stded25519.Sign(s.priv, msg)...), nil
 }
 
 // KeyIDFromPub derives the canonical [sign.KeyID] from a public

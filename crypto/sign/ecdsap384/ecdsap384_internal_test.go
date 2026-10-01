@@ -66,3 +66,24 @@ func TestWrapSign(t *testing.T) {
 		testkit.Equal(t, got, want, "wrapSign must return the signature unchanged on success")
 	})
 }
+
+// TestAppendSignature exercises the error branch of [appendSignature]
+// directly. Same rationale as [TestWrapGenerate].
+func TestAppendSignature(t *testing.T) {
+	t.Parallel()
+
+	t.Run("returns dst unchanged and the error of Sign", func(t *testing.T) {
+		t.Parallel()
+		signErr := testkit.TestError("signing failure")
+		got, err := appendSignature([]byte("dst"), nil, signErr)
+		testkit.ErrorIs(t, err, signErr, "appendSignature must return the error of Sign")
+		testkit.Equal(t, string(got), "dst", "appendSignature must return dst unchanged")
+	})
+
+	t.Run("appends the signature to dst", func(t *testing.T) {
+		t.Parallel()
+		got, err := appendSignature([]byte("dst"), []byte("sig"), nil)
+		testkit.NoError(t, err, "appendSignature must accept a signature")
+		testkit.Equal(t, string(got), "dstsig", "appendSignature must append the signature")
+	})
+}

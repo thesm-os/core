@@ -44,6 +44,17 @@ func AsContextSigner(s Signer) (ContextSigner, bool) {
 	return find[ContextSigner](s)
 }
 
+// AsAppendSigner returns the first [AppendSigner] in the chain that
+// starts at s and follows each decorator's Unwrap, and reports whether it
+// found one. It follows the rules of [AsStreamingSigner].
+//
+// # Allocation contract
+//
+// Zero alloc.
+func AsAppendSigner(s Signer) (AppendSigner, bool) {
+	return find[AppendSigner](s)
+}
+
 // find returns the first value of type T in the chain that starts at v
 // and follows Unwrap() Signer or Unwrap() Verifier. The chain ends at a
 // nil value or at a value without Unwrap, where find returns false.

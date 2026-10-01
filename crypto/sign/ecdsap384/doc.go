@@ -17,7 +17,9 @@
 // [sign.StreamingVerifier] capability interfaces. Hot-path
 // consumers signing or verifying long messages absorb bytes
 // into a SHA-384 stream and finalise to one curve operation —
-// avoiding a buffered-message allocation.
+// avoiding a buffered-message allocation. [Signer] also implements
+// [sign.AppendSigner], with the allocations of
+// [crypto/ecdsa.SignASN1].
 //
 // Under `GODEBUG=fips140=on` (or `=only`), every operation runs
 // through Go's FIPS-validated module. ECDSA P-384 + SHA-384 is

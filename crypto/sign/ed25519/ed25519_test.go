@@ -4,6 +4,7 @@
 package ed25519_test
 
 import (
+	"bytes"
 	stded25519 "crypto/ed25519"
 	"encoding/hex"
 	"fmt"
@@ -75,6 +76,8 @@ func TestEd25519SignerContract(t *testing.T) {
 			cryptotest.SignerKeyIDAssertion(fix.KeyID),
 			cryptotest.SignerCrossStdlibVerifyAssertion(stdlibVerify),
 			cryptotest.SignerCrossStdlibSignAssertion(stdlibSign(fix.StdlibPriv)),
+			cryptotest.AppendSignerAssertion(),
+			cryptotest.AppendSignerContextAssertion(),
 		)...,
 	)
 }
@@ -87,6 +90,39 @@ func BenchmarkEd25519Verifier(b *testing.B) {
 func BenchmarkEd25519Signer(b *testing.B) {
 	signer := mustSigner(b, cryptotest.NewEd25519Sample())
 	cryptotest.BenchmarkSignerContract(b, func() sign.Signer { return signer })
+}
+
+func BenchmarkAppendSign(b *testing.B) {
+	s := mustSigner(b, cryptotest.NewEd25519Sample())
+	msg := []byte("payload")
+	buf := make([]byte, 0, stded25519.SignatureSize)
+	ctx := b.Context()
+
+	if allocs := testing.AllocsPerRun(100, func() { buf, _ = s.AppendSign(ctx, buf[:0], msg) }); allocs != 0 {
+		b.Fatalf("AppendSign allocates %v times per call into a buffer with room, want 0", allocs)
+	}
+
+	b.ReportAllocs()
+	for b.Loop() {
+		buf, _ = s.AppendSign(ctx, buf[:0], msg)
+	}
+}
+
+// sinkVerifier receives the Verifiers of BenchmarkResolve, so that the
+// compiler keeps every call that it measures.
+var sinkVerifier sign.Verifier
+
+func BenchmarkResolve(b *testing.B) {
+	pub := mustSigner(b, cryptotest.NewEd25519Sample()).PublicKey()
+
+	if allocs := testing.AllocsPerRun(100, func() { sinkVerifier, _ = signed25519.Resolve(pub) }); allocs != 1 {
+		b.Fatalf("Resolve allocates %v times per call, want 1", allocs)
+	}
+
+	b.ReportAllocs()
+	for b.Loop() {
+		sinkVerifier, _ = signed25519.Resolve(pub)
+	}
 }
 
 // --- impl-specific tests ---
@@ -114,6 +150,16 @@ func TestStreamingNotImplemented(t *testing.T) {
 
 func TestNewVerifier(t *testing.T) {
 	t.Parallel()
+
+	t.Run("copies the public key", func(t *testing.T) {
+		t.Parallel()
+		pub := stded25519.PublicKey(bytes.Repeat([]byte{7}, stded25519.PublicKeySize))
+		v, err := signed25519.NewVerifier(pub)
+		testkit.NoError(t, err, "NewVerifier must accept a 32-byte key")
+		clear(pub)
+		testkit.Equal(t, v.PublicKey(), bytes.Repeat([]byte{7}, stded25519.PublicKeySize),
+			"zeroing the caller's key must not change the Verifier's key")
+	})
 
 	t.Run("returns ErrInvalidPublicKeySize for a public key of the wrong size", func(t *testing.T) {
 		t.Parallel()

@@ -51,6 +51,7 @@ func TestUnwrapZeroAlloc(t *testing.T) {
 		"AsStreamingSigner":   func() { _, _ = sign.AsStreamingSigner(s) },
 		"AsStreamingVerifier": func() { _, _ = sign.AsStreamingVerifier(s) },
 		"AsContextSigner":     func() { _, _ = sign.AsContextSigner(s) },
+		"AsAppendSigner":      func() { _, _ = sign.AsAppendSigner(s) },
 	} {
 		t.Run(name, func(t *testing.T) {
 			testkit.Equal(t, testing.AllocsPerRun(100, fn), float64(0), name+" must not allocate")
@@ -132,5 +133,23 @@ func TestAsContextSigner(t *testing.T) {
 
 		_, ok = sign.AsContextSigner(signerDecorator{})
 		testkit.False(t, ok, "a decorator of nil must not report a capability")
+	})
+}
+
+func TestAsAppendSigner(t *testing.T) {
+	t.Parallel()
+
+	t.Run("returns the AppendSigner behind two decorators", func(t *testing.T) {
+		t.Parallel()
+		s := newEd25519(t)
+		got, ok := sign.AsAppendSigner(signerDecorator{signerDecorator{s}})
+		testkit.True(t, ok, "an AppendSigner behind decorators must be found")
+		testkit.True(t, got == s.(sign.AppendSigner), "the wrapped signer must be returned")
+	})
+
+	t.Run("reports false for a decorator without Unwrap", func(t *testing.T) {
+		t.Parallel()
+		_, ok := sign.AsAppendSigner(opaqueSigner{newEd25519(t)})
+		testkit.False(t, ok, "a decorator without Unwrap must end the chain")
 	})
 }

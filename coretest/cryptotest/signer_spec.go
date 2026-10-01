@@ -164,6 +164,42 @@ func ContextSignerAssertion() SignerOption {
 	})
 }
 
+// AppendSignerAssertion verifies that the signer implements
+// [sign.AppendSigner], and that AppendSign appends a signature that
+// verifies after the bytes that dst already holds.
+func AppendSignerAssertion() SignerOption {
+	return SignerCustom("AppendSign appends a signature that verifies after the bytes of dst",
+		func(t *testing.T, s sign.Signer) {
+			as, ok := sign.AsAppendSigner(s)
+			testkit.True(t, ok, "the signer must implement AppendSigner")
+
+			msg, prefix := []byte("payload"), []byte("prefix")
+			out, err := as.AppendSign(t.Context(), bytes.Clone(prefix), msg)
+			testkit.NoError(t, err, "AppendSign")
+			testkit.True(t, bytes.HasPrefix(out, prefix), "AppendSign must keep the bytes of dst")
+			testkit.True(t, s.Verify(msg, out[len(prefix):]), "the appended signature must verify")
+		})
+}
+
+// AppendSignerContextAssertion verifies that AppendSign returns dst
+// unchanged, with an error that wraps the cause of a context that has
+// already ended.
+func AppendSignerContextAssertion() SignerOption {
+	return SignerCustom("AppendSign returns dst and the cause of an ended context", func(t *testing.T, s sign.Signer) {
+		as, ok := sign.AsAppendSigner(s)
+		testkit.True(t, ok, "the signer must implement AppendSigner")
+
+		cause := testkit.TestError("the caller gave up")
+		ctx, cancel := context.WithCancelCause(t.Context())
+		cancel(cause)
+
+		prefix := []byte("prefix")
+		out, err := as.AppendSign(ctx, prefix, []byte("payload"))
+		testkit.ErrorIs(t, err, cause, "AppendSign must return an error wrapping the context's cause")
+		testkit.Equal(t, out, prefix, "AppendSign must return dst unchanged with an error")
+	})
+}
+
 // SignerCrossStdlibSignAssertion verifies that the SUT accepts a
 // signature produced by the supplied stdlib signing function. It pins
 // byte-exact wire compatibility from the other direction: a

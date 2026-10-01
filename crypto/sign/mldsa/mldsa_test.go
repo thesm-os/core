@@ -115,6 +115,8 @@ func TestSignerContract(t *testing.T) {
 					cryptotest.SignerKeyIDAssertion(stdlibKeyID(t, tt.std())),
 					cryptotest.SignerCrossStdlibVerifyAssertion(stdlibVerify(tt.std())),
 					cryptotest.SignerCrossStdlibSignAssertion(stdlibSign(t, tt.std())),
+					cryptotest.AppendSignerAssertion(),
+					cryptotest.AppendSignerContextAssertion(),
 				)...,
 			)
 		})
@@ -304,6 +306,30 @@ func TestContextSeparation(t *testing.T) {
 	})
 }
 
+func TestContext(t *testing.T) {
+	t.Parallel()
+
+	t.Run("returns the context of a Verifier", func(t *testing.T) {
+		t.Parallel()
+		pub := mustSigner(t, mldsa.MLDSA44, testContext).PublicKey()
+		v, err := mldsa.NewVerifier(mldsa.MLDSA44, pub, testContext)
+		testkit.NoError(t, err, "NewVerifier must succeed")
+		testkit.Equal(t, v.Context(), testContext, "Context must return the context of NewVerifier")
+	})
+
+	t.Run("returns the context of a Signer", func(t *testing.T) {
+		t.Parallel()
+		testkit.Equal(t, mustSigner(t, mldsa.MLDSA87, testContext).Context(), testContext,
+			"Context must return the context of New")
+	})
+
+	t.Run("returns the empty context of a key built without one", func(t *testing.T) {
+		t.Parallel()
+		testkit.Equal(t, mustSigner(t, mldsa.MLDSA44, "").Context(), "",
+			"Context must return the empty context")
+	})
+}
+
 func TestGenerate(t *testing.T) {
 	t.Parallel()
 
@@ -368,6 +394,7 @@ func TestZeroAlloc(t *testing.T) {
 		{func() { _ = s.KeyID() }, "KeyID"},
 		{func() { _ = s.PublicKey() }, "PublicKey"},
 		{func() { _ = s.Algorithm() }, "Algorithm"},
+		{func() { _ = s.Context() }, "Context"},
 		{func() { _ = mldsa.KeyIDFromPub(s.PublicKey()) }, "KeyIDFromPub"},
 	}
 	for _, tt := range tests {
@@ -385,6 +412,53 @@ func BenchmarkSign(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
 				_, _ = s.Sign(msg)
+			}
+		})
+	}
+}
+
+func BenchmarkAppendSign(b *testing.B) {
+	for _, tt := range paramSets {
+		b.Run(tt.name, func(b *testing.B) {
+			s := mustSigner(b, tt.p, testContext)
+			msg := make([]byte, 64)
+			buf := make([]byte, 0, tt.std().SignatureSize())
+			ctx := b.Context()
+
+			// crypto/mldsa.PrivateKey.Sign returns a new slice, which is the
+			// only allocation of AppendSign into a buffer with room.
+			if allocs := testing.AllocsPerRun(20, func() { buf, _ = s.AppendSign(ctx, buf[:0], msg) }); allocs != 1 {
+				b.Fatalf("AppendSign allocates %v times per call, want 1", allocs)
+			}
+
+			b.ReportAllocs()
+			for b.Loop() {
+				buf, _ = s.AppendSign(ctx, buf[:0], msg)
+			}
+		})
+	}
+}
+
+// sinkVerifier receives the Verifiers of BenchmarkNewVerifier, so that
+// the compiler keeps every call that it measures.
+var sinkVerifier *mldsa.Verifier
+
+func BenchmarkNewVerifier(b *testing.B) {
+	for _, tt := range paramSets {
+		b.Run(tt.name, func(b *testing.B) {
+			pub := mustSigner(b, tt.p, testContext).PublicKey()
+
+			// crypto/mldsa.NewPublicKey allocates the key that it parses,
+			// and NewVerifier the Verifier and its copy of the encoding.
+			if allocs := testing.AllocsPerRun(20, func() {
+				sinkVerifier, _ = mldsa.NewVerifier(tt.p, pub, testContext)
+			}); allocs != 3 {
+				b.Fatalf("NewVerifier allocates %v times per call, want 3", allocs)
+			}
+
+			b.ReportAllocs()
+			for b.Loop() {
+				sinkVerifier, _ = mldsa.NewVerifier(tt.p, pub, testContext)
 			}
 		})
 	}

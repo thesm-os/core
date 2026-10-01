@@ -18,6 +18,13 @@
 // whole-message [sign.Signer.Sign] / [sign.Verifier.Verify]
 // path for Ed25519 inputs.
 //
+// [Signer] implements [sign.AppendSigner]. [Signer.AppendSign] into a
+// buffer with room for the 64-byte signature allocates nothing, because
+// [crypto/ed25519.Sign] returns a signature that the compiler keeps on
+// the stack of its caller. [Signer.Sign] allocates the signature it
+// returns. A [Verifier] keeps its public key in its own memory, so
+// [NewVerifier], [NewVerifierFromBytes] and [Resolve] allocate once.
+//
 // Under `GODEBUG=fips140=on` (or `=only`), every operation runs
 // through Go's FIPS-validated module. Ed25519 is approved under
 // FIPS 186-5 (2023), so both modes work without modification.

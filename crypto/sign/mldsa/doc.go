@@ -17,6 +17,8 @@
 // its context when it is built, because [sign.Signer.Sign] takes only
 // the message. One seed can serve one signer per purpose. A signature
 // made under one context does not verify under another.
+// [Verifier.Context] reports the context, and a Signer reports it
+// through the Verifier it embeds.
 //
 // # Private keys
 //
@@ -33,14 +35,18 @@
 //
 // # Allocation contract
 //
-// [Verifier.Verify], [Verifier.KeyID], [Verifier.PublicKey] and
-// [Verifier.Algorithm] are zero-allocation. [Signer.Sign] allocates the
-// returned signature once, because the standard library offers no
-// buffer-passing signing function.
+// [Verifier.Verify], [Verifier.KeyID], [Verifier.PublicKey],
+// [Verifier.Algorithm] and [Verifier.Context] are zero-allocation.
+// [NewVerifier] allocates three times: the Verifier, its copy of the
+// encoded key, and the key that [crypto/mldsa.NewPublicKey] parses.
+// [Signer.Sign] and [Signer.AppendSign] allocate the signature once,
+// because [crypto/mldsa.PrivateKey.Sign] returns a new slice and the
+// standard library has no form that writes into a buffer.
 //
 // # Dependency position
 //
-// Imports crypto/mldsa, crypto/sha256, errors and fmt from the standard
-// library, and go.thesmos.sh/core/crypto, go.thesmos.sh/core/crypto/sign,
-// go.thesmos.sh/core/errs and go.thesmos.sh/core/rand from this module.
+// Imports context, crypto/mldsa, crypto/sha256, errors and fmt from the
+// standard library, and go.thesmos.sh/core/crypto,
+// go.thesmos.sh/core/crypto/sign, go.thesmos.sh/core/errs and
+// go.thesmos.sh/core/rand from this module.
 package mldsa

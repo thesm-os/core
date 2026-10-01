@@ -4,6 +4,7 @@
 package mldsa
 
 import (
+	"context"
 	stdmldsa "crypto/mldsa"
 	"crypto/sha256"
 	"fmt"
@@ -76,10 +77,17 @@ func (p Params) std() (stdmldsa.Parameters, error) {
 // # Allocation contract
 //
 // [Verifier.KeyID], [Verifier.PublicKey], [Verifier.Algorithm] and
-// [Verifier.Verify] are zero-alloc.
+// [Verifier.Verify] are zero-alloc. [NewVerifier] allocates the
+// Verifier, its copy of the encoded key, and the key that
+// [crypto/mldsa.NewPublicKey] parses.
 type Verifier struct {
-	pub   *stdmldsa.PublicKey
-	opts  *stdmldsa.Options
+	pub *stdmldsa.PublicKey
+
+	// opts contains the context string. Verify and the Sign of a Signer
+	// pass its address, which points into the Verifier, so the options
+	// are no allocation of their own.
+	opts stdmldsa.Options
+
 	enc   []byte
 	keyID sign.KeyID
 	p     Params
@@ -160,7 +168,7 @@ func newVerifier(p Params, pk *stdmldsa.PublicKey, context string) *Verifier {
 
 	return &Verifier{
 		pub:   pk,
-		opts:  &stdmldsa.Options{Context: context},
+		opts:  stdmldsa.Options{Context: context},
 		enc:   enc,
 		keyID: KeyIDFromPub(enc),
 		p:     p,
@@ -179,11 +187,21 @@ func (v *Verifier) PublicKey() []byte { return v.enc }
 // Algorithm returns the parameter set's long-term name.
 func (v *Verifier) Algorithm() crypto.Algorithm { return v.p.Algorithm() }
 
+// Context returns the FIPS 204 context string under which v verifies,
+// and under which a [Signer] of the same key signs. A caller that
+// accepts a signer only under one context checks it here, because a
+// signature under another context verifies under no other.
+//
+// # Allocation contract
+//
+// Zero-alloc.
+func (v *Verifier) Context() string { return v.opts.Context }
+
 // Verify reports whether sig is a valid signature over msg under v's
 // public key and context. It returns false for a signature made under
 // another context, another key, or for malformed bytes.
 func (v *Verifier) Verify(msg, sig []byte) bool {
-	return stdmldsa.Verify(v.pub, msg, sig, v.opts) == nil
+	return stdmldsa.Verify(v.pub, msg, sig, &v.opts) == nil
 }
 
 // Signer signs with one ML-DSA private key under one context string.
@@ -199,8 +217,11 @@ type Signer struct {
 	priv *stdmldsa.PrivateKey
 }
 
-// Compile-time interface check.
-var _ sign.Signer = (*Signer)(nil)
+// Compile-time interface checks.
+var (
+	_ sign.Signer       = (*Signer)(nil)
+	_ sign.AppendSigner = (*Signer)(nil)
+)
 
 // New returns a Signer for the private key derived from the 32-byte
 // FIPS 204 seed, under context. The standard library copies seed into
@@ -267,7 +288,42 @@ func Generate(p Params, r rand.Rand, context string) (*Signer, error) {
 //
 // Allocates the signature once.
 func (s *Signer) Sign(msg []byte) ([]byte, error) {
-	return s.priv.Sign(nil, msg, s.opts) //nolint:wrapcheck // returned as the standard library produced it
+	return s.priv.Sign(nil, msg, &s.opts) //nolint:wrapcheck // returned as the standard library produced it
+}
+
+// AppendSign appends a hedged ML-DSA signature over msg under s's
+// context to dst and returns the extended slice. It implements
+// [sign.AppendSigner].
+//
+// Returns dst unchanged and context.Cause(ctx) when ctx has ended, and
+// dst unchanged and the error of [Signer.Sign]. The signature is
+// computed in process, so the check before signing is the only one.
+//
+// # Allocation contract
+//
+// Allocates the signature once, inside
+// [crypto/mldsa.PrivateKey.Sign], which returns a new slice, and the
+// growth of dst.
+func (s *Signer) AppendSign(ctx context.Context, dst, msg []byte) ([]byte, error) {
+	if err := context.Cause(ctx); err != nil {
+		return dst, err
+	}
+
+	sig, err := s.Sign(msg)
+
+	return appendSignature(dst, sig, err)
+}
+
+// appendSignature appends sig to dst, or returns dst unchanged and err
+// when Sign failed. Extracted so tests can drive the error branch, which
+// [crypto/mldsa.PrivateKey.Sign] reaches only for the zero private key
+// that [New] never builds.
+func appendSignature(dst, sig []byte, err error) ([]byte, error) {
+	if err != nil {
+		return dst, err
+	}
+
+	return append(dst, sig...), nil
 }
 
 // Seed returns a copy of the private key's 32-byte seed, for storage

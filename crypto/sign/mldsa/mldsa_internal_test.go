@@ -39,3 +39,24 @@ func TestUnavailable(t *testing.T) {
 		testkit.Equal(t, errs.Classify(err), errs.Unsupported, "the error must classify as Unsupported")
 	})
 }
+
+// TestAppendSignature covers the error branch of [appendSignature],
+// which the standard library reaches only for a zero private key.
+func TestAppendSignature(t *testing.T) {
+	t.Parallel()
+
+	t.Run("returns dst unchanged and the error of Sign", func(t *testing.T) {
+		t.Parallel()
+		signErr := testkit.TestError("signing failure")
+		got, err := appendSignature([]byte("dst"), nil, signErr)
+		testkit.ErrorIs(t, err, signErr, "appendSignature must return the error of Sign")
+		testkit.Equal(t, string(got), "dst", "appendSignature must return dst unchanged")
+	})
+
+	t.Run("appends the signature to dst", func(t *testing.T) {
+		t.Parallel()
+		got, err := appendSignature([]byte("dst"), []byte("sig"), nil)
+		testkit.NoError(t, err, "appendSignature must accept a signature")
+		testkit.Equal(t, string(got), "dstsig", "appendSignature must append the signature")
+	})
+}

@@ -125,12 +125,9 @@ type Verifier interface {
 //
 //   - All [Verifier] methods carry forward.
 //   - [Signer.Sign] returns a freshly-allocated signature over
-//     msg. The stdlib's underlying primitives ([crypto/ed25519.Sign],
-//     [crypto/ecdsa.SignASN1]) do not expose buffer-passing
-//     APIs, so per-call allocation is unavoidable in this
-//     implementation. Hot-path consumers amortise this by
-//     signing once per batch (batch-root mode) rather than per
-//     entry.
+//     msg. A hot-path consumer signs through [AppendSign] into a
+//     buffer that it reuses, which a signer with the [AppendSigner]
+//     capability fills without allocating the signature.
 //
 // Sign signs the bytes passed in as-is. Ed25519 signs the raw
 // message per RFC 8032 §5.1.6 (PureEdDSA, not Ed25519ph). ECDSA
@@ -156,11 +153,7 @@ type Signer interface {
 	Verifier
 
 	// Sign returns a freshly-allocated signature over message.
-	// The stdlib's underlying primitives ([crypto/ed25519.Sign],
-	// [crypto/ecdsa.SignASN1]) do not expose buffer-passing
-	// APIs, so per-call allocation is unavoidable. Hot-path
-	// consumers amortise this by signing once per batch
-	// (batch-root mode) rather than per entry.
+	// [AppendSign] signs into a buffer of the caller instead.
 	//
 	// Sign signs the bytes passed in as-is. Ed25519 signs the
 	// raw message per RFC 8032 §5.1.6 (PureEdDSA, not Ed25519ph);
@@ -169,17 +162,6 @@ type Signer interface {
 	// hashed externally to a Merkle root via
 	// [crypto.Hasher.NewStream] and the root signed as a normal
 	// small message.
-	//
-	// A future `AppendSigner` capability interface — a
-	// `SignTo(dst, msg []byte) ([]byte, error)` shape that
-	// writes into a caller-supplied buffer — is reserved for if
-	// stdlib gains an append-style sign primitive. Adding it
-	// would be additive (new optional interface, type-asserted
-	// at the call site, same pattern as [StreamingSigner]) and
-	// non-breaking. We do not ship it today because wrapping
-	// the current allocating-stdlib path under a `SignTo` name
-	// would mislead consumers expecting parity with
-	// [hash.Hash.Sum].
 	//
 	//testkit:nondeterministic
 	Sign(message []byte) ([]byte, error)
