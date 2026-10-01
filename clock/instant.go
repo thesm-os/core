@@ -89,20 +89,14 @@ const InstantSize = 16
 // [Instant.Compare] orders the instants. Wall is two's complement, so
 // an instant before the epoch sorts after every later one.
 //
-// The error is always nil. It satisfies [encoding.BinaryAppender].
+// AppendBinary appends what [Instant.AppendKanon] appends, and the error
+// is always nil. It satisfies [encoding.BinaryAppender].
 //
 // # Allocation contract
 //
 // Zero alloc when dst has capacity for [InstantSize] more bytes.
 func (i Instant) AppendBinary(dst []byte) ([]byte, error) {
-	// The conversion keeps the bit pattern of the int64, so gosec's
-	// G115 does not apply. UnmarshalBinary reverses it, and
-	// TestInstantBinaryRoundTrip covers a negative Wall.
-	dst = binary.BigEndian.AppendUint64(dst, uint64(i.Wall)) //nolint:gosec
-	dst = binary.BigEndian.AppendUint32(dst, i.Logical)
-	dst = binary.BigEndian.AppendUint32(dst, uint32(i.Node))
-
-	return dst, nil
+	return i.AppendKanon(dst), nil
 }
 
 // MarshalBinary returns the binary form of i, which
@@ -168,6 +162,27 @@ func (Instant) SizeKanon() int {
 //   - [Instant.UnmarshalBinary] accepts only the [InstantSize] bytes that
 //     AppendBinary writes for the Instant that it decodes.
 func (Instant) ExactKanon() {}
+
+// AppendKanon appends the binary form of i that [Instant.AppendBinary]
+// describes to dst, and returns the extended slice. It has no error
+// result, because every Instant has a binary form, so kanon's generated
+// code writes an Instant through it without an error path in every
+// position, the elements of a slice included. Implements
+// [go.thesmos.sh/kanon.Appender].
+//
+// # Allocation contract
+//
+// Zero alloc when dst has capacity for [InstantSize] more bytes.
+func (i Instant) AppendKanon(dst []byte) []byte {
+	// The conversion keeps the bit pattern of the int64, so gosec's
+	// G115 does not apply. UnmarshalBinary reverses it, and
+	// TestInstantBinaryRoundTrip covers a negative Wall.
+	dst = binary.BigEndian.AppendUint64(dst, uint64(i.Wall)) //nolint:gosec
+	dst = binary.BigEndian.AppendUint32(dst, i.Logical)
+	dst = binary.BigEndian.AppendUint32(dst, uint32(i.Node))
+
+	return dst
+}
 
 // UnixMilli returns Wall truncated toward zero to milliseconds, so an
 // instant before the Unix epoch rounds up.

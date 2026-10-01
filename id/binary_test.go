@@ -199,6 +199,26 @@ func BenchmarkAppendBinary(b *testing.B) {
 	runtime.KeepAlive(buf)
 }
 
+// BenchmarkAppendKanon reports the cost of AppendKanon of a 32-byte ID
+// into a buffer with room, and fails when it allocates. The allocation
+// check appends to a buffer of its own, so the closure that captures it
+// does not change the code of the timed loop.
+func BenchmarkAppendKanon(b *testing.B) {
+	u := id.New256(fill256(0x7f))
+
+	probe := make([]byte, 0, id.MaxSize)
+	if allocs := testing.AllocsPerRun(benchRuns, func() { probe = u.AppendKanon(probe[:0]) }); allocs != 0 {
+		b.Fatalf("AppendKanon allocates %v times per call, want 0", allocs)
+	}
+
+	buf := make([]byte, 0, id.MaxSize)
+	b.ReportAllocs()
+	for b.Loop() {
+		buf = u.AppendKanon(buf[:0])
+	}
+	runtime.KeepAlive(buf)
+}
+
 func BenchmarkMarshalBinary(b *testing.B) {
 	u := id.New256(fill256(0x7f))
 	b.ReportAllocs()

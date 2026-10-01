@@ -15,8 +15,8 @@ const (
 
 // ValidateKanon returns nil, since every value of Epoch is valid. kanon encodes
 // a value of Epoch as a value of its underlying type uint64, ahead of the
-// binary methods of Epoch, and calls ValidateKanon on every value of Epoch that
-// it encodes or decodes.
+// binary methods of Epoch, and does not call ValidateKanon on a value of Epoch
+// that it encodes or decodes.
 func (Epoch) ValidateKanon() error {
 	return nil
 }

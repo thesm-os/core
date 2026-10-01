@@ -3,7 +3,7 @@ module go.thesmos.sh/core
 go 1.27.0
 
 require (
-	go.thesmos.sh/kanon v0.0.0-20261001001558-f6f835e6d5ab
+	go.thesmos.sh/kanon v0.0.0-20261001092856-098def33ea91
 	go.thesmos.sh/testkit v0.10.0
 )
 

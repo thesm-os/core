@@ -359,6 +359,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to `*Tag`: `SizeKanon`, `EncodeKanon`, `AppendBinary`, `MarshalBinary`,
   `UnmarshalBinary`, `DecodeKanon`, `MergeKanon`, `Reset` and
   `CloneKanon`. See ADR-0043.
+- `id.ID` and `clock.Instant` implement `kanon.Appender` with an
+  `AppendKanon` method that has no error result. kanon's generated code
+  then writes an ID or an instant without an error path in every
+  position, the elements of a slice, the values of a map and the target of
+  a pointer included. `AppendBinary` appends the bytes of `AppendKanon`,
+  and `kanontest.RunExact` checks that the two agree for every value.
 
 ### Changed
 
@@ -531,7 +537,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   signatures encode.
 - Core's production code imports `go.thesmos.sh/kanon` and
   `go.thesmos.sh/kanon/wire` at the pseudo-version of kanon's commit
-  f6f835e, and its tests import kanon's conformance suite and
+  098def3, and its tests import kanon's conformance suite and
   `go.dokimi.dev/assert`. The generated files declare version 2 of the
   generator. CI checks that the generated files are current and that a
   pull request keeps every recorded field number. See ADR-0035.

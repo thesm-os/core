@@ -9,13 +9,14 @@ package id
 // encoding also stores the size, and the zero [ID] encodes as no bytes.
 //
 // The encoding is a stable wire contract, and the layout does not
-// change. Implements [encoding.BinaryAppender].
+// change. AppendBinary appends what [ID.AppendKanon] appends, and the
+// error is always nil. Implements [encoding.BinaryAppender].
 //
 // # Allocation contract
 //
 // Zero alloc when dst has capacity for i.Size() more bytes.
 func (i ID) AppendBinary(dst []byte) ([]byte, error) {
-	return append(dst, i.bytes[:i.size]...), nil
+	return i.AppendKanon(dst), nil
 }
 
 // MarshalBinary returns exactly i.Size() bytes, the encoding that
@@ -60,6 +61,19 @@ func (i ID) SizeKanon() int {
 //     for the ID that it decodes: no bytes for [Zero], and the 16, 20 or
 //     32 bytes of an ID of that size.
 func (ID) ExactKanon() {}
+
+// AppendKanon appends the encoding of i that [ID.AppendBinary] describes
+// to dst, and returns the extended slice. It has no error result, because
+// every ID has an encoding, so kanon's generated code writes an ID
+// through it without an error path in every position, the elements of a
+// slice included. Implements [go.thesmos.sh/kanon.Appender].
+//
+// # Allocation contract
+//
+// Zero alloc when dst has capacity for i.Size() more bytes.
+func (i ID) AppendKanon(dst []byte) []byte {
+	return append(dst, i.bytes[:i.size]...)
+}
 
 // UnmarshalBinary sets i to the ID that data encodes: [Zero] for empty
 // data, and otherwise the ID that [FromBytes] builds from data. It

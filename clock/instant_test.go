@@ -18,6 +18,10 @@ import (
 	"go.thesmos.sh/core/errs"
 )
 
+// benchRuns is the number of calls over which a benchmark averages the
+// allocations that it checks.
+const benchRuns = 100
+
 // roundTrips are instants at the limits of each field, whose binary
 // forms the tests encode and decode.
 var roundTrips = []struct {
@@ -403,6 +407,27 @@ func BenchmarkInstantAppendBinary(b *testing.B) {
 	var sink []byte
 	for b.Loop() {
 		sink, _ = i.AppendBinary(dst[:0])
+	}
+	runtime.KeepAlive(sink)
+}
+
+// BenchmarkInstantAppendKanon reports the cost of AppendKanon into a
+// buffer with room, and fails when it allocates. The allocation check
+// appends to a buffer of its own, so the closure that captures it does not
+// change the code of the timed loop.
+func BenchmarkInstantAppendKanon(b *testing.B) {
+	i := clock.Instant{Wall: 1_767_225_600_000_000_000, Logical: 7, Node: 42}
+
+	probe := make([]byte, 0, clock.InstantSize)
+	if allocs := testing.AllocsPerRun(benchRuns, func() { probe = i.AppendKanon(probe[:0]) }); allocs != 0 {
+		b.Fatalf("AppendKanon allocates %v times per call, want 0", allocs)
+	}
+
+	dst := make([]byte, 0, clock.InstantSize)
+	b.ReportAllocs()
+	var sink []byte
+	for b.Loop() {
+		sink = i.AppendKanon(dst[:0])
 	}
 	runtime.KeepAlive(sink)
 }
