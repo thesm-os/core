@@ -25,6 +25,14 @@ import (
 
 var message = []byte("release v1.2.3")
 
+// Sinks receive the results of the benchmarks of policies, so that the
+// compiler keeps every call that they measure.
+var (
+	sinkPolicy sign.Policy
+	sinkRule   sign.Rule
+	errSink    error
+)
+
 // key is a Verifier test double that counts its Verify calls. A
 // signature is valid when it is the key's public key followed by the
 // message.
@@ -187,8 +195,143 @@ func TestAtLeast(t *testing.T) {
 	})
 }
 
+func TestRules(t *testing.T) {
+	t.Parallel()
+
+	t.Run("AllOf", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns a rule that counts when every key signs", func(t *testing.T) {
+			t.Parallel()
+			var rules sign.Rules
+			a, b := newKey(1), newKey(2)
+			p := mustTree(t, rules.AllOf("w", a, b))
+			testkit.NoError(t, p.Check(message, signedBy(a, b)), "both keys must satisfy the rule")
+			testkit.ErrorIs(t, p.Check(message, signedBy(a)), sign.ErrThreshold, "one key must not satisfy it")
+		})
+
+		t.Run("copies keys", func(t *testing.T) {
+			t.Parallel()
+			var rules sign.Rules
+			a := newKey(1)
+			keys := []sign.Verifier{a}
+			r := rules.AllOf("a", keys...)
+
+			keys[0] = newKey(2)
+			testkit.NoError(t, mustTree(t, r).Check(message, signedBy(a)),
+				"replacing a key in the caller's slice must not change the rule")
+		})
+
+		t.Run("keeps the keys of the rules built before", func(t *testing.T) {
+			t.Parallel()
+			var rules sign.Rules
+			a, b := newKey(1), newKey(2)
+			first := rules.AllOf("a", a)
+			second := rules.AllOf("b", b)
+			p := mustTree(t, sign.AtLeast("both", 2, first, second))
+			testkit.NoError(t, p.Check(message, signedBy(a, b)), "each rule must keep its own key")
+		})
+
+		t.Run("returns a rule without keys for no keys", func(t *testing.T) {
+			t.Parallel()
+			var rules sign.Rules
+			_, err := sign.NewPolicyTree(rules.AllOf("empty"))
+			testkit.ErrorIs(t, err, sign.ErrPolicy, "a rule without keys must be refused")
+		})
+	})
+
+	t.Run("AtLeast", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns a rule that counts when the threshold of children count", func(t *testing.T) {
+			t.Parallel()
+			var rules sign.Rules
+			a, b, c := newKey(1), newKey(2), newKey(3)
+			p := mustTree(t, rules.AtLeast("two", 2, rules.AllOf("a", a), rules.AllOf("b", b), rules.AllOf("c", c)))
+			testkit.NoError(t, p.Check(message, signedBy(a, c)), "two children must satisfy the rule")
+			testkit.ErrorIs(t, p.Check(message, signedBy(b)), sign.ErrThreshold, "one child must not satisfy it")
+		})
+
+		t.Run("copies children", func(t *testing.T) {
+			t.Parallel()
+			var rules sign.Rules
+			a := newKey(1)
+			children := []sign.Rule{rules.AllOf("a", a)}
+			r := rules.AtLeast("r", 1, children...)
+
+			children[0] = rules.AllOf("b", newKey(2))
+			testkit.NoError(t, mustTree(t, r).Check(message, signedBy(a)),
+				"replacing a child in the caller's slice must not change the rule")
+		})
+
+		t.Run("keeps the children of the rules built before", func(t *testing.T) {
+			t.Parallel()
+			var rules sign.Rules
+			a, b := newKey(1), newKey(2)
+			first := rules.AtLeast("a", 1, rules.AllOf("a", a))
+			second := rules.AtLeast("b", 1, rules.AllOf("b", b))
+			p := mustTree(t, rules.AtLeast("both", 2, first, second))
+			testkit.NoError(t, p.Check(message, signedBy(a, b)), "each rule must keep its own children")
+		})
+	})
+
+	t.Run("Grow", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("leaves the rules built before unchanged", func(t *testing.T) {
+			t.Parallel()
+			var rules sign.Rules
+			a := newKey(1)
+			r := rules.AtLeast("r", 1, rules.AllOf("a", a))
+			rules.Grow(100, 100)
+			testkit.NoError(t, mustTree(t, r).Check(message, signedBy(a)), "Grow must not change a rule built before")
+		})
+	})
+
+	t.Run("Reset", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("leaves a Policy built from the rules valid", func(t *testing.T) {
+			t.Parallel()
+			var rules sign.Rules
+			a, b := newKey(1), newKey(2)
+			p := mustTree(t, rules.AtLeast("a", 1, rules.AllOf("a", a)))
+			rules.Reset()
+			mustTree(t, rules.AtLeast("b", 1, rules.AllOf("b", b)))
+			testkit.NoError(t, p.Check(message, signedBy(a)), "a Policy must not change when its rules are reused")
+			testkit.ErrorIs(t, p.Check(message, signedBy(b)), sign.ErrThreshold,
+				"a key of the next tree must not count in the Policy")
+		})
+
+		t.Run("builds the next tree in the memory of the last", func(t *testing.T) {
+			t.Parallel()
+			var rules sign.Rules
+			a, b := newKey(1), newKey(2)
+			first := rules.AllOf("a", a)
+			rules.Reset()
+			second := rules.AllOf("b", b)
+			testkit.NoError(t, mustTree(t, first).Check(message, signedBy(b)),
+				"a rule from before Reset must read the keys of the rule built after it")
+			testkit.NoError(t, mustTree(t, second).Check(message, signedBy(b)), "the new rule must count")
+		})
+	})
+}
+
 func TestNewPolicy(t *testing.T) {
 	t.Parallel()
+
+	t.Run("returns a Policy for 17 parties, more than fit on the stack", func(t *testing.T) {
+		t.Parallel()
+		keys := make([]*key, 17)
+		for i := range keys {
+			keys[i] = newKey(byte(i))
+		}
+
+		p := mustPolicy(t, len(keys), solo(keys...)...)
+		testkit.NoError(t, p.Check(message, signedBy(keys...)), "every party signing must satisfy the policy")
+		testkit.ErrorIs(t, p.Check(message, signedBy(keys[1:]...)), sign.ErrThreshold,
+			"one missing party must fail it")
+	})
 
 	t.Run("returns a Policy for a threshold from one to the number of parties", func(t *testing.T) {
 		t.Parallel()
@@ -366,6 +509,65 @@ func TestNewPolicyTree(t *testing.T) {
 		testkit.True(t, strings.Contains(err.Error(), "deeper than 64 rules"),
 			"the error must state the bound: "+err.Error())
 	})
+}
+
+func TestReset(t *testing.T) {
+	t.Parallel()
+
+	t.Run("sets p to the policy of each tree in turn", func(t *testing.T) {
+		t.Parallel()
+		a, b, c := newKey(1), newKey(2), newKey(3)
+		var p sign.Policy
+		testkit.NoError(t, p.Reset(sign.AtLeast("two", 2, allOf("a", a), allOf("b", b), allOf("c", c))),
+			"Reset must accept the first tree")
+		testkit.NoError(t, p.Check(message, signedBy(a, b)), "two of three must satisfy the first tree")
+
+		testkit.NoError(t, p.Reset(allOf("c", c)), "Reset must accept the second tree")
+		testkit.NoError(t, p.Check(message, signedBy(c)), "c must satisfy the second tree")
+		testkit.ErrorIs(t, p.Check(message, signedBy(a, b)), sign.ErrThreshold,
+			"the keys of the first tree must not count in the second")
+
+		testkit.NoError(t, p.Reset(sign.AtLeast("two", 2, allOf("a", a), allOf("b", b), allOf("c", c))),
+			"Reset must accept the first tree again")
+		testkit.NoError(t, p.Check(message, signedBy(b, c)), "two of three must satisfy the first tree again")
+	})
+
+	t.Run("returns the errors of NewPolicyTree", func(t *testing.T) {
+		t.Parallel()
+		a := newKey(1)
+		var p sign.Policy
+		err := p.Reset(sign.AtLeast("bad", 1, allOf("x", a), allOf("y", a)))
+		testkit.ErrorIs(t, err, sign.ErrPolicy, "Reset must refuse a key listed twice")
+		testkit.True(t, strings.Contains(err.Error(), `rule "bad/y": key `+a.id.String()+" listed twice"),
+			"the error must name the rule and the reason: "+err.Error())
+	})
+
+	refused := []struct {
+		name string
+		give func(a *key) sign.Rule
+	}{
+		{
+			name: "checks nothing after a tree that fails the check of its shape",
+			give: func(*key) sign.Rule { return sign.AtLeast("bad", 0) },
+		},
+		{
+			name: "checks nothing after a tree that repeats a key",
+			give: func(a *key) sign.Rule { return sign.AtLeast("bad", 1, allOf("x", a), allOf("y", a)) },
+		},
+	}
+	for _, tt := range refused {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			a := newKey(1)
+			var p sign.Policy
+			testkit.NoError(t, p.Reset(allOf("a", a)), "Reset must accept the first tree")
+			testkit.Error(t, p.Reset(tt.give(a)), "Reset must refuse the second tree")
+			testkit.ErrorIs(t, p.Check(message, signedBy(a)), sign.ErrPolicy,
+				"a Policy whose Reset failed must check nothing")
+			testkit.NoError(t, p.Reset(allOf("a", a)), "Reset must accept a tree after an error")
+			testkit.NoError(t, p.Check(message, signedBy(a)), "the Policy must check again")
+		})
+	}
 }
 
 // TestCheck covers Policy.Check. The bound on verifications is the
@@ -931,6 +1133,77 @@ func BenchmarkCheck(b *testing.B) {
 				_ = tc.policy.Check(message, tc.sigs)
 			}
 		})
+	}
+}
+
+// BenchmarkPolicy measures the construction of policies, and asserts its
+// allocations: once into new memory, and again into the memory of the
+// last construction.
+func BenchmarkPolicy(b *testing.B) {
+	x1, x2, x3, y1, y2, y3 := newKey(1), newKey(2), newKey(3), newKey(4), newKey(5), newKey(6)
+	example := sign.AtLeast("X-and-Y", 2,
+		sign.AtLeast("X-witnesses", 2, allOf("X1", x1), allOf("X2", x2), allOf("X3", x3)),
+		sign.AtLeast("Y-witnesses", 1, allOf("Y1", y1), allOf("Y2", y2), allOf("Y3", y3)),
+	)
+
+	doubles := make([]*key, 64)
+	for i := range doubles {
+		doubles[i] = newKey(byte(i))
+	}
+
+	parties := solo(doubles[:5]...)
+	wide := allOf("all", doubles...)
+
+	b.Run("NewPolicyTree of the example of tlog-policy", func(b *testing.B) {
+		benchAllocs(b, 4, func() { sinkPolicy, errSink = sign.NewPolicyTree(example) })
+	})
+
+	b.Run("NewPolicyTree of 64 keys", func(b *testing.B) {
+		benchAllocs(b, 6, func() { sinkPolicy, errSink = sign.NewPolicyTree(wide) })
+	})
+
+	b.Run("NewPolicy of 5 parties", func(b *testing.B) {
+		benchAllocs(b, 4, func() { sinkPolicy, errSink = sign.NewPolicy(3, parties...) })
+	})
+
+	b.Run("Reset to the example of tlog-policy", func(b *testing.B) {
+		var p sign.Policy
+		testkit.NoError(b, p.Reset(example), "Reset must accept the example")
+		benchAllocs(b, 0, func() { errSink = p.Reset(example) })
+	})
+
+	b.Run("Reset to 64 keys", func(b *testing.B) {
+		var p sign.Policy
+		testkit.NoError(b, p.Reset(wide), "Reset must accept the tree")
+		benchAllocs(b, 0, func() { errSink = p.Reset(wide) })
+	})
+
+	b.Run("Rules of the example of tlog-policy", func(b *testing.B) {
+		var rules sign.Rules
+		build := func() {
+			rules.Reset()
+			sinkRule = rules.AtLeast("X-and-Y", 2,
+				rules.AtLeast("X-witnesses", 2, rules.AllOf("X1", x1), rules.AllOf("X2", x2), rules.AllOf("X3", x3)),
+				rules.AtLeast("Y-witnesses", 1, rules.AllOf("Y1", y1), rules.AllOf("Y2", y2), rules.AllOf("Y3", y3)),
+			)
+		}
+		build()
+		benchAllocs(b, 0, build)
+	})
+}
+
+// benchAllocs reports the cost of call, and fails when call does not
+// allocate want times per call.
+func benchAllocs(b *testing.B, want float64, call func()) {
+	b.Helper()
+
+	if allocs := testing.AllocsPerRun(benchRuns, call); allocs != want {
+		b.Fatalf("allocates %v times per call, want %v", allocs, want)
+	}
+
+	b.ReportAllocs()
+	for b.Loop() {
+		call()
 	}
 }
 

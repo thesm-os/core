@@ -13,13 +13,15 @@
 // # Provided implementations
 //
 //   - go.thesmos.sh/core/crypto/sign/ed25519: Ed25519 PureEdDSA per
-//     RFC 8032 §5.1.6, backed by [crypto/ed25519]. [Signer] only, see
-//     Streaming.
+//     RFC 8032 §5.1.6, backed by [crypto/ed25519]. Implements [Signer]
+//     and [AppendSigner], and not [StreamingSigner], see Streaming.
 //   - go.thesmos.sh/core/crypto/sign/ecdsap384: ECDSA over NIST P-384
 //     with SHA-384 per FIPS 186-5 and ASN.1 DER signatures, backed by
-//     [crypto/ecdsa]. Implements [Signer] and [StreamingSigner].
+//     [crypto/ecdsa]. Implements [Signer], [AppendSigner] and
+//     [StreamingSigner].
 //   - go.thesmos.sh/core/crypto/sign/mldsa: ML-DSA-44, ML-DSA-65 and
-//     ML-DSA-87 per FIPS 204, backed by [crypto/mldsa]. [Signer] only.
+//     ML-DSA-87 per FIPS 204, backed by [crypto/mldsa]. Implements
+//     [Signer] and [AppendSigner].
 //
 // The implementations run through Go's FIPS 140-3 module when
 // GODEBUG=fips140=on is set. This package does not refuse to run
@@ -83,6 +85,10 @@
 // C2SP tlog-policy. [Policy.Check] counts each key once and verifies at
 // most one signature per key of the policy.
 //
+// A caller that builds its policy again, such as at each load of a
+// configuration, builds the rules in a [Rules] and the policy with
+// [Policy.Reset], both of which reuse the memory of the last build.
+//
 // # Encoding
 //
 // kanon generates the codec of [Signature], so a signature in the
@@ -98,13 +104,22 @@
 // The in-process signers in this module do not take a context and do
 // not implement it.
 //
+// # Signing into a caller's buffer
+//
+// A [Signer] that writes its signature into a buffer of the caller
+// implements [AppendSigner]. Callers sign through [AppendSign], which uses
+// the capability when a signer has it and appends a copy of the
+// signature of [SignContext] otherwise. A caller that reuses its buffer
+// signs with the Ed25519 signer of this module without an allocation.
+//
 // # Decorators
 //
 // A decorator that wraps a [Signer] implements Unwrap() Signer, and one
 // that wraps a [Verifier] implements Unwrap() Verifier. [AsStreamingSigner],
-// [AsStreamingVerifier] and [AsContextSigner] follow Unwrap to find a
-// capability behind any number of decorators, and [SignContext] uses
-// AsContextSigner.
+// [AsStreamingVerifier], [AsContextSigner] and [AsAppendSigner] follow
+// Unwrap to find a capability behind any number of decorators.
+// [SignContext] uses AsContextSigner, and [AppendSign] uses
+// AsAppendSigner.
 //
 // # Failure semantics
 //
@@ -151,9 +166,17 @@
 // [crypto/ecdsa.VerifyASN1] performs big.Int arithmetic.
 // Implementations document their own allocation behaviour.
 //
-// [Signer.Sign] allocates the returned signature, because the standard
-// library's signing functions, [crypto/ed25519.Sign],
-// [crypto/ecdsa.SignASN1] and [crypto/mldsa.PrivateKey.Sign], take no
-// destination buffer. A hot-path consumer signs once per batch and not
-// once per entry.
+// [Signer.Sign] allocates the returned signature. [AppendSign] into a
+// buffer with room allocates nothing for Ed25519, because
+// [crypto/ed25519.Sign] returns a signature that the compiler keeps on
+// the stack of its caller. For ML-DSA and ECDSA P-384 it allocates what
+// [crypto/mldsa.PrivateKey.Sign] and [crypto/ecdsa.SignASN1] allocate,
+// since both return a new slice.
+//
+// [Policy.Check] allocates nothing when it returns nil for a policy of
+// at most 64 keys and 128 rules. [NewPolicyTree] allocates the index of
+// the keys, the keys and the rules at their exact sizes: four
+// allocations for the example policy of tlog-policy. [Policy.Reset] and
+// the methods of [Rules] allocate nothing when they reuse the memory of
+// a build of the same size.
 package sign
