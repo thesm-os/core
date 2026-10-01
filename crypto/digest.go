@@ -40,7 +40,7 @@ const (
 // Digest is comparable, so it can be a map key or a field of a
 // comparable struct, and == compares two digests. Its fields are
 // unexported, so a stored Digest changes only when another Digest is
-// assigned to it, as [Digest.UnmarshalBinary] does.
+// assigned to it or [Digest.UnmarshalBinary] decodes into it.
 //
 // # Allocation contract
 //
@@ -105,15 +105,8 @@ func NewDigest512(b [DigestSize512]byte) Digest {
 //
 // Zero alloc.
 func DigestFromBytes(b []byte) (Digest, error) {
-	var size uint8
-	switch len(b) {
-	case DigestSize256:
-		size = DigestSize256
-	case DigestSize384:
-		size = DigestSize384
-	case DigestSize512:
-		size = DigestSize512
-	default:
+	size, ok := digestSize(len(b))
+	if !ok {
 		return Digest{}, ErrDigestSize
 	}
 
@@ -170,18 +163,23 @@ func (d Digest) MarshalBinary() ([]byte, error) {
 
 // UnmarshalBinary accepts exactly the inputs [DigestFromBytes] accepts
 // and returns the same error, so the two decode paths agree on every
-// input. On an error d is unchanged. Implements
+// input. It copies data into d and clears the rest of d's array, so the
+// decoded d equals, under ==, the Digest that DigestFromBytes returns for
+// data, whatever d held before. On an error d is unchanged. Implements
 // [encoding.BinaryUnmarshaler].
 //
 // # Allocation contract
 //
 // Zero alloc. It decodes into the receiver.
 func (d *Digest) UnmarshalBinary(data []byte) error {
-	parsed, err := DigestFromBytes(data)
-	if err != nil {
-		return err
+	size, ok := digestSize(len(data))
+	if !ok {
+		return ErrDigestSize
 	}
-	*d = parsed
+
+	d.size = size
+	n := copy(d.bytes[:], data)
+	clear(d.bytes[n:])
 
 	return nil
 }
@@ -232,10 +230,10 @@ func (d Digest) Bytes() []byte {
 // one for a wrong width.
 //
 // IsZero compares the size only. [NewDigest256], [NewDigest384],
-// [NewDigest512] and [DigestFromBytes] are the only code that sets a
-// Digest's size. Each sets it to 32, 48 or 64 together with the bytes,
-// and [Digest.UnmarshalBinary] assigns the result of DigestFromBytes.
-// No Digest other than the zero value has size 0.
+// [NewDigest512], [DigestFromBytes] and [Digest.UnmarshalBinary] are the
+// only code that sets a Digest's size. Each sets it to 32, 48 or 64
+// together with the bytes. No Digest other than the zero value has size
+// 0.
 //
 // The zero Digest has no binary encoding. [Digest.AppendBinary] and
 // [Digest.MarshalBinary] return [ErrDigestZero] for it, and every
@@ -294,4 +292,21 @@ func (d Digest) String() string {
 	var buf [DigestSize512 * 2]byte
 	hex.Encode(buf[:d.size*2], d.bytes[:d.size])
 	return string(buf[:d.size*2])
+}
+
+// digestSize returns the size of the Digest whose binary form is n bytes
+// long, and false for a length that no Digest has. [DigestFromBytes] and
+// [Digest.UnmarshalBinary] share it, so the two decode paths accept the
+// same lengths.
+func digestSize(n int) (uint8, bool) {
+	switch n {
+	case DigestSize256:
+		return DigestSize256, true
+	case DigestSize384:
+		return DigestSize384, true
+	case DigestSize512:
+		return DigestSize512, true
+	}
+
+	return 0, false
 }

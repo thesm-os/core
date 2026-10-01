@@ -62,7 +62,9 @@ func (i ID) SizeKanon() int {
 func (ID) ExactKanon() {}
 
 // UnmarshalBinary sets i to the ID that data encodes: [Zero] for empty
-// data, and otherwise the ID that [FromBytes] builds from data.
+// data, and otherwise the ID that [FromBytes] builds from data. It
+// copies data into i and clears the rest of i's array, so the decoded i
+// equals, under ==, the ID that FromBytes builds, whatever i held before.
 //
 // Returns [ErrSize] unless len(data) is 0, [Size128], [Size160] or
 // [Size256], and leaves i unchanged. It accepts the empty data that
@@ -74,17 +76,14 @@ func (ID) ExactKanon() {}
 //
 // Zero alloc. It decodes into the receiver.
 func (i *ID) UnmarshalBinary(data []byte) error {
-	if len(data) == 0 {
-		*i = Zero
-
-		return nil
+	size, ok := idSize(len(data))
+	if !ok {
+		return ErrSize
 	}
 
-	parsed, err := FromBytes(data)
-	if err != nil {
-		return err
-	}
-	*i = parsed
+	i.size = size
+	n := copy(i.bytes[:], data)
+	clear(i.bytes[n:])
 
 	return nil
 }

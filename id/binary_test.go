@@ -5,7 +5,9 @@ package id_test
 
 import (
 	"encoding"
+	"errors"
 	"runtime"
+	"strconv"
 	"testing"
 
 	"go.thesmos.sh/kanon/kanontest"
@@ -14,6 +16,10 @@ import (
 	"go.thesmos.sh/core/errs"
 	"go.thesmos.sh/core/id"
 )
+
+// benchRuns is the number of calls over which a benchmark averages the
+// allocations that it checks.
+const benchRuns = 100
 
 // The encoding interfaces ID satisfies. A missing method is a build
 // failure.
@@ -115,6 +121,53 @@ func TestUnmarshalBinary(t *testing.T) {
 		data[0] = 0
 		testkit.Equal(t, got.Bytes()[0], byte(0x88), "changing the input must not change the ID")
 	})
+
+	t.Run("returns the result of FromBytes for every length from 1 to Size256+1", func(t *testing.T) {
+		t.Parallel()
+		for n := 1; n <= id.Size256+1; n++ {
+			data := make([]byte, n)
+			for k := range data {
+				data[k] = byte(k + 1)
+			}
+			want, wantErr := id.FromBytes(data)
+			var got id.ID
+			err := got.UnmarshalBinary(data)
+			testkit.True(t, errors.Is(err, wantErr),
+				"UnmarshalBinary must return the error of FromBytes for "+strconv.Itoa(n)+" bytes")
+			testkit.True(t, got == want,
+				"UnmarshalBinary must decode the ID of FromBytes for "+strconv.Itoa(n)+" bytes")
+		}
+	})
+
+	cleared := []struct {
+		name string
+		held id.ID
+		give id.ID
+	}{
+		{
+			name: "clears the bytes of a Size256 ID under a Size128 one",
+			held: id.New256(fill256(0x33)),
+			give: id.New128(fill128(0x11)),
+		},
+		{
+			name: "clears the bytes of a Size256 ID under a Size160 one",
+			held: id.New256(fill256(0x33)),
+			give: id.New160(fill160(0x22)),
+		},
+		{
+			name: "clears the bytes of a Size160 ID under a Size128 one",
+			held: id.New160(fill160(0x22)),
+			give: id.New128(fill128(0x11)),
+		},
+	}
+	for _, tt := range cleared {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := tt.held
+			testkit.NoError(t, got.UnmarshalBinary(tt.give.Bytes()), "UnmarshalBinary must accept the encoding")
+			testkit.True(t, got == tt.give, "the decoded ID must equal the ID built from the same bytes")
+		})
+	}
 }
 
 func TestSizeKanon(t *testing.T) {
@@ -156,8 +209,18 @@ func BenchmarkMarshalBinary(b *testing.B) {
 	runtime.KeepAlive(sink)
 }
 
+// BenchmarkUnmarshalBinary reports the cost of a decode of 32 bytes into
+// an ID, and fails when the decode allocates. The allocation check
+// decodes into an ID of its own, so the closure that captures it does not
+// change the code of the timed loop.
 func BenchmarkUnmarshalBinary(b *testing.B) {
 	data := fill256Slice(0x7f)
+
+	var probe id.ID
+	if allocs := testing.AllocsPerRun(benchRuns, func() { _ = probe.UnmarshalBinary(data) }); allocs != 0 {
+		b.Fatalf("UnmarshalBinary allocates %v times per call, want 0", allocs)
+	}
+
 	var u id.ID
 	b.ReportAllocs()
 	for b.Loop() {

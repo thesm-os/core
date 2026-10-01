@@ -4,7 +4,9 @@
 package crypto_test
 
 import (
+	"errors"
 	"runtime"
+	"strconv"
 	"testing"
 
 	"go.thesmos.sh/kanon/kanontest"
@@ -13,6 +15,10 @@ import (
 	"go.thesmos.sh/core/crypto"
 	"go.thesmos.sh/core/errs"
 )
+
+// benchRuns is the number of calls over which a benchmark averages the
+// allocations that it checks.
+const benchRuns = 100
 
 // sizedDigests are a digest of each size, whose binary forms the tests
 // encode and decode.
@@ -444,6 +450,66 @@ func TestDigestAppendBinary(t *testing.T) {
 	})
 }
 
+func TestDigestUnmarshalBinary(t *testing.T) {
+	t.Parallel()
+
+	t.Run("leaves the digest unchanged for a length that no digest has", func(t *testing.T) {
+		t.Parallel()
+		want := crypto.NewDigest384(fill384(0x22))
+		got := want
+		testkit.ErrorIs(t, got.UnmarshalBinary(make([]byte, 40)), crypto.ErrDigestSize,
+			"UnmarshalBinary must reject 40 bytes")
+		testkit.True(t, got == want, "a rejected decode must leave the digest unchanged")
+	})
+
+	t.Run("returns the result of DigestFromBytes for every length up to MaxDigestSize+1", func(t *testing.T) {
+		t.Parallel()
+		for n := range crypto.MaxDigestSize + 2 {
+			data := make([]byte, n)
+			for k := range data {
+				data[k] = byte(k + 1)
+			}
+			want, wantErr := crypto.DigestFromBytes(data)
+			var got crypto.Digest
+			err := got.UnmarshalBinary(data)
+			testkit.True(t, errors.Is(err, wantErr),
+				"UnmarshalBinary must return the error of DigestFromBytes for "+strconv.Itoa(n)+" bytes")
+			testkit.True(t, got == want,
+				"UnmarshalBinary must decode the digest of DigestFromBytes for "+strconv.Itoa(n)+" bytes")
+		}
+	})
+
+	tests := []struct {
+		name string
+		held crypto.Digest
+		give crypto.Digest
+	}{
+		{
+			name: "clears the bytes of a DigestSize512 digest under a DigestSize256 one",
+			held: crypto.NewDigest512(fill512(0x33)),
+			give: crypto.NewDigest256(fill256(0x11)),
+		},
+		{
+			name: "clears the bytes of a DigestSize512 digest under a DigestSize384 one",
+			held: crypto.NewDigest512(fill512(0x33)),
+			give: crypto.NewDigest384(fill384(0x22)),
+		},
+		{
+			name: "clears the bytes of a DigestSize384 digest under a DigestSize256 one",
+			held: crypto.NewDigest384(fill384(0x22)),
+			give: crypto.NewDigest256(fill256(0x11)),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := tt.held
+			testkit.NoError(t, got.UnmarshalBinary(tt.give.Bytes()), "UnmarshalBinary must accept the encoding")
+			testkit.True(t, got == tt.give, "the decoded digest must equal the digest built from the same bytes")
+		})
+	}
+}
+
 func TestDigestZeroHasNoBinaryEncoding(t *testing.T) {
 	t.Parallel()
 
@@ -509,6 +575,26 @@ func BenchmarkDigestFromBytes(b *testing.B) {
 		sink, _ = crypto.DigestFromBytes(src)
 	}
 	runtime.KeepAlive(sink)
+}
+
+// BenchmarkDigestUnmarshalBinary reports the cost of a decode of 32 bytes
+// into a digest, and fails when the decode allocates. The allocation check
+// decodes into a digest of its own, so the closure that captures it does
+// not change the code of the timed loop.
+func BenchmarkDigestUnmarshalBinary(b *testing.B) {
+	data := crypto.NewDigest256(fill256(0x7f)).Bytes()
+
+	var probe crypto.Digest
+	if allocs := testing.AllocsPerRun(benchRuns, func() { _ = probe.UnmarshalBinary(data) }); allocs != 0 {
+		b.Fatalf("UnmarshalBinary allocates %v times per call, want 0", allocs)
+	}
+
+	var d crypto.Digest
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = d.UnmarshalBinary(data)
+	}
+	runtime.KeepAlive(d)
 }
 
 func BenchmarkDigestAppendBinary(b *testing.B) {

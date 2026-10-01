@@ -454,6 +454,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ID` a caller can build. A call takes 0.36 ns, down from 3.25 ns for
   the zero `ID`. For an `ID` whose first byte is not zero, the
   comparison of the whole 33-byte value took 1.26 to 1.28 ns.
+- `crypto.Digest.UnmarshalBinary` and `id.ID.UnmarshalBinary` decode into
+  the receiver. They assigned the value that `DigestFromBytes` or
+  `FromBytes` returned, which copied the whole value twice. A decode of 32
+  bytes takes 2.1 ns, down from 7.5 ns, for a digest, and 0.57 ns, down
+  from 7.3 ns, for an ID. Each method clears the bytes after its input, so
+  the decoded value equals, under `==`, the value that the constructor
+  builds from the same bytes. The accepted inputs, the errors and the
+  allocations do not change.
 - `arena.Arena.Alloc` clears only the part of its region that a
   `TruncateTo` rewind or a failed `AppendVia` left written. The other
   bytes are already zero from the allocation or from `Reset`, so on a new

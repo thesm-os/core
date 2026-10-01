@@ -104,15 +104,8 @@ func New256(b [Size256]byte) ID {
 //
 // Zero alloc.
 func FromBytes(b []byte) (ID, error) {
-	var size uint8
-	switch len(b) {
-	case Size128:
-		size = Size128
-	case Size160:
-		size = Size160
-	case Size256:
-		size = Size256
-	default:
+	size, ok := idSize(len(b))
+	if !ok || size == 0 {
 		return Zero, ErrSize
 	}
 
@@ -139,11 +132,11 @@ func (i ID) Bytes() []byte {
 // IsZero reports whether i is the zero [ID], which consumers read as
 // "no identifier".
 //
-// IsZero compares the size only. [New128], [New160], [New256] and
-// [FromBytes] are the only code that sets an ID's size. Each sets it
-// to 16, 20 or 32 together with the bytes, and [ID.UnmarshalBinary]
-// assigns [Zero] or the result of FromBytes. No ID other than the
-// zero value has size 0.
+// IsZero compares the size only. [New128], [New160], [New256],
+// [FromBytes] and [ID.UnmarshalBinary] are the only code that sets an
+// ID's size. Each sets it to 16, 20 or 32 together with the bytes, apart
+// from UnmarshalBinary of empty data, which sets size 0 and clears every
+// byte. No ID other than the zero value has size 0.
 //
 // # Allocation contract
 //
@@ -187,4 +180,24 @@ func (i ID) Compare(other ID) int {
 // Allocates the result string.
 func (i ID) String() string {
 	return "id:" + hex.EncodeToString(i.bytes[:i.size])
+}
+
+// idSize returns the size of the ID whose binary form is n bytes long: 0
+// for the empty form of [Zero], and 16, 20 or 32 for any other ID. It
+// returns false for a length that no ID has. [FromBytes] and
+// [ID.UnmarshalBinary] share it, so the two decode paths accept the same
+// lengths, apart from the empty form, which FromBytes rejects.
+func idSize(n int) (uint8, bool) {
+	switch n {
+	case 0:
+		return 0, true
+	case Size128:
+		return Size128, true
+	case Size160:
+		return Size160, true
+	case Size256:
+		return Size256, true
+	}
+
+	return 0, false
 }
