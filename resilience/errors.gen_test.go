@@ -25,6 +25,7 @@ func TestResilienceSentinelErrors(t *testing.T) {
 		{"ErrConfig", resilience.ErrConfig},
 		{"ErrFull", resilience.ErrFull},
 		{"ErrOpen", resilience.ErrOpen},
+		{"ErrUnits", resilience.ErrUnits},
 		{"ErrWaitTimeout", resilience.ErrWaitTimeout},
 	}
 
