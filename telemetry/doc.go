@@ -87,6 +87,23 @@
 // An implementation may report such a value through its own
 // diagnostics, such as a rate-limited log line.
 //
+// # Bounding the cost of a hot path
+//
+// Three types bound what a hot path spends on its telemetry:
+//
+//   - [ShardedCounter] spreads the adds to a [Counter] over padded cells
+//     that the caller chooses, and adds their sum to the Counter on Flush,
+//     so goroutines add without contending for one cache line.
+//   - [BoundedHistogram] records every value of a failed call, and one
+//     value in N of the calls that succeeded, N a power of two that Flush
+//     recomputes from the rate that it measured.
+//   - [RateLimitHandler] is a [slog.Handler] that passes one record per
+//     interval of each message and subject value, passes every record at
+//     [slog.LevelError] and above, and counts the records that it drops.
+//
+// Their constructors return [ErrConfig], classified
+// [go.thesmos.sh/core/errs.Invalid], for an argument that they refuse.
+//
 // # Allocation contract
 //
 // These methods do not allocate:
@@ -94,6 +111,12 @@
 //   - [Counter.Add], [Gauge.Set], [Gauge.Add] and [Histogram.Record],
 //     on the hot path.
 //   - [Counter.Release], [Gauge.Release] and [Histogram.Release].
+//   - [ShardedCounter.Add], [ShardedCounter.Flush],
+//     [BoundedHistogram.Record] and [BoundedHistogram.Flush], apart from
+//     the instrument that they wrap.
+//   - [RateLimitHandler.Handle], for an event that it remembers and a
+//     subject value that is a string or an integer, apart from the
+//     handler that it wraps.
 //
 // These methods may allocate, on a cold path: [Reporter.Counter],
 // [Reporter.Gauge], [Reporter.Histogram], [Reporter.Tracer],
@@ -129,4 +152,11 @@
 //
 //	// When the region is retired:
 //	requests.Release()
+//
+// # Dependency position
+//
+// Imports context, encoding/binary, errors, hash/maphash, log/slog, maps,
+// math/bits, slices, sync, sync/atomic and time from the standard library,
+// and go.thesmos.sh/core/cache, go.thesmos.sh/core/clock and
+// go.thesmos.sh/core/errs from this module.
 package telemetry
