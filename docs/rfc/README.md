@@ -110,6 +110,10 @@ Start from [`docs/templates/RFC.md`](../templates/RFC.md).
 | [0045](0045-kanon-forms-of-core-types.md) | kanon Forms of Core Types | Accepted |
 | [0046](0046-released-instruments-and-gauge-aggregation.md) | Released Instruments and Gauge Aggregation | Accepted |
 | [0047](0047-signed-notes-and-checkpoints.md) | Signed Notes and Checkpoints | Draft |
+| [0048](0048-time-stamp-tokens.md) | RFC 3161 Time-Stamp Tokens | Draft |
+| [0049](0049-bounded-cache.md) | Bounded Cache | Draft |
+| [0050](0050-rate-limiter.md) | Rate Limiter | Draft |
+| [0051](0051-bounded-hot-path-telemetry.md) | Bounded Telemetry on Hot Paths | Draft |
 
 ## Canonical first RFC
 

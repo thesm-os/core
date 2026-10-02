@@ -107,8 +107,11 @@ seams every other thesmos library and framework depends on:
   `SpanContext` across a process boundary, with `MapCarrier` for
   the common case. Implementations: `telemetry/noop`,
   `telemetry/w3c` (W3C Trace Context `traceparent` /
-  `tracestate`). See [RFC-0004][rfc-0004], [RFC-0020][rfc-0020]
-  and [RFC-0046][rfc-0046].
+  `tracestate`). `ShardedCounter` adds to padded cells without
+  contention, `BoundedHistogram` samples successful calls down to a
+  rate per second, and `RateLimitHandler` passes one log record per
+  interval of each event. See [RFC-0004][rfc-0004], [RFC-0020][rfc-0020],
+  [RFC-0046][rfc-0046] and [RFC-0051][rfc-0051].
 - **Epoch** — in-process strictly-monotonic 64-bit counter for
   leader generations, schema versions, optimistic-concurrency
   tokens. `epoch.Epoch` value type plus thread-safe
@@ -165,7 +168,9 @@ seams every other thesmos library and framework depends on:
   requests. `List` stores typed values in chunks of 4,096 that
   do not move once the first chunk is full, so appending copies
   no element and a truncated `List` fills again without
-  allocating. See [RFC-0011][rfc-0011].
+  allocating. `Slabs` allocates byte slices of power-of-two size
+  classes from slabs and takes each one back singly, for a store whose
+  values come and go. See [RFC-0011][rfc-0011].
 - **Errs** — error-classification seam: a closed eight-value
   taxonomy of what a caller should *do* about a failure, not
   what went wrong. `Classify` walks an error tree
@@ -179,9 +184,10 @@ seams every other thesmos library and framework depends on:
   failure is not an error), `Bulkhead` (concurrency limit with
   optional queue, rejection / timeout / cancellation kept
   distinct), and `Retrier` (attempt count *and* a sliding-window
-  budget, full-jitter `Backoff`). All read time through
-  `clock.Clock`, so their transitions are exact under a virtual
-  clock. See [RFC-0023][rfc-0023].
+  budget, full-jitter `Backoff`), and `Limiter` (a token bucket of a
+  rate and a burst, whose waits reserve their units in order). All read
+  time through `clock.Clock`, so their transitions are exact under a
+  virtual clock. See [RFC-0023][rfc-0023] and [RFC-0050][rfc-0050].
 - **Batch** — request coalescing: `Loader[K, V]` accumulates
   concurrent single-key loads into one batched call and
   deduplicates concurrent loads of the same key. Not a cache —
@@ -199,12 +205,14 @@ seams every other thesmos library and framework depends on:
   `cas/memory`. See [RFC-0027][rfc-0027].
 - **Blob** — named object storage, streamed in both directions, with
   conditional writes through the `version` vocabulary. A failed `Put`
-  leaves the key as it was, an open reader returns one version of the
-  object, and a listing walked to the end over an unchanging store
-  returns every object once. `Put` returns an invalid-argument error for
-  a content type of more than 255 bytes or with a byte outside printable
-  ASCII. Implementation: `blob/memory`. See [RFC-0028][rfc-0028] and
-  [ADR-0042][adr-0042].
+  leaves the key as it was, and a listing walked to the end over an
+  unchanging store returns every object once. An open reader returns
+  only bytes of the version that it opened, and can fail with
+  `version.ErrMismatch` once that version is replaced or deleted. `Put`
+  returns an invalid-argument error for a content type of more than 255
+  bytes or with a byte outside printable ASCII. Implementation:
+  `blob/memory`. See [RFC-0028][rfc-0028], [ADR-0042][adr-0042] and
+  [ADR-0044][adr-0044].
 - **Conformance** — `coretest/castest` and `coretest/blobtest` check
   any store against the rules of its package, across a restart and a
   crash when the adapter supplies them. Core's tests run each suite
@@ -250,7 +258,8 @@ seams every other thesmos library and framework depends on:
   lists the signature types that it accepts in a `note.Resolver`,
   including ML-DSA types that signed-note assigns no byte. Verifying a
   checkpoint, cosigning into a reused note and reloading an unchanged
-  policy file allocate nothing. See [RFC-0047][rfc-0047].
+  policy file allocate nothing, and `note.TextOf` reads the text of a
+  note of any keys without an allocation. See [RFC-0047][rfc-0047].
 - **BTree** — ordered maps and sets as in-memory B+ trees. `Map`,
   `MapFunc`, which orders its keys by a function of the caller, and `Set`
   have point operations, `Floor` and `Ceil`, `At` and `Rank` in O(log n),
@@ -258,6 +267,18 @@ seams every other thesmos library and framework depends on:
   copy-on-write nodes. Lookups, iteration, and a delete and an insert at a
   steady size do not allocate, and a map that `Reset` empties refills from
   its own nodes. See [RFC-0043][rfc-0043] and [ADR-0027][adr-0027].
+- **Cache** — a bounded map whose entries leave by eviction, expiry or
+  removal. A `cache.Cache` bounds the sum of the costs of its entries and
+  evicts with S3-FIFO. A lookup takes no lock and does not allocate, a
+  pinned entry is not evicted before `Unpin`, and a callback receives
+  every entry that leaves. See [RFC-0049][rfc-0049].
+- **Time stamps** — the Time-Stamp Protocol of RFC 3161 in `crypto/tsp`.
+  `AppendRequest` encodes a request, `ParseResponse` checks a response,
+  and a `Verifier` verifies a token offline against the caller's roots
+  and policies, with RSA, ECDSA, Ed25519 and ML-DSA signatures. A token
+  of a known certificate verifies without an allocation for Ed25519 and
+  ML-DSA. `coretest/tsptest` is a time-stamp authority for tests. See
+  [RFC-0048][rfc-0048].
 
 These interfaces — and the others added over time — share three
 properties:
@@ -315,6 +336,7 @@ Apache 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 [adr-0041]: docs/adr/0041-a-custodian-creates-wrapping-keys.md
 [adr-0042]: docs/adr/0042-a-content-type-is-bounded.md
 [adr-0043]: docs/adr/0043-core-structs-have-canonical-codecs.md
+[adr-0044]: docs/adr/0044-a-blob-reader-may-fail-after-removal.md
 [rfc-0001]: docs/rfc/0001-clock-seam.md
 [rfc-0002]: docs/rfc/0002-rand-seam.md
 [rfc-0003]: docs/rfc/0003-crypto-seam.md
@@ -356,5 +378,9 @@ Apache 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 [rfc-0044]: docs/rfc/0044-nested-signature-policies.md
 [rfc-0046]: docs/rfc/0046-released-instruments-and-gauge-aggregation.md
 [rfc-0047]: docs/rfc/0047-signed-notes-and-checkpoints.md
+[rfc-0048]: docs/rfc/0048-time-stamp-tokens.md
+[rfc-0049]: docs/rfc/0049-bounded-cache.md
+[rfc-0050]: docs/rfc/0050-rate-limiter.md
+[rfc-0051]: docs/rfc/0051-bounded-hot-path-telemetry.md
 [contrib]: CONTRIBUTING.md
 [sec]: SECURITY.md

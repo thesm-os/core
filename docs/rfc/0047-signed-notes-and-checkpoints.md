@@ -43,6 +43,14 @@ Each string with rules of its own is a defined type with a `Valid`
 method: key names, origins, extension lines, and the names of a policy
 file.
 
+Every operation of the two packages has a path without an allocation
+through memory of the caller. A log signs each checkpoint into a reused
+note, a verifier parses each checkpoint into a reused note and body, and
+a reload of an unchanged policy file builds nothing again. `crypto/sign`
+gains the two mechanisms that these paths need: `AppendSigner`, which
+appends a signature to a buffer of the caller, and `Rules` with
+`Policy.Reset`, which build a policy again in its own memory.
+
 ## Motivation
 
 ### tlog has no checkpoint
@@ -57,7 +65,7 @@ so every log and every reader built on `tlog` writes its own.
 ### A witness quorum has no parser
 
 `sign.NewPolicyTree` builds "the nested groups of a C2SP tlog-policy"
-(`crypto/sign/doc.go:82-83`). A tlog-policy file identifies each log and
+(`crypto/sign/doc.go:84-85`). A tlog-policy file identifies each log and
 each witness by a signed-note verifier key. Core cannot parse a verifier
 key, so a caller decodes the keys and writes the tree by hand.
 
@@ -73,6 +81,17 @@ configurations, which core supports:
   0xff type is encoded.
 - `tlog` builds trees over any `crypto.Hasher`. A tree over SHA-384 has
   48-byte roots, and the message of type 0x06 has room for 32 bytes.
+
+### Checkpoints run at the rate of the logs
+
+A log signs a checkpoint at each update of its tree. A witness verifies
+and cosigns the checkpoints of every log that it witnesses, and a
+monitor verifies the checkpoints of the logs that it follows. Each of
+these processes handles checkpoints at the rate of its logs, so an
+allocation per checkpoint loads its garbage collector in proportion to
+that rate. Core gives its hot paths a form without allocations, as
+`tlog.Update`, `arena` and `pool` do, and the formats of checkpoints
+follow the same rule.
 
 ### Why core
 
@@ -91,21 +110,24 @@ configurations, which core supports:
 | Component | Package | Responsibility |
 |---|---|---|
 | `Name`, `Type`, `NewType` | `note` | Key names, and the bytes of a signature type, including the encoding of a 0xff type |
-| `Key`, `ParseKey` | `note` | Verifier keys and their key IDs |
+| `Key`, `ParseKey`, `Key.Set` | `note` | Verifier keys and their key IDs, parsed into a new Key or into memory of the caller |
 | `KeyID`, `Algorithm` | `note` | The `sign.KeyID` and the algorithm of every note key and signature line |
-| `Verifier`, `Signer` | `note` | A `sign.Verifier` and a `sign.Signer` for one note key |
-| `Resolver` | `note` | The caller's table from signature type to constructor |
-| `Text`, `NewTextSigner` | `note` | Signatures over the note text, such as type 0x01 |
+| `Verifier`, `Signer` | `note` | A `sign.Verifier` and a `sign.AppendSigner` for one note key |
+| `Resolver`, `Keyring` | `note` | The caller's table from signature type to constructor, and the Verifiers of a configuration kept across its loads |
+| `Text`, `TextSigner` | `note` | Signatures over the note text, such as type 0x01 |
 | `Note`, `Signature`, `Parse`, `Open`, `Sign` | `note` | The encoding of a note, and its verification against a `sign.Policy` |
 | `Origin`, `Extension`, `Body`, `ParseBody` | `tlog/checkpoint` | Checkpoint bodies |
-| `CosignatureV1`, `SubtreeV1`, their signers, `Timestamp` | `tlog/checkpoint` | The two timestamped messages of tlog-cosignature |
+| `CosignatureV1`, `SubtreeV1`, `CosignatureV1Signer`, `SubtreeV1Signer`, `Timestamp` | `tlog/checkpoint` | The two timestamped messages of tlog-cosignature |
 | `PolicyName`, `Policy`, `ParsePolicy`, `Policy.QuorumRule` | `tlog/checkpoint` | tlog-policy files, and their quorum as a `sign.Rule` |
-| `Verifier` | `tlog/checkpoint` | One `sign.Policy` per origin, built from a `Policy` |
+| `Verifier` | `tlog/checkpoint` | One `sign.Policy` per origin, built from a `Policy` and built again in its own memory |
+| `AppendSigner`, `AppendSign`, `AsAppendSigner` | `crypto/sign` | A signature appended to a buffer of the caller |
+| `Rules`, `Policy.Reset` | `crypto/sign` | The memory of the rules of a tree, and a policy built again in its own memory |
 | `Verifier.Context` | `crypto/sign/mldsa` | The context string of an ML-DSA key, which the signer of type 0x06 checks |
 
-`note` imports `crypto`, `crypto/sign` and `errs`. `tlog/checkpoint`
-imports `note`, `crypto`, `crypto/sign`, `clock` and `errs`. Neither
-package imports an algorithm package. The caller's table names
+`note` imports `crypto`, `crypto/sign`, `errs` and `pool`.
+`tlog/checkpoint` imports `note`, `crypto`, `crypto/sign`, `clock`,
+`errs` and `pool`. The kanon codecs of both import the kanon runtime.
+Neither package imports an algorithm package. The caller's table names
 `ed25519`, `mldsa` or `ecdsap384`.
 
 ### Names and signature types
@@ -140,9 +162,10 @@ func NewType(identifier string) (Type, error)
 // followed by a length byte n of at least 1 and by n more bytes.
 func (t Type) Valid() bool
 
-// String returns "0x01" for an assigned type, and "0xff:" followed by
-// the identifier for a type without an assigned byte. It is for
-// diagnostics.
+// String returns "0x01" for the type of the byte 0x01, the identifier
+// for a valid type without an assigned byte, and "0x" followed by the
+// bytes of t in hexadecimal for any other value. It is for diagnostics,
+// and allocates nothing for a valid type.
 func (t Type) String() string
 ```
 
@@ -177,6 +200,10 @@ encoding of a 0xff type does not change the key ID. A verifier key whose
 That type has no entry in the caller's resolver, so resolution fails
 with `ErrUnknownType`.
 
+`String` returns a substring of a table for a type of one byte, and a
+substring of the type for the identifier of a 0xff type. Neither
+allocates.
+
 ### Verifier keys
 
 ```go
@@ -197,7 +224,8 @@ type Key struct {
 
 // ParseKey parses a verifier key: the name, '+', the key ID in 8
 // lowercase hexadecimal digits, '+', and the type followed by the
-// public key in padded standard base64.
+// public key in padded standard base64. The name of the returned Key
+// is a substring of vkey.
 //
 // Returns ErrKey, classified errs.Invalid, for an invalid name, a key ID
 // that is not 8 lowercase hexadecimal digits, base64 that the strict
@@ -220,7 +248,15 @@ func (k Key) AppendText(b []byte) ([]byte, error)
 // MarshalText returns the verifier key of k, as AppendText does.
 func (k Key) MarshalText() ([]byte, error)
 
-// UnmarshalText sets k to the key of a verifier key, as ParseKey does.
+// Set sets k to the key of the verifier key vkey, as ParseKey parses
+// it, and reuses the memory of k: its name and its type when they equal
+// those of vkey, and the capacity of its public key. A name that differs
+// is a substring of vkey. With String, Set implements flag.Value. k is
+// unchanged on an error.
+func (k *Key) Set(vkey string) error
+
+// UnmarshalText sets k to the key of text, as Set does, and implements
+// encoding.TextUnmarshaler.
 func (k *Key) UnmarshalText(text []byte) error
 
 // String returns the verifier key of k, or "" for a Key that is not
@@ -235,7 +271,10 @@ the PKIX encoding alone, so this package cannot represent a key of type
 0x02.
 
 `Key` implements the text interfaces of `encoding`, so a configuration
-in JSON or YAML decodes a list of verifier keys into `[]note.Key`.
+in JSON or YAML decodes a list of verifier keys into `[]note.Key`, and a
+command line takes a verifier key as a flag. `Set` and `UnmarshalText`
+decode into a pooled buffer and allocate nothing for a Key that holds
+the same key, as at each reload of a configuration.
 
 ### Key identity
 
@@ -299,11 +338,13 @@ type Verifier interface {
     Key() Key
 }
 
-// Signer is a Verifier that signs note texts. Sign returns the value
-// of a signature line for the text.
+// Signer is a Verifier that signs note texts. Sign returns the value of
+// a signature line for the text, and AppendSign appends it to dst by
+// the rules of sign.AppendSigner.
 type Signer interface {
     Verifier
     Sign(text []byte) ([]byte, error)
+    AppendSign(ctx context.Context, dst, text []byte) ([]byte, error)
 }
 
 // Resolver maps a signature type to a function that builds the Verifier
@@ -314,18 +355,15 @@ type Signer interface {
 // entries, so a verifier key selects only a type that the caller
 // listed. Apply a Resolver only to keys that the caller trusts, such as
 // the keys of its policy file, and never to a key that a note contains.
-//
-// # Concurrency
-//
-// Safe for concurrent use once built, as for any map that is only read.
 type Resolver map[Type]func(Key) (Verifier, error)
 
 // Verifier returns the Verifier of k.
 //
 // Returns ErrUnknownType, classified errs.Unsupported, when r has no
 // entry for k.Type, when the entry returns neither a Verifier nor an
-// error, and when the entry builds a Verifier for another key. Returns
-// the entry's error for a key that the entry refuses.
+// error, and when the entry builds a Verifier for another key: one whose
+// Key, KeyID, PublicKey or Algorithm is not that of k. Returns the
+// entry's error for a key that the entry refuses.
 func (r Resolver) Verifier(k Key) (Verifier, error)
 
 // Text returns the Resolver entry of a type whose signatures are the
@@ -333,14 +371,33 @@ func (r Resolver) Verifier(k Key) (Verifier, error)
 // sign.Resolver entry of the algorithm, such as ed25519.Resolve.
 func Text(resolve func(pub []byte) (sign.Verifier, error)) func(Key) (Verifier, error)
 
-// NewTextSigner returns a Signer for the key with name, type t and the
-// public key of s, whose signatures are the signatures of s over the
-// note text.
+// TextSigner is a Signer whose signatures are the signatures of a
+// sign.Signer over the note text. The zero TextSigner has no key: its
+// Verify reports false, and its Sign, SignContext and AppendSign return
+// ErrKey.
+type TextSigner struct{ /* unexported fields */ }
+
+// NewTextSigner returns a new TextSigner, as TextSigner.Reset sets it.
+func NewTextSigner(name Name, t Type, s sign.Signer) (*TextSigner, error)
+
+// Reset sets ts to the signer of the key with name, type t and the
+// public key of s.
 //
-// Returns ErrKey for an invalid name, and ErrType for an invalid type.
-// For TypeEd25519, returns ErrKey for a signer whose algorithm is not
-// Ed25519.
-func NewTextSigner(name Name, t Type, s sign.Signer) (Signer, error)
+// Returns ErrKey for a nil s, an invalid name and a signer without a
+// public key, and ErrType for an invalid type. For TypeEd25519, returns
+// ErrKey for a signer whose algorithm is not Ed25519. ts is unchanged
+// on an error.
+func (ts *TextSigner) Reset(name Name, t Type, s sign.Signer) error
+
+// Keyring builds the Verifier of each key of a configuration through a
+// Resolver, and keeps the Verifiers for the next load of the
+// configuration. Reset starts a load, and drops each Verifier that the
+// load before did not ask for. The zero Keyring resolves nothing.
+type Keyring struct{ /* unexported fields */ }
+
+func (k *Keyring) Reset(r Resolver)
+func (k *Keyring) Grow(n int)
+func (k *Keyring) Verifier(key Key) (Verifier, error)
 ```
 
 Each entry of a `Resolver` combines a message format with an
@@ -367,19 +424,30 @@ Type 0x06 signs with the empty context, as torchwood v0.10.0 verifies
 it. Its entry calls `mldsa.Resolver` with an empty string. A 0xff type
 with ML-DSA defines its own context, and its entry binds that context.
 
+The Verifier of an entry keeps the public key that the Verifier of its
+algorithm copies, so it does not alias the caller's key. A `Keyring`
+builds the Verifier of each key once: its `Verifier` returns the
+Verifier that it built for a key of the same name, type and public key
+in the load before, and allocates nothing for it. A process that reloads
+its policy file therefore builds a Verifier only for a new key.
+
 A context bounds the wait of every signer of `note` and of
 `tlog/checkpoint`, such as a signer behind a hardware module. Each
-signer implements `sign.ContextSigner`, whose `SignContext` builds the
-signed message and calls `sign.SignContext` on the wrapped signer. The
-signers leave out `Unwrap`. Through `Unwrap`, `sign.AsStreamingSigner`
-would find the wrapped signer's streaming capability, and a caller that
-streamed the note text to it would get a signature over the wrong
-message for a cosignature type.
+signer implements `sign.ContextSigner` and `sign.AppendSigner`. Its
+`SignContext` builds the signed message and calls `sign.SignContext` on
+the wrapped signer. Its `AppendSign` builds the message in a pooled
+buffer and calls `sign.AppendSign`. The signers leave out `Unwrap`.
+Through `Unwrap`, `sign.AsStreamingSigner` would find the wrapped
+signer's streaming capability, and a caller that streamed the note text
+to it would get a signature over the wrong message for a cosignature
+type.
 
 The constructor of a signer for an assigned type refuses a wrapped
 signer of another algorithm with `ErrKey`. The algorithm of an assigned
 type is fixed, and a signer of another algorithm writes lines that no
-verifier of the type accepts.
+verifier of the type accepts. A signer's key aliases the public key of
+the wrapped signer, which the `sign.Verifier` contract makes immutable,
+so `Reset` copies nothing.
 
 ### Notes
 
@@ -389,11 +457,11 @@ type Signature struct {
     // Name is the key name.
     Name Name
 
-    // ID is the key ID.
-    ID uint32
-
     // Value is the signature: the decoded bytes after the key ID.
     Value []byte
+
+    // ID is the key ID.
+    ID uint32
 }
 
 // Valid reports whether s has a valid name and a value.
@@ -418,30 +486,37 @@ type Note struct {
 // has at least one signature line and every line is Valid.
 func (n *Note) Valid() bool
 
-// Parse parses a signed note without verifying it. Text is a subslice
-// of msg. The text of a note is untrusted until Check returns nil.
+// Parse parses a signed note into a new Note without verifying it, as
+// Note.UnmarshalText parses it. Text is a subslice of msg. The text of
+// a note is untrusted until Check returns nil.
 //
 // Returns ErrNote, classified errs.Invalid, for a note that is not valid
 // UTF-8, that contains a character below U+0020 other than newline,
 // that has no blank line before its signature lines, or that has a
 // signature line with an invalid name, base64 that the strict decoder
 // refuses, or fewer than 5 decoded bytes.
-func Parse(msg []byte) (*Note, error)
+func Parse(msg []byte) (Note, error)
 
 // Open parses msg, and returns the note when its signatures satisfy p.
 //
 // Returns the errors of Parse, and the error of Note.Check.
-func Open(msg []byte, p sign.Policy) (*Note, error)
+func Open(msg []byte, p sign.Policy) (Note, error)
 
 // Sign returns the note of text with one signature line from each of
-// signers, in order. ctx bounds the wait of a signer behind a process
-// boundary, as sign.SignContext does.
+// signers, in order, as Note.Sign signs it into a new Note.
+func Sign(ctx context.Context, text []byte, signers ...Signer) (Note, error)
+
+// Sign sets n to the note of text with one signature line from each of
+// signers, in order, and appends each signature to the Value at the
+// position of its signer. ctx bounds the wait of a signer behind a
+// process boundary.
 //
 // Returns ErrNote for a text that does not end in a newline, that is
 // not valid UTF-8, or that contains a character below U+0020 other
-// than newline. Returns ErrKey for a signer with an invalid name, and
-// the error of a signer.
-func Sign(ctx context.Context, text []byte, signers ...Signer) (*Note, error)
+// than newline. Returns ErrKey for a nil signer and a signer with an
+// invalid name, and the error of a signer. After an error n has no
+// text and no line, and keeps its memory.
+func (n *Note) Sign(ctx context.Context, text []byte, signers ...Signer) error
 
 // Check reports whether the signature lines of n satisfy p for n.Text.
 // It converts each line to a sign.Signature and calls p.Check.
@@ -458,6 +533,21 @@ func (n *Note) Find(k Key) (Signature, bool)
 // signature line. It implements encoding.TextAppender. Returns ErrNote
 // for a Note that is not Valid.
 func (n *Note) AppendText(b []byte) ([]byte, error)
+
+// MarshalText returns the note, as AppendText appends it.
+func (n *Note) MarshalText() ([]byte, error)
+
+// UnmarshalText sets n to the note of msg, as Parse parses it, and
+// reuses the memory of n: its lines, each key name that equals the name
+// of the line at its position, and each Value, into which it decodes
+// the signature of the line at its position. After an error n has no
+// text and no line, and keeps its memory.
+func (n *Note) UnmarshalText(msg []byte) error
+
+// TextOf returns the text of the signed note msg, as Parse returns it in
+// Note.Text, without building a Note. It checks msg as Parse does, and
+// returns the errors of Parse. The text is a subslice of msg.
+func TextOf(msg []byte) ([]byte, error)
 
 var (
     // ErrNote is returned for a malformed note or note text.
@@ -496,11 +586,32 @@ witness returns only its lines, each formatted with
 `Signature.AppendText`. A log that receives a witness's lines appends
 them to `Note.Signatures`.
 
-A record stores a key, a note or a body as its C2SP text, and a
-signature line as a `sign.Signature`. The C2SP text is the only
-encoding that key IDs and signatures cover, so these types do not get a
-kanon codec. A record that needs one of them as a struct field reverses
-this choice.
+Each reuse form writes a value into the memory of the value at the same
+position in the previous call:
+
+- `Note.Sign` appends each signature to the Value of the line at the
+  position of its signer. A log or a witness that signs every checkpoint
+  of one log into one Note allocates nothing with Ed25519.
+- `Note.UnmarshalText` decodes each signature into the Value at its
+  position and keeps each key name that repeats. A verifier that parses
+  every checkpoint of one log into one Note allocates nothing.
+- `Parse` allocates three times for any number of lines: the lines, one
+  buffer for the values, and one string for the key names.
+
+A caller that hashes the texts of the notes of many logs parses notes
+whose key names change from one call to the next, so `UnmarshalText`
+allocates the names on almost every call. `TextOf` returns the text
+without a Note. It checks the lines in the order of `Parse` and decodes
+each signature in chunks of 512 characters into an array on its stack,
+so it allocates nothing for any note that it accepts. A fuzz test
+compares its text and its errors with those of `Parse`.
+
+`Key`, `Signature` and `Note` have canonical kanon codecs, the form of
+these types in a kanon record, with the field numbers Name 1, Type 2 and
+PublicKey 3, Name 1, Value 2 and ID 3, and Text 1 and Signatures 2. A
+decode accepts only the encoding that its encode writes. The C2SP text
+is the form that key IDs and signatures cover, and `Parse` and
+`AppendText` read and write it.
 
 ### Checkpoint bodies
 
@@ -527,6 +638,9 @@ type Body struct {
     // Origin identifies the log.
     Origin Origin
 
+    // Extensions are the extension lines.
+    Extensions []Extension
+
     // Size is the number of leaves of the tree.
     Size uint64
 
@@ -534,16 +648,14 @@ type Body struct {
     // SHA-256, as RFC 6962 and C2SP specify, and 48 or 64 bytes for a
     // tree that tlog builds over another hasher.
     Root crypto.Digest
-
-    // Extensions are the extension lines.
-    Extensions []Extension
 }
 
 // Valid reports whether b has a valid origin, a root of 32, 48 or 64
 // bytes, and valid extension lines.
 func (b Body) Valid() bool
 
-// ParseBody parses the text of a checkpoint.
+// ParseBody parses the text of a checkpoint. The origin and the
+// extension lines are substrings of one string of text.
 //
 // Returns ErrBody, classified errs.Invalid, for a text with fewer than
 // three lines, a text that does not end in a newline, an origin or an
@@ -559,7 +671,9 @@ func (b Body) AppendText(dst []byte) ([]byte, error)
 // MarshalText returns the text of b, as AppendText does.
 func (b Body) MarshalText() ([]byte, error)
 
-// UnmarshalText sets b to the body of text, as ParseBody does.
+// UnmarshalText sets b to the body of text, as ParseBody does, and
+// keeps the origin and each extension line of b that equals the line of
+// text. b is unchanged on an error.
 func (b *Body) UnmarshalText(text []byte) error
 ```
 
@@ -574,6 +688,14 @@ is for a deployment whose witnesses verify trees over SHA-384.
 valid key name is a valid origin. An origin may contain spaces and `+`,
 which tlog-checkpoint permits and a key name excludes. A checkpoint with
 such an origin matches no log of a policy.
+
+`ParseBody` makes one string of the text and takes the origin and the
+extension lines from it, so it allocates twice for a body with extension
+lines and once for a body without them. `UnmarshalText` makes that
+string only for a line that differs from the line of the Body, so the
+next checkpoint of the same log parses into the same Body without an
+allocation. `Body` has a canonical kanon codec with the field numbers
+Origin 1, Extensions 2, Size 3 and Root 4.
 
 ### Cosignatures
 
@@ -607,34 +729,46 @@ func CosignatureV1(resolve func(pub []byte) (sign.Verifier, error)) func(note.Ke
 // cosigned_message of the checkpoint in the note text.
 func SubtreeV1(resolve func(pub []byte) (sign.Verifier, error)) func(note.Key) (note.Verifier, error)
 
-// NewCosignatureV1Signer returns a note.Signer for the key with name,
-// type t and the public key of s, whose signatures are CosignatureV1
-// signatures of s. Each signature contains the time of a reading of
-// utc, in whole seconds.
+// CosignatureV1Signer is a note.Signer whose signatures are
+// CosignatureV1 signatures of a sign.Signer. Each signature contains
+// the time of a reading of a clock.UTCSource, in whole seconds. The
+// zero CosignatureV1Signer has no key, and its Sign returns ErrKey.
+type CosignatureV1Signer struct{ /* unexported fields */ }
+
+// NewCosignatureV1Signer returns a new CosignatureV1Signer, as Reset
+// sets it.
+func NewCosignatureV1Signer(name note.Name, t note.Type, s sign.Signer, utc clock.UTCSource, maxError time.Duration) (*CosignatureV1Signer, error)
+
+// Reset sets c to the signer of the key with name, type t and the
+// public key of s, with the timestamps of readings of utc within
+// maxError.
 //
-// Returns ErrKey and ErrType as note.NewTextSigner does, and
+// Returns ErrKey and ErrType as note.TextSigner.Reset does, and
 // ErrTimestamp for a nil utc or a negative maxError. For
 // TypeEd25519Cosignature, returns ErrKey for a signer whose algorithm is
 // not Ed25519. Its Sign returns an error that wraps ErrClock,
 // classified errs.Transient, when utc returns an error, when the reading
 // is not within maxError, and when the reading is before the Unix
-// epoch.
-func NewCosignatureV1Signer(name note.Name, t note.Type, s sign.Signer, utc clock.UTCSource, maxError time.Duration) (note.Signer, error)
+// epoch. c is unchanged on an error.
+func (c *CosignatureV1Signer) Reset(name note.Name, t note.Type, s sign.Signer, utc clock.UTCSource, maxError time.Duration) error
 
-// NewSubtreeV1Signer returns a note.Signer for the key with name, type
-// t and the public key of s, whose signatures are SubtreeV1 signatures
-// of s, timestamped from utc as NewCosignatureV1Signer timestamps them.
-// With a nil utc the timestamp is 0, which does not state a time, as a
-// log does when it signs its own checkpoint.
-//
-// Returns the errors of NewCosignatureV1Signer, apart from the one for
-// a nil utc, and ErrKey for a name longer than 255 bytes. For
-// TypeMLDSA44Cosignature, returns ErrKey for a signer whose algorithm is
-// not ML-DSA-44, and for a signer that reports a context other than the
-// empty one through a Context() string method. Its Sign returns the
-// errors of the Sign of NewCosignatureV1Signer, and ErrBody for a body
-// that a SubtreeV1 signature cannot cover.
-func NewSubtreeV1Signer(name note.Name, t note.Type, s sign.Signer, utc clock.UTCSource, maxError time.Duration) (note.Signer, error)
+// SubtreeV1Signer is a note.Signer whose signatures are SubtreeV1
+// signatures of a sign.Signer, timestamped as a CosignatureV1Signer
+// timestamps them. With a nil UTC source the timestamp is 0, which does
+// not state a time, as a log writes it when it signs its own checkpoint.
+type SubtreeV1Signer struct{ /* unexported fields */ }
+
+// NewSubtreeV1Signer returns a new SubtreeV1Signer, as Reset sets it.
+func NewSubtreeV1Signer(name note.Name, t note.Type, s sign.Signer, utc clock.UTCSource, maxError time.Duration) (*SubtreeV1Signer, error)
+
+// Reset returns the errors of CosignatureV1Signer.Reset, apart from the
+// one for a nil utc, and ErrKey for a name longer than 255 bytes. For
+// TypeMLDSA44Cosignature, it returns ErrKey for a signer whose
+// algorithm is not ML-DSA-44, and for a signer that reports a context
+// other than the empty one through a Context() string method. Its Sign
+// also returns ErrBody for a body that a SubtreeV1 signature cannot
+// cover.
+func (c *SubtreeV1Signer) Reset(name note.Name, t note.Type, s sign.Signer, utc clock.UTCSource, maxError time.Duration) error
 
 // Timestamp returns the time of a timestamped signature value: the
 // big-endian uint64 in its first 8 bytes, as seconds since the Unix
@@ -659,7 +793,7 @@ package mldsa
 func (v *Verifier) Context() string
 ```
 
-`NewSubtreeV1Signer` finds the method on the signer, or behind its
+`SubtreeV1Signer.Reset` finds the method on the signer, or behind its
 `Unwrap`, as the `As` functions of `sign` find a capability. A signer
 that does not report its context, such as one behind a hardware module,
 signs without the check. Its cosignatures then fail verification when
@@ -683,10 +817,11 @@ timestamp is the claim of another party, without a logical counter and
 without a node of the deployment.
 
 A verifier of either format reads the timestamp from the value, and
-rebuilds the signed message from the timestamp and the note text.
-`Check` passes the same text to each verifier, and each verifier checks
-its cosignature against its own timestamp. A verifier returns false for
-a value shorter than 8 bytes and for a timestamp above 2^63 − 1.
+rebuilds the signed message from the timestamp and the note text in a
+pooled buffer. `Check` passes the same text to each verifier, and each
+verifier checks its cosignature against its own timestamp. A verifier
+returns false for a value shorter than 8 bytes and for a timestamp above
+2^63 − 1.
 
 A `SubtreeV1` verifier parses the note text as a body. It returns false,
 and its signer returns `ErrBody`, for each of these bodies:
@@ -727,6 +862,10 @@ const QuorumNone PolicyName = "none"
 // accepts, the witnesses and groups whose cosignatures count, and the
 // quorum of cosignatures that a checkpoint needs.
 type Policy struct {
+    // Quorum is the name of the witness or group whose cosignatures a
+    // checkpoint needs, or QuorumNone.
+    Quorum PolicyName
+
     // Logs are the log lines. A log signs the checkpoints whose origin
     // is its key name.
     Logs []Log
@@ -737,20 +876,16 @@ type Policy struct {
     // Groups are the group lines, in the order of the file. A group
     // refers only to witnesses and groups before it.
     Groups []Group
-
-    // Quorum is the name of the witness or group whose cosignatures a
-    // checkpoint needs, or QuorumNone.
-    Quorum PolicyName
 }
 
 // Log is a line "log <vkey> [<url>]".
 type Log struct {
-    // Key is the log's verifier key.
-    Key note.Key
-
     // URL is the optional URL. tlog-policy leaves its meaning to the
     // application, and core does not read it.
     URL string
+
+    // Key is the log's verifier key.
+    Key note.Key
 }
 
 // Valid reports whether l has a Valid key.
@@ -761,12 +896,11 @@ type Witness struct {
     // Name is the witness's name in the policy.
     Name PolicyName
 
+    // URL is the optional URL.
+    URL string
+
     // Key is the witness's verifier key.
     Key note.Key
-
-    // URL is the optional URL. tlog-policy leaves its meaning to the
-    // application, and core does not read it.
-    URL string
 }
 
 // Valid reports whether w has a Valid name other than QuorumNone and a
@@ -778,12 +912,12 @@ type Group struct {
     // Name is the group's name in the policy.
     Name PolicyName
 
+    // Members are the names of the group's witnesses and groups.
+    Members []PolicyName
+
     // Threshold is the number of members that must count: the number of
     // the line, 1 for any, and len(Members) for all.
     Threshold int
-
-    // Members are the names of the group's witnesses and groups.
-    Members []PolicyName
 }
 
 // Valid reports whether g has a Valid name other than QuorumNone, at
@@ -795,24 +929,32 @@ func (g Group) Valid() bool
 // whether each name is defined once and before a group or the quorum
 // refers to it, whether each name is a member at most once and each
 // public key appears once, and whether the quorum is a defined name or
-// QuorumNone.
+// QuorumNone. It allocates nothing.
 func (p *Policy) Valid() bool
 
-// QuorumRule returns the quorum of p as a sign.Rule, with each witness
-// key resolved through r: an AllOf rule of its key for a witness, and an
-// AtLeast rule of its members with its threshold for a group.
-// NewVerifier builds its trees from it.
+// QuorumRule returns the quorum of p as a sign.Rule in the memory of
+// rules, with the Verifier of each witness key from keys: an AllOf rule
+// of its key for a witness, and an AtLeast rule of its members with its
+// threshold for a group. A Verifier builds its trees from the same rule.
 //
 // Returns ErrPolicy for a Policy that is not Valid and for the quorum
-// QuorumNone, and the error of r.Verifier for a key that r cannot
+// QuorumNone, and the error of keys.Verifier for a key that keys cannot
 // resolve.
-func (p *Policy) QuorumRule(r note.Resolver) (sign.Rule, error)
+func (p *Policy) QuorumRule(rules *sign.Rules, keys *note.Keyring) (sign.Rule, error)
 
-// ParsePolicy parses a tlog-policy file.
+// ParsePolicy parses a tlog-policy file into a new Policy, as
+// Policy.UnmarshalText parses it.
+func ParsePolicy(text []byte) (Policy, error)
+
+// UnmarshalText sets p to the policy of the file text. It compares each
+// line of text with the line at its position in p first, and keeps p
+// as it is when every line is equal. Otherwise it parses text into the
+// slices of p.
 //
 // Returns ErrPolicy, classified errs.Invalid, with the number of the
-// offending line, for each rule of the file that the text breaks.
-func ParsePolicy(text []byte) (*Policy, error)
+// offending line, for each rule of the file that the text breaks. After
+// an error p has no line and no quorum, and keeps its memory.
+func (p *Policy) UnmarshalText(text []byte) error
 ```
 
 `ParsePolicy` enforces the rules of tlog-policy:
@@ -838,34 +980,56 @@ A file may omit `log` lines, as tlog-policy permits for an application
 that knows its logs from another source. Such an application appends
 them to `Policy.Logs` before it builds a `Verifier`.
 
+`UnmarshalText` runs over the bytes of the file first. It compares each
+name, URL, threshold and member with the value at its position in p,
+and each key with the verifier key that it writes for the key of p into
+a pooled buffer. A reload of an unchanged file therefore allocates
+nothing. At the first line that differs it parses the string of the
+file. It counts the lines, the members and the bytes of the public keys
+first, and allocates each slice once at its size. Every name, URL and
+key name is then a substring of that one string, and the keys of one
+0xff type share one `Type`. `ParsePolicy` allocates six times for
+tlog-policy's example: the string, the logs, the witnesses, the groups,
+the members and the public keys.
+
 ### Checkpoint verification
 
 ```go
-// Verifier verifies checkpoints against a Policy.
+// Verifier verifies checkpoints against a Policy. The zero Verifier has
+// no tree and refuses every checkpoint with ErrOrigin.
 //
 // # Concurrency
 //
-// Immutable and safe for concurrent use.
+// Safe for concurrent use while no goroutine calls Reset on it.
 type Verifier struct{ /* unexported fields */ }
 
-// NewVerifier returns a Verifier for p, with each key resolved through
-// r.
+// NewVerifier returns a new Verifier for p, with each key resolved
+// through r, as Verifier.Reset sets it. The Verifier does not refer to
+// p.
+func NewVerifier(p *Policy, r note.Resolver) (*Verifier, error)
+
+// Reset sets v to the Verifier of p, with each key resolved through r,
+// and reuses the memory of v: the Verifier of each key of the policy
+// before, through a note.Keyring, the rules, and the sign.Policy of
+// each tree.
 //
 // Returns ErrPolicy for a policy without logs and for a Policy that is
 // not Valid. Returns the error of r.Verifier for a key that r cannot
 // resolve, and an error that wraps sign.ErrPolicy, classified
-// errs.Invalid, for a tree that sign.NewPolicyTree refuses.
-func NewVerifier(p *Policy, r note.Resolver) (*Verifier, error)
+// errs.Invalid, for a tree that sign.Policy.Reset refuses. After an
+// error v has no tree and keeps its memory.
+func (v *Verifier) Reset(p *Policy, r note.Resolver) error
 
-// Verify returns the body of the checkpoint in n when the signatures of
-// n satisfy the policy: the signature of a log whose key name is the
-// origin, and the cosignatures of the quorum.
+// Verify sets b to the body of the checkpoint in n when the signatures
+// of n satisfy the policy: the signature of a log whose key name is the
+// origin, and the cosignatures of the quorum. It reuses the memory of b
+// as Body.UnmarshalText does.
 //
 // Returns ErrBody when n.Text is not a body, and ErrOrigin, classified
 // errs.Integrity, for an origin that is not the key name of a log of
 // the policy. Returns the error of Note.Check when the signatures do
-// not satisfy the tree of the origin.
-func (v *Verifier) Verify(n *note.Note) (Body, error)
+// not satisfy the tree of the origin. b is unchanged on an error.
+func (v *Verifier) Verify(n *note.Note, b *Body) error
 
 var (
     // ErrBody is returned for a malformed body, and for a body that a
@@ -873,7 +1037,7 @@ var (
     ErrBody = errs.WithClass(errors.New("checkpoint: malformed body"), errs.Invalid)
 
     // ErrPolicy is returned for a policy that breaks a rule of
-    // tlog-policy, or that NewVerifier cannot build a tree from.
+    // tlog-policy, or that a Verifier cannot build a tree from.
     ErrPolicy = errs.WithClass(errors.New("checkpoint: invalid policy"), errs.Invalid)
 
     // ErrOrigin is returned by Verify for an origin that is not the key
@@ -890,7 +1054,7 @@ var (
 )
 ```
 
-`NewVerifier` builds one `sign.Policy` for each origin, the key name of
+A `Verifier` keeps one `sign.Policy` for each origin, the key name of
 one or more `log` lines. The tree of an origin requires one of its log
 keys and the quorum:
 
@@ -905,7 +1069,7 @@ tlog-policy's example policy, with one log, becomes this tree:
 
 ```go
 sign.AtLeast("checkpoint", 2,
-    sign.AtLeast("example.com/log", 1, sign.AllOf("example.com/log+530d903a", log)),
+    sign.AtLeast("example.com/log", 1, sign.AllOf("example.com/log", log)),
     sign.AtLeast("X-and-Y", 2,
         sign.AtLeast("X-witnesses", 2, sign.AllOf("X1", x1), sign.AllOf("X2", x2), sign.AllOf("X3", x3)),
         sign.AtLeast("Y-witnesses", 1, sign.AllOf("Y1", y1), sign.AllOf("Y2", y2), sign.AllOf("Y3", y3)),
@@ -921,7 +1085,17 @@ is the key name of no log fails with `ErrOrigin`, before any
 verification. `quorum none` still requires a log's signature, so no tree
 has a threshold of 0.
 
-A caller verifies a checkpoint in three calls:
+`Reset` builds the quorum once and the tree of each origin over it. It
+sorts the logs by origin, keeps the trees sorted by origin, and builds
+each tree in the `sign.Policy` of the tree at its position before.
+`Verify` finds the tree of an origin by a binary search, which compares
+the origin line of the note with the comparison operators of strings,
+and so without a copy of the line. A `Reset` to the policy that the
+Verifier holds allocates nothing. A caller that reloads the policy of
+goroutines that verify resets a second Verifier and swaps the two.
+
+A caller verifies the checkpoints of its logs in a loop of two calls
+per checkpoint, which allocates nothing:
 
 ```go
 p, err := checkpoint.ParsePolicy(policyText)
@@ -929,19 +1103,24 @@ if err != nil {
     return err
 }
 
-v, err := checkpoint.NewVerifier(p, r)
+v, err := checkpoint.NewVerifier(&p, r)
 if err != nil {
     return err
 }
 
-n, err := note.Parse(msg)
-if err != nil {
-    return err
-}
+var (
+    n    note.Note
+    body checkpoint.Body
+)
 
-body, err := v.Verify(n)
-if err != nil {
-    return err
+for msg := range checkpoints {
+    if err := n.UnmarshalText(msg); err != nil {
+        return err
+    }
+
+    if err := v.Verify(&n, &body); err != nil {
+        return err
+    }
 }
 ```
 
@@ -955,9 +1134,9 @@ sequenceDiagram
     participant N as note.Note
     participant P as sign.Policy
     participant K as note.Verifier
-    C->>V: Verify(n)
-    V->>V: ParseBody(n.Text)
-    V->>V: select the tree of the origin
+    C->>V: Verify(n, b)
+    V->>V: split n.Text into the lines of a body
+    V->>V: binary search for the tree of the origin
     V->>N: Check(tree)
     N->>P: Check(n.Text, one sign.Signature per line)
     loop at most once per key, until the root is decided
@@ -966,7 +1145,7 @@ sequenceDiagram
     end
     P-->>N: nil or ErrThreshold
     N-->>V: nil or the error
-    V-->>C: Body, or ErrBody, ErrOrigin or the error
+    V-->>C: nil after it sets b, or ErrBody, ErrOrigin or the error
 ```
 
 ### A caller's tree around the quorum
@@ -980,13 +1159,20 @@ A caller whose notes need another log rule writes its own tree around
 - A note whose first line is not the key name of the log that signs it.
 
 ```go
-q, err := p.QuorumRule(r)
+var (
+    rules sign.Rules
+    keys  note.Keyring
+    tree  sign.Policy
+)
+
+keys.Reset(r)
+
+q, err := p.QuorumRule(&rules, &keys)
 if err != nil {
     return err
 }
 
-tree, err := sign.NewPolicyTree(sign.AtLeast("note", 2, sign.AllOf("example.com/log", logPQ, logEC), q))
-if err != nil {
+if err := tree.Reset(rules.AtLeast("note", 2, rules.AllOf("example.com/log", logPQ, logEC), q)); err != nil {
     return err
 }
 
@@ -995,31 +1181,46 @@ if err := n.Check(tree); err != nil {
 }
 ```
 
-`logPQ` and `logEC` are the `note.Verifier` values that `r.Verifier`
-builds for the log's two keys. `NewPolicyTree` checks the whole tree,
-so a log key that is also a witness key fails there.
+`logPQ` and `logEC` are the `note.Verifier` values that `keys.Verifier`
+builds for the log's two keys. `Policy.Reset` checks the whole tree, so
+a log key that is also a witness key fails there. A caller that builds
+the tree again resets `rules` and `keys` first, and allocates nothing
+for the policy that it held.
 
 ### Signing and cosigning
 
-A log signs a checkpoint of the tree of a `tlog.Builder` `b`:
+A log signs a checkpoint of the tree of a `tlog.Builder` `b` into a
+`Note` that it reuses for every checkpoint:
 
 ```go
 s, err := note.NewTextSigner("example.com/log", note.TypeEd25519, key)
 if err != nil {
-    return nil, err
+    return err
 }
 
-text, err := checkpoint.Body{Origin: "example.com/log", Size: b.Size(), Root: b.Root()}.AppendText(nil)
-if err != nil {
-    return nil, err
-}
+var (
+    n    note.Note
+    text []byte
+    out  []byte
+)
 
-n, err := note.Sign(ctx, text, s)
-if err != nil {
-    return nil, err
-}
+for b := range updates {
+    text, err = checkpoint.Body{Origin: "example.com/log", Size: b.Size(), Root: b.Root()}.AppendText(text[:0])
+    if err != nil {
+        return err
+    }
 
-return n.AppendText(nil)
+    if err := n.Sign(ctx, text, s); err != nil {
+        return err
+    }
+
+    out, err = n.AppendText(out[:0])
+    if err != nil {
+        return err
+    }
+
+    publish(out)
+}
 ```
 
 A witness verifies the log's signature and a consistency proof from the
@@ -1032,8 +1233,8 @@ if err != nil {
     return nil, err
 }
 
-cosigned, err := note.Sign(ctx, n.Text, c)
-if err != nil {
+var cosigned note.Note
+if err := cosigned.Sign(ctx, n.Text, c); err != nil {
     return nil, err
 }
 
@@ -1047,10 +1248,10 @@ cosignatures it verified. A monitor that needs a witness's time verifies
 that witness's line itself, at one verification per witness:
 
 ```go
-times := map[checkpoint.PolicyName]time.Time{}
+keys.Reset(r)
 
 for _, w := range p.Witnesses {
-    wv, err := r.Verifier(w.Key)
+    wv, err := keys.Verifier(w.Key)
     if err != nil {
         return err
     }
@@ -1074,6 +1275,61 @@ does not depend on the order in which `Check` evaluates the tree. The
 same loop finds an invalid line of a known witness, which signed-note
 asks a verifier to reject.
 
+### Additions to crypto/sign
+
+```go
+package sign
+
+// AppendSigner is the optional capability of a Signer that writes its
+// signature into a buffer that the caller supplies. AppendSign reads
+// message and writes dst only until it returns. It returns dst unchanged
+// with an error, which wraps context.Cause(ctx) when ctx ends before the
+// signature is available.
+type AppendSigner interface {
+    Signer
+    AppendSign(ctx context.Context, dst, message []byte) ([]byte, error)
+}
+
+// AppendSign appends the signature of s over message to dst. It calls
+// the AppendSigner that AsAppendSigner finds in s, and otherwise signs
+// through SignContext and appends a copy of the signature.
+func AppendSign(ctx context.Context, s Signer, dst, message []byte) ([]byte, error)
+
+// AsAppendSigner returns the first AppendSigner in the chain that starts
+// at s and follows each decorator's Unwrap.
+func AsAppendSigner(s Signer) (AppendSigner, bool)
+
+// Rules is the memory of the rules of a tree. Its AllOf and AtLeast
+// build the rules that the functions AllOf and AtLeast build, and copy
+// keys and children into memory that Rules keeps. Reset makes that
+// memory free for the rules of the next tree.
+type Rules struct{ /* unexported fields */ }
+
+func (r *Rules) Grow(keys, children int)
+func (r *Rules) AllOf(name string, keys ...Verifier) Rule
+func (r *Rules) AtLeast(name string, threshold int, children ...Rule) Rule
+func (r *Rules) Reset()
+
+// Reset sets p to the Policy that requires root to count, as
+// NewPolicyTree builds it, and reuses the memory of p. After an error p
+// refuses every check with ErrPolicy, and keeps its memory.
+func (p *Policy) Reset(root Rule) error
+```
+
+The Ed25519, ML-DSA and ECDSA P-384 signers of core implement
+`AppendSigner`. The Ed25519 signer appends without an allocation,
+because `crypto/ed25519.Sign` returns a signature that the compiler
+keeps on the stack of its caller. The ML-DSA and ECDSA P-384 signers
+allocate what `crypto/mldsa.PrivateKey.Sign` and `crypto/ecdsa.SignASN1`
+allocate, since both return a new slice.
+
+`NewPolicyTree` and `Policy.Reset` check the shape of a tree and count
+its keys and rules before they copy it, so they size the memory of the
+policy once. `NewPolicyTree` allocates four times for the tree of
+tlog-policy's example: two for the index of the keys, one for the keys
+and one for the rules. `Policy.Reset` and the methods of `Rules`
+allocate nothing for a tree that fits the memory of the build before.
+
 ### Departures from the specifications
 
 | Rule | This design | Reason |
@@ -1093,14 +1349,15 @@ asks a verifier to reject.
 | Verifications for a note that repeats one known key's line 1,000 times | 1 |
 | Work per signature line before verification | One strict base64 decode and one SHA-256 of the key name |
 | Signed message of `SubtreeV1` | At most 580 bytes: 12 + 1 + 255 + 8 + 1 + 255 + 8 + 8 + 32 |
-| Nested groups in a quorum | 62. The root, 62 groups and the witness's key set fill the 64 rules of depth that `sign.NewPolicyTree` accepts |
+| Nested groups in a quorum | 62. The root, 62 groups and the witness's key set fill the 64 rules of depth that `sign.Policy.Reset` accepts |
 
 Core measured its verification costs with Go 1.27.1 on an AMD Ryzen 9
-9950X3D and four Ps. They give these figures for one `Verify`:
+9950X3D and four Ps, in six runs of each benchmark of `Verify`:
 
 - An Ed25519 log signature and cosignatures from the first two of 3
-  Ed25519 witnesses take 3 verifications, 82 to 85 µs.
-- The same checkpoint with ML-DSA-44 witnesses takes 163 to 168 µs.
+  Ed25519 witnesses take 3 verifications, 79 to 82 µs.
+- The same checkpoint with ML-DSA-44 witnesses takes 159 to 160 µs.
+- Neither allocates.
 
 The size of a signature line depends on its type:
 
@@ -1120,23 +1377,25 @@ requires reads at least that much.
 | Condition | Function | Error | Class |
 |---|---|---|---|
 | An identifier that is empty or longer than 255 bytes | `note.NewType` | `note.ErrType` | `Invalid` |
-| A malformed verifier key, or a key ID that differs from the key's | `note.ParseKey`, `Key.UnmarshalText` | `note.ErrKey` | `Invalid` |
+| A malformed verifier key, or a key ID that differs from the key's | `note.ParseKey`, `Key.Set`, `Key.UnmarshalText` | `note.ErrKey` | `Invalid` |
 | A `Key` that is not `Valid` | `Key.AppendText`, `Key.MarshalText` | `note.ErrKey` | `Invalid` |
-| A name or a type that is not `Valid` | `note.NewTextSigner`, the cosigner constructors | `note.ErrKey`, `note.ErrType` | `Invalid` |
-| A signer whose algorithm is not that of an assigned type, or an ML-DSA-44 signer of type 0x06 that reports a context other than the empty one | `note.NewTextSigner`, the cosigner constructors | `note.ErrKey` | `Invalid` |
-| A type without an entry, or an entry that builds a Verifier for another key | `Resolver.Verifier` | `note.ErrUnknownType` | `Unsupported` |
-| A note that is not valid UTF-8, contains a character below U+0020 other than newline, has no blank line before its signatures, or has a malformed signature line | `note.Parse`, `note.Open` | `note.ErrNote` | `Invalid` |
-| A text that does not end in a newline, is not valid UTF-8, or contains a character below U+0020 other than newline | `note.Sign`, `Note.AppendText` | `note.ErrNote` | `Invalid` |
+| A nil signer, or a name or a type that is not `Valid` | `note.NewTextSigner`, `TextSigner.Reset`, the cosigner constructors and their `Reset` | `note.ErrKey`, `note.ErrType` | `Invalid` |
+| A signer whose algorithm is not that of an assigned type, or an ML-DSA-44 signer of type 0x06 that reports a context other than the empty one | `note.NewTextSigner`, `TextSigner.Reset`, the cosigner constructors and their `Reset` | `note.ErrKey` | `Invalid` |
+| A zero `TextSigner`, `CosignatureV1Signer` or `SubtreeV1Signer` | Their `Sign`, `SignContext` and `AppendSign` | `note.ErrKey` | `Invalid` |
+| A type without an entry, or an entry that builds a Verifier for another key | `Resolver.Verifier`, `Keyring.Verifier` | `note.ErrUnknownType` | `Unsupported` |
+| A note that is not valid UTF-8, contains a character below U+0020 other than newline, has no blank line before its signatures, or has a malformed signature line | `note.Parse`, `note.Open`, `Note.UnmarshalText` | `note.ErrNote` | `Invalid` |
+| A text that does not end in a newline, is not valid UTF-8, or contains a character below U+0020 other than newline | `note.Sign`, `Note.Sign`, `Note.AppendText` | `note.ErrNote` | `Invalid` |
 | Signature lines that do not satisfy the policy | `Note.Check`, `note.Open`, `checkpoint.Verifier.Verify` | wraps `sign.ErrThreshold` | `Integrity` |
 | A text that is not a checkpoint body, or a `Body` that is not `Valid` | `checkpoint.ParseBody`, `Body.AppendText`, `Body.UnmarshalText`, `checkpoint.Verifier.Verify` | `checkpoint.ErrBody` | `Invalid` |
-| A body that a `SubtreeV1` signature cannot cover | `Sign` of a `NewSubtreeV1Signer` signer | `checkpoint.ErrBody` | `Invalid` |
-| A nil UTC source for a `CosignatureV1` signer, or a negative `maxError` | `checkpoint.NewCosignatureV1Signer`, `checkpoint.NewSubtreeV1Signer` | `checkpoint.ErrTimestamp` | `Invalid` |
+| A body that a `SubtreeV1` signature cannot cover | `Sign` of a `SubtreeV1Signer` | `checkpoint.ErrBody` | `Invalid` |
+| A nil UTC source for a `CosignatureV1Signer`, or a negative `maxError` | The cosigner constructors and their `Reset` | `checkpoint.ErrTimestamp` | `Invalid` |
 | A UTC source that returns an error, a reading that is not within `maxError`, or a reading before the Unix epoch | `Sign` of the cosigners | wraps `checkpoint.ErrClock` | `Transient` |
 | A value shorter than 8 bytes, or a timestamp above 2^63 − 1 | `checkpoint.Timestamp` | `checkpoint.ErrTimestamp` | `Invalid` |
-| A file that breaks a rule of tlog-policy | `checkpoint.ParsePolicy` | `checkpoint.ErrPolicy`, with the line number | `Invalid` |
+| A file that breaks a rule of tlog-policy | `checkpoint.ParsePolicy`, `Policy.UnmarshalText` | `checkpoint.ErrPolicy`, with the line number | `Invalid` |
 | A `Policy` that is not `Valid`, or whose quorum is `QuorumNone` | `Policy.QuorumRule` | `checkpoint.ErrPolicy` | `Invalid` |
-| A `Policy` without logs, or one that is not `Valid` | `checkpoint.NewVerifier` | `checkpoint.ErrPolicy` | `Invalid` |
-| A key that the resolver cannot resolve | `Policy.QuorumRule`, `checkpoint.NewVerifier` | the error of `Resolver.Verifier` | its class |
+| A `Policy` without logs, or one that is not `Valid` | `checkpoint.NewVerifier`, `checkpoint.Verifier.Reset` | `checkpoint.ErrPolicy` | `Invalid` |
+| A tree deeper than 64 rules | `checkpoint.NewVerifier`, `checkpoint.Verifier.Reset` | wraps `sign.ErrPolicy` | `Invalid` |
+| A key that the resolver cannot resolve | `Policy.QuorumRule`, `checkpoint.NewVerifier`, `checkpoint.Verifier.Reset` | the error of `Resolver.Verifier` | its class |
 | An origin that is not the key name of a log of the policy | `checkpoint.Verifier.Verify` | `checkpoint.ErrOrigin` | `Integrity` |
 
 A malformed signature value, a timestamp above 2^63 − 1, and a body that
@@ -1146,14 +1405,38 @@ verification failure to false.
 
 ### Allocation contract
 
+Every operation has a path without an allocation through memory of the
+caller. The benchmarks of the two packages assert each count of this
+table, with Ed25519 keys where the table names no algorithm.
+
 | Operation | Allocations |
 |---|---|
-| `note.Parse` | The `Note`, its slice of lines, each key name, and one buffer for the decoded values |
-| `Note.Check` | One slice of `sign.Signature`, and the allocations of `sign.Policy.Check` |
-| `Verify` of a `note.Text` verifier | The allocations of the wrapped `sign.Verifier` |
-| `Verify` of a `CosignatureV1` or `SubtreeV1` verifier | None on the warm path, apart from the wrapped `sign.Verifier`. The signed message is built in a pooled buffer |
-| `checkpoint.ParseBody` | The origin and the extension lines |
-| `checkpoint.Verifier.Verify` | The allocations of `ParseBody` and of `Note.Check` |
+| `Note.UnmarshalText` into a Note of the same keys | None |
+| `note.Parse` | Three, whatever the number of lines |
+| `Note.Sign` into a reused Note | None with Ed25519 |
+| `note.Sign` | Two for one signer: the lines and the value |
+| `Note.Check` of up to 16 lines | None, apart from `sign.Policy.Check` |
+| `Key.Set` and `Key.UnmarshalText` of the key that the Key holds | None |
+| `note.ParseKey` | One, the public key, and one more for a type without an assigned byte |
+| `Type.String` of a valid type | None |
+| `Keyring.Verifier` of a key that it keeps | None |
+| `Resolver.Verifier`, a `Text` entry, a `CosignatureV1` entry | Two with Ed25519: the Verifier and the Verifier of the algorithm |
+| A `SubtreeV1` entry | Four with ML-DSA-44 |
+| `TextSigner.Reset`, `CosignatureV1Signer.Reset`, `SubtreeV1Signer.Reset` | None |
+| `NewTextSigner`, `NewCosignatureV1Signer`, `NewSubtreeV1Signer` | One, the signer |
+| `AppendSign` of a note signer into a buffer with room | None with Ed25519. With ML-DSA-44, the signature that the standard library returns |
+| `Verify` of every note Verifier | The allocations of the wrapped `sign.Verifier`: none for Ed25519 and ML-DSA-44 |
+| `Body.UnmarshalText` of the origin and the extension lines that the Body holds | None |
+| `checkpoint.ParseBody` | Two with extension lines, one without |
+| `Policy.UnmarshalText` of the file that the Policy holds | None |
+| `checkpoint.ParsePolicy` | Six for tlog-policy's example |
+| `Policy.Valid` | None |
+| `Policy.QuorumRule` into the `Rules` and the `Keyring` of the quorum before | None |
+| `checkpoint.Verifier.Reset` to the policy that the Verifier holds | None |
+| `checkpoint.NewVerifier` | 18 for one log and three witnesses: the Verifier, its Keyring, rules, order of logs and trees, two for the Verifier of each key, and four for the `sign.Policy` of the origin |
+| `checkpoint.Verifier.Verify` | None, apart from the Verifiers of the keys, into a Body of the same extension lines |
+| `sign.Policy.Reset`, the methods of `sign.Rules` | None for a tree that fits the memory of the build before |
+| `sign.NewPolicyTree` | Four for the tree of tlog-policy's example |
 
 `sign.Policy.Check` allocates nothing when it returns nil for a policy of
 at most 64 keys and 128 rules, apart from what each verifier allocates.
@@ -1166,7 +1449,7 @@ groups, with the keys of one origin, fits that bound.
 |---|---|
 | 1 | `ParseKey` accepts signed-note's example key, `example.com/foo+530d903a+AekyeRrm56hApGFkyQR4ZCbV54Id2LKaANYcrnKv3U2k`, and `note.Open` verifies signed-note's example note under a policy of that key |
 | 2 | `ParseKey` accepts the keys of types 0x01, 0x04 and 0x06 in the tests of transparency-dev/formats v0.1.1, and `AppendText` writes each one back byte for byte |
-| 3 | `ParseKey` refuses each malformed case of the failure table. `AppendText` and `ParseKey` round-trip random keys of every type, including 0xff types with 1 and 255 identifier bytes |
+| 3 | `ParseKey`, `Key.Set` and `Key.UnmarshalText` refuse each malformed case of the failure table, and `Set` and `UnmarshalText` leave the Key unchanged. `AppendText` and `ParseKey` round-trip random keys of every type, including 0xff types with 1 and 255 identifier bytes. A `flag.FlagSet` takes a verifier key through `Key.Set` |
 | 4 | Fixed vectors pin `Key.ID` and `KeyID`, and the first four bytes of `KeyID` equal the key ID |
 | 5 | A property test shows that `Parse` accepts exactly the notes that `AppendText` writes. It draws texts, names and values from all of Unicode, including U+0000 to U+001F and U+007F to U+009F. `Parse` refuses each malformed case of the failure table |
 | 6 | `Check` ignores a line whose name or key ID differs from every key. It verifies one line of a note that repeats a known key's line 1,000 times, counted through a `Verifier` that records its calls |
@@ -1175,14 +1458,15 @@ groups, with the keys of one origin, fits that bound.
 | 9 | `CosignatureV1` verifies fixed type 0x04 cosignatures that torchwood v0.10.0 made, stored in `testdata` |
 | 10 | `SubtreeV1` returns false for each body of the list in Cosignatures, and its signer refuses each one with `ErrBody` |
 | 11 | A cosigner over `clock/fake` writes the fake time, and `Timestamp` returns it. After `SetUTCError` with an unsynchronised reading or an error above `maxError`, `Sign` returns `ErrClock`. `Timestamp` returns the zero Time for 0, and `ErrTimestamp` for 2^63 |
-| 12 | Each signer constructor refuses a signer of another algorithm for an assigned type. `NewSubtreeV1Signer` refuses an `mldsa.Signer` with a context that is not empty for type 0x06, directly and behind a decorator that implements `Unwrap` |
+| 12 | Each signer constructor and `Reset` refuses a signer of another algorithm for an assigned type. `SubtreeV1Signer.Reset` refuses an `mldsa.Signer` with a context that is not empty for type 0x06, directly and behind a decorator that implements `Unwrap` |
 | 13 | `ParsePolicy` parses tlog-policy's example and torchwood v0.10.0's `cmd/age-keyserver/witness_policy.txt`. It refuses the violation of each rule with its line number |
 | 14 | Under tlog-policy's example, `Verify` accepts the log's signature with two X witnesses and one Y witness, and refuses it with three Y witnesses and one X witness |
-| 15 | A policy of two logs with different origins verifies a checkpoint of each log, and refuses a checkpoint of a third origin with `ErrOrigin` |
+| 15 | A policy of logs with three origins, listed out of order, verifies a checkpoint of each origin, and refuses a checkpoint of another origin with `ErrOrigin` |
 | 16 | Under `quorum none`, `Verify` accepts a checkpoint with the log's signature alone, and refuses one without it |
 | 17 | A tree of `QuorumRule` and an `AllOf` rule of two log keys refuses a note that only one of the two keys signed |
-| 18 | Benchmarks report the allocations of the allocation table, for a checkpoint with an Ed25519 log signature and 2 of 3 Ed25519 witnesses |
-| 19 | The suites cover every statement of both packages and of `Verifier.Context`, and gremlins kills every mutant |
+| 18 | Each reuse form returns the memory of the value before, checked by the address of its first byte: `Note.Sign`, `Note.UnmarshalText`, `Key.Set`, `Body.UnmarshalText`, `Policy.UnmarshalText` and `Keyring.Verifier`. `Verifier.Reset` over three loads of one policy builds the Verifier of each key once, counted through a resolver that records its calls |
+| 19 | Benchmarks assert every count of the allocation table |
+| 20 | The suites cover every statement of both packages and of the additions to `crypto/sign`, and gremlins kills every mutant of `note` and `tlog/checkpoint` |
 
 ## Alternatives considered
 
@@ -1325,11 +1609,29 @@ and makes every check fail. Checkpoints and cosignatures have no
 requester to exclude. A caller with a policy of its own that needs
 exclusion converts the lines and calls `sign.Policy.Check` itself.
 
+### L. Constructors without reuse
+
+Every parse, signature and build would return new memory: `Parse`,
+`Sign`, `ParsePolicy` and `NewVerifier` only, without `UnmarshalText`,
+`Note.Sign`, `Reset` and `Keyring`.
+
+**Why not:** a log, a witness and a monitor handle checkpoints at the
+rate of their logs, and reload their policy files. Without reuse, every
+checkpoint allocates its note, its lines, its values and its body, and
+every reload allocates every Verifier and every tree again. The reuse
+forms make each of these paths free of allocations, and the
+constructors remain the form for a single call.
+
 ## Drawbacks
 
-- `note` and `tlog/checkpoint` add 76 exported identifiers, 38 in each
-  package, in about 18 source files with a test file each.
-  `crypto/sign/mldsa` gains one method, `Verifier.Context`.
+- `note` adds 51 exported identifiers in 12 source files, and its kanon
+  codecs add 29 generated methods in 5 more. `tlog/checkpoint` adds 44
+  exported identifiers in 8 source files, and 48 generated methods in 2
+  more. Each source file has a test file.
+- `crypto/sign` gains `AppendSigner`, `AppendSign`, `AsAppendSigner`,
+  `Rules` with four methods, and `Policy.Reset`. The Ed25519, ML-DSA and
+  ECDSA P-384 signers gain `AppendSign`, and `crypto/sign/mldsa` gains
+  `Verifier.Context`.
 - `Check` accepts a note with an invalid signature of a known key when
   the policy is met without that key. signed-note asks a verifier to
   reject such a note.
@@ -1348,17 +1650,30 @@ exclusion converts the lines and calls `sign.Policy.Check` itself.
   line, which tlog-policy does not forbid.
 - A checkpoint with extension lines or a 48-byte root cannot collect
   cosignatures of type 0x06.
-- `NewVerifier` builds one tree per origin, each with a copy of the
+- A `Verifier` builds one tree per origin, each with a copy of the
   quorum. A policy with 32 origins and 32 witnesses builds 32 trees of
   33 keys each.
+- A `Verifier`, a `TextSigner` and the cosigners are safe for concurrent
+  use only while no goroutine calls their `Reset`. A caller that reloads
+  a policy while goroutines verify keeps two Verifiers and swaps them.
+- The names, URLs and key names of a parsed `Policy`, the key name of a
+  parsed `Key`, and the origin and the extension lines of a parsed `Body`
+  are substrings of one string of the input, so any one of them keeps
+  the whole input in memory.
+- `Policy.UnmarshalText` compares each key of the file by writing the
+  verifier key of the key that the Policy holds, which costs one SHA-256
+  and one base64 encoding per key at each reload.
+- `Type.String` returns only the identifier for a type without an
+  assigned byte, so an identifier that reads like `0x01` prints like
+  type 0x01.
 - A cosigner refuses to sign while its UTC source is not synchronised
   or reports an error above `maxError`. A witness whose time discipline
   fails stops cosigning until the discipline recovers.
 - A caller that writes its own tree around `QuorumRule` also writes its
   own log rule. `ErrOrigin` and the origin binding of `Verifier` do not
   apply to that tree.
-- `NewSubtreeV1Signer` checks the context only of a signer that reports
-  it. A signer behind a hardware module that does not report its
+- `SubtreeV1Signer.Reset` checks the context only of a signer that
+  reports it. A signer behind a hardware module that does not report its
   context signs without the check.
 - The signers leave out `Unwrap`, so `sign.AsStreamingSigner` does not
   find a streaming capability behind them.
@@ -1436,7 +1751,8 @@ None.
 - ADR-0023, verifiers resolve from a table the caller writes.
 - ADR-0034, the root's children are the parties of a policy.
 - ADR-0043, core structs have canonical kanon codecs.
-- `tlog/doc.go`, `crypto/sign/doc.go`, `crypto/sign/policy.go`,
-  `crypto/sign/resolver.go`, `crypto/sign/unwrap.go`,
-  `crypto/sign/mldsa/mldsa.go`, `crypto/algorithm.go`, `clock/doc.go`,
-  `clock/instant.go`, `clock/utc.go` and `clock/hlc/hlc.go`.
+- `tlog/doc.go`, `crypto/sign/doc.go`, `crypto/sign/append.go`,
+  `crypto/sign/policy.go`, `crypto/sign/resolver.go`,
+  `crypto/sign/unwrap.go`, `crypto/sign/mldsa/mldsa.go`,
+  `crypto/algorithm.go`, `clock/doc.go`, `clock/instant.go`,
+  `clock/utc.go` and `clock/hlc/hlc.go`.

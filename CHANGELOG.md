@@ -417,6 +417,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `mldsa.Verifier.Context` returns the FIPS 204 context string of a key.
   The signer of type 0x06 of `tlog/checkpoint` refuses an ML-DSA-44 key
   under any context other than the empty one.
+- `arena.Slabs`: byte slices from slabs, taken back one at a time in any
+  order. `Alloc` returns a slice whose capacity is a power-of-two size
+  class of at least 64 bytes. `Free` zeroes the class and keeps it for
+  the next `Alloc` of the class, so a store whose values come and go
+  reuses the space of a removed value. A class larger than a slab takes
+  a slab of its own size, and the rest of a slab without room for a
+  class serves the smaller classes. `All` yields every slab, free space
+  included, and `InUse` returns the bytes in use. Once the free lists
+  have grown to the working set, an `Alloc` followed by a `Free` does
+  not allocate. `Free` returns `arena.ErrSizeClass`, classified
+  `errs.Invalid`, for a slice whose capacity is not a size class.
+- `note.TextOf` returns the text of a signed note without building a
+  `Note`, and checks the note as `Parse` does, with the same errors. It
+  allocates nothing for a note that it accepts, whatever its key names,
+  where `Note.UnmarshalText` allocates the names that change. See
+  RFC-0047.
+- `cache` package: a bounded map whose entries leave by eviction, expiry
+  or removal. A `Cache` bounds the sum of the costs of its entries, and
+  evicts with S3-FIFO, which missed fewer requests than LRU on eight of
+  nine simulated traces. `Get` and `Pin` take no lock and allocate
+  nothing for a string key or a key without pointers. A `Pinned` entry
+  is not evicted before `Unpin`, an entry expires at a time that the
+  `clock.Clock` of the `Config` measures, and `Config.Evicted` receives
+  every entry that leaves, once, outside the cache's lock. See RFC-0049.
+- `resilience.Limiter`: a token bucket of a rate per second and a burst,
+  over `clock.Clock`. `AllowN` takes units when the bucket has them, and
+  `WaitN` reserves them and waits on a timer of the clock. The bucket is
+  one time in int64 nanoseconds, as in the generic cell rate algorithm,
+  and each cost rounds up, so the Limiter admits at most its rate.
+  `WaitN` returns `resilience.ErrUnits`, classified `errs.Invalid`, for a
+  negative number of units or one above the burst. See RFC-0050.
+- `crypto/tsp` package: the Time-Stamp Protocol of RFC 3161, offline.
+  `AppendRequest` encodes a request, `ParseResponse` checks a response
+  against the request and returns its token, and a `Verifier` verifies a
+  token against the caller's roots and policies, with RSA, ECDSA,
+  Ed25519 and ML-DSA signatures. `Info.Time` is a `clock.UTCReading` of
+  genTime and the token's accuracy. A token of a known certificate
+  verifies without an allocation for Ed25519 and ML-DSA. See RFC-0048.
+- `coretest/tsptest`: a time-stamp authority for tests, with a
+  certificate chain of its own. `Respond` returns the response to a
+  request, and `Token` builds the malformed and forged tokens that a
+  verifier refuses from a `Spec`.
+- `telemetry.ShardedCounter`, `telemetry.BoundedHistogram` and
+  `telemetry.RateLimitHandler`. A `ShardedCounter` spreads the adds to a
+  `Counter` over cells of 128 bytes and adds their sum on `Flush`. A
+  `BoundedHistogram` records every value of a failed call and one value
+  in N of the calls that succeeded, N recomputed from the measured rate.
+  A `RateLimitHandler` is a `slog.Handler` that passes one record per
+  interval of each message and subject value, and every record at
+  `slog.LevelError` and above. Their hot paths allocate nothing, and
+  their constructors return `telemetry.ErrConfig`, classified
+  `errs.Invalid`. See RFC-0051.
 
 ### Changed
 
@@ -424,6 +476,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `blob.ValidContentType` rejects as `errs.Invalid`, and returns before
   it touches storage. `blob/memory` implements the check, and
   `coretest/blobtest` fails a store without it. See ADR-0042.
+- **Breaking:** an open reader of `blob.Store.Get` can fail with an error
+  that wraps `version.ErrMismatch` once its version is replaced or
+  deleted, so a store that destroys the bytes of a removed version can
+  implement the seam. The reader still returns only bytes of the version
+  that `Get` named. A caller of `Get`, `blob.GetBytes` or
+  `tlog.BlobTiles` that races a writer reads the object again after the
+  error. `coretest/blobtest` checks both rules after an overwrite and
+  after a delete, and `blob/memory` returns the old version as before.
+  See ADR-0044.
 - **Breaking:** the kanon codec of `sign.Signature` decodes only the
   canonical encoding of a signature. `DecodeKanon`, `MergeKanon` and
   `UnmarshalBinary` return an error that wraps `kanon.ErrNotCanonical` for
