@@ -212,8 +212,10 @@ func assertSameObject(t *testing.T, got, want blob.Info, who string) {
 //     [version.WriteOptions].
 //   - A Put that fails for a reader error, a precondition or a done
 //     context leaves the previous object in place.
-//   - An open reader serves the version its Info named, through an
-//     overwrite.
+//   - An open reader returns only bytes of the version its Info named,
+//     through an overwrite and a delete. It may fail once that version
+//     is removed, and then only with an error that wraps
+//     [version.ErrMismatch].
 //   - A walk of the cursor chain at page sizes 1, 2 and 10 yields every
 //     key under the prefix exactly once. The walk stops at 16 pages.
 //   - Every method rejects a key that [blob.ValidKey] rejects, as
@@ -439,23 +441,80 @@ func AssertStore(t *testing.T, newStore func(c clock.Clock) blob.Store, options 
 		})
 	})
 
-	t.Run("an open reader serves the version its Info named", func(t *testing.T) {
-		t.Parallel()
+	// The bodies of an object and of its overwrite while a reader of it is
+	// open. They share no byte, so a reader that returns a byte of the
+	// overwrite returns no prefix of the opened body.
+	const (
+		openedBody      = "the body that the reader opened"
+		replacementBody = "A-BODY-WRITTEN-WHILE-THE-READER-IS-OPEN"
+	)
+
+	// removals remove the version of the object under "k", each named by
+	// the write that removes it.
+	removals := map[string]func(t *testing.T, s blob.Store){
+		"an overwrite": func(t *testing.T, s blob.Store) {
+			t.Helper()
+			put(t, s, "k", replacementBody, blob.PutOptions{})
+		},
+		"a delete": func(t *testing.T, s blob.Store) {
+			t.Helper()
+			testkit.NoError(t, s.Delete(t.Context(), "k", ""), "Delete must succeed")
+		},
+	}
+
+	// drainRemoved opens a reader of an object, removes its version with
+	// remove while the reader is open, and drains the reader. It returns
+	// the bytes that the reader returned and its error.
+	drainRemoved := func(t *testing.T, remove func(t *testing.T, s blob.Store)) (string, error) {
+		t.Helper()
 
 		s := fresh()
-		first := put(t, s, "k", "the original body", blob.PutOptions{})
+		first := put(t, s, "k", openedBody, blob.PutOptions{})
 
 		rc, info, err := s.Get(t.Context(), "k")
 		testkit.NoError(t, err, "Get must succeed")
 		testkit.Equal(t, info.Version, first.Version, "the open must name the current version")
 
-		put(t, s, "k", "an overwrite while the reader is open", blob.PutOptions{})
+		remove(t, s)
 
 		body, err := io.ReadAll(rc)
-		testkit.NoError(t, err, "the body must drain after the overwrite")
 		testkit.NoError(t, rc.Close(), "the body must close")
-		testkit.Equal(t, string(body), "the original body",
-			"the reader must serve the version its Info named")
+
+		return string(body), err
+	}
+
+	t.Run("an open reader returns only bytes of the version its Info named", func(t *testing.T) {
+		t.Parallel()
+
+		for name, remove := range removals {
+			t.Run("after "+name, func(t *testing.T) {
+				t.Parallel()
+
+				body, err := drainRemoved(t, remove)
+				if err == nil {
+					testkit.Equal(t, body, openedBody, "a reader that drains must return the whole opened body")
+
+					return
+				}
+				testkit.True(t, strings.HasPrefix(openedBody, body),
+					"a reader that fails must return a prefix of the opened body")
+			})
+		}
+	})
+
+	t.Run("an open reader of a removed version fails only with ErrMismatch", func(t *testing.T) {
+		t.Parallel()
+
+		for name, remove := range removals {
+			t.Run("after "+name, func(t *testing.T) {
+				t.Parallel()
+
+				if _, err := drainRemoved(t, remove); err != nil {
+					testkit.ErrorIs(t, err, version.ErrMismatch,
+						"a reader that fails must return an error that wraps version.ErrMismatch")
+				}
+			})
+		}
 	})
 
 	t.Run("an empty body is an object", func(t *testing.T) {

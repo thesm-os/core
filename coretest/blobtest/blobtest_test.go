@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"iter"
 	"maps"
@@ -39,6 +40,11 @@ const brokenEnv = "BLOBTEST_BROKEN"
 // reference names the run against the memory store with every option.
 const reference = "reference"
 
+// purging names the run against a memory store whose readers fail once
+// the version that they opened is removed, as the readers of a store
+// that purges a removed version do.
+const purging = "purging"
+
 // childTimeout is the -test.timeout of a child process of runSuite. A
 // child runs the suite against one store in well under a second. The
 // bound ends a child whose parent has died, which no context of the
@@ -53,6 +59,10 @@ const truncatedContentTypeLen = 127
 // caseLine matches the line that go test -v prints when a top-level
 // case of the suite starts.
 var caseLine = regexp.MustCompile(`(?m)^=== RUN\s+TestAssertStore/([^/\s]+)$`)
+
+// errPurged is the error of a reader of the purging run once its version
+// is removed. It wraps version.ErrMismatch, as the law of Get requires.
+var errPurged = fmt.Errorf("blobtest: version purged: %w", version.ErrMismatch)
 
 // run is a store, and the options for it, that the suite runs against.
 type run struct {
@@ -163,6 +173,26 @@ func (r *lateReader) Close() error {
 	return r.rc.Close()
 }
 
+// purgingReader reads the version of an object that Get opened, and
+// fails each Read with gone once Stat of the key fails or names another
+// version, as the reader of a store that purges a removed version does.
+type purgingReader struct {
+	io.ReadCloser
+
+	gone    error
+	stat    func() (blob.Info, error)
+	version version.Version
+}
+
+//nolint:wrapcheck // the test double passes the error through
+func (r *purgingReader) Read(p []byte) (int, error) {
+	if info, err := r.stat(); err != nil || info.Version != r.version {
+		return 0, r.gone
+	}
+
+	return r.ReadCloser.Read(p)
+}
+
 // skipFirst drops the first object of its page, as a cursor that loses
 // an object on a page boundary does.
 type skipFirst struct {
@@ -199,12 +229,38 @@ func breaking(hook func(s *memory.Store, h *hooked)) run {
 	}}
 }
 
-// runs maps reference to the passing run, and the name of each case of
-// [blobtest.AssertStore] to a run that breaks the law of that case.
+// purgingStore returns a run against the memory store whose readers fail
+// with gone once the version that they opened is replaced or deleted.
+//
+//nolint:wrapcheck // the test double passes the error through
+func purgingStore(gone error) run {
+	return run{newStore: func(c clock.Clock) blob.Store {
+		s := memory.New(c)
+
+		return &hooked{Store: s, get: func(ctx context.Context, key string) (io.ReadCloser, blob.Info, error) {
+			rc, info, err := s.Get(ctx, key)
+			if err != nil {
+				return nil, blob.Info{}, err
+			}
+
+			return &purgingReader{
+				ReadCloser: rc,
+				gone:       gone,
+				stat:       func() (blob.Info, error) { return s.Stat(ctx, key) },
+				version:    info.Version,
+			}, info, nil
+		}}
+	}}
+}
+
+// runs maps reference and purging to the runs that pass, and the name of
+// each case of [blobtest.AssertStore] to a run that breaks the law of
+// that case.
 //
 //nolint:wrapcheck // the test doubles pass errors through
 func runs() map[string]run {
 	return map[string]run{
+		purging: purgingStore(errPurged),
 		reference: {
 			newStore: func(c clock.Clock) blob.Store { return memory.New(c) },
 			options: []blobtest.Option{
@@ -346,7 +402,9 @@ func runs() map[string]run {
 				return s.Put(ctx, key, bytes.NewReader(body), opts)
 			}
 		}),
-		"an open reader serves the version its Info named": breaking(func(s *memory.Store, h *hooked) {
+		"an open reader of a removed version fails only with ErrMismatch": purgingStore(
+			errors.New("blobtest: version purged")),
+		"an open reader returns only bytes of the version its Info named": breaking(func(s *memory.Store, h *hooked) {
 			h.get = func(ctx context.Context, key string) (io.ReadCloser, blob.Info, error) {
 				info, err := s.Stat(ctx, key)
 				if err != nil {
@@ -487,9 +545,10 @@ func runSuite(t *testing.T, name string) (string, error) {
 }
 
 // TestAssertStore checks that the suite detects the breach of each law
-// it states. A *testing.T cannot be observed failing in its own
-// process, so the test runs the suite in a child process and reads the
-// output of go test -v.
+// it states, and that it passes the memory store and a store whose
+// readers fail once their version is removed. A *testing.T cannot be
+// observed failing in its own process, so the test runs the suite in a
+// child process and reads the output of go test -v.
 //
 // The list of cases comes from a child run against the memory store with
 // every option. A case without a broken store fails the test, and so
@@ -505,10 +564,16 @@ func TestAssertStore(t *testing.T) {
 	}
 
 	out, err := runSuite(t, reference)
+	purgingOut, purgingErr := runSuite(t, purging)
 
 	t.Run("passes the memory store with every option", func(t *testing.T) {
 		t.Parallel()
 		testkit.NoError(t, err, "the suite must pass the memory store:\n"+out)
+	})
+
+	t.Run("passes a store whose readers fail once their version is removed", func(t *testing.T) {
+		t.Parallel()
+		testkit.NoError(t, purgingErr, "the suite must pass a store that purges a removed version:\n"+purgingOut)
 	})
 
 	t.Run("has a broken store for every case", func(t *testing.T) {
@@ -522,7 +587,7 @@ func TestAssertStore(t *testing.T) {
 
 		var broken []string
 		for name := range maps.Keys(runs()) {
-			if name != reference {
+			if name != reference && name != purging {
 				broken = append(broken, strings.ReplaceAll(name, " ", "_"))
 			}
 		}
@@ -538,7 +603,7 @@ func TestAssertStore(t *testing.T) {
 		t.Parallel()
 
 		for name := range maps.Keys(runs()) {
-			if name == reference {
+			if name == reference || name == purging {
 				continue
 			}
 			t.Run(name, func(t *testing.T) { //nolint:paralleltest // see comment above

@@ -49,7 +49,10 @@ func PutBytes(ctx context.Context, s Store, key string, b []byte, opts PutOption
 // admits nothing, so it is a caller mistake rather than a policy.
 //
 // The reader is closed before GetBytes returns, whether or not the
-// read succeeded.
+// read succeeded. When the object is replaced or deleted during the
+// read, GetBytes can return an error that wraps
+// [go.thesmos.sh/core/version.ErrMismatch], as [Store.Get] permits. The
+// caller then reads the object again.
 //
 // # Allocation contract
 //

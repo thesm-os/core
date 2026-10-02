@@ -34,6 +34,10 @@ type TileReader interface {
 // limit tiles concurrently through [task.Each], and returns
 // [task.ErrLimit] when limit is below one.
 //
+// A tile that is replaced or deleted while ReadTiles reads it can fail
+// the read with an error that wraps
+// [go.thesmos.sh/core/version.ErrMismatch], as [blob.Store.Get] permits.
+//
 // # Allocation contract
 //
 // One allocation for the reader. ReadTiles allocates one key per tile

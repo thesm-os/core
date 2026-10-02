@@ -252,9 +252,10 @@ type Store interface {
 	Put(ctx context.Context, key string, r io.Reader, opts PutOptions) (Info, error)
 
 	// Get opens the object for reading, and the caller closes the
-	// reader. The reader returns the bytes of one object, the version
-	// that the returned [Info] names, also when the key is overwritten
-	// while the reader is open. Absence classifies as
+	// reader. The reader returns only bytes of the version that the
+	// returned [Info] names. Once that version is replaced or deleted, a
+	// read either returns more bytes of it or fails with an error that
+	// wraps [version.ErrMismatch]. Absence classifies as
 	// [go.thesmos.sh/core/errs.NotFound].
 	Get(ctx context.Context, key string) (io.ReadCloser, Info, error)
 
