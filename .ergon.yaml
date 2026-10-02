@@ -306,6 +306,12 @@ checks:
     # - w3c unhex's arithmetic. Only bit 0 of its result escapes
     #   (`&sampledFlag`), and every mutation shifts the value by an
     #   even amount, so the observable bit never changes.
+    # - cache evict's `i >= (maxFreq+2)*n` vs `>`, the step from which
+    #   an eviction ignores hits. A single goroutine runs an eviction
+    #   that long only when every entry left is pinned or is the entry
+    #   of the calling Set, which a forced step keeps as well. Only a
+    #   reader that hits entries during the eviction makes the step
+    #   matter.
     #
     # An operator in a const declaration or an array length carries
     # no coverage counter, so gremlins reports its mutants as not
@@ -336,6 +342,9 @@ checks:
       - path: btree
         score: 100
         coverage: 100
+      - path: cache
+        score: 99
+        coverage: 100
       - path: cas
         score: 100
         coverage: 100
@@ -360,6 +369,9 @@ checks:
       - path: id
         score: 100
         coverage: 100
+      - path: internal/der
+        score: 100
+        coverage: 100
       - path: note
         score: 100
         coverage: 100
@@ -382,7 +394,7 @@ checks:
         score: 100
         coverage: 100
       - path: telemetry
-        score: 85
+        score: 94
         coverage: 100
       - path: tlog
         score: 100
