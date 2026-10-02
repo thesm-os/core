@@ -37,6 +37,12 @@ const (
 
 	// maxPadding is the largest number of '=' that end padded base64.
 	maxPadding = 2
+
+	// checkChunk is the number of base64 characters that validEncoding
+	// decodes at a time, and checkBytes the bytes that they decode to:
+	// three per four characters.
+	checkChunk = 512
+	checkBytes = 384
 )
 
 // Signature is one signature line of a note:
@@ -143,18 +149,103 @@ func splitLine(line []byte) (name, encoded []byte, err error) {
 // signature.
 func parseSignature(name Name, encoded, dst []byte) (Signature, []byte, error) {
 	if !name.Valid() {
-		return Signature{}, dst, fmt.Errorf("%w: a signature line with the invalid name %q", ErrNote, name)
+		return Signature{}, dst, errInvalidName(name)
 	}
 
 	start := len(dst)
 
 	id, out, ok := decodeSignature(dst, encoded)
 	if !ok {
-		return Signature{}, dst, fmt.Errorf(
-			"%w: the line of %s is not padded standard base64 of a key ID and a signature", ErrNote, name)
+		return Signature{}, dst, errEncoding(name)
 	}
 
 	return Signature{Name: name, Value: out[start:len(out):len(out)], ID: id}, out, nil
+}
+
+// checkLine returns nil when name and encoded, the parts of a signature
+// line that splitLine returns, form a line that parseSignature accepts,
+// and the error of parseSignature otherwise. It decodes the signature into
+// no memory of the caller, and allocates nothing for a line that it
+// accepts.
+func checkLine(name, encoded []byte) error {
+	if !validName(name) {
+		return errInvalidName(name)
+	}
+
+	if !validEncoding(encoded) {
+		return errEncoding(name)
+	}
+
+	return nil
+}
+
+// errInvalidName returns [ErrNote] for a signature line whose key name,
+// the bytes or the string in name, is not valid.
+func errInvalidName[N ~string | ~[]byte](name N) error {
+	return fmt.Errorf("%w: a signature line with the invalid name %q", ErrNote, name)
+}
+
+// errEncoding returns [ErrNote] for a signature line whose encoding is not
+// the padded standard base64 of a key ID and a signature. name is the key
+// name of the line.
+func errEncoding[N ~string | ~[]byte](name N) error {
+	return fmt.Errorf("%w: the line of %s is not padded standard base64 of a key ID and a signature", ErrNote, name)
+}
+
+// decodeHead decodes the first eight characters of encoded, the padded
+// standard base64 of a key ID and a signature: the key ID and the first two
+// bytes of the signature, or the whole value of a line of five or six
+// bytes. It returns them, their number, and the characters after the
+// eight. It reports false for an encoding of fewer than eight characters
+// or of a length that is not a multiple of four, for eight characters that
+// the strict decoder refuses or that decode to fewer than five bytes, and
+// for padding in the eight characters before more characters.
+func decodeHead(encoded []byte) (head [headBytes]byte, n int, tail []byte, ok bool) {
+	if len(encoded) < headText || len(encoded)%base64Quantum != 0 {
+		return head, 0, nil, false
+	}
+
+	n, err := strictBase64.Decode(head[:], encoded[:headText])
+	tail = encoded[headText:]
+
+	if err != nil || n <= keyIDSize || n < headBytes && len(tail) > 0 {
+		return head, 0, nil, false
+	}
+
+	return head, n, tail, true
+}
+
+// validEncoding reports whether decodeSignature accepts encoded, without
+// memory of the caller: it decodes the characters after the first eight in
+// chunks of checkChunk characters into an array on its stack.
+//
+// Padding ends an encoding, so a chunk before the last has none. The
+// strict decoder refuses padding anywhere in its input but at its end, so
+// validEncoding checks only that such a chunk does not end in '='.
+func validEncoding(encoded []byte) bool {
+	_, _, tail, ok := decodeHead(encoded)
+	if !ok {
+		return false
+	}
+
+	var buf [checkBytes]byte
+
+	for len(tail) > checkChunk {
+		chunk := tail[:checkChunk]
+		if chunk[checkChunk-1] == '=' {
+			return false
+		}
+
+		if _, err := strictBase64.Decode(buf[:], chunk); err != nil {
+			return false
+		}
+
+		tail = tail[checkChunk:]
+	}
+
+	_, err := strictBase64.Decode(buf[:], tail)
+
+	return err == nil
 }
 
 // decodeSignature decodes encoded, the padded standard base64 of a key ID
@@ -169,16 +260,8 @@ func parseSignature(name Name, encoded, dst []byte) (Signature, []byte, error) {
 // dst by the exact length of the rest, so that a dst with room for the
 // signature decodes without an allocation.
 func decodeSignature(dst, encoded []byte) (uint32, []byte, bool) {
-	if len(encoded) < headText || len(encoded)%base64Quantum != 0 {
-		return 0, dst, false
-	}
-
-	var head [headBytes]byte
-
-	n, err := strictBase64.Decode(head[:], encoded[:headText])
-	tail := encoded[headText:]
-
-	if err != nil || n <= keyIDSize || n < headBytes && len(tail) > 0 {
+	head, n, tail, ok := decodeHead(encoded)
+	if !ok {
 		return 0, dst, false
 	}
 

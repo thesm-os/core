@@ -6,7 +6,9 @@ package note
 //go:generate go tool kanon -type=Name -validate=valid
 
 import (
+	"bytes"
 	"fmt"
+	"strings"
 	"unicode"
 	"unicode/utf8"
 )
@@ -33,17 +35,7 @@ type Name string
 //
 // Zero-alloc.
 func (n Name) Valid() bool {
-	if n == "" || !utf8.ValidString(string(n)) {
-		return false
-	}
-
-	for _, r := range string(n) {
-		if r <= lastControl || r == keySeparator || unicode.IsSpace(r) {
-			return false
-		}
-	}
-
-	return true
+	return n != "" && utf8.ValidString(string(n)) && !strings.ContainsFunc(string(n), notNameRune)
 }
 
 // valid returns nil for a Valid name, and an error that wraps [ErrKey] for
@@ -54,4 +46,16 @@ func (n Name) valid() error {
 	}
 
 	return nil
+}
+
+// validName reports whether b is a key name, as [Name.Valid] reports it
+// for Name(b), without the conversion, which allocates.
+func validName(b []byte) bool {
+	return len(b) > 0 && utf8.Valid(b) && !bytes.ContainsFunc(b, notNameRune)
+}
+
+// notNameRune reports whether a key name excludes r: a character below
+// U+0020, '+', or a character of the Unicode White_Space property.
+func notNameRune(r rune) bool {
+	return r <= lastControl || r == keySeparator || unicode.IsSpace(r)
 }

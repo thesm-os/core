@@ -445,6 +445,47 @@ func (n *Note) textLen() int {
 	return size
 }
 
+// TextOf returns the text of the signed note msg, as [Parse] returns it in
+// Note.Text, without building a Note: the text up to the last blank line
+// of msg. The text is a subslice of msg. TextOf checks msg as Parse does,
+// the form of each signature line included, in the same order, so it
+// accepts exactly the notes that Parse accepts and returns the same
+// errors. It decodes each signature in chunks of 512 characters into an
+// array on its stack, and keeps nothing of it.
+//
+// A caller that hashes or compares the texts of the notes of many logs,
+// whose key names differ from one note to the next, reads each text
+// without the allocations of [Note.UnmarshalText] into a reused Note.
+//
+// Returns [ErrNote], classified [errs.Invalid], for every note that Parse
+// refuses, with the message of Parse, and nil text.
+//
+// # Allocation contract
+//
+// Zero-alloc for a note that TextOf accepts, whatever its key names and
+// its number of lines. A note that TextOf refuses allocates its error.
+func TextOf(msg []byte) ([]byte, error) {
+	text, lines, err := splitNote(msg)
+	if err != nil {
+		return nil, err
+	}
+
+	for line := range bytes.Lines(lines) {
+		if _, _, err := splitLine(line); err != nil {
+			return nil, err
+		}
+	}
+
+	for line := range bytes.Lines(lines) {
+		name, encoded, _ := splitLine(line)
+		if err := checkLine(name, encoded); err != nil {
+			return nil, err
+		}
+	}
+
+	return text, nil
+}
+
 // splitNote splits msg, a signed note, into its text and its signature
 // lines, the bytes after the last blank line.
 //

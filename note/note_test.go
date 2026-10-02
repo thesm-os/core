@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"math/rand/v2"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -157,7 +158,7 @@ func assertEmpty(tb testing.TB, n *note.Note) {
 	testkit.Len(tb, n.Signatures, 0, "the Note must have no line")
 }
 
-// textRunes are the characters of the texts that randomNote draws: the
+// textRunes are the characters of the texts that randomNote picks: the
 // characters of signature lines, a space, and characters outside ASCII
 // and from U+007F to U+009F.
 var textRunes = []rune("ab —+=/例λ\u007f\u0080\u009f")
@@ -180,6 +181,62 @@ func randomNote(r *rand.Rand) *note.Note {
 	}
 
 	return &note.Note{Text: []byte(text.String()), Signatures: sigs}
+}
+
+// refusedNotes are the notes that Parse and TextOf refuse, each named by
+// the case of the check that refuses it.
+var refusedNotes = []struct {
+	name string
+	give string
+}{
+	{name: "returns ErrNote for a note that is not valid UTF-8", give: "a\xff\n\n" + peterLine},
+	{name: "returns ErrNote for a note with a NUL", give: "a\x00\n\n" + peterLine},
+	{name: "returns ErrNote for a note with a carriage return", give: "a\r\n\r\n" + peterLine},
+	{name: "returns ErrNote for a note with U+001F", give: "a\x1f\n\n" + peterLine},
+	{name: "returns ErrNote for a note without a blank line", give: peterText + peterLine},
+	{name: "returns ErrNote for a note without a signature line", give: peterText + "\n"},
+	{name: "returns ErrNote for a last line without a newline", give: strings.TrimSuffix(peterNote, "\n")},
+	{
+		name: "returns ErrNote for a line without the em dash",
+		give: peterText + "\n- PeterNeumann " + peterValue + "\n",
+	},
+	{
+		name: "returns ErrNote for a line without the space after the em dash",
+		give: peterText + "\n—PeterNeumann " + peterValue + "\n",
+	},
+	{
+		name: "returns ErrNote for a line with an invalid name",
+		give: peterText + "\n— Peter+Neumann " + peterValue + "\n",
+	},
+	{name: "returns ErrNote for a line without a space after the name", give: peterText + "\n— PeterNeumann\n"},
+	{name: "returns ErrNote for a line that is not base64", give: peterText + "\n— PeterNeumann !!!!\n"},
+	{
+		name: "returns ErrNote for a line whose base64 has spare bits",
+		give: peterText + "\n— PeterNeumann " + strings.Replace(peterValue, "AM=", "AN=", 1) + "\n",
+	},
+	{name: "returns ErrNote for a line of 4 bytes", give: "a\n\n— a AAAAAA==\n"},
+	{name: "returns ErrNote for a line of 4 bytes after a valid line", give: peterNote + "— a AAAAAA==\n"},
+	{name: "returns ErrNote for a line with an empty name", give: "a\n\n—  AAAAAAA=\n"},
+	{
+		name: "returns ErrNote for padding inside a chunk before the last of a long line",
+		give: "a\n\n— a AAAAAAAA" + strings.Repeat("A", 506) + "==" + strings.Repeat("A", 8) + "\n",
+	},
+	{
+		name: "returns ErrNote for padding at the end of a chunk before the last of a long line",
+		give: "a\n\n— a AAAAAAAA" + strings.Repeat("A", 510) + "==" + strings.Repeat("A", 4) + "\n",
+	},
+	{
+		name: "returns ErrNote for spare bits in the last chunk of a long line",
+		give: "a\n\n— a AAAAAAAA" + strings.Repeat("A", 1020) + "AB==\n",
+	},
+	{
+		name: "returns ErrNote for a long line that is not base64 in its first chunk",
+		give: "a\n\n— a AAAAAAAA!" + strings.Repeat("A", 1023) + "\n",
+	},
+	{
+		name: "returns ErrNote for the first line without the em dash after a line that is not base64",
+		give: peterText + "\n— PeterNeumann !!!!\n- PeterNeumann " + peterValue + "\n",
+	},
 }
 
 func TestNote(t *testing.T) {
@@ -266,39 +323,7 @@ func TestNote(t *testing.T) {
 			}
 		})
 
-		tests := []struct {
-			name string
-			give string
-		}{
-			{name: "returns ErrNote for a note that is not valid UTF-8", give: "a\xff\n\n" + peterLine},
-			{name: "returns ErrNote for a note with a NUL", give: "a\x00\n\n" + peterLine},
-			{name: "returns ErrNote for a note with a carriage return", give: "a\r\n\r\n" + peterLine},
-			{name: "returns ErrNote for a note with U+001F", give: "a\x1f\n\n" + peterLine},
-			{name: "returns ErrNote for a note without a blank line", give: peterText + peterLine},
-			{name: "returns ErrNote for a note without a signature line", give: peterText + "\n"},
-			{name: "returns ErrNote for a last line without a newline", give: strings.TrimSuffix(peterNote, "\n")},
-			{
-				name: "returns ErrNote for a line without the em dash",
-				give: peterText + "\n- PeterNeumann " + peterValue + "\n",
-			},
-			{
-				name: "returns ErrNote for a line without the space after the em dash",
-				give: peterText + "\n—PeterNeumann " + peterValue + "\n",
-			},
-			{
-				name: "returns ErrNote for a line with an invalid name",
-				give: peterText + "\n— Peter+Neumann " + peterValue + "\n",
-			},
-			{name: "returns ErrNote for a line without a space after the name", give: peterText + "\n— PeterNeumann\n"},
-			{name: "returns ErrNote for a line that is not base64", give: peterText + "\n— PeterNeumann !!!!\n"},
-			{
-				name: "returns ErrNote for a line whose base64 has spare bits",
-				give: peterText + "\n— PeterNeumann " + strings.Replace(peterValue, "AM=", "AN=", 1) + "\n",
-			},
-			{name: "returns ErrNote for a line of 4 bytes", give: "a\n\n— a AAAAAA==\n"},
-			{name: "returns ErrNote for a line of 4 bytes after a valid line", give: peterNote + "— a AAAAAA==\n"},
-		}
-		for _, tt := range tests {
+		for _, tt := range refusedNotes {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
 				n, err := note.Parse([]byte(tt.give))
@@ -768,6 +793,73 @@ func TestNote(t *testing.T) {
 			})
 		}
 	})
+
+	t.Run("TextOf", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the text of signed-note's example", func(t *testing.T) {
+			t.Parallel()
+			text, err := note.TextOf([]byte(exampleNote))
+			testkit.NoError(t, err, "TextOf must accept the example of signed-note")
+			testkit.Equal(t, string(text), exampleText, "TextOf must return the text with its newline")
+		})
+
+		t.Run("returns a subslice of msg", func(t *testing.T) {
+			t.Parallel()
+			msg := []byte(peterNote)
+			text, err := note.TextOf(msg)
+			testkit.NoError(t, err, "TextOf must accept the note")
+			testkit.True(t, &text[0] == &msg[0], "the text must alias msg")
+		})
+
+		values := []struct {
+			name string
+			size int
+		}{
+			{name: "returns the text of a note whose line is longer than a chunk", size: 1000},
+			{name: "returns the text of a note whose line ends a chunk in padding", size: 385},
+			{name: "returns the text of a note whose line fills two chunks without padding", size: 770},
+		}
+		for _, tt := range values {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				n := note.Note{
+					Text:       []byte(peterText),
+					Signatures: []note.Signature{{Name: "a", Value: bytes.Repeat([]byte{0xa5}, tt.size), ID: 7}},
+				}
+				msg, err := n.AppendText(nil)
+				testkit.NoError(t, err, "AppendText must accept the note")
+
+				text, err := note.TextOf(msg)
+				testkit.NoError(t, err, "TextOf must accept a line of "+strconv.Itoa(tt.size)+" bytes")
+				testkit.Equal(t, string(text), peterText, "TextOf must return the text")
+			})
+		}
+
+		t.Run("returns the text and the error of Parse for the notes that AppendText writes", func(t *testing.T) {
+			t.Parallel()
+			r := testkit.SeededRand(t)
+			for range 2000 {
+				msg, err := randomNote(r).AppendText(nil)
+				testkit.NoError(t, err, "AppendText must accept a valid note")
+				assertTextOf(t, msg)
+
+				msg[r.IntN(len(msg))] = byte(r.Uint32())
+				assertTextOf(t, msg)
+			}
+		})
+
+		for _, tt := range refusedNotes {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				text, err := note.TextOf([]byte(tt.give))
+				testkit.ErrorIs(t, err, note.ErrNote, "TextOf must refuse the note")
+				testkit.Equal(t, errs.Classify(err), errs.Invalid, "the error must classify as Invalid")
+				testkit.True(t, text == nil, "TextOf must return no text with an error")
+				assertTextOf(t, []byte(tt.give))
+			})
+		}
+	})
 }
 
 func BenchmarkNote(b *testing.B) {
@@ -829,4 +921,56 @@ func BenchmarkNote(b *testing.B) {
 		testkit.NoError(b, reused.UnmarshalText(msg), "UnmarshalText must accept the note")
 		benchZeroAlloc(b, func() { errSink = reused.UnmarshalText(msg) })
 	})
+
+	b.Run("TextOf of notes of other key names", func(b *testing.B) {
+		notes := [][]byte{msg, []byte(peterNote + enochLine), []byte(exampleNote)}
+		i := 0
+		benchZeroAlloc(b, func() {
+			sinkBytes, errSink = note.TextOf(notes[i%len(notes)])
+			i++
+		})
+	})
+
+	b.Run("TextOf of a line of 4,627 bytes", func(b *testing.B) {
+		long := note.Note{
+			Text:       []byte(peterText),
+			Signatures: []note.Signature{{Name: "a", Value: make([]byte, 4627), ID: 7}},
+		}
+		longMsg, err := long.AppendText(nil)
+		testkit.NoError(b, err, "AppendText must accept the note")
+		benchZeroAlloc(b, func() { sinkBytes, errSink = note.TextOf(longMsg) })
+	})
+}
+
+func FuzzTextOf(f *testing.F) {
+	f.Add([]byte(exampleNote))
+	f.Add([]byte(peterNote + peterLine + enochLine))
+
+	for _, tt := range refusedNotes {
+		f.Add([]byte(tt.give))
+	}
+
+	f.Fuzz(func(t *testing.T, msg []byte) {
+		assertTextOf(t, msg)
+	})
+}
+
+// assertTextOf fails tb when TextOf and Parse disagree on msg: TextOf must
+// return the text of Parse for a note that Parse accepts, and the error of
+// Parse for one that it refuses.
+func assertTextOf(tb testing.TB, msg []byte) {
+	tb.Helper()
+
+	n, parseErr := note.Parse(msg)
+	text, err := note.TextOf(msg)
+
+	if parseErr != nil {
+		testkit.True(tb, err != nil && err.Error() == parseErr.Error(),
+			"TextOf must return the error of Parse for "+strconv.Quote(string(msg)))
+
+		return
+	}
+
+	testkit.NoError(tb, err, "TextOf must accept the note that Parse accepts: "+strconv.Quote(string(msg)))
+	testkit.Equal(tb, text, n.Text, "TextOf must return the text of Parse")
 }

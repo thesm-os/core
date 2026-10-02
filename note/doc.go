@@ -55,7 +55,9 @@
 // verifies nothing. [Note.Check] verifies the lines against a
 // [sign.Policy], and [Open] does both. The text of a note is untrusted
 // until Check returns nil. [Note.Find] returns the line of one key, for a
-// caller that verifies the signature of that key itself.
+// caller that verifies the signature of that key itself. [TextOf] returns
+// the text of a note without building a Note, for a caller that hashes or
+// compares texts, and checks the note as Parse does.
 //
 // Check verifies the signature of a known key only when the result of the
 // policy depends on it. signed-note asks a verifier to reject a note when
@@ -135,11 +137,13 @@
 //     The MarshalText methods and [Key.String] allocate the text once.
 //   - [Note.Check] allocates nothing for a note of at most 16 lines, apart
 //     from what sign.Policy.Check allocates.
-//   - [Note.UnmarshalText] allocates nothing into a Note that holds a note
-//     of the same keys, such as the previous checkpoint of one log.
+//   - [Note.UnmarshalText] allocates nothing into a Note that contains a
+//     note of the same keys, such as the previous checkpoint of one log.
 //     [Key.Set] and [Key.UnmarshalText] allocate nothing into a Key that
-//     holds the same key. [Parse] allocates three times, whatever the
+//     contains the same key. [Parse] allocates three times, whatever the
 //     number of lines, and [ParseKey] once.
+//   - [TextOf] allocates nothing for a note that it accepts, whatever its
+//     key names and its number of lines.
 //   - [Note.Sign] and the AppendSign of a Signer allocate nothing into
 //     memory with room when the algorithm appends without an allocation,
 //     as Ed25519 does. Sign allocates the lines and each value.
