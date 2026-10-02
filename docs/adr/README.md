@@ -96,5 +96,6 @@ Start from [`docs/templates/ADR.md`](../templates/ADR.md).
 | [0041](0041-a-custodian-creates-wrapping-keys.md) | A Custodian Creates Wrapping Keys | Accepted |
 | [0042](0042-a-content-type-is-bounded.md) | A Content Type Is Bounded | Accepted |
 | [0043](0043-core-structs-have-canonical-codecs.md) | Core Structs Have Canonical kanon Codecs | Accepted |
+| [0044](0044-a-blob-reader-may-fail-after-removal.md) | A Blob Reader May Fail Once Its Version Is Removed | Accepted |
 
 [nygard]: https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions
