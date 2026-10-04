@@ -781,6 +781,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   certificates referred to the caller's buffer, so a caller that reused
   the buffer made every later token of that authority fail with
   `tsp.ErrSignature`. `Info.Chain` no longer refers to the token.
+- `httpclient.Client.Fetch` and `AppendFetch` classify a read of a body
+  that ends at the client's `WithTimeout` as `errs.Transient`, as their
+  documentation states. They checked the context of `resp.Request`, which
+  `http.Client` also ends at its timeout, so the error was unclassified,
+  and a breaker and a retrier did not count it.
 
 ## [0.6.1] - 2026-08-05
 
