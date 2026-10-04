@@ -23,17 +23,17 @@ var (
 	// the same configuration fails the same way every time.
 	ErrConfig = errs.WithClass(errors.New("httpclient: invalid configuration"), errs.Invalid)
 
-	// ErrBlocked is returned by [Client.Do] and [Client.Fetch] for a request
-	// that the client does not send: a scheme other than http and https, a
-	// host that [WithHosts] does not admit, a redirect from https to http,
-	// and an address outside the [Reach] of the client. Classifies as
-	// Denied: the client refuses the call by policy, and the dependency took
-	// no part in it.
+	// ErrBlocked is returned by [Client.Do], [Client.Fetch] and
+	// [Client.AppendFetch] for a request that the client does not send: a
+	// scheme other than http and https, a host that [WithHosts] does not
+	// admit, a redirect from https to http, and an address outside the
+	// [Reach] of the client. Classifies as Denied: the client refuses the
+	// call by policy, and the dependency took no part in it.
 	ErrBlocked = errs.WithClass(errors.New("httpclient: blocked"), errs.Denied)
 
-	// ErrTooLarge is returned by [Client.Fetch] for a response body beyond
-	// the limit of [WithMaxResponseBytes]. Classifies as Invalid: the same
-	// call returns the same body, so a caller raises the limit or changes
-	// the request.
+	// ErrTooLarge is returned by [Client.Fetch] and [Client.AppendFetch] for
+	// a response body beyond the limit of [WithMaxResponseBytes]. Classifies
+	// as Invalid: the same call returns the same body, so a caller raises the
+	// limit or changes the request.
 	ErrTooLarge = errs.WithClass(errors.New("httpclient: response body beyond the limit"), errs.Invalid)
 )

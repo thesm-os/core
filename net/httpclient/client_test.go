@@ -41,6 +41,10 @@ const (
 	// body is the body that the handlers of the cases write.
 	body = "ok"
 
+	// prefix is the content of the dst that the cases of AppendFetch pass,
+	// which the result keeps before the body.
+	prefix = "items:"
+
 	// patience bounds every wait of a case for a value of a handler or of a
 	// call, above any correct wait, so a case fails where a defect would
 	// leave it waiting.
@@ -897,6 +901,178 @@ func TestClient(t *testing.T) {
 			})
 		}
 	})
+
+	t.Run("AppendFetch", func(t *testing.T) {
+		t.Parallel()
+
+		// A dst with room has 1 KiB of capacity beyond prefix: room for the
+		// body, and for the 512 bytes that each read of a body of unknown
+		// length makes room for.
+		appends := []struct {
+			name    string
+			room    int
+			chunked bool
+		}{
+			{name: "appends a declared body to the bytes of dst"},
+			{name: "appends a body of unknown length to the bytes of dst", chunked: true},
+			{name: "writes a declared body into the room of dst", room: 1024},
+			{name: "writes a body of unknown length into the room of dst", room: 1024, chunked: true},
+		}
+		for _, tt := range appends {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					if tt.chunked {
+						w.(http.Flusher).Flush()
+					}
+
+					_, _ = io.WriteString(w, body)
+				}))
+				t.Cleanup(srv.Close)
+
+				c, err := httpclient.New(dependency, required, loopback)
+				testkit.NoError(t, err, "New must accept the options")
+
+				dst := append(make([]byte, 0, len(prefix)+tt.room), prefix...)
+				got, err := appendFetch(t, c, dst, http.MethodGet, srv.URL)
+				testkit.NoError(t, err, "AppendFetch")
+				testkit.Equal(t, string(got), prefix+body, "the bytes of dst and the body")
+
+				if tt.room > 0 {
+					testkit.True(t, &got[0] == &dst[0], "AppendFetch must write into the array of dst")
+				}
+			})
+		}
+
+		// prefix is 6 bytes, so a body of 8 bytes fits the limit of 8 only
+		// when the limit counts the appended bytes alone.
+		limits := []struct {
+			name    string
+			size    int
+			chunked bool
+			fails   bool
+		}{
+			{
+				name: "returns a declared body of the limit after the bytes of dst",
+				size: 8,
+			},
+			{
+				name:    "returns a body of unknown length of the limit after the bytes of dst",
+				size:    8,
+				chunked: true,
+			},
+			{
+				name:  "returns dst with ErrTooLarge for a declared body beyond the limit",
+				size:  9,
+				fails: true,
+			},
+			{
+				name:    "returns dst with ErrTooLarge for a body of unknown length beyond the limit",
+				size:    9,
+				chunked: true,
+				fails:   true,
+			},
+		}
+		for _, tt := range limits {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+
+				payload := strings.Repeat("a", tt.size)
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					if tt.chunked {
+						w.(http.Flusher).Flush()
+					}
+
+					_, _ = io.WriteString(w, payload)
+				}))
+				t.Cleanup(srv.Close)
+
+				c, err := httpclient.New(dependency, required, loopback, httpclient.WithMaxResponseBytes(8))
+				testkit.NoError(t, err, "New must accept the options")
+
+				got, err := appendFetch(t, c, []byte(prefix), http.MethodGet, srv.URL)
+				if tt.fails {
+					testkit.ErrorIs(t, err, httpclient.ErrTooLarge, "AppendFetch must refuse the body")
+					testkit.Equal(t, string(got), prefix, "AppendFetch must return dst unchanged")
+
+					return
+				}
+
+				testkit.NoError(t, err, "AppendFetch")
+				testkit.Equal(t, string(got), prefix+payload, "the bytes of dst and the body")
+			})
+		}
+
+		t.Run("returns dst with a StatusError for a refused response", func(t *testing.T) {
+			t.Parallel()
+
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = io.WriteString(w, body)
+			}))
+			t.Cleanup(srv.Close)
+
+			c, err := httpclient.New(dependency, required, loopback)
+			testkit.NoError(t, err, "New must accept the options")
+
+			got, err := appendFetch(t, c, []byte(prefix), http.MethodGet, srv.URL)
+			se := testkit.ErrorAs[*httpclient.StatusError](t, err, "AppendFetch must return a StatusError")
+			testkit.Equal(t, string(se.Body), body, "the body of the error")
+			testkit.Equal(t, string(got), prefix, "AppendFetch must return dst unchanged")
+		})
+
+		t.Run("returns dst for a response to HEAD", func(t *testing.T) {
+			t.Parallel()
+
+			// The server declares the length of the body that a GET returns.
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, body)
+			}))
+			t.Cleanup(srv.Close)
+
+			c, err := httpclient.New(dependency, required, loopback)
+			testkit.NoError(t, err, "New must accept the options")
+
+			got, err := appendFetch(t, c, []byte(prefix), http.MethodHead, srv.URL)
+			testkit.NoError(t, err, "AppendFetch")
+			testkit.Equal(t, string(got), prefix, "AppendFetch must append nothing for HEAD")
+		})
+
+		t.Run("drops the bytes of an attempt that failed", func(t *testing.T) {
+			t.Parallel()
+
+			// The first attempt declares 10 bytes, sends 2 and closes the
+			// connection, so its read fails with a Transient error after it
+			// wrote 2 bytes into the room of dst.
+			var hits atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if hits.Add(1) == 1 {
+					w.Header().Set("Content-Length", "10")
+					_, _ = io.WriteString(w, "ab")
+					conn, _, err := http.NewResponseController(w).Hijack()
+					if err == nil {
+						_ = conn.Close()
+					}
+
+					return
+				}
+
+				_, _ = io.WriteString(w, body)
+			}))
+			t.Cleanup(srv.Close)
+
+			c, err := httpclient.New(dependency, required, loopback,
+				httpclient.WithRetrier(retrier(t, fake.New(origin))))
+			testkit.NoError(t, err, "New must accept the options")
+
+			dst := append(make([]byte, 0, len(prefix)+1024), prefix...)
+			got, err := appendFetch(t, c, dst, http.MethodGet, srv.URL)
+			testkit.NoError(t, err, "AppendFetch must return the body of the retry")
+			testkit.Equal(t, string(got), prefix+body, "the bytes of dst and the body of the retry")
+			testkit.Equal(t, hits.Load(), int32(2), "the attempts")
+		})
+	})
 }
 
 // get sends a GET of url with c.Do, and returns the status and the body of
@@ -930,6 +1106,17 @@ func fetch(t *testing.T, c *httpclient.Client, method, url string, body io.Reade
 	maps.Copy(req.Header, header)
 
 	return c.Fetch(req)
+}
+
+// appendFetch sends a request of method to url without a body through
+// c.AppendFetch with dst, and returns what AppendFetch returns.
+func appendFetch(t *testing.T, c *httpclient.Client, dst []byte, method, url string) ([]byte, error) {
+	t.Helper()
+
+	req, err := http.NewRequestWithContext(t.Context(), method, url, http.NoBody)
+	testkit.NoError(t, err, "the request of the case must build")
+
+	return c.AppendFetch(dst, req)
 }
 
 // await returns the next value of ch, and fails t when no value arrives

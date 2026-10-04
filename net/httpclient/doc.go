@@ -6,10 +6,10 @@
 // production client needs.
 //
 // [New] builds a [Client] of a dependency's name and options. [Client.Do]
-// sends a request as http.Client.Do does, and [Client.Fetch] returns the
-// body of a response that succeeded. Each Client has a transport of its
-// own, never net/http's DefaultTransport, with a limit on every phase of an
-// attempt.
+// sends a request as http.Client.Do does. [Client.Fetch] returns the body of
+// a response that succeeded, and [Client.AppendFetch] appends it to a buffer
+// of the caller. Each Client has a transport of its own, never net/http's
+// DefaultTransport, with a limit on every phase of an attempt.
 //
 // # Dependencies
 //
@@ -34,7 +34,8 @@
 //   - [WithTLSHandshakeTimeout]: 5 s, where net/http waits 10 s.
 //   - [WithIdleConnTimeout]: 90 s.
 //   - [WithMaxIdleConnsPerHost]: 32, where net/http keeps 2.
-//   - [WithMaxResponseBytes]: 8 MiB, for the body that Fetch reads.
+//   - [WithMaxResponseBytes]: 8 MiB, for the body that Fetch and AppendFetch
+//     read.
 //
 // A negative value turns a limit off, and New refuses a zero value.
 //
@@ -90,7 +91,8 @@
 // and of its headers, which leave the caller's request unchanged. A traced
 // attempt also allocates the attributes of its span. The state of a call
 // and the guards allocate nothing. Under a limit, Fetch allocates the body
-// once when the response declares its length. The benchmarks of the
+// once when the response declares its length. AppendFetch does not allocate
+// the body when the caller's buffer has room for it. The benchmarks of the
 // package measure a call on a connection that the transport reuses, with Go
 // 1.27.1:
 //
@@ -98,6 +100,10 @@
 //   - Do of a traced request: 60 objects.
 //   - Do with a breaker and a retrier: 54 objects.
 //   - Fetch: 55 objects, the body included.
+//   - AppendFetch into a buffer with room for the body: 54 objects.
+//   - AppendFetch of a chunked response into a buffer with room: 57
+//     objects. net/http allocates the key and the value of its
+//     Transfer-Encoding header, and the TransferEncoding of the response.
 //
 // The tracer, the propagator, and the functions of WithPrepare and
 // WithClassify allocate on their own.
@@ -109,15 +115,17 @@
 //
 //   - [ErrConfig], Invalid: New refuses the configuration.
 //   - [ErrBlocked], Denied: the client does not send the request.
-//   - [ErrTooLarge], Invalid: a body beyond the limit of Fetch.
+//   - [ErrTooLarge], Invalid: a body beyond the limit of Fetch and
+//     AppendFetch.
 //   - *[StatusError], by status: a response that the default
 //     classification refuses.
 //
 // # Dependency position
 //
-// Imports context, crypto/tls, errors, fmt, io, log/slog, net, net/http,
-// net/netip, net/url, slices, strconv, strings, syscall and time from the
-// standard library, and go.thesmos.sh/core/clock, go.thesmos.sh/core/errs,
-// go.thesmos.sh/core/net/internal/semconv, go.thesmos.sh/core/resilience
-// and go.thesmos.sh/core/telemetry from this module.
+// Imports context, crypto/tls, errors, fmt, io, log/slog, math, net,
+// net/http, net/netip, net/url, slices, strconv, strings, syscall and time
+// from the standard library, and go.thesmos.sh/core/clock,
+// go.thesmos.sh/core/errs, go.thesmos.sh/core/net/internal/semconv,
+// go.thesmos.sh/core/resilience and go.thesmos.sh/core/telemetry from this
+// module.
 package httpclient

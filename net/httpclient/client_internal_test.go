@@ -44,8 +44,11 @@ var (
 	// endOfHeader ends the header of a request.
 	endOfHeader = []byte("\r\n\r\n")
 
-	// response is the response of respond to every request.
-	response = []byte("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n" + payload)
+	// declared is a response that declares the length of its body.
+	declared = []byte("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n" + payload)
+
+	// chunked is a response of unknown length, with its body in one chunk.
+	chunked = []byte("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\n" + payload + "\r\n0\r\n\r\n")
 )
 
 // required bundles the four options of the dependencies that New requires,
@@ -232,7 +235,7 @@ func BenchmarkClient(b *testing.B) {
 	}
 	for _, tt := range dos {
 		b.Run(tt.name, func(b *testing.B) {
-			client := piped(b, tt.opts...)
+			client := piped(b, declared, tt.opts...)
 
 			c := bench.Start(b).MaxAllocs(tt.want)
 			defer c.End()
@@ -256,7 +259,7 @@ func BenchmarkClient(b *testing.B) {
 	}
 
 	b.Run("Fetch", func(b *testing.B) {
-		client := piped(b)
+		client := piped(b, declared)
 
 		c := bench.Start(b).MaxAllocs(55)
 		defer c.End()
@@ -273,13 +276,52 @@ func BenchmarkClient(b *testing.B) {
 		testkit.NoError(b, errFetch, "Fetch")
 		testkit.Equal(b, string(got), payload, "the benchmark must measure a body that the client read")
 	})
+
+	b.Run("AppendFetch", func(b *testing.B) {
+		// net/http allocates 3 objects more for a chunked response: the key and
+		// the value of its Transfer-Encoding header, and the TransferEncoding
+		// of the Response.
+		bodies := []struct {
+			name  string
+			reply []byte
+			want  uint64
+		}{
+			{name: "a declared body into a buffer with room", reply: declared, want: 54},
+			{name: "a body of unknown length into a buffer with room", reply: chunked, want: 57},
+		}
+		for _, tt := range bodies {
+			b.Run(tt.name, func(b *testing.B) {
+				client := piped(b, tt.reply)
+
+				// The buffer has room for the body, and for the 512 bytes that
+				// each read of a body of unknown length makes room for.
+				buf := make([]byte, 0, 1024)
+
+				c := bench.Start(b).MaxAllocs(tt.want)
+				defer c.End()
+
+				var (
+					got       []byte
+					errAppend error
+				)
+
+				for c.Loop() {
+					got, errAppend = client.AppendFetch(buf, req)
+				}
+
+				testkit.NoError(b, errAppend, "AppendFetch")
+				testkit.Equal(b, string(got), payload, "the benchmark must measure a body that the client read")
+			})
+		}
+	})
 }
 
 // piped returns a Client with the options of the internal cases and opts,
-// whose transport dials a pipe to respond. Its calls run through net/http's
-// Client and Transport on one connection that they reuse, and connect to no
-// network. The cleanup of b closes the connection.
-func piped(b *testing.B, opts ...Option) *Client {
+// whose transport dials a pipe to respond, which writes reply to every
+// request. Its calls run through net/http's Client and Transport on one
+// connection that they reuse, and connect to no network. The cleanup of b
+// closes the connection.
+func piped(b *testing.B, reply []byte, opts ...Option) *Client {
 	b.Helper()
 
 	client, err := New(dependency, append([]Option{required}, opts...)...)
@@ -289,7 +331,7 @@ func piped(b *testing.B, opts ...Option) *Client {
 	testkit.True(b, ok, "the client must send through a transport of net/http")
 	tr.DialContext = func(context.Context, string, string) (net.Conn, error) {
 		conn, peer := net.Pipe()
-		go respond(peer)
+		go respond(peer, reply)
 
 		return conn, nil
 	}
@@ -298,11 +340,11 @@ func piped(b *testing.B, opts ...Option) *Client {
 	return client
 }
 
-// respond writes response to conn for every request that it reads from
-// conn, until conn closes. The requests of the benchmark have no body, so
-// each ends with its header, and fits one read of the buffer. respond
-// does not allocate per request.
-func respond(conn net.Conn) {
+// respond writes reply to conn for every request that it reads from conn,
+// until conn closes. The requests of the benchmark have no body, so each
+// ends with its header, and fits one read of the buffer. respond does not
+// allocate per request.
+func respond(conn net.Conn, reply []byte) {
 	buf := make([]byte, 4096)
 
 	for {
@@ -312,7 +354,7 @@ func respond(conn net.Conn) {
 		}
 
 		if bytes.Contains(buf[:n], endOfHeader) {
-			if _, err := conn.Write(response); err != nil {
+			if _, err := conn.Write(reply); err != nil {
 				return
 			}
 		}

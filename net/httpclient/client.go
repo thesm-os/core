@@ -10,9 +10,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -63,8 +65,13 @@ const (
 	maxRedirects = 5
 
 	// statusBodyBytes is the number of bytes of the body of a refused
-	// response that Fetch keeps in its StatusError.
+	// response that Fetch and AppendFetch keep in its StatusError.
 	statusBodyBytes = 1024
+
+	// readBytes is the room that the read of a body in steps makes in its
+	// buffer before each step. It is the size of the first buffer of
+	// io.ReadAll.
+	readBytes = 512
 
 	// drainBytes is the number of bytes of an unread body that the client
 	// reads before it closes the body, so the transport can reuse the
@@ -312,10 +319,10 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 }
 
 // Fetch sends req as Do does, and returns the body of a response that
-// succeeded, at most the bytes of [WithMaxResponseBytes]. It reads the body
-// within the attempt, so the timeout, the breaker and the retries cover the
-// read. Under a limit, it allocates the body once when the response
-// declares its length. A response to HEAD returns nil.
+// succeeded. It calls [Client.AppendFetch] with a nil dst, so it reads at
+// most the bytes of [WithMaxResponseBytes] within the attempt, and the
+// timeout, the breaker and the retries cover the read. A response to HEAD
+// returns nil.
 //
 // Error modes: the errors of Do; the error of the classification of a
 // refused response, by default a *[StatusError] with the first 1 KiB of the
@@ -326,10 +333,42 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 // # Allocation contract
 //
 // Fetch allocates as Do does, and the body: 55 objects for a call on a
-// connection that the transport reuses. A refused response allocates its
-// StatusError and the 1 KiB buffer of its body as well.
+// connection that the transport reuses. Under a limit, it allocates the
+// body once when the response declares its length. A refused response
+// allocates its StatusError and the 1 KiB buffer of its body as well.
 func (c *Client) Fetch(req *http.Request) ([]byte, error) {
-	return attempts(&call{c: c, req: req}, func(resp *http.Response, err error) ([]byte, error) {
+	return c.AppendFetch(nil, req)
+}
+
+// AppendFetch sends req as Do does, and appends to dst the body of a
+// response that succeeded, at most the bytes of [WithMaxResponseBytes]. It
+// reads the body within the attempt, so the timeout, the breaker and the
+// retries cover the read. Each attempt appends to dst at the length that
+// dst had at the call, so the bytes of an attempt that failed are not in
+// the result. A response to HEAD appends nothing.
+//
+// Under a limit, AppendFetch grows dst at most once for a body whose length
+// the response declares, and refuses a declared length beyond the limit
+// without a read. It reads a body of unknown length, and any body without a
+// limit, in steps into the room of dst, and grows dst before a step when
+// less than 512 bytes of room are left.
+//
+// Error modes: those of [Client.Fetch]. With an error, AppendFetch returns
+// dst unchanged. An attempt that failed can have written into the capacity
+// of dst beyond its length.
+//
+// # Allocation contract
+//
+// AppendFetch allocates as Do does when dst has room for the body: 54
+// objects for a call on a connection that the transport reuses, with Go
+// 1.27.1. For a body of unknown length, room means 512 bytes beyond the
+// body, because each step makes room for 512 bytes before its read. A
+// chunked response costs 57 objects, because net/http allocates the key and
+// the value of its Transfer-Encoding header and the TransferEncoding of the
+// response. A body without room in dst grows dst. A refused response
+// allocates its StatusError and the 1 KiB buffer of its body as well.
+func (c *Client) AppendFetch(dst []byte, req *http.Request) ([]byte, error) {
+	b, err := attempts(&call{c: c, req: req}, func(resp *http.Response, err error) ([]byte, error) {
 		if resp == nil {
 			return nil, err
 		}
@@ -338,9 +377,9 @@ func (c *Client) Fetch(req *http.Request) ([]byte, error) {
 			if se, ok := errors.AsType[*StatusError](err); ok {
 				// The body is detail of the error. A read that fails keeps
 				// the bytes that it read.
-				b := make([]byte, statusBodyBytes)
-				n, _ := io.ReadFull(resp.Body, b)
-				se.Body = b[:n]
+				body := make([]byte, statusBodyBytes)
+				n, _ := io.ReadFull(resp.Body, body)
+				se.Body = body[:n]
 			}
 
 			discard(resp)
@@ -348,19 +387,24 @@ func (c *Client) Fetch(req *http.Request) ([]byte, error) {
 			return nil, err
 		}
 
-		// read consumes the body to its end or fails, so the body closes
-		// without a drain. The transport reuses the connection of a body
-		// that it read to its end, and closes any other.
-		body, err := c.read(resp)
+		// appendBody consumes the body to its end or fails, so the body
+		// closes without a drain. The transport reuses the connection of a
+		// body that it read to its end, and closes any other.
+		b, err := c.appendBody(dst, resp)
 		_ = resp.Body.Close()
 
-		return body, err
+		return b, err
 	})
+	if err != nil {
+		return dst, err
+	}
+
+	return b, nil
 }
 
-// call is one call of [Client.Do] or [Client.Fetch]: its request, the host
-// and the port of its URL, and the response of the attempt before the
-// current one, which the next attempt discards.
+// call is one call of [Client.Do], [Client.Fetch] or [Client.AppendFetch]:
+// its request, the host and the port of its URL, and the response of the
+// attempt before the current one, which the next attempt discards.
 type call struct {
 	c    *Client
 	req  *http.Request
@@ -418,8 +462,8 @@ func attempts[T any](k *call, read func(*http.Response, error) (T, error)) (T, e
 
 		k.sent = true
 
-		// read takes over the body: Fetch's read closes it, and Do returns
-		// it to its caller or discards it at the next attempt.
+		// read takes over the body: AppendFetch's read closes it, and Do
+		// returns it to its caller or discards it at the next attempt.
 		return read(c.send(ctx, k, body)) //nolint:bodyclose // see above
 	}
 
@@ -534,41 +578,63 @@ func (c *Client) send(ctx context.Context, k *call, body io.ReadCloser) (*http.R
 	return resp, err
 }
 
-// read reads the body of resp, a response that succeeded, under the limit
-// of the client. Under a limit, it refuses a declared length beyond the
-// limit without a read, and allocates the body of a declared length once.
-// Without a limit, it reads the body in growing buffers, so a declared
-// length that the server does not send allocates nothing in advance.
+// appendBody appends the body of resp, a response that succeeded, to dst
+// under the limit of the client, as [Client.AppendFetch] describes, and
+// returns dst unchanged with an error. Without a limit, it reads every body
+// in steps, so a declared length that the server does not send allocates
+// nothing in advance.
 //
 // A response to HEAD declares the length of the body that a GET would
-// return, and has no body, so read returns nil for it.
-func (c *Client) read(resp *http.Response) ([]byte, error) {
+// return, and has no body, so appendBody returns dst for it.
+func (c *Client) appendBody(dst []byte, resp *http.Response) ([]byte, error) {
 	// unknownLength is the ContentLength that net/http gives a response
 	// without a declared length.
 	const unknownLength = -1
 
 	if resp.Request.Method == http.MethodHead {
-		return nil, nil
+		return dst, nil
 	}
 
-	if c.maxResponse != unbounded && resp.ContentLength > c.maxResponse {
-		return nil, fmt.Errorf("%w: %s declared %d bytes", ErrTooLarge, c.name, resp.ContentLength)
+	limited := c.maxResponse != unbounded
+	if limited && resp.ContentLength > c.maxResponse {
+		return dst, fmt.Errorf("%w: %s declared %d bytes", ErrTooLarge, c.name, resp.ContentLength)
 	}
 
 	var (
-		body []byte
-		err  error
+		b   []byte
+		err error
 	)
 
-	if c.maxResponse == unbounded {
-		body, err = io.ReadAll(resp.Body)
-	} else if resp.ContentLength != unknownLength {
-		body = make([]byte, resp.ContentLength)
-		_, err = io.ReadFull(resp.Body, body)
+	if limited && resp.ContentLength != unknownLength {
+		// The limit bounds the declared length, so it fits an int on a
+		// 64-bit platform.
+		n := int(resp.ContentLength)
+		b = slices.Grow(dst, n)[:len(dst)+n]
+		_, err = io.ReadFull(resp.Body, b[len(dst):])
 	} else {
-		body, err = io.ReadAll(io.LimitReader(resp.Body, c.maxResponse+1))
-		if err == nil && int64(len(body)) > c.maxResponse {
-			return nil, fmt.Errorf("%w: %s sent more than %d bytes", ErrTooLarge, c.name, c.maxResponse)
+		// The reader stops one byte beyond the limit, so a longer body fails
+		// the check after the loop. The reader is a local value whose Read
+		// the loop calls directly, so it does not escape to the heap.
+		lr := io.LimitedReader{R: resp.Body, N: math.MaxInt64}
+		if limited {
+			lr.N = c.maxResponse + 1
+		}
+
+		b = dst
+		for err == nil {
+			b = slices.Grow(b, readBytes)
+
+			var n int
+			n, err = lr.Read(b[len(b):cap(b)])
+			b = b[:len(b)+n]
+		}
+
+		if limited && int64(len(b)-len(dst)) > c.maxResponse {
+			return dst, fmt.Errorf("%w: %s sent more than %d bytes", ErrTooLarge, c.name, c.maxResponse)
+		}
+
+		if errors.Is(err, io.EOF) {
+			err = nil
 		}
 	}
 
@@ -578,10 +644,10 @@ func (c *Client) read(resp *http.Response) ([]byte, error) {
 			err = errs.WithClass(err, errs.Transient)
 		}
 
-		return nil, err
+		return dst, err
 	}
 
-	return body, nil
+	return b, nil
 }
 
 // admit returns nil for a URL that the client may call: a scheme of http

@@ -48,8 +48,8 @@ type StatusError struct {
 	Dependency string
 
 	// Body is the first 1 KiB of the body of the response, which
-	// [Client.Fetch] reads. [Client.Do] leaves the body to its caller, and
-	// its errors have no Body.
+	// [Client.Fetch] and [Client.AppendFetch] read. [Client.Do] leaves the
+	// body to its caller, and its errors have no Body.
 	Body []byte
 
 	// Status is the status code of the response.

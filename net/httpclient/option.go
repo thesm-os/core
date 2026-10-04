@@ -226,8 +226,8 @@ func WithMaxIdleConnsPerHost(n int) Option {
 	return func(s *settings) { s.maxIdleConnsPerHost = n }
 }
 
-// WithMaxResponseBytes bounds the body that [Client.Fetch] reads. The
-// default is 8 MiB.
+// WithMaxResponseBytes bounds the body that [Client.Fetch] and
+// [Client.AppendFetch] read. The default is 8 MiB.
 func WithMaxResponseBytes(n int64) Option {
 	return func(s *settings) { s.maxResponseBytes = n }
 }
@@ -243,8 +243,9 @@ func WithPrepare(prepare func(*http.Request) error) Option {
 
 // WithClassify replaces the classification of the responses. classify
 // returns nil for a response that succeeded and an error otherwise, whose
-// class decides the breaker and the retries, and which Fetch returns. A
-// classify that reads the body sets a new one for the caller of Do.
+// class decides the breaker and the retries, and which Fetch and
+// AppendFetch return. A classify that reads the body sets a new one for the
+// caller of Do.
 func WithClassify(classify func(*http.Response) error) Option {
 	return func(s *settings) { s.classify = classify }
 }
