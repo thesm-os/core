@@ -18,9 +18,11 @@ var (
 	// ErrConfig is returned by [New] for a configuration that it refuses:
 	// an empty name, a nil option, a missing clock, logger, reporter or
 	// propagator, no host, a host that is not a host, a Reach outside its
-	// constants, and a zero duration, size or count. The error that New
-	// returns wraps ErrConfig and names the problem. Classifies as Invalid:
-	// the same configuration fails the same way every time.
+	// constants, a zero duration, size or count, and a dial function of
+	// [WithDialContext] for a client of [ReachPublic] or beside a resolver.
+	// The error that New returns wraps ErrConfig and names the problem.
+	// Classifies as Invalid: the same configuration fails the same way every
+	// time.
 	ErrConfig = errs.WithClass(errors.New("httpclient: invalid configuration"), errs.Invalid)
 
 	// ErrBlocked is returned by [Client.Do], [Client.Fetch] and

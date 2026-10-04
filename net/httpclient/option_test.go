@@ -4,6 +4,7 @@
 package httpclient_test
 
 import (
+	"bufio"
 	"context"
 	"crypto/tls"
 	"io"
@@ -512,6 +513,141 @@ func TestOption(t *testing.T) {
 			testkit.ErrorIs(t, err, context.DeadlineExceeded, "the dial must end at its timeout")
 			testkit.Equal(t, errs.Classify(err), errs.Transient, "the class of the error")
 			testkit.True(t, time.Since(start) < 2*time.Second, "the dial must end at the timeout of the option")
+		})
+	})
+
+	t.Run("WithDialContext", func(t *testing.T) {
+		t.Parallel()
+
+		// unresolved admits dependency.test, a name that does not resolve, so
+		// a call connects only through the dial function of a case.
+		unresolved := httpclient.Options(
+			httpclient.WithHosts("dependency.test"),
+			httpclient.WithReach(httpclient.ReachPrivate),
+		)
+
+		t.Run("connects the client through the dial function", func(t *testing.T) {
+			t.Parallel()
+
+			type dialed struct{ Network, Address string }
+
+			// The dial function returns one end of a pipe, and a goroutine of
+			// the case writes the response to one request on the other end.
+			dials := make(chan dialed, 1)
+			c, err := httpclient.New(dependency, required, unresolved,
+				httpclient.WithDialContext(func(_ context.Context, network, address string) (net.Conn, error) {
+					dials <- dialed{Network: network, Address: address}
+
+					conn, peer := net.Pipe()
+					go func() {
+						defer peer.Close()
+
+						req, errRead := http.ReadRequest(bufio.NewReader(peer))
+						if errRead != nil {
+							return
+						}
+
+						resp := &http.Response{
+							StatusCode:    http.StatusOK,
+							ProtoMajor:    1,
+							ProtoMinor:    1,
+							ContentLength: int64(len(body)),
+							Body:          io.NopCloser(strings.NewReader(body)),
+							Request:       req,
+						}
+						_ = resp.Write(peer)
+					}()
+
+					return conn, nil
+				}))
+			testkit.NoError(t, err, "New must accept the options")
+
+			got, err := fetch(t, c, http.MethodGet, "http://dependency.test/items", http.NoBody, nil)
+			testkit.NoError(t, err, "Fetch through the dial function")
+			testkit.Equal(t, string(got), body, "the body of the response on the pipe")
+			testkit.Equal(t, await(t, dials, "the client must call the dial function"),
+				dialed{Network: "tcp", Address: "dependency.test:80"}, "the network and the address of the dial")
+		})
+
+		t.Run("ends a dial at the dial timeout", func(t *testing.T) {
+			t.Parallel()
+
+			// The dial function returns when its context ends, and errHung
+			// when the context has not ended within patience.
+			c, err := httpclient.New(dependency, required, unresolved, httpclient.WithDialTimeout(50*time.Millisecond),
+				httpclient.WithDialContext(func(ctx context.Context, _, _ string) (net.Conn, error) {
+					timer := time.NewTimer(patience)
+					defer timer.Stop()
+
+					select {
+					case <-ctx.Done():
+						return nil, ctx.Err()
+					case <-timer.C:
+						return nil, errHung
+					}
+				}))
+			testkit.NoError(t, err, "New must accept the options")
+
+			_, err = fetch(t, c, http.MethodGet, "http://dependency.test/", http.NoBody, nil)
+			testkit.ErrorIs(t, err, context.DeadlineExceeded, "the dial must end at its timeout")
+			testkit.Equal(t, errs.Classify(err), errs.Transient, "the class of the error")
+		})
+
+		t.Run("ends the context of a dial when the dial returns", func(t *testing.T) {
+			t.Parallel()
+
+			contexts := make(chan context.Context, 1)
+			c, err := httpclient.New(dependency, required, unresolved,
+				httpclient.WithDialContext(func(ctx context.Context, _, _ string) (net.Conn, error) {
+					contexts <- ctx
+
+					return nil, errBoom
+				}))
+			testkit.NoError(t, err, "New must accept the options")
+
+			_, err = fetch(t, c, http.MethodGet, "http://dependency.test/", http.NoBody, nil)
+			testkit.ErrorIs(t, err, errBoom, "Fetch must return the error of the dial")
+
+			ctx := await(t, contexts, "the client must call the dial function")
+			testkit.ErrorIs(t, ctx.Err(), context.Canceled, "the context of the dial must end when the dial returns")
+		})
+
+		t.Run("dials without a deadline when the dial timeout is off", func(t *testing.T) {
+			t.Parallel()
+
+			deadlines := make(chan bool, 1)
+			c, err := httpclient.New(dependency, required, unresolved, httpclient.WithDialTimeout(-1),
+				httpclient.WithDialContext(func(ctx context.Context, _, _ string) (net.Conn, error) {
+					_, ok := ctx.Deadline()
+					deadlines <- ok
+
+					return nil, errBoom
+				}))
+			testkit.NoError(t, err, "New must accept the options")
+
+			_, err = fetch(t, c, http.MethodGet, "http://dependency.test/", http.NoBody, nil)
+			testkit.ErrorIs(t, err, errBoom, "Fetch must return the error of the dial")
+			testkit.False(t, await(t, deadlines, "the client must call the dial function"),
+				"the context of the dial must have no deadline")
+		})
+
+		t.Run("restores the client's dialer for nil", func(t *testing.T) {
+			t.Parallel()
+
+			srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+			t.Cleanup(srv.Close)
+
+			// The client's dialer checks the addresses of ReachPublic, the
+			// default, which refuses the loopback address of the server.
+			c, err := httpclient.New(dependency, required, httpclient.WithHosts("127.0.0.1"),
+				httpclient.WithDialContext(func(context.Context, string, string) (net.Conn, error) {
+					return nil, errBoom
+				}),
+				httpclient.WithDialContext(nil))
+			testkit.NoError(t, err, "New must accept a nil dial function for a client of ReachPublic")
+
+			_, err = fetch(t, c, http.MethodGet, srv.URL, http.NoBody, nil)
+			testkit.ErrorIs(t, err, httpclient.ErrBlocked, "the client's dialer must check the address")
 		})
 	})
 }

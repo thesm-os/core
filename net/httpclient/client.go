@@ -82,6 +82,11 @@ const (
 	// WithMaxResponseBytes, which turns the limit off. New refuses a zero
 	// limit, so zero is free to mean no limit.
 	unbounded = 0
+
+	// noTimeout is the dial timeout that a Client applies for a negative
+	// WithDialTimeout, which turns the timeout off. New refuses a zero
+	// timeout, so zero is free to mean no timeout.
+	noTimeout = 0
 )
 
 // clientSpan is the options of every span of the client.
@@ -192,9 +197,28 @@ func New(name string, opts ...Option) (*Client, error) {
 
 	// net/http fails a dial or a handshake at once for a negative timeout,
 	// and waits without a bound for a zero one.
-	dialer := &net.Dialer{Timeout: max(s.dialTimeout, 0), Resolver: s.resolver}
+	dialTimeout := max(s.dialTimeout, noTimeout)
+	dialer := &net.Dialer{Timeout: dialTimeout, Resolver: s.resolver}
 	if s.reach == ReachPublic && s.proxy == nil {
 		dialer.ControlContext = checkAddress
+	}
+
+	dial := dialer.DialContext
+	if caller := s.dial; caller != nil {
+		// net/http dials under a context that the cancellation of a request
+		// does not end, so the client ends the context of a dial of the
+		// caller at the dial timeout, and when the dial returns.
+		dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+			var cancel context.CancelFunc
+			if dialTimeout == noTimeout {
+				ctx, cancel = context.WithCancel(ctx)
+			} else {
+				ctx, cancel = context.WithTimeout(ctx, dialTimeout)
+			}
+			defer cancel()
+
+			return caller(ctx, network, address)
+		}
 	}
 
 	var protocols http.Protocols
@@ -202,7 +226,7 @@ func New(name string, opts ...Option) (*Client, error) {
 	protocols.SetHTTP2(true)
 
 	transport := &http.Transport{
-		DialContext:           dialer.DialContext,
+		DialContext:           dial,
 		TLSClientConfig:       s.tls,
 		TLSHandshakeTimeout:   max(s.tlsHandshakeTimeout, 0),
 		IdleConnTimeout:       max(s.idleConnTimeout, 0),

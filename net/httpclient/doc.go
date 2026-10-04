@@ -50,6 +50,11 @@
 // deployment. With [WithProxy], the dialer connects to the proxy, and the
 // proxy enforces the addresses that a deployment admits.
 //
+// [WithDialContext] replaces the dialer with a function of the caller, such
+// as one that returns one end of a net.Pipe in a test that counts the
+// allocations of a call. New refuses it for a client of ReachPublic,
+// because the function replaces the dialer that checks the addresses.
+//
 // # Guards
 //
 // [WithBreaker] guards each attempt with a circuit per host, and

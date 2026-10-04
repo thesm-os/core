@@ -317,25 +317,23 @@ func BenchmarkClient(b *testing.B) {
 }
 
 // piped returns a Client with the options of the internal cases and opts,
-// whose transport dials a pipe to respond, which writes reply to every
-// request. Its calls run through net/http's Client and Transport on one
-// connection that they reuse, and connect to no network. The cleanup of b
-// closes the connection.
+// which dials, through WithDialContext, a pipe to respond, which writes
+// reply to every request. Its calls run through net/http's Client and
+// Transport on one connection that they reuse, and connect to no network.
+// The cleanup of b closes the connection.
 func piped(b *testing.B, reply []byte, opts ...Option) *Client {
 	b.Helper()
 
-	client, err := New(dependency, append([]Option{required}, opts...)...)
+	client, err := New(dependency, required, WithReach(ReachPrivate),
+		WithDialContext(func(context.Context, string, string) (net.Conn, error) {
+			conn, peer := net.Pipe()
+			go respond(peer, reply)
+
+			return conn, nil
+		}),
+		Options(opts...))
 	testkit.NoError(b, err, "New must accept the options")
-
-	tr, ok := client.http.Transport.(*http.Transport)
-	testkit.True(b, ok, "the client must send through a transport of net/http")
-	tr.DialContext = func(context.Context, string, string) (net.Conn, error) {
-		conn, peer := net.Pipe()
-		go respond(peer, reply)
-
-		return conn, nil
-	}
-	b.Cleanup(tr.CloseIdleConnections)
+	b.Cleanup(client.http.CloseIdleConnections)
 
 	return client
 }

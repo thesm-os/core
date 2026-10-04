@@ -71,6 +71,10 @@ var origin = time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
 var (
 	errBoom = errors.New("boom")
 	errDNS  = errors.New("no resolution")
+
+	// errHung is the error of a dial function whose context did not end
+	// within patience.
+	errHung = errors.New("the context of the dial did not end")
 )
 
 // required bundles the four options of the dependencies that New requires:
@@ -267,6 +271,24 @@ func TestClient(t *testing.T) {
 			{name: "returns ErrConfig for zero idle connections", give: httpclient.WithMaxIdleConnsPerHost(0)},
 			{name: "returns ErrConfig for negative idle connections", give: httpclient.WithMaxIdleConnsPerHost(-1)},
 			{name: "returns ErrConfig for a zero response limit", give: httpclient.WithMaxResponseBytes(0)},
+			{
+				name: "returns ErrConfig for a dial function of a client of ReachPublic",
+				give: httpclient.Options(
+					httpclient.WithReach(httpclient.ReachPublic),
+					httpclient.WithDialContext(func(context.Context, string, string) (net.Conn, error) {
+						return nil, errBoom
+					}),
+				),
+			},
+			{
+				name: "returns ErrConfig for a dial function together with a resolver",
+				give: httpclient.Options(
+					httpclient.WithResolver(failing),
+					httpclient.WithDialContext(func(context.Context, string, string) (net.Conn, error) {
+						return nil, errBoom
+					}),
+				),
+			},
 		}
 		for _, tt := range refused {
 			t.Run(tt.name, func(t *testing.T) {

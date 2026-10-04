@@ -4,6 +4,7 @@
 package httpclient
 
 import (
+	"context"
 	"crypto/tls"
 	"log/slog"
 	"net"
@@ -48,6 +49,7 @@ type settings struct {
 	tls        *tls.Config
 	proxy      *url.URL
 	resolver   *net.Resolver
+	dial       func(ctx context.Context, network, address string) (net.Conn, error)
 	prepare    func(*http.Request) error
 	classify   func(*http.Response) error
 	hosts      []string
@@ -95,6 +97,8 @@ func (s *settings) problem() string {
 		{"no host is admitted: New requires WithHosts", len(s.hosts) == 0},
 		{"a host is not an IP address, a DNS name or a DNS name after a dot", invalidHost},
 		{"the reach is not ReachPublic or ReachPrivate", !s.reach.Valid()},
+		{"a dial function replaces the address check of ReachPublic", s.dial != nil && s.reach == ReachPublic},
+		{"a resolver has no effect beside a dial function", s.dial != nil && s.resolver != nil},
 		{"the timeout is zero", s.timeout == 0},
 		{"the dial timeout is zero", s.dialTimeout == 0},
 		{"the TLS handshake timeout is zero", s.tlsHandshakeTimeout == 0},
@@ -188,9 +192,24 @@ func WithProxy(u *url.URL) Option {
 }
 
 // WithResolver sets the resolver of the names that the client dials. The
-// default is net.DefaultResolver.
+// default is net.DefaultResolver. New refuses it together with
+// [WithDialContext], whose dial function receives the host unresolved.
 func WithResolver(r *net.Resolver) Option {
 	return func(s *settings) { s.resolver = r }
+}
+
+// WithDialContext connects the client through dial in place of its
+// net.Dialer, such as a function that returns one end of a net.Pipe whose
+// other end a test serves. The transport calls dial with the network "tcp"
+// and the host and port of the URL, or of the proxy of [WithProxy], before
+// any resolution, and adds TLS for https itself. The context of each dial
+// ends when dial returns, and at the timeout of [WithDialTimeout]. A nil
+// dial restores the client's dialer.
+//
+// New refuses dial for a client of [ReachPublic], because dial replaces the
+// dialer that checks the addresses, and together with [WithResolver].
+func WithDialContext(dial func(ctx context.Context, network, address string) (net.Conn, error)) Option {
+	return func(s *settings) { s.dial = dial }
 }
 
 // WithTimeout bounds one attempt, from its connection to the end of the
