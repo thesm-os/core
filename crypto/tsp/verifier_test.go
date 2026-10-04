@@ -231,6 +231,33 @@ func TestVerifier(t *testing.T) {
 				"TSA must be the directoryName of the authority")
 		})
 
+		t.Run("returns the verified chain of the authority", func(t *testing.T) {
+			t.Parallel()
+			a := newAuthority(t, tsptest.Config{Key: tsptest.KeyEd25519, Digest: tsptest.DigestSHA512})
+
+			info, err := newVerifier(t, a, nil).Verify(stamp(t, a), tsp.SHA256, imprint)
+			testkit.NoError(t, err, "Verify must accept the token")
+			testkit.Len(t, info.Chain, 3, "the chain must run from the authority to the root")
+			testkit.True(t, info.Chain[0].Equal(a.Leaf()), "the chain must start at the authority's certificate")
+			testkit.True(t, info.Chain[1].Equal(a.Intermediate()), "the chain must pass the intermediate")
+			testkit.NoError(t, info.Chain[2].CheckSignatureFrom(info.Chain[2]),
+				"the chain must end at the self-signed root")
+		})
+
+		t.Run("returns the chain that the Verifier keeps for a known certificate", func(t *testing.T) {
+			t.Parallel()
+			a := newAuthority(t, tsptest.Config{Key: tsptest.KeyEd25519, Digest: tsptest.DigestSHA512})
+			v := newVerifier(t, a, nil)
+
+			first, err := v.Verify(stamp(t, a), tsp.SHA256, imprint)
+			testkit.NoError(t, err, "Verify must accept the first token")
+			second, err := v.Verify(stamp(t, a), tsp.SHA256, imprint)
+			testkit.NoError(t, err, "Verify must accept the second token")
+
+			testkit.True(t, &first.Chain[0] == &second.Chain[0],
+				"two tokens of one certificate must share the chain that the Verifier keeps")
+		})
+
 		t.Run("returns the Policy of a token under the second policy", func(t *testing.T) {
 			t.Parallel()
 			a := newAuthority(t, tsptest.Config{Key: tsptest.KeyEd25519, Digest: tsptest.DigestSHA512, Policy: otherID})
@@ -658,21 +685,21 @@ func TestVerifier(t *testing.T) {
 			t.Parallel()
 			a := newAuthority(t, tsptest.Config{Key: tsptest.KeyEd25519, Digest: tsptest.DigestSHA512})
 			refused := errors.New("not in the trusted list")
-			v := newVerifier(t, a, func(tsp.Info, []*x509.Certificate) error { return refused })
+			v := newVerifier(t, a, func(tsp.Info) error { return refused })
 
 			_, err := v.Verify(stamp(t, a), tsp.SHA256, imprint)
 			testkit.ErrorIs(t, err, refused, "the error of Check must fail the verification")
 		})
 
-		t.Run("passes Check the Info and the chain of the authority", func(t *testing.T) {
+		t.Run("passes Check the Info with the chain of the authority", func(t *testing.T) {
 			t.Parallel()
 			a := newAuthority(t, tsptest.Config{Key: tsptest.KeyEd25519, Digest: tsptest.DigestSHA512})
 
 			var calls atomic.Int32
-			v := newVerifier(t, a, func(info tsp.Info, chain []*x509.Certificate) error {
+			v := newVerifier(t, a, func(info tsp.Info) error {
 				calls.Add(1)
-				testkit.Len(t, chain, 3, "the chain must run from the authority to the root")
-				testkit.True(t, chain[0].Equal(a.Leaf()), "the chain must start at the authority's certificate")
+				testkit.Len(t, info.Chain, 3, "the chain must run from the authority to the root")
+				testkit.True(t, info.Chain[0].Equal(a.Leaf()), "the chain must start at the authority's certificate")
 				testkit.True(t, info.Time.Time.Equal(origin), "Check must receive the Info")
 
 				return nil
@@ -932,7 +959,7 @@ func spec(edit func(a *tsptest.Authority, s *tsptest.Spec)) func(testing.TB, *ts
 // newVerifier returns a Verifier of a's roots that accepts policyID with an
 // accuracy of a second, with check as its Check, and fails tb when
 // NewVerifier refuses it.
-func newVerifier(tb testing.TB, a *tsptest.Authority, check func(tsp.Info, []*x509.Certificate) error) *tsp.Verifier {
+func newVerifier(tb testing.TB, a *tsptest.Authority, check func(tsp.Info) error) *tsp.Verifier {
 	tb.Helper()
 
 	return verifierOf(tb, tsp.VerifierConfig{

@@ -54,6 +54,14 @@ type Info struct {
 	// of its subjectAltName extension.
 	TSA []byte
 
+	// Chain is the verified chain of the authority's certificate, leaf
+	// first, as Verify verified it at genTime. Chain[0] is the certificate
+	// whose key signed the token. A caller applies a rule of its own per
+	// authority with it, such as a date after which it distrusts a key.
+	// The Verifier shares the chain with every token of the same
+	// certificate, so the caller does not change it.
+	Chain []*x509.Certificate
+
 	// extensions is the content of the extensions field, a sequence of
 	// Extension elements, and nil when the token has none.
 	extensions []byte

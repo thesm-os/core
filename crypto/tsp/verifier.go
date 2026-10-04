@@ -77,15 +77,14 @@ type VerifierConfig struct {
 	// too.
 	Intermediates *x509.CertPool
 
-	// Check is called with the Info of each token that verifies and the
-	// chain of its authority's certificate, leaf first, before Verify
-	// returns, and an error that it returns fails the verification. The
-	// chain is shared with later calls, so Check does not change it. A
-	// caller checks there what this package cannot know: the status of the
-	// authority in a trusted list, the revocation of its certificate at
-	// the token's time, or an extension that a qualified time-stamp
+	// Check is called with the Info of each token that verifies, whose
+	// Chain is the verified chain of the authority's certificate, before
+	// Verify returns, and an error that it returns fails the verification.
+	// A caller checks there what this package cannot know: the status of
+	// the authority in a trusted list, the revocation of its certificate
+	// at the token's time, or an extension that a qualified time-stamp
 	// contains. A nil Check checks nothing more.
-	Check func(info Info, chain []*x509.Certificate) error
+	Check func(info Info) error
 
 	// Policies are the policies whose tokens the Verifier accepts. There
 	// is at least one, and no two have one ID.
@@ -135,7 +134,7 @@ type VerifierConfig struct {
 // verification of its chain.
 type Verifier struct {
 	roots, intermediates *x509.CertPool
-	check                func(Info, []*x509.Certificate) error
+	check                func(Info) error
 
 	// chains keeps the verified chains by the SHA-256 of the leaf.
 	chains *cache.Cache[[sha256.Size]byte, *chain]
@@ -230,7 +229,8 @@ func NewVerifier(cfg VerifierConfig) (*Verifier, error) {
 // # Allocation contract
 //
 // As the [Verifier]'s. The Info refers to token, so the caller keeps token
-// while it uses the Info.
+// while it uses the Info. Its Chain is the chain that the Verifier keeps,
+// without a copy.
 func (v *Verifier) Verify(token []byte, h Hash, imprint crypto.Digest) (Info, error) {
 	if !h.matches(imprint) {
 		return Info{}, ErrHash
@@ -269,6 +269,7 @@ func (v *Verifier) Verify(token []byte, h Hash, imprint crypto.Digest) (Info, er
 		Serial:     ti.serial,
 		Nonce:      ti.nonce,
 		TSA:        ti.tsa,
+		Chain:      c.certs,
 		extensions: ti.extensions,
 		Time:       clock.UTCReading{Time: ti.genTime, MaxError: p.Accuracy, Synced: true},
 		Ordering:   ti.ordering,
@@ -278,7 +279,7 @@ func (v *Verifier) Verify(token []byte, h Hash, imprint crypto.Digest) (Info, er
 	}
 
 	if v.check != nil {
-		if err := v.check(info, c.certs); err != nil {
+		if err := v.check(info); err != nil {
 			return Info{}, fmt.Errorf("tsp: check: %w", err)
 		}
 	}
