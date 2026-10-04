@@ -414,7 +414,7 @@ func (c *Client) AppendFetch(dst []byte, req *http.Request) ([]byte, error) {
 		// appendBody consumes the body to its end or fails, so the body
 		// closes without a drain. The transport reuses the connection of a
 		// body that it read to its end, and closes any other.
-		b, err := c.appendBody(dst, resp)
+		b, err := c.appendBody(req.Context(), dst, resp)
 		_ = resp.Body.Close()
 
 		return b, err
@@ -608,9 +608,14 @@ func (c *Client) send(ctx context.Context, k *call, body io.ReadCloser) (*http.R
 // in steps, so a declared length that the server does not send allocates
 // nothing in advance.
 //
+// It classifies an error of the read as Transient while ctx, the context of
+// the caller's request, is live. The context of resp.Request is not the
+// caller's: http.Client ends it at the timeout of the client as well, which
+// is a failure of the dependency.
+//
 // A response to HEAD declares the length of the body that a GET would
 // return, and has no body, so appendBody returns dst for it.
-func (c *Client) appendBody(dst []byte, resp *http.Response) ([]byte, error) {
+func (c *Client) appendBody(ctx context.Context, dst []byte, resp *http.Response) ([]byte, error) {
 	// unknownLength is the ContentLength that net/http gives a response
 	// without a declared length.
 	const unknownLength = -1
@@ -664,7 +669,7 @@ func (c *Client) appendBody(dst []byte, resp *http.Response) ([]byte, error) {
 
 	if err != nil {
 		err = fmt.Errorf("httpclient: %s: read the body: %w", c.name, err)
-		if resp.Request.Context().Err() == nil {
+		if ctx.Err() == nil {
 			err = errs.WithClass(err, errs.Transient)
 		}
 

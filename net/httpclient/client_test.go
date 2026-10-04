@@ -850,6 +850,62 @@ func TestClient(t *testing.T) {
 			testkit.Equal(t, errs.Classify(err), errs.Transient, "the class of the error")
 		})
 
+		// stalled sends the header of a body of 10 bytes, and no byte of the
+		// body before the client stops waiting or patience ends.
+		stalled := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Length", "10")
+			w.WriteHeader(http.StatusOK)
+			_ = http.NewResponseController(w).Flush()
+
+			timer := time.NewTimer(patience)
+			defer timer.Stop()
+
+			select {
+			case <-r.Context().Done():
+			case <-timer.C:
+			}
+		})
+
+		stalls := []struct {
+			opts     []httpclient.Option
+			name     string
+			deadline time.Duration
+			want     errs.Class
+		}{
+			{
+				name:     "returns a Transient error for a body beyond the timeout",
+				opts:     []httpclient.Option{httpclient.WithTimeout(50 * time.Millisecond)},
+				deadline: patience,
+				want:     errs.Transient,
+			},
+			{
+				name:     "returns the error of the context for a body beyond the deadline of the caller",
+				deadline: 50 * time.Millisecond,
+				want:     errs.Unspecified,
+			},
+		}
+		for _, tt := range stalls {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+
+				srv := httptest.NewServer(stalled)
+				t.Cleanup(srv.Close)
+
+				c, err := httpclient.New(dependency, required, loopback, httpclient.Options(tt.opts...))
+				testkit.NoError(t, err, "New must accept the options")
+
+				ctx, cancel := context.WithTimeout(t.Context(), tt.deadline)
+				defer cancel()
+
+				req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, http.NoBody)
+				testkit.NoError(t, err, "the request must build")
+
+				_, err = c.Fetch(req)
+				testkit.ErrorIs(t, err, context.DeadlineExceeded, "the read must end at the earlier deadline")
+				testkit.Equal(t, errs.Classify(err), tt.want, "the class of the error")
+			})
+		}
+
 		limits := []struct {
 			opts    []httpclient.Option
 			name    string
