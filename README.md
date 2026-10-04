@@ -185,9 +185,12 @@ seams every other thesmos library and framework depends on:
   optional queue, rejection / timeout / cancellation kept
   distinct), and `Retrier` (attempt count *and* a sliding-window
   budget, full-jitter `Backoff`), and `Limiter` (a token bucket of a
-  rate and a burst, whose waits reserve their units in order). All read
-  time through `clock.Clock`, so their transitions are exact under a
-  virtual clock. See [RFC-0023][rfc-0023] and [RFC-0050][rfc-0050].
+  rate and a burst, whose waits reserve their units in order).
+  `Failover` calls redundant targets one after another under their
+  circuits, and its error remains retryable while any target's error is.
+  All read time through `clock.Clock`, so their transitions are exact
+  under a virtual clock. See [RFC-0023][rfc-0023], [RFC-0050][rfc-0050]
+  and [RFC-0052][rfc-0052].
 - **Batch** — request coalescing: `Loader[K, V]` accumulates
   concurrent single-key loads into one batched call and
   deduplicates concurrent loads of the same key. Not a cache —
@@ -382,5 +385,6 @@ Apache 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 [rfc-0049]: docs/rfc/0049-bounded-cache.md
 [rfc-0050]: docs/rfc/0050-rate-limiter.md
 [rfc-0051]: docs/rfc/0051-bounded-hot-path-telemetry.md
+[rfc-0052]: docs/rfc/0052-failover.md
 [contrib]: CONTRIBUTING.md
 [sec]: SECURITY.md

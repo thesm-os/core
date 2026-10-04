@@ -448,13 +448,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and each cost rounds up, so the Limiter admits at most its rate.
   `WaitN` returns `resilience.ErrUnits`, classified `errs.Invalid`, for a
   negative number of units or one above the burst. See RFC-0050.
+- `resilience.Failover`: calls redundant targets one after another under
+  their circuits of a `Breaker`, from a start that a caller rotates, until
+  one succeeds. It skips a target whose circuit refuses the call and
+  records each outcome as `Call` does. When every target fails, its error
+  contains each target's error, and it classifies as `errs.Transient`
+  when any target's error is Transient, with the shortest delay among
+  them, so a `Do` around it retries. A success allocates nothing. See
+  RFC-0052.
 - `crypto/tsp` package: the Time-Stamp Protocol of RFC 3161, offline.
   `AppendRequest` encodes a request, `ParseResponse` checks a response
   against the request and returns its token, and a `Verifier` verifies a
   token against the caller's roots and policies, with RSA, ECDSA,
   Ed25519 and ML-DSA signatures. `Info.Time` is a `clock.UTCReading` of
-  genTime and the token's accuracy. A token of a known certificate
-  verifies without an allocation for Ed25519 and ML-DSA. See RFC-0048.
+  genTime and the token's accuracy, and `Info.Chain` is the verified
+  chain of the authority's certificate, which `VerifierConfig.Check`
+  receives in the `Info`. A token of a known certificate verifies without
+  an allocation for Ed25519 and ML-DSA. See RFC-0048.
 - `coretest/tsptest`: a time-stamp authority for tests, with a
   certificate chain of its own. `Respond` returns the response to a
   request, and `Token` builds the malformed and forged tokens that a
@@ -722,6 +732,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Epoch.Counter`, and `tlog.LeafHash` and `tlog.Root` for the removed
   `crypto.Hasher.Combine`. The `id` documentation no longer refers to
   a `crypto/kem` package.
+- `resilience.Call` records no outcome for a call whose context ended
+  with an error. It recorded a success, which cleared the failure count
+  of a closed circuit, so a dependency that hangs never opened it, and
+  counted the abandoned probe of a half-open circuit toward closing it.
+  The circuit now admits its next probe and keeps its counts. See
+  RFC-0052.
+- `resilience.Call` releases the probe of a half-open circuit when its
+  function panics. The circuit refused every later call once a caller
+  recovered from such a panic. The panic still reaches the caller.
 
 ## [0.6.1] - 2026-08-05
 

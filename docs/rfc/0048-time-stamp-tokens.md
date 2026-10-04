@@ -177,9 +177,9 @@ type Policy struct {
 type VerifierConfig struct {
     Roots         *x509.CertPool // required
     Intermediates *x509.CertPool // optional
-    // Check is called with the Info and the chain of each token that
-    // verifies, and its error fails the verification.
-    Check    func(info Info, chain []*x509.Certificate) error
+    // Check is called with the Info of each token that verifies, and its
+    // error fails the verification.
+    Check    func(info Info) error
     Policies []Policy // at least one, no two of one ID
 }
 
@@ -190,11 +190,12 @@ func NewVerifier(cfg VerifierConfig) (*Verifier, error)
 func (v *Verifier) Verify(token []byte, h Hash, imprint crypto.Digest) (Info, error)
 
 type Info struct {
-    Time     clock.UTCReading // genTime, with the accuracy as MaxError
-    Serial   []byte           // the content of serialNumber
-    Nonce    []byte           // nil when the token has none
-    TSA      []byte           // the DER of the tsa GeneralName, or nil
-    Policy   Policy           // the Verifier's Policy of the token
+    Time     clock.UTCReading    // genTime, with the accuracy as MaxError
+    Serial   []byte              // the content of serialNumber
+    Nonce    []byte              // nil when the token has none
+    TSA      []byte              // the DER of the tsa GeneralName, or nil
+    Chain    []*x509.Certificate // the verified chain of the authority, leaf first
+    Policy   Policy              // the Verifier's Policy of the token
     Ordering bool
 }
 
@@ -243,10 +244,19 @@ tokens.
 The Verifier does not check revocation. Under RFC 3161 section 4, a
 token issued before the revocation of its authority's certificate
 remains valid for some reasons of revocation. The caller's Check
-decides, from the chain and genTime. Check also reads what core cannot
+decides, from `Info.Chain` and genTime. Check also reads what core cannot
 know, such as the status of an authority in a trusted list, or the
 qcStatements extension of a qualified time stamp through
 `Info.Extension`.
+
+`Info.Chain` is the chain that the Verifier keeps for the authority's
+certificate, without a copy, so Verify returns it without an allocation
+and every token of one certificate shares it. A caller applies a rule of
+its own per authority after Verify, such as a date after which it
+distrusts the authority's key, because a key type has passed the date
+that the caller's jurisdiction sets for it. Check receives the same Info,
+so a Check that a caller writes for concurrent Verify calls needs no
+state to match a chain with its token.
 
 ### The names and usages of the authority
 
@@ -513,7 +523,7 @@ requires.
 
 ## Drawbacks
 
-- `crypto/tsp` adds 2,547 lines of source and 3,981 lines of tests,
+- `crypto/tsp` adds 2,556 lines of source and 4,008 lines of tests,
   `coretest/tsptest` 1,407 and 708, and `internal/der` 628 and 850.
 - The module has two DER decoders: `encoding/asn1` inside `crypto/x509`,
   and `internal/der`.

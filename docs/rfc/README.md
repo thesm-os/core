@@ -114,6 +114,7 @@ Start from [`docs/templates/RFC.md`](../templates/RFC.md).
 | [0049](0049-bounded-cache.md) | Bounded Cache | Draft |
 | [0050](0050-rate-limiter.md) | Rate Limiter | Draft |
 | [0051](0051-bounded-hot-path-telemetry.md) | Bounded Telemetry on Hot Paths | Draft |
+| [0052](0052-failover.md) | Failover Between Redundant Dependencies | Draft |
 
 ## Canonical first RFC
 
