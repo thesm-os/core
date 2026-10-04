@@ -1,0 +1,1037 @@
+// Copyright Thesmos 2026
+// SPDX-License-Identifier: Apache-2.0
+
+package httpserver_test
+
+import (
+	"context"
+	"crypto/tls"
+	"errors"
+	"io"
+	"log/slog"
+	"maps"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"slices"
+	"strings"
+	"sync"
+	"syscall"
+	"testing"
+	"time"
+
+	"go.dokimi.dev/assert/bench"
+	"go.thesmos.sh/testkit"
+
+	"go.thesmos.sh/core/clock/fake"
+	"go.thesmos.sh/core/coretest/telemetrytest"
+	"go.thesmos.sh/core/errs"
+	"go.thesmos.sh/core/net/httpserver"
+	"go.thesmos.sh/core/telemetry"
+	"go.thesmos.sh/core/telemetry/noop"
+	"go.thesmos.sh/core/telemetry/w3c"
+)
+
+// The identity of every span that the reporter of a fixture starts.
+const (
+	traceID telemetry.TraceID = "4bf92f3577b34da6a3ce929d0e0e4736"
+	spanID  telemetry.SpanID  = "00f067aa0ba902b7"
+)
+
+// The fixture values of the cases.
+const (
+	// loopback is the address of a listener on a port that the system
+	// chooses.
+	loopback = "127.0.0.1:0"
+
+	// tcp is the network of the listeners of the cases.
+	tcp = "tcp"
+
+	// body is the body that the handlers of the cases write.
+	body = "ok"
+)
+
+// The messages and the keys of the log records of the package, which the
+// cases pin.
+const (
+	messageRequest  = "request"
+	messageNotReady = "ready check failed"
+
+	keyError    = "error"
+	keyDuration = "duration"
+	keyBodySize = "http.response.body.size"
+	keyTraceID  = "trace_id"
+	keyPanic    = "panic"
+	keyStack    = "stack"
+)
+
+// origin is the time of the fake clocks of the cases.
+var origin = time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
+
+// The errors of the test doubles.
+var (
+	errCheck  = errors.New("dependency unavailable")
+	errAccept = errors.New("accept failed")
+	errClose  = errors.New("close failed")
+	errBoom   = errors.New("boom")
+
+	// errHung is the error of Run that a fixture records when Run does not
+	// return within patience of the end of its context.
+	errHung = errors.New("run did not return within the patience of the case")
+)
+
+// required bundles the four options that New requires: a fake clock that
+// the cases do not advance, a logger that discards its records, the noop
+// reporter and the W3C propagator. A case that advances its clock or reads
+// its records passes its own clock or logger after required.
+var required = httpserver.Options(
+	httpserver.WithClock(fake.New(origin)),
+	httpserver.WithLogger(slog.New(slog.DiscardHandler)),
+	httpserver.WithReporter(noop.Reporter{}),
+	httpserver.WithPropagator(w3c.Propagator{}),
+)
+
+// logs is a slog.Handler that keeps a clone of every record at or above
+// its level, and sends a clone of each record of a request to requests
+// when requests is not nil. Its methods are safe for concurrent use.
+type logs struct {
+	records  []slog.Record
+	requests chan slog.Record
+	mu       sync.Mutex
+	level    slog.Level
+}
+
+var _ slog.Handler = (*logs)(nil)
+
+// Enabled reports whether level is at or above the level of l.
+func (l *logs) Enabled(_ context.Context, level slog.Level) bool { return level >= l.level }
+
+// Handle keeps a clone of r, and sends one to requests for a record of a
+// request. A case that sets requests gives it room for every record.
+//
+//nolint:gocritic // hugeParam: slog.Handler passes the Record by value
+func (l *logs) Handle(_ context.Context, r slog.Record) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	l.records = append(l.records, r.Clone())
+
+	if l.requests != nil && r.Message == messageRequest {
+		l.requests <- r.Clone()
+	}
+
+	return nil
+}
+
+// WithAttrs returns l, which keeps no attributes of its own.
+func (l *logs) WithAttrs([]slog.Attr) slog.Handler { return l }
+
+// WithGroup returns l, which keeps no groups of its own.
+func (l *logs) WithGroup(string) slog.Handler { return l }
+
+// find returns the records whose message is msg, in order.
+func (l *logs) find(msg string) []slog.Record {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	var found []slog.Record
+	for i := range l.records {
+		if l.records[i].Message == msg {
+			found = append(found, l.records[i])
+		}
+	}
+
+	return found
+}
+
+// span is a span stub that the tracer of a reporter started, with the name
+// and the options of its start.
+type span struct {
+	*telemetrytest.SpanStub
+
+	name telemetry.SpanName
+	opts []telemetry.SpanOption
+}
+
+// set is a histogram stub of one attribute set, with the attributes that
+// bound it.
+type set struct {
+	*telemetrytest.HistogramStub
+
+	attrs []telemetry.Attr
+}
+
+// reporter is a telemetry.Reporter whose tracer starts a span stub, with
+// the identity of traceID and spanID unless anonymous, and whose histogram
+// binds a histogram stub for each attribute set. It keeps the spans and the
+// sets in order, and its methods are safe for concurrent use.
+type reporter struct {
+	*telemetrytest.ReporterStub
+
+	spans     []*span
+	sets      []*set
+	mu        sync.Mutex
+	anonymous bool
+}
+
+// newReporter returns a reporter whose spans have a trace identity.
+func newReporter(tb testing.TB) *reporter {
+	tb.Helper()
+
+	r := &reporter{ReporterStub: telemetrytest.NewReporterStub(tb)}
+
+	tracer := telemetrytest.NewTracerStub(tb)
+	tracer.OnStart.Func(r.start)
+	r.OnTracer.Returns(tracer)
+
+	histogram := telemetrytest.NewHistogramStub(tb)
+	histogram.OnWith.Func(r.bind)
+	r.OnHistogram.Returns(histogram)
+
+	return r
+}
+
+// start starts a span stub of name, and keeps it.
+func (r *reporter) start(
+	ctx context.Context, name telemetry.SpanName, opts ...telemetry.SpanOption,
+) (context.Context, telemetry.Span) {
+	s := &span{SpanStub: telemetrytest.NewSpanStub(nil), name: name, opts: slices.Clone(opts)}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if !r.anonymous {
+		s.OnSpanContext.Returns(telemetry.SpanContext{TraceID: traceID, SpanID: spanID})
+	}
+
+	r.spans = append(r.spans, s)
+
+	return ctx, s
+}
+
+// bind binds a histogram stub of attrs, and keeps it.
+func (r *reporter) bind(attrs []telemetry.Attr) telemetry.Histogram {
+	s := &set{HistogramStub: telemetrytest.NewHistogramStub(nil), attrs: attrs}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.sets = append(r.sets, s)
+
+	return s
+}
+
+// started returns the spans that the tracer started, in order.
+func (r *reporter) started() []*span {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return slices.Clone(r.spans)
+}
+
+// bound returns the attribute sets that the histogram bound, in order.
+func (r *reporter) bound() []*set {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	return slices.Clone(r.sets)
+}
+
+// fixture is a Server that a case runs on a loopback listener. It reads a
+// fake clock, writes its log records to logs, and reports to a reporter.
+type fixture struct {
+	server   *httpserver.Server
+	clock    *fake.Clock
+	logs     *logs
+	reporter *reporter
+	client   *http.Client
+	cancel   context.CancelFunc
+	done     chan error
+	url      string
+	err      error
+	once     sync.Once
+
+	// checked reports that the case received the error of Run from stop.
+	checked bool
+}
+
+// newFixture runs a Server of h with the options of a fixture, a drain
+// without a delay, and then opts, which override them. The cleanup of t
+// stops the Server, and fails t when Run returned an error that the case
+// did not receive from stop.
+func newFixture(t *testing.T, h http.Handler, opts ...httpserver.Option) *fixture {
+	t.Helper()
+
+	ln := listen(t)
+	f := &fixture{
+		clock:    fake.New(origin),
+		logs:     &logs{level: slog.LevelDebug},
+		reporter: newReporter(t),
+		client:   &http.Client{Transport: &http.Transport{}, Timeout: patience},
+		done:     make(chan error, 1),
+		url:      "http://" + ln.Addr().String(),
+	}
+
+	all := append([]httpserver.Option{
+		httpserver.WithClock(f.clock),
+		httpserver.WithLogger(slog.New(f.logs)),
+		httpserver.WithReporter(f.reporter),
+		httpserver.WithPropagator(w3c.Propagator{}),
+		httpserver.WithListener(ln),
+		httpserver.WithDrainDelay(-1),
+	}, opts...)
+
+	s, err := httpserver.New(h, all...)
+	testkit.NoError(t, err, "New must accept the options of the fixture")
+	f.server = s
+
+	ctx, cancel := context.WithCancel(t.Context())
+	f.cancel = cancel
+
+	go func() { f.done <- s.Run(ctx) }()
+
+	t.Cleanup(func() {
+		f.wait()
+
+		if !f.checked {
+			testkit.NoError(t, f.err, "Run must drain")
+		}
+	})
+
+	return f
+}
+
+// wait ends the context of Run once, and waits for Run to return, at most
+// for patience, after which it records errHung. After wait, the log record
+// of every request that the fixture served is in its logs.
+func (f *fixture) wait() {
+	f.once.Do(func() {
+		f.cancel()
+
+		timer := time.NewTimer(patience)
+		defer timer.Stop()
+
+		select {
+		case f.err = <-f.done:
+		case <-timer.C:
+			f.err = errHung
+		}
+
+		f.client.CloseIdleConnections()
+	})
+}
+
+// stop waits for Run as wait does, and returns the error of Run to the
+// case, which asserts it.
+func (f *fixture) stop() error {
+	f.wait()
+	f.checked = true
+
+	return f.err
+}
+
+// response is a response that a case received, with its body read.
+type response struct {
+	header http.Header
+	body   string
+	status int
+}
+
+// send sends a request of method to path of f with body and header, and
+// returns its response.
+func (f *fixture) send(t *testing.T, method, path string, body io.Reader, header http.Header) response {
+	t.Helper()
+
+	req, err := http.NewRequestWithContext(t.Context(), method, f.url+path, body)
+	testkit.NoError(t, err, "the request of the case must build")
+	maps.Copy(req.Header, header)
+
+	return do(t, f.client, req)
+}
+
+// failingListener is a listener whose Accept fails with err once fail is
+// closed, and which closes closed when it is closed.
+type failingListener struct {
+	net.Listener
+
+	fail   chan struct{}
+	closed chan struct{}
+	err    error
+	once   sync.Once
+}
+
+// Accept waits for fail, and returns err.
+func (l *failingListener) Accept() (net.Conn, error) {
+	<-l.fail
+
+	return nil, l.err
+}
+
+// Close closes the listener under it and closed.
+func (l *failingListener) Close() error {
+	l.once.Do(func() { close(l.closed) })
+
+	return l.Listener.Close() //nolint:wrapcheck // a test listener returns the error of the listener under it
+}
+
+// closeFailingListener is a listener whose Close fails with err after it
+// closes the listener under it.
+type closeFailingListener struct {
+	net.Listener
+
+	err error
+}
+
+// Close closes the listener under it, and returns err.
+func (l *closeFailingListener) Close() error {
+	_ = l.Listener.Close() //nolint:errcheck // the case asserts err
+
+	return l.err
+}
+
+// signallingListener is a listener that closes closed when it is closed.
+type signallingListener struct {
+	net.Listener
+
+	closed chan struct{}
+	once   sync.Once
+}
+
+// Close closes the listener under it and closed.
+func (l *signallingListener) Close() error {
+	l.once.Do(func() { close(l.closed) })
+
+	return l.Listener.Close() //nolint:wrapcheck // a test listener returns the error of the listener under it
+}
+
+// discardWriter is a ResponseWriter that keeps the status of its last
+// response and discards every body.
+type discardWriter struct {
+	header http.Header
+	status int
+}
+
+// Header returns the header map of the writer.
+func (w *discardWriter) Header() http.Header { return w.header }
+
+// WriteHeader keeps code.
+func (w *discardWriter) WriteHeader(code int) { w.status = code }
+
+// Write discards b.
+func (*discardWriter) Write(b []byte) (int, error) { return len(b), nil }
+
+func TestServer(t *testing.T) {
+	t.Parallel()
+
+	t.Run("New", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns ErrConfig for a nil handler", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := httpserver.New(nil, required)
+			testkit.ErrorIs(t, err, httpserver.ErrConfig, "New must refuse a nil handler")
+			testkit.Equal(t, errs.Classify(err), errs.Invalid, "the class of the error")
+		})
+
+		t.Run("returns ErrConfig for a trusted origin that is not an origin", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := httpserver.New(http.NotFoundHandler(), required, httpserver.WithTrustedOrigins("app.example.com"))
+			testkit.ErrorIs(t, err, httpserver.ErrConfig, "New must refuse an origin without a scheme")
+			testkit.Equal(t, errs.Classify(err), errs.Invalid, "the class of the error")
+		})
+
+		t.Run("returns ErrConfig for a middleware that returns a nil handler", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := httpserver.New(http.NotFoundHandler(), required, httpserver.WithMiddleware(
+				func(h http.Handler) http.Handler { return h },
+				func(http.Handler) http.Handler { return nil },
+			))
+			testkit.ErrorIs(t, err, httpserver.ErrConfig, "New must refuse a middleware that returns nil")
+			testkit.Contains(t, err.Error(), "index 1", "the error must name the middleware")
+		})
+
+		t.Run("logs the errors of net/http through the logger at LevelWarn", func(t *testing.T) {
+			t.Parallel()
+
+			cfg, _ := tlsPair(t)
+			f := newFixture(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), httpserver.WithTLS(cfg))
+			conn := dial(t, f)
+
+			_, err := io.WriteString(conn, "garbage that is not a TLS record\r\n")
+			testkit.NoError(t, err, "the bytes must write")
+			_, _ = conn.Read(make([]byte, 1))
+			testkit.NoError(t, f.stop(), "Run must drain")
+
+			f.logs.mu.Lock()
+			defer f.logs.mu.Unlock()
+
+			testkit.True(t, slices.ContainsFunc(f.logs.records, func(r slog.Record) bool {
+				return r.Level == slog.LevelWarn && strings.Contains(r.Message, "TLS handshake error")
+			}), "the logger must receive the TLS handshake error of net/http")
+		})
+
+		t.Run("returns ErrConfig without the options that it requires", func(t *testing.T) {
+			t.Parallel()
+
+			_, err := httpserver.New(http.NotFoundHandler())
+			testkit.ErrorIs(t, err, httpserver.ErrConfig, "New must refuse a Server without a clock")
+			testkit.Contains(t, err.Error(), "WithClock", "the error must name the missing option")
+		})
+
+		tests := []struct {
+			give httpserver.Option
+			name string
+		}{
+			{name: "returns ErrConfig for a nil option"},
+			{name: "returns ErrConfig for a nil clock", give: httpserver.WithClock(nil)},
+			{name: "returns ErrConfig for a nil logger", give: httpserver.WithLogger(nil)},
+			{name: "returns ErrConfig for a nil reporter", give: httpserver.WithReporter(nil)},
+			{name: "returns ErrConfig for a nil propagator", give: httpserver.WithPropagator(nil)},
+			{name: "returns ErrConfig for a nil listener", give: httpserver.WithListener(nil)},
+			{name: "returns ErrConfig for an address without a port", give: httpserver.WithAddr("localhost")},
+			{name: "returns ErrConfig for a nil TLS configuration", give: httpserver.WithTLS(nil)},
+			{name: "returns ErrConfig for a nil middleware", give: httpserver.WithMiddleware(nil)},
+			{name: "returns ErrConfig for a nil ready check", give: httpserver.WithReadyCheck(nil)},
+			{name: "returns ErrConfig for a zero read header timeout", give: httpserver.WithReadHeaderTimeout(0)},
+			{name: "returns ErrConfig for a zero read timeout", give: httpserver.WithReadTimeout(0)},
+			{name: "returns ErrConfig for a zero write timeout", give: httpserver.WithWriteTimeout(0)},
+			{name: "returns ErrConfig for a zero idle timeout", give: httpserver.WithIdleTimeout(0)},
+			{name: "returns ErrConfig for a zero drain delay", give: httpserver.WithDrainDelay(0)},
+			{name: "returns ErrConfig for a zero shutdown timeout", give: httpserver.WithShutdownTimeout(0)},
+			{name: "returns ErrConfig for a zero header limit", give: httpserver.WithMaxHeaderBytes(0)},
+			{name: "returns ErrConfig for a negative header limit", give: httpserver.WithMaxHeaderBytes(-1)},
+			{name: "returns ErrConfig for a zero body limit", give: httpserver.WithMaxBodyBytes(0)},
+			{name: "returns ErrConfig for a zero in-flight limit", give: httpserver.WithMaxInFlight(0)},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+
+				_, err := httpserver.New(http.NotFoundHandler(), required, tt.give)
+				testkit.ErrorIs(t, err, httpserver.ErrConfig, "New must refuse the option")
+				testkit.Equal(t, errs.Classify(err), errs.Invalid, "the class of the error")
+			})
+		}
+	})
+
+	t.Run("Run", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("serves the handler until the context ends and returns nil", func(t *testing.T) {
+			t.Parallel()
+
+			f := newFixture(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, body)
+			}))
+			got := f.send(t, http.MethodGet, "/", http.NoBody, nil)
+			testkit.Equal(t, got.status, http.StatusOK, "the status")
+			testkit.Equal(t, got.body, body, "the body")
+			testkit.NoError(t, f.stop(), "Run must return nil after the drain")
+		})
+
+		t.Run("drains at once for a context that ended before Run", func(t *testing.T) {
+			t.Parallel()
+
+			s, err := httpserver.New(
+				http.NotFoundHandler(),
+				required,
+				httpserver.WithAddr(loopback),
+				httpserver.WithDrainDelay(-1),
+			)
+			testkit.NoError(t, err, "New must accept the options")
+
+			ctx, cancel := context.WithCancel(t.Context())
+			cancel()
+			testkit.NoError(t, s.Run(ctx), "Run must drain and return nil")
+		})
+
+		t.Run("returns ErrClosed when it is called again", func(t *testing.T) {
+			t.Parallel()
+
+			s, err := httpserver.New(
+				http.NotFoundHandler(),
+				required,
+				httpserver.WithAddr(loopback),
+				httpserver.WithDrainDelay(-1),
+			)
+			testkit.NoError(t, err, "New must accept the options")
+
+			ctx, cancel := context.WithCancel(t.Context())
+			cancel()
+			testkit.NoError(t, s.Run(ctx), "the first Run must return nil")
+
+			err = s.Run(t.Context())
+			testkit.ErrorIs(t, err, httpserver.ErrClosed, "a second Run must return ErrClosed")
+			testkit.Equal(t, errs.Classify(err), errs.Invalid, "the class of the error")
+		})
+
+		t.Run("returns ErrListen for an address that another listener uses", func(t *testing.T) {
+			t.Parallel()
+
+			s, err := httpserver.New(http.NotFoundHandler(), required, httpserver.WithAddr(listen(t).Addr().String()))
+			testkit.NoError(t, err, "New must accept the options")
+
+			err = s.Run(t.Context())
+			testkit.ErrorIs(t, err, httpserver.ErrListen, "Run must return ErrListen")
+			testkit.ErrorIs(t, err, syscall.EADDRINUSE, "the error must contain its cause")
+			testkit.Equal(t, errs.Classify(err), errs.Transient, "the class of the error")
+		})
+
+		t.Run("returns ErrServe joined with the error of an Accept that fails", func(t *testing.T) {
+			t.Parallel()
+
+			ln := &failingListener{
+				Listener: listen(t), fail: make(chan struct{}), closed: make(chan struct{}), err: errAccept,
+			}
+			close(ln.fail)
+
+			s, err := httpserver.New(http.NotFoundHandler(), required, httpserver.WithListener(ln))
+			testkit.NoError(t, err, "New must accept the options")
+
+			err = s.Run(t.Context())
+			testkit.ErrorIs(t, err, httpserver.ErrServe, "Run must return ErrServe")
+			testkit.ErrorIs(t, err, errAccept, "the error must contain its cause")
+			testkit.Equal(t, errs.Classify(err), errs.Transient, "the class of the error")
+		})
+
+		t.Run("returns ErrServe when serving fails during the drain", func(t *testing.T) {
+			t.Parallel()
+
+			clk := fake.New(origin)
+			ln := &failingListener{
+				Listener: listen(t), fail: make(chan struct{}), closed: make(chan struct{}), err: errAccept,
+			}
+			s, err := httpserver.New(http.NotFoundHandler(), required,
+				httpserver.WithClock(clk), httpserver.WithListener(ln), httpserver.WithDrainDelay(time.Second))
+			testkit.NoError(t, err, "New must accept the options")
+
+			ctx, cancel := context.WithCancel(t.Context())
+			done := make(chan error, 1)
+			go func() { done <- s.Run(ctx) }()
+
+			cancel()
+			clk.AwaitWaiters(1)
+			close(ln.fail)
+			await(t, ln.closed, "serving must close the listener")
+			clk.Advance(time.Second)
+
+			err = await(t, done, "Run must return")
+			testkit.ErrorIs(t, err, httpserver.ErrServe, "Run must return ErrServe")
+			testkit.ErrorIs(t, err, errAccept, "the error must contain its cause")
+		})
+
+		t.Run("serves for the drain delay while Ready responds with 503", func(t *testing.T) {
+			t.Parallel()
+
+			f := newFixture(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}),
+				httpserver.WithDrainDelay(time.Second))
+			testkit.Equal(t, f.send(t, http.MethodGet, "/", http.NoBody, nil).status, http.StatusOK, "the status")
+
+			f.cancel()
+			f.clock.AwaitWaiters(1)
+
+			rec := httptest.NewRecorder()
+			f.server.Ready().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil))
+			testkit.Equal(t, rec.Code, http.StatusServiceUnavailable, "Ready during the drain")
+			testkit.Equal(t, f.send(t, http.MethodGet, "/", http.NoBody, nil).status, http.StatusOK,
+				"the server must serve during the drain delay")
+
+			f.clock.Advance(time.Second)
+			testkit.NoError(t, f.stop(), "Run must return nil after the drain")
+		})
+
+		t.Run("returns ErrShutdown when the shutdown timeout elapses with a request in flight", func(t *testing.T) {
+			t.Parallel()
+
+			entered, release := make(chan struct{}), make(chan struct{})
+			defer close(release)
+
+			f := newFixture(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+				close(entered)
+				<-release
+			}), httpserver.WithShutdownTimeout(time.Minute))
+			sent := make(chan error, 1)
+			go func() { sent <- request(t, f.client, f.url) }()
+
+			await(t, entered, "the handler must receive the request")
+			f.cancel()
+			f.clock.AwaitWaiters(1)
+			f.clock.Advance(time.Minute)
+
+			err := f.stop()
+			testkit.ErrorIs(t, err, httpserver.ErrShutdown, "Run must return ErrShutdown")
+			testkit.ErrorIs(t, err, context.DeadlineExceeded, "the error must contain the elapsed deadline")
+			testkit.Equal(t, errs.Classify(err), errs.Unspecified, "ErrShutdown has no class")
+			testkit.Error(t, await(t, sent, "the request must end"), "the request in flight must lose its connection")
+		})
+
+		t.Run("waits for a request in flight when the shutdown timeout is negative", func(t *testing.T) {
+			t.Parallel()
+
+			entered, gate := make(chan struct{}), make(chan struct{})
+			release := sync.OnceFunc(func() { close(gate) })
+			defer release()
+
+			ln := &signallingListener{Listener: listen(t), closed: make(chan struct{})}
+			f := newFixture(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+				close(entered)
+				<-gate
+			}), httpserver.WithListener(ln), httpserver.WithShutdownTimeout(-1))
+			sent := make(chan error, 1)
+			go func() { sent <- request(t, f.client, "http://"+ln.Addr().String()) }()
+
+			await(t, entered, "the handler must receive the request")
+			f.cancel()
+			await(t, ln.closed, "the shutdown must close the listener")
+			release()
+
+			testkit.NoError(t, await(t, sent, "the request must end"), "the request in flight must finish")
+			testkit.NoError(t, f.stop(), "Run must return nil after the request finished")
+		})
+
+		t.Run("returns ErrShutdown joined with the error of closing the listener", func(t *testing.T) {
+			t.Parallel()
+
+			// The request makes Serve track the listener, which the
+			// shutdown closes.
+			ln := &closeFailingListener{Listener: listen(t), err: errClose}
+			f := newFixture(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}),
+				httpserver.WithListener(ln))
+			testkit.NoError(t, request(t, f.client, "http://"+ln.Addr().String()), "the request before the drain")
+
+			err := f.stop()
+			testkit.ErrorIs(t, err, httpserver.ErrShutdown, "Run must return ErrShutdown")
+			testkit.ErrorIs(t, err, errClose, "the error must contain its cause")
+		})
+
+		t.Run("serves HTTP/2 to a cleartext client that starts with its preface", func(t *testing.T) {
+			t.Parallel()
+
+			protos := make(chan int, 1)
+			f := newFixture(t, http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				protos <- r.ProtoMajor
+			}))
+
+			var p http.Protocols
+			p.SetUnencryptedHTTP2(true)
+			client := &http.Client{Transport: &http.Transport{Protocols: &p}, Timeout: patience}
+			defer client.CloseIdleConnections()
+
+			testkit.NoError(t, request(t, client, f.url), "the request of HTTP/2")
+			testkit.Equal(t, await(t, protos, "the handler must run"), 2, "the major version of the protocol")
+		})
+	})
+
+	t.Run("Addr", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns nil before Run listens", func(t *testing.T) {
+			t.Parallel()
+
+			s, err := httpserver.New(http.NotFoundHandler(), required)
+			testkit.NoError(t, err, "New must accept the options")
+			testkit.True(t, s.Addr() == nil, "Addr before Run must be nil")
+		})
+
+		t.Run("returns the address that Run listened on", func(t *testing.T) {
+			t.Parallel()
+
+			s, err := httpserver.New(
+				http.NotFoundHandler(),
+				required,
+				httpserver.WithAddr(loopback),
+				httpserver.WithDrainDelay(-1),
+			)
+			testkit.NoError(t, err, "New must accept the options")
+
+			ctx, cancel := context.WithCancel(t.Context())
+			cancel()
+			testkit.NoError(t, s.Run(ctx), "Run must drain")
+
+			addr, ok := s.Addr().(*net.TCPAddr)
+			testkit.True(t, ok, "Addr must return the address of a TCP listener")
+			testkit.True(t, addr.IP.IsLoopback(), "the address must be on the host of WithAddr")
+			testkit.True(t, addr.Port != 0, "the port must be the port that the system chose")
+		})
+	})
+
+	t.Run("Live", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("responds with 200 before Run listens", func(t *testing.T) {
+			t.Parallel()
+
+			s, err := httpserver.New(http.NotFoundHandler(), required)
+			testkit.NoError(t, err, "New must accept the options")
+
+			rec := httptest.NewRecorder()
+			s.Live().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil))
+			testkit.Equal(t, rec.Code, http.StatusOK, "Live")
+		})
+	})
+
+	t.Run("Ready", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("responds with 503 before Run listens", func(t *testing.T) {
+			t.Parallel()
+
+			s, err := httpserver.New(http.NotFoundHandler(), required)
+			testkit.NoError(t, err, "New must accept the options")
+
+			rec := httptest.NewRecorder()
+			s.Ready().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil))
+			testkit.Equal(t, rec.Code, http.StatusServiceUnavailable, "Ready")
+		})
+
+		t.Run("responds with 200 while Run serves", func(t *testing.T) {
+			t.Parallel()
+
+			f := newFixture(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+			testkit.Equal(t, f.send(t, http.MethodGet, "/", http.NoBody, nil).status, http.StatusOK, "the status")
+
+			rec := httptest.NewRecorder()
+			f.server.Ready().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil))
+			testkit.Equal(t, rec.Code, http.StatusOK, "Ready")
+		})
+
+		t.Run("responds with 503 after Run returns", func(t *testing.T) {
+			t.Parallel()
+
+			f := newFixture(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+			testkit.NoError(t, f.stop(), "Run must drain")
+
+			rec := httptest.NewRecorder()
+			f.server.Ready().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil))
+			testkit.Equal(t, rec.Code, http.StatusServiceUnavailable, "Ready")
+		})
+
+		t.Run("responds with 503 after serving failed", func(t *testing.T) {
+			t.Parallel()
+
+			ln := &failingListener{
+				Listener: listen(t), fail: make(chan struct{}), closed: make(chan struct{}), err: errAccept,
+			}
+			close(ln.fail)
+
+			s, err := httpserver.New(http.NotFoundHandler(), required, httpserver.WithListener(ln))
+			testkit.NoError(t, err, "New must accept the options")
+			testkit.ErrorIs(t, s.Run(t.Context()), httpserver.ErrServe, "Run must fail")
+
+			rec := httptest.NewRecorder()
+			s.Ready().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil))
+			testkit.Equal(t, rec.Code, http.StatusServiceUnavailable, "Ready")
+		})
+
+		t.Run("responds with 503 and logs the error while a ready check fails", func(t *testing.T) {
+			t.Parallel()
+
+			f := newFixture(
+				t,
+				http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}),
+				httpserver.WithReadyCheck(func(context.Context) error { return errCheck }),
+			)
+			testkit.Equal(t, f.send(t, http.MethodGet, "/", http.NoBody, nil).status, http.StatusOK, "the status")
+
+			rec := httptest.NewRecorder()
+			f.server.Ready().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil))
+			testkit.Equal(t, rec.Code, http.StatusServiceUnavailable, "Ready")
+
+			records := f.logs.find(messageNotReady)
+			testkit.Len(t, records, 1, "Ready must log the failed check once")
+			testkit.Equal(t, records[0].Level, slog.LevelWarn, "the level of the record")
+
+			logged, _ := value(t, &records[0], keyError).Any().(error)
+			testkit.ErrorIs(t, logged, errCheck, "the error of the record")
+		})
+
+		t.Run("passes the context of the probe's request to a ready check", func(t *testing.T) {
+			t.Parallel()
+
+			type key struct{}
+
+			checked := make(chan any, 1)
+			f := newFixture(
+				t,
+				http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}),
+				httpserver.WithReadyCheck(func(ctx context.Context) error {
+					checked <- ctx.Value(key{})
+
+					return nil
+				}),
+			)
+			testkit.Equal(t, f.send(t, http.MethodGet, "/", http.NoBody, nil).status, http.StatusOK, "the status")
+
+			ctx := context.WithValue(t.Context(), key{}, "probe")
+			req := httptest.NewRequestWithContext(ctx, http.MethodGet, "/", nil)
+			rec := httptest.NewRecorder()
+			f.server.Ready().ServeHTTP(rec, req)
+
+			testkit.Equal(t, rec.Code, http.StatusOK, "Ready")
+			testkit.Equal(t, await(t, checked, "the check must run"), any("probe"),
+				"the check must receive the context of the probe")
+		})
+	})
+}
+
+func BenchmarkServer(b *testing.B) {
+	s, err := httpserver.New(http.NotFoundHandler(), required)
+	testkit.NoError(b, err, "New must accept the options")
+
+	req := httptest.NewRequestWithContext(b.Context(), http.MethodGet, "/", nil)
+	w := &discardWriter{header: http.Header{}}
+
+	b.Run("Addr", func(b *testing.B) {
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		var addr net.Addr
+		for c.Loop() {
+			addr = s.Addr()
+		}
+
+		testkit.True(b, addr == nil, "the benchmark must measure a Server before Run")
+	})
+
+	b.Run("Live", func(b *testing.B) {
+		live := s.Live()
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			live.ServeHTTP(w, req)
+		}
+
+		testkit.Equal(b, w.status, http.StatusOK, "the benchmark must measure the response of Live")
+	})
+
+	b.Run("Ready", func(b *testing.B) {
+		ready := s.Ready()
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			ready.ServeHTTP(w, req)
+		}
+
+		testkit.Equal(b, w.status, http.StatusServiceUnavailable, "the benchmark must measure a Server before Run")
+	})
+}
+
+// listen returns a TCP listener on a loopback port that the system chooses,
+// which the cleanup of tb closes.
+func listen(tb testing.TB) net.Listener {
+	tb.Helper()
+
+	var lc net.ListenConfig
+
+	ln, err := lc.Listen(tb.Context(), tcp, loopback)
+	testkit.NoError(tb, err, "the listener of the case must listen")
+	tb.Cleanup(func() { _ = ln.Close() })
+
+	return ln
+}
+
+// do sends req with client, and returns its response with the body read
+// and closed.
+func do(t *testing.T, client *http.Client, req *http.Request) response {
+	t.Helper()
+
+	resp, err := client.Do(req)
+	testkit.NoError(t, err, "the request of the case must receive a response")
+
+	defer resp.Body.Close()
+
+	b, err := io.ReadAll(resp.Body)
+	testkit.NoError(t, err, "the body of the response must read")
+
+	return response{header: resp.Header, body: string(b), status: resp.StatusCode}
+}
+
+// request sends a GET of url with client, reads the body of its response,
+// and returns the error of the exchange, for a goroutine of a case that
+// cannot fail the test itself.
+func request(t *testing.T, client *http.Client, url string) error {
+	t.Helper()
+
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, url, http.NoBody)
+	if err != nil {
+		return err //nolint:wrapcheck // the case asserts the error
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return err //nolint:wrapcheck // the case asserts the error
+	}
+
+	defer resp.Body.Close()
+
+	_, err = io.Copy(io.Discard, resp.Body)
+
+	return err //nolint:wrapcheck // the case asserts the error
+}
+
+// value returns the value of the attribute key of r, and fails t when r has
+// none.
+func value(t *testing.T, r *slog.Record, key string) slog.Value {
+	t.Helper()
+
+	var (
+		v     slog.Value
+		found bool
+	)
+
+	r.Attrs(func(a slog.Attr) bool {
+		if a.Key == key {
+			v, found = a.Value, true
+		}
+
+		return !found
+	})
+
+	testkit.True(t, found, "the record must contain the attribute "+key)
+
+	return v
+}
+
+// tlsPair returns a server configuration with the certificate of
+// net/http/httptest, and a client that trusts it, negotiates HTTP/2, and
+// gives up after patience.
+func tlsPair(t *testing.T) (*tls.Config, *http.Client) {
+	t.Helper()
+
+	ts := httptest.NewUnstartedServer(http.NotFoundHandler())
+	ts.EnableHTTP2 = true
+	ts.StartTLS()
+	t.Cleanup(ts.Close)
+
+	client := ts.Client()
+	client.Timeout = patience
+
+	return ts.TLS.Clone(), client
+}
+
+// await returns the next value of ch, and fails t when no value arrives
+// within patience, so a case fails where a defect would leave it waiting.
+func await[T any](t *testing.T, ch <-chan T, what string) T {
+	t.Helper()
+
+	timer := time.NewTimer(patience)
+	defer timer.Stop()
+
+	select {
+	case v := <-ch:
+		return v
+	case <-timer.C:
+		t.Fatalf("%s: nothing arrived within %s", what, patience)
+
+		var zero T
+
+		return zero
+	}
+}

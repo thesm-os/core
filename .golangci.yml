@@ -265,6 +265,16 @@ linters:
         linters: [forbidigo]
         text: "panic"
 
+      # httpserver's chain aborts a response after it recovers a panic of
+      # the handler that followed the header, or a panic with
+      # http.ErrAbortHandler. net/http aborts a response only through a
+      # panic with http.ErrAbortHandler, which its own recover handles
+      # without a log: it closes the connection, or resets the stream of
+      # HTTP/2, so the client does not read a partial body as complete.
+      - path: 'net/httpserver/chain\.go'
+        linters: [forbidigo]
+        text: "panic"
+
       # TestZeroAlloc tests use testing.AllocsPerRun which relies
       # on a process-global malloc counter; running them in
       # parallel with other tests produces flaky alloc counts.
