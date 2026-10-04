@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"go.dokimi.dev/assert/bench"
 	"go.thesmos.sh/testkit"
 
 	"go.thesmos.sh/core/clock"
@@ -229,18 +230,31 @@ func BenchmarkBoundedHistogram(b *testing.B) {
 	sampleAt(b, h, clk, 64)
 
 	b.Run("Record of a successful call", func(b *testing.B) {
-		allocs(b, func() { h.Record(b.Context(), 1, telemetry.OutcomeSuccess) })
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			h.Record(b.Context(), 1, telemetry.OutcomeSuccess)
+		}
 	})
 
 	b.Run("Record of a failed call", func(b *testing.B) {
-		allocs(b, func() { h.Record(b.Context(), 1, telemetry.OutcomeFailure) })
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			h.Record(b.Context(), 1, telemetry.OutcomeFailure)
+		}
 	})
 
 	b.Run("Flush", func(b *testing.B) {
-		allocs(b, func() {
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
 			clk.Advance(time.Millisecond)
 			h.Flush()
-		})
+		}
 	})
 }
 

@@ -64,6 +64,15 @@
 // exporters batch. Library code emits a span per request, not per
 // iteration of a loop.
 //
+// # Propagation
+//
+// A [Propagator] moves a [SpanContext] across a process boundary through a
+// [Carrier]. [HeaderCarrier] adapts the headers of an HTTP message, and
+// [MapCarrier] adapts a map of strings. [WithRemoteParent] starts a span as
+// the child of an extracted context, and a [Tracer] reads that parent with
+// [RemoteParent]. [go.thesmos.sh/core/telemetry/w3c] implements W3C Trace
+// Context.
+//
 // # Provided implementations
 //
 //   - [go.thesmos.sh/core/telemetry/noop] discards every signal. Tests

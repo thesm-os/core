@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"go.dokimi.dev/assert/bench"
 	"go.thesmos.sh/testkit"
 
 	"go.thesmos.sh/core/clock"
@@ -353,7 +354,13 @@ func BenchmarkRateLimitHandler(b *testing.B) {
 			errBench := h.Handle(b.Context(), r)
 			testkit.NoError(b, errBench, "the first record must pass")
 
-			allocs(b, func() { errBench = h.Handle(b.Context(), r) })
+			c := bench.Start(b).MaxAllocs(0)
+			defer c.End()
+
+			for c.Loop() {
+				errBench = h.Handle(b.Context(), r)
+			}
+
 			testkit.NoError(b, errBench, "a dropped record must return nil")
 		})
 	}
@@ -361,8 +368,14 @@ func BenchmarkRateLimitHandler(b *testing.B) {
 	b.Run("Handle of a record at LevelError", func(b *testing.B) {
 		r := slog.NewRecord(origin, slog.LevelError, message, 0)
 
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
 		var errBench error
-		allocs(b, func() { errBench = h.Handle(b.Context(), r) })
+		for c.Loop() {
+			errBench = h.Handle(b.Context(), r)
+		}
+
 		testkit.NoError(b, errBench, "the discarding handler must return nil")
 	})
 }

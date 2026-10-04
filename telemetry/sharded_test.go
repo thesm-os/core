@@ -9,16 +9,13 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"go.dokimi.dev/assert/bench"
 	"go.thesmos.sh/testkit"
 
 	"go.thesmos.sh/core/errs"
 	"go.thesmos.sh/core/telemetry"
 	"go.thesmos.sh/core/telemetry/noop"
 )
-
-// benchRuns is the number of calls over which a benchmark averages the
-// allocations that it checks.
-const benchRuns = 100
 
 // summingCounter is a Counter that sums its adds and counts its calls.
 type summingCounter struct {
@@ -173,14 +170,22 @@ func BenchmarkShardedCounter(b *testing.B) {
 	testkit.NoError(b, err, "NewShardedCounter must accept the arguments")
 
 	b.Run("Add", func(b *testing.B) {
-		allocs(b, func() { s.Add(7, 1) })
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			s.Add(7, 1)
+		}
 	})
 
 	b.Run("Flush", func(b *testing.B) {
-		allocs(b, func() {
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
 			s.Add(3, 1)
 			s.Flush(b.Context())
-		})
+		}
 	})
 }
 
@@ -193,19 +198,4 @@ func newSharded(tb testing.TB, c telemetry.Counter, cells int) *telemetry.Sharde
 	testkit.NoError(tb, err, "NewShardedCounter must accept the arguments")
 
 	return s
-}
-
-// allocs fails b when call allocates, averaged over benchRuns calls, and
-// then reports the time and the allocations of call per iteration.
-func allocs(b *testing.B, call func()) {
-	b.Helper()
-
-	if n := testing.AllocsPerRun(benchRuns, call); n != 0 {
-		b.Fatalf("allocates %v times per call, want 0", n)
-	}
-
-	b.ReportAllocs()
-	for b.Loop() {
-		call()
-	}
 }
