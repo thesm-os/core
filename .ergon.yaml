@@ -317,7 +317,9 @@ checks:
     # no coverage counter, so gremlins reports its mutants as not
     # covered and never runs them. Such constants are written as
     # literals, and the tests that pin their values kill any change
-    # to them.
+    # to them. The minus of a negative constant is an operator too,
+    # so such a constant is declared in the function that uses it,
+    # where its block has a counter.
     #
     # Contorting any of these to satisfy the metric would trade real
     # clarity for a number.
@@ -370,6 +372,9 @@ checks:
         score: 100
         coverage: 100
       - path: internal/der
+        score: 100
+        coverage: 100
+      - path: net
         score: 100
         coverage: 100
       - path: note
