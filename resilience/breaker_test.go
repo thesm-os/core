@@ -23,6 +23,37 @@ const target = "inventory"
 
 var errDependency = errors.New("resilience_test: dependency failed")
 
+// errTripping is a dependency failure whose class trips the circuits of
+// breakerConfig.
+var errTripping = errs.WithClass(errDependency, errs.Transient)
+
+// failing is a call to a dependency that fails with errTripping.
+func failing(context.Context) (int, error) { return 0, errTripping }
+
+// succeeding is a call to a dependency that returns 42.
+func succeeding(context.Context) (int, error) { return 42, nil }
+
+// panicking is a call whose function panics with "fn panicked", as the
+// function of a caller that recovers from panics can.
+//
+//nolint:forbidigo // the panic is the input of the cases of a panicking fn
+func panicking(context.Context) (int, error) {
+	panic("fn panicked")
+}
+
+// trip opens target's circuit of b with the two failures that
+// breakerConfig takes.
+func trip(tb testing.TB, b *resilience.Breaker) {
+	tb.Helper()
+
+	for range 2 {
+		b.Allow(target)
+		b.Record(target, true)
+	}
+
+	testkit.Equal(tb, b.State(target), resilience.Open, "two failures must open the circuit")
+}
+
 // breakerConfig returns the configuration every test uses: a circuit
 // opens after 2 consecutive failures, refuses calls for 30s, and closes
 // after 2 consecutive probe successes.
@@ -410,6 +441,81 @@ func TestBreakerCall(t *testing.T) {
 			"cancellation must not open the circuit")
 	})
 
+	t.Run("a cancelled call keeps the failure count", func(t *testing.T) {
+		t.Parallel()
+		b := mustBreaker(t, fake.New(originUTC))
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+
+		_, _ = resilience.Call(t.Context(), b, target, failing)
+		_, _ = resilience.Call(ctx, b, target, failing)
+		_, _ = resilience.Call(t.Context(), b, target, failing)
+
+		testkit.Equal(t, b.State(target), resilience.Open,
+			"a cancelled call between two failures must not reset the failure count")
+	})
+
+	t.Run("a call that succeeds after its context ended counts as a success", func(t *testing.T) {
+		t.Parallel()
+		b := mustBreaker(t, fake.New(originUTC))
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+
+		_, _ = resilience.Call(t.Context(), b, target, failing)
+		got, err := resilience.Call(ctx, b, target, succeeding)
+		testkit.NoError(t, err, "Call must return the success of fn")
+		testkit.Equal(t, got, 42, "Call must return the value of fn")
+		_, _ = resilience.Call(t.Context(), b, target, failing)
+
+		testkit.Equal(t, b.State(target), resilience.Closed,
+			"the success between two failures must reset the failure count")
+	})
+
+	t.Run("a cancelled probe releases the probe without counting a success", func(t *testing.T) {
+		t.Parallel()
+		c := fake.New(originUTC)
+		b := mustBreaker(t, c)
+		trip(t, b)
+		c.Advance(31 * time.Second)
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+
+		_, err := resilience.Call(ctx, b, target, failing)
+		testkit.ErrorIs(t, err, errDependency, "Call must return the error of fn")
+		testkit.True(t, b.Allow(target), "the circuit must admit the next probe")
+
+		b.Record(target, false)
+		testkit.Equal(t, b.State(target), resilience.HalfOpen,
+			"one probe success must not close a circuit that needs two")
+	})
+
+	t.Run("a panicking probe releases the probe", func(t *testing.T) {
+		t.Parallel()
+		c := fake.New(originUTC)
+		b := mustBreaker(t, c)
+		trip(t, b)
+		c.Advance(31 * time.Second)
+
+		got := testkit.Panics(t, func() { _, _ = resilience.Call(t.Context(), b, target, panicking) },
+			"Call must let the panic of fn continue")
+
+		testkit.Equal(t, got, any("fn panicked"), "the recovered value must be the panic value of fn")
+		testkit.True(t, b.Allow(target), "the circuit must admit the next probe")
+	})
+
+	t.Run("a panic in a closed circuit counts nothing", func(t *testing.T) {
+		t.Parallel()
+		b := mustBreaker(t, fake.New(originUTC))
+
+		_, _ = resilience.Call(t.Context(), b, target, failing)
+		testkit.Panics(t, func() { _, _ = resilience.Call(t.Context(), b, target, panicking) },
+			"Call must let the panic of fn continue")
+		_, _ = resilience.Call(t.Context(), b, target, failing)
+
+		testkit.Equal(t, b.State(target), resilience.Open,
+			"a panic between two failures must not reset the failure count")
+	})
+
 	t.Run("does not call fn when the circuit is open", func(t *testing.T) {
 		t.Parallel()
 		b := mustBreaker(t, fake.New(originUTC))
@@ -492,6 +598,20 @@ func TestZeroAlloc(t *testing.T) {
 			testkit.Equal(t, testing.AllocsPerRun(1000, tt.fn), float64(0), tt.name+" must not allocate")
 		})
 	}
+}
+
+func BenchmarkCall(b *testing.B) {
+	br := mustBreaker(b, fake.New(originUTC))
+	ctx := b.Context()
+
+	var (
+		got int
+		err error
+	)
+
+	allocs(b, 0, func() { got, err = resilience.Call(ctx, br, target, succeeding) })
+	testkit.NoError(b, err, "the benchmark must measure a call that succeeds")
+	testkit.Equal(b, got, 42, "the benchmark must measure the value of fn")
 }
 
 func BenchmarkBreakerAllow(b *testing.B) {

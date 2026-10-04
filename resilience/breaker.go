@@ -122,14 +122,16 @@ type Breaker struct {
 	mu sync.Mutex
 }
 
-// event is an input to a circuit: a caller asks to proceed, or reports
-// the outcome of a call it was allowed to make.
+// event is an input to a circuit: a caller asks to proceed, reports
+// the outcome of a call it was allowed to make, or releases a probe
+// whose call ended without an outcome.
 type event uint8
 
 const (
 	allow event = iota
 	success
 	failure
+	release
 )
 
 // String returns the event name, which the circuit's Mermaid diagram
@@ -140,8 +142,10 @@ func (e event) String() string {
 		return "Allow"
 	case success:
 		return "Success"
-	default:
+	case failure:
 		return "Failure"
+	default:
+		return "Release"
 	}
 }
 
@@ -153,6 +157,11 @@ type circuit struct {
 	b         *Breaker
 	failures  int
 	successes int
+
+	// probe numbers the probes that the circuit has admitted, from 1.
+	// While probing is set, the outstanding probe is number probe, so the
+	// call of an earlier probe cannot release the current one.
+	probe uint64
 
 	// probing reports that a probe has been admitted and its outcome
 	// is outstanding. A half-open circuit does not admit another call
@@ -184,6 +193,7 @@ var circuitSpec, errCircuitSpec = fsm.NewBuilder[State, event, circuit](Closed).
 	Edge(HalfOpen, success, Closed, fsm.If(recovered)).
 	Edge(HalfOpen, success, HalfOpen, fsm.If(probing), fsm.Do(countSuccess)).
 	Edge(HalfOpen, success, HalfOpen, fsm.Do(clearFailures)).
+	Edge(HalfOpen, release, HalfOpen, fsm.Do(releaseProbe)).
 	OnEnter(Open, reopen).
 	OnEnter(Closed, reset).
 	Build()
@@ -237,14 +247,24 @@ func countSuccess(c *circuit) {
 // a probe's.
 func clearFailures(c *circuit) { c.failures = 0 }
 
-// claimProbe admits the one probe a half-open circuit allows.
-func claimProbe(c *circuit) { c.probing = true }
+// claimProbe admits the one probe a half-open circuit allows, and gives
+// it the next number.
+func claimProbe(c *circuit) {
+	c.probing = true
+	c.probe++
+}
+
+// releaseProbe ends the outstanding probe without an outcome, so the
+// circuit admits the next probe and keeps its counts.
+func releaseProbe(c *circuit) { c.probing = false }
 
 // reopen starts the open interval at the current time.
 func reopen(c *circuit) { c.openUntil = c.b.clock.Time().Add(c.b.openFor) }
 
-// reset clears the counters of a circuit that has closed.
-func reset(c *circuit) { *c = circuit{b: c.b} }
+// reset clears the counters of a circuit that has closed. It keeps the
+// probe number, so the call of a probe from before the circuit closed
+// cannot release a probe of a later half-open interval.
+func reset(c *circuit) { *c = circuit{b: c.b, probe: c.probe} }
 
 // NewBreaker returns a Breaker configured by cfg.
 //
@@ -284,19 +304,56 @@ func NewBreaker(cfg BreakerConfig) (*Breaker, error) {
 // for a transport that reports failure in a status code. [Call] pairs
 // them for a function whose failures are errors.
 func (b *Breaker) Allow(target string) bool {
+	_, ok := b.admit(target)
+
+	return ok
+}
+
+// admit asks target's circuit to admit a call, as Allow describes, and
+// reports whether it did. probe is the number of the probe that the
+// circuit gave the call, and zero for a call that a closed circuit
+// admits.
+func (b *Breaker) admit(target string) (probe uint64, ok bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	m, ok := b.circuits[target]
-	if !ok {
+	m, found := b.circuits[target]
+	if !found {
 		c := circuitSpec.Start(circuit{b: b})
 		m = &c
 		b.circuits[target] = m
 	}
 
-	_, err := m.Fire(allow)
+	s, err := m.Fire(allow)
+	if err != nil {
+		return 0, false
+	}
 
-	return err == nil
+	// Allow leaves a circuit half-open only when it claims the probe.
+	if s == HalfOpen {
+		return m.Data().probe, true
+	}
+
+	return 0, true
+}
+
+// abandon releases probe when its call has no outcome, because the call's
+// context ended or fn panicked. The circuit then admits the next probe,
+// and its counts do not change. A probe that an outcome or a release has
+// already ended changes nothing, and neither does the zero probe of a
+// call without one.
+func (b *Breaker) abandon(target string, probe uint64) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	// admit created the circuit before the call, and the Breaker does not
+	// remove it.
+	m := b.circuits[target]
+	if c := m.Data(); c.probing && c.probe == probe {
+		// A probe is outstanding only in HalfOpen, where release has an
+		// edge, so Fire cannot reject it.
+		_, _ = m.Fire(release)
+	}
 }
 
 // Record adds the outcome of one call to target's circuit. failed
@@ -347,41 +404,76 @@ func (b *Breaker) State(target string) State {
 // Call runs fn under target's circuit. When the circuit refuses the
 // call, Call returns [ErrOpen] and does not run fn.
 //
-// Call classifies fn's error with [errs.Classify] and counts it as a
-// failure when its class is in TripOn. A dependency that rejects a bad
-// request is working, so [errs.Invalid], [errs.NotFound] and
-// [errs.Denied] do not normally belong in TripOn.
+// Call records one of three outcomes of fn in the circuit:
 //
-// Call does not count an error as a failure when ctx has ended. The
-// caller stopped waiting, and the dependency did not fail. Counting
-// these errors would open the circuit when many callers cancel at
-// once, and the resulting ErrOpen errors would report an outage that
-// did not happen.
+//   - A failure, for an error whose class [errs.Classify] reports in
+//     TripOn.
+//   - No outcome, for an error after ctx has ended. The caller stopped
+//     waiting, and the dependency neither failed nor succeeded. The
+//     circuit's counts do not change, and a half-open circuit admits its
+//     next probe. Counting these errors as failures would open the
+//     circuit when many callers cancel at once, and the resulting ErrOpen
+//     errors would report an outage that did not happen.
+//   - A success, for any other result. A dependency that rejects a bad
+//     request is working, so [errs.Invalid], [errs.NotFound] and
+//     [errs.Denied] do not normally belong in TripOn.
+//
+// A panic in fn is no outcome either. Call releases the probe of the
+// call, so the circuit does not refuse every later call, and the panic
+// continues.
 //
 // A caller whose failures are not errors, such as an HTTP status or an
 // RPC trailer, uses [Breaker.Allow] and [Breaker.Record] instead.
+//
+// # Allocation contract
+//
+// Zero alloc for a target that has a circuit, apart from what fn
+// allocates.
 func Call[T any](
 	ctx context.Context, b *Breaker, target string,
 	fn func(context.Context) (T, error),
 ) (T, error) {
-	if !b.Allow(target) {
+	probe, ok := b.admit(target)
+	if !ok {
 		var zero T
 
 		return zero, ErrOpen
 	}
 
-	v, err := fn(ctx)
+	return run(ctx, b, target, probe, fn)
+}
 
-	b.Record(target, b.tripped(ctx, err))
+// run calls fn, a call that target's circuit admitted with probe, and
+// records its outcome as [Call] describes. When fn panics, run abandons
+// probe and the panic continues.
+func run[T any](
+	ctx context.Context, b *Breaker, target string, probe uint64,
+	fn func(context.Context) (T, error),
+) (T, error) {
+	returned := false
+
+	defer func() {
+		if !returned {
+			b.abandon(target, probe)
+		}
+	}()
+
+	v, err := fn(ctx)
+	returned = true
+
+	if err != nil && ctx.Err() != nil {
+		b.abandon(target, probe)
+
+		return v, err
+	}
+
+	b.Record(target, b.trips(err))
 
 	return v, err
 }
 
-// tripped reports whether err counts as a dependency failure.
-func (b *Breaker) tripped(ctx context.Context, err error) bool {
-	if err == nil || ctx.Err() != nil {
-		return false
-	}
-
-	return slices.Contains(b.tripOn, errs.Classify(err))
+// trips reports whether err counts as a dependency failure: an error
+// whose class is in TripOn.
+func (b *Breaker) trips(err error) bool {
+	return err != nil && slices.Contains(b.tripOn, errs.Classify(err))
 }

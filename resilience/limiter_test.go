@@ -23,9 +23,9 @@ const (
 	// maxBurst is the largest Burst that NewLimiter accepts.
 	maxBurst = 4_611_686_018
 
-	// limiterBenchRuns is the number of calls over which a benchmark
-	// averages the allocations that it checks.
-	limiterBenchRuns = 100
+	// benchRuns is the number of calls over which a benchmark averages
+	// the allocations that it checks.
+	benchRuns = 100
 )
 
 // timedClock is a fake clock that records the duration of every timer it
@@ -513,7 +513,7 @@ func BenchmarkLimiter(b *testing.B) {
 		l := mustLimiter(b, resilience.LimiterConfig{Clock: c, Rate: math.MaxInt32, Burst: math.MaxInt32})
 
 		var sink bool
-		limiterAllocs(b, 0, func() { sink = l.AllowN(1) })
+		allocs(b, 0, func() { sink = l.AllowN(1) })
 		testkit.True(b, sink, "the benchmark must measure an admitted call")
 	})
 
@@ -523,7 +523,7 @@ func BenchmarkLimiter(b *testing.B) {
 		ctx := b.Context()
 
 		var sink error
-		limiterAllocs(b, 0, func() {
+		allocs(b, 0, func() {
 			c.Advance(time.Nanosecond)
 			sink = l.WaitN(ctx, 1)
 		})
@@ -531,15 +531,15 @@ func BenchmarkLimiter(b *testing.B) {
 	})
 }
 
-// limiterAllocs fails b when call does not allocate want times per call,
-// averaged over limiterBenchRuns calls, and then reports the time and the
+// allocs fails b when call does not allocate want times per call,
+// averaged over benchRuns calls, and then reports the time and the
 // allocations of call per iteration. The check runs in the benchmark, so
 // it applies to the build that a benchmark measures.
-func limiterAllocs(b *testing.B, want float64, call func()) {
+func allocs(b *testing.B, want float64, call func()) {
 	b.Helper()
 
-	if allocs := testing.AllocsPerRun(limiterBenchRuns, call); allocs != want {
-		b.Fatalf("allocates %v times per call, want %v", allocs, want)
+	if got := testing.AllocsPerRun(benchRuns, call); got != want {
+		b.Fatalf("allocates %v times per call, want %v", got, want)
 	}
 
 	b.ReportAllocs()
