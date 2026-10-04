@@ -22,6 +22,10 @@
 //     dependency that fails for all of them.
 //   - [Limiter] bounds the rate of work in units per second, with a
 //     burst, such as the bytes that background jobs read and write.
+//   - [Failover] calls redundant dependencies one after another under
+//     their circuits, such as the time-stamp authorities of a deployment,
+//     until one succeeds. Its error remains retryable while the error of
+//     any dependency is.
 //
 // # No defaults
 //

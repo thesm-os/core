@@ -28,13 +28,16 @@ var (
 	// ErrConfig is returned by every constructor when a required field
 	// is missing or out of range. A threshold of zero makes a primitive
 	// useless or permanently closed, so the constructor refuses it when
-	// the caller wires the primitive. Classifies as Invalid.
+	// the caller wires the primitive. [Failover] returns it for an empty
+	// list of targets, a negative start, and a target named twice.
+	// Classifies as Invalid.
 	ErrConfig = errs.WithClass(errors.New("resilience: invalid configuration"), errs.Invalid)
 
 	// ErrOpen is returned by [Call] instead of a call to a dependency
-	// whose circuit is open. Classifies as Transient: the dependency may
-	// recover, so a retry wrapped around a breaker backs off and tries
-	// again later.
+	// whose circuit is open, and the error of a [Failover] contains it for
+	// each target whose circuit refused the call. Classifies as Transient:
+	// the dependency may recover, so a retry wrapped around a breaker backs
+	// off and tries again later.
 	ErrOpen = errs.WithClass(errors.New("resilience: circuit open"), errs.Transient)
 
 	// ErrFull is returned by [Bulkhead.Acquire] when the concurrency
