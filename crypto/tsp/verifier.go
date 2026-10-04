@@ -130,8 +130,8 @@ type VerifierConfig struct {
 // Verify allocates nothing for a token of a known certificate signed with
 // Ed25519 or ML-DSA, apart from what Check allocates. RSA and ECDSA
 // allocate what crypto/rsa and crypto/ecdsa allocate to verify a
-// signature. A token of an unknown certificate allocates its parse and the
-// verification of its chain.
+// signature. A token of an unknown certificate allocates copies of its
+// certificates, their parse and the verification of its chain.
 type Verifier struct {
 	roots, intermediates *x509.CertPool
 	check                func(Info) error
@@ -228,9 +228,10 @@ func NewVerifier(cfg VerifierConfig) (*Verifier, error) {
 //
 // # Allocation contract
 //
-// As the [Verifier]'s. The Info refers to token, so the caller keeps token
-// while it uses the Info. Its Chain is the chain that the Verifier keeps,
-// without a copy.
+// As the [Verifier]'s. The Info refers to token, apart from its Chain, so
+// the caller keeps token while it uses the other fields of the Info. The
+// Chain is the chain that the Verifier keeps, without a copy. The Verifier
+// keeps no reference to token after Verify returns.
 func (v *Verifier) Verify(token []byte, h Hash, imprint crypto.Digest) (Info, error) {
 	if !h.matches(imprint) {
 		return Info{}, ErrHash
@@ -358,13 +359,16 @@ func (v *Verifier) signer(t *token, genTime time.Time) (*chain, error) {
 // is within its validity, and otherwise a chain that it verifies with the
 // intermediates of the configuration and the other certificates of the
 // token, and keeps.
+//
+// x509.ParseCertificate keeps slices of its input in the certificate, and
+// the kept chain outlives the token, so chainOf parses a copy of leaf.
 func (v *Verifier) chainOf(leaf, certificates []byte, genTime time.Time) (*chain, error) {
 	key := sha256.Sum256(leaf)
 	if c, ok := v.chains.Get(key); ok && c.valid(genTime) {
 		return c, nil
 	}
 
-	cert, err := x509.ParseCertificate(leaf)
+	cert, err := x509.ParseCertificate(bytes.Clone(leaf))
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrCertificate, err)
 	}
@@ -397,7 +401,9 @@ func (v *Verifier) chainOf(leaf, certificates []byte, genTime time.Time) (*chain
 // pool returns the intermediates of a chain: those of the configuration,
 // and each certificate of certificates other than leaf that parses. A
 // token may contain certificates that this package does not parse, such
-// as attribute certificates, which serve no chain.
+// as attribute certificates, which serve no chain. pool parses a copy of
+// each certificate, because a chain that the Verifier keeps can contain
+// it.
 func (v *Verifier) pool(certificates, leaf []byte) *x509.CertPool {
 	var p *x509.CertPool
 	if v.intermediates != nil {
@@ -417,7 +423,7 @@ func (v *Verifier) pool(certificates, leaf []byte) *x509.CertPool {
 			continue
 		}
 
-		if cert, err := x509.ParseCertificate(element); err == nil {
+		if cert, err := x509.ParseCertificate(bytes.Clone(element)); err == nil {
 			p.AddCert(cert)
 		}
 	}

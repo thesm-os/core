@@ -258,6 +258,31 @@ func TestVerifier(t *testing.T) {
 				"two tokens of one certificate must share the chain that the Verifier keeps")
 		})
 
+		for _, k := range keys {
+			name := "verifies a second token signed with " + k.name + " after the caller clears the first"
+			t.Run(name, func(t *testing.T) {
+				t.Parallel()
+				a := newAuthority(t, tsptest.Config{Key: k.key, Digest: k.digest})
+				v := newVerifier(t, a, nil)
+
+				// A caller with pooled buffers reuses the buffer of a token
+				// once Verify returns.
+				first := stamp(t, a)
+				_, err := v.Verify(first, tsp.SHA256, imprint)
+				testkit.NoError(t, err, "Verify must accept the first token")
+				clear(first)
+
+				info, err := v.Verify(stamp(t, a), tsp.SHA256, imprint)
+				testkit.NoError(t, err, "Verify must accept the second token")
+				testkit.True(
+					t,
+					info.Chain[0].Equal(a.Leaf()),
+					"the kept chain must start at the authority's certificate",
+				)
+				testkit.True(t, info.Chain[1].Equal(a.Intermediate()), "the kept chain must pass the intermediate")
+			})
+		}
+
 		t.Run("returns the Policy of a token under the second policy", func(t *testing.T) {
 			t.Parallel()
 			a := newAuthority(t, tsptest.Config{Key: tsptest.KeyEd25519, Digest: tsptest.DigestSHA512, Policy: otherID})
