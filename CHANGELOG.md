@@ -501,8 +501,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   refuses a status other than 2xx with a `*httpclient.StatusError`, whose
   class follows the status and whose `RetryAfter` reads both forms of the
   header. `Fetch` returns the body within `WithMaxResponseBytes`, or
-  `httpclient.ErrTooLarge`. An attempt allocates 2 objects of the client.
-  See RFC-0053.
+  `httpclient.ErrTooLarge`. `AppendFetch` appends the body to a buffer of
+  the caller, and does not allocate the body when the buffer has room for
+  it. `WithDialContext` connects a client through a dial function of the
+  caller, such as one end of a `net.Pipe` in a test that counts the
+  allocations of a call, and `New` refuses it for `ReachPublic`. An
+  attempt allocates 2 objects of the client. See RFC-0053.
 - `telemetry.HeaderCarrier`, `telemetry.WithRemoteParent` and
   `telemetry.RemoteParent`. `HeaderCarrier` is a `Carrier` over the
   headers of an HTTP message, to which an `http.Header` converts without

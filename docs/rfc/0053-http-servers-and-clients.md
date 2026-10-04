@@ -122,9 +122,9 @@ The options of both packages follow three rules:
 A consumer extends a server or a client with hooks and with options of
 its own:
 
-- **Hooks.** `WithMiddleware`, `WithReadyCheck`, `WithPrepare` and
-  `WithClassify` take the consumer's functions, and run them at a fixed
-  place in each request or call.
+- **Hooks.** `WithMiddleware`, `WithReadyCheck`, `WithPrepare`,
+  `WithClassify` and `WithDialContext` take the consumer's functions, and
+  run them at a fixed place in each request, call or connection.
 - **Its own options.** A function of the consumer returns one of core's
   options, or bundles several with `Options`:
 
@@ -435,12 +435,19 @@ func WithTLS(cfg *tls.Config) Option           // default: the configuration of 
 func WithProxy(u *url.URL) Option              // default: no proxy, whatever the environment sets
 func WithResolver(r *net.Resolver) Option      // default net.DefaultResolver
 
+// WithDialContext connects the client through dial in place of its
+// net.Dialer, such as a function that returns one end of a net.Pipe that a
+// test serves. The context of each dial ends when dial returns, and at the
+// dial timeout. New refuses dial for a client of ReachPublic, and together
+// with WithResolver.
+func WithDialContext(dial func(ctx context.Context, network, address string) (net.Conn, error)) Option
+
 func WithTimeout(d time.Duration) Option             // one attempt; default 10s
 func WithDialTimeout(d time.Duration) Option         // default 5s
 func WithTLSHandshakeTimeout(d time.Duration) Option // default 5s
 func WithIdleConnTimeout(d time.Duration) Option     // default 90s
 func WithMaxIdleConnsPerHost(n int) Option           // default 32; New refuses a value that is not positive
-func WithMaxResponseBytes(n int64) Option            // the bodies that Fetch reads; default 8 MiB
+func WithMaxResponseBytes(n int64) Option            // the bodies that Fetch and AppendFetch read; default 8 MiB
 
 // WithPrepare calls prepare on the request of each attempt, after the
 // client injected the trace and before it sends the request, so a token or
@@ -450,7 +457,8 @@ func WithPrepare(prepare func(*http.Request) error) Option
 
 // WithClassify replaces the classification of the responses. classify
 // returns nil for a response that succeeded and an error otherwise, whose
-// class decides the breaker and the retries, and which Fetch returns.
+// class decides the breaker and the retries, and which Fetch and
+// AppendFetch return.
 func WithClassify(classify func(*http.Response) error) Option
 
 // Do sends req as http.Client.Do does, under the guards of the client, and
@@ -458,14 +466,21 @@ func WithClassify(classify func(*http.Response) error) Option
 func (c *Client) Do(req *http.Request) (*http.Response, error)
 
 // Fetch sends req as Do does, and returns the body of a response that
-// succeeded, at most the bytes of WithMaxResponseBytes.
+// succeeded, at most the bytes of WithMaxResponseBytes. It calls
+// AppendFetch with a nil dst.
 func (c *Client) Fetch(req *http.Request) ([]byte, error)
+
+// AppendFetch sends req as Do does, and appends to dst the body of a
+// response that succeeded, at most the bytes of WithMaxResponseBytes. Each
+// attempt appends to dst at the length that dst had at the call. With an
+// error, AppendFetch returns dst unchanged.
+func (c *Client) AppendFetch(dst []byte, req *http.Request) ([]byte, error)
 
 // StatusError is the error of a response with a status other than 2xx,
 // under the default classification.
 type StatusError struct {
     Dependency string
-    Body       []byte // the first 1 KiB of the body, which Fetch reads
+    Body       []byte // the first 1 KiB of the body, which Fetch and AppendFetch read
     Status     int
 }
 
@@ -483,7 +498,7 @@ The defaults of the limits:
 | `WithTLSHandshakeTimeout` | 5 s | `DefaultTransport` waits 10 s |
 | `WithIdleConnTimeout` | 90 s | As `DefaultTransport` |
 | `WithMaxIdleConnsPerHost` | 32 | `net/http` keeps 2, and closes the connections of a burst that it opened |
-| `WithMaxResponseBytes` | 8 MiB | Bounds the memory of `Fetch` |
+| `WithMaxResponseBytes` | 8 MiB | Bounds the memory of `Fetch` and `AppendFetch` |
 
 Each `Client` has its own `http.Transport`, never `DefaultTransport`. The
 transport negotiates HTTP/2 over TLS and HTTP/1.1 otherwise. Its HTTP/2
@@ -536,6 +551,15 @@ limit, without a read when the response declares its length. It returns
 nil for a response to `HEAD`, whose declared length is the length of the
 body that a `GET` returns.
 
+`AppendFetch` appends the body to a buffer of the caller and reads it as
+`Fetch` does, so a caller that reads one response per call reuses one
+buffer. Each attempt appends at the length that the buffer had at the
+call, so the bytes of an attempt that failed are not in the result. Under
+the limit, `AppendFetch` grows the buffer at most once for a declared
+length. It reads a body of unknown length in steps into the room of the
+buffer, and grows the buffer before a step with less than 512 bytes of
+room. `Fetch` calls `AppendFetch` with a nil buffer.
+
 The client follows at most 5 redirects, and returns the sixth redirect
 response as it is. Each redirect goes to a host that `WithHosts` admits,
 and none goes from `https` to `http`.
@@ -543,6 +567,16 @@ and none goes from `https` to `http`.
 With `WithProxy`, the dialer connects to the proxy, so the client does not
 check the addresses that it connects to. It still checks the host against
 `WithHosts`. The proxy enforces the addresses that the deployment admits.
+
+`WithDialContext` replaces the dialer with a function of the caller, which
+receives the host and the port before any resolution. `New` refuses it for
+a client of `ReachPublic`, because the function replaces the dialer that
+checks the addresses. It also refuses it together with `WithResolver`,
+which would have no effect. `net/http` dials under a context that the
+cancellation of a request does not end. The client ends the context of
+each dial at the dial timeout, and when the function returns. A
+test connects a client through one end of a `net.Pipe`, and counts the
+allocations of a call without those of a server.
 
 ### The addresses of `ReachPublic`
 
@@ -662,6 +696,8 @@ The client, on a connection that `net/http`'s `Transport` reuses:
 | `Do` of a traced request | 60 | The attributes of the span, the `traceparent` value and its slice, the storage of the copied header map at its first key, and 2 more in `net/http`'s copies of the header |
 | `Do` with a breaker and a retrier | 54 | The guards allocate nothing |
 | `Fetch` | 55 | The body as well |
+| `AppendFetch` into a buffer with room for the body | 54 | As `Do`. The body goes into the caller's buffer |
+| `AppendFetch` of a chunked response into a buffer with room | 57 | 3 more in `net/http`: the key and the value of the `Transfer-Encoding` header, and the `TransferEncoding` of the response |
 
 `HeaderCarrier.Get` does not allocate for a key of at most 64 bytes.
 `Set` allocates the slice of the value, and the string of a key that is
@@ -679,7 +715,7 @@ when `New` is called, outside any request.
 | `httpserver.ErrServe` | Transient | Serving failed, such as a listener whose `Accept` fails |
 | `httpserver.ErrShutdown` | None | A drain that did not finish within the shutdown timeout, or a listener that failed to close |
 | `httpclient.ErrBlocked` | Denied | A host that `WithHosts` does not admit, a scheme other than http and https, a redirect from https to http, or an address outside the `Reach` |
-| `httpclient.ErrTooLarge` | Invalid | A body beyond the limit of `Fetch` |
+| `httpclient.ErrTooLarge` | Invalid | A body beyond the limit of `Fetch` and `AppendFetch` |
 | `*httpclient.StatusError` | By status | A response with a status other than 2xx, under the default classification |
 | `resilience.ErrOpen` | Transient | A circuit that refused the attempt |
 | A certificate that fails verification | Integrity | The certificate fails the same way on every attempt |
@@ -703,8 +739,8 @@ waiting.
 A table checks an address of every blocked class and range of
 `ReachPublic`. A test of the hosts resolves a name through the resolver of
 `WithResolver`. The benchmarks of the client send through `net/http`'s
-`Transport` over `net.Pipe` to a responder that does not allocate. They
-count the allocations of a real call.
+`Transport`, and through `WithDialContext` over `net.Pipe` to a responder
+that does not allocate. They count the allocations of a real call.
 
 ## Alternatives considered
 
@@ -816,11 +852,54 @@ the server that deduplicates. The `Idempotency-Key` header is sent to the
 server. `net/http` already treats it as the mark of a request that is
 safe to replay.
 
+### K. A pool of bodies in the client
+
+Keep the buffers of the bodies that `Fetch` returns in a pool of the
+`Client`, and take each back through a release method.
+
+**Why not:** the pool would give a body to a later call once its caller
+releases it. A caller that reads a body after the release would read the
+bytes of another call, and a body released twice would go to two later
+calls at once. With an append to its own slice, the caller decides when
+the buffer is reused, as with the `Append` functions of the standard
+library and `tsp.AppendRequest`.
+
+### L. An `io.Writer` as the destination of the body
+
+Write the body to a writer of the caller.
+
+**Why not:** a writer cannot take back the bytes of an attempt that failed
+before the client retries. A slice drops them, because each attempt
+appends at the length that the slice had at the call.
+
+### M. A `WithTransport` option
+
+Let a caller pass an `http.RoundTripper` in place of the client's
+transport, such as one that responds from memory in a test.
+
+**Why not:** the caller's transport replaces the limits, the address
+check and the connection pool that every client has. For a
+`RoundTripper` other than its own `Transport`, `net/http` adds a
+goroutine, two channels, a timer and a `sync.OnceFunc` to each call with
+a timeout. A test over such a transport does not count the allocations of
+a real call.
+
+### N. A test server in the same process or in another
+
+Count the allocations of a call to a server over loopback.
+
+**Why not:** a server in the same process adds its own allocations to the
+count, and they change with the version of `net/http` and with the
+configuration of the server. A server in another process keeps them out.
+Every consumer that measures then needs a test binary that runs again as
+the server, a port per test, and the cleanup of the process. A dial
+option in core removes that work from every consumer.
+
 ## Drawbacks
 
 - The proposal adds three packages and three declarations to
-  `telemetry`. The packages under `net` have 3,143 lines of source and
-  5,432 lines of tests. `HeaderCarrier` has 143 lines of source and 291
+  `telemetry`. The packages under `net` have 3,272 lines of source and
+  5,958 lines of tests. `HeaderCarrier` has 143 lines of source and 291
   lines of tests.
 - Core then has two styles of configuration: options in the HTTP
   packages, and `Config` structs in the others.
