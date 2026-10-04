@@ -186,7 +186,7 @@ type VerifierConfig struct {
 func NewVerifier(cfg VerifierConfig) (*Verifier, error)
 
 // Verify verifies token for imprint, a digest of h, and returns its
-// TSTInfo. The Info refers to token.
+// TSTInfo. The Info refers to token, apart from its Chain.
 func (v *Verifier) Verify(token []byte, h Hash, imprint crypto.Digest) (Info, error)
 
 type Info struct {
@@ -251,7 +251,9 @@ qcStatements extension of a qualified time stamp through
 
 `Info.Chain` is the chain that the Verifier keeps for the authority's
 certificate, without a copy, so Verify returns it without an allocation
-and every token of one certificate shares it. A caller applies a rule of
+and every token of one certificate shares it. The Verifier parses copies
+of a token's certificates when it verifies a chain, so it keeps no
+reference to a token after Verify returns. A caller applies a rule of
 its own per authority after Verify, such as a date after which it
 distrusts the authority's key, because a key type has passed the date
 that the caller's jurisdiction sets for it. Check receives the same Info,

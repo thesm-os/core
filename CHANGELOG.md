@@ -772,6 +772,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `resilience.Call` releases the probe of a half-open circuit when its
   function panics. The circuit refused every later call once a caller
   recovered from such a panic. The panic still reaches the caller.
+- `tsp.Verifier` parses copies of the certificates of a token, and keeps
+  no reference to the token after `Verify` returns. It kept a chain whose
+  certificates referred to the caller's buffer, so a caller that reused
+  the buffer made every later token of that authority fail with
+  `tsp.ErrSignature`. `Info.Chain` no longer refers to the token.
 
 ## [0.6.1] - 2026-08-05
 
