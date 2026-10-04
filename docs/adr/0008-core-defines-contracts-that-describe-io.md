@@ -1,17 +1,17 @@
 ---
 adr: 0008
 title: Core Defines Contracts That Describe IO
-status: Accepted
+status: Superseded
 date: 2026-08-03
 supersedes: none
-superseded-by: none
+superseded-by: ADR-0045
 ---
 
 # ADR-0008: Core Defines Contracts That Describe IO
 
 ## Status
 
-Accepted
+Superseded by [ADR-0045](0045-core-ships-io-built-on-the-standard-library.md).
 
 ## Context
 

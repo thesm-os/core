@@ -115,6 +115,7 @@ Start from [`docs/templates/RFC.md`](../templates/RFC.md).
 | [0050](0050-rate-limiter.md) | Rate Limiter | Draft |
 | [0051](0051-bounded-hot-path-telemetry.md) | Bounded Telemetry on Hot Paths | Draft |
 | [0052](0052-failover.md) | Failover Between Redundant Dependencies | Draft |
+| [0053](0053-http-servers-and-clients.md) | HTTP Servers and Clients | Accepted |
 
 ## Canonical first RFC
 

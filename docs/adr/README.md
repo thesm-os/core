@@ -60,7 +60,7 @@ Start from [`docs/templates/ADR.md`](../templates/ADR.md).
 | [0005](0005-primitive-set-chosen-for-coherence.md) | The Primitive Set Is Chosen for Coherence | Accepted |
 | [0006](0006-stdlib-only-scope-test-dependencies.md) | Stdlib-Only Scope: Test Dependencies | Superseded by [0015](0015-dependency-free-x-modules-in-production.md) |
 | [0007](0007-zero-digest-is-valid-chain-genesis.md) | The Zero Digest Is a Valid Chain Genesis | Superseded by [0013](0013-tagged-tree-hashing-on-the-interface.md), [0014](0014-genesis-sentinel-is-deleted.md) |
-| [0008](0008-core-defines-contracts-that-describe-io.md) | Core Defines Contracts That Describe IO | Accepted |
+| [0008](0008-core-defines-contracts-that-describe-io.md) | Core Defines Contracts That Describe IO | Superseded by [0045](0045-core-ships-io-built-on-the-standard-library.md) |
 | [0009](0009-logging-is-log-slog.md) | Logging Is log/slog | Accepted |
 | [0010](0010-one-package-name-one-concept.md) | One Package Name, One Concept | Accepted |
 | [0011](0011-test-doubles-named-for-behaviour.md) | Test Doubles Are Named for Their Behaviour | Accepted |
@@ -97,5 +97,6 @@ Start from [`docs/templates/ADR.md`](../templates/ADR.md).
 | [0042](0042-a-content-type-is-bounded.md) | A Content Type Is Bounded | Accepted |
 | [0043](0043-core-structs-have-canonical-codecs.md) | Core Structs Have Canonical kanon Codecs | Accepted |
 | [0044](0044-a-blob-reader-may-fail-after-removal.md) | A Blob Reader May Fail Once Its Version Is Removed | Accepted |
+| [0045](0045-core-ships-io-built-on-the-standard-library.md) | Core Ships IO Built on the Standard Library | Accepted |
 
 [nygard]: https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions

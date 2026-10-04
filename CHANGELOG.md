@@ -479,6 +479,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `slog.LevelError` and above. Their hot paths allocate nothing, and
   their constructors return `telemetry.ErrConfig`, classified
   `errs.Invalid`. See RFC-0051.
+- `net/httpserver` package: serves HTTP on `net/http` with a limit on
+  every phase of a connection, a drain, recovery from panics,
+  cross-origin protection and the telemetry of each request. `New`
+  requires `WithClock`, `WithLogger`, `WithReporter` and `WithPropagator`,
+  and every limit has a default, such as a header timeout of 5 s and a
+  body limit of 4 MiB. A request that declares a body beyond the limit
+  receives 413 before the handler runs. `Error` writes the problem
+  details of RFC 9457 with the status of the error's class, and
+  `Annotate` adds attributes to the log record and the span of a request.
+  `Run` keeps serving for the drain delay while `Ready` responds with 503,
+  and returns `httpserver.ErrShutdown` when the shutdown timeout elapses.
+  The chain allocates 2 objects per request. See RFC-0053 and ADR-0045.
+- `net/httpclient` package: calls one HTTP dependency on a transport of
+  its own. `New` requires the same four dependencies and `WithHosts`. A
+  `Client` of `ReachPublic`, the default, checks every address that it
+  connects to, and returns `httpclient.ErrBlocked`, classified
+  `errs.Denied`, for an address that is not public. `WithBreaker` and
+  `WithRetrier` guard and retry each call through `resilience`, and retry
+  only a request that is safe to send again. The default classification
+  refuses a status other than 2xx with a `*httpclient.StatusError`, whose
+  class follows the status and whose `RetryAfter` reads both forms of the
+  header. `Fetch` returns the body within `WithMaxResponseBytes`, or
+  `httpclient.ErrTooLarge`. An attempt allocates 2 objects of the client.
+  See RFC-0053.
+- `telemetry.HeaderCarrier`, `telemetry.WithRemoteParent` and
+  `telemetry.RemoteParent`. `HeaderCarrier` is a `Carrier` over the
+  headers of an HTTP message, to which an `http.Header` converts without
+  a copy. It canonicalises its keys as `net/textproto` does, so `Get`
+  does not allocate. `WithRemoteParent` starts a span as the child of a
+  context that a `Propagator` extracted, and a tracer reads it with
+  `RemoteParent`. See RFC-0053.
 
 ### Changed
 

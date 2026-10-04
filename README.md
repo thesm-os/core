@@ -282,6 +282,16 @@ seams every other thesmos library and framework depends on:
   of a known certificate verifies without an allocation for Ed25519 and
   ML-DSA. `coretest/tsptest` is a time-stamp authority for tests. See
   [RFC-0048][rfc-0048].
+- **HTTP** — a server and a client on `net/http`. `net/httpserver`
+  limits every phase of a connection by default, drains before it shuts
+  down, recovers from panics, refuses the cross-origin requests of
+  browsers, and records the duration, a log record and a span of each
+  request. `net/httpclient` calls one dependency on a transport of its
+  own, refuses an address that is not public, and guards and retries each
+  call with `resilience`. Both take the clock, the logger, the reporter
+  and the propagator as required options. `telemetry.HeaderCarrier`
+  propagates a trace over HTTP headers. See [RFC-0053][rfc-0053] and
+  [ADR-0045][adr-0045].
 
 These interfaces — and the others added over time — share three
 properties:
@@ -340,6 +350,7 @@ Apache 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 [adr-0042]: docs/adr/0042-a-content-type-is-bounded.md
 [adr-0043]: docs/adr/0043-core-structs-have-canonical-codecs.md
 [adr-0044]: docs/adr/0044-a-blob-reader-may-fail-after-removal.md
+[adr-0045]: docs/adr/0045-core-ships-io-built-on-the-standard-library.md
 [rfc-0001]: docs/rfc/0001-clock-seam.md
 [rfc-0002]: docs/rfc/0002-rand-seam.md
 [rfc-0003]: docs/rfc/0003-crypto-seam.md
@@ -386,5 +397,6 @@ Apache 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
 [rfc-0050]: docs/rfc/0050-rate-limiter.md
 [rfc-0051]: docs/rfc/0051-bounded-hot-path-telemetry.md
 [rfc-0052]: docs/rfc/0052-failover.md
+[rfc-0053]: docs/rfc/0053-http-servers-and-clients.md
 [contrib]: CONTRIBUTING.md
 [sec]: SECURITY.md
