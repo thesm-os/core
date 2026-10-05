@@ -85,7 +85,11 @@ func TestOption(t *testing.T) {
 				protos <- r.ProtoMajor
 			}), httpserver.WithTLS(cfg))
 
-			testkit.NoError(t, request(t, client, "https"+strings.TrimPrefix(f.url, "http")), "the request over TLS")
+			req, err := http.NewRequestWithContext(
+				t.Context(), http.MethodGet, "https"+strings.TrimPrefix(f.url, "http"), http.NoBody,
+			)
+			testkit.NoError(t, err, "the request of the case must build")
+			testkit.Equal(t, do(t, client, req).status, http.StatusOK, "the status of the request over TLS")
 			testkit.Equal(t, await(t, protos, "the handler must run"), 2, "the major version of the protocol")
 		})
 	})
@@ -127,7 +131,7 @@ func TestOption(t *testing.T) {
 			_, err := io.WriteString(conn, "POST / HTTP/1.1\r\nHost: test\r\nContent-Length: 10\r\n\r\nab")
 			testkit.NoError(t, err, "the request must write")
 
-			got := await(t, read, "the handler must read the body")
+			got := awaitBefore(t, read, refused(conn), "the handler must read the body")
 			ne := testkit.ErrorAs[net.Error](t, got, "the read of the body must fail on the connection")
 			testkit.True(t, ne.Timeout(), "the read of the body must time out")
 		})
@@ -155,7 +159,7 @@ func TestOption(t *testing.T) {
 			_, err := io.WriteString(conn, "GET / HTTP/1.1\r\nHost: test\r\n\r\n")
 			testkit.NoError(t, err, "the request must write")
 
-			got := await(t, wrote, "the handler must write the response")
+			got := awaitBefore(t, wrote, refused(conn), "the handler must write the response")
 			ne := testkit.ErrorAs[net.Error](t, got, "the write of the response must fail on the connection")
 			testkit.True(t, ne.Timeout(), "the write of the response must time out")
 		})
@@ -365,7 +369,7 @@ func TestOption(t *testing.T) {
 
 			sent := make(chan error, 1)
 			go func() { sent <- request(t, f.client, f.url) }()
-			await(t, entered, "the handler must receive the first request")
+			awaitBefore(t, entered, sent, "the handler must receive the first request")
 
 			got := f.send(t, http.MethodGet, "/", http.NoBody, nil)
 			testkit.Equal(t, got.status, http.StatusServiceUnavailable, "the status beyond the bound")
@@ -436,4 +440,25 @@ func dial(t *testing.T, f *fixture) net.Conn {
 	testkit.NoError(t, conn.SetReadDeadline(time.Now().Add(patience)), "the read deadline must set")
 
 	return conn
+}
+
+// refused returns a channel that receives the status of the first response
+// on conn when that status is not 200, such as the refusal of a request
+// before its handler runs. It reads the status line and the headers of the
+// response and no more, so a handler that writes a long body still fills
+// the connection. The read ends at the deadline of conn or when the cleanup
+// of the case closes conn.
+func refused(conn net.Conn) <-chan int {
+	statuses := make(chan int, 1)
+
+	go func() {
+		// A Close of the body would read the rest of the response, which a
+		// case of a write timeout leaves unread.
+		resp, err := http.ReadResponse(bufio.NewReader(conn), nil) //nolint:bodyclose // see above
+		if err == nil && resp.StatusCode != http.StatusOK {
+			statuses <- resp.StatusCode
+		}
+	}()
+
+	return statuses
 }

@@ -50,6 +50,12 @@ const (
 	// leave it waiting.
 	patience = 5 * time.Second
 
+	// attempts is the number of attempts of the retrier of the cases. A
+	// channel to which the handler of a case sends a value per attempt has
+	// room for every attempt, so a defect that retries more often fails the
+	// case instead of blocking the handler.
+	attempts = 3
+
 	// traceID and spanID are the identity of every span that the reporter
 	// of a case starts.
 	traceID telemetry.TraceID = "4bf92f3577b34da6a3ce929d0e0e4736"
@@ -569,7 +575,7 @@ func TestClient(t *testing.T) {
 		t.Run("calls the function of WithPrepare on the request of each attempt", func(t *testing.T) {
 			t.Parallel()
 
-			tokens := make(chan string, 2)
+			tokens := make(chan string, attempts)
 			var hits atomic.Int32
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				tokens <- r.Header.Get("Authorization")

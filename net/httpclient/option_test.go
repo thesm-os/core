@@ -140,7 +140,7 @@ func TestOption(t *testing.T) {
 
 				var hits atomic.Int32
 
-				received := make(chan string, 2)
+				received := make(chan string, attempts)
 				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					b, _ := io.ReadAll(r.Body)
 					received <- string(b)
@@ -313,7 +313,7 @@ func TestOption(t *testing.T) {
 
 			// The transport returns the connection of a response with a body to
 			// its pool once the body is read to its end and closed.
-			idle := make(chan struct{}, 2)
+			idle := make(chan struct{}, attempts)
 			ctx := httptrace.WithClientTrace(t.Context(), &httptrace.ClientTrace{
 				PutIdleConn: func(err error) {
 					if err == nil {
@@ -327,8 +327,20 @@ func TestOption(t *testing.T) {
 
 			_, err = c.Do(req) //nolint:bodyclose // Do returns no response with the error
 			testkit.ErrorIs(t, err, resilience.ErrOpen, "Do must return the refusal of the circuit")
-			await(t, idle, "the response of the first attempt must close")
-			await(t, idle, "the response of the second attempt must close")
+
+			// The transport returns the connection of a closed response at
+			// once, so a second without it means that Do left a response
+			// open.
+			timer := time.NewTimer(time.Second)
+			defer timer.Stop()
+
+			for i := range 2 {
+				select {
+				case <-idle:
+				case <-timer.C:
+					t.Fatalf("the response of attempt %d must close", i+1)
+				}
+			}
 		})
 
 		t.Run("records no outcome in the circuit when the caller cancels", func(t *testing.T) {
@@ -572,11 +584,13 @@ func TestOption(t *testing.T) {
 		t.Run("ends a dial at the dial timeout", func(t *testing.T) {
 			t.Parallel()
 
+			const dialTimeout = 50 * time.Millisecond
+
 			// The dial function returns when its context ends, and errHung
-			// when the context has not ended within patience.
-			c, err := httpclient.New(dependency, required, unresolved, httpclient.WithDialTimeout(50*time.Millisecond),
+			// when the context has not ended within twenty dial timeouts.
+			c, err := httpclient.New(dependency, required, unresolved, httpclient.WithDialTimeout(dialTimeout),
 				httpclient.WithDialContext(func(ctx context.Context, _, _ string) (net.Conn, error) {
-					timer := time.NewTimer(patience)
+					timer := time.NewTimer(20 * dialTimeout)
 					defer timer.Stop()
 
 					select {
@@ -652,15 +666,16 @@ func TestOption(t *testing.T) {
 	})
 }
 
-// retrier returns a Retrier of 3 attempts on clk, whose backoff is below a
-// nanosecond, so a retry waits only for the delay of a Retry-After header.
+// retrier returns a Retrier on clk with the number of attempts of the cases
+// and a backoff below a nanosecond, so a retry waits only for the delay of
+// a Retry-After header.
 func retrier(t *testing.T, clk *fake.Clock) *resilience.Retrier {
 	t.Helper()
 
 	r, err := resilience.NewRetrier(resilience.RetryConfig{
 		Clock:         clk,
 		Rand:          pcg.New(1),
-		Attempts:      3,
+		Attempts:      attempts,
 		Base:          1,
 		Max:           1,
 		MaxRetryAfter: time.Minute,

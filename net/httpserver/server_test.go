@@ -47,6 +47,12 @@ const (
 	// tcp is the network of the listeners of the cases.
 	tcp = "tcp"
 
+	// unbound is an address of TEST-NET-1 (RFC 5737), which no interface of
+	// the host has. A case that serves on a listener of its own sets it as
+	// the address too, so a Server that listens on its address instead of
+	// the listener fails to listen at once.
+	unbound = "192.0.2.1:0"
+
 	// body is the body that the handlers of the cases write.
 	body = "ok"
 )
@@ -237,10 +243,44 @@ func (r *reporter) bound() []*set {
 	return slices.Clone(r.sets)
 }
 
+// served is the listener of a fixture. It closes accepting at its first
+// Accept, which tells the fixture that Run serves, and closed when it is
+// closed. Its Close returns closeErr after it closes the listener under it,
+// when a case set closeErr before it stopped the fixture.
+type served struct {
+	net.Listener
+
+	closeErr              error
+	accepting, closed     chan struct{}
+	acceptOnce, closeOnce sync.Once
+}
+
+// Accept closes accepting once, and returns the next connection of the
+// listener under it.
+func (l *served) Accept() (net.Conn, error) {
+	l.acceptOnce.Do(func() { close(l.accepting) })
+
+	return l.Listener.Accept() //nolint:wrapcheck // a test listener returns the error of the listener under it
+}
+
+// Close closes closed once and the listener under it, and returns closeErr
+// when a case set it.
+func (l *served) Close() error {
+	l.closeOnce.Do(func() { close(l.closed) })
+
+	err := l.Listener.Close()
+	if l.closeErr != nil {
+		return l.closeErr
+	}
+
+	return err //nolint:wrapcheck // as in Accept
+}
+
 // fixture is a Server that a case runs on a loopback listener. It reads a
 // fake clock, writes its log records to logs, and reports to a reporter.
 type fixture struct {
 	server   *httpserver.Server
+	listener *served
 	clock    *fake.Clock
 	logs     *logs
 	reporter *reporter
@@ -256,14 +296,16 @@ type fixture struct {
 }
 
 // newFixture runs a Server of h with the options of a fixture, a drain
-// without a delay, and then opts, which override them. The cleanup of t
-// stops the Server, and fails t when Run returned an error that the case
-// did not receive from stop.
+// without a delay, and then opts, which override them. It returns once Run
+// accepts on the listener of the fixture, and fails t at once when Run
+// returns first. The cleanup of t stops the Server, and fails t when Run
+// returned an error that the case did not receive from stop.
 func newFixture(t *testing.T, h http.Handler, opts ...httpserver.Option) *fixture {
 	t.Helper()
 
-	ln := listen(t)
+	ln := &served{Listener: listen(t), accepting: make(chan struct{}), closed: make(chan struct{})}
 	f := &fixture{
+		listener: ln,
 		clock:    fake.New(origin),
 		logs:     &logs{level: slog.LevelDebug},
 		reporter: newReporter(t),
@@ -278,6 +320,7 @@ func newFixture(t *testing.T, h http.Handler, opts ...httpserver.Option) *fixtur
 		httpserver.WithReporter(f.reporter),
 		httpserver.WithPropagator(w3c.Propagator{}),
 		httpserver.WithListener(ln),
+		httpserver.WithAddr(unbound),
 		httpserver.WithDrainDelay(-1),
 	}, opts...)
 
@@ -297,6 +340,21 @@ func newFixture(t *testing.T, h http.Handler, opts ...httpserver.Option) *fixtur
 			testkit.NoError(t, f.err, "Run must drain")
 		}
 	})
+
+	// A case of a Server that does not serve fails here at once, and does
+	// not wait for a response that no server sends.
+	timer := time.NewTimer(patience)
+	defer timer.Stop()
+
+	select {
+	case <-ln.accepting:
+	case err := <-f.done:
+		// wait reads the error of Run again.
+		f.done <- err
+		t.Fatalf("Run returned before it served: %v", err)
+	case <-timer.C:
+		t.Fatalf("Run did not serve within %s", patience)
+	}
 
 	return f
 }
@@ -369,36 +427,6 @@ func (l *failingListener) Accept() (net.Conn, error) {
 
 // Close closes the listener under it and closed.
 func (l *failingListener) Close() error {
-	l.once.Do(func() { close(l.closed) })
-
-	return l.Listener.Close() //nolint:wrapcheck // a test listener returns the error of the listener under it
-}
-
-// closeFailingListener is a listener whose Close fails with err after it
-// closes the listener under it.
-type closeFailingListener struct {
-	net.Listener
-
-	err error
-}
-
-// Close closes the listener under it, and returns err.
-func (l *closeFailingListener) Close() error {
-	_ = l.Listener.Close() //nolint:errcheck // the case asserts err
-
-	return l.err
-}
-
-// signallingListener is a listener that closes closed when it is closed.
-type signallingListener struct {
-	net.Listener
-
-	closed chan struct{}
-	once   sync.Once
-}
-
-// Close closes the listener under it and closed.
-func (l *signallingListener) Close() error {
 	l.once.Do(func() { close(l.closed) })
 
 	return l.Listener.Close() //nolint:wrapcheck // a test listener returns the error of the listener under it
@@ -604,7 +632,8 @@ func TestServer(t *testing.T) {
 			}
 			close(ln.fail)
 
-			s, err := httpserver.New(http.NotFoundHandler(), required, httpserver.WithListener(ln))
+			s, err := httpserver.New(http.NotFoundHandler(), required, httpserver.WithListener(ln),
+				httpserver.WithAddr(unbound))
 			testkit.NoError(t, err, "New must accept the options")
 
 			err = s.Run(t.Context())
@@ -620,8 +649,8 @@ func TestServer(t *testing.T) {
 			ln := &failingListener{
 				Listener: listen(t), fail: make(chan struct{}), closed: make(chan struct{}), err: errAccept,
 			}
-			s, err := httpserver.New(http.NotFoundHandler(), required,
-				httpserver.WithClock(clk), httpserver.WithListener(ln), httpserver.WithDrainDelay(time.Second))
+			s, err := httpserver.New(http.NotFoundHandler(), required, httpserver.WithClock(clk),
+				httpserver.WithListener(ln), httpserver.WithAddr(unbound), httpserver.WithDrainDelay(time.Second))
 			testkit.NoError(t, err, "New must accept the options")
 
 			ctx, cancel := context.WithCancel(t.Context())
@@ -672,7 +701,7 @@ func TestServer(t *testing.T) {
 			sent := make(chan error, 1)
 			go func() { sent <- request(t, f.client, f.url) }()
 
-			await(t, entered, "the handler must receive the request")
+			awaitBefore(t, entered, sent, "the handler must receive the request")
 			f.cancel()
 			f.clock.AwaitWaiters(1)
 			f.clock.Advance(time.Minute)
@@ -691,17 +720,16 @@ func TestServer(t *testing.T) {
 			release := sync.OnceFunc(func() { close(gate) })
 			defer release()
 
-			ln := &signallingListener{Listener: listen(t), closed: make(chan struct{})}
 			f := newFixture(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 				close(entered)
 				<-gate
-			}), httpserver.WithListener(ln), httpserver.WithShutdownTimeout(-1))
+			}), httpserver.WithShutdownTimeout(-1))
 			sent := make(chan error, 1)
-			go func() { sent <- request(t, f.client, "http://"+ln.Addr().String()) }()
+			go func() { sent <- request(t, f.client, f.url) }()
 
-			await(t, entered, "the handler must receive the request")
+			awaitBefore(t, entered, sent, "the handler must receive the request")
 			f.cancel()
-			await(t, ln.closed, "the shutdown must close the listener")
+			await(t, f.listener.closed, "the shutdown must close the listener")
 			release()
 
 			testkit.NoError(t, await(t, sent, "the request must end"), "the request in flight must finish")
@@ -713,10 +741,9 @@ func TestServer(t *testing.T) {
 
 			// The request makes Serve track the listener, which the
 			// shutdown closes.
-			ln := &closeFailingListener{Listener: listen(t), err: errClose}
-			f := newFixture(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}),
-				httpserver.WithListener(ln))
-			testkit.NoError(t, request(t, f.client, "http://"+ln.Addr().String()), "the request before the drain")
+			f := newFixture(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+			f.listener.closeErr = errClose
+			testkit.NoError(t, request(t, f.client, f.url), "the request before the drain")
 
 			err := f.stop()
 			testkit.ErrorIs(t, err, httpserver.ErrShutdown, "Run must return ErrShutdown")
@@ -736,7 +763,9 @@ func TestServer(t *testing.T) {
 			client := &http.Client{Transport: &http.Transport{Protocols: &p}, Timeout: patience}
 			defer client.CloseIdleConnections()
 
-			testkit.NoError(t, request(t, client, f.url), "the request of HTTP/2")
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, f.url, http.NoBody)
+			testkit.NoError(t, err, "the request of the case must build")
+			testkit.Equal(t, do(t, client, req).status, http.StatusOK, "the status of the request of HTTP/2")
 			testkit.Equal(t, await(t, protos, "the handler must run"), 2, "the major version of the protocol")
 		})
 	})
@@ -833,7 +862,8 @@ func TestServer(t *testing.T) {
 			}
 			close(ln.fail)
 
-			s, err := httpserver.New(http.NotFoundHandler(), required, httpserver.WithListener(ln))
+			s, err := httpserver.New(http.NotFoundHandler(), required, httpserver.WithListener(ln),
+				httpserver.WithAddr(unbound))
 			testkit.NoError(t, err, "New must accept the options")
 			testkit.ErrorIs(t, s.Run(t.Context()), httpserver.ErrServe, "Run must fail")
 
@@ -1050,4 +1080,35 @@ func await[T any](t *testing.T, ch <-chan T, what string) T {
 
 		return zero
 	}
+}
+
+// awaitBefore returns the next value of ch, as await does, and fails t at
+// once when end delivers first and ch has no value. A case passes the end
+// of the request whose handler sends to ch, so it fails as soon as the
+// request ends without the handler.
+func awaitBefore[T, E any](t *testing.T, ch <-chan T, end <-chan E, what string) T {
+	t.Helper()
+
+	timer := time.NewTimer(patience)
+	defer timer.Stop()
+
+	var zero T
+
+	select {
+	case v := <-ch:
+		return v
+	case e := <-end:
+		// A handler that sent before the request ended left its value in ch.
+		select {
+		case v := <-ch:
+			return v
+		default:
+		}
+
+		t.Fatalf("%s: the request ended first with %v", what, e)
+	case <-timer.C:
+		t.Fatalf("%s: nothing arrived within %s", what, patience)
+	}
+
+	return zero
 }

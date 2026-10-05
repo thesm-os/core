@@ -102,7 +102,7 @@ func TestExchange(t *testing.T) {
 			f := newFixture(t, http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 				contexts <- r.Context()
 			}))
-			f.send(t, http.MethodGet, "/", http.NoBody, nil)
+			testkit.Equal(t, f.send(t, http.MethodGet, "/", http.NoBody, nil).status, http.StatusOK, "the status")
 			testkit.NoError(t, f.stop(), "Run must drain")
 
 			httpserver.Annotate(await(t, contexts, "the handler must run"), tenant)
@@ -323,7 +323,9 @@ func TestExchange(t *testing.T) {
 			client := &http.Client{Transport: &http.Transport{Protocols: &p}, Timeout: patience}
 			defer client.CloseIdleConnections()
 
-			testkit.NoError(t, request(t, client, f.url), "the request of HTTP/2")
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, f.url, http.NoBody)
+			testkit.NoError(t, err, "the request of the case must build")
+			testkit.Equal(t, do(t, client, req).status, http.StatusOK, "the status of the request of HTTP/2")
 			testkit.ErrorIs(t, await(t, hijacked, "the handler must run"), http.ErrNotSupported, "Hijack over HTTP/2")
 		})
 	})
@@ -338,7 +340,7 @@ func TestExchange(t *testing.T) {
 			f := newFixture(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				set <- http.NewResponseController(w).SetWriteDeadline(time.Now().Add(time.Minute))
 			}))
-			f.send(t, http.MethodGet, "/", http.NoBody, nil)
+			testkit.Equal(t, f.send(t, http.MethodGet, "/", http.NoBody, nil).status, http.StatusOK, "the status")
 			testkit.NoError(
 				t,
 				await(t, set, "the handler must run"),
@@ -357,7 +359,7 @@ func TestExchange(t *testing.T) {
 			f := newFixture(t, http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 				servers <- r.Context().Value(http.ServerContextKey)
 			}))
-			f.send(t, http.MethodGet, "/", http.NoBody, nil)
+			testkit.Equal(t, f.send(t, http.MethodGet, "/", http.NoBody, nil).status, http.StatusOK, "the status")
 
 			_, ok := await(t, servers, "the handler must run").(*http.Server)
 			testkit.True(t, ok, "the context must return the http.Server of the request")
@@ -383,7 +385,7 @@ func TestExchange(t *testing.T) {
 				sent <- err
 			}()
 
-			await(t, entered, "the handler must receive the request")
+			awaitBefore(t, entered, sent, "the handler must receive the request")
 			cancel()
 			testkit.ErrorIs(t, await(t, ended, "the context must end"), context.Canceled,
 				"the context of the request must end")
