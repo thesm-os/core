@@ -202,7 +202,9 @@ func (c *Client) AddCheckpoint(
 	resp := buffers.Get()
 	defer buffers.Put(resp)
 
-	*resp, err = c.http.AppendFetch((*resp)[:0], req)
+	// AppendFetch reads the response under the context of req, which is
+	// ctx.
+	*resp, err = c.http.AppendFetch((*resp)[:0], req) //nolint:contextcheck // see above
 	if err != nil {
 		return dst, statusError(err)
 	}
@@ -312,7 +314,9 @@ func (c *Client) Checkpoint(ctx context.Context, origin checkpoint.Origin, dst [
 		return dst, false, fmt.Errorf("witness: build the request: %w", err)
 	}
 
-	got, err := c.http.AppendFetch(dst, req)
+	// AppendFetch reads the response under the context of req, which is
+	// ctx.
+	got, err := c.http.AppendFetch(dst, req) //nolint:contextcheck // see above
 	if se, ok := errors.AsType[*httpclient.StatusError](err); ok && se.Status == http.StatusNotFound {
 		return dst, false, nil
 	}
