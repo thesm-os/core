@@ -154,7 +154,7 @@ jobs:
           go-version-file: go.mod
       # The cache restores ~/go/bin, where setup-ergon installs ergon,
       # so it runs first and the pinned ergon overwrites a cached one.
-      - uses: actions/cache@v5
+      - uses: actions/cache@v6
         with:
           path: ~/go/bin
           key: go-tools-${{ hashFiles('Makefile') }}
