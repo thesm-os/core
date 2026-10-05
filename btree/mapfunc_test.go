@@ -4,7 +4,9 @@
 package btree_test
 
 import (
+	"bytes"
 	"cmp"
+	"fmt"
 	"slices"
 	"testing"
 
@@ -12,6 +14,10 @@ import (
 
 	"go.thesmos.sh/core/btree"
 )
+
+// leafItems is the capacity of a leaf in items, which the package
+// documents. Keys that a map receives in ascending order fill every leaf.
+const leafItems = 63
 
 // reverse orders ints from largest to smallest.
 func reverse(a, b int) int {
@@ -29,6 +35,21 @@ func descending(tb testing.TB, n int) (*btree.MapFunc[int, int], []int) {
 		m.Set(k, -k)
 	}
 	slices.SortFunc(keys, reverse)
+
+	return m, keys
+}
+
+// byteKeys returns a map of the []byte keys k0000 to k0188 ordered by
+// bytes.Compare, set in ascending order with the index of each key as its
+// value, and its keys in that order. The keys fill three leaves, so
+// keys[leafItems] is the first key of the second leaf.
+func byteKeys() (*btree.MapFunc[[]byte, int], [][]byte) {
+	m := btree.NewMapFunc[[]byte, int](bytes.Compare)
+	keys := make([][]byte, 3*leafItems)
+	for i := range keys {
+		keys[i] = fmt.Appendf(nil, "k%04d", i)
+		m.Set(keys[i], i)
+	}
 
 	return m, keys
 }
@@ -132,6 +153,18 @@ func TestMapFunc(t *testing.T) {
 			testkit.Equal(t, items(t, m.All()), slices.DeleteFunc(keys, func(k int) bool { return k == 4 }),
 				"Delete must remove the key")
 		})
+
+		t.Run("lets the caller reuse the bytes of a removed key at the start of a leaf", func(t *testing.T) {
+			t.Parallel()
+			m, keys := byteKeys()
+			_, ok := m.Delete(keys[leafItems])
+			testkit.True(t, ok, "Delete must remove the key")
+			clear(keys[leafItems])
+			for i, k := range keys {
+				_, ok := m.Get(k)
+				testkit.Equal(t, ok, i != leafItems, "Get must find every key that the map contains")
+			}
+		})
 	})
 
 	t.Run("DeleteRange", func(t *testing.T) {
@@ -144,6 +177,18 @@ func TestMapFunc(t *testing.T) {
 			testkit.Equal(t, m.DeleteRange(100, 50), 25, "DeleteRange must remove 100 down to 52")
 			testkit.Equal(t, items(t, m.All()), slices.DeleteFunc(keys, func(k int) bool { return k <= 100 && k > 50 }),
 				"DeleteRange must remove exactly the range")
+		})
+
+		t.Run("lets the caller reuse the bytes of removed keys at the start of a leaf", func(t *testing.T) {
+			t.Parallel()
+			m, keys := byteKeys()
+			testkit.Equal(t, m.DeleteRange(keys[leafItems], keys[leafItems+2]), 2, "DeleteRange must remove two keys")
+			clear(keys[leafItems])
+			clear(keys[leafItems+1])
+			for i, k := range keys {
+				_, ok := m.Get(k)
+				testkit.Equal(t, ok, i < leafItems || i >= leafItems+2, "Get must find every key that the map contains")
+			}
 		})
 	})
 

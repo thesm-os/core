@@ -235,6 +235,13 @@ func (t *tree[K, V, O]) keepAll(in *inner[K, V]) {
 // remove removes the item at index i of leaf l, at the end of path, and
 // refills or merges every node that the removal leaves underfull. Every
 // node on path and l must have the ID of t.
+//
+// Every separator is the first key of the subtree after it, so that the
+// tree refers to no key that it removed. The separator of the first key of
+// l is in the deepest node of path that does not route to its first child.
+// A removal of that key gives the separator the new first key of l. A leaf
+// that the removal empties is the last leaf of its parent. The refill or
+// merge of that leaf replaces or removes its separator.
 func (t *tree[K, V, O]) remove(path []step[K, V], l *leaf[K, V], i int) {
 	l.remove(i)
 	t.len--
@@ -249,6 +256,15 @@ func (t *tree[K, V, O]) remove(path []step[K, V], l *leaf[K, V], i int) {
 	}
 	for _, s := range path {
 		s.n.count--
+	}
+	if i == 0 && l.n != 0 {
+		for k := d; k >= 0; k-- {
+			if s := path[k]; s.i > 0 {
+				s.n.keys[s.i-1] = l.keys[0]
+
+				break
+			}
+		}
 	}
 	if l.n < minItems {
 		t.fixLeaf(path[d].n, path[d].i)

@@ -47,6 +47,18 @@
 //     a node from the free list before it allocates. [Map.Reset] puts
 //     every node of the map on the free lists.
 //
+// # Stored keys
+//
+//   - A [Map.Set] of a new key stores the key that it receives. A Set of a
+//     key that the map contains keeps the stored key.
+//   - Each separator of an internal node is the first key of the subtree
+//     after it. A removal of that key gives the separator the new first
+//     key of the subtree, or removes the separator with the subtree when
+//     the subtree is empty.
+//   - A map refers to no key that it removed. A caller may reuse the memory
+//     of a key, such as the bytes of a []byte key of a [MapFunc], once no
+//     map contains the key.
+//
 // # Writes during an iteration
 //
 // A write to a map during an iteration over it does not end the

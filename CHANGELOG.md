@@ -814,6 +814,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   documentation states. They checked the context of `resp.Request`, which
   `http.Client` also ends at its timeout, so the error was unclassified,
   and a breaker and a retrier did not count it.
+- `btree.Map`, `MapFunc` and `Set` refer to no key that `Delete` or
+  `DeleteRange` removed. A removal of the first key of a leaf gives the
+  separator of that key the new first key of the leaf. The separator kept
+  the removed key, so a caller that reused the memory of a `[]byte` key
+  of a `MapFunc` changed the separator, and the map no longer found the
+  keys of the leaves before it.
 
 ## [0.6.1] - 2026-08-05
 

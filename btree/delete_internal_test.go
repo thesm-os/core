@@ -40,6 +40,15 @@ func TestDelete(t *testing.T) {
 			"leaves a leaf of minItems items alone": {
 				leavesOf(spare, spare), 0, []int{lean, spare}, [][]int{{1}},
 			},
+			"gives the separator before a leaf the next key of the leaf": {
+				leavesOf(spare, spare), 2 * spare, []int{spare, lean}, [][]int{{1}},
+			},
+			"gives the separator above the first leaf of an internal node the next key of the leaf": {
+				nodesOf(leavesOf(slices.Repeat([]int{spare}, spare)...), leavesOf(slices.Repeat([]int{spare}, spare)...)),
+				2 * spare * spare,
+				slices.Concat(slices.Repeat([]int{spare}, spare), []int{lean}, slices.Repeat([]int{spare}, spare-1)),
+				[][]int{{1}, {minItems, minItems}},
+			},
 			"moves the last item of the left leaf into an underfull leaf": {
 				leavesOf(spare, lean), 2 * spare, []int{lean, lean}, [][]int{{1}},
 			},

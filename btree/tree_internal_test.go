@@ -52,10 +52,11 @@ type checker[K, V any, O order[K]] struct {
 	leafDepth int
 }
 
-// node checks the subtree of in, or of l when in is nil, whose keys must
-// sort at or after lo and before hi, and returns its number of items. A
-// node on the right edge of the tree may have fewer than minItems items
-// or separators, but not none.
+// node checks the subtree of in, or of l when in is nil, and returns its
+// number of items. The keys of the subtree must sort at or after lo and
+// before hi, and its first key must be lo when lo is not nil. A node on
+// the right edge of the tree may have fewer than minItems items or
+// separators, but not none.
 func (c *checker[K, V, O]) node(in *inner[K, V], l *leaf[K, V], depth int, lo, hi *K, edge bool) (int, error) {
 	if in == nil {
 		if c.leafDepth == -1 {
@@ -68,6 +69,11 @@ func (c *checker[K, V, O]) node(in *inner[K, V], l *leaf[K, V], depth int, lo, h
 		}
 		if !zeroFrom(l.keys[:], l.n) || !zeroFrom(l.vals[:], l.n) {
 			return 0, fmt.Errorf("%w: a leaf with a slot past its items that is not zero", errInvariant)
+		}
+		// The separator before a subtree is its first key, so it lies in the
+		// leftmost leaf of the subtree.
+		if lo != nil && c.t.order.less(*lo, l.keys[0]) {
+			return 0, fmt.Errorf("%w: a separator that is not the first key of the subtree after it", errInvariant)
 		}
 
 		return l.n, c.order(l.keys[:l.n], lo, hi)
@@ -135,7 +141,8 @@ func (c *checker[K, V, O]) order(keys []K, lo, hi *K) error {
 
 // check returns an error when t breaks an invariant of its tree: an empty
 // tree without nodes, keys and separators in the order of t and between
-// the separators above them, node fill between minItems and maxItems
+// the separators above them, each separator the first key of the subtree
+// after it, node fill between minItems and maxItems
 // outside the root and the right edge, correct subtree counts and length,
 // the child array of each level, every leaf at the same depth, zero slots
 // past the used ones, and free nodes that are zeroed and on the free list
