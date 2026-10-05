@@ -571,12 +571,28 @@ func TestServer(t *testing.T) {
 		t.Run("returns ErrListen for an address that another listener uses", func(t *testing.T) {
 			t.Parallel()
 
-			s, err := httpserver.New(http.NotFoundHandler(), required, httpserver.WithAddr(listen(t).Addr().String()))
+			addr := listen(t).Addr().String()
+
+			// The errno of a listen on an address in use depends on the
+			// platform. Unix returns EADDRINUSE, and Windows returns
+			// WSAEADDRINUSE, which package syscall does not declare. A second
+			// listen on the address returns the errno of the platform.
+			var lc net.ListenConfig
+
+			second, lerr := lc.Listen(t.Context(), tcp, addr)
+			if second != nil {
+				_ = second.Close()
+			}
+
+			inUse, ok := errors.AsType[syscall.Errno](lerr)
+			testkit.True(t, ok, "a second listen on the address must fail with an errno")
+
+			s, err := httpserver.New(http.NotFoundHandler(), required, httpserver.WithAddr(addr))
 			testkit.NoError(t, err, "New must accept the options")
 
 			err = s.Run(t.Context())
 			testkit.ErrorIs(t, err, httpserver.ErrListen, "Run must return ErrListen")
-			testkit.ErrorIs(t, err, syscall.EADDRINUSE, "the error must contain its cause")
+			testkit.ErrorIs(t, err, inUse, "the error must contain its cause")
 			testkit.Equal(t, errs.Classify(err), errs.Transient, "the class of the error")
 		})
 
