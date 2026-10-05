@@ -54,6 +54,12 @@
 // buffer and appends the value to the buffer of the caller, so
 // [note.Note.Sign] cosigns into a reused Note.
 //
+// A witness that commits a checkpoint before it cosigns it signs at the
+// time of its commit through the [Cosigner] interface of both cosigners.
+// [Cosigner.CheckText] reports before the commit whether a cosigner signs
+// a text, and [Cosigner.AppendSignAt] signs after the commit at a time of
+// the caller, without a reading of the UTC source.
+//
 // # Policies
 //
 // [ParsePolicy] reads a tlog-policy file, and [Policy.UnmarshalText] reads
@@ -120,24 +126,25 @@
 //   - The Verify of a CosignatureV1 or SubtreeV1 Verifier allocates
 //     nothing apart from the wrapped [sign.Verifier], because it builds its
 //     message in a pooled buffer.
-//   - The AppendSign of a cosigner allocates nothing into a buffer with
-//     room when the wrapped signer appends without an allocation, as
-//     Ed25519 does. Its Sign allocates the value once.
+//   - The AppendSign and AppendSignAt of a cosigner allocate nothing into
+//     a buffer with room when the wrapped signer appends without an
+//     allocation, as Ed25519 does. Its Sign allocates the value once, and
+//     its CheckText allocates nothing for a text that it accepts.
 //   - Body.AppendText allocates nothing into a buffer with room, and
 //     [Body.MarshalText] allocates the text once, at its length.
 //   - Body.UnmarshalText allocates nothing into a Body of the same origin
 //     and extension lines. ParseBody allocates the string of the text and
 //     the slice of extension lines.
-//   - Policy.UnmarshalText allocates nothing into a Policy that holds the
-//     policy of the file. ParsePolicy allocates the string of the file and
-//     one slice per kind of value: six allocations for a policy with
-//     groups.
+//   - Policy.UnmarshalText allocates nothing into a Policy that already
+//     contains the policy of the file. ParsePolicy allocates the string of
+//     the file and one slice per kind of value: six allocations for a
+//     policy with groups.
 //   - Verifier.Reset allocates nothing for the policy that the Verifier
-//     holds, and Policy.QuorumRule nothing into the memory of the quorum
-//     before. NewVerifier allocates the memory of the Verifier at the size
-//     of the policy, two allocations for the Verifier of each Ed25519 key,
-//     and four for the sign.Policy of each origin: 18 for one log and three
-//     witnesses.
+//     was built from, and Policy.QuorumRule nothing into the memory of the
+//     quorum before. NewVerifier allocates the memory of the Verifier at
+//     the size of the policy, two allocations for the Verifier of each
+//     Ed25519 key, and four for the sign.Policy of each origin: 18 for one
+//     log and three witnesses.
 //   - The Reset of a cosigner allocates nothing. The cosigner constructors
 //     allocate the cosigner, and the Resolver entries the Verifier and what
 //     the algorithm allocates.

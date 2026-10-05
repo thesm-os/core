@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"go.dokimi.dev/assert/bench"
 	"go.thesmos.sh/testkit"
 
 	"go.thesmos.sh/core/clock"
@@ -73,9 +74,8 @@ func (f failingUTC) ReadUTC() (clock.UTCReading, error) {
 	return clock.UTCReading{}, f.err
 }
 
-// fakeSigner is a sign.Signer that reports the algorithm and the public
-// key that it holds, and returns the signature and the error that it
-// holds.
+// fakeSigner is a sign.Signer that reports its algorithm and its public
+// key, and returns its signature and its error.
 type fakeSigner struct {
 	err error
 	alg crypto.Algorithm
@@ -86,16 +86,16 @@ type fakeSigner struct {
 // KeyID returns the zero KeyID.
 func (fakeSigner) KeyID() sign.KeyID { return sign.KeyID{} }
 
-// PublicKey returns the public key that f holds.
+// PublicKey returns the public key of f.
 func (f fakeSigner) PublicKey() []byte { return f.pub }
 
-// Algorithm returns the algorithm that f holds.
+// Algorithm returns the algorithm of f.
 func (f fakeSigner) Algorithm() crypto.Algorithm { return f.alg }
 
 // Verify reports false.
 func (fakeSigner) Verify(_, _ []byte) bool { return false }
 
-// Sign returns the signature and the error that f holds.
+// Sign returns the signature and the error of f.
 func (f fakeSigner) Sign([]byte) ([]byte, error) { return f.sig, f.err }
 
 // retainingSigner is a sign.ContextSigner that is not a sign.AppendSigner.
@@ -400,8 +400,8 @@ func TestCosignature(t *testing.T) {
 			testkit.NoError(t, err, "Sign must sign the text")
 			got, err := checkpoint.Timestamp(value)
 			testkit.NoError(t, err, "Timestamp must read the value")
-			testkit.True(t, got.Equal(clockTime), "the value must hold the time of the clock, not "+got.String())
-			testkit.Len(t, value, 8+64, "the value must hold the timestamp and the Ed25519 signature")
+			testkit.True(t, got.Equal(clockTime), "the value must contain the time of the clock, not "+got.String())
+			testkit.Len(t, value, 8+64, "the value must contain the timestamp and the Ed25519 signature")
 		})
 
 		t.Run("returns a value that starts with the whole seconds of the reading", func(t *testing.T) {
@@ -413,7 +413,7 @@ func TestCosignature(t *testing.T) {
 			testkit.NoError(t, err, "Sign must sign the text")
 			got, err := checkpoint.Timestamp(value)
 			testkit.NoError(t, err, "Timestamp must read the value")
-			testkit.True(t, got.Equal(clockTime), "the value must hold the whole seconds, not "+got.String())
+			testkit.True(t, got.Equal(clockTime), "the value must contain the whole seconds, not "+got.String())
 		})
 
 		t.Run("signs with a reading whose error bound equals the bound of the Signer", func(t *testing.T) {
@@ -588,6 +588,143 @@ func TestCosignature(t *testing.T) {
 			testkit.Equal(t, string(got), prefix, "AppendSign must return dst unchanged")
 		})
 	})
+
+	t.Run("AppendSignAt", func(t *testing.T) {
+		t.Parallel()
+
+		at := clockTime.Add(time.Hour)
+
+		t.Run("appends a value that verifies under CosignatureV1", func(t *testing.T) {
+			t.Parallel()
+			s := witness(t, "a").(checkpoint.Cosigner)
+			got, err := s.AppendSignAt(t.Context(), []byte(prefix), []byte(cosignedText), at)
+			testkit.NoError(t, err, "AppendSignAt must sign the text")
+			testkit.Equal(t, string(got[:len(prefix)]), prefix, "AppendSignAt must keep dst")
+			testkit.True(t, s.Verify([]byte(cosignedText), got[len(prefix):]), "the appended value must verify")
+		})
+
+		t.Run("appends the whole seconds of the time of the caller", func(t *testing.T) {
+			t.Parallel()
+			s := witness(t, "a").(checkpoint.Cosigner)
+			got, err := s.AppendSignAt(t.Context(), nil, []byte(cosignedText), at.Add(999*time.Millisecond))
+			testkit.NoError(t, err, "AppendSignAt must sign the text")
+			stamp, err := checkpoint.Timestamp(got)
+			testkit.NoError(t, err, "Timestamp must read the value")
+			testkit.True(t, stamp.Equal(at),
+				"the value must contain the whole seconds of the time, not "+stamp.String())
+		})
+
+		t.Run("signs without a reading of the UTC source", func(t *testing.T) {
+			t.Parallel()
+			s, err := checkpoint.NewCosignatureV1Signer("a", checkpoint.TypeEd25519Cosignature,
+				ed25519Signer(t, "a"), failingUTC{err: testkit.TestError("the UTC source fails")}, time.Second)
+			testkit.NoError(t, err, "NewCosignatureV1Signer must accept the signer")
+			got, err := s.AppendSignAt(t.Context(), nil, []byte(cosignedText), at)
+			testkit.NoError(t, err, "AppendSignAt must sign without a reading")
+			testkit.True(t, s.Verify([]byte(cosignedText), got), "the value must verify")
+		})
+
+		t.Run("signs at the first second after the Unix epoch", func(t *testing.T) {
+			t.Parallel()
+			first := time.Unix(1, 0)
+			s := witness(t, "a").(checkpoint.Cosigner)
+			got, err := s.AppendSignAt(t.Context(), nil, []byte(cosignedText), first)
+			testkit.NoError(t, err, "AppendSignAt must sign at the timestamp 1")
+			stamp, err := checkpoint.Timestamp(got)
+			testkit.NoError(t, err, "Timestamp must read the value")
+			testkit.True(t, stamp.Equal(first), "the value must contain the timestamp 1, not "+stamp.String())
+		})
+
+		t.Run("builds the message of a signer that is not an AppendSigner in a buffer of its own", func(t *testing.T) {
+			t.Parallel()
+			var messages [][]byte
+			s := retainingWitness(t, &messages).(checkpoint.Cosigner)
+			got, err := s.AppendSignAt(t.Context(), nil, []byte(cosignedText), at)
+			testkit.NoError(t, err, "AppendSignAt must sign the text")
+			testkit.True(t, s.Verify([]byte(cosignedText), got), "the value must verify")
+			want := cosignatureHeader + strconv.FormatInt(at.Unix(), 10) + "\n" + cosignedText
+			testkit.Equal(t, string(messages[0]), want, "the signer must receive the message of the time")
+		})
+
+		timeTests := []struct {
+			give time.Time
+			name string
+		}{
+			{
+				name: "returns dst unchanged and ErrTimestamp for a time in the first second of the Unix epoch",
+				give: time.Unix(0, 999_999_999),
+			},
+			{name: "returns dst unchanged and ErrTimestamp for a time before the Unix epoch", give: time.Unix(-1, 0)},
+			{name: "returns dst unchanged and ErrTimestamp for the zero Time", give: time.Time{}},
+		}
+		for _, tt := range timeTests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				s := witness(t, "a").(checkpoint.Cosigner)
+				got, err := s.AppendSignAt(t.Context(), []byte(prefix), []byte(cosignedText), tt.give)
+				testkit.ErrorIs(t, err, checkpoint.ErrTimestamp,
+					"AppendSignAt must refuse a timestamp that is not positive")
+				testkit.Equal(t, errs.Classify(err), errs.Invalid, "the error must classify as Invalid")
+				testkit.Equal(t, string(got), prefix, "AppendSignAt must return dst unchanged")
+			})
+		}
+
+		t.Run("returns dst unchanged with the error of the signer", func(t *testing.T) {
+			t.Parallel()
+			failure := testkit.TestError("the signer fails")
+			signer := fakeSigner{alg: crypto.AlgEd25519, pub: make([]byte, 32), err: failure}
+			s, err := checkpoint.NewCosignatureV1Signer("a", checkpoint.TypeEd25519Cosignature, signer,
+				fake.New(clockTime), time.Second)
+			testkit.NoError(t, err, "NewCosignatureV1Signer must accept the signer")
+			got, err := s.AppendSignAt(t.Context(), []byte(prefix), []byte(cosignedText), at)
+			testkit.ErrorIs(t, err, failure, "AppendSignAt must return the error of the signer")
+			testkit.Equal(t, string(got), prefix, "AppendSignAt must return dst unchanged")
+		})
+
+		t.Run("returns dst unchanged with the cause of a context that ended", func(t *testing.T) {
+			t.Parallel()
+			ctx, cancel := context.WithCancel(t.Context())
+			cancel()
+			s := witness(t, "a").(checkpoint.Cosigner)
+			got, err := s.AppendSignAt(ctx, []byte(prefix), []byte(cosignedText), at)
+			testkit.ErrorIs(t, err, context.Canceled, "AppendSignAt must return the cause of the context")
+			testkit.Equal(t, string(got), prefix, "AppendSignAt must return dst unchanged")
+		})
+
+		t.Run("returns dst unchanged and ErrKey for the zero CosignatureV1Signer", func(t *testing.T) {
+			t.Parallel()
+			var zero checkpoint.CosignatureV1Signer
+			got, err := zero.AppendSignAt(t.Context(), []byte(prefix), []byte(cosignedText), at)
+			testkit.ErrorIs(t, err, note.ErrKey, "the zero CosignatureV1Signer must sign nothing")
+			testkit.Equal(t, string(got), prefix, "AppendSignAt must return dst unchanged")
+		})
+	})
+
+	t.Run("CheckText", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns nil for a text that is not a checkpoint", func(t *testing.T) {
+			t.Parallel()
+			testkit.NoError(t, witness(t, "a").(checkpoint.Cosigner).CheckText([]byte("another text\n")),
+				"CheckText must accept every text of CosignatureV1")
+		})
+
+		t.Run("returns nil without a reading of the UTC source", func(t *testing.T) {
+			t.Parallel()
+			s, err := checkpoint.NewCosignatureV1Signer("a", checkpoint.TypeEd25519Cosignature,
+				ed25519Signer(t, "a"), failingUTC{err: testkit.TestError("the UTC source fails")}, time.Second)
+			testkit.NoError(t, err, "NewCosignatureV1Signer must accept the signer")
+			testkit.NoError(t, s.CheckText([]byte(cosignedText)), "CheckText must not read the UTC source")
+		})
+
+		t.Run("returns ErrKey for the zero CosignatureV1Signer", func(t *testing.T) {
+			t.Parallel()
+			var zero checkpoint.CosignatureV1Signer
+			err := zero.CheckText([]byte(cosignedText))
+			testkit.ErrorIs(t, err, note.ErrKey, "the zero CosignatureV1Signer must sign nothing")
+			testkit.Equal(t, errs.Classify(err), errs.Invalid, "the error must classify as Invalid")
+		})
+	})
 }
 
 func BenchmarkCosignature(b *testing.B) {
@@ -639,6 +776,41 @@ func BenchmarkCosignature(b *testing.B) {
 		ctx := b.Context()
 		buf := make([]byte, 0, 8+64)
 		benchZeroAlloc(b, func() { sinkBytes, errSink = s.AppendSign(ctx, buf[:0], text) })
+	})
+
+	b.Run("AppendSignAt", func(b *testing.B) {
+		ctx := b.Context()
+		cs := s.(checkpoint.Cosigner)
+		buf := make([]byte, 0, 8+64)
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		var (
+			got []byte
+			err error
+		)
+
+		for c.Loop() {
+			got, err = cs.AppendSignAt(ctx, buf[:0], text, clockTime)
+		}
+
+		testkit.NoError(b, err, "AppendSignAt must sign the text")
+		testkit.True(b, cs.Verify(text, got), "the benchmark must measure a value that verifies")
+	})
+
+	b.Run("CheckText", func(b *testing.B) {
+		cs := s.(checkpoint.Cosigner)
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		var err error
+		for c.Loop() {
+			err = cs.CheckText(text)
+		}
+
+		testkit.NoError(b, err, "the benchmark must measure a text that CheckText accepts")
 	})
 }
 

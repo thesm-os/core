@@ -32,6 +32,11 @@ const (
 	// timePrefix starts the second line of that message, before the
 	// timestamp in decimal.
 	timePrefix = "time "
+
+	// checkTimestamp is the timestamp of the message that CheckText
+	// builds. No format refuses a text for its timestamp, so any
+	// timestamp gives the answer of every other.
+	checkTimestamp = 1
 )
 
 // cosignatureV1 is the format of [CosignatureV1] signatures.
@@ -133,9 +138,37 @@ func (v *verifier) Verify(text, value []byte) bool {
 	return ok
 }
 
+// Cosigner is a [note.Signer] of timestamped signatures that also signs at
+// a timestamp of its caller, and reports whether it signs a text. A
+// witness that commits a checkpoint before it cosigns it checks each note
+// with CheckText before the commit, reads one time for the commit, and
+// signs after the commit with AppendSignAt at that time.
+// *[CosignatureV1Signer] and *[SubtreeV1Signer] implement it.
+//
+// # Concurrency
+//
+// Implementations must be safe for concurrent use.
+type Cosigner interface {
+	note.Signer
+
+	// AppendSignAt appends to dst the value of a signature line for text
+	// with the timestamp of t, in whole seconds since the Unix epoch, and
+	// returns the extended slice: the timestamp, then the signature of the
+	// wrapped signer over the message of that timestamp and text. It does
+	// not read a clock. It returns dst unchanged with an error, which
+	// wraps context.Cause(ctx) when ctx ends first.
+	AppendSignAt(ctx context.Context, dst, text []byte, t time.Time) ([]byte, error)
+
+	// CheckText returns nil when AppendSignAt signs text, and the error
+	// that AppendSignAt returns for a text that the format does not sign.
+	// It neither signs nor reads a clock.
+	CheckText(text []byte) error
+}
+
 // cosigner is the [note.Signer] of a key whose signatures are timestamped
 // signatures over the messages of one format. The zero cosigner has no
-// signer, and its Sign, SignContext and AppendSign return [note.ErrKey].
+// signer, and its Sign, SignContext, AppendSign, AppendSignAt and
+// CheckText return [note.ErrKey].
 type cosigner struct {
 	// signer makes the signatures.
 	signer sign.Signer
@@ -219,13 +252,8 @@ func (c *cosigner) SignContext(ctx context.Context, text []byte) ([]byte, error)
 
 // AppendSign appends the value of a signature line for text to dst: the
 // timestamp of a reading of the UTC source, then the signature of the
-// wrapped signer over the message of that timestamp and text, through
-// [sign.AppendSign].
-//
-// It builds the message in a pooled buffer when the wrapped signer is a
-// [sign.AppendSigner], which reads the message only until it returns.
-// Otherwise it builds the message in a new buffer, because a signer
-// behind a process boundary may still read it after it returns.
+// wrapped signer over the message of that timestamp and text, as
+// appendAt appends it.
 //
 // Returns dst unchanged with [note.ErrKey] for the zero cosigner, with the
 // error of the clock as [NewCosignatureV1Signer] documents it, with an
@@ -241,10 +269,66 @@ func (c *cosigner) AppendSign(ctx context.Context, dst, text []byte) ([]byte, er
 		return dst, err
 	}
 
-	if _, ok := sign.AsAppendSigner(c.signer); !ok {
-		var msg []byte
+	return c.appendAt(ctx, dst, t, text)
+}
 
-		msg, err = c.message(nil, c.key.Name, t, text)
+// AppendSignAt appends the value of a signature line for text to dst, as
+// AppendSign appends it, with the timestamp of t in whole seconds since
+// the Unix epoch in place of a reading of the UTC source. It does not read
+// the UTC source, so a cosigner without one signs at t too.
+//
+// Returns dst unchanged with [note.ErrKey] for the zero cosigner, with
+// [ErrTimestamp] for a t whose whole seconds since the Unix epoch are not
+// positive, because the timestamp 0 states no time, with an error that
+// wraps [ErrBody] for a text that the format cannot sign, and with the
+// error of the signer.
+func (c *cosigner) AppendSignAt(ctx context.Context, dst, text []byte, t time.Time) ([]byte, error) {
+	if c.signer == nil {
+		return dst, errNoSigner
+	}
+
+	sec := t.Unix()
+	if sec <= 0 {
+		return dst, fmt.Errorf("%w: the time %v is not a positive number of seconds after the Unix epoch",
+			ErrTimestamp, t)
+	}
+
+	return c.appendAt(ctx, dst, uint64(sec), text) //nolint:gosec // sec is positive
+}
+
+// CheckText returns nil when AppendSignAt signs text, and the error that
+// AppendSignAt returns for a text that the format cannot sign, which wraps
+// [ErrBody]. It builds the message of checkTimestamp in a pooled buffer,
+// and neither signs nor reads the UTC source.
+//
+// Returns [note.ErrKey] for the zero cosigner.
+func (c *cosigner) CheckText(text []byte) error {
+	if c.signer == nil {
+		return errNoSigner
+	}
+
+	buf := buffers.Get()
+	msg, err := c.message((*buf)[:0], c.key.Name, checkTimestamp, text)
+	*buf = msg[:0]
+	buffers.Put(buf)
+
+	return err
+}
+
+// appendAt appends the value of a signature line for text with the
+// timestamp t to dst: t, then the signature of the wrapped signer over the
+// message of t and text, through [sign.AppendSign].
+//
+// It builds the message in a pooled buffer when the wrapped signer is a
+// [sign.AppendSigner], which reads the message only until it returns.
+// Otherwise it builds the message in a new buffer, because a signer
+// behind a process boundary may still read it after it returns.
+//
+// It returns dst unchanged with an error that wraps [ErrBody] for a text
+// that the format cannot sign, and with the error of the signer.
+func (c *cosigner) appendAt(ctx context.Context, dst []byte, t uint64, text []byte) ([]byte, error) {
+	if _, ok := sign.AsAppendSigner(c.signer); !ok {
+		msg, err := c.message(nil, c.key.Name, t, text)
 		if err != nil {
 			return dst, err
 		}
@@ -320,16 +404,22 @@ func CosignatureV1(resolve func(pub []byte) (sign.Verifier, error)) func(note.Ke
 // [CosignatureV1Signer.Reset] sets one in memory of the caller, such as a
 // field of a struct, without an allocation.
 //
-// A CosignatureV1Signer implements [sign.ContextSigner] and
+// A CosignatureV1Signer implements [Cosigner], [sign.ContextSigner] and
 // [sign.AppendSigner]. Its Sign and AppendSign return an error that wraps
 // [ErrClock], classified [errs.Transient], when the UTC source returns an
 // error, when the reading is not within the error bound, and when the
 // reading is before the Unix epoch. They return the error of the wrapped
 // signer.
 //
+// Its AppendSignAt signs at a time of the caller without a reading, and
+// returns [ErrTimestamp], classified [errs.Invalid], for a time whose
+// whole seconds since the Unix epoch are not positive. A CosignatureV1
+// signature covers every text, so its CheckText returns nil for every
+// text.
+//
 // The zero CosignatureV1Signer has no key. Its Key is the zero Key, its
-// Verify reports false, and its Sign, SignContext and AppendSign return
-// [note.ErrKey].
+// Verify reports false, and its Sign, SignContext, AppendSign,
+// AppendSignAt and CheckText return [note.ErrKey].
 //
 // # Concurrency
 //
@@ -337,16 +427,18 @@ func CosignatureV1(resolve func(pub []byte) (sign.Verifier, error)) func(note.Ke
 //
 // # Allocation contract
 //
-// AppendSign into a buffer with room for the value allocates nothing when
-// the wrapped signer appends without an allocation, as an Ed25519 signer
-// does, because it builds the message in a pooled buffer. Sign and
-// SignContext allocate the value once, at its length, apart from what the
-// wrapped signer allocates.
+// AppendSign and AppendSignAt into a buffer with room for the value
+// allocate nothing when the wrapped signer appends without an allocation,
+// as an Ed25519 signer does, because they build the message in a pooled
+// buffer. CheckText allocates nothing. Sign and SignContext allocate the
+// value once, at its length, apart from what the wrapped signer
+// allocates.
 type CosignatureV1Signer struct {
 	cosigner
 }
 
 var (
+	_ Cosigner           = (*CosignatureV1Signer)(nil)
 	_ note.Signer        = (*CosignatureV1Signer)(nil)
 	_ sign.ContextSigner = (*CosignatureV1Signer)(nil)
 )

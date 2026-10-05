@@ -32,8 +32,10 @@ var (
 	// log of the policy.
 	ErrOrigin = errs.WithClass(errors.New("checkpoint: unknown origin"), errs.Integrity)
 
-	// ErrTimestamp reports a malformed timestamp, and a cosigner without
-	// a UTC source or with a negative error bound.
+	// ErrTimestamp reports a malformed timestamp, a cosigner without a UTC
+	// source or with a negative error bound, and a time of
+	// [Cosigner.AppendSignAt] whose whole seconds since the Unix epoch are
+	// not positive.
 	ErrTimestamp = errs.WithClass(errors.New("checkpoint: invalid timestamp"), errs.Invalid)
 
 	// ErrClock reports a cosigner whose UTC source returns no reading

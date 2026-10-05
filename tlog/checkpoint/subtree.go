@@ -84,14 +84,17 @@ func SubtreeV1(resolve func(pub []byte) (sign.Verifier, error)) func(note.Key) (
 // returns a new one, and [SubtreeV1Signer.Reset] sets one in memory of the
 // caller without an allocation.
 //
-// A SubtreeV1Signer implements [sign.ContextSigner] and
-// [sign.AppendSigner]. Its Sign and AppendSign return the errors of those
-// of a CosignatureV1Signer, and an error that wraps [ErrBody], classified
-// [errs.Invalid], for a text that a SubtreeV1 signature cannot cover.
+// A SubtreeV1Signer implements [Cosigner], [sign.ContextSigner] and
+// [sign.AppendSigner]. Its Sign, AppendSign and AppendSignAt return the
+// errors of those of a CosignatureV1Signer, and an error that wraps
+// [ErrBody], classified [errs.Invalid], for a text that a SubtreeV1
+// signature cannot cover. Its CheckText returns that error. Without a UTC
+// source, its AppendSign writes the timestamp 0, and its AppendSignAt the
+// time of its caller.
 //
 // The zero SubtreeV1Signer has no key. Its Key is the zero Key, its Verify
-// reports false, and its Sign, SignContext and AppendSign return
-// [note.ErrKey].
+// reports false, and its Sign, SignContext, AppendSign, AppendSignAt and
+// CheckText return [note.ErrKey].
 //
 // # Concurrency
 //
@@ -99,12 +102,14 @@ func SubtreeV1(resolve func(pub []byte) (sign.Verifier, error)) func(note.Key) (
 //
 // # Allocation contract
 //
-// The allocation contract of a CosignatureV1Signer.
+// The allocation contract of a CosignatureV1Signer, apart from the error
+// of a text that CheckText refuses.
 type SubtreeV1Signer struct {
 	cosigner
 }
 
 var (
+	_ Cosigner           = (*SubtreeV1Signer)(nil)
 	_ note.Signer        = (*SubtreeV1Signer)(nil)
 	_ sign.ContextSigner = (*SubtreeV1Signer)(nil)
 )

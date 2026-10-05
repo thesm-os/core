@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"go.dokimi.dev/assert/bench"
 	"go.thesmos.sh/testkit"
 
 	"go.thesmos.sh/core/clock"
@@ -67,6 +68,25 @@ func TestSubtree(t *testing.T) {
 	t.Parallel()
 
 	entry := checkpoint.SubtreeV1(mldsa.Resolver(mldsa.MLDSA44, ""))
+
+	// uncovered are the texts that a SubtreeV1 signature cannot cover,
+	// which Sign and CheckText refuse alike.
+	uncovered := []struct {
+		name string
+		give string
+	}{
+		{name: "returns ErrBody for a text that is not a body", give: "example.com/log\n5\n"},
+		{name: "returns ErrBody for a body with extension lines", give: cosignedText + "ext\n"},
+		{name: "returns ErrBody for a root of 48 bytes", give: "a\n5\n" + encode(root(t, 48)) + "\n"},
+		{
+			name: "returns ErrBody for an origin of 256 bytes",
+			give: strings.Repeat("o", 256) + "\n5\n" + exampleRoot + "\n",
+		},
+		{
+			name: "returns ErrBody for an empty tree whose root is not SHA-256 of the empty string",
+			give: "a\n0\n" + exampleRoot + "\n",
+		},
+	}
 
 	t.Run("SubtreeV1", func(t *testing.T) {
 		t.Parallel()
@@ -205,7 +225,7 @@ func TestSubtree(t *testing.T) {
 			testkit.True(t, v.Verify([]byte(cosignedText), value), "the Verifier must accept the line")
 			stamp, err := checkpoint.Timestamp(value)
 			testkit.NoError(t, err, "Timestamp must read the value")
-			testkit.True(t, stamp.Equal(clockTime), "the value must hold the time of the clock, not "+stamp.String())
+			testkit.True(t, stamp.Equal(clockTime), "the value must contain the time of the clock, not "+stamp.String())
 		})
 
 		t.Run("returns a Signer that signs the message that tlog-cosignature specifies", func(t *testing.T) {
@@ -349,23 +369,7 @@ func TestSubtree(t *testing.T) {
 			testkit.True(t, value == nil, "Sign must return a nil value with an error")
 		})
 
-		tests := []struct {
-			name string
-			give string
-		}{
-			{name: "returns ErrBody for a text that is not a body", give: "example.com/log\n5\n"},
-			{name: "returns ErrBody for a body with extension lines", give: cosignedText + "ext\n"},
-			{name: "returns ErrBody for a root of 48 bytes", give: "a\n5\n" + encode(root(t, 48)) + "\n"},
-			{
-				name: "returns ErrBody for an origin of 256 bytes",
-				give: strings.Repeat("o", 256) + "\n5\n" + exampleRoot + "\n",
-			},
-			{
-				name: "returns ErrBody for an empty tree whose root is not SHA-256 of the empty string",
-				give: "a\n0\n" + exampleRoot + "\n",
-			},
-		}
-		for _, tt := range tests {
+		for _, tt := range uncovered {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
 				value, err := pqSigner(t, nil).Sign([]byte(tt.give))
@@ -404,6 +408,60 @@ func TestSubtree(t *testing.T) {
 			testkit.ErrorIs(t, err, checkpoint.ErrBody, "AppendSign must refuse a body that SubtreeV1 cannot cover")
 			testkit.Equal(t, string(got), prefix, "AppendSign must return dst unchanged")
 		})
+	})
+
+	t.Run("AppendSignAt", func(t *testing.T) {
+		t.Parallel()
+
+		at := clockTime.Add(time.Hour)
+
+		t.Run("appends the time of the caller from a SubtreeV1Signer without a UTC source", func(t *testing.T) {
+			t.Parallel()
+			s := pqSigner(t, nil).(checkpoint.Cosigner)
+			got, err := s.AppendSignAt(t.Context(), []byte(prefix), []byte(cosignedText), at)
+			testkit.NoError(t, err, "AppendSignAt must sign the checkpoint")
+			testkit.Equal(t, string(got[:len(prefix)]), prefix, "AppendSignAt must keep dst")
+			testkit.True(t, s.Verify([]byte(cosignedText), got[len(prefix):]), "the appended value must verify")
+			stamp, err := checkpoint.Timestamp(got[len(prefix):])
+			testkit.NoError(t, err, "Timestamp must read the value")
+			testkit.True(t, stamp.Equal(at), "the value must contain the time of the caller, not "+stamp.String())
+		})
+
+		t.Run("appends a signature over the message that tlog-cosignature specifies", func(t *testing.T) {
+			t.Parallel()
+			got, err := pqSigner(t, nil).(checkpoint.Cosigner).AppendSignAt(t.Context(), nil, []byte(cosignedText), at)
+			testkit.NoError(t, err, "AppendSignAt must sign the checkpoint")
+			msg := cosignedMessage(pqName, uint64(at.Unix()), "example.com/log", 5, exampleDigest(t).Bytes())
+			testkit.True(t, mldsaSigner(t, mldsa.MLDSA44, pqName, "").Verify(msg, got[8:]),
+				"the signature must cover the message of the specification at the time of the caller")
+		})
+
+		t.Run("returns dst unchanged with ErrBody", func(t *testing.T) {
+			t.Parallel()
+			got, err := pqSigner(t, nil).(checkpoint.Cosigner).AppendSignAt(t.Context(), []byte(prefix),
+				[]byte(cosignedText+"ext\n"), at)
+			testkit.ErrorIs(t, err, checkpoint.ErrBody, "AppendSignAt must refuse a body that SubtreeV1 cannot cover")
+			testkit.Equal(t, string(got), prefix, "AppendSignAt must return dst unchanged")
+		})
+	})
+
+	t.Run("CheckText", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns nil for a body that a SubtreeV1 signature covers", func(t *testing.T) {
+			t.Parallel()
+			testkit.NoError(t, pqSigner(t, nil).(checkpoint.Cosigner).CheckText([]byte(cosignedText)),
+				"CheckText must accept a body of three lines")
+		})
+
+		for _, tt := range uncovered {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				err := pqSigner(t, nil).(checkpoint.Cosigner).CheckText([]byte(tt.give))
+				testkit.ErrorIs(t, err, checkpoint.ErrBody, "CheckText must refuse a body that SubtreeV1 cannot cover")
+				testkit.Equal(t, errs.Classify(err), errs.Invalid, "the error must classify as Invalid")
+			})
+		}
 	})
 }
 
@@ -450,6 +508,42 @@ func BenchmarkSubtree(b *testing.B) {
 		ctx := b.Context()
 		buf := make([]byte, 0, 8+stdmldsa.MLDSA44().SignatureSize())
 		benchAllocs(b, 1, func() { sinkBytes, errSink = s.AppendSign(ctx, buf[:0], text) })
+	})
+
+	b.Run("AppendSignAt", func(b *testing.B) {
+		ctx := b.Context()
+		cs := s.(checkpoint.Cosigner)
+		buf := make([]byte, 0, 8+stdmldsa.MLDSA44().SignatureSize())
+
+		// The one allocation is the signature that crypto/mldsa returns.
+		c := bench.Start(b).MaxAllocs(1)
+		defer c.End()
+
+		var (
+			got []byte
+			err error
+		)
+
+		for c.Loop() {
+			got, err = cs.AppendSignAt(ctx, buf[:0], text, clockTime)
+		}
+
+		testkit.NoError(b, err, "AppendSignAt must sign the checkpoint")
+		testkit.True(b, cs.Verify(text, got), "the benchmark must measure a value that verifies")
+	})
+
+	b.Run("CheckText", func(b *testing.B) {
+		cs := s.(checkpoint.Cosigner)
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		var err error
+		for c.Loop() {
+			err = cs.CheckText(text)
+		}
+
+		testkit.NoError(b, err, "the benchmark must measure a text that CheckText accepts")
 	})
 }
 
