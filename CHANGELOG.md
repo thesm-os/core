@@ -514,6 +514,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   does not allocate. `WithRemoteParent` starts a span as the child of a
   context that a `Propagator` extracted, and a tracer reads it with
   `RemoteParent`. See RFC-0053.
+- `tlog/witness` package: both sides of C2SP tlog-witness. A `Client`
+  sends a checkpoint and a consistency proof to `add-checkpoint`, and
+  returns the cosignature lines of the witness after it verifies a line
+  of every witness key. `Client.Checkpoint` reads the monitor retrieval
+  route. A `Server` is a witness: `AddCheckpoint` and `Checkpoint` are
+  its handlers, and `Advance` advances up to 4,096 origins under one note
+  in one commit. The server commits each checkpoint to a journal in a
+  `blob.Store` before it cosigns it, at the time of the commit, so
+  processes that share one store never cosign two inconsistent
+  checkpoints of one origin. Snapshots move the latest updates of idle
+  origins into groups, retire the origins that `Logs` refuses after
+  `Retention`, and delete the objects that they replace. A circuit
+  of a `resilience.Breaker` per cosigner stops the commits while a
+  cosigner fails. A call returns once its signatures exist. The commit
+  then stores the lines while the next commit runs, and the monitor
+  retrieval route serves an update once its lines are stored. Each
+  cosigner signs the notes of a commit on up to GOMAXPROCS goroutines.
+  A commit allocates 9 objects of the package, which its calls share,
+  and its concurrent signatures 8 more for a commit of two or more
+  calls. The monitor retrieval route allocates nothing for an update in
+  its cache. Every error classifies under `errs`. See RFC-0054.
+- `checkpoint.Cosigner`: a cosigner that signs at a time of its caller.
+  `CosignatureV1Signer` and `SubtreeV1Signer` implement it. `AppendSignAt`
+  signs without a reading of the UTC source, and returns
+  `checkpoint.ErrTimestamp` for a time whose whole seconds since the Unix
+  epoch are not positive. `CheckText` returns the error that
+  `AppendSignAt` returns for a text that the format does not sign. Both
+  allocate nothing for Ed25519. See RFC-0054.
 
 ### Changed
 
