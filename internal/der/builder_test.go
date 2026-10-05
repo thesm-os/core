@@ -40,6 +40,14 @@ func TestBuilder(t *testing.T) {
 				name: "appends a length of 65,536 in the long form of three octets", length: 65_536,
 				header: []byte{0x04, 0x83, 0x01, 0x00, 0x00},
 			},
+			{
+				name: "appends the two octets of a length of 4,660 in big-endian order", length: 4_660,
+				header: []byte{0x04, 0x82, 0x12, 0x34},
+			},
+			{
+				name: "appends the three octets of a length of 74,565 in big-endian order", length: 74_565,
+				header: []byte{0x04, 0x83, 0x01, 0x23, 0x45},
+			},
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
@@ -142,6 +150,14 @@ func TestBuilder(t *testing.T) {
 			{
 				name: "inserts three long-form octets for a length of 65,536", content: 65_536,
 				header: []byte{0x30, 0x83, 0x01, 0x00, 0x00},
+			},
+			{
+				name: "inserts the two octets of a length of 4,660 in big-endian order", content: 4_660,
+				header: []byte{0x30, 0x82, 0x12, 0x34},
+			},
+			{
+				name: "inserts the three octets of a length of 74,565 in big-endian order", content: 74_565,
+				header: []byte{0x30, 0x83, 0x01, 0x23, 0x45},
 			},
 		}
 		for _, tt := range tests {
