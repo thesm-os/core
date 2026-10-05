@@ -117,8 +117,14 @@ func TestCosignInternal(t *testing.T) {
 
 				var wg sync.WaitGroup
 
-				wg.Go(func() { c.advance(t, s, 0, 5, nil) })
-				<-p.started
+				first := make(chan struct{})
+
+				wg.Go(func() {
+					defer close(first)
+
+					c.advance(t, s, 0, 5, nil)
+				})
+				awaitBefore(t, p.started, first, "the commit of c must sign")
 
 				errs := make([]error, 2)
 				for i, l := range []*internalLog{a, b} {
@@ -129,7 +135,7 @@ func TestCosignInternal(t *testing.T) {
 				}
 
 				close(p.release)
-				wg.Wait()
+				waitAll(t, &wg, "every call must return")
 
 				for _, err := range errs {
 					testkit.Error(t, err, "every call of the commit must fail")

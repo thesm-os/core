@@ -260,20 +260,22 @@ func newServer(tb testing.TB, cfg *witness.ServerConfig) *witness.Server {
 }
 
 // advance advances the updates of l under the note of the size of the last
-// update, through s, and fails the test when Advance fails.
+// update, through s, and fails the test when Advance fails or returns no
+// lines.
 func advance(tb testing.TB, s *witness.Server, l *testLog, updates ...witness.Update) []byte {
 	tb.Helper()
 
 	lines, failures, err := s.Advance(tb.Context(), l.notes[updates[len(updates)-1].Body.Size], updates, nil)
 	testkit.NoError(tb, err, "Advance must commit the updates")
 	testkit.Len(tb, failures, 0, "Advance must return no failure")
+	testkit.NotEqual(tb, len(lines), 0, "Advance must return the cosignature lines")
 
 	return lines
 }
 
 // refuseLines makes the store of f refuse every write of lines, and
 // returns the number of writes that it refused. A commit writes its lines
-// after Advance returns, so a test waits for that number.
+// after Advance returns, so a test reads that number after settle.
 func refuseLines(f *fixture) *atomic.Int64 {
 	var refused atomic.Int64
 

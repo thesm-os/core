@@ -45,8 +45,14 @@ func TestQueueInternal(t *testing.T) {
 
 			var wg sync.WaitGroup
 
-			wg.Go(func() { logs[0].advance(t, s, 0, 5, nil) })
-			<-g.started
+			first := make(chan struct{})
+
+			wg.Go(func() {
+				defer close(first)
+
+				logs[0].advance(t, s, 0, 5, nil)
+			})
+			awaitBefore(t, g.started, first, "the first commit must sign")
 
 			for _, l := range logs[1:] {
 				wg.Go(func() { l.advance(t, s, 0, 5, nil) })
@@ -54,7 +60,7 @@ func TestQueueInternal(t *testing.T) {
 
 			waitQueue(t, s, 3)
 			close(g.release)
-			wg.Wait()
+			waitAll(t, &wg, "every call must return")
 
 			s.mu.RLock()
 			seq := s.st.seq
@@ -119,7 +125,7 @@ func TestQueueInternal(t *testing.T) {
 			p.delivered = true
 			p.done <- struct{}{}
 			s.qmu.Unlock()
-			wg.Wait()
+			waitAll(t, &wg, "wait must return")
 
 			testkit.NoError(t, err, "wait must return the delivered result")
 			testkit.True(t, owned, "the call must remain the caller's")
@@ -246,5 +252,58 @@ func waitQueue(tb testing.TB, s *Server, n int) {
 		}
 
 		time.Sleep(time.Millisecond)
+	}
+}
+
+// awaitBefore returns the next value of ch, and fails tb at once when end
+// delivers first while ch has no value, or when nothing arrives within 5
+// seconds. A test passes the end of the call that leads to the value, so it
+// fails as soon as that call returns without the value.
+func awaitBefore[T, E any](tb testing.TB, ch <-chan T, end <-chan E, what string) T {
+	tb.Helper()
+
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+
+	var zero T
+
+	select {
+	case v := <-ch:
+		return v
+	case <-end:
+		// A value that came before the end of the call is in ch.
+		select {
+		case v := <-ch:
+			return v
+		default:
+		}
+
+		tb.Fatalf("%s: the call returned first", what)
+	case <-timer.C:
+		tb.Fatalf("%s: nothing arrived within 5 seconds", what)
+	}
+
+	return zero
+}
+
+// waitAll waits for wg, and fails tb when wg does not finish within 5
+// seconds.
+func waitAll(tb testing.TB, wg *sync.WaitGroup, what string) {
+	tb.Helper()
+
+	done := make(chan struct{})
+
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+
+	select {
+	case <-done:
+	case <-timer.C:
+		tb.Fatal(what)
 	}
 }

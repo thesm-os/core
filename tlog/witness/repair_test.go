@@ -38,7 +38,8 @@ func TestRepair(t *testing.T) {
 			refused := refuseLines(f)
 
 			advance(tb, s, l, l.update(tb, 0, 5))
-			waitFor(tb, func() bool { return refused.Load() == 1 }, "the store must refuse the lines")
+			settle(tb, s, l)
+			testkit.Equal(tb, refused.Load(), int64(1), "the store must refuse the lines")
 			f.store.reset()
 
 			return f, s
@@ -95,7 +96,8 @@ func TestRepair(t *testing.T) {
 			refused := refuseLines(f)
 
 			advance(t, s, l, l.update(t, 0, 5))
-			waitFor(t, func() bool { return refused.Load() == 1 }, "the store must refuse the lines")
+			settle(t, s, l)
+			testkit.Equal(t, refused.Load(), int64(1), "the store must refuse the lines")
 			f.store.reset()
 			f.clock.Advance(time.Minute)
 
@@ -117,9 +119,13 @@ func TestRepair(t *testing.T) {
 			var signed atomic.Int64
 
 			f := newFixture(t, l)
-			release := make(chan struct{})
+			release, repairing := make(chan struct{}), make(chan struct{})
 			c := &flaky{Cosigner: f.cosigners[0], before: func(context.Context) error {
-				if signed.Add(1) > 1 {
+				if n := signed.Add(1); n > 1 {
+					if n == 2 {
+						close(repairing)
+					}
+
 					<-release
 				}
 
@@ -130,7 +136,8 @@ func TestRepair(t *testing.T) {
 			refused := refuseLines(f)
 
 			advance(t, s, l, l.update(t, 0, 5))
-			waitFor(t, func() bool { return refused.Load() == 1 }, "the store must refuse the lines")
+			settle(t, s, l)
+			testkit.Equal(t, refused.Load(), int64(1), "the store must refuse the lines")
 			f.store.reset()
 			f.clock.Advance(time.Minute)
 
@@ -141,10 +148,19 @@ func TestRepair(t *testing.T) {
 				wg.Go(func() { codes[i] = get(t, s, l.origin).Code })
 			}
 
-			waitFor(t, func() bool { return signed.Load() == 2 }, "the repair must sign")
+			// Every GET waits for the repair, so the GETs return first only
+			// without one.
+			returned := make(chan struct{})
+
+			go func() {
+				wg.Wait()
+				close(returned)
+			}()
+
+			awaitBefore(t, repairing, returned, "the repair must sign")
 			time.Sleep(10 * time.Millisecond)
 			close(release)
-			wg.Wait()
+			waitAll(t, &wg, "every GET must return")
 
 			testkit.Equal(t, signed.Load(), int64(2), "the GETs must start one repair")
 
@@ -173,8 +189,10 @@ func TestRepair(t *testing.T) {
 			t.Cleanup(open)
 
 			f := newFixture(t, l)
+			signing := make(chan struct{})
 			c := &flaky{Cosigner: f.cosigners[0], before: func(context.Context) error {
 				if signed.Add(1) == 1 {
+					close(signing)
 					<-release
 				}
 
@@ -189,9 +207,15 @@ func TestRepair(t *testing.T) {
 				wg    sync.WaitGroup
 			)
 
+			returned := make(chan struct{})
 			updates := []witness.Update{l.update(t, 0, 5)}
-			wg.Go(func() { lines, _, err = s.Advance(t.Context(), l.notes[5], updates, nil) })
-			waitFor(t, func() bool { return signed.Load() == 1 }, "the commit must sign")
+
+			wg.Go(func() {
+				defer close(returned)
+
+				lines, _, err = s.Advance(t.Context(), l.notes[5], updates, nil)
+			})
+			awaitBefore(t, signing, returned, "the commit must sign")
 
 			// The repair age: the deadline of a commit, one second for the
 			// whole seconds of the time of its record, and twice MaxError
@@ -203,9 +227,10 @@ func TestRepair(t *testing.T) {
 			testkit.Equal(t, signed.Load(), int64(1), "the route must start no repair")
 
 			open()
-			wg.Wait()
+			waitAll(t, &wg, "the commit must return")
 			testkit.NoError(t, err, "the commit must succeed")
-			waitFor(t, func() bool { return len(keys(t, f.store, "lines/")) == 1 }, "the commit must store its lines")
+			settle(t, s, l)
+			testkit.Len(t, keys(t, f.store, "lines/"), 1, "the commit must store its lines")
 
 			rec := get(t, s, l.origin)
 			testkit.Equal(t, rec.Code, http.StatusOK, "the route must serve the record of the commit")
@@ -252,7 +277,8 @@ func TestRepair(t *testing.T) {
 			refused := refuseLines(f)
 
 			advance(t, s, l, l.update(t, 0, 5))
-			waitFor(t, func() bool { return refused.Load() == 1 }, "the store must refuse the lines")
+			settle(t, s, l)
+			testkit.Equal(t, refused.Load(), int64(1), "the store must refuse the lines")
 			f.clock.Advance(time.Minute)
 
 			for range 3 {
@@ -306,11 +332,35 @@ func TestRepair(t *testing.T) {
 			refused := refuseLines(f)
 
 			ctx, updates := t.Context(), []witness.Update{l.update(t, 0, 5)}
+			returned := make(chan struct{})
 
-			go func() { _, _, _ = s.Advance(ctx, l.notes[5], updates, nil) }()
+			go func() {
+				defer close(returned)
 
-			release <- struct{}{}
-			waitFor(t, func() bool { return refused.Load() == 1 }, "the store must refuse the lines")
+				_, _, _ = s.Advance(ctx, l.notes[5], updates, nil)
+			}()
+
+			timer := time.NewTimer(5 * time.Second)
+			defer timer.Stop()
+
+			// The signature of the commit receives the value, and the commit
+			// returns after it.
+			select {
+			case release <- struct{}{}:
+			case <-returned:
+				t.Fatal("the commit must sign")
+			case <-timer.C:
+				t.Fatal("the commit must sign within 5 seconds")
+			}
+
+			select {
+			case <-returned:
+			case <-timer.C:
+				t.Fatal("the commit must return within 5 seconds")
+			}
+
+			settle(t, s, l)
+			testkit.Equal(t, refused.Load(), int64(1), "the store must refuse the lines")
 			f.store.reset()
 			f.clock.Advance(time.Minute)
 

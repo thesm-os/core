@@ -157,9 +157,10 @@ func (l *internalLog) update(tb testing.TB, oldSize, size uint64, prefix []byte)
 }
 
 // advance commits the update of l from oldSize to size through s, with
-// prefix, and fails the test unless s cosigns it. It returns once the
-// commit has ended the write of its lines. The commit locks the lmu of s
-// before it delivers the call, and unlocks it when that write ends.
+// prefix, and fails the test when Advance fails or returns no lines. It
+// returns once the commit has ended the write of its lines. The commit
+// locks the lmu of s before it delivers the call, and unlocks it when that
+// write ends.
 func (l *internalLog) advance(tb testing.TB, s *Server, oldSize, size uint64, prefix []byte) []byte {
 	tb.Helper()
 
@@ -167,6 +168,7 @@ func (l *internalLog) advance(tb testing.TB, s *Server, oldSize, size uint64, pr
 		nil)
 	testkit.NoError(tb, err, "Advance must commit the update")
 	testkit.Len(tb, failures, 0, "Advance must return no failure")
+	testkit.NotEqual(tb, len(lines), 0, "Advance must return the cosignature lines")
 
 	// The lock waits for the commit to unlock the lmu, which it does when
 	// the write of its lines ends.

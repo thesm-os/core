@@ -390,9 +390,14 @@ func TestSnapshotInternal(t *testing.T) {
 
 				bNote, bUpdates := b.note(t, 5), []Update{b.update(t, 0, 5, nil)}
 				aNote, aUpdates := a.note(t, 5), []Update{a.update(t, 0, 5, nil)}
+				first := make(chan struct{})
 
-				wg.Go(func() { _, _, berr = p.Advance(t.Context(), bNote, bUpdates, nil) })
-				<-g.started
+				wg.Go(func() {
+					defer close(first)
+
+					_, _, berr = p.Advance(t.Context(), bNote, bUpdates, nil)
+				})
+				awaitBefore(t, g.started, first, "the commit of b must sign")
 
 				wg.Go(func() { _, failures, aerr = p.Advance(t.Context(), aNote, aUpdates, nil) })
 				waitQueue(t, p, 1)
@@ -406,7 +411,7 @@ func TestSnapshotInternal(t *testing.T) {
 				testkit.Len(t, listKeys(t, f.store, retiredPrefix), 1, "the snapshot must retire a")
 
 				open()
-				wg.Wait()
+				waitAll(t, &wg, "both calls must return")
 
 				testkit.NoError(t, berr, "the commit of b must succeed")
 				testkit.NoError(t, aerr, "Advance must check the update of a")

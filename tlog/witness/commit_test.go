@@ -293,7 +293,8 @@ func TestCommit(t *testing.T) {
 			}})
 
 			testkit.NotEqual(t, len(advance(t, s, l, l.update(t, 0, 5))), 0, "the commit must return its lines")
-			waitFor(t, func() bool { return len(keys(t, f.store, "lines/")) == 1 }, "the commit must store its lines")
+			settle(t, s, l)
+			testkit.Len(t, keys(t, f.store, "lines/"), 1, "the commit must store its lines")
 		})
 
 		t.Run("returns ErrContention when the head moves 16 times", func(t *testing.T) {
@@ -335,16 +336,21 @@ func TestCommit(t *testing.T) {
 
 			var errA error
 
+			returned := make(chan struct{})
+
 			wg.Go(func() {
+				defer close(returned)
+
 				_, _, errA = s.Advance(ctx, a.notes[5], []witness.Update{a.update(t, 0, 5)}, nil)
 			})
-			<-blocked
+			awaitBefore(t, blocked, returned, "the commit must write the head")
 			cancel(cause)
-			wg.Wait()
+			waitAll(t, &wg, "the caller must return")
 			close(release)
 
 			testkit.ErrorIs(t, errA, cause, "the caller must receive the cause of its context")
-			waitFor(t, func() bool { return get(t, s, a.origin).Code == 200 }, "the commit must complete")
+			settle(t, s, a)
+			testkit.Equal(t, get(t, s, a.origin).Code, 200, "the commit must complete")
 			testkit.NotEqual(t, len(advance(t, s, b, b.update(t, 0, 5))), 0, "the next call must commit")
 		})
 
@@ -369,18 +375,24 @@ func TestCommit(t *testing.T) {
 
 			results := make([]error, 2)
 			lines := make([][]byte, 2)
+			returned := make(chan struct{}, 2)
+
 			wg.Go(func() {
+				defer func() { returned <- struct{}{} }()
+
 				lines[0], _, results[0] = a.Advance(t.Context(), l.notes[5], []witness.Update{l.update(t, 0, 5)}, nil)
 			})
 			wg.Go(func() {
+				defer func() { returned <- struct{}{} }()
+
 				lines[1], _, results[1] = b.Advance(t.Context(), signBody(t, fork, l.signer),
 					[]witness.Update{{Body: fork}}, nil)
 			})
 
-			<-arrived
-			<-arrived
+			awaitBefore(t, arrived, returned, "the first Server must write the head")
+			awaitBefore(t, arrived, returned, "the second Server must write the head")
 			close(release)
-			wg.Wait()
+			waitAll(t, &wg, "both Servers must return")
 
 			cosigned := 0
 			for i := range lines {
@@ -424,7 +436,7 @@ func TestCommit(t *testing.T) {
 						})
 					}
 
-					wg.Wait()
+					waitAll(t, &wg, "both Servers must return")
 
 					if len(lines[0]) > 0 && len(lines[1]) > 0 {
 						t.Fatalf("round %d cosigned two inconsistent checkpoints", i)
@@ -471,7 +483,7 @@ func TestCommit(t *testing.T) {
 
 			wg.Go(func() { la = advance(t, a, l, l.update(t, 0, 5)) })
 			wg.Go(func() { lb = advance(t, b, l, l.update(t, 0, 5)) })
-			wg.Wait()
+			waitAll(t, &wg, "both Servers must return")
 
 			testkit.Len(t, keys(t, f.store, "records/"), 1, "the two commits must create one record")
 			testkit.Equal(t, string(lb), string(la), "both Servers must sign the same lines with Ed25519")
@@ -565,8 +577,8 @@ func TestCommit(t *testing.T) {
 				f := newFixture(t, l)
 				s := newServer(t, f.config())
 				advance(t, s, l, l.update(t, 0, 5))
-				waitFor(t, func() bool { return len(keys(t, f.store, "lines/")) == 1 },
-					"the first commit must store its lines")
+				settle(t, s, l)
+				testkit.Len(t, keys(t, f.store, "lines/"), 1, "the first commit must store its lines")
 
 				var once atomic.Bool
 
@@ -592,7 +604,8 @@ func TestCommit(t *testing.T) {
 				// The commit writes its lines after Advance returns.
 				f.store.intercept(h)
 				_, _, _ = s.Advance(t.Context(), l.notes[6], []witness.Update{l.update(t, 5, 6)}, nil)
-				waitFor(t, once.Load, "the store must return an unknown outcome for the write")
+				settle(t, s, l)
+				testkit.True(t, once.Load(), "the store must return an unknown outcome for the write")
 				f.store.reset()
 
 				again := newServer(t, f.config())
@@ -710,17 +723,67 @@ func lineTime(tb testing.TB, l *testLog, size uint64, lines []byte) time.Time {
 	return ts
 }
 
-// waitFor waits until cond reports true, for at most 5 seconds, and fails
-// the test with what otherwise.
-func waitFor(tb testing.TB, cond func() bool, what string) {
+// awaitBefore returns the next value of ch, and fails tb at once when end
+// delivers first while ch has no value, or when nothing arrives within 5
+// seconds. A test passes the end of the call that leads to the value, so it
+// fails as soon as that call returns without the value.
+func awaitBefore[T, E any](tb testing.TB, ch <-chan T, end <-chan E, what string) T {
 	tb.Helper()
 
-	deadline := time.Now().Add(5 * time.Second)
-	for !cond() {
-		if time.Now().After(deadline) {
-			tb.Fatal(what)
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+
+	var zero T
+
+	select {
+	case v := <-ch:
+		return v
+	case <-end:
+		// A value that came before the end of the call is in ch.
+		select {
+		case v := <-ch:
+			return v
+		default:
 		}
 
-		time.Sleep(time.Millisecond)
+		tb.Fatalf("%s: the call returned first", what)
+	case <-timer.C:
+		tb.Fatalf("%s: nothing arrived within 5 seconds", what)
 	}
+
+	return zero
+}
+
+// waitAll waits for wg, and fails tb when wg does not finish within 5
+// seconds.
+func waitAll(tb testing.TB, wg *sync.WaitGroup, what string) {
+	tb.Helper()
+
+	done := make(chan struct{})
+
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+
+	select {
+	case <-done:
+	case <-timer.C:
+		tb.Fatal(what)
+	}
+}
+
+// settle returns once the write of the lines of every earlier commit of s
+// has ended. A call returns only after the write of the lines of the commit
+// before its own, so settle sends a call whose commit fails its update: a
+// checkpoint of l from the old size 1, which no test commits.
+func settle(tb testing.TB, s *witness.Server, l *testLog) {
+	tb.Helper()
+
+	_, failures, err := s.Advance(tb.Context(), l.notes[2], []witness.Update{l.update(tb, 1, 2)}, nil)
+	testkit.NoError(tb, err, "the call that settles the writes must return")
+	testkit.Len(tb, failures, 1, "the commit must fail the call that settles the writes")
 }

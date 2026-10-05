@@ -39,7 +39,8 @@ func TestRoute(t *testing.T) {
 			u.Prefix = []byte("a prefix\n")
 			lines, _, err := s.Advance(t.Context(), l.notes[5], []witness.Update{u}, nil)
 			testkit.NoError(t, err, "Advance must commit the update")
-			waitFor(t, func() bool { return len(keys(t, f.store, "lines/")) == 1 }, "the commit must store its lines")
+			settle(t, s, l)
+			testkit.Len(t, keys(t, f.store, "lines/"), 1, "the commit must store its lines")
 
 			rec := get(t, s, l.origin)
 			testkit.Equal(t, rec.Code, http.StatusOK, "the route must serve the origin")
@@ -51,8 +52,10 @@ func TestRoute(t *testing.T) {
 		t.Run("serves the update of a record of another process whose lines exist", func(t *testing.T) {
 			t.Parallel()
 			f := newFixture(t, l)
-			lines := advance(t, newServer(t, f.config()), l, l.update(t, 0, 5))
-			waitFor(t, func() bool { return len(keys(t, f.store, "lines/")) == 1 }, "the commit must store its lines")
+			s := newServer(t, f.config())
+			lines := advance(t, s, l, l.update(t, 0, 5))
+			settle(t, s, l)
+			testkit.Len(t, keys(t, f.store, "lines/"), 1, "the commit must store its lines")
 
 			rec := get(t, newServer(t, f.config()), l.origin)
 			testkit.Equal(t, rec.Code, http.StatusOK, "the route must serve the origin")
@@ -65,13 +68,13 @@ func TestRoute(t *testing.T) {
 			f := newFixture(t, l)
 			s := newServer(t, f.config())
 			lines := advance(t, s, l, l.update(t, 0, 5))
-			waitFor(t, func() bool { return len(keys(t, f.store, "lines/")) == 1 },
-				"the first commit must store its lines")
+			settle(t, s, l)
+			testkit.Len(t, keys(t, f.store, "lines/"), 1, "the first commit must store its lines")
 
 			refused := refuseLines(f)
 			advance(t, s, l, l.update(t, 5, 6))
-			waitFor(t, func() bool { return refused.Load() == 1 },
-				"the store must refuse the lines of the second commit")
+			settle(t, s, l)
+			testkit.Equal(t, refused.Load(), int64(1), "the store must refuse the lines of the second commit")
 
 			rec := get(t, s, l.origin)
 			testkit.Equal(t, rec.Code, http.StatusOK, "the route must serve the origin")
@@ -85,7 +88,8 @@ func TestRoute(t *testing.T) {
 			refused := refuseLines(f)
 
 			advance(t, s, l, l.update(t, 0, 5))
-			waitFor(t, func() bool { return refused.Load() == 1 }, "the store must refuse the lines")
+			settle(t, s, l)
+			testkit.Equal(t, refused.Load(), int64(1), "the store must refuse the lines")
 			testkit.Equal(t, get(t, s, l.origin).Code, http.StatusNotFound, "the route must not serve the commit")
 		})
 
@@ -120,8 +124,10 @@ func TestRoute(t *testing.T) {
 		t.Run("responds with 503 when the object of the served update is missing", func(t *testing.T) {
 			t.Parallel()
 			f := newFixture(t, l)
-			advance(t, newServer(t, f.config()), l, l.update(t, 0, 5))
-			waitFor(t, func() bool { return len(keys(t, f.store, "lines/")) == 1 }, "the commit must store its lines")
+			first := newServer(t, f.config())
+			advance(t, first, l, l.update(t, 0, 5))
+			settle(t, first, l)
+			testkit.Len(t, keys(t, f.store, "lines/"), 1, "the commit must store its lines")
 
 			s := newServer(t, f.config())
 			deleteAll(t, f.store, "records/")
@@ -132,8 +138,10 @@ func TestRoute(t *testing.T) {
 		t.Run("responds with 500 for lines that do not decode", func(t *testing.T) {
 			t.Parallel()
 			f := newFixture(t, l)
-			advance(t, newServer(t, f.config()), l, l.update(t, 0, 5))
-			waitFor(t, func() bool { return len(keys(t, f.store, "lines/")) == 1 }, "the commit must store its lines")
+			first := newServer(t, f.config())
+			advance(t, first, l, l.update(t, 0, 5))
+			settle(t, first, l)
+			testkit.Len(t, keys(t, f.store, "lines/"), 1, "the commit must store its lines")
 
 			s := newServer(t, f.config())
 			overwriteAll(t, f.store, "lines/", []byte{0xff})
@@ -147,8 +155,8 @@ func TestRoute(t *testing.T) {
 				f := newFixture(t, l)
 				s := newServer(t, f.config())
 				advance(t, s, l, l.update(t, 0, 5))
-				waitFor(t, func() bool { return len(keys(t, f.store, "lines/")) == 1 },
-					"the first commit must store its lines")
+				settle(t, s, l)
+				testkit.Len(t, keys(t, f.store, "lines/"), 1, "the first commit must store its lines")
 
 				other := newServer(t, f.config())
 				newer := advance(t, other, l, l.update(t, 5, 7))
@@ -178,7 +186,8 @@ func BenchmarkRoute(b *testing.B) {
 		f := newFixture(b, l)
 		s := newServer(b, f.config())
 		lines := advance(b, s, l, l.update(b, 0, 5))
-		waitFor(b, func() bool { return len(keys(b, f.store, "lines/")) == 1 }, "the commit must store its lines")
+		settle(b, s, l)
+		testkit.Len(b, keys(b, f.store, "lines/"), 1, "the commit must store its lines")
 		h := s.Checkpoint()
 
 		// The first GET reads the record and its lines into the cache.

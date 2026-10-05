@@ -50,8 +50,14 @@ func TestCommitInternal(t *testing.T) {
 
 			var wg sync.WaitGroup
 
-			wg.Go(func() { other.advance(t, s, 0, 5, nil) })
-			<-g.started
+			first := make(chan struct{})
+
+			wg.Go(func() {
+				defer close(first)
+
+				other.advance(t, s, 0, 5, nil)
+			})
+			awaitBefore(t, g.started, first, "the first commit must sign")
 
 			var stale []Failure
 
@@ -64,7 +70,7 @@ func TestCommitInternal(t *testing.T) {
 			})
 			waitQueue(t, s, 3)
 			close(g.release)
-			wg.Wait()
+			waitAll(t, &wg, "every call must return")
 
 			testkit.Len(t, stale, 1, "the third call must fail against the first two")
 
@@ -81,16 +87,22 @@ func TestCommitInternal(t *testing.T) {
 			t.Parallel()
 			_, st, s := faultyServer(t)
 
-			var once atomic.Bool
+			var (
+				once    atomic.Bool
+				refresh error
+			)
 
+			// The hook runs on the goroutine of the commit, where a failed
+			// assertion would end the commit before it delivers the call.
+			// The case checks the error of the refresh after Advance.
 			st.afterPut = func(key string) {
 				if key == headKey && once.CompareAndSwap(false, true) {
-					_, err := s.sync(t.Context(), "")
-					testkit.NoError(t, err, "the refresh must catch up to the head")
+					_, refresh = s.sync(t.Context(), "")
 				}
 			}
 
 			l.advance(t, s, 0, 5, nil)
+			testkit.NoError(t, refresh, "the refresh must catch up to the head")
 
 			o, _ := s.st.origins.Get(hashOrigin(l.origin))
 			testkit.Equal(t, o.size, uint64(5), "the state must contain the commit")
@@ -244,7 +256,7 @@ func TestCommitInternal(t *testing.T) {
 			testkit.Equal(t, started.Load(), int64(1), "the second commit must not write its lines yet")
 
 			open()
-			wg.Wait()
+			waitAll(t, &wg, "the second call must return")
 
 			testkit.Equal(t, started.Load(), int64(2), "the second commit must write its lines after the first")
 		})
