@@ -126,8 +126,8 @@ func appendLength(dst []byte, n int) []byte {
 	octets := lengthOctets(n)
 
 	dst = append(dst, longForm|octet(octets))
-	for i := octets - 1; i >= 0; i-- {
-		dst = append(dst, octet(n>>(8*i)))
+	for i := range octets {
+		dst = append(dst, octet(n>>(8*(octets-1-i))))
 	}
 
 	return dst
