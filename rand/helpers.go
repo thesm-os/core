@@ -6,8 +6,10 @@ package rand
 import "math/bits"
 
 // Float64 returns a uniformly distributed value in [0.0, 1.0)
-// derived from r.Uint64. Uses 53 bits of precision to match the
-// float64 mantissa, the same construction as [math/rand/v2].
+// derived from r.Uint64: the top 53 bits of one draw, the precision
+// of the float64 mantissa, divided by 2^53. [math/rand/v2] divides the
+// low 53 bits instead, so the two return different values for one
+// draw.
 //
 // # Allocation contract
 //
@@ -16,15 +18,24 @@ func Float64(r Rand) float64 {
 	return float64(r.Uint64()>>11) / (1 << 53)
 }
 
-// Shuffle pseudo-randomly permutes the range [0, n) by calling swap
-// for each pair, using the Fisher-Yates algorithm with Lemire's
-// nearly-divisionless integer draw. If n <= 1, Shuffle is a no-op.
+// Shuffle pseudo-randomly permutes the range [0, n) with the
+// Fisher-Yates algorithm. It calls swap(i, j) once for each i from n-1
+// down to 1, with j drawn from [0, i] by [Uint64N]. For an n of 1 or
+// less, math.MinInt included, Shuffle neither draws nor calls swap.
 //
 // # Allocation contract
 //
 // Zero alloc.
 func Shuffle(r Rand, n int, swap func(i, j int)) {
-	for i := n - 1; i > 0; i-- {
+	// n-1 overflows for math.MinInt, so the loop alone does not stop
+	// every n below 2.
+	if n < 2 {
+		return
+	}
+	// The loop runs a count fixed before it starts, with i from n-1 down
+	// to 1.
+	for k := range n - 1 {
+		i := n - 1 - k
 		swap(i, int(Uint64N(r, uint64(i+1))))
 	}
 }
