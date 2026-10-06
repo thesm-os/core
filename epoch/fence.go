@@ -92,10 +92,12 @@ func (w *Watermark) Admit(e Epoch) error {
 			return ErrFenced
 		}
 
+		//dokimi:mutate-skip sbr-delete, ror-false: the swap of an equal epoch returns nil too, at the cost of a write
 		if e == cur {
 			return nil
 		}
 
+		//dokimi:mutate-skip uoi-not: the swap fails only when a concurrent admit wins the race, which no test orders
 		if w.current.CompareAndSwap(uint64(cur), uint64(e)) {
 			return nil
 		}

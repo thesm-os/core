@@ -5,9 +5,13 @@ package epoch_test
 
 import (
 	"encoding"
+	"slices"
 	"testing"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/bench"
+	"go.dokimi.dev/assert/expect"
+	"go.dokimi.dev/assert/prop"
 
 	"go.thesmos.sh/core/epoch"
 )
@@ -46,64 +50,102 @@ func TestMarshalBinary(t *testing.T) {
 
 				got, err := tc.in.MarshalBinary()
 
-				testkit.NoError(t, err, "MarshalBinary must succeed")
-				testkit.Equal(t, got, tc.want,
+				assert.NoError(t, err, "MarshalBinary must succeed")
+				assert.Equal(t, got, tc.want,
 					"the layout is a stable wire contract")
 			})
 		}
 	})
 
-	t.Run("AppendBinary appends rather than replaces", func(t *testing.T) {
+	t.Run("AppendBinary appends the binary form to dst", func(t *testing.T) {
 		t.Parallel()
 
-		got, err := epoch.Epoch(1).AppendBinary([]byte{0xAA})
+		prop.ForAll(t, "AppendBinary must extend dst with the binary form of the epoch", func(c *prop.Case) {
+			dst := c.Draw(prop.Bytes(prop.MaxSize(2*epoch.EpochSize)), "dst")
+			e := c.Draw(prop.Of[epoch.Epoch](), "epoch")
 
-		testkit.NoError(t, err, "AppendBinary must succeed")
-		testkit.Equal(t, got, []byte{0xAA, 0, 0, 0, 0, 0, 0, 0, 1},
-			"AppendBinary must extend dst")
+			form, err := e.MarshalBinary()
+			assert.NoError(c, err, "MarshalBinary must succeed")
+			want := append(slices.Clip(dst), form...)
+
+			got, err := e.AppendBinary(dst)
+			assert.NoError(c, err, "AppendBinary must succeed")
+			assert.Equal(c, got, want, "AppendBinary must keep dst and append the binary form")
+		})
 	})
 }
 
 func TestUnmarshalBinary(t *testing.T) {
 	t.Parallel()
 
-	t.Run("round-trips every shape", func(t *testing.T) {
+	t.Run("returns the epoch that MarshalBinary encodes", func(t *testing.T) {
 		t.Parallel()
 
-		for _, want := range []epoch.Epoch{epoch.Zero, 1, 8, ^epoch.Epoch(0)} {
-			b, err := want.MarshalBinary()
-			testkit.NoError(t, err, "MarshalBinary must succeed")
+		prop.RoundTrip(t, epoch.Epoch.MarshalBinary, func(b []byte) (epoch.Epoch, error) {
+			var e epoch.Epoch
+			err := e.UnmarshalBinary(b)
 
-			var got epoch.Epoch
-
-			testkit.NoError(t, got.UnmarshalBinary(b),
-				"UnmarshalBinary must accept its own output")
-			testkit.Equal(t, got, want, "the round trip must be exact")
-		}
+			return e, err
+		}, "UnmarshalBinary must undo MarshalBinary for every epoch")
 	})
 
-	t.Run("rejects any length but EpochSize", func(t *testing.T) {
+	t.Run("returns ErrSize for any length but EpochSize", func(t *testing.T) {
 		t.Parallel()
 
-		cases := map[string][]byte{
-			"nil":   nil,
-			"empty": {},
-			"short": {0, 0, 0, 0, 0, 0, 0},
-			"long":  {0, 0, 0, 0, 0, 0, 0, 0, 0},
+		prop.ForAll(t, "UnmarshalBinary must refuse every length but EpochSize", func(c *prop.Case) {
+			data := c.Draw(prop.Bytes(prop.MaxSize(2*epoch.EpochSize)).Filter(func(b []byte) bool {
+				return len(b) != epoch.EpochSize
+			}), "data")
+
+			got := epoch.Epoch(7)
+
+			var err error
+			assert.Pure(c, func() epoch.Epoch { return got }, func() { err = got.UnmarshalBinary(data) },
+				"a refused decode must not modify the receiver")
+			assert.ErrorIs(c, err, epoch.ErrSize, "a wrong-length input must be a decode error")
+		})
+	})
+}
+
+// TestBinaryAllocs checks the allocation contract of AppendBinary.
+// MaxAllocs counts the allocations of the whole process, so the test does
+// not run in parallel.
+//
+//nolint:paralleltest // see above
+func TestBinaryAllocs(t *testing.T) {
+	t.Run("AppendBinary", func(t *testing.T) {
+		e := epoch.Epoch(123456789)
+		dst := make([]byte, 0, epoch.EpochSize)
+
+		var (
+			got []byte
+			err error
+		)
+		expect.MaxAllocs(t, func() { got, err = e.AppendBinary(dst[:0]) }, 0,
+			"AppendBinary must not allocate when dst has room for the binary form")
+		assert.NoError(t, err, "AppendBinary must succeed")
+		assert.Length(t, got, epoch.EpochSize, "the test must measure the binary form")
+	})
+}
+
+func BenchmarkBinary(b *testing.B) {
+	b.Run("AppendBinary", func(b *testing.B) {
+		e := epoch.Epoch(123456789)
+		dst := make([]byte, 0, epoch.EpochSize)
+
+		var (
+			got []byte
+			err error
+		)
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			got, err = e.AppendBinary(dst[:0])
 		}
-		for name, data := range cases {
-			t.Run(name, func(t *testing.T) {
-				t.Parallel()
 
-				got := epoch.Epoch(7)
-
-				err := got.UnmarshalBinary(data)
-
-				testkit.ErrorIs(t, err, epoch.ErrSize,
-					"a wrong-length input must be a decode error")
-				testkit.Equal(t, got, epoch.Epoch(7),
-					"a rejected decode must not modify the receiver")
-			})
-		}
+		assert.NoError(b, err, "AppendBinary must succeed")
+		assert.Length(b, got, epoch.EpochSize, "the benchmark must measure the binary form")
 	})
 }

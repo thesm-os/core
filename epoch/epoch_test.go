@@ -4,51 +4,55 @@
 package epoch_test
 
 import (
+	"cmp"
 	"math"
-	"runtime"
+	"strconv"
 	"testing"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/bench"
+	"go.dokimi.dev/assert/expect"
+	"go.dokimi.dev/assert/prop"
 
 	"go.thesmos.sh/core/epoch"
 )
+
+// epochPair is the input of a property over two epochs.
+type epochPair struct {
+	A, B epoch.Epoch
+}
 
 func TestEpochZero(t *testing.T) {
 	t.Parallel()
 
 	t.Run("Zero is the reserved sentinel", func(t *testing.T) {
 		t.Parallel()
-		testkit.True(t, epoch.Zero.IsZero(), "Zero.IsZero must return true")
-		testkit.Equal(t, epoch.Zero, epoch.Epoch(0), "Zero must equal 0")
+		assert.True(t, epoch.Zero.IsZero(), "Zero.IsZero must return true")
+		assert.Equal(t, epoch.Zero, epoch.Epoch(0), "Zero must equal 0")
 	})
 
-	t.Run("non-zero IsZero returns false", func(t *testing.T) {
+	t.Run("IsZero reports false for every epoch above Zero", func(t *testing.T) {
 		t.Parallel()
-		var e epoch.Epoch = 1
-		testkit.False(t, e.IsZero(), "Epoch(1).IsZero must return false")
+		prop.False(t, epoch.Epoch.IsZero, "IsZero must report false for an epoch above Zero",
+			prop.Using(prop.Integer[epoch.Epoch](1, math.MaxUint64)))
 	})
 }
 
 func TestEpochCompare(t *testing.T) {
 	t.Parallel()
 
-	cases := map[string]struct {
-		a, b epoch.Epoch
-		want int
-	}{
-		"a < b":           {1, 2, -1},
-		"a > b":           {5, 3, 1},
-		"a == b":          {7, 7, 0},
-		"zero < non-zero": {epoch.Zero, 1, -1},
-		"non-zero > zero": {1, epoch.Zero, 1},
-	}
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			testkit.Equal(t, tc.a.Compare(tc.b), tc.want,
-				"Compare must reflect ordering")
-		})
-	}
+	t.Run("orders two epochs as their values", func(t *testing.T) {
+		t.Parallel()
+		prop.Equal(t,
+			func(p epochPair) int { return p.A.Compare(p.B) },
+			func(p epochPair) int { return cmp.Compare(uint64(p.A), uint64(p.B)) },
+			"Compare must return -1, 0 or +1 as the values of the epochs order",
+			prop.Example(epochPair{A: 1, B: 2}),
+			prop.Example(epochPair{A: 5, B: 3}),
+			prop.Example(epochPair{A: 7, B: 7}),
+			prop.Example(epochPair{A: epoch.Zero, B: 1}),
+		)
+	})
 }
 
 func TestEpochSuccessor(t *testing.T) {
@@ -57,13 +61,13 @@ func TestEpochSuccessor(t *testing.T) {
 	t.Run("Successor advances by one", func(t *testing.T) {
 		t.Parallel()
 		var e epoch.Epoch = 7
-		testkit.Equal(t, e.Successor(), epoch.Epoch(8),
+		assert.Equal(t, e.Successor(), epoch.Epoch(8),
 			"Successor(7) must equal 8")
 	})
 
 	t.Run("Successor of Zero is 1", func(t *testing.T) {
 		t.Parallel()
-		testkit.Equal(t, epoch.Zero.Successor(), epoch.Epoch(1),
+		assert.Equal(t, epoch.Zero.Successor(), epoch.Epoch(1),
 			"Successor(Zero) must equal 1")
 	})
 
@@ -73,7 +77,7 @@ func TestEpochSuccessor(t *testing.T) {
 		// Documented: monotonicity wraps at MaxUint64; the wrap is
 		// unreachable in practice (~584 years at 1 ns/epoch) and
 		// therefore not guarded.
-		testkit.Equal(t, maxEpoch.Successor(), epoch.Zero,
+		assert.Equal(t, maxEpoch.Successor(), epoch.Zero,
 			"Successor(MaxUint64) must wrap to Zero")
 	})
 }
@@ -81,72 +85,108 @@ func TestEpochSuccessor(t *testing.T) {
 func TestEpochString(t *testing.T) {
 	t.Parallel()
 
-	cases := map[string]struct {
-		want string
-		in   epoch.Epoch
-	}{
-		"zero":  {"0", epoch.Zero},
-		"one":   {"1", 1},
-		"large": {"1234567890", 1234567890},
-		"max":   {"18446744073709551615", math.MaxUint64},
-	}
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			testkit.Equal(t, tc.in.String(), tc.want, "String must match expected")
-		})
-	}
+	t.Run("returns the decimal form of the epoch", func(t *testing.T) {
+		t.Parallel()
+		prop.RoundTrip(t,
+			func(e epoch.Epoch) (string, error) { return e.String(), nil },
+			func(s string) (epoch.Epoch, error) {
+				v, err := strconv.ParseUint(s, 10, 64)
+
+				return epoch.Epoch(v), err //nolint:wrapcheck // the round trip compares the parser's own outcome
+			},
+			"strconv.ParseUint must read the text of String back as the epoch",
+			prop.Example(epoch.Zero),
+			prop.Example(epoch.Epoch(math.MaxUint64)),
+		)
+	})
 }
 
-// TestEpochZeroAlloc cannot run in parallel —
-// testing.AllocsPerRun panics if any other test is running.
+// TestEpochAllocs checks the allocation ceiling of every method of an
+// Epoch. MaxAllocs counts the allocations of the whole process, so the
+// test does not run in parallel. String formats a value above 99,
+// because strconv returns a constant string below 100.
 //
-//nolint:paralleltest // see comment above
-func TestEpochZeroAlloc(t *testing.T) {
-	var e epoch.Epoch = 42
-	other := epoch.Epoch(43)
+//nolint:paralleltest // see above
+func TestEpochAllocs(t *testing.T) {
+	e, other := epoch.Epoch(123456789), epoch.Epoch(123456790)
 
-	cases := []struct {
-		fn   func()
-		name string
-	}{
-		{func() { _ = e.IsZero() }, "IsZero"},
-		{func() { _ = e.Compare(other) }, "Compare"},
-		{func() { _ = e.Successor() }, "Successor"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			testkit.Equal(t, testing.AllocsPerRun(100, tc.fn),
-				float64(0), tc.name+" must be zero-alloc")
-		})
-	}
+	t.Run("IsZero", func(t *testing.T) {
+		var got bool
+		expect.MaxAllocs(t, func() { got = e.IsZero() }, 0, "IsZero must not allocate")
+		assert.False(t, got, "the test must measure a non-zero epoch")
+	})
+
+	t.Run("Compare", func(t *testing.T) {
+		var got int
+		expect.MaxAllocs(t, func() { got = e.Compare(other) }, 0, "Compare must not allocate")
+		assert.Equal(t, got, -1, "the test must measure an earlier epoch")
+	})
+
+	t.Run("Successor", func(t *testing.T) {
+		var got epoch.Epoch
+		expect.MaxAllocs(t, func() { got = e.Successor() }, 0, "Successor must not allocate")
+		assert.Equal(t, got, other, "the test must measure the next epoch")
+	})
+
+	t.Run("String", func(t *testing.T) {
+		var got string
+		expect.MaxAllocs(t, func() { got = e.String() }, 1, "String must allocate only its result")
+		assert.Equal(t, got, "123456789", "the test must measure the decimal form")
+	})
 }
 
-func BenchmarkCompare(b *testing.B) {
-	e := epoch.Epoch(42)
-	other := epoch.Epoch(43)
-	b.ReportAllocs()
-	var sink int
-	for b.Loop() {
-		sink = e.Compare(other)
-	}
-	runtime.KeepAlive(sink)
-}
+func BenchmarkEpoch(b *testing.B) {
+	e, other := epoch.Epoch(123456789), epoch.Epoch(123456790)
 
-func BenchmarkSuccessor(b *testing.B) {
-	e := epoch.Epoch(42)
-	b.ReportAllocs()
-	var sink epoch.Epoch
-	for b.Loop() {
-		sink = e.Successor()
-	}
-	runtime.KeepAlive(sink)
-}
+	b.Run("IsZero", func(b *testing.B) {
+		var got bool
 
-func BenchmarkString(b *testing.B) {
-	e := epoch.Epoch(123456789)
-	b.ReportAllocs()
-	for b.Loop() {
-		_ = e.String()
-	}
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			got = e.IsZero()
+		}
+
+		assert.False(b, got, "the benchmark must measure a non-zero epoch")
+	})
+
+	b.Run("Compare", func(b *testing.B) {
+		var got int
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			got = e.Compare(other)
+		}
+
+		assert.Equal(b, got, -1, "the benchmark must measure an earlier epoch")
+	})
+
+	b.Run("Successor", func(b *testing.B) {
+		var got epoch.Epoch
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			got = e.Successor()
+		}
+
+		assert.Equal(b, got, other, "the benchmark must measure the next epoch")
+	})
+
+	b.Run("String", func(b *testing.B) {
+		var got string
+
+		c := bench.Start(b).MaxAllocs(1)
+		defer c.End()
+
+		for c.Loop() {
+			got = e.String()
+		}
+
+		assert.Equal(b, got, "123456789", "the benchmark must measure the decimal form")
+	})
 }

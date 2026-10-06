@@ -5,13 +5,24 @@ package epoch_test
 
 import (
 	"math"
-	"runtime"
-	"sync"
 	"testing"
+	"time"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/bench"
+	"go.dokimi.dev/assert/expect"
+	"go.dokimi.dev/assert/history"
 
 	"go.thesmos.sh/core/epoch"
+)
+
+// Parameters of the concurrent case of TestCounter.
+const (
+	// counterClients is the number of clients that call Next at once.
+	counterClients = 8
+
+	// counterCalls is the number of Next calls of each client.
+	counterCalls = 64
 )
 
 func TestCounter(t *testing.T) {
@@ -20,30 +31,36 @@ func TestCounter(t *testing.T) {
 	t.Run("zero-value Counter starts at Zero, Next returns 1", func(t *testing.T) {
 		t.Parallel()
 		var c epoch.Counter
-		testkit.Equal(t, c.Current(), epoch.Zero,
+		assert.Equal(t, c.Current(), epoch.Zero,
 			"Current on zero-value Counter must equal epoch.Zero")
-		testkit.Equal(t, c.Next(), epoch.Epoch(1),
+		assert.Equal(t, c.Next(), epoch.Epoch(1),
 			"first Next on zero-value Counter must return 1")
 	})
 
 	t.Run("NewCounter advances from start", func(t *testing.T) {
 		t.Parallel()
 		c := epoch.NewCounter(100)
-		testkit.Equal(t, c.Current(), epoch.Epoch(100),
+		assert.Equal(t, c.Current(), epoch.Epoch(100),
 			"Current after NewCounter(100) must equal 100")
-		testkit.Equal(t, c.Next(), epoch.Epoch(101),
+		assert.Equal(t, c.Next(), epoch.Epoch(101),
 			"first Next after NewCounter(100) must return 101")
-		testkit.Equal(t, c.Next(), epoch.Epoch(102),
-			"second Next must return 102")
+	})
+
+	t.Run("Next advances the counter by one per call", func(t *testing.T) {
+		t.Parallel()
+		c := epoch.NewCounter(100)
+		assert.Accumulates(t, func(struct{}) error {
+			c.Next()
+
+			return nil
+		}, struct{}{}, func() int { return int(c.Current()) }, "each Next must advance the counter by the same step")
+		assert.Equal(t, c.Current(), epoch.Epoch(102), "two Next calls must advance the counter by two")
 	})
 
 	t.Run("Current does not advance the counter", func(t *testing.T) {
 		t.Parallel()
 		c := epoch.NewCounter(5)
-		_ = c.Current()
-		_ = c.Current()
-		testkit.Equal(t, c.Next(), epoch.Epoch(6),
-			"Next after Currents must reflect that Current did not advance")
+		assert.Pure(t, c.Current, func() { _ = c.Current() }, "Current must not advance the counter")
 	})
 
 	t.Run("Next wraps at MaxUint64", func(t *testing.T) {
@@ -51,94 +68,112 @@ func TestCounter(t *testing.T) {
 		// Documented: at MaxUint64 the underlying counter wraps to
 		// zero. Unreachable in practice; not guarded.
 		c := epoch.NewCounter(math.MaxUint64 - 1)
-		testkit.Equal(t, c.Next(), epoch.Epoch(math.MaxUint64),
+		assert.Equal(t, c.Next(), epoch.Epoch(math.MaxUint64),
 			"Next at MaxUint64-1 must return MaxUint64")
-		testkit.Equal(t, c.Next(), epoch.Zero,
+		assert.Equal(t, c.Next(), epoch.Zero,
 			"Next at MaxUint64 must wrap to Zero")
+	})
+
+	t.Run("concurrent Next calls behave as one call at a time", func(t *testing.T) {
+		t.Parallel()
+		c := epoch.NewCounter(epoch.Zero)
+		h := history.New()
+
+		outcomes := history.Concurrently(counterClients, time.Minute, func(client int) (any, error) {
+			var last epoch.Epoch
+			for range counterCalls {
+				call := h.Invoke(client, "next", nil)
+				last = c.Next()
+				call.OK(last)
+			}
+
+			return last, nil
+		})
+		for _, o := range outcomes {
+			assert.True(t, o.Finished, "every client must finish its calls")
+		}
+
+		history.Linearizable(t, h, history.Model[epoch.Epoch]{
+			Init: func() epoch.Epoch { return epoch.Zero },
+			Step: func(s epoch.Epoch, op history.Op) []epoch.Epoch {
+				if op.Known && op.Output != s.Successor() {
+					return nil
+				}
+
+				return []epoch.Epoch{s.Successor()}
+			},
+		}, "concurrent Next calls must return the epochs of a sequential counter")
+		assert.Equal(t, c.Current(), epoch.Epoch(counterClients*counterCalls),
+			"Current must count every Next call")
 	})
 }
 
-func TestCounterConcurrent(t *testing.T) {
-	t.Parallel()
-
-	const goroutines = 16
-	const perGoroutine = 1000
-	c := epoch.NewCounter(epoch.Zero)
-
-	seen := make(chan epoch.Epoch, goroutines*perGoroutine)
-	var wg sync.WaitGroup
-	wg.Add(goroutines)
-	for range goroutines {
-		go func() {
-			defer wg.Done()
-			for range perGoroutine {
-				seen <- c.Next()
-			}
-		}()
-	}
-	wg.Wait()
-	close(seen)
-
-	// Every value 1..goroutines*perGoroutine should appear exactly
-	// once. The set of returned epochs is the contiguous range
-	// (1, N] with no gaps and no duplicates.
-	const total = goroutines * perGoroutine
-	hits := make(map[epoch.Epoch]int, total)
-	for e := range seen {
-		hits[e]++
-	}
-	testkit.Equal(t, len(hits), total,
-		"every Next call must produce a distinct epoch")
-	for e := epoch.Epoch(1); e <= total; e++ {
-		testkit.Equal(t, hits[e], 1,
-			"epoch must appear exactly once across all goroutines")
-	}
-	testkit.Equal(t, c.Current(), epoch.Epoch(total),
-		"final Current must equal total Next calls")
-}
-
-// TestCounterZeroAlloc cannot run in parallel —
-// testing.AllocsPerRun panics if any other test is running.
+// TestCounterAllocs checks the allocation ceiling of every method of a
+// Counter. MaxAllocs counts the allocations of the whole process, so the
+// test does not run in parallel.
 //
-//nolint:paralleltest // see comment above
-func TestCounterZeroAlloc(t *testing.T) {
-	c := epoch.NewCounter(epoch.Zero)
-
+//nolint:paralleltest // see above
+func TestCounterAllocs(t *testing.T) {
 	t.Run("Next", func(t *testing.T) {
-		testkit.Equal(t, testing.AllocsPerRun(100, func() { _ = c.Next() }),
-			float64(0), "Counter.Next must be zero-alloc")
+		c := epoch.NewCounter(epoch.Zero)
+
+		var got epoch.Epoch
+		expect.MaxAllocs(t, func() { got = c.Next() }, 0, "Counter.Next must not allocate")
+		assert.Equal(t, got, c.Current(), "the test must measure the issued epochs")
 	})
 
 	t.Run("Current", func(t *testing.T) {
-		testkit.Equal(t, testing.AllocsPerRun(100, func() { _ = c.Current() }),
-			float64(0), "Counter.Current must be zero-alloc")
+		c := epoch.NewCounter(epoch.Epoch(1))
+
+		var got epoch.Epoch
+		expect.MaxAllocs(t, func() { got = c.Current() }, 0, "Counter.Current must not allocate")
+		assert.Equal(t, got, epoch.Epoch(1), "the test must measure the current epoch")
 	})
 }
 
-func BenchmarkNext(b *testing.B) {
-	c := epoch.NewCounter(epoch.Zero)
-	b.ReportAllocs()
-	for b.Loop() {
-		_ = c.Next()
-	}
-}
+func BenchmarkCounter(b *testing.B) {
+	b.Run("Next", func(b *testing.B) {
+		c := epoch.NewCounter(epoch.Zero)
 
-func BenchmarkCurrent(b *testing.B) {
-	c := epoch.NewCounter(epoch.Epoch(1))
-	b.ReportAllocs()
-	var sink epoch.Epoch
-	for b.Loop() {
-		sink = c.Current()
-	}
-	runtime.KeepAlive(sink)
-}
+		var got epoch.Epoch
 
-func BenchmarkNextParallel(b *testing.B) {
-	c := epoch.NewCounter(epoch.Zero)
-	b.ReportAllocs()
-	b.RunParallel(func(pb *testing.PB) {
-		for pb.Next() {
-			_ = c.Next()
+		contract := bench.Start(b).MaxAllocs(0)
+		defer contract.End()
+
+		for contract.Loop() {
+			got = c.Next()
 		}
+
+		assert.Equal(b, got, c.Current(), "the benchmark must measure the issued epochs")
+	})
+
+	b.Run("Current", func(b *testing.B) {
+		c := epoch.NewCounter(epoch.Epoch(1))
+
+		var got epoch.Epoch
+
+		contract := bench.Start(b).MaxAllocs(0)
+		defer contract.End()
+
+		for contract.Loop() {
+			got = c.Current()
+		}
+
+		assert.Equal(b, got, epoch.Epoch(1), "the benchmark must measure the current epoch")
+	})
+
+	b.Run("Next in parallel", func(b *testing.B) {
+		c := epoch.NewCounter(epoch.Zero)
+
+		contract := bench.Start(b).MaxAllocs(0)
+		defer contract.End()
+
+		contract.RunParallel(func(pb *bench.PB) {
+			for pb.Next() {
+				c.Next()
+			}
+		})
+
+		assert.NotEqual(b, c.Current(), epoch.Zero, "the benchmark must measure issued epochs")
 	})
 }

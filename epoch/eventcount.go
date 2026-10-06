@@ -45,7 +45,8 @@ import (
 // new context allocates once inside the context package.
 type EventCount struct {
 	// wake is closed by the next Advance when taken is set. It is nil
-	// before the first blocking Wait and after Fail.
+	// until the first Wait that finds its target unmet. No method reads
+	// it after Fail.
 	wake chan struct{}
 
 	// err is the error of the first Fail.
@@ -113,8 +114,6 @@ func (c *EventCount) Fail(err error) {
 		close(c.wake)
 		c.taken = false
 	}
-
-	c.wake = nil
 }
 
 // Wait blocks until the count is at least v and returns nil. It returns
