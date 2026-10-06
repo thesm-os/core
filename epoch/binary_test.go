@@ -24,6 +24,10 @@ var (
 	_ encoding.BinaryUnmarshaler = (*epoch.Epoch)(nil)
 )
 
+// refuseContract is the contract of refusesLength, which
+// TestUnmarshalBinary and FuzzUnmarshalBinary check.
+const refuseContract = "UnmarshalBinary must refuse every length but EpochSize"
+
 func TestMarshalBinary(t *testing.T) {
 	t.Parallel()
 
@@ -92,19 +96,14 @@ func TestUnmarshalBinary(t *testing.T) {
 	t.Run("returns ErrSize for any length but EpochSize", func(t *testing.T) {
 		t.Parallel()
 
-		prop.ForAll(t, "UnmarshalBinary must refuse every length but EpochSize", func(c *prop.Case) {
-			data := c.Draw(prop.Bytes(prop.MaxSize(2*epoch.EpochSize)).Filter(func(b []byte) bool {
-				return len(b) != epoch.EpochSize
-			}), "data")
-
-			got := epoch.Epoch(7)
-
-			var err error
-			assert.Pure(c, func() epoch.Epoch { return got }, func() { err = got.UnmarshalBinary(data) },
-				"a refused decode must not modify the receiver")
-			assert.ErrorIs(c, err, epoch.ErrSize, "a wrong-length input must be a decode error")
-		})
+		prop.ForAll(t, refuseContract, refusesLength)
 	})
+}
+
+// FuzzUnmarshalBinary checks the contract of refusesLength on the inputs
+// that a fuzzer finds.
+func FuzzUnmarshalBinary(f *testing.F) {
+	prop.Fuzz(f, refuseContract, refusesLength)
 }
 
 // TestBinaryAllocs checks the allocation contract of AppendBinary.
@@ -148,4 +147,20 @@ func BenchmarkBinary(b *testing.B) {
 		assert.NoError(b, err, "AppendBinary must succeed")
 		assert.Length(b, got, epoch.EpochSize, "the benchmark must measure the binary form")
 	})
+}
+
+// refusesLength decodes an input of any length but EpochSize, up to twice
+// EpochSize, into an epoch of 7. The decode must return ErrSize and leave
+// the epoch unchanged.
+func refusesLength(c *prop.Case) {
+	data := c.Draw(prop.Bytes(prop.MaxSize(2*epoch.EpochSize)).Filter(func(b []byte) bool {
+		return len(b) != epoch.EpochSize
+	}), "data")
+
+	got := epoch.Epoch(7)
+
+	var err error
+	assert.Pure(c, func() epoch.Epoch { return got }, func() { err = got.UnmarshalBinary(data) },
+		"a refused decode must not modify the receiver")
+	assert.ErrorIs(c, err, epoch.ErrSize, "a wrong-length input must be a decode error")
 }
