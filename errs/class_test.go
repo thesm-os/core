@@ -28,6 +28,10 @@ var (
 	_ encoding.TextUnmarshaler = (*errs.Class)(nil)
 )
 
+// refuseContract is the contract of refusesText, which TestClass and
+// FuzzClass check.
+const refuseContract = "UnmarshalText must refuse every text that names no class"
+
 // names pins the name of every class. The names are a persisted
 // encoding, so this table is the recorded form a change must match.
 var names = []struct {
@@ -212,23 +216,7 @@ func TestClass(t *testing.T) {
 
 		t.Run("returns ErrUnknownClass for any text but a name", func(t *testing.T) {
 			t.Parallel()
-			prop.ForAll(t, "UnmarshalText must refuse every text that names no class", func(c *prop.Case) {
-				text := c.Draw(prop.String(prop.MaxSize(12)).Filter(func(s string) bool {
-					for _, n := range names {
-						if n.name == s {
-							return false
-						}
-					}
-
-					return true
-				}), "text")
-				got := errs.Denied
-
-				var err error
-				assert.Pure(c, func() errs.Class { return got }, func() { err = got.UnmarshalText([]byte(text)) },
-					"a refused decode must leave the class unchanged")
-				assert.ErrorIs(c, err, errs.ErrUnknownClass, "UnmarshalText must refuse "+text)
-			})
+			prop.ForAll(t, refuseContract, refusesText)
 		})
 
 		t.Run("decodes a class from its JSON name", func(t *testing.T) {
@@ -240,6 +228,12 @@ func TestClass(t *testing.T) {
 			assert.Equal(t, got.Class, errs.Integrity, "JSON must decode the name")
 		})
 	})
+}
+
+// FuzzClass checks the contract of refusesText on the texts that a fuzzer
+// finds.
+func FuzzClass(f *testing.F) {
+	prop.Fuzz(f, refuseContract, refusesText)
 }
 
 // TestClassAllocs checks the allocation contract of each method of a
@@ -359,4 +353,25 @@ func BenchmarkClass(b *testing.B) {
 		assert.NoError(b, err, "UnmarshalText must accept a name")
 		assert.Equal(b, got, errs.Integrity, "the benchmark must measure a decode")
 	})
+}
+
+// refusesText decodes a text that names no class, invalid UTF-8 included,
+// into a Class of Denied. The decode must return ErrUnknownClass and leave
+// the class unchanged.
+func refusesText(c *prop.Case) {
+	text := c.Draw(prop.Bytes(prop.MaxSize(16)).Filter(func(b []byte) bool {
+		for _, n := range names {
+			if n.name == string(b) {
+				return false
+			}
+		}
+
+		return true
+	}), "text")
+	got := errs.Denied
+
+	var err error
+	assert.Pure(c, func() errs.Class { return got }, func() { err = got.UnmarshalText(text) },
+		"a refused decode must leave the class unchanged")
+	assert.ErrorIs(c, err, errs.ErrUnknownClass, "UnmarshalText must refuse "+string(text))
 }
