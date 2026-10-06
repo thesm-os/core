@@ -5,42 +5,54 @@ package rand_test
 
 import (
 	"encoding/binary"
+	"math"
+	"slices"
 	"testing"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/bench"
+	"go.dokimi.dev/assert/expect"
+	"go.dokimi.dev/assert/prop"
 
 	"go.thesmos.sh/core/rand"
 	"go.thesmos.sh/core/rand/constant"
 	"go.thesmos.sh/core/rand/pcg"
 )
 
-// scriptedRand returns a pre-set sequence of Uint64 values and
-// panics once exhausted. Used to force specific algorithmic branches
-// (e.g. Lemire's rejection loop) that probabilistic inputs cannot
-// reliably trigger.
+// Generators of the properties over the helpers.
+var (
+	// seeds generates the seed of a pcg source.
+	seeds = prop.Integer[rand.Seed](math.MinInt64, math.MaxInt64)
+
+	// lengths generates the length of the range that a case shuffles.
+	lengths = prop.Integer(0, 64)
+)
+
+// scriptedRand returns a pre-set sequence of Uint64 values and panics once
+// the sequence ends. It forces the branches of an algorithm that random
+// draws reach too rarely, such as the rejection loop of Uint64N.
 //
-// Panicking rather than looping is load-bearing. Every test scripts
-// exactly the draws the algorithm should consume and asserts pos
-// afterwards, so a draw past the script is always a defect — and
-// under a mutated redraw condition, looping converts that defect
-// into an infinite spin the binary can only escape by deadline.
-// The panic turns the same defect into an immediate, named kill.
+// A case scripts exactly the draws that the algorithm consumes. A draw past
+// the script is a defect, and under a mutated redraw condition it would loop
+// until the test binary's deadline, so the panic ends it at once.
 type scriptedRand struct {
 	values []uint64
 	pos    int
 }
 
+// Uint64 returns the next value of the script, and panics past its end.
 func (s *scriptedRand) Uint64() uint64 {
 	if s.pos >= len(s.values) {
-		// A draw past the script is a programmer error, and under a
-		// mutated redraw loop the alternative is an infinite spin.
-		panic("scriptedRand: draw past the script") //nolint:forbidigo // see above
+		panic("scriptedRand: draw past the script") //nolint:forbidigo // see the type's docblock
 	}
 	v := s.values[s.pos]
 	s.pos++
+
 	return v
 }
 
+// Read fills p with the little-endian bytes of the next values of the
+// script.
 func (s *scriptedRand) Read(p []byte) (int, error) {
 	var chunk [8]byte
 	written := 0
@@ -48,253 +60,229 @@ func (s *scriptedRand) Read(p []byte) (int, error) {
 		binary.LittleEndian.PutUint64(chunk[:], s.Uint64())
 		written += copy(p[written:], chunk[:])
 	}
+
 	return len(p), nil
 }
 
 func TestFloat64(t *testing.T) {
 	t.Parallel()
 
-	t.Run("returns 0.0 when Uint64 returns 0", func(t *testing.T) {
+	t.Run("returns the top 53 bits of the draw over 2^53", func(t *testing.T) {
 		t.Parallel()
-		testkit.Equal(t, rand.Float64(constant.New(0)), 0.0,
-			"Float64(0) must return 0.0")
+		prop.Equal(t,
+			func(u uint64) uint64 { return uint64(math.Ldexp(rand.Float64(constant.New(u)), 53)) },
+			func(u uint64) uint64 { return u >> 11 },
+			"Float64 must divide the top 53 bits of one draw by 2^53",
+			prop.Example(uint64(0)), prop.Example(uint64(1<<63)), prop.Example(uint64(math.MaxUint64)))
 	})
 
-	t.Run("stays in [0.0, 1.0)", func(t *testing.T) {
+	t.Run("returns a value in [0, 1)", func(t *testing.T) {
 		t.Parallel()
-		r := pcg.New(rand.Seed(42))
-		for range 1000 {
-			got := rand.Float64(r)
-			testkit.True(t, got >= 0.0 && got < 1.0,
-				"Float64 must stay in [0.0, 1.0)")
-		}
+		prop.InRange(t, func(u uint64) float64 { return rand.Float64(constant.New(u)) }, 0, math.Nextafter(1, 0),
+			"Float64 must stay below 1", prop.Example(uint64(math.MaxUint64)))
 	})
 }
 
 func TestShuffle(t *testing.T) {
 	t.Parallel()
 
-	t.Run("no-op for n <= 1", func(t *testing.T) {
+	t.Run("calls swap for each i from n-1 down to 1 with j in [0, i]", func(t *testing.T) {
 		t.Parallel()
-		// Construct a fixed Rand that would deterministically swap
-		// indices if Shuffle ran the loop body. Verify swap is
-		// never called — and panic if it is called OUT OF CONTRACT,
-		// because the called-flag assertion only runs after Shuffle
-		// returns. A mutant that turns the loop condition inside out
-		// runs it downward from i = n-1 forever, and a swap that
-		// ignores its indices lets that spin until the binary's
-		// deadline instead of dying at the first bad call.
-		called := false
-		for _, n := range []int{0, 1} {
-			swap := func(i, j int) {
-				called = true
-				if i < 0 || i >= n || j < 0 || j > i {
-					panic("Shuffle: swap invoked outside its index contract") //nolint:forbidigo // see above
-				}
-			}
-			rand.Shuffle(constant.New(0), n, swap)
-		}
-		testkit.False(t, called, "Shuffle must not invoke swap for n <= 1")
-	})
+		prop.ForAll(t, "Shuffle must call swap once per index, from the last down to 1", func(c *prop.Case) {
+			r := pcg.New(c.Draw(seeds, "seed"))
+			n := c.Draw(lengths, "n")
 
-	t.Run("permutes the input", func(t *testing.T) {
-		t.Parallel()
-		const n = 100
-		out := make([]int, n)
-		for i := range n {
-			out[i] = i
-		}
-		r := pcg.New(rand.Seed(42))
-		rand.Shuffle(r, n, func(i, j int) { out[i], out[j] = out[j], out[i] })
-
-		// Result must contain every index in [0, n) exactly once.
-		seen := make(map[int]bool, n)
-		for _, v := range out {
-			testkit.False(t, seen[v], "Shuffle must not produce duplicate index")
-			seen[v] = true
-		}
-		testkit.Equal(t, len(seen), n, "Shuffle must preserve cardinality")
-	})
-
-	t.Run("deterministic for the same seed", func(t *testing.T) {
-		t.Parallel()
-		const n = 50
-		runs := make([][]int, 2)
-		for run := range runs {
-			runs[run] = make([]int, n)
-			for i := range n {
-				runs[run][i] = i
-			}
-			r := pcg.New(rand.Seed(123))
+			var is []int
 			rand.Shuffle(r, n, func(i, j int) {
-				runs[run][i], runs[run][j] = runs[run][j], runs[run][i]
+				assert.InRange(c, j, 0, float64(i), "swap must receive a j in [0, i]")
+				is = append(is, i)
 			})
-		}
-		testkit.Equal(t, runs[0], runs[1],
-			"Shuffle must produce identical permutations for the same seed")
+
+			var want []int
+			for i := n - 1; i > 0; i-- {
+				want = append(want, i)
+			}
+			assert.Equal(c, is, want, "Shuffle must call swap for n-1 down to 1")
+		})
+	})
+
+	t.Run("permutes the range", func(t *testing.T) {
+		t.Parallel()
+		prop.ForAll(t, "Shuffle must move every element of [0, n) and lose none", func(c *prop.Case) {
+			r := pcg.New(c.Draw(seeds, "seed"))
+			n := c.Draw(lengths, "n")
+			want := make([]int, n)
+			for i := range want {
+				want[i] = i
+			}
+
+			got := slices.Clone(want)
+			rand.Shuffle(r, n, func(i, j int) { got[i], got[j] = got[j], got[i] })
+			assert.Permutation(c, got, want, "the shuffled range must contain each element once")
+		})
+	})
+
+	t.Run("returns the same permutation for the same seed", func(t *testing.T) {
+		t.Parallel()
+		prop.Deterministic(t, func(seed rand.Seed) ([]int, error) {
+			out := make([]int, 50)
+			for i := range out {
+				out[i] = i
+			}
+			rand.Shuffle(pcg.New(seed), len(out), func(i, j int) { out[i], out[j] = out[j], out[i] })
+
+			return out, nil
+		}, "Shuffle must permute the same way for the same stream of draws", prop.Using(seeds))
+	})
+
+	t.Run("returns the recorded permutation of seed 1", func(t *testing.T) {
+		t.Parallel()
+		// The permutation is recorded from pcg.New(rand.Seed(1)). A change
+		// of the index arithmetic, such as the i+1 bound or the order of
+		// the swaps, changes it.
+		out := []int{0, 1, 2, 3, 4, 5, 6, 7}
+		rand.Shuffle(pcg.New(rand.Seed(1)), len(out), func(i, j int) { out[i], out[j] = out[j], out[i] })
+		assert.Equal(t, out, []int{5, 3, 1, 2, 6, 7, 0, 4}, "Shuffle must return the recorded permutation")
+	})
+
+	t.Run("calls no swap for n of 1 or less", func(t *testing.T) {
+		t.Parallel()
+		// The empty script panics at the first draw and the swap at its
+		// first call, so a mutant that loops for math.MinInt stops at once.
+		prop.NotPanics(t, func(n int) {
+			rand.Shuffle(&scriptedRand{}, n, func(int, int) {
+				panic("Shuffle: swap called for n of 1 or less") //nolint:forbidigo // see above
+			})
+		}, "Shuffle must neither draw nor call swap for n of 1 or less",
+			prop.Using(prop.Integer(math.MinInt, 1)), prop.Example(math.MinInt), prop.Example(0), prop.Example(1))
 	})
 }
 
 func TestUint64N(t *testing.T) {
 	t.Parallel()
 
-	t.Run("returns 0 when n is 0", func(t *testing.T) {
+	t.Run("returns 0 for n of 0 or 1", func(t *testing.T) {
 		t.Parallel()
-		testkit.Equal(t, rand.Uint64N(constant.New(0xFFFFFFFFFFFFFFFF), 0), uint64(0),
-			"Uint64N(_, 0) must return 0")
+		prop.ForAll(t, "Uint64N must return 0 for an interval of at most one value", func(c *prop.Case) {
+			r := constant.New(c.Draw(prop.Of[uint64](), "draw"))
+			n := c.Draw(prop.SampledFrom[uint64](0, 1), "n")
+			assert.Equal(c, rand.Uint64N(r, n), 0, "Uint64N must return 0")
+		})
 	})
 
-	t.Run("returns 0 when n is 1", func(t *testing.T) {
+	t.Run("returns a value below n", func(t *testing.T) {
 		t.Parallel()
-		testkit.Equal(t, rand.Uint64N(constant.New(0xFFFFFFFFFFFFFFFF), 1), uint64(0),
-			"Uint64N(_, 1) must return 0")
+		prop.ForAll(t, "Uint64N must return a value in [0, n)", func(c *prop.Case) {
+			r := pcg.New(c.Draw(seeds, "seed"))
+			n := c.Draw(prop.Integer[uint64](1, math.MaxUint64), "n")
+			assert.True(c, rand.Uint64N(r, n) < n, "Uint64N must return a value below n")
+		})
 	})
 
-	t.Run("result is strictly less than n", func(t *testing.T) {
+	t.Run("redraws while the draw falls in the band of bias", func(t *testing.T) {
 		t.Parallel()
-		r := pcg.New(rand.Seed(7))
-		const n uint64 = 100
-		for range 10_000 {
-			got := rand.Uint64N(r, n)
-			testkit.True(t, got < n, "Uint64N(_, n) must return < n")
-		}
+		// For n = 7 the band is lo < -7 % 7 = 2. A first draw of 0 gives
+		// lo = 0, inside the band. The second, 1<<60, gives lo = 7<<60,
+		// outside it, and hi = 0.
+		r := &scriptedRand{values: []uint64{0, 1 << 60}}
+		assert.Equal(t, rand.Uint64N(r, 7), 0, "Uint64N must return the hi of the second draw")
+		assert.Equal(t, r.pos, 2, "Uint64N must take exactly two draws")
 	})
 
-	t.Run("rejection loop triggers when first draw is biased", func(t *testing.T) {
+	t.Run("keeps a draw at the edge of the band of bias", func(t *testing.T) {
 		t.Parallel()
-		// Lemire's algorithm enters the rejection check when
-		// lo < n, and re-draws while lo < thresh = -n % n.
-		// For n = 7, thresh = 2. A first draw of 0 yields
-		// lo = hi = 0, satisfying both conditions. The second
-		// draw must produce lo >= 2 to exit the loop.
-		const n uint64 = 7
-		// Draw 1: 0 × 7 → lo=0, hi=0 → lo<n and lo<thresh,
-		//         loop iterates.
-		// Draw 2: 0x1000000000000000 × 7 = 0x7000000000000000
-		//         → lo huge, hi=0 → loop exits with hi=0.
-		r := &scriptedRand{values: []uint64{0, 0x1000000000000000}}
-		testkit.Equal(t, rand.Uint64N(r, n), uint64(0), "Uint64N must return 0")
-		testkit.Equal(t, r.pos, 2,
-			"rejection loop must consume exactly 2 draws")
-	})
-
-	t.Run("non-rejected first draw exits before redrawing", func(t *testing.T) {
-		t.Parallel()
-		// Construct a draw whose lo straddles the loop boundary
-		// `lo < thresh` and `lo == thresh`. The original code
-		// uses `<` (exits at lo == thresh); a CONDITIONALS_BOUNDARY
-		// mutation to `<=` would re-iterate. Choose a draw that
-		// produces lo == thresh exactly so the mutation is
-		// observable.
-		//
-		// For n = 3, thresh = 1. Find d such that d*3 mod 2^64
-		// equals 1. The modular inverse of 3 in mod 2^64 is
-		// 12297829382473034411 (verified: 3 * x = 2*2^64 + 1).
-		const n uint64 = 3
-		// Draw 1: d × 3 = 2 × 2^64 + 1 → lo=1, hi=2.
-		// Original: lo < thresh (1 < 1) false → exit, return 2.
-		// Mutated `<=`: lo <= thresh (1 <= 1) true → redraw.
-		// Set draw 2 to 4: 4×3 = 12 → lo=12, hi=0 → exit, return 0.
+		// For n = 3 the band is lo < -3 % 3 = 1. The modular inverse of 3
+		// gives 3x = 2*2^64 + 1, so lo = 1, at the edge, and hi = 2.
 		r := &scriptedRand{values: []uint64{12297829382473034411, 4}}
-		testkit.Equal(t, rand.Uint64N(r, n), uint64(2),
-			"rejection loop must use < not <= (returns hi=2 on first draw)")
-		testkit.Equal(t, r.pos, 1,
-			"rejection loop must not redraw on lo == thresh")
+		assert.Equal(t, rand.Uint64N(r, 3), 2, "Uint64N must return the hi of the first draw")
+		assert.Equal(t, r.pos, 1, "Uint64N must not redraw for a lo equal to the band")
 	})
 }
 
-func TestShuffleDeterministic(t *testing.T) {
-	t.Parallel()
-
-	// Hardcoded golden permutation recorded from
-	// pcg.New(rand.Seed(1)) on Go 1.26.x. Any drift in Shuffle's
-	// index arithmetic (the `i+1` upper bound, the swap order)
-	// produces a different permutation. The fixture is regenerated
-	// only if the upstream math/rand/v2 PCG output changes.
-	want := []int{5, 3, 1, 2, 6, 7, 0, 4}
-
-	out := make([]int, len(want))
-	for i := range out {
-		out[i] = i
-	}
-	rand.Shuffle(pcg.New(rand.Seed(1)), len(out), func(i, j int) {
-		out[i], out[j] = out[j], out[i]
-	})
-
-	testkit.Equal(t, out, want,
-		"Shuffle output must match the golden permutation")
-}
-
-// TestZeroAlloc enforces the documented "Zero alloc" contracts on
-// the rand package's helpers. testing.AllocsPerRun uses a
-// process-global malloc counter, so this test does not call
-// t.Parallel.
-func TestZeroAlloc(t *testing.T) {
+// TestHelpersAllocs checks the allocation contracts of Float64, Shuffle
+// and Uint64N. MaxAllocs counts the allocations of the whole process, so
+// the test does not run in parallel.
+//
+//nolint:paralleltest // see above
+func TestHelpersAllocs(t *testing.T) {
 	r := pcg.New(rand.Seed(1))
-	// The swap asserts Shuffle's index contract (0 <= j <= i < n)
-	// rather than ignoring its arguments. Comparisons cost no
-	// allocations, so the measurement is undisturbed — and a mutant
-	// that runs the loop index away from its bounds dies here by
-	// panic instead of spinning until the test binary's deadline.
-	noopSwap := func(i, j int) {
-		if j < 0 || i < j || i >= 16 {
-			//nolint:forbidigo // an out-of-contract index is a programmer error, and the panic is what stops a runaway loop index from spinning forever
-			panic("Shuffle: swap invoked outside its index contract")
+
+	t.Run("Float64", func(t *testing.T) {
+		var got float64
+		expect.MaxAllocs(t, func() { got = rand.Float64(r) }, 0, "Float64 must not allocate")
+		assert.InRange(t, got, 0, math.Nextafter(1, 0), "the test must measure a value in [0, 1)")
+	})
+
+	t.Run("Shuffle", func(t *testing.T) {
+		calls := 0
+		expect.MaxAllocs(t, func() { rand.Shuffle(r, 16, func(int, int) { calls++ }) }, 0,
+			"Shuffle must not allocate")
+		assert.True(t, calls > 0, "the test must measure calls of swap")
+	})
+
+	t.Run("Uint64N", func(t *testing.T) {
+		var got uint64
+		expect.MaxAllocs(t, func() { got = rand.Uint64N(r, 100) }, 0, "Uint64N must not allocate")
+		assert.True(t, got < 100, "the test must measure a value below n")
+	})
+}
+
+// BenchmarkHelpers reports the cost of Float64, Shuffle and Uint64N on a
+// pcg source, and fails when one of them allocates.
+func BenchmarkHelpers(b *testing.B) {
+	b.Run("Float64", func(b *testing.B) {
+		r := pcg.New(rand.Seed(1))
+
+		var got float64
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			got = rand.Float64(r)
 		}
-	}
 
-	cases := []struct {
-		name string
-		fn   func()
-	}{
-		{"Float64", func() { _ = rand.Float64(r) }},
-		{"Uint64N", func() { _ = rand.Uint64N(r, 100) }},
-		// pcg, not constant.New(0): Shuffle uses Lemire's rejection
-		// sampling, and a constant-zero source would hit the
-		// rejection band on every draw and loop forever for
-		// n >= 3.
-		{"Shuffle", func() { rand.Shuffle(r, 16, noopSwap) }},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			testkit.Equal(t, testing.AllocsPerRun(100, tc.fn),
-				float64(0), tc.name+" must be zero-alloc")
-		})
-	}
-}
+		assert.InRange(b, got, 0, math.Nextafter(1, 0), "the benchmark must measure a value in [0, 1)")
+	})
 
-func BenchmarkFloat64(b *testing.B) {
-	r := pcg.New(rand.Seed(1))
-	b.ReportAllocs()
-	for b.Loop() {
-		_ = rand.Float64(r)
-	}
-}
+	b.Run("Shuffle", func(b *testing.B) {
+		for _, size := range []struct {
+			name string
+			n    int
+		}{
+			{"16", 16},
+			{"256", 256},
+			{"4K", 4096},
+		} {
+			b.Run(size.name, func(b *testing.B) {
+				r := pcg.New(rand.Seed(1))
+				calls := 0
+				swap := func(int, int) { calls++ }
 
-func BenchmarkUint64N(b *testing.B) {
-	r := pcg.New(rand.Seed(1))
-	b.ReportAllocs()
-	for b.Loop() {
-		_ = rand.Uint64N(r, 1024)
-	}
-}
+				c := bench.Start(b).MaxAllocs(0)
+				defer c.End()
 
-func BenchmarkShuffle(b *testing.B) {
-	for _, sz := range []struct {
-		name string
-		n    int
-	}{
-		{"16", 16},
-		{"256", 256},
-		{"4K", 4096},
-	} {
-		b.Run(sz.name, func(b *testing.B) {
-			r := pcg.New(rand.Seed(1))
-			swap := func(_, _ int) {}
-			b.ReportAllocs()
-			for b.Loop() {
-				rand.Shuffle(r, sz.n, swap)
-			}
-		})
-	}
+				for c.Loop() {
+					rand.Shuffle(r, size.n, swap)
+				}
+
+				assert.True(b, calls > 0, "the benchmark must measure calls of swap")
+			})
+		}
+	})
+
+	b.Run("Uint64N", func(b *testing.B) {
+		r := pcg.New(rand.Seed(1))
+
+		var got uint64
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			got = rand.Uint64N(r, 1024)
+		}
+
+		assert.True(b, got < 1024, "the benchmark must measure a value below n")
+	})
 }
