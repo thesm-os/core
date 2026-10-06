@@ -4,49 +4,64 @@
 package version_test
 
 import (
-	"runtime"
 	"testing"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/bench"
+	"go.dokimi.dev/assert/expect"
+	"go.dokimi.dev/assert/prop"
 
 	"go.thesmos.sh/core/version"
 )
 
-func TestWriteOptionsIsConditional(t *testing.T) {
+func TestWriteOptions(t *testing.T) {
 	t.Parallel()
 
-	cases := map[string]struct {
-		in   version.WriteOptions
-		want bool
-	}{
-		"zero value is not conditional": {
-			version.WriteOptions{}, false,
-		},
-		"IfMatch set is conditional": {
-			version.WriteOptions{IfMatch: "abc"}, true,
-		},
-		"IfNoneMatch wildcard is conditional": {
-			version.WriteOptions{IfNoneMatch: version.Wildcard}, true,
-		},
-		"both set is conditional": {
-			version.WriteOptions{IfMatch: "abc", IfNoneMatch: "def"}, true,
-		},
-	}
-	for name, tc := range cases {
-		t.Run(name, func(t *testing.T) {
+	t.Run("IsConditional", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("reports whether either precondition is set", func(t *testing.T) {
 			t.Parallel()
-			testkit.Equal(t, tc.in.IsConditional(), tc.want,
-				"IsConditional must reflect IfMatch/IfNoneMatch presence")
+			prop.Equal(t, version.WriteOptions.IsConditional,
+				func(o version.WriteOptions) bool { return o.IfMatch != "" || o.IfNoneMatch != "" },
+				"IsConditional must report true when IfMatch or IfNoneMatch is set",
+				prop.Example(version.WriteOptions{}),
+				prop.Example(version.WriteOptions{IfMatch: "abc"}),
+				prop.Example(version.WriteOptions{IfNoneMatch: version.Wildcard}),
+				prop.Example(version.WriteOptions{IfMatch: "abc", IfNoneMatch: "def"}),
+			)
 		})
-	}
+	})
 }
 
-func BenchmarkIsConditional(b *testing.B) {
-	opts := version.WriteOptions{IfMatch: "v1"}
-	b.ReportAllocs()
-	var sink bool
-	for b.Loop() {
-		sink = opts.IsConditional()
-	}
-	runtime.KeepAlive(sink)
+// TestWriteOptionsAllocs checks that IsConditional does not allocate.
+// MaxAllocs counts the allocations of the whole process, so the test does
+// not run in parallel.
+//
+//nolint:paralleltest // see above
+func TestWriteOptionsAllocs(t *testing.T) {
+	t.Run("IsConditional", func(t *testing.T) {
+		opts := version.WriteOptions{IfMatch: "v1"}
+
+		var got bool
+		expect.MaxAllocs(t, func() { got = opts.IsConditional() }, 0, "IsConditional must not allocate")
+		assert.True(t, got, "the test must measure a conditional write")
+	})
+}
+
+func BenchmarkWriteOptions(b *testing.B) {
+	b.Run("IsConditional", func(b *testing.B) {
+		opts := version.WriteOptions{IfMatch: "v1"}
+
+		var got bool
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			got = opts.IsConditional()
+		}
+
+		assert.True(b, got, "the benchmark must measure a conditional write")
+	})
 }
