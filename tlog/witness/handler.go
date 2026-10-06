@@ -180,7 +180,7 @@ func readBody(r io.Reader, dst []byte) ([]byte, error) {
 // httpserver.Error otherwise.
 func writeFailure(w http.ResponseWriter, r *http.Request, err error) {
 	if se, ok := errors.AsType[*SizeError](err); ok {
-		var body [maxSizeText + 1]byte
+		var body [maxSizeBody]byte
 
 		w.Header()[contentType] = sizeTypes[:1:1]
 		w.WriteHeader(http.StatusConflict)

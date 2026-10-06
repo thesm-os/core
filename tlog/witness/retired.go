@@ -144,9 +144,13 @@ func (s *Server) lookupRetired(ctx context.Context, h originHash, o checkpoint.O
 			return fmt.Errorf("%w: the key %q is not the key of a retired origin", ErrJournal, k)
 		}
 
-		if !found || n > size {
-			key, size, found = k, n, true
+		// n equals size only for a first key of size 0, because the keys of
+		// one origin differ in their sizes.
+		if n >= size {
+			key, size = k, n
 		}
+
+		found = true
 
 		return nil
 	})

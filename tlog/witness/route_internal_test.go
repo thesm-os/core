@@ -4,6 +4,7 @@
 package witness
 
 import (
+	"encoding/hex"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -42,7 +43,7 @@ func TestRouteInternal(t *testing.T) {
 			st.refuse(linesPrefix)
 			a.advance(t, s, 0, 5, nil)
 			st.refuse("")
-			testkit.NoError(t, s.snapshot(t.Context()), "the snapshot must install")
+			testkit.NoError(t, s.snapshot(bounded(t)), "the snapshot must install")
 
 			testkit.Equal(t, getRoute(t, f.server(t), a.origin).Code, http.StatusServiceUnavailable,
 				"the route must report the origin of the snapshot")
@@ -62,6 +63,36 @@ func TestRouteInternal(t *testing.T) {
 			testkit.Equal(t, getRoute(t, s, a.origin).Code, http.StatusInternalServerError,
 				"the route must refuse the position")
 		})
+
+		positions := []struct {
+			edit func(p *position)
+			name string
+		}{
+			{
+				name: "responds with 500 for a served position one past the updates of its call",
+				edit: func(p *position) { p.update = 1 },
+			},
+			{
+				name: "responds with 500 for a served position one past the calls of its record",
+				edit: func(p *position) { p.call = 1 },
+			},
+		}
+		for _, tt := range positions {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				_, _, s := faultyServer(t)
+				a.advance(t, s, 0, 5, nil)
+
+				h := hashOrigin(a.origin)
+				o, _ := s.st.origins.Get(h)
+				tt.edit(&o.served)
+				o.latest = o.served
+				s.st.origins.Set(h, o)
+
+				testkit.Equal(t, getRoute(t, s, a.origin).Code, http.StatusInternalServerError,
+					"the route must refuse the position")
+			})
+		}
 
 		t.Run("responds with 500 for a group that does not decode", func(t *testing.T) {
 			t.Parallel()
@@ -96,7 +127,7 @@ func TestRouteInternal(t *testing.T) {
 			testkit.Equal(tb, getRoute(tb, stale, a.origin).Code, http.StatusOK, "the route must serve the record")
 
 			for size := uint64(6); size <= 8; size++ {
-				testkit.NoError(tb, s.snapshot(tb.Context()), "the snapshot must install")
+				testkit.NoError(tb, s.snapshot(bounded(tb)), "the snapshot must install")
 				b.advance(tb, s, size-1, size, nil)
 			}
 
@@ -191,7 +222,7 @@ func TestRouteInternal(t *testing.T) {
 			f.clock.Advance(2 * time.Minute)
 			getRoute(t, s, a.origin)
 
-			deadline := time.Now().Add(5 * time.Second)
+			deadline := time.Now().Add(patience)
 			for !h.has("witness: a refresh failed") {
 				if time.Now().After(deadline) {
 					t.Fatal("the refresh must log its failure")
@@ -199,6 +230,26 @@ func TestRouteInternal(t *testing.T) {
 
 				time.Sleep(time.Millisecond)
 			}
+		})
+	})
+
+	t.Run("parseRoute", func(t *testing.T) {
+		t.Parallel()
+
+		h := hashOrigin(a.origin)
+		digits := hex.EncodeToString(h[:])
+
+		t.Run("returns the hash of a path of only the hash and the checkpoint element", func(t *testing.T) {
+			t.Parallel()
+			got, ok := parseRoute("/" + digits + checkpointPath)
+			testkit.True(t, ok, "parseRoute must accept the path")
+			testkit.True(t, got == h, "parseRoute must return the hash")
+		})
+
+		t.Run("reports false for a path without a slash before the hash", func(t *testing.T) {
+			t.Parallel()
+			_, ok := parseRoute(digits + checkpointPath)
+			testkit.False(t, ok, "parseRoute must refuse the path")
 		})
 	})
 
@@ -214,8 +265,89 @@ func TestRouteInternal(t *testing.T) {
 			o, _ := s.st.origins.Get(h)
 			s.st.origins.Delete(h)
 
-			got := s.advanceServed(t.Context(), h, o)
+			got := s.advanceServed(bounded(t), h, o)
 			testkit.True(t, got == o, "advanceServed must return the state that it received")
+		})
+
+		t.Run("moves no served position back to an earlier record", func(t *testing.T) {
+			t.Parallel()
+			_, _, s := faultyServer(t)
+			a.advance(t, s, 0, 5, nil)
+			first := s.st.head.Record
+			a.advance(t, s, 5, 6, nil)
+
+			h := hashOrigin(a.origin)
+			o, _ := s.st.origins.Get(h)
+
+			// The state of a GET that read it before the second commit.
+			stale := o
+			stale.latest = position{key: recordPrefix + first, seq: 1}
+
+			got := s.advanceServed(bounded(t), h, stale)
+			testkit.True(t, got.served == o.served, "advanceServed must keep the later served position")
+		})
+
+		t.Run("moves no served position to another update of its record", func(t *testing.T) {
+			t.Parallel()
+			_, _, s := faultyServer(t)
+			a.advance(t, s, 0, 5, nil)
+
+			h := hashOrigin(a.origin)
+			o, _ := s.st.origins.Get(h)
+
+			other := o
+			other.latest.call = 1
+
+			got := s.advanceServed(bounded(t), h, other)
+			testkit.True(t, got.served == o.served, "advanceServed must keep the served position of the record")
+		})
+	})
+
+	t.Run("readLoaded", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the length of a record and of its lines as the size of the object", func(t *testing.T) {
+			t.Parallel()
+			f, _, s := faultyServer(t)
+			a.advance(t, s, 0, 5, nil)
+
+			o, _ := s.st.origins.Get(hashOrigin(a.origin))
+			got, err := s.readLoaded(bounded(t), o.served)
+			testkit.NoError(t, err, "readLoaded must read the record")
+
+			name := o.served.key[len(recordPrefix):]
+			rec, err := read(t.Context(), f.store, recordPrefix+name, maxObjectBytes)
+			testkit.NoError(t, err, "the record must read")
+			ls, err := read(t.Context(), f.store, linesPrefix+name, maxObjectBytes)
+			testkit.NoError(t, err, "the lines must read")
+
+			testkit.Equal(t, got.size, int64(len(rec)+len(ls)),
+				"the size must be the length of the record and its lines")
+		})
+	})
+
+	t.Run("refreshIfStale", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("starts no refresh of a state of exactly refreshAge", func(t *testing.T) {
+			t.Parallel()
+			f, st, s := faultyServer(t)
+
+			// A refresh that starts waits in its read of the head until the
+			// cleanup, so its flag remains set when the case reads it.
+			gate := make(chan struct{})
+			t.Cleanup(func() { close(gate) })
+			st.get = func(key string) error {
+				if key == headKey {
+					<-gate
+				}
+
+				return nil
+			}
+
+			f.clock.Advance(refreshAge)
+			s.refreshIfStale()
+			testkit.False(t, s.refreshing.Load(), "a state of exactly refreshAge must start no refresh")
 		})
 	})
 }

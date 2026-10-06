@@ -76,12 +76,13 @@ type plan struct {
 // walk that found an object missing, start again from a new reading of
 // the head.
 //
-// Returns an error that wraps [ErrJournal] when two walks from one version
-// of the head find a fault: an object that does not decode or whose hash
-// is not its name, a chain that ends before its snapshot or before the
-// record of the state, and a record missing from the chain after the
-// record of the snapshot. Returns the cause of ctx when ctx ends, and the
-// errors of the store.
+// Error modes:
+//   - An error that wraps [ErrJournal] when two walks from one version of
+//     the head find an object that does not decode or whose hash is not its
+//     name, a chain that ends before its snapshot or before the record of
+//     the state, or a record missing from the chain after the record of the
+//     snapshot.
+//   - The cause of ctx when ctx ends, and the errors of the store.
 //
 // # Allocation contract
 //
@@ -265,16 +266,21 @@ func (s *Server) walk(ctx context.Context, h head, b base, own string) (plan, er
 // p, newest first. It reports in p whether it read the record named own.
 // It returns the name at which it stopped, which is stop.
 //
+// The chain has one record of each Seq. The walk reads one record for each
+// Seq from that of from down to stopSeq, and then requires the name stop.
 // An empty stop walks back to the first record of the chain.
 //
 // Returns the errors of walk.
 func (s *Server) walkTo(ctx context.Context, from, stop string, stopSeq uint64, own string, p *plan) (string, error) {
-	name := from
-	next := uint64(0)
+	seq, ok := parseName(from)
+	if !ok || seq < stopSeq {
+		return "", fmt.Errorf("%w: the chain from %s does not contain the record %q", ErrJournal, from, stop)
+	}
 
-	for name != stop {
-		seq, ok := parseName(name)
-		if !ok || seq <= stopSeq || (next != 0 && seq != next-1) {
+	name := from
+
+	for ; seq > stopSeq; seq-- {
+		if got, ok := parseName(name); !ok || got != seq {
 			return "", fmt.Errorf("%w: the chain from %s does not contain the record %q", ErrJournal, from, stop)
 		}
 
@@ -292,11 +298,13 @@ func (s *Server) walkTo(ctx context.Context, from, stop string, stopSeq uint64, 
 				rec.Seq, rec.Prev)
 		}
 
-		// A chain that begins before stop ends at an empty predecessor, which
-		// the next turn refuses as no name.
 		p.own = p.own || name == own
 		p.records = append(p.records, walked{rec: rec, key: recordPrefix + name, size: size})
-		name, next = rec.Prev, seq
+		name = rec.Prev
+	}
+
+	if name != stop {
+		return "", fmt.Errorf("%w: the chain from %s does not contain the record %q", ErrJournal, from, stop)
 	}
 
 	return name, nil

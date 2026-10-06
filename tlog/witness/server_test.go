@@ -253,7 +253,7 @@ func (f *fixture) config() *witness.ServerConfig {
 func newServer(tb testing.TB, cfg *witness.ServerConfig) *witness.Server {
 	tb.Helper()
 
-	s, err := witness.NewServer(tb.Context(), cfg)
+	s, err := witness.NewServer(bounded(tb), cfg)
 	testkit.NoError(tb, err, "NewServer must accept the configuration")
 
 	return s
@@ -265,7 +265,7 @@ func newServer(tb testing.TB, cfg *witness.ServerConfig) *witness.Server {
 func advance(tb testing.TB, s *witness.Server, l *testLog, updates ...witness.Update) []byte {
 	tb.Helper()
 
-	lines, failures, err := s.Advance(tb.Context(), l.notes[updates[len(updates)-1].Body.Size], updates, nil)
+	lines, failures, err := s.Advance(bounded(tb), l.notes[updates[len(updates)-1].Body.Size], updates, nil)
 	testkit.NoError(tb, err, "Advance must commit the updates")
 	testkit.Len(tb, failures, 0, "Advance must return no failure")
 	testkit.NotEqual(tb, len(lines), 0, "Advance must return the cosignature lines")
@@ -301,7 +301,7 @@ func TestServer(t *testing.T) {
 
 		t.Run("returns ErrConfig for a nil configuration", func(t *testing.T) {
 			t.Parallel()
-			s, err := witness.NewServer(t.Context(), nil)
+			s, err := witness.NewServer(bounded(t), nil)
 			testkit.ErrorIs(t, err, witness.ErrConfig, "NewServer must refuse a nil configuration")
 			testkit.True(t, s == nil, "NewServer must return a nil Server with an error")
 		})
@@ -367,7 +367,7 @@ func TestServer(t *testing.T) {
 				cfg := newFixture(t).config()
 				tt.edit(cfg)
 
-				s, err := witness.NewServer(t.Context(), cfg)
+				s, err := witness.NewServer(bounded(t), cfg)
 				testkit.ErrorIs(t, err, witness.ErrConfig, "NewServer must refuse the configuration")
 				testkit.Equal(t, errs.Classify(err), errs.Invalid, "the error must classify as Invalid")
 				testkit.True(t, s == nil, "NewServer must return a nil Server with an error")

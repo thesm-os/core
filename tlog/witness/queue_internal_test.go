@@ -16,6 +16,10 @@ import (
 	"go.thesmos.sh/core/tlog/checkpoint"
 )
 
+// patience bounds each wait of an internal case: a call into a Server, a
+// value that a hook sends, and the goroutines that a case starts.
+const patience = 5 * time.Second
+
 // gated is a cosigner whose first signature waits until release closes,
 // after it closes started.
 type gated struct {
@@ -137,7 +141,7 @@ func TestQueueInternal(t *testing.T) {
 			p := &pending{done: make(chan struct{}, 1)}
 			p.done <- struct{}{}
 
-			owned, err := s.wait(t.Context(), p)
+			owned, err := s.wait(bounded(t), p)
 			testkit.NoError(t, err, "wait must return the result")
 			testkit.True(t, owned, "the call must remain the caller's")
 		})
@@ -231,12 +235,12 @@ func (g *gated) AppendSignAt(ctx context.Context, dst, text []byte, t time.Time)
 	return g.Cosigner.AppendSignAt(ctx, dst, text, t)
 }
 
-// waitQueue waits until n calls wait in the queue of s, for at most 5
-// seconds.
+// waitQueue waits until n calls wait in the queue of s, for at most
+// patience.
 func waitQueue(tb testing.TB, s *Server, n int) {
 	tb.Helper()
 
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(patience)
 
 	for {
 		s.qmu.Lock()
@@ -255,14 +259,26 @@ func waitQueue(tb testing.TB, s *Server, n int) {
 	}
 }
 
+// bounded returns a context of tb that ends after patience. A call into a
+// Server under it returns the error of the context when a defect stalls
+// the call, so the case fails instead of waiting for the end of the test.
+func bounded(tb testing.TB) context.Context {
+	tb.Helper()
+
+	ctx, cancel := context.WithTimeout(tb.Context(), patience)
+	tb.Cleanup(cancel)
+
+	return ctx
+}
+
 // awaitBefore returns the next value of ch, and fails tb at once when end
-// delivers first while ch has no value, or when nothing arrives within 5
-// seconds. A test passes the end of the call that leads to the value, so it
-// fails as soon as that call returns without the value.
+// delivers first while ch has no value, or when nothing arrives within
+// patience. A test passes the end of the call that leads to the value, so
+// it fails as soon as that call returns without the value.
 func awaitBefore[T, E any](tb testing.TB, ch <-chan T, end <-chan E, what string) T {
 	tb.Helper()
 
-	timer := time.NewTimer(5 * time.Second)
+	timer := time.NewTimer(patience)
 	defer timer.Stop()
 
 	var zero T
@@ -280,14 +296,14 @@ func awaitBefore[T, E any](tb testing.TB, ch <-chan T, end <-chan E, what string
 
 		tb.Fatalf("%s: the call returned first", what)
 	case <-timer.C:
-		tb.Fatalf("%s: nothing arrived within 5 seconds", what)
+		tb.Fatalf("%s: nothing arrived within %s", what, patience)
 	}
 
 	return zero
 }
 
-// waitAll waits for wg, and fails tb when wg does not finish within 5
-// seconds.
+// waitAll waits for wg, and fails tb when wg does not finish within
+// patience.
 func waitAll(tb testing.TB, wg *sync.WaitGroup, what string) {
 	tb.Helper()
 
@@ -298,7 +314,7 @@ func waitAll(tb testing.TB, wg *sync.WaitGroup, what string) {
 		close(done)
 	}()
 
-	timer := time.NewTimer(5 * time.Second)
+	timer := time.NewTimer(patience)
 	defer timer.Stop()
 
 	select {

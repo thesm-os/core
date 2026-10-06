@@ -37,7 +37,7 @@ func TestRoute(t *testing.T) {
 
 			u := l.update(t, 0, 5)
 			u.Prefix = []byte("a prefix\n")
-			lines, _, err := s.Advance(t.Context(), l.notes[5], []witness.Update{u}, nil)
+			lines, _, err := s.Advance(bounded(t), l.notes[5], []witness.Update{u}, nil)
 			testkit.NoError(t, err, "Advance must commit the update")
 			settle(t, s, l)
 			testkit.Len(t, keys(t, f.store, "lines/"), 1, "the commit must store its lines")
@@ -116,7 +116,7 @@ func TestRoute(t *testing.T) {
 				advance(t, s, l, l.update(t, 0, 5))
 
 				rec := httptest.NewRecorder()
-				s.Checkpoint().ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, tt.give, nil))
+				s.Checkpoint().ServeHTTP(rec, httptest.NewRequestWithContext(bounded(t), http.MethodGet, tt.give, nil))
 				testkit.Equal(t, rec.Code, http.StatusNotFound, "the route must refuse the path")
 			})
 		}
@@ -167,7 +167,7 @@ func TestRoute(t *testing.T) {
 				f.clock.Advance(2 * time.Minute)
 
 				want := string(l.notes[7]) + string(newer)
-				deadline := time.Now().Add(5 * time.Second)
+				deadline := time.Now().Add(patience)
 
 				for get(t, s, l.origin).Body.String() != want {
 					if time.Now().After(deadline) {
@@ -216,7 +216,7 @@ func get(tb testing.TB, s *witness.Server, origin checkpoint.Origin) *httptest.R
 
 	rec := httptest.NewRecorder()
 	path := monitoringPath + "/" + originHashText(origin) + "/checkpoint"
-	s.Checkpoint().ServeHTTP(rec, httptest.NewRequestWithContext(tb.Context(), http.MethodGet, path, nil))
+	s.Checkpoint().ServeHTTP(rec, httptest.NewRequestWithContext(bounded(tb), http.MethodGet, path, nil))
 
 	return rec
 }

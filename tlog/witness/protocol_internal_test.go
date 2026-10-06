@@ -6,6 +6,7 @@ package witness
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"math"
 	"strings"
 	"testing"
 
@@ -168,6 +169,26 @@ func TestProtocolInternal(t *testing.T) {
 			t.Parallel()
 			testkit.Equal(t, string(appendSize([]byte("a:"), 20852163)), "a:20852163\n",
 				"appendSize must write the size and a newline")
+		})
+
+		t.Run("appends maxSizeBody bytes for the largest size", func(t *testing.T) {
+			t.Parallel()
+			testkit.Equal(t, len(appendSize(nil, math.MaxUint64)), maxSizeBody,
+				"the body of a 409 must fit an array of maxSizeBody bytes")
+		})
+	})
+
+	t.Run("SizeError", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("Error", func(t *testing.T) {
+			t.Parallel()
+
+			t.Run("returns a text of maxSizeError bytes for the largest size", func(t *testing.T) {
+				t.Parallel()
+				testkit.Equal(t, len((&SizeError{Size: math.MaxUint64}).Error()), maxSizeError,
+					"the text of a SizeError must fit an array of maxSizeError bytes")
+			})
 		})
 	})
 

@@ -221,6 +221,10 @@ func TestHandler(t *testing.T) {
 				},
 			},
 			{
+				name: "responds with 400 for a body of 1 MiB that is not a request", want: http.StatusBadRequest,
+				give: func(testing.TB) []byte { return make([]byte, 1<<20) },
+			},
+			{
 				name: "responds with 413 for a body above 1 MiB", want: http.StatusRequestEntityTooLarge,
 				give: func(testing.TB) []byte { return make([]byte, 1<<20+1) },
 			},
@@ -273,7 +277,7 @@ func TestHandler(t *testing.T) {
 		t.Run("responds with 500 for a body that it cannot read", func(t *testing.T) {
 			t.Parallel()
 			rec := httptest.NewRecorder()
-			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/add-checkpoint", failingReader{})
+			req := httptest.NewRequestWithContext(bounded(t), http.MethodPost, "/add-checkpoint", failingReader{})
 			newServer(t, newFixture(t, l).config()).AddCheckpoint().ServeHTTP(rec, req)
 			testkit.Equal(t, rec.Code, http.StatusInternalServerError, "the handler must report the read")
 		})
@@ -284,27 +288,27 @@ func TestHandler(t *testing.T) {
 			s := newServer(t, f.config())
 			c := newWitnessClient(t, serve(t, s), f.cosigners[0].Key())
 
-			_, err := c.AddCheckpoint(t.Context(), l.notes[5], 0, nil, nil)
+			_, err := c.AddCheckpoint(bounded(t), l.notes[5], 0, nil, nil)
 			testkit.NoError(t, err, "the client must receive the lines")
 
-			_, err = c.AddCheckpoint(t.Context(), l.notes[6], 0, nil, nil)
+			_, err = c.AddCheckpoint(bounded(t), l.notes[6], 0, nil, nil)
 			se, ok := errors.AsType[*witness.SizeError](err)
 			testkit.True(t, ok, "the client must receive a SizeError for a 409")
 			testkit.Equal(t, se.Size, uint64(5), "the SizeError must contain the committed size")
 
 			proof := l.update(t, 5, 9).Proof
 			proof[0] = l.leaves[0]
-			_, err = c.AddCheckpoint(t.Context(), l.notes[9], 5, proof, nil)
+			_, err = c.AddCheckpoint(bounded(t), l.notes[9], 5, proof, nil)
 			testkit.ErrorIs(t, err, witness.ErrInconsistent, "the client must receive ErrInconsistent for a 422")
 
 			other := newTestLog(t, "example.com/other")
-			_, err = c.AddCheckpoint(t.Context(), other.notes[5], 0, nil, nil)
+			_, err = c.AddCheckpoint(bounded(t), other.notes[5], 0, nil, nil)
 			testkit.Equal(t, errs.Classify(err), errs.NotFound, "the client must receive NotFound for a 404")
 
-			_, err = c.AddCheckpoint(t.Context(), signBody(t, l.body(6), other.signer), 5, l.update(t, 5, 6).Proof, nil)
+			_, err = c.AddCheckpoint(bounded(t), signBody(t, l.body(6), other.signer), 5, l.update(t, 5, 6).Proof, nil)
 			testkit.Equal(t, errs.Classify(err), errs.Denied, "the client must receive Denied for a 403")
 
-			_, err = c.AddCheckpoint(t.Context(), l.notes[5], 6, nil, nil)
+			_, err = c.AddCheckpoint(bounded(t), l.notes[5], 6, nil, nil)
 			status, ok := errors.AsType[*httpclient.StatusError](err)
 			testkit.True(t, ok, "the client must receive a StatusError for a 400")
 			testkit.Equal(t, status.Status, http.StatusBadRequest, "the status must be 400")
@@ -318,7 +322,7 @@ func TestHandler(t *testing.T) {
 				s := newServer(t, f.config())
 				c := newWitnessClient(t, serve(t, s), f.cosigners[0].Key(), f.cosigners[1].Key())
 
-				lines, err := c.AddCheckpoint(t.Context(), l.notes[5], 0, nil, nil)
+				lines, err := c.AddCheckpoint(bounded(t), l.notes[5], 0, nil, nil)
 				testkit.NoError(t, err, "the client must verify both lines")
 
 				text := append([]byte(nil), noteText(t, l.notes[5])...)
@@ -389,7 +393,7 @@ func post(tb testing.TB, s *witness.Server, body []byte) *httptest.ResponseRecor
 	tb.Helper()
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequestWithContext(tb.Context(), http.MethodPost, "/add-checkpoint", bytes.NewReader(body))
+	req := httptest.NewRequestWithContext(bounded(tb), http.MethodPost, "/add-checkpoint", bytes.NewReader(body))
 	s.AddCheckpoint().ServeHTTP(rec, req)
 
 	return rec
@@ -414,7 +418,7 @@ func serve(tb testing.TB, s *witness.Server) *httptest.Server {
 func newWitnessClient(tb testing.TB, ts *httptest.Server, keys ...note.Key) *witness.Client {
 	tb.Helper()
 
-	h, err := httpclient.New("witness", required, httpclient.WithTimeout(10*time.Second))
+	h, err := httpclient.New("witness", required, httpclient.WithTimeout(patience))
 	testkit.NoError(tb, err, "httpclient.New must accept the options")
 
 	c, err := witness.NewClient(&witness.ClientConfig{

@@ -52,7 +52,9 @@ type (
 )
 
 // oddClassError is an error whose class is outside the classes of errs.
-type oddClassError struct{}
+type oddClassError struct {
+	class errs.Class
+}
 
 func TestTelemetry(t *testing.T) {
 	t.Parallel()
@@ -76,7 +78,7 @@ func TestTelemetry(t *testing.T) {
 			m, s, f := metered(t, l)
 			f.clock.SetUTCError(0, false)
 
-			_, _, err := s.Advance(t.Context(), l.notes[5], []witness.Update{l.update(t, 0, 5)}, nil)
+			_, _, err := s.Advance(bounded(t), l.notes[5], []witness.Update{l.update(t, 0, 5)}, nil)
 			testkit.ErrorIs(t, err, checkpoint.ErrClock, "the commit must fail")
 			testkit.Len(t, m.get(durationName+" error.type=Transient"), 1, "the commit must record its class")
 		})
@@ -90,37 +92,67 @@ func TestTelemetry(t *testing.T) {
 					return errs.WithClass(errors.New("the store failed"), c)
 				}})
 
-				_, _, err := s.Advance(t.Context(), l.notes[5], []witness.Update{l.update(t, 0, 5)}, nil)
+				_, _, err := s.Advance(bounded(t), l.notes[5], []witness.Update{l.update(t, 0, 5)}, nil)
 				testkit.Error(t, err, "the commit must fail")
 				testkit.Len(t, m.get(durationName+" error.type="+c.String()), 1, "the commit must record "+c.String())
 			}
 		})
 
-		t.Run("records the error of a class outside errs as Unspecified", func(t *testing.T) {
-			t.Parallel()
-			m, s, f := metered(t, l)
-			f.store.intercept(hook{op: opPut, prefix: "records/", before: func(context.Context, string) error {
-				return oddClassError{}
-			}})
+		odd := []struct {
+			name string
+			give errs.Class
+		}{
+			{
+				name: "records the error of the first class after the classes of errs as Unspecified",
+				give: errs.Integrity + 1,
+			},
+			{name: "records the error of a class far after the classes of errs as Unspecified", give: 200},
+		}
+		for _, tt := range odd {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				m, s, f := metered(t, l)
+				f.store.intercept(hook{op: opPut, prefix: "records/", before: func(context.Context, string) error {
+					return oddClassError{class: tt.give}
+				}})
 
-			_, _, err := s.Advance(t.Context(), l.notes[5], []witness.Update{l.update(t, 0, 5)}, nil)
-			testkit.Error(t, err, "the commit must fail")
-			testkit.Len(t, m.get(durationName+" error.type=Unspecified"), 1, "the commit must record Unspecified")
-		})
+				_, _, err := s.Advance(bounded(t), l.notes[5], []witness.Update{l.update(t, 0, 5)}, nil)
+				testkit.Error(t, err, "the commit must fail")
+				testkit.Len(t, m.get(durationName+" error.type=Unspecified"), 1, "the commit must record Unspecified")
+			})
+		}
+
+		t.Run("counts the updates of a commit whose signatures fail as uncosigned and none as committed",
+			func(t *testing.T) {
+				t.Parallel()
+				m := &meter{values: map[string][]float64{}}
+				f := newFixture(t, l)
+				c := &flaky{Cosigner: f.cosigners[0]}
+				c.fail.Store(true)
+				f.cosigners = []checkpoint.Cosigner{c}
+				cfg := f.config()
+				cfg.Reporter = m
+
+				_, _, err := newServer(t, cfg).Advance(bounded(t), l.notes[5], []witness.Update{l.update(t, 0, 5)}, nil)
+				testkit.Error(t, err, "the signature must fail")
+				testkit.Equal(t, m.get(updatesName+" outcome=uncosigned"), []float64{1},
+					"the meter must count the update")
+				testkit.Len(t, m.get(updatesName+" outcome=committed"), 0, "the meter must count no committed update")
+			})
 
 		t.Run("counts the updates of each outcome", func(t *testing.T) {
 			t.Parallel()
 			m, s, f := metered(t, l)
 			advance(t, s, l, l.update(t, 0, 5))
 
-			_, _, err := s.Advance(t.Context(), l.notes[6], []witness.Update{l.update(t, 0, 6)}, nil)
+			_, _, err := s.Advance(bounded(t), l.notes[6], []witness.Update{l.update(t, 0, 6)}, nil)
 			testkit.NoError(t, err, "the conflict must be a failure")
 
 			proof := l.update(t, 5, 9).Proof
 			proof[0] = l.leaves[0]
 			u := l.update(t, 5, 9)
 			u.Proof = proof
-			_, _, err = s.Advance(t.Context(), l.notes[9], []witness.Update{u}, nil)
+			_, _, err = s.Advance(bounded(t), l.notes[9], []witness.Update{u}, nil)
 			testkit.NoError(t, err, "the inconsistency must be a failure")
 
 			c := &flaky{Cosigner: f.cosigners[0]}
@@ -128,7 +160,7 @@ func TestTelemetry(t *testing.T) {
 			f.cosigners = []checkpoint.Cosigner{c}
 			cfg := f.config()
 			cfg.Reporter = m
-			_, _, err = newServer(t, cfg).Advance(t.Context(), l.notes[6], []witness.Update{l.update(t, 5, 6)}, nil)
+			_, _, err = newServer(t, cfg).Advance(bounded(t), l.notes[6], []witness.Update{l.update(t, 5, 6)}, nil)
 			testkit.Error(t, err, "the signature must fail")
 
 			for _, want := range []string{"committed", "conflict", "inconsistent", "uncosigned"} {
@@ -258,7 +290,7 @@ func (oddClassError) Error() string {
 	return "an error of an odd class"
 }
 
-// Class returns a class outside the classes of errs.
-func (oddClassError) Class() errs.Class {
-	return errs.Class(200)
+// Class returns the class of e, which is outside the classes of errs.
+func (e oddClassError) Class() errs.Class {
+	return e.class
 }

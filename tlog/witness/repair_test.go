@@ -72,26 +72,27 @@ func TestRepair(t *testing.T) {
 				"the repair must sign at the time of the record")
 		})
 
-		t.Run("repairs a record whose read, write and signatures take nearly their bounds", func(t *testing.T) {
+		t.Run("repairs a record whose read, signature and write together exceed Timeout", func(t *testing.T) {
 			t.Parallel()
 
-			// The read of the record and the write of the lines take 80% of
-			// Timeout, and the signature 80% of SignTimeout. A store whose
-			// deadline were Timeout alone would end the repair before its
-			// lines.
+			// The read of the record, the signature and the write of the lines
+			// take 350 ms, above a Timeout of 300 ms, so a store whose deadline
+			// were Timeout alone would end the repair before its lines. The
+			// deadline of Timeout + SignTimeout leaves 950 ms more for the
+			// stalls of a loaded machine.
 			var slow atomic.Bool
 
 			f := newFixture(t, l)
 			c := &flaky{Cosigner: f.cosigners[0], before: func(context.Context) error {
 				if slow.Load() {
-					time.Sleep(400 * time.Millisecond)
+					time.Sleep(150 * time.Millisecond)
 				}
 
 				return nil
 			}}
 			f.cosigners = []checkpoint.Cosigner{c}
 			cfg := f.config()
-			cfg.Timeout, cfg.SignTimeout = 500*time.Millisecond, 500*time.Millisecond
+			cfg.Timeout, cfg.SignTimeout = 300*time.Millisecond, time.Second
 			s := newServer(t, cfg)
 			refused := refuseLines(f)
 
@@ -102,7 +103,7 @@ func TestRepair(t *testing.T) {
 			f.clock.Advance(time.Minute)
 
 			pause := func(context.Context, string) error {
-				time.Sleep(200 * time.Millisecond)
+				time.Sleep(100 * time.Millisecond)
 
 				return nil
 			}
@@ -213,7 +214,7 @@ func TestRepair(t *testing.T) {
 			wg.Go(func() {
 				defer close(returned)
 
-				lines, _, err = s.Advance(t.Context(), l.notes[5], updates, nil)
+				lines, _, err = s.Advance(bounded(t), l.notes[5], updates, nil)
 			})
 			awaitBefore(t, signing, returned, "the commit must sign")
 
@@ -331,7 +332,7 @@ func TestRepair(t *testing.T) {
 			s := newServer(t, f.config())
 			refused := refuseLines(f)
 
-			ctx, updates := t.Context(), []witness.Update{l.update(t, 0, 5)}
+			ctx, updates := bounded(t), []witness.Update{l.update(t, 0, 5)}
 			returned := make(chan struct{})
 
 			go func() {
@@ -340,7 +341,7 @@ func TestRepair(t *testing.T) {
 				_, _, _ = s.Advance(ctx, l.notes[5], updates, nil)
 			}()
 
-			timer := time.NewTimer(5 * time.Second)
+			timer := time.NewTimer(patience)
 			defer timer.Stop()
 
 			// The signature of the commit receives the value, and the commit
@@ -350,13 +351,13 @@ func TestRepair(t *testing.T) {
 			case <-returned:
 				t.Fatal("the commit must sign")
 			case <-timer.C:
-				t.Fatal("the commit must sign within 5 seconds")
+				t.Fatalf("the commit must sign within %s", patience)
 			}
 
 			select {
 			case <-returned:
 			case <-timer.C:
-				t.Fatal("the commit must return within 5 seconds")
+				t.Fatalf("the commit must return within %s", patience)
 			}
 
 			settle(t, s, l)

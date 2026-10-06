@@ -44,7 +44,7 @@ func (p *picky) AppendSignAt(ctx context.Context, dst, text []byte, t time.Time)
 
 // overlapping is a cosigner that counts the signatures that run at once,
 // and keeps the most. While wait is set, a signature waits until two run at
-// once, for at most 5 seconds, and fails after that. Otherwise it takes 10
+// once, for at most patience, and fails after that. Otherwise it takes 10
 // ms, so that the signatures of concurrent goroutines overlap.
 type overlapping struct {
 	checkpoint.Cosigner
@@ -88,7 +88,7 @@ func (o *overlapping) AppendSignAt(ctx context.Context, dst, text []byte, t time
 
 	select {
 	case <-o.both:
-	case <-time.After(5 * time.Second):
+	case <-time.After(patience):
 		return dst, errors.New("the signatures do not run at once")
 	}
 
@@ -129,7 +129,7 @@ func TestCosignInternal(t *testing.T) {
 				errs := make([]error, 2)
 				for i, l := range []*internalLog{a, b} {
 					wg.Go(func() {
-						_, _, errs[i] = s.Advance(t.Context(), l.note(t, 5), []Update{l.update(t, 0, 5, nil)}, nil)
+						_, _, errs[i] = s.Advance(bounded(t), l.note(t, 5), []Update{l.update(t, 0, 5, nil)}, nil)
 					})
 					waitQueue(t, s, i+1)
 				}
@@ -169,7 +169,7 @@ func TestCosignInternal(t *testing.T) {
 			s := newInternalServer(t, cfg)
 
 			for size := uint64(1); size <= 2; size++ {
-				_, _, err := s.Advance(t.Context(), a.note(t, size), []Update{a.update(t, size-1, size, nil)}, nil)
+				_, _, err := s.Advance(bounded(t), a.note(t, size), []Update{a.update(t, size-1, size, nil)}, nil)
 				testkit.Error(t, err, "the commit must fail at the failing cosigner")
 			}
 
@@ -209,7 +209,7 @@ func TestCosignInternal(t *testing.T) {
 			s, c := overlapped(t, 2, true)
 
 			var g signing
-			testkit.NoError(t, s.cosign(t.Context(), texts[:2], internalTime, &g), "the signatures must run at once")
+			testkit.NoError(t, s.cosign(bounded(t), texts[:2], internalTime, &g), "the signatures must run at once")
 
 			for i, text := range texts[:2] {
 				testkit.True(t, c.Verify(text, g.values[0][i]), "the value of each text must verify")
@@ -229,7 +229,7 @@ func TestCosignInternal(t *testing.T) {
 				s, c := overlapped(t, tt.signers, false)
 
 				var g signing
-				testkit.NoError(t, s.cosign(t.Context(), texts, internalTime, &g), "the cosigner must sign every text")
+				testkit.NoError(t, s.cosign(bounded(t), texts, internalTime, &g), "the cosigner must sign every text")
 				testkit.True(t, c.most <= tt.signers, "the cosigner must sign at most signers texts at once")
 
 				for i, text := range texts {

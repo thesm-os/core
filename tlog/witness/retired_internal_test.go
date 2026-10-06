@@ -93,7 +93,7 @@ func TestRetiredInternal(t *testing.T) {
 				putObject(t, f.store, retiredKey(other, 1), []byte("an entry"))
 			}
 
-			set, err := f.server(t).listRetired(t.Context())
+			set, err := f.server(t).listRetired(bounded(t))
 			testkit.NoError(t, err, "listRetired must walk the store")
 			testkit.Equal(t, set.Len(), 120, "listRetired must return every prefix")
 		})
@@ -103,7 +103,7 @@ func TestRetiredInternal(t *testing.T) {
 			f := newInternalFixture(t)
 			putObject(t, f.store, retiredPrefix+"other", []byte("an object"))
 
-			_, err := f.server(t).listRetired(t.Context())
+			_, err := f.server(t).listRetired(bounded(t))
 			testkit.ErrorIs(t, err, ErrJournal, "listRetired must refuse the key")
 		})
 
@@ -130,7 +130,7 @@ func TestRetiredInternal(t *testing.T) {
 				s := newInternalServer(t, cfg)
 				tt.edit(st)
 
-				_, err := s.listRetired(t.Context())
+				_, err := s.listRetired(bounded(t))
 				testkit.Error(t, err, "listRetired must fail")
 			})
 		}
@@ -146,16 +146,39 @@ func TestRetiredInternal(t *testing.T) {
 			retire(t, f.store, 9)
 			retire(t, f.store, 5)
 
-			c, err := f.server(t).lookupRetired(t.Context(), h, origin)
+			c, err := f.server(t).lookupRetired(bounded(t), h, origin)
 			testkit.NoError(t, err, "lookupRetired must read the object")
 			testkit.True(t, c == committed{root: root, size: 9}, "lookupRetired must return the largest size")
 		})
 
 		t.Run("returns a fresh checkpoint for an origin without a retired object", func(t *testing.T) {
 			t.Parallel()
-			c, err := newInternalFixture(t).server(t).lookupRetired(t.Context(), h, origin)
+			c, err := newInternalFixture(t).server(t).lookupRetired(bounded(t), h, origin)
 			testkit.NoError(t, err, "lookupRetired must walk the store")
 			testkit.True(t, c.fresh, "the origin must be new")
+		})
+
+		t.Run("returns the checkpoint of a retired object of size 0", func(t *testing.T) {
+			t.Parallel()
+			f := newInternalFixture(t)
+			retire(t, f.store, 0)
+
+			c, err := f.server(t).lookupRetired(bounded(t), h, origin)
+			testkit.NoError(t, err, "lookupRetired must read the object")
+			testkit.True(t, c == committed{root: root}, "lookupRetired must return the size 0")
+		})
+
+		t.Run("returns the checkpoint of the retired object of a long origin", func(t *testing.T) {
+			t.Parallel()
+			f := newInternalFixture(t)
+			long := checkpoint.Origin("example.com/" + strings.Repeat("a", 200))
+			lh := hashOrigin(long)
+			data, _ := (&entry{Origin: long, Root: root, Size: 3}).MarshalBinary()
+			putObject(t, f.store, retiredKey(lh, 3), data)
+
+			c, err := f.server(t).lookupRetired(bounded(t), lh, long)
+			testkit.NoError(t, err, "lookupRetired must read the object of the long origin")
+			testkit.True(t, c == committed{root: root, size: 3}, "lookupRetired must return the checkpoint")
 		})
 
 		other, _ := (&entry{Origin: "example.com/other", Root: root, Size: 3}).MarshalBinary()
@@ -183,7 +206,7 @@ func TestRetiredInternal(t *testing.T) {
 				f := newInternalFixture(t)
 				putObject(t, f.store, tt.key, tt.give)
 
-				_, err := f.server(t).lookupRetired(t.Context(), h, origin)
+				_, err := f.server(t).lookupRetired(bounded(t), h, origin)
 				testkit.ErrorIs(t, err, ErrJournal, "lookupRetired must refuse the object")
 			})
 		}
@@ -204,7 +227,7 @@ func TestRetiredInternal(t *testing.T) {
 				return nil
 			}
 
-			_, err := s.lookupRetired(t.Context(), h, origin)
+			_, err := s.lookupRetired(bounded(t), h, origin)
 			testkit.Error(t, err, "lookupRetired must fail")
 			testkit.ErrorIsNot(t, err, ErrJournal, "the error must be the error of the store")
 		})
@@ -222,7 +245,7 @@ func TestRetiredInternal(t *testing.T) {
 			s.st.retired.Add(binary.BigEndian.Uint64(lh[:]))
 			st.list = func(string) error { return errors.New("the walk failed") }
 
-			_, _, err := s.Advance(t.Context(), l.note(t, 5), []Update{l.update(t, 0, 5, nil)}, nil)
+			_, _, err := s.Advance(bounded(t), l.note(t, 5), []Update{l.update(t, 0, 5, nil)}, nil)
 			testkit.Error(t, err, "Advance must fail")
 		})
 	})

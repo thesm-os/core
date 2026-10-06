@@ -79,7 +79,7 @@ func TestConsistency(t *testing.T) {
 				}
 
 				u := tt.give(t)
-				_, failures, err := s.Advance(t.Context(), signBody(t, u.Body, l.signer), []witness.Update{u}, nil)
+				_, failures, err := s.Advance(bounded(t), signBody(t, u.Body, l.signer), []witness.Update{u}, nil)
 				testkit.NoError(t, err, "Advance must check the update")
 				testkit.Len(t, failures, 1, "Advance must return the failure")
 				testkit.ErrorIs(t, failures[0].Err, witness.ErrInconsistent, "the failure must be ErrInconsistent")

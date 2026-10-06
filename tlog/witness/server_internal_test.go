@@ -72,6 +72,11 @@ func TestServerInternal(t *testing.T) {
 			{name: "bounds a snapshot at 64 MiB for few origins", give: 100, want: maxObjectBytes},
 			{name: "bounds a snapshot at 1 KiB per origin for many origins", give: 1 << 20, want: 1 << 30},
 			{
+				name: "bounds a snapshot at 1 KiB per origin for the largest MaxOrigins whose product is an int64",
+				give: math.MaxInt64 / snapshotOriginBytes,
+				want: math.MaxInt64 / snapshotOriginBytes * snapshotOriginBytes,
+			},
+			{
 				name: "bounds a snapshot at the largest int64 for the largest MaxOrigins", give: math.MaxInt,
 				want: math.MaxInt64,
 			},
@@ -82,7 +87,7 @@ func TestServerInternal(t *testing.T) {
 				f := newInternalFixture(t)
 				cfg := f.config()
 				cfg.MaxOrigins = tt.give
-				s, err := NewServer(t.Context(), cfg)
+				s, err := NewServer(bounded(t), cfg)
 				testkit.NoError(t, err, "NewServer must accept the configuration")
 				testkit.Equal(t, s.snapshotLimit, tt.want, "NewServer must bound the snapshots")
 			})
@@ -164,7 +169,7 @@ func (l *internalLog) update(tb testing.TB, oldSize, size uint64, prefix []byte)
 func (l *internalLog) advance(tb testing.TB, s *Server, oldSize, size uint64, prefix []byte) []byte {
 	tb.Helper()
 
-	lines, failures, err := s.Advance(tb.Context(), l.note(tb, size), []Update{l.update(tb, oldSize, size, prefix)},
+	lines, failures, err := s.Advance(bounded(tb), l.note(tb, size), []Update{l.update(tb, oldSize, size, prefix)},
 		nil)
 	testkit.NoError(tb, err, "Advance must commit the update")
 	testkit.Len(tb, failures, 0, "Advance must return no failure")
@@ -262,7 +267,7 @@ func (f *internalFixture) config() *ServerConfig {
 func (f *internalFixture) server(tb testing.TB) *Server {
 	tb.Helper()
 
-	s, err := NewServer(tb.Context(), f.config())
+	s, err := NewServer(bounded(tb), f.config())
 	testkit.NoError(tb, err, "NewServer must accept the configuration")
 
 	return s

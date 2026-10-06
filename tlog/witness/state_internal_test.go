@@ -4,11 +4,14 @@
 package witness
 
 import (
+	"bytes"
+	"slices"
 	"testing"
 
 	"go.thesmos.sh/testkit"
 
 	"go.thesmos.sh/core/crypto"
+	"go.thesmos.sh/core/tlog/checkpoint"
 )
 
 func TestStateInternal(t *testing.T) {
@@ -45,6 +48,63 @@ func TestStateInternal(t *testing.T) {
 
 			a, _ := st.origins.Get(hashOrigin("example.com/a"))
 			testkit.True(t, a.served == position{}, "an origin of a record must have no served position")
+		})
+
+		h := hashOrigin("example.com/a")
+		inGroup := &snapshot{
+			Record:  rec,
+			Objects: []object{{Key: groupPrefix + grp, Updates: 1}},
+			Origins: []snapOrigin{{Origin: "example.com/a", Size: 5, Time: 1, Root: root}},
+		}
+
+		t.Run("takes the position of the snapshot for an origin whose latest update is at its record",
+			func(t *testing.T) {
+				t.Parallel()
+				at := position{key: recordPrefix + rec, seq: 1, call: 1}
+				st := newState()
+				st.origins.Set(h, originState{origin: "example.com/a", latest: at})
+				snap := &snapshot{
+					Record:  rec,
+					Objects: []object{{Key: recordPrefix + rec}},
+					Origins: []snapOrigin{{Origin: "example.com/a", Size: 5, Time: 1, Root: root}},
+				}
+
+				testkit.NoError(t, st.take(snap, "a snapshot", 100, nil), "take must take the snapshot")
+				o, _ := st.origins.Get(h)
+				testkit.Equal(t, o.latest.call, 0, "the origin must take the position of the snapshot")
+			})
+
+		t.Run("keeps a served position after the record of the snapshot", func(t *testing.T) {
+			t.Parallel()
+			later := position{key: recordPrefix + string(appendName(nil, 3, []byte("a later record"))), seq: 3}
+			st := newState()
+			st.origins.Set(h, originState{origin: "example.com/a", latest: later, served: later})
+
+			testkit.NoError(t, st.take(inGroup, "a snapshot", 100, nil), "take must take the snapshot")
+			o, _ := st.origins.Get(h)
+			testkit.True(t, o.served == later, "the origin must keep its later served position")
+		})
+
+		t.Run("serves the group of the snapshot for an origin served at the record of the snapshot",
+			func(t *testing.T) {
+				t.Parallel()
+				at := position{key: recordPrefix + rec, seq: 1}
+				st := newState()
+				st.origins.Set(h, originState{origin: "example.com/a", latest: at, served: at})
+
+				testkit.NoError(t, st.take(inGroup, "a snapshot", 100, nil), "take must take the snapshot")
+				o, _ := st.origins.Get(h)
+				testkit.True(t, o.served.group, "the origin must serve the group")
+			})
+
+		t.Run("keeps the head of a state at the record of the snapshot", func(t *testing.T) {
+			t.Parallel()
+			st := newState()
+			st.seq, st.time, st.end = 1, 100, 50
+
+			testkit.NoError(t, st.take(inGroup, "a snapshot", 100, nil), "take must take the snapshot")
+			testkit.Equal(t, st.time, uint64(100), "the state must keep the time of its head")
+			testkit.Equal(t, st.end, uint64(50), "the state must keep the end of its head")
 		})
 
 		asc := sortedOrigins(
@@ -86,6 +146,13 @@ func TestStateInternal(t *testing.T) {
 					Origins: []snapOrigin{asc[1], asc[0]},
 				},
 			},
+			{
+				name: "returns ErrJournal for an origin listed twice",
+				give: &snapshot{
+					Record: rec, Objects: []object{{Key: recordPrefix + rec}},
+					Origins: []snapOrigin{asc[0], asc[0]},
+				},
+			},
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
@@ -97,6 +164,59 @@ func TestStateInternal(t *testing.T) {
 				testkit.Equal(t, st.seq, uint64(0), "take must leave the state unchanged")
 			})
 		}
+	})
+
+	t.Run("removeRetired", func(t *testing.T) {
+		t.Parallel()
+
+		a, b := checkpoint.Origin("example.com/a"), checkpoint.Origin("example.com/b")
+		c := checkpoint.Origin("example.com/c")
+
+		// stateOf returns a state of origins, each with its latest update at
+		// the record of Seq 5.
+		stateOf := func(origins ...checkpoint.Origin) *state {
+			st := newState()
+			for _, o := range origins {
+				st.origins.Set(hashOrigin(o), originState{origin: o, latest: position{key: recordPrefix + rec, seq: 5}})
+			}
+
+			return st
+		}
+
+		// hashesOf returns the hashes of origins in ascending order.
+		hashesOf := func(origins ...checkpoint.Origin) []originHash {
+			hashes := make([]originHash, 0, len(origins))
+			for _, o := range origins {
+				hashes = append(hashes, hashOrigin(o))
+			}
+
+			slices.SortFunc(hashes, func(x, y originHash) int { return bytes.Compare(x[:], y[:]) })
+
+			return hashes
+		}
+
+		t.Run("keeps every origin that hashes lists", func(t *testing.T) {
+			t.Parallel()
+			st := stateOf(a, b, c)
+			st.removeRetired(hashesOf(a, b, c), 5)
+			testkit.Equal(t, st.origins.Len(), 3, "removeRetired must keep the listed origins")
+		})
+
+		t.Run("removes an origin after every listed hash", func(t *testing.T) {
+			t.Parallel()
+			hashes := hashesOf(a, b)
+			st := stateOf(a, b)
+			st.removeRetired(hashes[:1], 5)
+			testkit.Equal(t, st.origins.Len(), 1, "removeRetired must remove the origin after the listed hash")
+			testkit.True(t, st.origins.Has(hashes[0]), "removeRetired must keep the listed origin")
+		})
+
+		t.Run("removes an unlisted origin whose latest update is at the record of the snapshot", func(t *testing.T) {
+			t.Parallel()
+			st := stateOf(a)
+			st.removeRetired(nil, 5)
+			testkit.Equal(t, st.origins.Len(), 0, "removeRetired must remove the origin")
+		})
 	})
 }
 

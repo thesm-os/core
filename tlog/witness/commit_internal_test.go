@@ -37,6 +37,40 @@ func TestCommitInternal(t *testing.T) {
 		return f, st, newInternalServer(tb, cfg)
 	}
 
+	t.Run("commit", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("runs no commit for a queue that its callers emptied", func(t *testing.T) {
+			t.Parallel()
+			_, st, s := faultyServer(t)
+
+			var reads atomic.Int64
+
+			st.get = func(key string) error {
+				if key == headKey {
+					reads.Add(1)
+				}
+
+				return nil
+			}
+
+			// The committer that enqueue starts finds the queue empty when every
+			// caller left before the committer took the queue.
+			s.qmu.Lock()
+			s.committing = true
+			s.qmu.Unlock()
+
+			s.commit()
+
+			s.qmu.Lock()
+			committing := s.committing
+			s.qmu.Unlock()
+
+			testkit.Equal(t, reads.Load(), int64(0), "commit must read no head")
+			testkit.False(t, committing, "commit must record that no commit runs")
+		})
+	})
+
 	t.Run("checkCall", func(t *testing.T) {
 		t.Parallel()
 
@@ -66,7 +100,7 @@ func TestCommitInternal(t *testing.T) {
 			wg.Go(func() { l.advance(t, s, 5, 6, nil) })
 			waitQueue(t, s, 2)
 			wg.Go(func() {
-				_, stale, _ = s.Advance(t.Context(), l.note(t, 7), []Update{l.update(t, 0, 7, nil)}, nil)
+				_, stale, _ = s.Advance(bounded(t), l.note(t, 7), []Update{l.update(t, 0, 7, nil)}, nil)
 			})
 			waitQueue(t, s, 3)
 			close(g.release)
@@ -77,6 +111,45 @@ func TestCommitInternal(t *testing.T) {
 			se, ok := errors.AsType[*SizeError](stale[0].Err)
 			testkit.True(t, ok, "the failure must be a SizeError")
 			testkit.Equal(t, se.Size, uint64(6), "the SizeError must contain the size of the second call")
+		})
+
+		t.Run("counts the new origins of the earlier calls of the commit against MaxOrigins", func(t *testing.T) {
+			t.Parallel()
+			first, b, c := newInternalLog(t, "example.com/first"), newInternalLog(t, "example.com/b"),
+				newInternalLog(t, "example.com/c")
+			f := newInternalFixture(t, first, b, c)
+			g := &gated{Cosigner: f.signer, started: make(chan struct{}), release: make(chan struct{})}
+			f.signer = g
+			cfg := f.config()
+			cfg.MaxOrigins = 2
+			s := newInternalServer(t, cfg)
+
+			var wg sync.WaitGroup
+
+			returned := make(chan struct{})
+
+			wg.Go(func() {
+				defer close(returned)
+
+				first.advance(t, s, 0, 5, nil)
+			})
+			awaitBefore(t, g.started, returned, "the first commit must sign")
+
+			// The next commit takes both calls. The new origin of b is the
+			// second origin, and the new origin of c a third.
+			var failures []Failure
+
+			wg.Go(func() { b.advance(t, s, 0, 5, nil) })
+			waitQueue(t, s, 1)
+			wg.Go(func() {
+				_, failures, _ = s.Advance(bounded(t), c.note(t, 5), []Update{c.update(t, 0, 5, nil)}, nil)
+			})
+			waitQueue(t, s, 2)
+			close(g.release)
+			waitAll(t, &wg, "every call must return")
+
+			testkit.Len(t, failures, 1, "the call of c must fail")
+			testkit.ErrorIs(t, failures[0].Err, ErrUnknownOrigin, "the failure must be ErrUnknownOrigin")
 		})
 	})
 
@@ -97,7 +170,7 @@ func TestCommitInternal(t *testing.T) {
 			// The case checks the error of the refresh after Advance.
 			st.afterPut = func(key string) {
 				if key == headKey && once.CompareAndSwap(false, true) {
-					_, refresh = s.sync(t.Context(), "")
+					_, refresh = s.sync(bounded(t), "")
 				}
 			}
 
@@ -145,7 +218,7 @@ func TestCommitInternal(t *testing.T) {
 				return nil
 			}
 
-			lines, _, err := s.Advance(t.Context(), l.note(t, 5), []Update{l.update(t, 0, 5, nil)}, nil)
+			lines, _, err := s.Advance(bounded(t), l.note(t, 5), []Update{l.update(t, 0, 5, nil)}, nil)
 			testkit.NoError(t, err, "Advance must return before the write of the lines")
 			testkit.NotEqual(t, len(lines), 0, "Advance must return the lines")
 			testkit.Len(t, listKeys(t, st.Store, linesPrefix), 0, "the commit must not have stored its lines")
@@ -230,7 +303,7 @@ func TestCommitInternal(t *testing.T) {
 				}
 			}
 
-			_, _, err := s.Advance(t.Context(), l.note(t, 5), []Update{l.update(t, 0, 5, nil)}, nil)
+			_, _, err := s.Advance(bounded(t), l.note(t, 5), []Update{l.update(t, 0, 5, nil)}, nil)
 			testkit.NoError(t, err, "the first commit must return before its lines")
 
 			var (
@@ -274,7 +347,7 @@ func TestCommitInternal(t *testing.T) {
 				return nil
 			}
 
-			_, failures, err := s.Advance(t.Context(), l.note(t, 6), []Update{l.update(t, 0, 6, nil)}, nil)
+			_, failures, err := s.Advance(bounded(t), l.note(t, 6), []Update{l.update(t, 0, 6, nil)}, nil)
 			testkit.NoError(t, err, "Advance must check the update")
 			testkit.Len(t, failures, 1, "Advance must return the conflict")
 
@@ -283,6 +356,39 @@ func TestCommitInternal(t *testing.T) {
 			s.lmu.Unlock()
 
 			testkit.Equal(t, n, int64(0), "the commit must write nothing")
+		})
+
+		t.Run("moves the served position of an origin to the later of two calls of the record", func(t *testing.T) {
+			t.Parallel()
+			other := newInternalLog(t, "example.com/b")
+			f := newInternalFixture(t, l, other)
+			g := &gated{Cosigner: f.signer, started: make(chan struct{}), release: make(chan struct{})}
+			f.signer = g
+			s := f.server(t)
+
+			var wg sync.WaitGroup
+
+			returned := make(chan struct{})
+
+			wg.Go(func() {
+				defer close(returned)
+
+				other.advance(t, s, 0, 5, nil)
+			})
+			awaitBefore(t, g.started, returned, "the first commit must sign")
+
+			// The next commit takes both calls of l in one record.
+			wg.Go(func() { l.advance(t, s, 0, 5, nil) })
+			waitQueue(t, s, 1)
+			wg.Go(func() { l.advance(t, s, 5, 6, nil) })
+			waitQueue(t, s, 2)
+			close(g.release)
+			waitAll(t, &wg, "every call must return")
+
+			rec := getRoute(t, s, l.origin)
+			testkit.Equal(t, rec.Code, http.StatusOK, "the route must serve the origin")
+			testkit.True(t, strings.HasPrefix(rec.Body.String(), string(l.note(t, 6))),
+				"the route must serve the later call of the record")
 		})
 	})
 
@@ -305,7 +411,7 @@ func TestCommitInternal(t *testing.T) {
 			l.advance(t, s, 0, 5, nil)
 			failHead(st)
 
-			_, failures, err := s.Advance(t.Context(), l.note(t, 6), []Update{l.update(t, 0, 6, nil)}, nil)
+			_, failures, err := s.Advance(bounded(t), l.note(t, 6), []Update{l.update(t, 0, 6, nil)}, nil)
 			testkit.Error(t, err, "Advance must fail")
 			testkit.Len(t, failures, 0, "Advance must return no failure with an error")
 		})
@@ -324,7 +430,7 @@ func TestCommitInternal(t *testing.T) {
 				return nil
 			}
 
-			_, _, err := s.Advance(t.Context(), l.note(t, 6), []Update{l.update(t, 3, 6, nil)}, nil)
+			_, _, err := s.Advance(bounded(t), l.note(t, 6), []Update{l.update(t, 3, 6, nil)}, nil)
 			testkit.Error(t, err, "Advance must fail")
 		})
 
@@ -340,7 +446,7 @@ func TestCommitInternal(t *testing.T) {
 			}
 			failHead(st)
 
-			_, _, err := s.Advance(t.Context(), l.note(t, 5), []Update{l.update(t, 0, 5, nil)}, nil)
+			_, _, err := s.Advance(bounded(t), l.note(t, 5), []Update{l.update(t, 0, 5, nil)}, nil)
 			testkit.Error(t, err, "Advance must fail")
 			testkit.ErrorIsNot(t, err, ErrContention, "the error must be the error of the store")
 		})
@@ -357,7 +463,7 @@ func TestCommitInternal(t *testing.T) {
 			}
 			failHead(st)
 
-			_, _, err := s.Advance(t.Context(), l.note(t, 5), []Update{l.update(t, 0, 5, nil)}, nil)
+			_, _, err := s.Advance(bounded(t), l.note(t, 5), []Update{l.update(t, 0, 5, nil)}, nil)
 			testkit.Error(t, err, "Advance must fail")
 			testkit.ErrorIsNot(t, err, version.ErrOutcomeUnknown, "the error must be the error of the read")
 		})

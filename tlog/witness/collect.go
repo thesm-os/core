@@ -31,7 +31,9 @@ import (
 //
 // Returns the errors of the store.
 func (s *Server) collect(ctx context.Context, w *snapper, snap *snapshot, name string, headSeq uint64) error {
-	keep := make(map[string]bool, len(w.base.objects)+len(snap.Objects))
+	// The map has room for the objects of snap, and grows for the objects
+	// of the base that snap does not refer to.
+	keep := make(map[string]bool, len(snap.Objects))
 	for _, obj := range w.base.objects {
 		keep[obj.Key] = true
 	}

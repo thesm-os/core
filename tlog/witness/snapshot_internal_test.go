@@ -25,6 +25,7 @@ import (
 
 	"go.thesmos.sh/core/blob"
 	"go.thesmos.sh/core/blob/memory"
+	"go.thesmos.sh/core/crypto"
 	"go.thesmos.sh/core/page"
 	"go.thesmos.sh/core/resilience"
 	"go.thesmos.sh/core/tlog/checkpoint"
@@ -75,7 +76,7 @@ func TestSnapshotInternal(t *testing.T) {
 			a.advance(t, s, 0, 5, nil)
 			b.advance(t, s, 0, 5, nil)
 
-			testkit.NoError(t, s.snapshot(t.Context()), "snapshot must install")
+			testkit.NoError(t, s.snapshot(bounded(t)), "snapshot must install")
 
 			snap := installedSnapshot(t, f.store)
 			testkit.Equal(t, snap.Base, "", "the first snapshot must have no base")
@@ -92,11 +93,11 @@ func TestSnapshotInternal(t *testing.T) {
 			f := newInternalFixture(t, a)
 			s := f.server(t)
 			a.advance(t, s, 0, 5, nil)
-			testkit.NoError(t, s.snapshot(t.Context()), "snapshot must install")
+			testkit.NoError(t, s.snapshot(bounded(t)), "snapshot must install")
 
 			h, _, err := readHead(t.Context(), f.store)
 			testkit.NoError(t, err, "the head must read")
-			testkit.NoError(t, s.snapshot(t.Context()), "a second snapshot must do nothing")
+			testkit.NoError(t, s.snapshot(bounded(t)), "a second snapshot must do nothing")
 
 			again, _, err := readHead(t.Context(), f.store)
 			testkit.NoError(t, err, "the head must read")
@@ -110,10 +111,10 @@ func TestSnapshotInternal(t *testing.T) {
 			s := f.server(t)
 			lines := a.advance(t, s, 0, 5, []byte("a prefix\n"))
 			b.advance(t, s, 0, 5, nil)
-			testkit.NoError(t, s.snapshot(t.Context()), "the first snapshot must install")
+			testkit.NoError(t, s.snapshot(bounded(t)), "the first snapshot must install")
 
 			b.advance(t, s, 5, 6, nil)
-			testkit.NoError(t, s.snapshot(t.Context()), "the second snapshot must install")
+			testkit.NoError(t, s.snapshot(bounded(t)), "the second snapshot must install")
 
 			snap := installedSnapshot(t, f.store)
 			groups := 0
@@ -149,9 +150,9 @@ func TestSnapshotInternal(t *testing.T) {
 			}
 
 			logs[4].advance(t, s, 0, 5, nil)
-			testkit.NoError(t, s.snapshot(t.Context()), "the first snapshot must install")
+			testkit.NoError(t, s.snapshot(bounded(t)), "the first snapshot must install")
 			logs[4].advance(t, s, 5, 6, nil)
-			testkit.NoError(t, s.snapshot(t.Context()), "the second snapshot must install")
+			testkit.NoError(t, s.snapshot(bounded(t)), "the second snapshot must install")
 
 			first := groupKeys(installedSnapshot(t, f.store))
 			testkit.Len(t, first, 1, "the four idle origins must share a group")
@@ -161,13 +162,71 @@ func TestSnapshotInternal(t *testing.T) {
 			}
 
 			logs[4].advance(t, s, 6, 7, nil)
-			testkit.NoError(t, s.snapshot(t.Context()), "the third snapshot must install")
+			testkit.NoError(t, s.snapshot(bounded(t)), "the third snapshot must install")
 
 			third := groupKeys(installedSnapshot(t, f.store))
 			for key := range first {
 				testkit.False(t, third[key], "the snapshot must compact the group")
 			}
 		})
+
+		t.Run("keeps a group in which half of the updates are current", func(t *testing.T) {
+			t.Parallel()
+			logs := make([]*internalLog, 5)
+			for i := range logs {
+				logs[i] = newInternalLog(t, "example.com/log/"+strconv.Itoa(i))
+			}
+
+			f := newInternalFixture(t, logs...)
+			s := f.server(t)
+
+			for _, l := range logs[:4] {
+				l.advance(t, s, 0, 5, nil)
+			}
+
+			logs[4].advance(t, s, 0, 5, nil)
+			testkit.NoError(t, s.snapshot(bounded(t)), "the first snapshot must install")
+			logs[4].advance(t, s, 5, 6, nil)
+			testkit.NoError(t, s.snapshot(bounded(t)), "the second snapshot must install")
+
+			first := groupKeys(installedSnapshot(t, f.store))
+			testkit.Len(t, first, 1, "the four idle origins must share a group")
+
+			for _, l := range logs[:2] {
+				l.advance(t, s, 5, 6, nil)
+			}
+
+			logs[4].advance(t, s, 6, 7, nil)
+			testkit.NoError(t, s.snapshot(bounded(t)), "the third snapshot must install")
+
+			third := groupKeys(installedSnapshot(t, f.store))
+			for key := range first {
+				testkit.True(t, third[key], "the snapshot must keep the group")
+			}
+		})
+
+		t.Run("keeps the update of an origin at the record of the installed snapshot on that record",
+			func(t *testing.T) {
+				t.Parallel()
+				a, b, c := newInternalLog(t, "example.com/a"), newInternalLog(t, "example.com/b"),
+					newInternalLog(t, "example.com/c")
+				f := newInternalFixture(t, a, b, c)
+				s := f.server(t)
+				a.advance(t, s, 0, 5, nil)
+				c.advance(t, s, 0, 5, nil)
+				testkit.NoError(t, s.snapshot(bounded(t)), "the first snapshot must install")
+
+				b.advance(t, s, 0, 5, nil)
+				testkit.NoError(t, s.snapshot(bounded(t)), "the second snapshot must install")
+
+				// The record of c is the record of the first snapshot, and the
+				// second snapshot moves only the updates before it.
+				snap := installedSnapshot(t, f.store)
+				i := slices.IndexFunc(snap.Origins, func(o snapOrigin) bool { return o.Origin == c.origin })
+				testkit.True(t, i >= 0, "the snapshot must contain c")
+				testkit.True(t, strings.HasPrefix(snap.Objects[snap.Origins[i].Object].Key, recordPrefix),
+					"the update of c must remain on its record")
+			})
 
 		t.Run("collects only what neither of the two newest snapshots refers to", func(t *testing.T) {
 			t.Parallel()
@@ -178,7 +237,7 @@ func TestSnapshotInternal(t *testing.T) {
 
 			for size := uint64(1); size <= 4; size++ {
 				b.advance(t, s, size-1, size, nil)
-				testkit.NoError(t, s.snapshot(t.Context()), "the snapshot must install")
+				testkit.NoError(t, s.snapshot(bounded(t)), "the snapshot must install")
 			}
 
 			snap := installedSnapshot(t, f.store)
@@ -215,7 +274,7 @@ func TestSnapshotInternal(t *testing.T) {
 
 			a.advance(t, s, 5, 6, nil)
 			a.advance(t, s, 6, 7, nil)
-			testkit.NoError(t, s.snapshot(t.Context()), "the snapshot must install")
+			testkit.NoError(t, s.snapshot(bounded(t)), "the snapshot must install")
 
 			_, err = f.store.Stat(t.Context(), orphan)
 			testkit.Error(t, err, "the snapshot must collect the record off the chain")
@@ -235,7 +294,7 @@ func TestSnapshotInternal(t *testing.T) {
 			st.refuse("")
 
 			b.advance(t, s, 0, 5, nil)
-			testkit.NoError(t, s.snapshot(t.Context()), "the first snapshot must install")
+			testkit.NoError(t, s.snapshot(bounded(t)), "the first snapshot must install")
 
 			f.clock.Advance(time.Minute)
 			b.advance(t, s, 5, 6, nil)
@@ -245,14 +304,14 @@ func TestSnapshotInternal(t *testing.T) {
 			}
 
 			testkit.Equal(t, f.breaker.State(s.targets[0]), resilience.Open, "the circuit must be open")
-			testkit.NoError(t, s.snapshot(t.Context()), "the snapshot must install")
+			testkit.NoError(t, s.snapshot(bounded(t)), "the snapshot must install")
 
 			o, _ := s.st.origins.Get(hashOrigin(a.origin))
 			testkit.False(t, o.latest.group, "the update of a must remain on its record")
 
 			f.clock.Advance(time.Minute)
 			b.advance(t, s, 6, 7, nil)
-			testkit.NoError(t, s.snapshot(t.Context()), "the next snapshot must install")
+			testkit.NoError(t, s.snapshot(bounded(t)), "the next snapshot must install")
 
 			o, _ = s.st.origins.Get(hashOrigin(a.origin))
 			testkit.True(t, o.latest.group, "the next snapshot must move the update of a")
@@ -275,11 +334,11 @@ func TestSnapshotInternal(t *testing.T) {
 
 			st.refuse("")
 			c.advance(t, s, 0, 5, nil)
-			testkit.NoError(t, s.snapshot(t.Context()), "the first snapshot must install")
+			testkit.NoError(t, s.snapshot(bounded(t)), "the first snapshot must install")
 
 			f.clock.Advance(time.Minute)
 			c.advance(t, s, 5, 6, nil)
-			testkit.NoError(t, s.snapshot(t.Context()), "the second snapshot must install")
+			testkit.NoError(t, s.snapshot(bounded(t)), "the second snapshot must install")
 
 			moved := 0
 
@@ -306,12 +365,12 @@ func TestSnapshotInternal(t *testing.T) {
 			st.refuse("")
 
 			b.advance(t, s, 0, 5, nil)
-			testkit.NoError(t, s.snapshot(t.Context()), "the first snapshot must install")
+			testkit.NoError(t, s.snapshot(bounded(t)), "the first snapshot must install")
 			f.clock.Advance(time.Minute)
 			b.advance(t, s, 5, 6, nil)
 
 			f.clock.SetUTCError(0, false)
-			testkit.NoError(t, s.snapshot(t.Context()), "the snapshot must install")
+			testkit.NoError(t, s.snapshot(bounded(t)), "the snapshot must install")
 
 			o, _ := s.st.origins.Get(hashOrigin(a.origin))
 			testkit.False(t, o.latest.group, "the snapshot must not repair the record")
@@ -326,10 +385,10 @@ func TestSnapshotInternal(t *testing.T) {
 			b.advance(t, s, 0, 5, nil)
 
 			other := f.server(t)
-			testkit.NoError(t, other.snapshot(t.Context()), "the other process must install")
+			testkit.NoError(t, other.snapshot(bounded(t)), "the other process must install")
 
 			installed := installedSnapshot(t, f.store)
-			testkit.NoError(t, s.snapshot(t.Context()), "the snapshot must be abandoned without an error")
+			testkit.NoError(t, s.snapshot(bounded(t)), "the snapshot must be abandoned without an error")
 			testkit.Equal(t, installedSnapshot(t, f.store).Record, installed.Record,
 				"the snapshot of the other process must remain installed")
 		})
@@ -344,7 +403,7 @@ func TestSnapshotInternal(t *testing.T) {
 			f.refuse(a.origin)
 			f.clock.Advance(2 * time.Hour)
 			b.advance(t, s, 0, 5, nil)
-			testkit.NoError(t, s.snapshot(t.Context()), "the snapshot must install")
+			testkit.NoError(t, s.snapshot(bounded(t)), "the snapshot must install")
 
 			testkit.Len(t, listKeys(t, f.store, retiredPrefix), 1, "the snapshot must create the retired object")
 			testkit.Equal(t, getRoute(t, s, a.origin).Code, http.StatusNotFound, "the route must refuse the origin")
@@ -354,7 +413,7 @@ func TestSnapshotInternal(t *testing.T) {
 			f.mu.Unlock()
 
 			for _, server := range []*Server{s, f.server(t)} {
-				_, failures, err := server.Advance(t.Context(), a.note(t, 6), []Update{a.update(t, 0, 6, nil)}, nil)
+				_, failures, err := server.Advance(bounded(t), a.note(t, 6), []Update{a.update(t, 0, 6, nil)}, nil)
 				testkit.NoError(t, err, "Advance must check the update")
 				testkit.Len(t, failures, 1, "Advance must refuse the old size 0")
 
@@ -362,6 +421,21 @@ func TestSnapshotInternal(t *testing.T) {
 				testkit.True(t, ok, "the failure must be a SizeError")
 				testkit.Equal(t, se.Size, uint64(5), "the SizeError must contain the retired size")
 			}
+		})
+
+		t.Run("keeps an origin that Logs refuses for exactly Retention", func(t *testing.T) {
+			t.Parallel()
+			a, b := newInternalLog(t, "example.com/a"), newInternalLog(t, "example.com/b")
+			f := newInternalFixture(t, a, b)
+			s := f.server(t)
+			a.advance(t, s, 0, 5, nil)
+
+			f.refuse(a.origin)
+			f.clock.Advance(time.Hour)
+			b.advance(t, s, 0, 5, nil)
+			testkit.NoError(t, s.snapshot(bounded(t)), "the snapshot must install")
+
+			testkit.Len(t, listKeys(t, f.store, retiredPrefix), 0, "the snapshot must retire no origin")
 		})
 
 		t.Run("returns the retired size to a call that waits while another process retires its origin",
@@ -395,11 +469,11 @@ func TestSnapshotInternal(t *testing.T) {
 				wg.Go(func() {
 					defer close(first)
 
-					_, _, berr = p.Advance(t.Context(), bNote, bUpdates, nil)
+					_, _, berr = p.Advance(bounded(t), bNote, bUpdates, nil)
 				})
 				awaitBefore(t, g.started, first, "the commit of b must sign")
 
-				wg.Go(func() { _, failures, aerr = p.Advance(t.Context(), aNote, aUpdates, nil) })
+				wg.Go(func() { _, failures, aerr = p.Advance(bounded(t), aNote, aUpdates, nil) })
 				waitQueue(t, p, 1)
 
 				other := f.server(t)
@@ -407,7 +481,7 @@ func TestSnapshotInternal(t *testing.T) {
 				f.refuse(a.origin)
 				f.clock.Advance(2 * time.Hour)
 				b.advance(t, other, 5, 6, nil)
-				testkit.NoError(t, other.snapshot(t.Context()), "the snapshot must install")
+				testkit.NoError(t, other.snapshot(bounded(t)), "the snapshot must install")
 				testkit.Len(t, listKeys(t, f.store, retiredPrefix), 1, "the snapshot must retire a")
 
 				open()
@@ -440,7 +514,7 @@ func TestSnapshotInternal(t *testing.T) {
 				}
 			}
 
-			_, failures, err := s.Advance(t.Context(), batch.note(t, 5), updates, nil)
+			_, failures, err := s.Advance(bounded(t), batch.note(t, 5), updates, nil)
 			testkit.NoError(t, err, "Advance must commit the updates")
 			testkit.Len(t, failures, 0, "Advance must return no failure")
 			testkit.Equal(t, st.walks(retiredPrefix), 0, "the commit must not list the retired objects")
@@ -486,10 +560,10 @@ func TestSnapshotInternal(t *testing.T) {
 					sizes[i] = 5
 				}
 
-				_, failures, err := s.Advance(t.Context(), msg, updates, nil)
+				_, failures, err := s.Advance(bounded(t), msg, updates, nil)
 				testkit.NoError(t, err, "Advance must commit the updates")
 				testkit.Len(t, failures, 0, "Advance must return no failure")
-				testkit.NoError(t, s.snapshot(t.Context()), "the snapshot must install")
+				testkit.NoError(t, s.snapshot(bounded(t)), "the snapshot must install")
 
 				snap := installedSnapshot(t, f.store)
 				current := map[uint32]uint32{}
@@ -522,7 +596,7 @@ func TestSnapshotInternal(t *testing.T) {
 
 			a.advance(tb, s, 0, 5, nil)
 			b.advance(tb, s, 0, 5, nil)
-			testkit.NoError(tb, s.snapshot(tb.Context()), "the first snapshot must install")
+			testkit.NoError(tb, s.snapshot(bounded(tb)), "the first snapshot must install")
 			b.advance(tb, s, 5, 6, nil)
 
 			return f, st, s
@@ -540,7 +614,7 @@ func TestSnapshotInternal(t *testing.T) {
 				t.Parallel()
 				_, st, s := idle(t)
 				st.refuse(tt.prefix)
-				testkit.Error(t, s.snapshot(t.Context()), "the snapshot must fail")
+				testkit.Error(t, s.snapshot(bounded(t)), "the snapshot must fail")
 			})
 		}
 
@@ -558,11 +632,30 @@ func TestSnapshotInternal(t *testing.T) {
 			}
 
 			b.advance(t, s, 0, 5, nil)
-			testkit.NoError(t, s.snapshot(t.Context()), "the first snapshot must install")
+			testkit.NoError(t, s.snapshot(bounded(t)), "the first snapshot must install")
 			b.advance(t, s, 5, 6, nil)
 
 			st.refuse(groupPrefix)
-			testkit.Error(t, s.snapshot(t.Context()), "the snapshot must fail")
+			testkit.Error(t, s.snapshot(bounded(t)), "the snapshot must fail")
+		})
+
+		t.Run("moves two calls that together exceed a group into two groups", func(t *testing.T) {
+			t.Parallel()
+			c := newInternalLog(t, "example.com/c")
+			f := newInternalFixture(t, a, b, c)
+			s := f.server(t)
+
+			for _, l := range []*internalLog{a, c} {
+				l.advance(t, s, 0, 5, make([]byte, 600<<10))
+			}
+
+			b.advance(t, s, 0, 5, nil)
+			testkit.NoError(t, s.snapshot(bounded(t)), "the first snapshot must install")
+			b.advance(t, s, 5, 6, nil)
+			testkit.NoError(t, s.snapshot(bounded(t)), "the second snapshot must install")
+
+			testkit.Len(t, groupKeys(installedSnapshot(t, f.store)), 2,
+				"the snapshot must create a group for each call")
 		})
 
 		t.Run("returns the error of the store for a retired object that it does not create", func(t *testing.T) {
@@ -572,7 +665,7 @@ func TestSnapshotInternal(t *testing.T) {
 			f.clock.Advance(2 * time.Hour)
 			b.advance(t, s, 6, 7, nil)
 			st.refuse(retiredPrefix)
-			testkit.Error(t, s.snapshot(t.Context()), "the snapshot must fail")
+			testkit.Error(t, s.snapshot(bounded(t)), "the snapshot must fail")
 		})
 
 		t.Run("returns the error of the store for the record of a move that it does not read", func(t *testing.T) {
@@ -586,7 +679,7 @@ func TestSnapshotInternal(t *testing.T) {
 				return nil
 			}
 
-			testkit.Error(t, s.snapshot(t.Context()), "the snapshot must fail")
+			testkit.Error(t, s.snapshot(bounded(t)), "the snapshot must fail")
 		})
 
 		positions := []struct {
@@ -595,11 +688,11 @@ func TestSnapshotInternal(t *testing.T) {
 		}{
 			{
 				name: "returns ErrJournal for a position of a call that the record does not have",
-				edit: func(p *position) { p.call = 5 },
+				edit: func(p *position) { p.call = 1 },
 			},
 			{
 				name: "returns ErrJournal for a position of an update that the call does not have",
-				edit: func(p *position) { p.update = 5 },
+				edit: func(p *position) { p.update = 1 },
 			},
 		}
 		for _, tt := range positions {
@@ -611,7 +704,7 @@ func TestSnapshotInternal(t *testing.T) {
 				tt.edit(&o.latest)
 				s.st.origins.Set(h, o)
 
-				testkit.ErrorIs(t, s.snapshot(t.Context()), ErrJournal, "the snapshot must refuse the position")
+				testkit.ErrorIs(t, s.snapshot(bounded(t)), ErrJournal, "the snapshot must refuse the position")
 			})
 		}
 
@@ -622,7 +715,7 @@ func TestSnapshotInternal(t *testing.T) {
 			a.advance(t, s, 5, 6, nil)
 			st.refuse("")
 			b.advance(t, s, 6, 7, nil)
-			testkit.NoError(t, s.snapshot(t.Context()), "the second snapshot must install")
+			testkit.NoError(t, s.snapshot(bounded(t)), "the second snapshot must install")
 			b.advance(t, s, 7, 8, nil)
 			f.clock.Advance(time.Minute)
 
@@ -646,7 +739,7 @@ func TestSnapshotInternal(t *testing.T) {
 				return nil
 			}
 
-			testkit.Error(t, s.snapshot(t.Context()), "the snapshot must fail")
+			testkit.Error(t, s.snapshot(bounded(t)), "the snapshot must fail")
 		})
 
 		t.Run("returns the error of the store for a head that the install does not write", func(t *testing.T) {
@@ -660,7 +753,7 @@ func TestSnapshotInternal(t *testing.T) {
 				return nil
 			}
 
-			testkit.Error(t, s.snapshot(t.Context()), "the snapshot must fail")
+			testkit.Error(t, s.snapshot(bounded(t)), "the snapshot must fail")
 		})
 
 		t.Run("returns ErrContention after 16 tries of the install", func(t *testing.T) {
@@ -674,7 +767,7 @@ func TestSnapshotInternal(t *testing.T) {
 				return nil
 			}
 
-			testkit.ErrorIs(t, s.snapshot(t.Context()), ErrContention, "the snapshot must give up")
+			testkit.ErrorIs(t, s.snapshot(bounded(t)), ErrContention, "the snapshot must give up")
 		})
 
 		t.Run("returns the error of the store for a walk of the garbage that fails", func(t *testing.T) {
@@ -688,18 +781,18 @@ func TestSnapshotInternal(t *testing.T) {
 				return nil
 			}
 
-			testkit.Error(t, s.snapshot(t.Context()), "the snapshot must fail")
+			testkit.Error(t, s.snapshot(bounded(t)), "the snapshot must fail")
 		})
 
 		t.Run("returns the error of the store for garbage that it does not delete", func(t *testing.T) {
 			t.Parallel()
 			_, st, s := idle(t)
 			b.advance(t, s, 6, 7, nil)
-			testkit.NoError(t, s.snapshot(t.Context()), "the second snapshot must install")
+			testkit.NoError(t, s.snapshot(bounded(t)), "the second snapshot must install")
 			b.advance(t, s, 7, 8, nil)
 			st.del = func(string) error { return errors.New("the delete failed") }
 
-			testkit.Error(t, s.snapshot(t.Context()), "the snapshot must fail")
+			testkit.Error(t, s.snapshot(bounded(t)), "the snapshot must fail")
 		})
 
 		t.Run("logs a snapshot that fails", func(t *testing.T) {
@@ -726,13 +819,131 @@ func TestSnapshotInternal(t *testing.T) {
 			s := newInternalServer(t, cfg)
 			a.advance(t, s, 0, 5, nil)
 
-			testkit.NoError(t, s.snapshot(t.Context()), "the snapshot must install")
+			testkit.NoError(t, s.snapshot(bounded(t)), "the snapshot must install")
 			testkit.True(t, h.has("witness: the state is above 90% of MaxOrigins"), "the snapshot must warn")
+		})
+
+		t.Run("logs nothing for a state at 90% of MaxOrigins", func(t *testing.T) {
+			t.Parallel()
+			batch := newInternalLog(t, "example.com/batch")
+			f := newInternalFixture(t)
+			h := &logged{}
+			cfg := f.config()
+			cfg.MaxOrigins, cfg.Logger = 10, slog.New(h)
+			s := newInternalServer(t, cfg)
+
+			root := batch.update(t, 0, 5, nil).Body.Root
+			updates := make([]Update, 9)
+
+			for i := range updates {
+				origin := checkpoint.Origin("example.com/log/" + strconv.Itoa(i))
+				f.accepted[origin] = batch.log
+				updates[i] = Update{Body: checkpoint.Body{Origin: origin, Size: 5, Root: root}}
+			}
+
+			_, failures, err := s.Advance(bounded(t), batch.note(t, 5), updates, nil)
+			testkit.NoError(t, err, "Advance must commit the updates")
+			testkit.Len(t, failures, 0, "Advance must return no failure")
+			testkit.NoError(t, s.snapshot(bounded(t)), "the snapshot must install")
+			testkit.False(t, h.has("witness: the state is above 90% of MaxOrigins"), "the snapshot must not warn")
+		})
+
+		t.Run("takes the snapshot that it installs into its state", func(t *testing.T) {
+			t.Parallel()
+			f := newInternalFixture(t, a)
+			s := f.server(t)
+			a.advance(t, s, 0, 5, nil)
+			testkit.NoError(t, s.snapshot(bounded(t)), "the snapshot must install")
+
+			h, v, err := readHead(t.Context(), f.store)
+			testkit.NoError(t, err, "the head must read")
+			testkit.Equal(t, s.st.version, v, "the state must reflect the head of the install")
+			testkit.Equal(t, s.st.snap.name, h.Snapshot, "the state must take the snapshot")
+		})
+	})
+
+	t.Run("place", func(t *testing.T) {
+		t.Parallel()
+
+		origin := checkpoint.Origin("example.com/a")
+		root := crypto.NewDigest256([32]byte{1})
+
+		// filling returns a server, the writer of a snapshot of Seq 1 whose
+		// group has one call and used bytes, and an object of one call with a
+		// note and lines of 60 bytes each, with the move of its update.
+		filling := func(tb testing.TB, used int) (*Server, *snapper, *loaded, move) {
+			tb.Helper()
+
+			w := &snapper{placed: make(map[originHash]placed), seq: 1, bytes: used}
+			other := entry{Origin: "example.com/b", Root: root, Size: 1}
+			w.group.Calls = []call{{Note: []byte("a note"), Updates: []entry{other}}}
+
+			l := &loaded{
+				calls: []call{{Note: make([]byte, 60), Updates: []entry{{Origin: origin, Root: root, Size: 1}}}},
+				lines: [][]byte{make([]byte, 60)},
+			}
+
+			m := move{from: position{key: recordPrefix + "x", seq: 1}, hash: hashOrigin(origin)}
+
+			return newInternalFixture(tb).server(tb), w, l, m
+		}
+
+		t.Run("creates the group first when the note and the lines of a call exceed maxGroupBytes", func(t *testing.T) {
+			t.Parallel()
+			s, w, l, m := filling(t, maxGroupBytes-100)
+			testkit.NoError(t, s.place(bounded(t), w, l, []move{m}), "place must place the call")
+			testkit.Len(t, w.keys, 1, "place must create the full group first")
+			testkit.Len(t, w.group.Calls, 1, "the call must start the next group")
+		})
+
+		t.Run("adds a call that fills the group to maxGroupBytes", func(t *testing.T) {
+			t.Parallel()
+			s, w, l, m := filling(t, maxGroupBytes-120)
+			testkit.NoError(t, s.place(bounded(t), w, l, []move{m}), "place must place the call")
+			testkit.Len(t, w.keys, 0, "place must create no group")
+			testkit.Len(t, w.group.Calls, 2, "the call must join the group")
 		})
 	})
 
 	t.Run("snapshotIfDue", func(t *testing.T) {
 		t.Parallel()
+
+		tests := []struct {
+			name    string
+			snapEnd uint64
+			after   uint64
+			want    bool
+		}{
+			{
+				name:  "writes a snapshot at snapshotBytes of records after the installed snapshot",
+				after: snapshotBytes, want: true,
+			},
+			{
+				name:    "writes no snapshot below snapshotBytes of records after a large installed snapshot",
+				snapEnd: 2 * snapshotBytes, after: 1,
+			},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+
+				// A journal of one record, which no commit of the server wrote, so
+				// no committer runs beside the case.
+				f := newInternalFixture(t)
+				putHead(t, f.store, head{Record: putRecord(t, f.store, &record{Seq: 1, Time: 1})})
+				s := f.server(t)
+
+				s.mu.Lock()
+				s.st.snap.end, s.st.end = tt.snapEnd, tt.snapEnd+tt.after
+				s.mu.Unlock()
+
+				s.snapshotIfDue()
+
+				h, _, err := readHead(t.Context(), f.store)
+				testkit.NoError(t, err, "the head must read")
+				testkit.Equal(t, h.Snapshot != "", tt.want, "snapshotIfDue must write a snapshot when one is due")
+			})
+		}
 
 		t.Run("writes a snapshot after 64 MiB of records", func(t *testing.T) {
 			t.Parallel()
@@ -926,7 +1137,7 @@ func (f *faulty) walks(prefix string) int {
 func newInternalServer(tb testing.TB, cfg *ServerConfig) *Server {
 	tb.Helper()
 
-	s, err := NewServer(tb.Context(), cfg)
+	s, err := NewServer(bounded(tb), cfg)
 	testkit.NoError(tb, err, "NewServer must accept the configuration")
 
 	return s
@@ -997,7 +1208,7 @@ func getRoute(tb testing.TB, s *Server, origin checkpoint.Origin) *httptest.Resp
 	path := "/m/" + hex.EncodeToString(h[:]) + "/checkpoint"
 
 	rec := httptest.NewRecorder()
-	s.Checkpoint().ServeHTTP(rec, httptest.NewRequestWithContext(tb.Context(), http.MethodGet, path, nil))
+	s.Checkpoint().ServeHTTP(rec, httptest.NewRequestWithContext(bounded(tb), http.MethodGet, path, nil))
 
 	return rec
 }

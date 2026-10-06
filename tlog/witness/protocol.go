@@ -51,8 +51,9 @@ const (
 	// characters decodes to at most.
 	maxHashBytes = 66
 
-	// maxSizeText is the length of the decimal of the largest uint64.
-	maxSizeText = 20
+	// maxSizeBody is the length of the longest body of a 409: the 20 digits
+	// of the decimal of the largest uint64, and a newline.
+	maxSizeBody = 21
 
 	// hashChunk is the size of the buffer on the stack through which
 	// hashOrigin copies an origin to its hash.
@@ -62,6 +63,10 @@ const (
 	// SizeError.
 	sizeErrorHead = "witness: the witness committed the size "
 	sizeErrorTail = " last"
+
+	// maxSizeError is the length of the longest text of a SizeError:
+	// sizeErrorHead, the 20 digits of the largest uint64, and sizeErrorTail.
+	maxSizeError = 65
 )
 
 // strictBase64 decodes padded standard base64, and refuses an encoding
@@ -108,7 +113,7 @@ type SizeError struct {
 // Error returns the text of e: the prefix of the package and the
 // committed size. It builds the text in an array on its stack.
 func (e *SizeError) Error() string {
-	var buf [len(sizeErrorHead) + maxSizeText + len(sizeErrorTail)]byte
+	var buf [maxSizeError]byte
 
 	b := append(buf[:0], sizeErrorHead...)
 	b = strconv.AppendUint(b, e.Size, 10)

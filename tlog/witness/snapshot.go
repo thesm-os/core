@@ -213,8 +213,9 @@ func (w *snapper) moves() []move {
 
 	compacted := make(map[string]bool)
 
+	// A record never compacts, because its count of updates is 0.
 	for _, obj := range w.base.objects {
-		if obj.Updates > 0 && 2*current[obj.Key] < obj.Updates {
+		if 2*current[obj.Key] < obj.Updates {
 			compacted[obj.Key] = true
 		}
 	}
@@ -351,7 +352,9 @@ func (s *Server) place(ctx context.Context, w *snapper, l *loaded, moves []move)
 			size += len(c.Updates[m.from.update].Prefix)
 		}
 
-		if len(w.group.Calls) > 0 && w.bytes+size > maxGroupBytes {
+		// A call above maxGroupBytes starts a group of its own, because flush
+		// creates nothing for an empty group.
+		if w.bytes+size > maxGroupBytes {
 			if err := s.flush(ctx, w); err != nil {
 				return err
 			}

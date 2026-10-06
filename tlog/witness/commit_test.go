@@ -31,6 +31,10 @@ import (
 // blocks.
 const maxHeadWrites = 16
 
+// patience bounds each wait of a case: a call into a Server, a value that
+// a hook sends, and the goroutines that a case starts.
+const patience = 5 * time.Second
+
 // flaky is a cosigner whose signatures fail while fail is set, and that
 // runs before, when it is not nil, before each signature.
 type flaky struct {
@@ -57,7 +61,7 @@ func TestCommit(t *testing.T) {
 			s := newServer(t, f.config())
 			f.clock.SetUTCError(time.Second, true)
 
-			_, _, err := s.Advance(t.Context(), l.notes[5], []witness.Update{l.update(t, 0, 5)}, nil)
+			_, _, err := s.Advance(bounded(t), l.notes[5], []witness.Update{l.update(t, 0, 5)}, nil)
 			testkit.ErrorIs(t, err, checkpoint.ErrClock, "Advance must refuse the reading")
 			testkit.Equal(t, errs.Classify(err), errs.Transient, "the error must classify as Transient")
 			testkit.Len(t, keys(t, f.store, "records/"), 0, "the commit must create no record")
@@ -69,7 +73,7 @@ func TestCommit(t *testing.T) {
 			s := newServer(t, f.config())
 			f.clock.SetUTCError(0, false)
 
-			_, _, err := s.Advance(t.Context(), l.notes[5], []witness.Update{l.update(t, 0, 5)}, nil)
+			_, _, err := s.Advance(bounded(t), l.notes[5], []witness.Update{l.update(t, 0, 5)}, nil)
 			testkit.ErrorIs(t, err, checkpoint.ErrClock, "Advance must refuse the reading")
 		})
 
@@ -78,7 +82,7 @@ func TestCommit(t *testing.T) {
 			cfg := newFixture(t, l).config()
 			cfg.UTC = brokenUTC{}
 
-			_, _, err := newServer(t, cfg).Advance(t.Context(), l.notes[5], []witness.Update{l.update(t, 0, 5)}, nil)
+			_, _, err := newServer(t, cfg).Advance(bounded(t), l.notes[5], []witness.Update{l.update(t, 0, 5)}, nil)
 			testkit.ErrorIs(t, err, checkpoint.ErrClock, "Advance must refuse the reading")
 		})
 
@@ -87,7 +91,7 @@ func TestCommit(t *testing.T) {
 			cfg := newFixture(t, l).config()
 			cfg.UTC = fake.New(time.Unix(0, 0))
 
-			_, _, err := newServer(t, cfg).Advance(t.Context(), l.notes[5], []witness.Update{l.update(t, 0, 5)}, nil)
+			_, _, err := newServer(t, cfg).Advance(bounded(t), l.notes[5], []witness.Update{l.update(t, 0, 5)}, nil)
 			testkit.ErrorIs(t, err, checkpoint.ErrClock, "Advance must refuse the reading")
 		})
 
@@ -101,9 +105,22 @@ func TestCommit(t *testing.T) {
 			_, _, err := newServer(
 				t,
 				f.config(),
-			).Advance(t.Context(), l.notes[6], []witness.Update{l.update(t, 5, 6)}, nil)
+			).Advance(bounded(t), l.notes[6], []witness.Update{l.update(t, 5, 6)}, nil)
 			testkit.ErrorIs(t, err, checkpoint.ErrClock, "Advance must refuse the head's time")
 			testkit.Len(t, keys(t, f.store, "records/"), 1, "the commit must create no record")
+		})
+
+		t.Run("commits after a head ahead of the reading by exactly twice MaxError", func(t *testing.T) {
+			t.Parallel()
+			f := newFixture(t, l)
+			ahead := f.config()
+			ahead.UTC = fake.New(clockTime.Add(2 * time.Second))
+			advance(t, newServer(t, ahead), l, l.update(t, 0, 5))
+
+			cfg := f.config()
+			cfg.MaxError = time.Second
+			testkit.NotEqual(t, len(advance(t, newServer(t, cfg), l, l.update(t, 5, 6))), 0,
+				"Advance must commit after the head")
 		})
 
 		t.Run("commits readings a millisecond apart around a second boundary under a MaxError of 1 ms",
@@ -171,7 +188,7 @@ func TestCommit(t *testing.T) {
 			}
 
 			records := len(keys(t, f.store, "records/"))
-			_, _, err := s.Advance(t.Context(), l.notes[3], []witness.Update{l.update(t, 2, 3)}, nil)
+			_, _, err := s.Advance(bounded(t), l.notes[3], []witness.Update{l.update(t, 2, 3)}, nil)
 			testkit.ErrorIs(t, err, resilience.ErrOpen, "Advance must refuse the commit")
 			testkit.Equal(t, errs.Classify(err), errs.Transient, "the error must classify as Transient")
 			testkit.Len(t, keys(t, f.store, "records/"), records, "the commit must create no record")
@@ -237,7 +254,7 @@ func TestCommit(t *testing.T) {
 			s := newServer(t, cfg)
 
 			for size := uint64(1); size <= 2; size++ {
-				_, _, err := s.Advance(t.Context(), l.notes[size], []witness.Update{l.update(t, size-1, size)}, nil)
+				_, _, err := s.Advance(bounded(t), l.notes[size], []witness.Update{l.update(t, size-1, size)}, nil)
 				testkit.ErrorIs(t, err, context.DeadlineExceeded, "the signature must end at SignTimeout")
 			}
 
@@ -257,7 +274,7 @@ func TestCommit(t *testing.T) {
 			}})
 
 			for range 3 {
-				_, _, err := s.Advance(t.Context(), l.notes[5], []witness.Update{l.update(t, 0, 5)}, nil)
+				_, _, err := s.Advance(bounded(t), l.notes[5], []witness.Update{l.update(t, 0, 5)}, nil)
 				testkit.ErrorIs(t, err, context.DeadlineExceeded, "the commit must end at its deadline")
 			}
 
@@ -269,25 +286,26 @@ func TestCommit(t *testing.T) {
 			)
 		})
 
-		t.Run("stores the lines of a commit whose writes and signatures take nearly their bounds", func(t *testing.T) {
+		t.Run("stores the lines of a commit whose writes and signature together exceed Timeout", func(t *testing.T) {
 			t.Parallel()
 
-			// The three writes take 75% of Timeout and the signature 80% of
-			// SignTimeout. A store whose deadline were Timeout alone would end
-			// the commit before its lines. With bounds of half a second, 225
-			// ms of the deadline remain for the stalls of a loaded machine.
+			// The three writes take 360 ms, above a Timeout of 300 ms, so a
+			// store whose deadline were Timeout alone would end the commit
+			// before its lines. The deadline of Timeout + SignTimeout leaves 840
+			// ms after the writes and the signature for the stalls of a loaded
+			// machine.
 			f := newFixture(t, l)
 			c := &flaky{Cosigner: f.cosigners[0], before: func(context.Context) error {
-				time.Sleep(400 * time.Millisecond)
+				time.Sleep(100 * time.Millisecond)
 
 				return nil
 			}}
 			f.cosigners = []checkpoint.Cosigner{c}
 			cfg := f.config()
-			cfg.Timeout, cfg.SignTimeout = 500*time.Millisecond, 500*time.Millisecond
+			cfg.Timeout, cfg.SignTimeout = 300*time.Millisecond, time.Second
 			s := newServer(t, cfg)
 			f.store.intercept(hook{op: opPut, before: func(context.Context, string) error {
-				time.Sleep(125 * time.Millisecond)
+				time.Sleep(120 * time.Millisecond)
 
 				return nil
 			}})
@@ -305,10 +323,62 @@ func TestCommit(t *testing.T) {
 				return version.ErrMismatch
 			}})
 
-			_, _, err := s.Advance(t.Context(), l.notes[5], []witness.Update{l.update(t, 0, 5)}, nil)
+			_, _, err := s.Advance(bounded(t), l.notes[5], []witness.Update{l.update(t, 0, 5)}, nil)
 			testkit.ErrorIs(t, err, witness.ErrContention, "Advance must give up")
 			testkit.Equal(t, errs.Classify(err), errs.Transient, "the error must classify as Transient")
 		})
+
+		t.Run("writes the head again without a second record after an unknown outcome that did not apply",
+			func(t *testing.T) {
+				t.Parallel()
+				f := newFixture(t, l)
+				s := newServer(t, f.config())
+
+				var (
+					once    atomic.Bool
+					records atomic.Int64
+				)
+
+				f.store.intercept(hook{op: opPut, prefix: "head", before: func(context.Context, string) error {
+					if once.CompareAndSwap(false, true) {
+						return version.ErrOutcomeUnknown
+					}
+
+					return nil
+				}})
+				f.store.intercept(hook{op: opPut, prefix: "records/", before: func(context.Context, string) error {
+					records.Add(1)
+
+					return nil
+				}})
+
+				testkit.NotEqual(t, len(advance(t, s, l, l.update(t, 0, 5))), 0, "the commit must commit")
+				testkit.Equal(t, records.Load(), int64(1), "the commit must create one record")
+			})
+
+		t.Run("returns ErrUnknownOrigin for the second of two new origins of a call beyond MaxOrigins",
+			func(t *testing.T) {
+				t.Parallel()
+				batch := newTestLog(t, "example.com/batch")
+				f := newFixture(t)
+				cfg := f.config()
+				cfg.MaxOrigins = 1
+
+				root := batch.body(5).Root
+				updates := make([]witness.Update, 2)
+
+				for i := range updates {
+					origin := checkpoint.Origin("example.com/log/" + strconv.Itoa(i))
+					f.accepted[origin] = batch.log
+					updates[i] = witness.Update{Body: checkpoint.Body{Origin: origin, Size: 5, Root: root}}
+				}
+
+				_, failures, err := newServer(t, cfg).Advance(bounded(t), batch.notes[5], updates, nil)
+				testkit.NoError(t, err, "Advance must check the updates")
+				testkit.Len(t, failures, 1, "Advance must refuse one update")
+				testkit.Equal(t, failures[0].Index, 1, "the failure must name the second update")
+				testkit.ErrorIs(t, failures[0].Err, witness.ErrUnknownOrigin, "the failure must be ErrUnknownOrigin")
+			})
 
 		t.Run("returns the cause of ctx to a caller whose context ends while the commit completes", func(t *testing.T) {
 			t.Parallel()
@@ -380,12 +450,12 @@ func TestCommit(t *testing.T) {
 			wg.Go(func() {
 				defer func() { returned <- struct{}{} }()
 
-				lines[0], _, results[0] = a.Advance(t.Context(), l.notes[5], []witness.Update{l.update(t, 0, 5)}, nil)
+				lines[0], _, results[0] = a.Advance(bounded(t), l.notes[5], []witness.Update{l.update(t, 0, 5)}, nil)
 			})
 			wg.Go(func() {
 				defer func() { returned <- struct{}{} }()
 
-				lines[1], _, results[1] = b.Advance(t.Context(), signBody(t, fork, l.signer),
+				lines[1], _, results[1] = b.Advance(bounded(t), signBody(t, fork, l.signer),
 					[]witness.Update{{Body: fork}}, nil)
 			})
 
@@ -432,7 +502,7 @@ func TestCommit(t *testing.T) {
 					for j, s := range []*witness.Server{a, b} {
 						msg := signBody(t, bodies[j], l.signer)
 						wg.Go(func() {
-							lines[j], _, _ = s.Advance(t.Context(), msg, []witness.Update{{Body: bodies[j]}}, nil)
+							lines[j], _, _ = s.Advance(bounded(t), msg, []witness.Update{{Body: bodies[j]}}, nil)
 						})
 					}
 
@@ -603,7 +673,7 @@ func TestCommit(t *testing.T) {
 
 				// The commit writes its lines after Advance returns.
 				f.store.intercept(h)
-				_, _, _ = s.Advance(t.Context(), l.notes[6], []witness.Update{l.update(t, 5, 6)}, nil)
+				_, _, _ = s.Advance(bounded(t), l.notes[6], []witness.Update{l.update(t, 5, 6)}, nil)
 				settle(t, s, l)
 				testkit.True(t, once.Load(), "the store must return an unknown outcome for the write")
 				f.store.reset()
@@ -646,7 +716,7 @@ func sendLike(tb testing.TB, s *witness.Server, l *testLog, size uint64) (checkp
 	oldSize := uint64(0)
 
 	for range 3 {
-		_, failures, err := s.Advance(tb.Context(), l.notes[size], []witness.Update{l.update(tb, oldSize, size)}, nil)
+		_, failures, err := s.Advance(bounded(tb), l.notes[size], []witness.Update{l.update(tb, oldSize, size)}, nil)
 		if err != nil {
 			return checkpoint.Body{}, err
 		}
@@ -692,10 +762,10 @@ func (brokenUTC) ReadUTC() (clock.UTCReading, error) {
 func resend(tb testing.TB, s *witness.Server, l *testLog, size uint64) {
 	tb.Helper()
 
-	_, failures, err := s.Advance(tb.Context(), l.notes[size], []witness.Update{l.update(tb, size-1, size)}, nil)
+	_, failures, err := s.Advance(bounded(tb), l.notes[size], []witness.Update{l.update(tb, size-1, size)}, nil)
 	if len(failures) > 0 {
 		se, _ := errors.AsType[*witness.SizeError](failures[0].Err)
-		_, _, err = s.Advance(tb.Context(), l.notes[size], []witness.Update{l.update(tb, se.Size, size)}, nil)
+		_, _, err = s.Advance(bounded(tb), l.notes[size], []witness.Update{l.update(tb, se.Size, size)}, nil)
 	}
 
 	testkit.Error(tb, err, "the commit must fail at its signature")
@@ -723,14 +793,26 @@ func lineTime(tb testing.TB, l *testLog, size uint64, lines []byte) time.Time {
 	return ts
 }
 
+// bounded returns a context of tb that ends after patience. A call into a
+// Server under it returns the error of the context when a defect stalls
+// the call, so the case fails instead of waiting for the end of the test.
+func bounded(tb testing.TB) context.Context {
+	tb.Helper()
+
+	ctx, cancel := context.WithTimeout(tb.Context(), patience)
+	tb.Cleanup(cancel)
+
+	return ctx
+}
+
 // awaitBefore returns the next value of ch, and fails tb at once when end
-// delivers first while ch has no value, or when nothing arrives within 5
-// seconds. A test passes the end of the call that leads to the value, so it
-// fails as soon as that call returns without the value.
+// delivers first while ch has no value, or when nothing arrives within
+// patience. A test passes the end of the call that leads to the value, so
+// it fails as soon as that call returns without the value.
 func awaitBefore[T, E any](tb testing.TB, ch <-chan T, end <-chan E, what string) T {
 	tb.Helper()
 
-	timer := time.NewTimer(5 * time.Second)
+	timer := time.NewTimer(patience)
 	defer timer.Stop()
 
 	var zero T
@@ -748,14 +830,14 @@ func awaitBefore[T, E any](tb testing.TB, ch <-chan T, end <-chan E, what string
 
 		tb.Fatalf("%s: the call returned first", what)
 	case <-timer.C:
-		tb.Fatalf("%s: nothing arrived within 5 seconds", what)
+		tb.Fatalf("%s: nothing arrived within %s", what, patience)
 	}
 
 	return zero
 }
 
-// waitAll waits for wg, and fails tb when wg does not finish within 5
-// seconds.
+// waitAll waits for wg, and fails tb when wg does not finish within
+// patience.
 func waitAll(tb testing.TB, wg *sync.WaitGroup, what string) {
 	tb.Helper()
 
@@ -766,7 +848,7 @@ func waitAll(tb testing.TB, wg *sync.WaitGroup, what string) {
 		close(done)
 	}()
 
-	timer := time.NewTimer(5 * time.Second)
+	timer := time.NewTimer(patience)
 	defer timer.Stop()
 
 	select {
@@ -783,7 +865,7 @@ func waitAll(tb testing.TB, wg *sync.WaitGroup, what string) {
 func settle(tb testing.TB, s *witness.Server, l *testLog) {
 	tb.Helper()
 
-	_, failures, err := s.Advance(tb.Context(), l.notes[2], []witness.Update{l.update(tb, 1, 2)}, nil)
+	_, failures, err := s.Advance(bounded(tb), l.notes[2], []witness.Update{l.update(tb, 1, 2)}, nil)
 	testkit.NoError(tb, err, "the call that settles the writes must return")
 	testkit.Len(tb, failures, 1, "the commit must fail the call that settles the writes")
 }

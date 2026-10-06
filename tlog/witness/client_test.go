@@ -307,6 +307,12 @@ func TestClient(t *testing.T) {
 				},
 			},
 			{
+				name: "returns ErrCosignature for an invalid line of a key beside a valid line of every other key",
+				reply: func([]byte) (int, []byte) {
+					return http.StatusOK, append(garbageLine(ed.Key()), cosignLines(t, text, pq)...)
+				},
+			},
+			{
 				name: "returns ErrCosignature for a line whose timestamp is 0",
 				reply: func([]byte) (int, []byte) {
 					return http.StatusOK, cosignLines(t, text, mldsaCosigner(t, witnessName, nil))
@@ -384,6 +390,20 @@ func TestClient(t *testing.T) {
 			got, err := c.AddCheckpoint(t.Context(), msg, 0, nil, []byte("prefix:"))
 			testkit.Error(t, err, "AddCheckpoint must fail without a witness")
 			testkit.Equal(t, string(got), "prefix:", "AddCheckpoint must return dst unchanged")
+		})
+
+		t.Run("sends a proof of 63 hashes", func(t *testing.T) {
+			t.Parallel()
+			w := newFakeWitness(t, func([]byte) (int, []byte) { return http.StatusOK, cosignLines(t, text, ed) })
+
+			long := make([]crypto.Digest, 63)
+			for i := range long {
+				long[i] = crypto.NewDigest256(sha256.Sum256([]byte(strconv.Itoa(i))))
+			}
+
+			_, err := newClient(t, w, ed.Key()).AddCheckpoint(t.Context(), msg, 3, long, nil)
+			testkit.NoError(t, err, "AddCheckpoint must send a proof of 63 hashes")
+			testkit.Equal(t, w.requests.Load(), int64(1), "AddCheckpoint must send the request")
 		})
 
 		t.Run("returns ErrRequest for a proof of 64 hashes before a request", func(t *testing.T) {

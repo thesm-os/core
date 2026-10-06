@@ -41,7 +41,7 @@ func TestLog(t *testing.T) {
 				f := newFixture(t)
 				f.accepted[l.origin] = tt.give
 
-				_, _, err := newServer(t, f.config()).Advance(t.Context(), l.notes[5],
+				_, _, err := newServer(t, f.config()).Advance(bounded(t), l.notes[5],
 					[]witness.Update{l.update(t, 0, 5)}, nil)
 				testkit.ErrorIs(t, err, witness.ErrConfig, "Advance must refuse the Log")
 			})
