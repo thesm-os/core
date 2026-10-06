@@ -5,483 +5,618 @@ package arena_test
 
 import (
 	"bytes"
-	"runtime"
+	"slices"
 	"testing"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/bench"
+	"go.dokimi.dev/assert/expect"
+	"go.dokimi.dev/assert/prop"
+	"go.dokimi.dev/assert/stateful"
 
 	"go.thesmos.sh/core/arena"
 )
 
-func TestNew(t *testing.T) {
-	t.Parallel()
+// fill is the byte that a case writes into the memory of an arena or a
+// Slabs, to tell a written byte from a zero one.
+const fill = 0xa5
 
-	t.Run("New returns an empty arena", func(t *testing.T) {
-		t.Parallel()
-		a := arena.New()
-		testkit.Equal(t, a.Len(), 0, "Len on fresh arena must be 0")
-		testkit.Equal(t, a.Cap(), 0, "Cap on fresh arena must be 0")
-	})
+// arenaContract is the contract of arenaSteps, which TestArena and
+// FuzzArena check.
+const arenaContract = "every call must agree with a model of the bytes of the current lifecycle"
 
-	t.Run("NewWithCapacity pre-allocates the backing buffer", func(t *testing.T) {
-		t.Parallel()
-		a := arena.NewWithCapacity(1024)
-		testkit.Equal(t, a.Len(), 0, "Len on freshly-allocated arena must be 0")
-		testkit.Equal(t, a.Cap(), 1024, "Cap must equal the requested capacity")
-	})
+// Generators of the arena properties.
+var (
+	// capacities generates the initial capacity of an arena: none, or room
+	// for a few payloads.
+	capacities = prop.Integer(0, 128)
+
+	// payload generates the bytes of one append, the empty payload
+	// included.
+	payload = prop.Bytes(prop.MaxSize(48))
+
+	// payloads generates the payloads of a sequence of appends.
+	payloads = prop.List(payload, prop.MaxSize(8))
+)
+
+// sizes are the payload sizes of the benchmarks, from a small record to a
+// large batch.
+var sizes = []struct {
+	name string
+	n    int
+}{
+	{"16B", 16},
+	{"64B", 64},
+	{"256B", 256},
+	{"4K", 4096},
+	{"64K", 65536},
 }
 
-func TestAppend(t *testing.T) {
-	t.Parallel()
-
-	t.Run("returns a slice equal to the input", func(t *testing.T) {
-		t.Parallel()
-		a := arena.New()
-		input := []byte("hello")
-		testkit.Equal(t, a.Append(input), input,
-			"Append must return a slice equal to the supplied input")
-	})
-
-	t.Run("returned slice has capacity equal to length", func(t *testing.T) {
-		t.Parallel()
-		a := arena.New()
-		got := a.Append([]byte("hello"))
-		// Three-index slicing caps capacity. append on the
-		// returned slice must NOT extend into the arena.
-		testkit.Equal(t, cap(got), len(got),
-			"three-index cap must keep cap == len so callers can't extend into the arena")
-	})
-
-	t.Run("multiple appends extend Len cumulatively", func(t *testing.T) {
-		t.Parallel()
-		a := arena.New()
-		a.Append([]byte("ab"))
-		a.Append([]byte("cd"))
-		a.Append([]byte("ef"))
-		testkit.Equal(t, a.Len(), 6, "Len must equal the cumulative bytes appended")
-	})
-
-	t.Run("returned slice aliases the backing buffer until Reset", func(t *testing.T) {
-		t.Parallel()
-		a := arena.NewWithCapacity(64)
-		first := a.Append([]byte("hello"))
-		// A second append within capacity must not invalidate
-		// first — arena guarantees stability across Appends as
-		// long as no realloc occurs.
-		a.Append([]byte("world"))
-		testkit.Equal(t, first, []byte("hello"),
-			"first slice must remain stable across subsequent in-capacity appends")
-	})
+// ends are the calls that end the lifecycle of an arena, and with it the
+// validity of every Marker that the lifecycle returned.
+var ends = []struct {
+	name string
+	end  func(*arena.Arena)
+}{
+	{name: "Reset", end: (*arena.Arena).Reset},
+	{name: "Shrink", end: (*arena.Arena).Shrink},
 }
 
-func TestAlloc(t *testing.T) {
+// marked is a Marker beside the position and the lifecycle that the model
+// of arenaSteps records for it.
+type marked struct {
+	m     arena.Marker
+	pos   int
+	cycle int
+}
+
+func TestArena(t *testing.T) {
 	t.Parallel()
 
-	t.Run("returns a zeroed slice of length n", func(t *testing.T) {
+	t.Run("New", func(t *testing.T) {
 		t.Parallel()
-		a := arena.New()
-		got := a.Alloc(8)
-		testkit.Equal(t, len(got), 8, "Alloc(n) must return a slice of length n")
-		testkit.Equal(t, got, make([]byte, 8), "Alloc must zero the returned region")
-	})
 
-	t.Run("returned slice has capacity equal to length", func(t *testing.T) {
-		t.Parallel()
-		a := arena.New()
-		got := a.Alloc(8)
-		testkit.Equal(t, cap(got), len(got), "Alloc must cap capacity at length")
-	})
-
-	t.Run("returns a zeroed region after Reset", func(t *testing.T) {
-		t.Parallel()
-		a := arena.NewWithCapacity(64)
-		// Fill the buffer with non-zero bytes.
-		filled := a.Alloc(32)
-		for i := range filled {
-			filled[i] = 0xFF
-		}
-		a.Reset()
-		// Alloc must return zeroed bytes, not the prior 0xFFs.
-		testkit.Equal(t, a.Alloc(32), make([]byte, 32),
-			"Alloc after Reset must zero the reused region")
-	})
-
-	t.Run("returns a zeroed region after earlier appends", func(t *testing.T) {
-		t.Parallel()
-		a := arena.NewWithCapacity(64)
-		a.Append([]byte("head"))
-		testkit.Equal(t, a.Alloc(8), make([]byte, 8), "the region past the appended bytes must be zero")
-		testkit.Equal(t, a.Bytes()[:4], []byte("head"), "the appended bytes must remain")
-	})
-
-	t.Run("zeroes the bytes a TruncateTo rewind left behind", func(t *testing.T) {
-		t.Parallel()
-		a := arena.NewWithCapacity(64)
-		m := a.Mark()
-		a.Append(bytes.Repeat([]byte{0xFF}, 16))
-		testkit.True(t, a.TruncateTo(m), "the marker is current")
-		testkit.Equal(t, a.Alloc(16), make([]byte, 16), "Alloc must clear the rewound bytes")
-	})
-
-	t.Run("zeroes a region that extends past the rewound bytes", func(t *testing.T) {
-		t.Parallel()
-		a := arena.NewWithCapacity(64)
-		a.Append([]byte("keep"))
-		m := a.Mark()
-		a.Append(bytes.Repeat([]byte{0xFF}, 8))
-		testkit.True(t, a.TruncateTo(m), "the marker is current")
-		testkit.Equal(t, a.Alloc(32), make([]byte, 32), "every byte of the region must be zero")
-		testkit.Equal(t, a.Bytes()[:4], []byte("keep"), "the bytes before the region must remain")
-	})
-
-	t.Run("zeroes the spare capacity a failed AppendVia wrote into", func(t *testing.T) {
-		t.Parallel()
-		a := arena.NewWithCapacity(64)
-		_, err := a.AppendVia(func(dst []byte) ([]byte, error) {
-			_ = append(dst, bytes.Repeat([]byte{0xFF}, 32)...)
-
-			return nil, testkit.TestError("encode failed")
+		t.Run("returns an arena without a backing buffer", func(t *testing.T) {
+			t.Parallel()
+			a := arena.New()
+			expect.Equal(t, a.Len(), 0, "a new arena must be empty")
+			expect.Equal(t, a.Cap(), 0, "a new arena must have no backing buffer")
 		})
-		testkit.Error(t, err, "the appender's failure must be returned")
-		testkit.Equal(t, a.Alloc(48), make([]byte, 48), "Alloc must clear what the failed appender wrote")
 	})
 
-	t.Run("grows via reallocation when capacity exceeded", func(t *testing.T) {
+	t.Run("NewWithCapacity", func(t *testing.T) {
 		t.Parallel()
-		a := arena.NewWithCapacity(8)
-		a.Alloc(4)
-		// Force a grow.
-		a.Alloc(100)
-		testkit.True(t, a.Cap() >= 104, "Cap must be ≥ requested after grow")
+
+		t.Run("returns an empty arena with room for initialCap bytes", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "NewWithCapacity must return an empty arena of the requested capacity", func(c *prop.Case) {
+				n := c.Draw(capacities, "initialCap")
+				a := arena.NewWithCapacity(n)
+				assert.Equal(c, a.Len(), 0, "the arena must be empty")
+				assert.Equal(c, a.Cap(), n, "the capacity must be initialCap")
+			})
+		})
 	})
 
-	t.Run("keeps the buffer when the request fills the capacity exactly", func(t *testing.T) {
+	t.Run("Append", func(t *testing.T) {
 		t.Parallel()
-		// Lock the >= boundary in the cap-fits check: cap
-		// exactly equals needed triggers in-place expansion,
-		// not the grow branch.
-		a := arena.NewWithCapacity(32)
-		_ = a.Alloc(32)
-		testkit.Equal(t, a.Cap(), 32,
-			"Cap at boundary must not reallocate — in-place expansion")
+
+		t.Run("returns a region that keeps its payload across later appends", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "every region, Bytes and Len must follow the payloads in the order of the appends",
+				appendsInOrder)
+		})
 	})
 
-	t.Run("doubles the capacity when twice the capacity covers the request", func(t *testing.T) {
+	t.Run("Alloc", func(t *testing.T) {
 		t.Parallel()
-		// Lock the doubling-dominant grow path: requested
-		// capacity is less than 2x current, so grown capacity
-		// is have*2 (50*2=100), not want (75).
-		a := arena.NewWithCapacity(50)
-		_ = a.Alloc(75)
-		testkit.Equal(t, a.Cap(), 100,
-			"doubling must dominate when have*2 > want")
+
+		// have is the capacity of the arena of the growth cases, and
+		// allocCap returns the capacity after an Alloc of n bytes on it.
+		const have = 50
+		allocCap := func(n int) int {
+			a := arena.NewWithCapacity(have)
+			a.Alloc(n)
+
+			return a.Cap()
+		}
+
+		t.Run("returns n zero bytes after the bytes appended before", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "Alloc must append n zero bytes and keep the bytes before them", func(c *prop.Case) {
+				a := arena.NewWithCapacity(c.Draw(capacities, "initialCap"))
+				head := c.Draw(payload, "head")
+				a.Append(head)
+				n := c.Draw(prop.Integer(0, 96), "n")
+
+				got := a.Alloc(n)
+				assert.Equal(c, got, make([]byte, n), "the region must be n zero bytes", assert.EquateEmpty())
+				assert.Equal(c, cap(got), n, "the capacity of the region must be its length")
+				assert.Equal(c, a.Bytes(), slices.Concat(head, got), "the region must follow the appended bytes",
+					assert.EquateEmpty())
+			})
+		})
+
+		t.Run("keeps the backing buffer for a request that fits it", func(t *testing.T) {
+			t.Parallel()
+			prop.Equal(t, allocCap, func(int) int { return have },
+				"Alloc must not reallocate for a request within the capacity",
+				prop.Using(prop.Integer(0, have)), prop.Example(have))
+		})
+
+		t.Run("grows the capacity to the larger of twice the capacity and the request", func(t *testing.T) {
+			t.Parallel()
+			prop.Equal(t, allocCap, func(n int) int { return max(2*have, n) },
+				"Alloc must double the capacity, or take the request when it is larger",
+				prop.Using(prop.Integer(have+1, 1024)),
+				prop.Example(have+1), prop.Example(2*have), prop.Example(2*have+1), prop.Example(1000))
+		})
+
+		t.Run("returns zero bytes where the lifecycle before Reset wrote", func(t *testing.T) {
+			t.Parallel()
+			a := arena.NewWithCapacity(64)
+			copy(a.Alloc(32), bytes.Repeat([]byte{fill}, 32))
+			a.Reset()
+			assert.Equal(t, a.Alloc(32), make([]byte, 32), "Alloc after Reset must return zero bytes")
+		})
+
+		t.Run("returns zero bytes where a TruncateTo rewind left written ones", func(t *testing.T) {
+			t.Parallel()
+			a := arena.NewWithCapacity(64)
+			m := a.Mark()
+			a.Append(bytes.Repeat([]byte{fill}, 16))
+			assert.True(t, a.TruncateTo(m), "TruncateTo must return true for a current marker")
+			assert.Equal(t, a.Alloc(16), make([]byte, 16), "Alloc must clear the rewound bytes")
+		})
+
+		t.Run("returns zero bytes past the bytes that a rewind left written", func(t *testing.T) {
+			t.Parallel()
+			a := arena.NewWithCapacity(64)
+			a.Append([]byte("keep"))
+			m := a.Mark()
+			a.Append(bytes.Repeat([]byte{fill}, 8))
+			assert.True(t, a.TruncateTo(m), "TruncateTo must return true for a current marker")
+			assert.Equal(t, a.Alloc(32), make([]byte, 32), "every byte of the region must be zero")
+			assert.Equal(t, a.Bytes()[:4], []byte("keep"), "the bytes before the region must remain")
+		})
+
+		t.Run("returns zero bytes where a failed AppendVia wrote", func(t *testing.T) {
+			t.Parallel()
+			a := arena.NewWithCapacity(64)
+			_, err := a.AppendVia(func(dst []byte) ([]byte, error) {
+				_ = append(dst, bytes.Repeat([]byte{fill}, 32)...)
+
+				return nil, errEncode
+			})
+			assert.ErrorIs(t, err, errEncode, "AppendVia must return the appender's error")
+			assert.Equal(t, a.Alloc(48), make([]byte, 48), "Alloc must clear what the failed appender wrote")
+		})
+
+		t.Run("returns a region that the caller fills in place", func(t *testing.T) {
+			t.Parallel()
+			a := arena.New()
+			copy(a.Alloc(5), "hello")
+			assert.Equal(t, a.Bytes(), []byte("hello"), "a write into the region must show in Bytes")
+		})
+
+		t.Run("panics for a negative n", func(t *testing.T) {
+			t.Parallel()
+			assert.Panics(t, func() { arena.New().Alloc(-1) }, "a negative n must panic")
+		})
 	})
 
-	t.Run("doubles the capacity when twice the capacity equals the request", func(t *testing.T) {
+	t.Run("SliceSince", func(t *testing.T) {
 		t.Parallel()
-		// Lock the equality boundary in growCap's doubling
-		// check: have*2 == want, growCap returns have*2.
-		a := arena.NewWithCapacity(50)
-		_ = a.Alloc(100)
-		testkit.Equal(t, a.Cap(), 100,
-			"have*2 == want must return have*2")
+
+		t.Run("returns the bytes appended after the marker", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "SliceSince must return the bytes appended after Mark", func(c *prop.Case) {
+				a := arena.NewWithCapacity(c.Draw(capacities, "initialCap"))
+				for _, d := range c.Draw(payloads, "before") {
+					a.Append(d)
+				}
+				m := a.Mark()
+				after := c.Draw(payloads, "after")
+				for _, d := range after {
+					a.Append(d)
+				}
+
+				got := a.SliceSince(m)
+				assert.Equal(c, got, slices.Concat(after...), "SliceSince must return the bytes after the marker")
+				assert.Equal(c, cap(got), len(got), "the capacity of the slice must be its length")
+			})
+		})
+
+		t.Run("returns nil for a marker at the end", func(t *testing.T) {
+			t.Parallel()
+			a := arena.New()
+			a.Append([]byte("data"))
+			assert.Nil(t, a.SliceSince(a.Mark()), "no byte may follow a marker at the end")
+		})
+
+		for _, tt := range ends {
+			t.Run("returns nil for a marker from before "+tt.name, func(t *testing.T) {
+				t.Parallel()
+				a := arena.New()
+				a.Append([]byte("first lifecycle"))
+				stale := a.Mark()
+				tt.end(a)
+				a.Append(make([]byte, 200))
+				assert.Nil(t, a.SliceSince(stale), "a marker of an ended lifecycle must slice nothing")
+			})
+		}
 	})
 
-	t.Run("grows to the request when it exceeds twice the capacity", func(t *testing.T) {
+	t.Run("Bytes", func(t *testing.T) {
 		t.Parallel()
-		// Lock the want-dominant grow path: requested capacity
-		// is more than 2x current, so grown capacity is
-		// exactly want (1000), not have*2 (8).
-		a := arena.NewWithCapacity(4)
-		_ = a.Alloc(1000)
-		testkit.Equal(t, a.Cap(), 1000,
-			"want must dominate when have*2 < want")
+
+		t.Run("returns no byte for a new arena", func(t *testing.T) {
+			t.Parallel()
+			assert.Empty(t, arena.New().Bytes(), "a new arena must have no bytes")
+		})
 	})
 
-	t.Run("caller may write into the returned slice", func(t *testing.T) {
+	t.Run("behaves as a byte string under any sequence of calls", func(t *testing.T) {
 		t.Parallel()
-		a := arena.New()
-		buf := a.Alloc(5)
-		copy(buf, "hello")
-		// The arena's Bytes view must reflect the write.
-		testkit.Equal(t, a.Bytes(), []byte("hello"),
-			"writes into Alloc'd slice must reflect in arena Bytes")
-	})
-
-	t.Run("zero n returns an empty slice", func(t *testing.T) {
-		t.Parallel()
-		a := arena.New()
-		testkit.Equal(t, len(a.Alloc(0)), 0, "Alloc(0) must return an empty slice")
+		prop.ForAll(t, arenaContract, arenaSteps)
 	})
 }
 
-// FuzzAppendBytesEquivalence asserts that bytes appended to
-// the arena read back identically via Bytes — for arbitrary
-// chunked input. Catches any divergence between the append
-// and read paths under unusual chunk-size patterns.
-func FuzzAppendBytesEquivalence(f *testing.F) {
-	f.Add([]byte(""), []byte(""))
-	f.Add([]byte("hello"), []byte(" world"))
-	f.Add(bytes.Repeat([]byte{0xAA}, 1024), bytes.Repeat([]byte{0xBB}, 1024))
-
-	f.Fuzz(func(t *testing.T, first, second []byte) {
-		a := arena.New()
-		a.Append(first)
-		a.Append(second)
-
-		want := append([]byte{}, first...)
-		want = append(want, second...)
-
-		// bytes.Equal treats nil and empty slice as equal; go-cmp
-		// (which testkit.Equal uses) does not. The arena may return
-		// nil for an empty result while want is the empty slice —
-		// stick with bytes.Equal here for the right semantics.
-		testkit.True(t, bytes.Equal(a.Bytes(), want),
-			"Bytes must equal the concatenation of the two Appends")
-		testkit.True(t, bytes.Equal(a.CopyOut(), want),
-			"CopyOut must equal the concatenation of the two Appends")
-	})
+// FuzzArena checks the machine of arenaSteps on the call sequences that a
+// fuzzer finds.
+func FuzzArena(f *testing.F) {
+	prop.Fuzz(f, arenaContract, arenaSteps)
 }
 
-func TestMarkSliceSince(t *testing.T) {
-	t.Parallel()
-
-	t.Run("captures a region built across multiple appends", func(t *testing.T) {
-		t.Parallel()
-		a := arena.New()
-		a.Append([]byte("prefix:"))
-		mark := a.Mark()
-		a.Append([]byte("part1"))
-		a.Append([]byte("part2"))
-		testkit.Equal(t, a.SliceSince(mark), []byte("part1part2"),
-			"SliceSince must return bytes appended after the mark")
-	})
-
-	t.Run("returns nil when mark is at current end", func(t *testing.T) {
-		t.Parallel()
-		a := arena.New()
-		a.Append([]byte("data"))
-		mark := a.Mark()
-		testkit.True(t, a.SliceSince(mark) == nil,
-			"SliceSince at end must return nil — no bytes after mark")
-	})
-
-	t.Run("Marker from previous lifecycle is rejected after Reset", func(t *testing.T) {
-		t.Parallel()
-		// Lock the epoch invalidation: a Marker captured
-		// before Reset must produce nil from SliceSince after
-		// Reset, even if subsequent appends extend past the
-		// captured position. Prevents silent corruption when a
-		// stale Marker survives across a lifecycle boundary.
-		a := arena.New()
-		a.Append([]byte("first lifecycle"))
-		stale := a.Mark()
-
-		a.Reset()
-		a.Append(make([]byte, 200)) // len now 200; stale.pos was 15
-
-		testkit.True(t, a.SliceSince(stale) == nil,
-			"stale Marker after Reset must return nil")
-	})
-
-	t.Run("Marker from previous lifecycle is rejected after Shrink", func(t *testing.T) {
-		t.Parallel()
-		a := arena.New()
-		a.Append([]byte("first lifecycle"))
-		stale := a.Mark()
-
-		a.Shrink()
-		a.Append(make([]byte, 200))
-
-		testkit.True(t, a.SliceSince(stale) == nil,
-			"stale Marker after Shrink must return nil")
-	})
-
-	t.Run("returned slice has capped capacity", func(t *testing.T) {
-		t.Parallel()
-		a := arena.New()
-		mark := a.Mark()
-		a.Append([]byte("hello"))
-		got := a.SliceSince(mark)
-		testkit.Equal(t, cap(got), len(got),
-			"SliceSince must cap capacity at length (three-index slicing)")
-	})
-}
-
-func TestBytes(t *testing.T) {
-	t.Parallel()
-
-	t.Run("empty arena returns empty slice", func(t *testing.T) {
-		t.Parallel()
-		a := arena.New()
-		testkit.Equal(t, len(a.Bytes()), 0, "Bytes on empty arena must be empty")
-	})
-
-	t.Run("returns the full appended region", func(t *testing.T) {
-		t.Parallel()
-		a := arena.New()
-		a.Append([]byte("hello "))
-		a.Append([]byte("world"))
-		testkit.Equal(t, a.Bytes(), []byte("hello world"),
-			"Bytes must return the full appended region")
-	})
-
-	t.Run("returned slice has capped capacity", func(t *testing.T) {
-		t.Parallel()
-		a := arena.NewWithCapacity(64)
-		a.Append([]byte("data"))
-		got := a.Bytes()
-		testkit.Equal(t, cap(got), len(got),
-			"Bytes must cap capacity at length (three-index slicing)")
-	})
-}
-
-// TestZeroAlloc cannot run in parallel — testing.AllocsPerRun
-// panics if any other test is running.
+// TestArenaAllocs checks the allocation contract of each method of an
+// Arena whose backing buffer has room for its writes. MaxAllocs counts the
+// allocations of the whole process, so the test does not run in parallel.
 //
-//nolint:paralleltest // see comment above
-func TestZeroAlloc(t *testing.T) {
-	a := arena.NewWithCapacity(1024)
+//nolint:paralleltest // see above
+func TestArenaAllocs(t *testing.T) {
 	data := []byte("hello world")
 
-	t.Run("Append into pre-sized buffer", func(t *testing.T) {
-		// Reset between iterations so capacity stays in scope.
-		testkit.Equal(t, testing.AllocsPerRun(100, func() {
+	t.Run("Append", func(t *testing.T) {
+		a := arena.NewWithCapacity(1024)
+
+		var got []byte
+		expect.MaxAllocs(t, func() {
 			a.Reset()
-			_ = a.Append(data)
-		}), float64(0), "Append into pre-sized arena must be zero-alloc")
+			got = a.Append(data)
+		}, 0, "Append into a backing buffer with room must not allocate")
+		assert.Equal(t, got, data, "the test must measure an append of the payload")
 	})
 
-	t.Run("Alloc within capacity", func(t *testing.T) {
-		testkit.Equal(t, testing.AllocsPerRun(100, func() {
+	t.Run("Alloc", func(t *testing.T) {
+		a := arena.NewWithCapacity(1024)
+
+		var got []byte
+		expect.MaxAllocs(t, func() {
 			a.Reset()
-			_ = a.Alloc(64)
-		}), float64(0), "Alloc within capacity must be zero-alloc")
+			got = a.Alloc(64)
+		}, 0, "Alloc within the capacity must not allocate")
+		assert.Length(t, got, 64, "the test must measure a region of 64 bytes")
 	})
 
-	t.Run("Mark + SliceSince", func(t *testing.T) {
-		a.Reset()
+	t.Run("Mark", func(t *testing.T) {
+		a := arena.NewWithCapacity(1024)
 		a.Append(data)
-		mark := a.Mark()
-		a.Append(data)
-		testkit.Equal(t, testing.AllocsPerRun(100, func() {
-			_ = a.SliceSince(mark)
-		}), float64(0), "SliceSince must be zero-alloc")
+
+		var got arena.Marker
+		expect.MaxAllocs(t, func() { got = a.Mark() }, 0, "Mark must not allocate")
+		assert.Nil(t, a.SliceSince(got), "the test must measure a marker at the end")
 	})
 
-	t.Run("Bytes / Len / Cap", func(t *testing.T) {
-		a.Reset()
+	t.Run("SliceSince", func(t *testing.T) {
+		a := arena.NewWithCapacity(1024)
 		a.Append(data)
-		testkit.Equal(t, testing.AllocsPerRun(100, func() {
-			_ = a.Bytes()
-			_ = a.Len()
-			_ = a.Cap()
-		}), float64(0), "Bytes/Len/Cap must be zero-alloc")
+		m := a.Mark()
+		a.Append(data)
+
+		var got []byte
+		expect.MaxAllocs(t, func() { got = a.SliceSince(m) }, 0, "SliceSince must not allocate")
+		assert.Equal(t, got, data, "the test must measure the bytes after the marker")
+	})
+
+	t.Run("Len", func(t *testing.T) {
+		a := arena.NewWithCapacity(1024)
+		a.Append(data)
+
+		var got int
+		expect.MaxAllocs(t, func() { got = a.Len() }, 0, "Len must not allocate")
+		assert.Equal(t, got, len(data), "the test must measure the length of the payload")
+	})
+
+	t.Run("Cap", func(t *testing.T) {
+		a := arena.NewWithCapacity(1024)
+
+		var got int
+		expect.MaxAllocs(t, func() { got = a.Cap() }, 0, "Cap must not allocate")
+		assert.Equal(t, got, 1024, "the test must measure the initial capacity")
+	})
+
+	t.Run("Bytes", func(t *testing.T) {
+		a := arena.NewWithCapacity(1024)
+		a.Append(data)
+
+		var got []byte
+		expect.MaxAllocs(t, func() { got = a.Bytes() }, 0, "Bytes must not allocate")
+		assert.Equal(t, got, data, "the test must measure the payload")
 	})
 }
 
-func BenchmarkAppend(b *testing.B) {
-	for _, sz := range []struct {
-		name string
-		n    int
-	}{
-		{"16B", 16},
-		{"64B", 64},
-		{"256B", 256},
-		{"4K", 4096},
-		{"64K", 65536},
-	} {
-		b.Run(sz.name, func(b *testing.B) {
-			a := arena.NewWithCapacity(sz.n * 2)
-			data := make([]byte, sz.n)
-			b.ReportAllocs()
-			b.SetBytes(int64(sz.n))
-			for b.Loop() {
-				a.Reset()
-				_ = a.Append(data)
-			}
-		})
-	}
+// BenchmarkArena reports the cost of each method of an Arena whose backing
+// buffer has room for its writes, and fails when a method allocates.
+func BenchmarkArena(b *testing.B) {
+	b.Run("Append", func(b *testing.B) {
+		for _, size := range sizes {
+			b.Run(size.name, func(b *testing.B) {
+				a := arena.NewWithCapacity(size.n)
+				data := make([]byte, size.n)
+				b.SetBytes(int64(size.n))
+
+				var got []byte
+
+				c := bench.Start(b).MaxAllocs(0)
+				defer c.End()
+
+				for c.Loop() {
+					a.Reset()
+					got = a.Append(data)
+				}
+
+				assert.Length(b, got, size.n, "the benchmark must measure an append of the payload")
+			})
+		}
+	})
+
+	// Each iteration fills the region, the use that Alloc exists for. On an
+	// arena that Reset cleared, the fill is the only write to the region.
+	b.Run("Alloc", func(b *testing.B) {
+		for _, size := range sizes {
+			b.Run(size.name, func(b *testing.B) {
+				a := arena.NewWithCapacity(size.n)
+				src := bytes.Repeat([]byte{fill}, size.n)
+				b.SetBytes(int64(size.n))
+
+				var got []byte
+
+				c := bench.Start(b).MaxAllocs(0)
+				defer c.End()
+
+				for c.Loop() {
+					a.Reset()
+					got = a.Alloc(size.n)
+					copy(got, src)
+				}
+
+				assert.Equal(b, got, src, "the benchmark must measure a filled region")
+			})
+		}
+	})
+
+	b.Run("Mark", func(b *testing.B) {
+		a := arena.NewWithCapacity(4096)
+		a.Append(make([]byte, 256))
+
+		var got arena.Marker
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			got = a.Mark()
+		}
+
+		assert.Nil(b, a.SliceSince(got), "the benchmark must measure a marker at the end")
+	})
+
+	b.Run("SliceSince", func(b *testing.B) {
+		a := arena.NewWithCapacity(4096)
+		m := a.Mark()
+		a.Append(make([]byte, 128))
+
+		var got []byte
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			got = a.SliceSince(m)
+		}
+
+		assert.Length(b, got, 128, "the benchmark must measure the bytes after the marker")
+	})
+
+	b.Run("Len", func(b *testing.B) {
+		a := arena.NewWithCapacity(4096)
+		a.Append(make([]byte, 1024))
+
+		var got int
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			got = a.Len()
+		}
+
+		assert.Equal(b, got, 1024, "the benchmark must measure the appended length")
+	})
+
+	b.Run("Cap", func(b *testing.B) {
+		a := arena.NewWithCapacity(4096)
+
+		var got int
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			got = a.Cap()
+		}
+
+		assert.Equal(b, got, 4096, "the benchmark must measure the initial capacity")
+	})
+
+	b.Run("Bytes", func(b *testing.B) {
+		a := arena.NewWithCapacity(4096)
+		a.Append(make([]byte, 1024))
+
+		var got []byte
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			got = a.Bytes()
+		}
+
+		assert.Length(b, got, 1024, "the benchmark must measure the appended bytes")
+	})
 }
 
-func BenchmarkAlloc(b *testing.B) {
-	for _, sz := range []struct {
-		name string
-		n    int
-	}{
-		{"16B", 16},
-		{"64B", 64},
-		{"256B", 256},
-		{"4K", 4096},
-		{"64K", 65536},
-	} {
-		b.Run(sz.name, func(b *testing.B) {
-			a := arena.NewWithCapacity(sz.n * 2)
-			b.ReportAllocs()
-			b.SetBytes(int64(sz.n))
-			for b.Loop() {
-				a.Reset()
-				_ = a.Alloc(sz.n)
-			}
-		})
+// appendsInOrder appends a sequence of payloads to an arena of any initial
+// capacity. Each region must keep its payload across the appends after it,
+// also across those that move the arena to a new backing array, and Bytes
+// and Len must state the payloads in order.
+func appendsInOrder(c *prop.Case) {
+	a := arena.NewWithCapacity(c.Draw(capacities, "initialCap"))
+	data := c.Draw(payloads, "payloads")
+
+	regions := make([][]byte, 0, len(data))
+	for _, d := range data {
+		region := a.Append(d)
+		assert.Equal(c, cap(region), len(region), "the capacity of a region must be its length")
+		regions = append(regions, region)
 	}
+
+	want := slices.Concat(data...)
+	assert.Equal(c, regions, data, "every region must keep its payload", assert.EquateEmpty())
+	assert.Equal(c, a.Bytes(), want, "Bytes must return the payloads in order", assert.EquateEmpty())
+	assert.Equal(c, cap(a.Bytes()), len(want), "the capacity of Bytes must be its length")
+	assert.Equal(c, a.Len(), len(want), "Len must count the bytes of every payload")
 }
 
-// BenchmarkAllocFill reserves a region in a reused arena and fills it,
-// the use Alloc exists for. On an arena that Reset cleared, the fill is
-// the only write to the region.
-func BenchmarkAllocFill(b *testing.B) {
-	for _, sz := range []struct {
-		name string
-		n    int
-	}{
-		{"4K", 4096},
-		{"64K", 65536},
-		{"1M", 1 << 20},
-	} {
-		b.Run(sz.name, func(b *testing.B) {
-			a := arena.NewWithCapacity(sz.n)
-			src := bytes.Repeat([]byte{0xA5}, sz.n)
-			b.ReportAllocs()
-			b.SetBytes(int64(sz.n))
-			for b.Loop() {
-				a.Reset()
-				copy(a.Alloc(sz.n), src)
-			}
-		})
-	}
-}
+// arenaSteps runs the steps of a machine over the methods of an Arena that
+// change it, and checks every call against a model: the bytes of the
+// current lifecycle, the number of lifecycles that Reset and Shrink ended,
+// and the position and lifecycle of every Marker. Each region that Alloc
+// returns is filled, so later calls find written bytes to zero.
+func arenaSteps(c *prop.Case) {
+	a := arena.NewWithCapacity(c.Draw(capacities, "initialCap"))
 
-func BenchmarkMark(b *testing.B) {
-	a := arena.NewWithCapacity(4096)
-	a.Append(make([]byte, 256))
-	b.ReportAllocs()
-	var sink arena.Marker
-	for b.Loop() {
-		sink = a.Mark()
-	}
-	runtime.KeepAlive(sink)
-}
+	var (
+		want  []byte
+		cycle int
+		marks []marked
+	)
 
-func BenchmarkSliceSince(b *testing.B) {
-	a := arena.NewWithCapacity(4096)
-	m := a.Mark()
-	a.Append(make([]byte, 128))
-	b.ReportAllocs()
-	var sink []byte
-	for b.Loop() {
-		sink = a.SliceSince(m)
-	}
-	runtime.KeepAlive(sink)
-}
+	data := func(c *prop.Case, _ struct{}) any { return c.Draw(payload, "data") }
+	marker := func(c *prop.Case, _ struct{}) any { return marks[c.Draw(prop.Integer(0, len(marks)-1), "marker")] }
+	hasMarks := func(struct{}) bool { return len(marks) > 0 }
 
-func BenchmarkBytes(b *testing.B) {
-	a := arena.NewWithCapacity(4096)
-	a.Append(make([]byte, 1024))
-	b.ReportAllocs()
-	var sink []byte
-	for b.Loop() {
-		sink = a.Bytes()
-	}
-	runtime.KeepAlive(sink)
+	stateful.Steps(c, stateful.Machine[struct{}]{
+		Actions: []stateful.Action[struct{}]{
+			{
+				Name:  "Append",
+				Input: data,
+				Run: func(c *prop.Case, _ int, in any) {
+					v := in.([]byte)
+					assert.Equal(c, a.Append(v), v, "Append must return its payload", assert.EquateEmpty())
+					want = append(want, v...)
+				},
+			},
+			{
+				Name:  "Alloc",
+				Input: func(c *prop.Case, _ struct{}) any { return c.Draw(prop.Integer(0, 64), "n") },
+				Run: func(c *prop.Case, _ int, in any) {
+					n := in.(int)
+					region := a.Alloc(n)
+					assert.Equal(c, region, make([]byte, n), "Alloc must return zero bytes", assert.EquateEmpty())
+					for i := range region {
+						region[i] = fill
+					}
+					want = append(want, region...)
+				},
+			},
+			{
+				Name:  "AppendVia",
+				Input: data,
+				Run: func(c *prop.Case, _ int, in any) {
+					v := in.([]byte)
+					region, err := a.AppendVia(func(dst []byte) ([]byte, error) { return append(dst, v...), nil })
+					assert.NoError(c, err, "AppendVia must return the appender's success")
+					assert.Equal(c, region, v, "AppendVia must return what the appender appended", assert.EquateEmpty())
+					want = append(want, v...)
+				},
+			},
+			{
+				Name:  "AppendVia with an error",
+				Input: data,
+				Run: func(c *prop.Case, _ int, in any) {
+					region, err := a.AppendVia(func(dst []byte) ([]byte, error) {
+						_ = append(dst, in.([]byte)...)
+
+						return nil, errEncode
+					})
+					assert.ErrorIs(c, err, errEncode, "AppendVia must return the appender's error")
+					assert.Nil(c, region, "AppendVia must return no region with an error")
+				},
+			},
+			{
+				Name: "Mark",
+				Run: func(*prop.Case, int, any) {
+					marks = append(marks, marked{m: a.Mark(), pos: len(want), cycle: cycle})
+				},
+			},
+			{
+				Name:    "SliceSince",
+				Enabled: hasMarks,
+				Input:   marker,
+				Run: func(c *prop.Case, _ int, in any) {
+					mk := in.(marked)
+					var tail []byte
+					if mk.cycle == cycle && mk.pos < len(want) {
+						tail = want[mk.pos:]
+					}
+					assert.Equal(c, a.SliceSince(mk.m), tail, "SliceSince must return the bytes after a current marker")
+				},
+			},
+			{
+				Name:    "TruncateTo",
+				Enabled: hasMarks,
+				Input:   marker,
+				Run: func(c *prop.Case, _ int, in any) {
+					mk := in.(marked)
+					current := mk.cycle == cycle && mk.pos <= len(want)
+					assert.Equal(c, a.TruncateTo(mk.m), current,
+						"TruncateTo must return true for a current marker at or before the end")
+					if current {
+						want = want[:mk.pos]
+					}
+				},
+			},
+			{
+				Name: "Reset",
+				Run: func(c *prop.Case, _ int, _ any) {
+					a.Reset()
+					want, cycle = want[:0], cycle+1
+					assert.Equal(c, spare(c, a), make([]byte, a.Cap()), "Reset must zero the backing buffer",
+						assert.EquateEmpty())
+				},
+			},
+			{
+				Name: "Shrink",
+				Run: func(c *prop.Case, _ int, _ any) {
+					a.Shrink()
+					want, cycle = want[:0], cycle+1
+					assert.Equal(c, a.Cap(), 0, "Shrink must release the backing buffer")
+				},
+			},
+		},
+		Invariant: func(c *prop.Case, _ struct{}) {
+			assert.Equal(c, a.Bytes(), want, "Bytes must return the bytes of the model", assert.EquateEmpty())
+		},
+	})
 }

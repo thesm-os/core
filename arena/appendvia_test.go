@@ -4,241 +4,246 @@
 package arena_test
 
 import (
+	"bytes"
 	"errors"
-	"runtime"
+	"slices"
 	"testing"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/bench"
+	"go.dokimi.dev/assert/expect"
+	"go.dokimi.dev/assert/prop"
 
 	"go.thesmos.sh/core/arena"
 	"go.thesmos.sh/core/crypto"
 )
 
+// errEncode is the error of an appender that fails.
 var errEncode = errors.New("arena_test: encode failed")
 
 func TestAppendVia(t *testing.T) {
 	t.Parallel()
 
-	t.Run("adopts what the appender wrote", func(t *testing.T) {
+	t.Run("AppendVia", func(t *testing.T) {
 		t.Parallel()
-		a := arena.NewWithCapacity(64)
 
-		got, err := a.AppendVia(func(dst []byte) ([]byte, error) {
-			return append(dst, "payload"...), nil
+		t.Run("returns the bytes that the appender appended", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "AppendVia must adopt what the appender appended", func(c *prop.Case) {
+				a := arena.NewWithCapacity(c.Draw(capacities, "initialCap"))
+				head := c.Draw(payload, "head")
+				a.Append(head)
+				data := c.Draw(payload, "data")
+
+				got, err := a.AppendVia(func(dst []byte) ([]byte, error) { return append(dst, data...), nil })
+				assert.NoError(c, err, "AppendVia must return the appender's success")
+				assert.Equal(c, got, data, "the region must be what the appender appended", assert.EquateEmpty())
+				assert.Equal(c, cap(got), len(got), "the capacity of the region must be its length")
+				assert.Equal(c, a.Bytes(), slices.Concat(head, data), "Bytes must return the head and then the data",
+					assert.EquateEmpty())
+			})
 		})
 
-		testkit.NoError(t, err, "AppendVia must succeed")
-		testkit.Equal(t, got, []byte("payload"), "the region must hold what was appended")
-		testkit.Equal(t, a.Len(), len("payload"), "the arena must have grown by the written bytes")
+		t.Run("returns the encoding of an encoding.BinaryAppender", func(t *testing.T) {
+			t.Parallel()
+			d := crypto.NewDigest256([crypto.DigestSize256]byte{1, 2, 3})
+			a := arena.NewWithCapacity(64)
+			got, err := a.AppendVia(d.AppendBinary)
+			assert.NoError(t, err, "AppendVia must return the success of AppendBinary")
+			assert.Equal(t, got, d.Bytes(), "the region must be the encoded digest")
+		})
+
+		t.Run("returns the appender's error", func(t *testing.T) {
+			t.Parallel()
+			a := arena.NewWithCapacity(64)
+			got, err := a.AppendVia(func(dst []byte) ([]byte, error) { return append(dst, "partial"...), errEncode })
+			assert.ErrorIs(t, err, errEncode, "the appender's error must reach the caller")
+			assert.Nil(t, got, "no region may be returned with an error")
+		})
+
+		t.Run("leaves the bytes unchanged when the appender fails", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "a failed AppendVia must leave the bytes of the arena unchanged", func(c *prop.Case) {
+				a := arena.NewWithCapacity(c.Draw(capacities, "initialCap"))
+				a.Append(c.Draw(payload, "head"))
+				partial := c.Draw(payload, "partial")
+
+				assert.Pure(c, func() []byte { return bytes.Clone(a.Bytes()) }, func() {
+					_, _ = a.AppendVia(func(dst []byte) ([]byte, error) { return append(dst, partial...), errEncode })
+				}, "the bytes that the appender wrote must be discarded")
+			})
+		})
+
+		t.Run("lets a later Append follow the bytes before a failed call", func(t *testing.T) {
+			t.Parallel()
+			a := arena.NewWithCapacity(64)
+			a.Append([]byte("keep"))
+			_, err := a.AppendVia(func(dst []byte) ([]byte, error) { return append(dst, "discard"...), errEncode })
+			assert.ErrorIs(t, err, errEncode, "the appender's error must reach the caller")
+			assert.Equal(t, a.Append([]byte("after")), []byte("after"), "a later Append must return its payload")
+			assert.Equal(t, a.Bytes(), []byte("keepafter"), "the discarded bytes must not reappear")
+		})
 	})
 
-	t.Run("composes with encoding.BinaryAppender", func(t *testing.T) {
+	t.Run("TruncateTo", func(t *testing.T) {
 		t.Parallel()
-		// The reason this method exists: AppendBinary's signature is
-		// exactly AppendVia's callback, so a type that implements the
-		// stdlib interface writes into arena capacity unchanged.
+
+		t.Run("rewinds the arena to the marker", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "TruncateTo must discard every byte appended after the marker", func(c *prop.Case) {
+				a := arena.NewWithCapacity(c.Draw(capacities, "initialCap"))
+				before := c.Draw(payloads, "before")
+				for _, d := range before {
+					a.Append(d)
+				}
+				m := a.Mark()
+				for _, d := range c.Draw(payloads, "after") {
+					a.Append(d)
+				}
+
+				assert.True(c, a.TruncateTo(m), "TruncateTo must return true for a current marker")
+				assert.Equal(c, a.Bytes(), slices.Concat(before...), "Bytes must return the bytes before the marker",
+					assert.EquateEmpty())
+			})
+		})
+
+		t.Run("leaves the bytes unchanged for a marker at the end", func(t *testing.T) {
+			t.Parallel()
+			a := arena.NewWithCapacity(64)
+			a.Append([]byte("keep"))
+			m := a.Mark()
+
+			var ok bool
+			assert.Pure(t, func() []byte { return bytes.Clone(a.Bytes()) }, func() { ok = a.TruncateTo(m) },
+				"a marker at the end must discard nothing")
+			assert.True(t, ok, "TruncateTo must return true for a marker at the end")
+		})
+
+		t.Run("keeps the backing buffer", func(t *testing.T) {
+			t.Parallel()
+			a := arena.NewWithCapacity(64)
+			m := a.Mark()
+			a.Append(make([]byte, 32))
+
+			var ok bool
+			assert.Pure(t, a.Cap, func() { ok = a.TruncateTo(m) }, "TruncateTo must not release the backing buffer")
+			assert.True(t, ok, "TruncateTo must return true for a current marker")
+		})
+
+		t.Run("keeps an earlier marker valid", func(t *testing.T) {
+			t.Parallel()
+			a := arena.NewWithCapacity(64)
+			start := a.Mark()
+			a.Append([]byte("keep"))
+			mid := a.Mark()
+			a.Append([]byte("discard"))
+			assert.True(t, a.TruncateTo(mid), "TruncateTo must return true for a current marker")
+			assert.Equal(t, a.SliceSince(start), []byte("keep"), "a marker before the rewind must still slice")
+		})
+
+		t.Run("returns false for a marker past the end", func(t *testing.T) {
+			t.Parallel()
+			a := arena.NewWithCapacity(64)
+			start := a.Mark()
+			a.Append([]byte("discard"))
+			end := a.Mark()
+			assert.True(t, a.TruncateTo(start), "TruncateTo must return true for a current marker")
+
+			var ok bool
+			assert.Pure(t, func() []byte { return bytes.Clone(a.Bytes()) }, func() { ok = a.TruncateTo(end) },
+				"a marker past the end must not expose the discarded bytes")
+			assert.False(t, ok, "TruncateTo must return false for a marker past the end")
+		})
+
+		for _, tt := range ends {
+			t.Run("returns false for a marker from before "+tt.name, func(t *testing.T) {
+				t.Parallel()
+				a := arena.NewWithCapacity(64)
+				a.Append([]byte("first"))
+				stale := a.Mark()
+				tt.end(a)
+				a.Append([]byte("second"))
+
+				var ok bool
+				assert.Pure(t, func() []byte { return bytes.Clone(a.Bytes()) }, func() { ok = a.TruncateTo(stale) },
+					"a marker of an ended lifecycle must leave the arena unchanged")
+				assert.False(t, ok, "TruncateTo must return false for a marker of an ended lifecycle")
+			})
+		}
+	})
+}
+
+// TestAppendViaAllocs checks the allocation contracts of AppendVia and
+// TruncateTo. MaxAllocs counts the allocations of the whole process, so the
+// test does not run in parallel.
+//
+//nolint:paralleltest // see above
+func TestAppendViaAllocs(t *testing.T) {
+	t.Run("AppendVia", func(t *testing.T) {
+		a := arena.NewWithCapacity(4096)
 		d := crypto.NewDigest256([crypto.DigestSize256]byte{1, 2, 3})
-		a := arena.NewWithCapacity(64)
 
-		got, err := a.AppendVia(d.AppendBinary)
-
-		testkit.NoError(t, err, "AppendVia must accept an encoding.BinaryAppender")
-		testkit.Equal(t, got, d.Bytes(), "the region must hold the encoded digest")
+		var (
+			got []byte
+			err error
+		)
+		expect.MaxAllocs(t, func() {
+			a.Reset()
+			got, err = a.AppendVia(d.AppendBinary)
+		}, 0, "AppendVia into a backing buffer with room must not allocate")
+		assert.NoError(t, err, "the test must measure an encode that succeeds")
+		assert.Equal(t, got, d.Bytes(), "the test must measure the encoded digest")
 	})
 
-	t.Run("appends after existing content without disturbing it", func(t *testing.T) {
-		t.Parallel()
-		a := arena.NewWithCapacity(64)
-		first := a.Append([]byte("first"))
+	t.Run("TruncateTo", func(t *testing.T) {
+		a := arena.NewWithCapacity(4096)
+		m := a.Mark()
+		a.Append(make([]byte, 128))
 
-		second, err := a.AppendVia(func(dst []byte) ([]byte, error) {
-			return append(dst, "second"...), nil
-		})
-
-		testkit.NoError(t, err, "AppendVia must succeed")
-		testkit.Equal(t, first, []byte("first"), "earlier content must be untouched")
-		testkit.Equal(t, second, []byte("second"), "the region must cover only the new bytes")
-		testkit.Equal(t, a.Bytes(), []byte("firstsecond"), "the arena must hold both, in order")
+		var ok bool
+		expect.MaxAllocs(t, func() { ok = a.TruncateTo(m) }, 0, "TruncateTo must not allocate")
+		assert.True(t, ok, "the test must measure a current marker")
 	})
+}
 
-	t.Run("grows past capacity", func(t *testing.T) {
-		t.Parallel()
-		// The appender may exceed the arena's spare capacity, in
-		// which case append reallocates and the arena adopts the new
-		// backing array, exactly as Append does when it grows.
-		a := arena.NewWithCapacity(8)
-		big := make([]byte, 1024)
-		for i := range big {
-			big[i] = byte(i)
+// BenchmarkAppendVia reports the cost of AppendVia and TruncateTo, and fails
+// when either allocates.
+func BenchmarkAppendVia(b *testing.B) {
+	b.Run("AppendVia", func(b *testing.B) {
+		a := arena.NewWithCapacity(4096)
+		d := crypto.NewDigest256([crypto.DigestSize256]byte{1, 2, 3})
+
+		var (
+			got []byte
+			err error
+		)
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			a.Reset()
+			got, err = a.AppendVia(d.AppendBinary)
 		}
 
-		got, err := a.AppendVia(func(dst []byte) ([]byte, error) {
-			return append(dst, big...), nil
-		})
-
-		testkit.NoError(t, err, "AppendVia must succeed past capacity")
-		testkit.Equal(t, got, big, "the region must hold every written byte")
-		testkit.Equal(t, a.Len(), len(big), "the arena must have grown")
+		assert.NoError(b, err, "the benchmark must measure an encode that succeeds")
+		assert.Equal(b, got, d.Bytes(), "the benchmark must measure the encoded digest")
 	})
 
-	t.Run("an appender writing nothing yields an empty region", func(t *testing.T) {
-		t.Parallel()
-		a := arena.NewWithCapacity(64)
-
-		got, err := a.AppendVia(func(dst []byte) ([]byte, error) { return dst, nil })
-
-		testkit.NoError(t, err, "AppendVia must succeed")
-		testkit.Equal(t, len(got), 0, "writing nothing must yield an empty region")
-		testkit.Equal(t, a.Len(), 0, "the arena must not have grown")
-	})
-
-	t.Run("the region is three-index capped", func(t *testing.T) {
-		t.Parallel()
-		// Appending to the returned region must not reach into a
-		// neighbour's bytes, which is the invariant every other
-		// arena accessor holds.
-		a := arena.NewWithCapacity(64)
-		got, err := a.AppendVia(func(dst []byte) ([]byte, error) {
-			return append(dst, "abc"...), nil
-		})
-		testkit.NoError(t, err, "AppendVia must succeed")
-		testkit.Equal(t, cap(got), len(got), "the region's capacity must equal its length")
-	})
-}
-
-func TestAppendViaError(t *testing.T) {
-	t.Parallel()
-
-	t.Run("returns the appender's error", func(t *testing.T) {
-		t.Parallel()
-		a := arena.NewWithCapacity(64)
-
-		got, err := a.AppendVia(func(dst []byte) ([]byte, error) {
-			return append(dst, "partial"...), errEncode
-		})
-
-		testkit.ErrorIs(t, err, errEncode, "the appender's error must reach the caller")
-		testkit.Equal(t, got, []byte(nil), "no region may be returned alongside an error")
-	})
-
-	t.Run("leaves no partial region behind", func(t *testing.T) {
-		t.Parallel()
-		// A failed encode must not leave half a record in the arena
-		// for the next append to run into.
-		a := arena.NewWithCapacity(64)
-		a.Append([]byte("keep"))
-
-		_, err := a.AppendVia(func(dst []byte) ([]byte, error) {
-			return append(dst, "discard"...), errEncode
-		})
-
-		testkit.ErrorIs(t, err, errEncode, "the error must propagate")
-		testkit.Equal(t, a.Len(), len("keep"), "the arena must be back at its pre-call extent")
-		testkit.Equal(t, a.Bytes(), []byte("keep"), "earlier content must survive")
-	})
-
-	t.Run("the arena stays usable after a failure", func(t *testing.T) {
-		t.Parallel()
-		a := arena.NewWithCapacity(64)
-		_, err := a.AppendVia(func(dst []byte) ([]byte, error) {
-			return append(dst, "discard"...), errEncode
-		})
-		testkit.ErrorIs(t, err, errEncode, "the error must propagate")
-
-		got := a.Append([]byte("after"))
-		testkit.Equal(t, got, []byte("after"), "a later append must succeed")
-		testkit.Equal(t, a.Bytes(), []byte("after"), "the discarded bytes must not reappear")
-	})
-}
-
-func TestTruncateTo(t *testing.T) {
-	t.Parallel()
-
-	t.Run("rewinds to the marked extent", func(t *testing.T) {
-		t.Parallel()
-		a := arena.NewWithCapacity(64)
-		a.Append([]byte("keep"))
+	b.Run("TruncateTo", func(b *testing.B) {
+		a := arena.NewWithCapacity(4096)
 		m := a.Mark()
-		a.Append([]byte("discard"))
+		a.Append(make([]byte, 128))
 
-		testkit.True(t, a.TruncateTo(m), "TruncateTo must accept a live marker")
-		testkit.Equal(t, a.Bytes(), []byte("keep"), "bytes after the mark must be discarded")
+		var ok bool
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			ok = a.TruncateTo(m)
+		}
+
+		assert.True(b, ok, "the benchmark must measure a current marker")
 	})
-
-	t.Run("truncating to the current end is a no-op", func(t *testing.T) {
-		t.Parallel()
-		a := arena.NewWithCapacity(64)
-		a.Append([]byte("keep"))
-		m := a.Mark()
-
-		testkit.True(t, a.TruncateTo(m), "a marker at the end must be accepted")
-		testkit.Equal(t, a.Bytes(), []byte("keep"), "nothing must be discarded")
-	})
-
-	t.Run("rejects a marker from a previous lifecycle", func(t *testing.T) {
-		t.Parallel()
-		// The epoch check is what stops a stale marker rewinding into
-		// the current cycle's bytes — the same guard SliceSince has.
-		a := arena.NewWithCapacity(64)
-		a.Append([]byte("first"))
-		stale := a.Mark()
-
-		a.Reset()
-		a.Append([]byte("second"))
-
-		testkit.False(t, a.TruncateTo(stale), "a stale marker must be rejected")
-		testkit.Equal(t, a.Bytes(), []byte("second"), "the arena must be unchanged")
-	})
-
-	t.Run("capacity is preserved", func(t *testing.T) {
-		t.Parallel()
-		a := arena.NewWithCapacity(64)
-		m := a.Mark()
-		a.Append(make([]byte, 32))
-
-		before := a.Cap()
-		testkit.True(t, a.TruncateTo(m), "TruncateTo must accept a live marker")
-		testkit.Equal(t, a.Cap(), before, "truncation must not release the backing buffer")
-	})
-
-	t.Run("markers stay valid across a truncation", func(t *testing.T) {
-		t.Parallel()
-		// TruncateTo does not advance the epoch: it rewinds within
-		// the same lifecycle, so earlier markers still describe
-		// positions that are still meaningful.
-		a := arena.NewWithCapacity(64)
-		start := a.Mark()
-		a.Append([]byte("keep"))
-		mid := a.Mark()
-		a.Append([]byte("discard"))
-
-		testkit.True(t, a.TruncateTo(mid), "TruncateTo must accept a live marker")
-		testkit.Equal(t, a.SliceSince(start), []byte("keep"), "an earlier marker must still slice")
-	})
-}
-
-func BenchmarkAppendVia(b *testing.B) {
-	a := arena.NewWithCapacity(4096)
-	d := crypto.NewDigest256([crypto.DigestSize256]byte{1, 2, 3})
-	b.ReportAllocs()
-
-	var sink []byte
-	for b.Loop() {
-		a.Reset()
-		sink, _ = a.AppendVia(d.AppendBinary)
-	}
-	runtime.KeepAlive(sink)
-}
-
-func BenchmarkTruncateTo(b *testing.B) {
-	a := arena.NewWithCapacity(4096)
-	m := a.Mark()
-	a.Append(make([]byte, 128))
-	b.ReportAllocs()
-
-	var sink bool
-	for b.Loop() {
-		sink = a.TruncateTo(m)
-	}
-	runtime.KeepAlive(sink)
 }

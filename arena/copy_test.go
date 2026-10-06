@@ -4,287 +4,280 @@
 package arena_test
 
 import (
-	"strconv"
+	"bytes"
+	"slices"
 	"testing"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/bench"
+	"go.dokimi.dev/assert/expect"
+	"go.dokimi.dev/assert/prop"
 
 	"go.thesmos.sh/core/arena"
 )
 
-func TestCopyOut(t *testing.T) {
+// Shape of the entries that the RebaseSlices benchmarks rebase.
+const (
+	// rebaseItems is the number of entries.
+	rebaseItems = 32
+
+	// rebaseItemSize is the length of each entry.
+	rebaseItemSize = 256
+)
+
+func TestCopy(t *testing.T) {
 	t.Parallel()
 
-	t.Run("returns nil for empty arena", func(t *testing.T) {
+	t.Run("CopyOut", func(t *testing.T) {
 		t.Parallel()
-		a := arena.New()
-		testkit.True(t, a.CopyOut() == nil, "CopyOut on empty arena must return nil")
+
+		t.Run("returns nil for an empty arena", func(t *testing.T) {
+			t.Parallel()
+			expect.Nil(t, arena.New().CopyOut(), "an arena without a backing buffer must copy out nil")
+			expect.Nil(t, arena.NewWithCapacity(64).CopyOut(), "an empty arena with a backing buffer must copy out nil")
+		})
+
+		t.Run("returns a copy that later writes to the arena leave unchanged", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "CopyOut must return a copy of the bytes that the caller owns", func(c *prop.Case) {
+				a := arena.NewWithCapacity(c.Draw(capacities, "initialCap"))
+				data := c.Draw(payloads, "payloads")
+				for _, d := range data {
+					a.Append(d)
+				}
+
+				got := a.CopyOut()
+				assert.Equal(c, got, slices.Concat(data...), "CopyOut must return the appended bytes")
+
+				overwrite := c.Draw(payload, "overwrite")
+				assert.Pure(c, func() []byte { return bytes.Clone(got) }, func() {
+					a.Reset()
+					a.Append(overwrite)
+				}, "Reset and a later Append must leave the copy unchanged")
+			})
+		})
 	})
 
-	t.Run("returns a caller-owned copy of the appended bytes", func(t *testing.T) {
+	t.Run("CopyOutTo", func(t *testing.T) {
 		t.Parallel()
-		a := arena.New()
-		a.Append([]byte("hello "))
-		a.Append([]byte("world"))
 
-		got := a.CopyOut()
-		testkit.Equal(t, got, []byte("hello world"),
-			"CopyOut must return the appended bytes")
+		t.Run("appends the bytes of the arena to dst", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "CopyOutTo must extend dst with the bytes of the arena", func(c *prop.Case) {
+				dst := c.Draw(payload, "dst")
+				a := arena.NewWithCapacity(c.Draw(capacities, "initialCap"))
+				data := c.Draw(payloads, "payloads")
+				for _, d := range data {
+					a.Append(d)
+				}
 
-		// The returned slice must be caller-owned: resetting
-		// the arena and overwriting must not corrupt got.
-		a.Reset()
-		a.Append([]byte("OVERWRITE!!"))
-		testkit.Equal(t, got, []byte("hello world"),
-			"CopyOut must be caller-owned — Reset+Append must not affect prior return")
+				assert.Equal(c, a.CopyOutTo(dst), slices.Concat(dst, slices.Concat(data...)),
+					"CopyOutTo must return dst followed by the bytes of the arena", assert.EquateEmpty())
+			})
+		})
+	})
+
+	t.Run("RebaseSlices", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns nil without a byte to rebase", func(t *testing.T) {
+			t.Parallel()
+			prop.Nil(t, arena.RebaseSlices, "RebaseSlices must return nil when every entry is empty",
+				prop.Using(prop.List(prop.OneOf(prop.Just([]byte(nil)), prop.Just([]byte{})), prop.MaxSize(4))),
+				prop.Example([][]byte(nil)), prop.Example([][]byte{}), prop.Example([][]byte{nil, {}, nil}))
+		})
+
+		t.Run("copies the entries into the result and points each entry into it", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "RebaseSlices must move every entry into one allocation", func(c *prop.Case) {
+				entries := c.Draw(payloads, "entries")
+				want := make([][]byte, 0, len(entries))
+				for _, e := range entries {
+					want = append(want, bytes.Clone(e))
+				}
+
+				out := arena.RebaseSlices(entries)
+				assert.Equal(c, out, slices.Concat(want...), "the result must be the entries in order")
+				assert.Equal(c, entries, want, "every entry must keep its bytes", assert.EquateEmpty())
+				for _, e := range entries {
+					assert.Equal(c, cap(e), len(e), "the capacity of an entry must be its length")
+				}
+
+				clear(out)
+				assert.Equal(c, slices.Concat(entries...), make([]byte, len(out)),
+					"a write to the result must show in the entries", assert.EquateEmpty())
+			})
+		})
+
+		t.Run("copies entries that overlap in their source", func(t *testing.T) {
+			t.Parallel()
+			src := []byte("abcdefgh")
+			entries := [][]byte{src[0:5], src[2:7], src[0:5]}
+			out := arena.RebaseSlices(entries)
+			clear(src)
+			assert.Equal(t, out, []byte("abcdecdefgabcde"), "each entry must be read before the next is written")
+			assert.Equal(t, entries, [][]byte{[]byte("abcde"), []byte("cdefg"), []byte("abcde")},
+				"no entry may still point into the source")
+		})
+	})
+
+	t.Run("RebaseSlicesTo", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("appends the entries to dst and points each entry into the result", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "RebaseSlicesTo must move every entry into dst", func(c *prop.Case) {
+				dst := c.Draw(payload, "dst")
+				entries := c.Draw(payloads, "entries")
+				want := make([][]byte, 0, len(entries))
+				for _, e := range entries {
+					want = append(want, bytes.Clone(e))
+				}
+
+				out := arena.RebaseSlicesTo(dst, entries)
+				assert.Equal(c, out, slices.Concat(append([][]byte{dst}, want...)...),
+					"the result must be dst followed by the entries in order", assert.EquateEmpty())
+				assert.Equal(c, entries, want, "every entry must keep its bytes", assert.EquateEmpty())
+				for _, e := range entries {
+					assert.Equal(c, cap(e), len(e), "the capacity of an entry must be its length")
+				}
+
+				clear(out[len(dst):])
+				assert.Equal(c, slices.Concat(entries...), make([]byte, len(out)-len(dst)),
+					"a write to the result must show in the entries", assert.EquateEmpty())
+			})
+		})
 	})
 }
 
-func TestCopyOutTo(t *testing.T) {
-	t.Parallel()
-
-	t.Run("appends arena bytes to destination", func(t *testing.T) {
-		t.Parallel()
-		a := arena.New()
-		a.Append([]byte("world"))
-		dst := []byte("hello ")
-		testkit.Equal(t, a.CopyOutTo(dst), []byte("hello world"),
-			"CopyOutTo must append arena bytes to dst")
-	})
-
-	t.Run("empty arena returns dst unchanged", func(t *testing.T) {
-		t.Parallel()
-		a := arena.New()
-		dst := []byte("hello")
-		testkit.Equal(t, a.CopyOutTo(dst), []byte("hello"),
-			"CopyOutTo on empty arena must return dst unchanged")
-	})
-}
-
-func TestRebaseSlices(t *testing.T) {
-	t.Parallel()
-
-	t.Run("returns nil for empty input", func(t *testing.T) {
-		t.Parallel()
-		testkit.True(t, arena.RebaseSlices(nil) == nil,
-			"RebaseSlices(nil) must return nil")
-		testkit.True(t, arena.RebaseSlices([][]byte{}) == nil,
-			"RebaseSlices([]) must return nil")
-	})
-
-	t.Run("returns nil when every entry is empty", func(t *testing.T) {
-		t.Parallel()
-		testkit.True(t, arena.RebaseSlices([][]byte{nil, {}, nil}) == nil,
-			"RebaseSlices with all-empty entries must return nil")
-	})
-
-	t.Run("rebases entries into a single allocation", func(t *testing.T) {
-		t.Parallel()
-		entries := [][]byte{
-			[]byte("alpha"),
-			[]byte("beta"),
-			[]byte("gamma"),
-		}
-		out := arena.RebaseSlices(entries)
-		testkit.Equal(t, out, []byte("alphabetagamma"),
-			"RebaseSlices output must be the concatenation")
-		// Each entry must point into out and contain its
-		// original bytes.
-		testkit.Equal(t, entries[0], []byte("alpha"), "entries[0] must remain alpha")
-		testkit.Equal(t, entries[1], []byte("beta"), "entries[1] must remain beta")
-		testkit.Equal(t, entries[2], []byte("gamma"), "entries[2] must remain gamma")
-	})
-
-	t.Run("each rebased entry has capacity capped at length", func(t *testing.T) {
-		t.Parallel()
-		entries := [][]byte{
-			[]byte("ab"),
-			[]byte("cd"),
-		}
-		_ = arena.RebaseSlices(entries)
-		for i, e := range entries {
-			testkit.Equal(t, cap(e), len(e),
-				"entries["+strconv.Itoa(i)+"] cap must be capped at length")
-		}
-	})
-
-	t.Run("rebased entries don't alias each other", func(t *testing.T) {
-		t.Parallel()
-		entries := [][]byte{
-			[]byte("ab"),
-			[]byte("cd"),
-		}
-		_ = arena.RebaseSlices(entries)
-		// Append onto entries[0]; three-index capping must
-		// prevent it from extending into entries[1].
-		entries[0] = append(entries[0], 'X', 'Y')
-		testkit.Equal(t, entries[1], []byte("cd"),
-			"entries[1] must remain cd — three-index cap must prevent aliasing")
-	})
-}
-
-func TestRebaseSlicesTo(t *testing.T) {
-	t.Parallel()
-
-	t.Run("appends entries into dst and rebases", func(t *testing.T) {
-		t.Parallel()
-		entries := [][]byte{
-			[]byte("alpha"),
-			[]byte("beta"),
-		}
-		dst := []byte("prefix:")
-		out := arena.RebaseSlicesTo(dst, entries)
-		testkit.Equal(t, out, []byte("prefix:alphabeta"),
-			"RebaseSlicesTo must append entries to dst")
-		// Entries point into the new dst, with their original
-		// bytes preserved.
-		testkit.Equal(t, entries[0], []byte("alpha"), "entries[0] must remain alpha")
-		testkit.Equal(t, entries[1], []byte("beta"), "entries[1] must remain beta")
-	})
-
-	t.Run("empty entries return dst unchanged", func(t *testing.T) {
-		t.Parallel()
-		dst := []byte("hello")
-		testkit.Equal(t, arena.RebaseSlicesTo(dst, nil), dst,
-			"RebaseSlicesTo with nil entries must return dst unchanged")
-	})
-
-	t.Run("each rebased entry has capacity capped at length", func(t *testing.T) {
-		t.Parallel()
-		entries := [][]byte{
-			[]byte("xy"),
-			[]byte("z"),
-		}
-		_ = arena.RebaseSlicesTo(nil, entries)
-		for i, e := range entries {
-			testkit.Equal(t, cap(e), len(e),
-				"entries["+strconv.Itoa(i)+"] cap must be capped at length")
-		}
-	})
-}
-
-// TestCopyZeroAlloc cannot run in parallel —
-// testing.AllocsPerRun panics if any other test is running.
+// TestCopyAllocs checks the allocation contracts of CopyOut, CopyOutTo,
+// RebaseSlices and RebaseSlicesTo. MaxAllocs counts the allocations of the
+// whole process, so the test does not run in parallel.
 //
-//nolint:paralleltest // see comment above
-func TestCopyZeroAlloc(t *testing.T) {
-	t.Run("CopyOutTo with sufficient dst capacity", func(t *testing.T) {
+//nolint:paralleltest // see above
+func TestCopyAllocs(t *testing.T) {
+	data := []byte("hello world")
+
+	t.Run("CopyOut", func(t *testing.T) {
 		a := arena.NewWithCapacity(1024)
-		a.Append([]byte("hello world"))
-		dst := make([]byte, 0, 64)
-		testkit.Equal(t, testing.AllocsPerRun(100, func() {
-			_ = a.CopyOutTo(dst)
-		}), float64(0), "CopyOutTo with sufficient dst capacity must be zero-alloc")
+		a.Append(data)
+
+		var got []byte
+		expect.MaxAllocs(t, func() { got = a.CopyOut() }, 1, "CopyOut must allocate only the copy")
+		assert.Equal(t, got, data, "the test must measure a copy of the payload")
 	})
 
-	t.Run("RebaseSlicesTo with sufficient dst capacity", func(t *testing.T) {
-		entries := [][]byte{
-			[]byte("ab"), []byte("cd"), []byte("ef"),
-		}
+	t.Run("CopyOutTo", func(t *testing.T) {
+		a := arena.NewWithCapacity(1024)
+		a.Append(data)
 		dst := make([]byte, 0, 64)
-		testkit.Equal(t, testing.AllocsPerRun(100, func() {
-			// RebaseSlicesTo mutates entries; we don't care
-			// about that for the alloc test.
-			_ = arena.RebaseSlicesTo(dst, entries)
-		}), float64(0), "RebaseSlicesTo with sufficient dst capacity must be zero-alloc")
+
+		var got []byte
+		expect.MaxAllocs(t, func() { got = a.CopyOutTo(dst) }, 0, "CopyOutTo into a dst with room must not allocate")
+		assert.Equal(t, got, data, "the test must measure a copy of the payload")
+	})
+
+	t.Run("RebaseSlices", func(t *testing.T) {
+		entries := [][]byte{[]byte("ab"), []byte("cd"), []byte("ef")}
+
+		var got []byte
+		expect.MaxAllocs(t, func() { got = arena.RebaseSlices(entries) }, 1,
+			"RebaseSlices must allocate only the result")
+		assert.Equal(t, got, []byte("abcdef"), "the test must measure a rebase of every entry")
+	})
+
+	t.Run("RebaseSlicesTo", func(t *testing.T) {
+		entries := [][]byte{[]byte("ab"), []byte("cd"), []byte("ef")}
+		dst := make([]byte, 0, 64)
+
+		var got []byte
+		expect.MaxAllocs(t, func() { got = arena.RebaseSlicesTo(dst, entries) }, 0,
+			"RebaseSlicesTo into a dst with room must not allocate")
+		assert.Equal(t, got, []byte("abcdef"), "the test must measure a rebase of every entry")
 	})
 }
 
-func BenchmarkCopyOut(b *testing.B) {
-	for _, sz := range []struct {
-		name string
-		n    int
-	}{
-		{"16B", 16},
-		{"64B", 64},
-		{"256B", 256},
-		{"4K", 4096},
-		{"64K", 65536},
-	} {
-		b.Run(sz.name, func(b *testing.B) {
-			// sink read past the loop forces CopyOut's slice
-			// to escape uniformly across sizes. Without it,
-			// escape analysis stack-promotes small returns
-			// and the bench under-reports the "always
-			// allocates" contract on small input.
-			var sink []byte
-			a := arena.NewWithCapacity(sz.n * 2)
-			a.Append(make([]byte, sz.n))
-			b.ReportAllocs()
-			b.SetBytes(int64(sz.n))
-			for b.Loop() {
-				sink = a.CopyOut()
-			}
-			if len(sink) == 0 {
-				b.Fatal("sink unexpectedly empty after loop")
-			}
-		})
-	}
-}
+// BenchmarkCopy reports the cost of copying the bytes of an arena out to
+// memory of the caller's, and fails when a call allocates more than its
+// allocation contract allows.
+func BenchmarkCopy(b *testing.B) {
+	b.Run("CopyOut", func(b *testing.B) {
+		for _, size := range sizes {
+			b.Run(size.name, func(b *testing.B) {
+				a := arena.NewWithCapacity(size.n)
+				a.Append(make([]byte, size.n))
+				b.SetBytes(int64(size.n))
 
-func BenchmarkCopyOutTo(b *testing.B) {
-	for _, sz := range []struct {
-		name string
-		n    int
-	}{
-		{"16B", 16},
-		{"64B", 64},
-		{"256B", 256},
-		{"4K", 4096},
-		{"64K", 65536},
-	} {
-		b.Run(sz.name, func(b *testing.B) {
-			a := arena.NewWithCapacity(sz.n * 2)
-			a.Append(make([]byte, sz.n))
-			dst := make([]byte, 0, sz.n)
-			b.ReportAllocs()
-			b.SetBytes(int64(sz.n))
-			for b.Loop() {
-				dst = a.CopyOutTo(dst[:0])
-			}
-		})
-	}
-}
+				var got []byte
 
-func BenchmarkRebaseSlices(b *testing.B) {
-	a := arena.NewWithCapacity(64 * 1024)
-	const items = 32
-	const itemSize = 256
-	for range items {
-		a.Append(make([]byte, itemSize))
-	}
-	b.ReportAllocs()
-	b.SetBytes(int64(items * itemSize))
-	for b.Loop() {
-		entries := make([][]byte, 0, items)
-		off := 0
-		all := a.Bytes()
-		for range items {
-			entries = append(entries, all[off:off+itemSize])
-			off += itemSize
+				c := bench.Start(b).MaxAllocs(1)
+				defer c.End()
+
+				for c.Loop() {
+					got = a.CopyOut()
+				}
+
+				assert.Length(b, got, size.n, "the benchmark must measure a copy of every byte")
+			})
 		}
-		_ = arena.RebaseSlices(entries)
-	}
-}
+	})
 
-func BenchmarkRebaseSlicesTo(b *testing.B) {
-	a := arena.NewWithCapacity(64 * 1024)
-	const items = 32
-	const itemSize = 256
-	for range items {
-		a.Append(make([]byte, itemSize))
-	}
-	dst := make([]byte, 0, items*itemSize)
-	b.ReportAllocs()
-	b.SetBytes(int64(items * itemSize))
-	for b.Loop() {
-		entries := make([][]byte, 0, items)
-		off := 0
-		all := a.Bytes()
-		for range items {
-			entries = append(entries, all[off:off+itemSize])
-			off += itemSize
+	b.Run("CopyOutTo", func(b *testing.B) {
+		for _, size := range sizes {
+			b.Run(size.name, func(b *testing.B) {
+				a := arena.NewWithCapacity(size.n)
+				a.Append(make([]byte, size.n))
+				dst := make([]byte, 0, size.n)
+				b.SetBytes(int64(size.n))
+
+				c := bench.Start(b).MaxAllocs(0)
+				defer c.End()
+
+				for c.Loop() {
+					dst = a.CopyOutTo(dst[:0])
+				}
+
+				assert.Length(b, dst, size.n, "the benchmark must measure a copy of every byte")
+			})
 		}
-		dst = arena.RebaseSlicesTo(dst[:0], entries)
-	}
+	})
+
+	b.Run("RebaseSlices", func(b *testing.B) {
+		all := make([]byte, rebaseItems*rebaseItemSize)
+		b.SetBytes(int64(len(all)))
+
+		var got []byte
+
+		c := bench.Start(b).MaxAllocs(1)
+		defer c.End()
+
+		for c.Loop() {
+			var entries [rebaseItems][]byte
+			for i := range entries {
+				entries[i] = all[i*rebaseItemSize : (i+1)*rebaseItemSize]
+			}
+			got = arena.RebaseSlices(entries[:])
+		}
+
+		assert.Length(b, got, len(all), "the benchmark must measure a rebase of every entry")
+	})
+
+	b.Run("RebaseSlicesTo", func(b *testing.B) {
+		all := make([]byte, rebaseItems*rebaseItemSize)
+		dst := make([]byte, 0, len(all))
+		b.SetBytes(int64(len(all)))
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			var entries [rebaseItems][]byte
+			for i := range entries {
+				entries[i] = all[i*rebaseItemSize : (i+1)*rebaseItemSize]
+			}
+			dst = arena.RebaseSlicesTo(dst[:0], entries[:])
+		}
+
+		assert.Length(b, dst, len(all), "the benchmark must measure a rebase of every entry")
+	})
 }

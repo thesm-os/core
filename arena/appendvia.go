@@ -19,7 +19,7 @@ package arena
 //
 // # On error
 //
-// The arena returns to its length before the call, so a failed encode
+// The arena keeps the length it had before the call, so a failed encode
 // leaves no partial region for the next append. The bytes fn wrote are
 // discarded, and no region is returned.
 //
@@ -38,12 +38,11 @@ func (a *Arena) AppendVia(fn func(dst []byte) ([]byte, error)) ([]byte, error) {
 
 	out, err := fn(a.buf)
 	if err != nil {
-		// fn wrote past len(a.buf), into the spare capacity or into an
-		// array it allocated, so a.buf[:start] is the arena before the
-		// call. How far fn wrote into the spare capacity is unknown, so
-		// the dirty mark covers the whole spare capacity.
+		// fn received a copy of the slice header, so a.buf keeps its
+		// length, and fn wrote only past it: into the spare capacity or
+		// into an array it allocated. How far fn wrote into the spare
+		// capacity is unknown, so the dirty mark covers all of it.
 		a.dirty = cap(a.buf)
-		a.buf = a.buf[:start]
 
 		return nil, err
 	}

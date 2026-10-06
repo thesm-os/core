@@ -41,6 +41,7 @@ func (a *Arena) Reset() {
 	// smaller buffer than the one the dirty mark was taken on.
 	clear(a.buf[:min(max(a.dirty, len(a.buf)), cap(a.buf))])
 	a.buf = a.buf[:0]
+	//dokimi:mutate-skip sbr-delete: a stale dirty mark only widens what the next Reset and Alloc clear
 	a.dirty = 0
 	a.epoch = a.epoch.Successor()
 }
@@ -76,6 +77,7 @@ func (a *Arena) CapExceeds(maxCap int) bool {
 // Zero-alloc (drops the slice header reference).
 func (a *Arena) Shrink() {
 	a.buf = nil
+	//dokimi:mutate-skip sbr-delete: a stale dirty mark only widens what the next Reset and Alloc clear
 	a.dirty = 0
 	a.epoch = a.epoch.Successor()
 }

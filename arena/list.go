@@ -75,7 +75,8 @@ type List[T any] struct {
 
 	// cur is the chunk that contains element base, the first element of
 	// the chunk that Append writes into. It is nil before the first Append
-	// and after a Truncate to the end of the last chunk.
+	// and after a Truncate. Truncate sets base to the new length and off to
+	// 0, and the next Append finds the chunk.
 	cur  []T
 	base int
 
@@ -97,6 +98,7 @@ type List[T any] struct {
 // while [List.Len] is below [List.Cap], which includes every Append into
 // the chunks a [List.Truncate] kept.
 func (l *List[T]) Append(v T) {
+	//dokimi:mutate-skip ror-true: grow recomputes the cursor that Append has, at the cost of a call per element
 	if l.off == l.end {
 		l.grow()
 	}
@@ -239,9 +241,6 @@ func (l *List[T]) Truncate(n int) {
 		clear(c[:min(len(c), end-i)])
 	}
 
+	// The next Append calls grow, which finds the chunk of element n.
 	l.cur, l.base, l.off, l.end = nil, n, 0, 0
-	if k := n >> listShift; k < len(l.chunks) {
-		l.cur, l.base, l.off = l.chunks[k], k<<listShift, n&listMask
-		l.end = len(l.cur)
-	}
 }
