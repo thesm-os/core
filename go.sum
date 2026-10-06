@@ -2,8 +2,8 @@ github.com/anishathalye/porcupine v1.1.0 h1:jkMLqDejaWqvhvjxYKyqwQO3d1Jw+/08wHiI
 github.com/anishathalye/porcupine v1.1.0/go.mod h1:WM0SsFjWNl2Y4BqHr/E/ll2yY1GY1jqn+W7Z/84Zoog=
 github.com/google/go-cmp v0.7.0 h1:wk8382ETsv4JYUZwIsn6YpYiWiBsYLSJiTsyBybVuN8=
 github.com/google/go-cmp v0.7.0/go.mod h1:pXiqmnSA92OHEEa9HXL2W4E7lf9JzCmGVUdgjX3N/iU=
-go.dokimi.dev/assert v0.0.0-20261004151802-9420a79efe10 h1:0XGW7cpBw0wr4G0+TlTcPL4T1u4gP/hvWQUTmk3T98o=
-go.dokimi.dev/assert v0.0.0-20261004151802-9420a79efe10/go.mod h1:BsuINBkmhOK/EVx3iFJLyE+8JXZYzI81zhK4VF4XXjk=
+go.dokimi.dev/assert v0.0.0-20261006083336-cf337fea0d0f h1:ldEBGgFC2yfQH91KOt9WaMlrHgjMkNI3g+T7ePe8m3I=
+go.dokimi.dev/assert v0.0.0-20261006083336-cf337fea0d0f/go.mod h1:Mr2lGt+AMXUIuqxAk7aGgGpTbdvFjuCd1qmUt0r091k=
 go.thesmos.sh/kanon v0.0.0-20261001092856-098def33ea91 h1:Bc+dqrGIhOM1+ZTnfyHo3/ADfwwigaBXB06M3UVFWjo=
 go.thesmos.sh/kanon v0.0.0-20261001092856-098def33ea91/go.mod h1:uwImeOPhLY8HX2h/V47obUaJ6pbb8zBriBbVAUy9v9U=
 go.thesmos.sh/testkit v0.10.0 h1:QfHqaXv945ISStcgZDBDk5yk5DZqX8+V86J9LS7C43Y=
