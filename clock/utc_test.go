@@ -7,64 +7,173 @@ import (
 	"testing"
 	"time"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/bench"
+	"go.dokimi.dev/assert/expect"
+	"go.dokimi.dev/assert/prop"
 
 	"go.thesmos.sh/core/clock"
 )
 
+// at is the time of the readings of the explicit cases.
 var at = time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 
-// TestUTCReadingZeroAlloc enforces the allocation contract of the
-// UTCReading methods. testing.AllocsPerRun reads a process-global
-// malloc counter, so this test does not call t.Parallel.
-//
-//nolint:paralleltest // see comment above
-func TestUTCReadingZeroAlloc(t *testing.T) {
-	r := clock.UTCReading{Time: at, MaxError: time.Millisecond, Synced: true}
+// Generators of the properties over readings.
+var (
+	// readTimes generates the time of a reading, far enough from the
+	// limits of int64 nanoseconds that a bound of errorBounds cannot
+	// overflow it.
+	readTimes = prop.Integer[int64](-1<<62, 1<<62)
 
-	for name, fn := range map[string]func(){
-		"Within":   func() { _ = r.Within(time.Second) },
-		"Earliest": func() { _ = r.Earliest() },
-		"Latest":   func() { _ = r.Latest() },
-	} {
-		t.Run(name, func(t *testing.T) {
-			testkit.Equal(t, testing.AllocsPerRun(100, fn), float64(0), name+" must not allocate")
-		})
-	}
-}
+	// errorBounds generates the error bound of a reading.
+	errorBounds = prop.Duration(0, time.Hour)
+)
 
 func TestUTCReading(t *testing.T) {
 	t.Parallel()
 
-	t.Run("Within accepts an error bound equal to the limit", func(t *testing.T) {
+	t.Run("Within", func(t *testing.T) {
 		t.Parallel()
-		r := clock.UTCReading{Time: at, MaxError: time.Millisecond, Synced: true}
-		testkit.True(t, r.Within(time.Millisecond), "a bound equal to the limit must be within it")
+
+		t.Run("reports true for a synchronised reading whose bound is at most the limit", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "Within must report true for a bound up to the limit", func(c *prop.Case) {
+				limit := c.Draw(errorBounds, "limit")
+				r := clock.UTCReading{Time: at, MaxError: c.Draw(prop.Duration(0, limit), "maxError"), Synced: true}
+				assert.True(c, r.Within(limit), "a bound up to the limit must be within it")
+			})
+		})
+
+		t.Run("reports true for a bound equal to the limit", func(t *testing.T) {
+			t.Parallel()
+			r := clock.UTCReading{Time: at, MaxError: time.Millisecond, Synced: true}
+			assert.True(t, r.Within(time.Millisecond), "a bound equal to the limit must be within it")
+		})
+
+		t.Run("reports false for a bound above the limit", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "Within must report false for a bound above the limit", func(c *prop.Case) {
+				limit := c.Draw(errorBounds, "limit")
+				r := clock.UTCReading{
+					Time:     at,
+					MaxError: c.Draw(prop.Duration(limit+1, limit+time.Hour), "maxError"),
+					Synced:   true,
+				}
+				assert.False(c, r.Within(limit), "a bound above the limit must not be within it")
+			})
+		})
+
+		t.Run("reports false for an unsynchronised reading", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "Within must report false for every reading that is not synchronised", func(c *prop.Case) {
+				r := clock.UTCReading{Time: at, MaxError: c.Draw(errorBounds, "maxError")}
+				limit := c.Draw(errorBounds, "limit")
+				assert.False(c, r.Within(limit), "an unsynchronised reading must be within no limit")
+			})
+		})
 	})
 
-	t.Run("Within refuses an error bound above the limit", func(t *testing.T) {
+	t.Run("Earliest", func(t *testing.T) {
 		t.Parallel()
-		r := clock.UTCReading{Time: at, MaxError: time.Millisecond + time.Nanosecond, Synced: true}
-		testkit.False(t, r.Within(time.Millisecond), "a bound above the limit must not be within it")
+
+		t.Run("returns the time MaxError before Time", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "Earliest must be MaxError before Time", func(c *prop.Case) {
+				r := clock.UTCReading{
+					Time:     time.Unix(0, c.Draw(readTimes, "time")).UTC(),
+					MaxError: c.Draw(errorBounds, "maxError"),
+					Synced:   true,
+				}
+				assert.Equal(c, r.Earliest().Add(r.MaxError), r.Time, "Earliest must lie MaxError before Time")
+			})
+		})
 	})
 
-	t.Run("Within refuses an unsynchronised reading", func(t *testing.T) {
+	t.Run("Latest", func(t *testing.T) {
 		t.Parallel()
-		r := clock.UTCReading{Time: at}
-		testkit.False(t, r.Within(time.Hour), "an unsynchronised reading must not be within any limit")
+
+		t.Run("returns the time MaxError after Time", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "Latest must be MaxError after Time", func(c *prop.Case) {
+				r := clock.UTCReading{
+					Time:     time.Unix(0, c.Draw(readTimes, "time")).UTC(),
+					MaxError: c.Draw(errorBounds, "maxError"),
+					Synced:   true,
+				}
+				assert.Equal(c, r.Latest().Add(-r.MaxError), r.Time, "Latest must lie MaxError after Time")
+			})
+		})
+	})
+}
+
+// TestUTCReadingAllocs checks the allocation contract of each method of
+// UTCReading. MaxAllocs counts the allocations of the whole process, so the
+// test does not run in parallel.
+//
+//nolint:paralleltest // see above
+func TestUTCReadingAllocs(t *testing.T) {
+	r := clock.UTCReading{Time: at, MaxError: time.Millisecond, Synced: true}
+
+	t.Run("Within", func(t *testing.T) {
+		var got bool
+		expect.MaxAllocs(t, func() { got = r.Within(time.Second) }, 0, "Within must not allocate")
+		assert.True(t, got, "the test must measure a reading within the limit")
 	})
 
-	t.Run("Earliest and Latest bound the reading by MaxError", func(t *testing.T) {
-		t.Parallel()
-		r := clock.UTCReading{Time: at, MaxError: 250 * time.Microsecond, Synced: true}
-		testkit.Equal(t, r.Earliest(), at.Add(-250*time.Microsecond), "Earliest must be Time minus MaxError")
-		testkit.Equal(t, r.Latest(), at.Add(250*time.Microsecond), "Latest must be Time plus MaxError")
+	t.Run("Earliest", func(t *testing.T) {
+		var got time.Time
+		expect.MaxAllocs(t, func() { got = r.Earliest() }, 0, "Earliest must not allocate")
+		assert.Equal(t, got, at.Add(-time.Millisecond), "the test must measure the earliest time")
 	})
 
-	t.Run("Earliest and Latest equal Time for a zero bound", func(t *testing.T) {
-		t.Parallel()
-		r := clock.UTCReading{Time: at, Synced: true}
-		testkit.Equal(t, r.Earliest(), at, "Earliest must be Time for a zero bound")
-		testkit.Equal(t, r.Latest(), at, "Latest must be Time for a zero bound")
+	t.Run("Latest", func(t *testing.T) {
+		var got time.Time
+		expect.MaxAllocs(t, func() { got = r.Latest() }, 0, "Latest must not allocate")
+		assert.Equal(t, got, at.Add(time.Millisecond), "the test must measure the latest time")
+	})
+}
+
+// BenchmarkUTCReading reports the cost of each method of UTCReading, and
+// fails when a method allocates.
+func BenchmarkUTCReading(b *testing.B) {
+	r := clock.UTCReading{Time: at, MaxError: time.Millisecond, Synced: true}
+
+	b.Run("Within", func(b *testing.B) {
+		var got bool
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			got = r.Within(time.Second)
+		}
+
+		assert.True(b, got, "the benchmark must measure a reading within the limit")
+	})
+
+	b.Run("Earliest", func(b *testing.B) {
+		var got time.Time
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			got = r.Earliest()
+		}
+
+		assert.Equal(b, got, at.Add(-time.Millisecond), "the benchmark must measure the earliest time")
+	})
+
+	b.Run("Latest", func(b *testing.B) {
+		var got time.Time
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			got = r.Latest()
+		}
+
+		assert.Equal(b, got, at.Add(time.Millisecond), "the benchmark must measure the latest time")
 	})
 }
