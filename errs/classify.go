@@ -114,10 +114,6 @@ var byJoinRank = [...]Class{
 //
 // Zero alloc.
 func Classify(err error) Class {
-	if err == nil {
-		return Unspecified
-	}
-
 	if c, ok := classOf(err); ok {
 		return c
 	}
@@ -145,7 +141,8 @@ func Classify(err error) Class {
 
 // classOf walks err's chain and returns the [Class] of the first
 // [Classifier] on it, or the class of the first join on it. It reports
-// false when the chain ends without either.
+// false when the chain ends without either, at a nil error or at an error
+// without an Unwrap method.
 //
 // This is errors.As specialised to one interface. The standard
 // library version takes a pointer to the target interface, which
@@ -158,7 +155,7 @@ func Classify(err error) Class {
 // cause, and Unwrap() []error for errors.Join trees, whose branches
 // [joined] classifies.
 func classOf(err error) (Class, bool) {
-	for err != nil {
+	for {
 		if c, ok := err.(Classifier); ok {
 			return c.Class(), true
 		}
@@ -178,8 +175,6 @@ func classOf(err error) (Class, bool) {
 			return Unspecified, false
 		}
 	}
-
-	return Unspecified, false
 }
 
 // joined returns the class of a join whose branches are branches: the

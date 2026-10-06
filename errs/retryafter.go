@@ -50,9 +50,10 @@ func WithRetryAfter(err error, d time.Duration) error {
 }
 
 // delayOf returns the first positive delay on err's chain, the longest
-// delay among the branches of the first join on it, or zero.
+// delay among the branches of the first join on it, or zero. The chain
+// ends at a nil error or at an error without an Unwrap method.
 func delayOf(err error) time.Duration {
-	for err != nil {
+	for {
 		if x, ok := err.(interface{ RetryAfter() time.Duration }); ok {
 			if d := x.RetryAfter(); d > 0 {
 				return d
@@ -75,8 +76,6 @@ func delayOf(err error) time.Duration {
 			return 0
 		}
 	}
-
-	return 0
 }
 
 // delayed is the [WithRetryAfter] wrapper. It is a value type, so the
