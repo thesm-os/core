@@ -3,6 +3,8 @@
 
 package arena
 
+import "slices"
+
 // CopyOut allocates a single contiguous byte slice containing
 // every byte appended since the last [Arena.Reset] and returns
 // it. The returned slice is caller-owned — the arena can be
@@ -69,7 +71,7 @@ func (a *Arena) CopyOutTo(dst []byte) []byte {
 //
 // Exactly one allocation sized to the total bytes across
 // every entry, when at least one entry is non-empty. Returns
-// nil and performs no allocation when slices is empty or
+// nil and performs no allocation when entries is empty or
 // every entry is empty.
 //
 // Sustained-throughput callers that already own a destination
@@ -77,42 +79,48 @@ func (a *Arena) CopyOutTo(dst []byte) []byte {
 // writes into a caller-supplied buffer instead of allocating
 // — the same relationship as [Arena.CopyOut] vs
 // [Arena.CopyOutTo].
-func RebaseSlices(slices [][]byte) []byte {
-	if len(slices) == 0 {
-		return nil
-	}
+func RebaseSlices(entries [][]byte) []byte {
 	totalData := 0
-	for i := range slices {
-		totalData += len(slices[i])
+	for i := range entries {
+		totalData += len(entries[i])
 	}
 	if totalData == 0 {
 		return nil
 	}
 	out := make([]byte, 0, totalData)
-	for i := range slices {
+	for i := range entries {
 		start := len(out)
-		out = append(out, slices[i]...)
+		out = append(out, entries[i]...)
 		end := len(out)
-		slices[i] = out[start:end:end]
+		entries[i] = out[start:end:end]
 	}
 	return out
 }
 
 // RebaseSlicesTo rebases the supplied sub-slices in place
 // into dst and returns the extended slice. Each rebased
-// entry is three-index-capped at its length.
+// entry is three-index-capped at its length, and every entry
+// points into the returned slice.
+//
+// RebaseSlicesTo grows dst once, to room for the bytes of
+// every entry, before it copies the first entry. The entries
+// may overlap in source memory, as for [RebaseSlices].
 //
 // # Allocation contract
 //
-// Zero-alloc when dst has sufficient capacity to hold every
-// entry's bytes. Reallocates per [append]'s growth rule when
-// capacity is exceeded.
-func RebaseSlicesTo(dst []byte, slices [][]byte) []byte {
-	for i := range slices {
+// Zero-alloc when dst has room for the bytes of every entry.
+// Otherwise one allocation, the growth of dst.
+func RebaseSlicesTo(dst []byte, entries [][]byte) []byte {
+	total := 0
+	for i := range entries {
+		total += len(entries[i])
+	}
+	dst = slices.Grow(dst, total)
+	for i := range entries {
 		start := len(dst)
-		dst = append(dst, slices[i]...)
+		dst = append(dst, entries[i]...)
 		end := len(dst)
-		slices[i] = dst[start:end:end]
+		entries[i] = dst[start:end:end]
 	}
 	return dst
 }
