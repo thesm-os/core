@@ -4,11 +4,14 @@
 package uuidtext_test
 
 import (
-	"strconv"
+	"errors"
 	"strings"
 	"testing"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/bench"
+	"go.dokimi.dev/assert/expect"
+	"go.dokimi.dev/assert/prop"
 
 	"go.thesmos.sh/core/id"
 	"go.thesmos.sh/core/id/internal/uuidtext"
@@ -18,9 +21,12 @@ import (
 // RFC 9562.
 const exampleText = "f81d4fae-7dec-11d0-a765-00a0c91e6bf6"
 
-// benchRuns is the number of calls over which a benchmark averages the
-// allocations that it checks.
-const benchRuns = 100
+// The contracts of parsesText and roundTrips, which the tests and the
+// fuzz targets check.
+const (
+	parseContract     = "Format of the ID that Parse returns must equal the text apart from case"
+	roundTripContract = "Parse must return the ID whose text form Format returns"
+)
 
 // exampleBytes are the bytes of the UUID whose text form is exampleText.
 var exampleBytes = [id.Size128]byte{
@@ -29,166 +35,228 @@ var exampleBytes = [id.Size128]byte{
 }
 
 var (
-	errLength = testkit.TestError("the text is not 36 bytes")
-	errFormat = testkit.TestError("a hyphen is missing")
-	errChar   = testkit.TestError("a group has a byte other than a hex digit")
+	errLength = errors.New("the text is not 36 bytes")
+	errFormat = errors.New("a hyphen is missing")
+	errChar   = errors.New("a group has a byte other than a hex digit")
 
 	// sentinels are the errors that the tests pass to Parse.
 	sentinels = uuidtext.Errors{Length: errLength, Format: errFormat, Char: errChar}
 )
 
-// The benchmarks write each result to a sink, so that the compiler keeps
-// every call that they measure.
-var (
-	sinkText string
-	sinkID   id.ID
+// texts generates text forms of UUIDs, with digits in either case.
+var texts = prop.StringMatching(
+	`[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`,
 )
 
-// notUUIDs returns IDs that are not 128 bits, each named by its size.
-func notUUIDs() map[string]id.ID {
-	return map[string]id.ID{
-		"the zero ID":  id.Zero,
-		"a 160-bit ID": id.New160([id.Size160]byte{1}),
-		"a 256-bit ID": id.New256([id.Size256]byte{1}),
-	}
-}
+// uuids generates IDs of 128 bits.
+var uuids = prop.Bytes(prop.MinSize(id.Size128), prop.MaxSize(id.Size128)).Map(func(b []byte) id.ID {
+	return id.New128([id.Size128]byte(b))
+})
 
-func TestFormat(t *testing.T) {
+func TestUUIDText(t *testing.T) {
 	t.Parallel()
 
-	t.Run("returns the lowercase text form of a 128-bit ID", func(t *testing.T) {
+	t.Run("Format", func(t *testing.T) {
 		t.Parallel()
-		testkit.Equal(t, uuidtext.Format(id.New128(exampleBytes)), exampleText,
-			"Format must return the text form")
-	})
 
-	t.Run("returns the empty string for an ID that is not 128 bits", func(t *testing.T) {
-		t.Parallel()
-		for name, u := range notUUIDs() {
-			testkit.Equal(t, uuidtext.Format(u), "", "Format must return the empty string for "+name)
-		}
-	})
-}
-
-func TestParse(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name string
-		give string
-	}{
-		{name: "returns the ID of a lowercase text form", give: exampleText},
-		{name: "returns the ID of an uppercase text form", give: strings.ToUpper(exampleText)},
-		{name: "returns the ID of a mixed-case text form", give: "F81D4FAE-7dec-11D0-a765-00A0c91e6BF6"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+		t.Run("returns the lowercase text form of a 128-bit ID", func(t *testing.T) {
 			t.Parallel()
-			got, err := uuidtext.Parse(tt.give, sentinels)
-			testkit.NoError(t, err, "Parse must accept "+tt.give)
-			testkit.Equal(t, got, id.New128(exampleBytes), "Parse must return the encoded bytes")
+			assert.Equal(t, uuidtext.Format(id.New128(exampleBytes)), exampleText, "Format must return the text form")
 		})
+
+		tests := []struct {
+			name string
+			give id.ID
+		}{
+			{name: "returns the empty string for the zero ID", give: id.Zero},
+			{name: "returns the empty string for a 160-bit ID", give: id.New160([id.Size160]byte{1})},
+			{name: "returns the empty string for a 256-bit ID", give: id.New256([id.Size256]byte{1})},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				assert.Equal(t, uuidtext.Format(tt.give), "", "Format must return the empty string")
+			})
+		}
+	})
+
+	t.Run("Parse", func(t *testing.T) {
+		t.Parallel()
+
+		tests := []struct {
+			name string
+			give string
+		}{
+			{name: "returns the ID of a lowercase text form", give: exampleText},
+			{name: "returns the ID of an uppercase text form", give: strings.ToUpper(exampleText)},
+			{name: "returns the ID of a mixed-case text form", give: "F81D4FAE-7dec-11D0-a765-00A0c91e6BF6"},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				got, err := uuidtext.Parse(tt.give, sentinels)
+				assert.NoError(t, err, "Parse must accept the text form")
+				assert.Equal(t, got, id.New128(exampleBytes), "Parse must return the encoded bytes")
+			})
+		}
+
+		t.Run("returns the ID that Format encodes", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, roundTripContract, roundTrips)
+		})
+
+		t.Run("returns an ID whose text form is a text form in either case", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "Parse must accept every text form of a UUID", func(c *prop.Case) {
+				s := c.Draw(texts, "text")
+
+				got, err := uuidtext.Parse(s, sentinels)
+				assert.NoError(c, err, "Parse must accept the text form")
+				assert.True(c, strings.EqualFold(uuidtext.Format(got), s),
+					"Format(Parse(s)) must equal s apart from case")
+			})
+		})
+
+		t.Run("returns an ID whose text form is the text for any text that it accepts", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, parseContract, parsesText)
+		})
+
+		t.Run("returns Errors.Length for a text that is not 36 bytes", func(t *testing.T) {
+			t.Parallel()
+			lengths := prop.Integer(0, 2*uuidtext.Len).Filter(func(n int) bool { return n != uuidtext.Len })
+			prop.ForAll(t, "Parse must refuse a text of another length", func(c *prop.Case) {
+				n := c.Draw(lengths, "length")
+
+				got, err := uuidtext.Parse(strings.Repeat("0", n), sentinels)
+				assert.ErrorIs(c, err, errLength, "Parse must return Errors.Length")
+				assert.True(c, got.IsZero(), "Parse must return the zero ID with an error")
+			})
+		})
+
+		t.Run("returns Errors.Format for a text without one of its hyphens", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "Parse must refuse a text without a hyphen", func(c *prop.Case) {
+				at := c.Draw(prop.SampledFrom(8, 13, 18, 23), "hyphen")
+
+				got, err := uuidtext.Parse(exampleText[:at]+"0"+exampleText[at+1:], sentinels)
+				assert.ErrorIs(c, err, errFormat, "Parse must return Errors.Format")
+				assert.True(c, got.IsZero(), "Parse must return the zero ID with an error")
+			})
+		})
+
+		t.Run("returns Errors.Char for a byte other than a hexadecimal digit", func(t *testing.T) {
+			t.Parallel()
+			digits := prop.Integer(0, uuidtext.Len-1).Filter(func(i int) bool {
+				return i != 8 && i != 13 && i != 18 && i != 23
+			})
+			prop.ForAll(t, "Parse must refuse a group with another byte", func(c *prop.Case) {
+				at := c.Draw(digits, "digit")
+
+				got, err := uuidtext.Parse(exampleText[:at]+"g"+exampleText[at+1:], sentinels)
+				assert.ErrorIs(c, err, errChar, "Parse must return Errors.Char")
+				assert.True(c, got.IsZero(), "Parse must return the zero ID with an error")
+			}, prop.Cases(200))
+		})
+	})
+}
+
+// TestUUIDTextAllocs checks the allocation contracts of Format and Parse.
+// MaxAllocs counts the allocations of the whole process, so the test does
+// not run in parallel.
+//
+//nolint:paralleltest // see above
+func TestUUIDTextAllocs(t *testing.T) {
+	u := id.New128(exampleBytes)
+
+	t.Run("Format", func(t *testing.T) {
+		var s string
+		expect.MaxAllocs(t, func() { s = uuidtext.Format(u) }, 1, "Format must allocate only the returned string")
+		assert.Equal(t, s, exampleText, "the test must measure the text form of the ID")
+	})
+
+	t.Run("Parse", func(t *testing.T) {
+		var (
+			got id.ID
+			err error
+		)
+		expect.MaxAllocs(t, func() { got, err = uuidtext.Parse(exampleText, sentinels) }, 0, "Parse must not allocate")
+		assert.NoError(t, err, "the test must measure a text that Parse accepts")
+		assert.Equal(t, got, u, "the test must measure the ID of the text")
+	})
+}
+
+// BenchmarkUUIDText reports the cost of Format and Parse, and fails when
+// one allocates more than TestUUIDTextAllocs allows.
+func BenchmarkUUIDText(b *testing.B) {
+	u := id.New128(exampleBytes)
+
+	b.Run("Format", func(b *testing.B) {
+		var s string
+
+		c := bench.Start(b).MaxAllocs(1)
+		defer c.End()
+
+		for c.Loop() {
+			s = uuidtext.Format(u)
+		}
+
+		assert.Equal(b, s, exampleText, "the benchmark must measure the text form of the ID")
+	})
+
+	b.Run("Parse", func(b *testing.B) {
+		var (
+			got id.ID
+			err error
+		)
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			got, err = uuidtext.Parse(exampleText, sentinels)
+		}
+
+		assert.NoError(b, err, "the benchmark must measure a text that Parse accepts")
+		assert.Equal(b, got, u, "the benchmark must measure the ID of the text")
+	})
+}
+
+// FuzzParse checks the contract of parsesText on the texts that a fuzzer
+// finds. Each seed is a text after the octet of its length that the bridge
+// reads first.
+func FuzzParse(f *testing.F) {
+	for _, s := range []string{exampleText, strings.ToUpper(exampleText), "00000000-0000-0000-0000-00000000000g"} {
+		f.Add(append([]byte{byte(len(s))}, s...))
 	}
 
-	t.Run("returns the ID that Format encodes", func(t *testing.T) {
-		t.Parallel()
-		want := id.New128([id.Size128]byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 255})
-		got, err := uuidtext.Parse(uuidtext.Format(want), sentinels)
-		testkit.NoError(t, err, "Parse must accept the text form that Format returns")
-		testkit.Equal(t, got, want, "Parse must return the ID that Format encoded")
-	})
-
-	t.Run("returns Errors.Length for a text that is not 36 bytes", func(t *testing.T) {
-		t.Parallel()
-		for _, s := range []string{"", exampleText[:35], exampleText + "0"} {
-			got, err := uuidtext.Parse(s, sentinels)
-			testkit.ErrorIs(t, err, errLength,
-				"Parse must return Errors.Length for a text of "+strconv.Itoa(len(s))+" bytes")
-			testkit.Equal(t, got, id.Zero, "Parse must return the zero ID with an error")
-		}
-	})
-
-	t.Run("returns Errors.Format for a text without one of its hyphens", func(t *testing.T) {
-		t.Parallel()
-		for _, at := range []int{8, 13, 18, 23} {
-			s := exampleText[:at] + "0" + exampleText[at+1:]
-			got, err := uuidtext.Parse(s, sentinels)
-			testkit.ErrorIs(t, err, errFormat, "Parse must return Errors.Format for "+s)
-			testkit.Equal(t, got, id.Zero, "Parse must return the zero ID with an error")
-		}
-	})
-
-	t.Run("returns Errors.Char for a byte other than a hex digit in any group", func(t *testing.T) {
-		t.Parallel()
-		for _, at := range []int{0, 12, 14, 22, 35} {
-			s := exampleText[:at] + "g" + exampleText[at+1:]
-			got, err := uuidtext.Parse(s, sentinels)
-			testkit.ErrorIs(t, err, errChar, "Parse must return Errors.Char for "+s)
-			testkit.Equal(t, got, id.Zero, "Parse must return the zero ID with an error")
-		}
-	})
+	prop.Fuzz(f, parseContract, parsesText)
 }
 
-// FuzzParse checks that Parse does not panic, and that the text form of
-// every ID it returns equals its input apart from case.
-func FuzzParse(f *testing.F) {
-	f.Add(exampleText)
-	f.Add(strings.ToUpper(exampleText))
-	f.Add("00000000-0000-0000-0000-00000000000g")
-
-	f.Fuzz(func(t *testing.T, s string) {
-		got, err := uuidtext.Parse(s, sentinels)
-		if err != nil {
-			return
-		}
-
-		testkit.True(t, strings.EqualFold(uuidtext.Format(got), s),
-			"Format(Parse(s)) must equal s apart from case")
-	})
-}
-
-// FuzzRoundTrip checks that Parse returns every 128-bit ID from the text
-// form that Format returns for it.
+// FuzzRoundTrip checks the contract of roundTrips on the IDs that a fuzzer
+// finds.
 func FuzzRoundTrip(f *testing.F) {
 	f.Add(exampleBytes[:])
-
-	f.Fuzz(func(t *testing.T, data []byte) {
-		var raw [id.Size128]byte
-		copy(raw[:], data)
-		want := id.New128(raw)
-
-		got, err := uuidtext.Parse(uuidtext.Format(want), sentinels)
-		testkit.NoError(t, err, "Parse must accept the text form that Format returns")
-		testkit.Equal(t, got, want, "Parse must return the ID that Format encoded")
-	})
+	prop.Fuzz(f, roundTripContract, roundTrips)
 }
 
-// BenchmarkFormat reports the cost of Format, and fails when it allocates
-// more than the returned string.
-func BenchmarkFormat(b *testing.B) {
-	u := id.New128(exampleBytes)
-	format := func() { sinkText = uuidtext.Format(u) }
+// parsesText checks that Parse refuses a drawn text, or returns an ID
+// whose text form equals the text apart from case.
+func parsesText(c *prop.Case) {
+	s := string(c.Draw(prop.Bytes(prop.MaxSize(2*uuidtext.Len)), "text"))
 
-	if allocs := testing.AllocsPerRun(benchRuns, format); allocs > 1 {
-		b.Fatalf("Format allocates %v times per call, want 1", allocs)
-	}
-
-	b.ReportAllocs()
-	for b.Loop() {
-		format()
+	got, err := uuidtext.Parse(s, sentinels)
+	if err == nil {
+		assert.True(c, strings.EqualFold(uuidtext.Format(got), s), "Format(Parse(s)) must equal s apart from case")
 	}
 }
 
-// BenchmarkParse reports the cost of Parse, and fails when it allocates.
-func BenchmarkParse(b *testing.B) {
-	parse := func() { sinkID, _ = uuidtext.Parse(exampleText, sentinels) }
+// roundTrips checks that Parse returns a drawn 128-bit ID from the text
+// form that Format returns for it.
+func roundTrips(c *prop.Case) {
+	want := c.Draw(uuids, "id")
 
-	if allocs := testing.AllocsPerRun(benchRuns, parse); allocs != 0 {
-		b.Fatalf("Parse allocates %v times per call, want 0", allocs)
-	}
-
-	b.ReportAllocs()
-	for b.Loop() {
-		parse()
-	}
+	got, err := uuidtext.Parse(uuidtext.Format(want), sentinels)
+	assert.NoError(c, err, "Parse must accept the text form that Format returns")
+	assert.Equal(c, got, want, "Parse must return the ID that Format encoded")
 }
