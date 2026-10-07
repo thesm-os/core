@@ -339,12 +339,12 @@ func TestEd25519(t *testing.T) {
 			priv := bytes.Clone(fix.StdlibPriv)
 			s, err := signed25519.New(priv)
 			assert.NoError(t, err, "New must accept the private key of the fixture")
-			want, err := s.Sign(fix.Message)
-			assert.NoError(t, err, "Sign must succeed")
-			clear(priv)
-			got, err := s.Sign(fix.Message)
-			assert.NoError(t, err, "Sign must succeed after the zeroing")
-			assert.Equal(t, got, want, "zeroing the key of the caller must not change the signatures of the Signer")
+			assert.Pure(t, func() []byte {
+				sig, err := s.Sign(fix.Message)
+				assert.NoError(t, err, "Sign must succeed")
+
+				return sig
+			}, func() { clear(priv) }, "zeroing the key of the caller must not change the signatures of the Signer")
 		})
 	})
 
