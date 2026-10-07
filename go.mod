@@ -4,7 +4,7 @@ go 1.27.0
 
 require (
 	go.dokimi.dev/assert v0.0.0-20261006203413-f36a960fd058
-	go.thesmos.sh/kanon v0.0.0-20261001092856-098def33ea91
+	go.thesmos.sh/kanon v0.0.0-20261006204020-55eb98776e63
 	go.thesmos.sh/testkit v0.10.0
 )
 
