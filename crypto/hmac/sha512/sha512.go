@@ -94,12 +94,11 @@ func (m *MAC384) Sign(data []byte) crypto.Digest {
 }
 
 // Verify reports whether expected is HMAC-SHA-384(key, data).
-// The comparison is constant-time over the active byte prefix;
-// size mismatch short-circuits to false.
+// The comparison is constant-time over the active byte prefix. An
+// expected of another length returns false, because
+// [subtle.ConstantTimeCompare] returns 0 at once for slices of two
+// lengths.
 func (m *MAC384) Verify(data, expected []byte) bool {
-	if len(expected) != crypto.DigestSize384 {
-		return false
-	}
 	e := m.pool.Get()
 	e.h.Reset()
 	// hash.Hash.Write never returns a non-nil error per the
@@ -176,12 +175,11 @@ func (m *MAC512) Sign(data []byte) crypto.Digest {
 }
 
 // Verify reports whether expected is HMAC-SHA-512(key, data).
-// The comparison is constant-time over the active byte prefix;
-// size mismatch short-circuits to false.
+// The comparison is constant-time over the active byte prefix. An
+// expected of another length returns false, because
+// [subtle.ConstantTimeCompare] returns 0 at once for slices of two
+// lengths.
 func (m *MAC512) Verify(data, expected []byte) bool {
-	if len(expected) != crypto.DigestSize512 {
-		return false
-	}
 	e := m.pool.Get()
 	e.h.Reset()
 	// hash.Hash.Write never returns a non-nil error per the
