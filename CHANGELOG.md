@@ -570,6 +570,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bytes allocates 60 objects on a connection that the transport reuses.
   `ErrRequestBody`, classified `errs.Invalid`, refuses a request with a
   body of its own.
+- `blob.AppendBytes` appends an object to a buffer of the caller under a
+  read limit. For an object above the limit, it returns the buffer
+  unchanged and an error that classifies as `errs.Invalid`. It refuses a
+  size above the limit that the store reports before it reads the body, and
+  reads at most the limit of a body whose size the store does not report.
+  It allocates nothing beyond what the store allocates when the buffer has
+  room for the object and `bytes.MinRead` more bytes.
 
 ### Changed
 
@@ -795,6 +802,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `witness.Client.AddCheckpoint` sends its body from pooled memory through
   `httpclient.Client.AppendFetchBody`, where it sent a copy of the body
   per call: 65 allocations per call instead of 66.
+- `blob.GetBytes` reads through `blob.AppendBytes`, and sizes its buffer
+  once from the size that the store reports. An object of 8 KiB in
+  `blob/memory` costs 2 allocations instead of 13.
 
 ### Fixed
 
