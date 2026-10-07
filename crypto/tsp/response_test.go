@@ -354,7 +354,7 @@ func parsesResponse(c *prop.Case) {
 
 	got, err := tsp.ParseResponse(resp, tsp.SHA256, imprint, nonce, x509.OID{})
 	if err == nil {
-		assert.True(c, bytes.Contains(resp, got), "the token must be a slice of the response")
+		assert.Contains(c, resp, got, "the token must be a slice of the response")
 	}
 }
 

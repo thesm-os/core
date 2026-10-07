@@ -4,7 +4,6 @@
 package tsp_test
 
 import (
-	"bytes"
 	"crypto/fips140"
 	"crypto/sha256"
 	"crypto/x509"
@@ -1007,7 +1006,7 @@ func verifiesToken(v *tsp.Verifier) func(*prop.Case) {
 
 		info, err := v.Verify(tok, tsp.SHA256, imprint)
 		if err == nil {
-			assert.True(c, bytes.Contains(tok, info.Serial), "the Info must refer to the token")
+			assert.Contains(c, tok, info.Serial, "the Info must refer to the token")
 		}
 	}
 }

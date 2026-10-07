@@ -98,9 +98,13 @@ func TestRequest(t *testing.T) {
 				assert.True(c, got.CertReq, "certReq must be TRUE")
 				assert.Empty(c, got.Extensions, "the request must have no extensions")
 
-				again, err := asn1.Marshal(got)
-				assert.NoError(c, err, "the decoded request must encode")
-				assert.Equal(c, req, again, "the request must be the one DER encoding of its value")
+				assert.RoundTrip(c, func(b []byte) (timeStampReq, error) {
+					var v timeStampReq
+					_, err := asn1.Unmarshal(b, &v)
+
+					return v, err //nolint:wrapcheck // the decoder's own error is the failure
+				}, func(v timeStampReq) ([]byte, error) { return asn1.Marshal(v) }, req,
+					"the request must be the one DER encoding of its value")
 			})
 		})
 
