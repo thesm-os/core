@@ -96,7 +96,7 @@ func TestSleep(t *testing.T) {
 				done <- struct{}{}
 			}()
 			synctest.Wait()
-			assert.Length(t, done, 0, "Sleep must block before the deadline")
+			assert.Empty(t, done, "Sleep must block before the deadline")
 			c.Advance(6 * time.Second)
 			synctest.Wait()
 			assert.Length(t, done, 1, "Sleep must return once virtual time passes the deadline")
@@ -124,7 +124,7 @@ func TestAfter(t *testing.T) {
 		t.Parallel()
 		c := fake.New(originUTC)
 		ch := clock.After(c, 5*time.Second)
-		assert.Length(t, ch, 0, "the channel must not deliver before the deadline")
+		assert.Empty(t, ch, "the channel must not deliver before the deadline")
 		c.Advance(6 * time.Second)
 		assert.Length(t, ch, 1, "the channel must deliver once virtual time passes the deadline")
 	})
@@ -156,7 +156,7 @@ func TestWait(t *testing.T) {
 			errc := make(chan error, 1)
 			go func() { errc <- clock.Wait(t.Context(), c, 5*time.Second) }()
 			synctest.Wait()
-			assert.Length(t, errc, 0, "Wait must block before the deadline")
+			assert.Empty(t, errc, "Wait must block before the deadline")
 			c.Advance(6 * time.Second)
 			assert.NoError(t, <-errc, "Wait must return nil when the deadline passes")
 		})
@@ -207,9 +207,7 @@ func TestWait(t *testing.T) {
 	t.Run("stops its timer when the context ends first", func(t *testing.T) {
 		t.Parallel()
 		c := &stoppingClock{}
-		ctx, cancel := context.WithCancel(t.Context())
-		cancel()
-		assert.ErrorIs(t, clock.Wait(ctx, c, time.Hour), context.Canceled,
+		assert.HonoursCancellation(t, func(ctx context.Context) error { return clock.Wait(ctx, c, time.Hour) },
 			"Wait must return the error of a cancelled context")
 		assert.Equal(t, c.timer.stops, 1, "Wait must stop the timer that it created")
 	})
@@ -225,7 +223,7 @@ func TestHelpersAllocs(t *testing.T) {
 	t.Run("Sleep", func(t *testing.T) {
 		c := &stoppingClock{}
 		expect.MaxAllocs(t, func() { clock.Sleep(c, 0) }, 0, "Sleep must allocate nothing of its own")
-		assert.Length(t, c.timer.tick, 0, "the test must measure a Sleep that took the tick")
+		assert.Empty(t, c.timer.tick, "the test must measure a Sleep that took the tick")
 	})
 
 	t.Run("After", func(t *testing.T) {
@@ -259,7 +257,7 @@ func BenchmarkHelpers(b *testing.B) {
 			clock.Sleep(c, 0)
 		}
 
-		assert.Length(b, c.timer.tick, 0, "the benchmark must measure a Sleep that took the tick")
+		assert.Empty(b, c.timer.tick, "the benchmark must measure a Sleep that took the tick")
 	})
 
 	b.Run("After", func(b *testing.B) {
