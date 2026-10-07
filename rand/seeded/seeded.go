@@ -28,9 +28,9 @@ const blockSize = 32
 //
 // # Allocation contract
 //
-// All scratch (counter bytes, output buffer, HMAC state) lives on
-// the receiver, so [Rand.Read] and [Rand.Uint64] are zero-alloc
-// after construction.
+// The receiver contains all scratch (counter bytes, output buffer, HMAC
+// state), so [Rand.Read] and [Rand.Uint64] are zero-alloc after
+// construction.
 type Rand struct {
 	stream  crypto.Stream
 	seed    rand.Seed
@@ -117,18 +117,20 @@ func (r *Rand) Seed() rand.Seed {
 // readLocked fills p from the buffered HMAC output, then refills the
 // buffer once for each whole block of the rest of p, and once more for
 // a shorter tail, which leaves the unread bytes of that block buffered.
-// The loop count is fixed before the loop starts. Caller holds r.mu.
+// The loop count is fixed before the loop starts. The caller must have
+// locked r.mu.
 func (r *Rand) readLocked(p []byte) {
 	n := copy(p, r.buf[r.bufHead:r.bufHead+r.bufLen])
 	r.bufHead += n
 	r.bufLen -= n
 	p = p[n:]
 
+	// A refill happens only once the copy above has drained the buffer,
+	// so bufLen is 0 until the tail below leaves bytes unread.
 	for range len(p) / blockSize {
 		r.refillLocked()
 		copy(p, r.buf[:])
 		p = p[blockSize:]
-		r.bufHead, r.bufLen = blockSize, 0
 	}
 
 	if len(p) != 0 {
@@ -138,8 +140,9 @@ func (r *Rand) readLocked(p []byte) {
 	}
 }
 
-// refillLocked computes one HMAC block from the next counter and
-// stages it in the receiver buffer. Caller holds r.mu.
+// refillLocked computes one HMAC block from the next counter into the
+// receiver buffer, and leaves bufHead and bufLen unchanged. The caller
+// must have locked r.mu.
 func (r *Rand) refillLocked() {
 	binary.BigEndian.PutUint64(r.ctr[:], r.counter)
 	r.counter++
@@ -149,6 +152,4 @@ func (r *Rand) refillLocked() {
 	_, _ = r.stream.Write(r.ctr[:])
 	digest := r.stream.Sum()
 	copy(r.buf[:], digest.Bytes())
-	r.bufHead = 0
-	r.bufLen = blockSize
 }

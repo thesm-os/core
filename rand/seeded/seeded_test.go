@@ -4,28 +4,36 @@
 package seeded_test
 
 import (
-	"bytes"
-	"fmt"
+	"encoding/binary"
+	"encoding/hex"
+	"math"
 	"testing"
 	"time"
 
-	"go.thesmos.sh/testkit"
-	"go.thesmos.sh/testkit/bench"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/bench"
+	"go.dokimi.dev/assert/expect"
+	"go.dokimi.dev/assert/history"
+	"go.dokimi.dev/assert/prop"
+	testkitbench "go.thesmos.sh/testkit/bench"
 
 	"go.thesmos.sh/core/coretest/randtest"
 	"go.thesmos.sh/core/rand"
 	"go.thesmos.sh/core/rand/seeded"
 )
 
-// newSeeded is the SUT factory for the testkit-driven contract
-// suite.
-func newSeeded() rand.Rand { return seeded.New(rand.Seed(1)) }
+// opUint64 is the operation that the history of the concurrent draws
+// records for a call of Uint64.
+const opUint64 = "uint64"
 
-// --- testkit-driven contract layer ---
+// seeds generates every Seed.
+var seeds = prop.Integer[rand.Seed](math.MinInt64, math.MaxInt64)
 
+// TestSeededRandContract runs the contract suite of rand.Rand with the
+// assertions of distinct draws and of determinism under one seed.
 func TestSeededRandContract(t *testing.T) {
 	t.Parallel()
-	randtest.AssertRandContract(t, newSeeded,
+	randtest.AssertRandContract(t, func() rand.Rand { return seeded.New(rand.Seed(1)) },
 		append(randtest.RandContractAssertions(),
 			randtest.RandUint64DistinctnessAssertion(),
 			randtest.RandSeedDeterminismAssertion(
@@ -36,153 +44,249 @@ func TestSeededRandContract(t *testing.T) {
 	)
 }
 
+// TestSeededRandModel runs the model test of the contract suite.
 func TestSeededRandModel(t *testing.T) {
 	t.Parallel()
-	randtest.RandModelTest(t, newSeeded)
+	randtest.RandModelTest(t, func() rand.Rand { return seeded.New(rand.Seed(1)) })
 }
 
-func FuzzSeededRandModel(f *testing.F) {
-	randtest.RandModelFuzz(f, newSeeded)
-}
-
-func BenchmarkSeededRand(b *testing.B) {
-	randtest.BenchmarkRandContract(b, newSeeded,
-		randtest.RandBenchOnUint64(bench.PureAllocsWithin[rand.Rand, uint64](0)),
-	)
-}
-
-// --- seeded-specific tests ---
-
-func TestSeed(t *testing.T) {
+func TestRand(t *testing.T) {
 	t.Parallel()
 
-	t.Run("Seed reports construction-time seed for int-seeded", func(t *testing.T) {
+	t.Run("New", func(t *testing.T) {
 		t.Parallel()
-		const s = rand.Seed(99)
-		testkit.Equal(t, seeded.New(s).Seed(), s,
-			"Seed must return the construction-time value")
-	})
 
-	t.Run("Seed reports SeedUnspecified for byte-seeded", func(t *testing.T) {
-		t.Parallel()
-		testkit.Equal(t, seeded.NewFromBytes([]byte("anything")).Seed(),
-			rand.SeedUnspecified,
-			"NewFromBytes must report SeedUnspecified — no int recovers a byte seed")
-	})
+		t.Run("returns a Rand whose stream depends only on the seed", func(t *testing.T) {
+			t.Parallel()
+			assert.Deterministic(t, func(s rand.Seed) ([]byte, error) {
+				p := make([]byte, 64)
+				_, _ = seeded.New(s).Read(p)
 
-	t.Run("byte-seeded instances with equal input produce identical streams", func(t *testing.T) {
-		t.Parallel()
-		seed := []byte("test-seed-bytes-2026")
-		a, b := seeded.NewFromBytes(seed), seeded.NewFromBytes(seed)
-		ba, bb := make([]byte, 128), make([]byte, 128)
-		_, _ = a.Read(ba)
-		_, _ = b.Read(bb)
-		testkit.Equal(t, ba, bb,
-			"NewFromBytes with equal seed bytes must produce identical streams")
-	})
-}
+				return p, nil
+			}, rand.Seed(42), "two Rands of one seed must return one stream")
+		})
 
-func TestRead(t *testing.T) {
-	t.Parallel()
-
-	t.Run("split reads equal a single read of the same length", func(t *testing.T) {
-		t.Parallel()
-		// Behavioural contract: a 100-byte Read produces the
-		// same bytes as ten 10-byte Reads. Exercises the
-		// buffered-block carry-over between calls.
-		single := make([]byte, 100)
-		_, _ = seeded.New(rand.Seed(2)).Read(single)
-
-		split := make([]byte, 100)
-		r := seeded.New(rand.Seed(2))
-		for i := 0; i < 100; i += 10 {
-			_, _ = r.Read(split[i : i+10])
-		}
-		testkit.Equal(t, split, single,
-			"split Reads must reproduce the same byte stream as a single Read")
-	})
-
-	t.Run("each HMAC-SHA-256 block is distinct", func(t *testing.T) {
-		t.Parallel()
-		// The block size is 32 bytes. Three consecutive blocks
-		// must differ — a stalled counter would yield
-		// b1 == b2 == b3.
-		buf := make([]byte, 96)
-		_, _ = seeded.New(rand.Seed(123)).Read(buf)
-		b1, b2, b3 := buf[0:32], buf[32:64], buf[64:96]
-		testkit.False(t, bytes.Equal(b1, b2),
-			"block 1 must differ from block 2 — counter must advance")
-		testkit.False(t, bytes.Equal(b2, b3),
-			"block 2 must differ from block 3 — counter must advance")
-	})
-
-	t.Run("seed 0xabcd produces a known 64-byte fixture", func(t *testing.T) {
-		t.Parallel()
-		// Golden bytes recorded from seeded.New(0xabcd).Read(64).
-		// Provides a cross-version stability check; pinned because
-		// HMAC-SHA-256 is deterministic and the construction
-		// (key = big-endian seed, counter encoded big-endian) is
-		// part of the public contract — see package godoc.
-		want := testkit.MustDecodeHex(t,
-			"c1dfde25ff46bc350cbd30fd529c74c4e4e820f2e2ea56dff62b4e1b60e75c56"+
+		// HMAC-SHA-256 is deterministic and the key derivation, the
+		// big-endian seed, is part of the contract, so the stream of a
+		// seed must not change across versions.
+		t.Run("returns a Rand whose stream for seed 0xabcd matches its record", func(t *testing.T) {
+			t.Parallel()
+			want, err := hex.DecodeString("c1dfde25ff46bc350cbd30fd529c74c4e4e820f2e2ea56dff62b4e1b60e75c56" +
 				"df4a9b70aa92cd69a9a3d37de3ff9a5baa97ee15640101987fd736296aa2cfcc")
-		got := make([]byte, len(want))
-		_, _ = seeded.New(rand.Seed(0xabcd)).Read(got)
-		testkit.Equal(t, got, want, "seeded.New(0xabcd) Read(64) must byte-match the golden vector")
+			assert.NoError(t, err, "the record must be hexadecimal")
+			got := make([]byte, len(want))
+			_, _ = seeded.New(rand.Seed(0xabcd)).Read(got)
+			assert.Equal(t, got, want, "the stream of seed 0xabcd must match its record")
+		})
+	})
+
+	t.Run("NewFromBytes", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns a Rand whose stream depends only on the seed bytes", func(t *testing.T) {
+			t.Parallel()
+			assert.Deterministic(t, func(seed string) ([]byte, error) {
+				p := make([]byte, 128)
+				_, _ = seeded.NewFromBytes([]byte(seed)).Read(p)
+
+				return p, nil
+			}, "test-seed-bytes-2026", "two Rands of one byte seed must return one stream")
+		})
+
+		t.Run("returns a Rand whose Seed reports SeedUnspecified", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, seeded.NewFromBytes([]byte("anything")).Seed(), rand.SeedUnspecified,
+				"no int64 recovers a byte seed")
+		})
+	})
+
+	t.Run("Seed", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the seed of New", func(t *testing.T) {
+			t.Parallel()
+			prop.Equal(t, func(s rand.Seed) rand.Seed { return seeded.New(s).Seed() },
+				func(s rand.Seed) rand.Seed { return s }, "Seed must return the seed that New received",
+				prop.Using(seeds), prop.Example(rand.Seed(99)))
+		})
+	})
+
+	t.Run("Read", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the stream of one read across reads of any sizes", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "Read must return the stream of one read across reads of any sizes", func(c *prop.Case) {
+				seed := c.Draw(seeds, "seed")
+				sizes := c.Draw(prop.List(prop.Integer(0, 80), prop.MaxSize(8)), "sizes")
+				total := 0
+				for _, n := range sizes {
+					total += n
+				}
+				single := make([]byte, total)
+				_, _ = seeded.New(seed).Read(single)
+
+				split := make([]byte, total)
+				r := seeded.New(seed)
+				at := 0
+				for _, n := range sizes {
+					_, _ = r.Read(split[at : at+n])
+					at += n
+				}
+				assert.Equal(c, split, single, "reads of the drawn sizes must return the bytes of one read")
+			})
+		})
+
+		// A counter that stalls repeats its block.
+		t.Run("returns another block for each counter", func(t *testing.T) {
+			t.Parallel()
+			buf := make([]byte, 96)
+			_, _ = seeded.New(rand.Seed(123)).Read(buf)
+			expect.NotEqual(t, buf[0:32], buf[32:64], "the second block must differ from the first")
+			expect.NotEqual(t, buf[32:64], buf[64:96], "the third block must differ from the second")
+		})
+
+		t.Run("returns the length of p", func(t *testing.T) {
+			t.Parallel()
+			prop.Equal(t, func(n int) int {
+				got, _ := seeded.New(rand.Seed(1)).Read(make([]byte, n))
+
+				return got
+			}, func(n int) int { return n }, "Read must report every byte of p", prop.Using(prop.Integer(0, 200)))
+		})
+
+		t.Run("returns no error", func(t *testing.T) {
+			t.Parallel()
+			prop.NoError(t, func(n int) error {
+				_, err := seeded.New(rand.Seed(1)).Read(make([]byte, n))
+
+				return err
+			}, "Read must not fail", prop.Using(prop.Integer(0, 200)))
+		})
+	})
+
+	t.Run("Uint64", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the next 8 bytes of the stream in little-endian order", func(t *testing.T) {
+			t.Parallel()
+			prop.Equal(t, func(s rand.Seed) uint64 { return seeded.New(s).Uint64() }, func(s rand.Seed) uint64 {
+				p := make([]byte, 8)
+				_, _ = seeded.New(s).Read(p)
+
+				return binary.LittleEndian.Uint64(p)
+			}, "Uint64 must decode the bytes that Read returns", prop.Using(seeds))
+		})
+
+		// The history of the calls must linearize against the stream of a
+		// Rand of the same seed, so the mutex gives each value of the
+		// stream to one call.
+		t.Run("returns the values of one stream to concurrent callers", func(t *testing.T) {
+			t.Parallel()
+			const (
+				clients = 8
+				draws   = 64
+			)
+
+			stream := make([]uint64, clients*draws)
+			reference := seeded.New(rand.Seed(7))
+			for i := range stream {
+				stream[i] = reference.Uint64()
+			}
+
+			r := seeded.New(rand.Seed(7))
+			h := history.New()
+			outcomes := history.Concurrently(clients, 10*time.Second, func(client int) (any, error) {
+				for range draws {
+					call := h.Invoke(client, opUint64, nil)
+					call.OK(r.Uint64())
+				}
+
+				return client, nil
+			})
+			for _, o := range outcomes {
+				assert.True(t, o.Finished, "every client must finish")
+			}
+
+			history.Linearizable(t, h, history.Spec[int]{
+				Initial: func() int { return 0 },
+				Next: func(drawn int, op history.Operation) []int {
+					if drawn == len(stream) || !op.Returned(stream[drawn]) {
+						return nil
+					}
+
+					return []int{drawn + 1}
+				},
+			}, "concurrent calls must return the values of the stream in an order of their calls")
+		})
 	})
 }
 
-// TestReadTerminates pins the one property of Read no other test can
-// observe: that it returns at all.
+// TestRandAllocs checks that Uint64 and Read allocate nothing.
+// MaxAllocs counts the allocations of the whole process, so the test
+// does not run in parallel.
 //
-// Read's fill loop runs once for each whole block of the read, a count
-// fixed before the loop starts. Every other Read test calls Read
-// directly, so a Read that did not return would hang them, and the
-// binary would stop at its deadline with the failure attributed to
-// whichever test was running. Running Read on a watchdogged goroutine
-// converts that hang into a named failure here.
-//
-// The bound is real time and generous: a legitimate Read of these
-// sizes completes in microseconds, so one second cannot flake on a
-// contended runner. It is deliberately the smallest deadline in
-// play — the escape must land inside a per-mutant budget that also
-// funds compiling the mutated tree in a cold cache.
-func TestReadTerminates(t *testing.T) {
-	t.Parallel()
-
-	// Zero and one probe the empty-buffer edge; 32 is exactly one
-	// HMAC block; 33 and 100 force refills mid-fill.
-	for _, size := range []int{0, 1, 8, 32, 33, 100} {
-		done := make(chan struct{})
-
-		go func() {
-			r := seeded.New(rand.Seed(1))
-			_, _ = r.Read(make([]byte, size))
-			close(done)
-		}()
-
-		select {
-		case <-done:
-		case <-time.After(time.Second):
-			// Panic, not t.Fatal. A mutant that hangs this Read hangs
-			// every parallel sibling that calls Read directly, and a
-			// Fatal only exits THIS test's goroutine — the process then
-			// waits on the stuck siblings until the deadline anyway.
-			// Crashing the process is the entire job of this watchdog.
-			//nolint:forbidigo // only a process crash escapes the parallel siblings this mutant has already hung; see the comment above
-			panic(fmt.Sprintf(
-				"seeded: Read(len %d) did not return — the fill loop no longer terminates", size,
-			))
-		}
-	}
-
-	// Anchor the helper's other guarantee so this test cannot rot
-	// into liveness-only: a terminated Read must also have filled.
+//nolint:paralleltest // see above
+func TestRandAllocs(t *testing.T) {
 	r := seeded.New(rand.Seed(1))
 	p := make([]byte, 100)
 
-	n, err := r.Read(p)
+	t.Run("Uint64", func(t *testing.T) {
+		var got uint64
+		expect.MaxAllocs(t, func() { got = r.Uint64() }, 0, "Uint64 must not allocate")
+		assert.NotEqual(t, got, 0, "the test must measure a draw")
+	})
 
-	testkit.NoError(t, err, "Read must not fail")
-	testkit.Equal(t, n, len(p), "Read must fill the whole buffer")
+	t.Run("Read", func(t *testing.T) {
+		var n int
+		expect.MaxAllocs(t, func() { n, _ = r.Read(p) }, 0, "Read must not allocate")
+		assert.Equal(t, n, len(p), "the test must measure a read of p")
+	})
+}
+
+// BenchmarkSeededRand runs the benchmarks of the contract suite of
+// rand.Rand.
+func BenchmarkSeededRand(b *testing.B) {
+	randtest.BenchmarkRandContract(b, func() rand.Rand { return seeded.New(rand.Seed(1)) },
+		randtest.RandBenchOnUint64(testkitbench.PureAllocsWithin[rand.Rand, uint64](0)),
+	)
+}
+
+// BenchmarkRand reports the cost of Uint64 and of a Read of 100 bytes,
+// and fails when either allocates.
+func BenchmarkRand(b *testing.B) {
+	r := seeded.New(rand.Seed(1))
+
+	b.Run("Uint64", func(b *testing.B) {
+		var got uint64
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			got = r.Uint64()
+		}
+
+		assert.NotEqual(b, got, 0, "the benchmark must measure a draw")
+	})
+
+	b.Run("Read", func(b *testing.B) {
+		p := make([]byte, 100)
+		var n int
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			n, _ = r.Read(p)
+		}
+
+		assert.Equal(b, n, len(p), "the benchmark must measure a read of p")
+	})
+}
+
+// FuzzSeededRandModel runs the model of the contract suite on the inputs
+// that a fuzzer finds.
+func FuzzSeededRandModel(f *testing.F) {
+	randtest.RandModelFuzz(f, func() rand.Rand { return seeded.New(rand.Seed(1)) })
 }
