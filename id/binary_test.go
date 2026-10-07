@@ -6,7 +6,6 @@ package id_test
 import (
 	"bytes"
 	"encoding"
-	"errors"
 	"slices"
 	"testing"
 
@@ -131,7 +130,7 @@ func TestBinary(t *testing.T) {
 				want, wantErr := id.FromBytes(data)
 				var got id.ID
 				err := got.UnmarshalBinary(data)
-				assert.True(c, errors.Is(err, wantErr), "UnmarshalBinary must return the error of FromBytes")
+				assert.ErrorIs(c, err, wantErr, "UnmarshalBinary must return the error of FromBytes")
 				assert.Equal(c, got, want, "UnmarshalBinary must decode the ID of FromBytes")
 			})
 		})

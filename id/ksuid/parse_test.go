@@ -117,15 +117,11 @@ func TestParse(t *testing.T) {
 
 		t.Run("returns an ID for every encoding up to the largest KSUID", func(t *testing.T) {
 			t.Parallel()
-			prop.ForAll(t, "Parse must decode every encoding that does not overflow", func(c *prop.Case) {
-				s := c.Draw(prop.StringMatching(`[0-9A-Za][0-9A-Za-z]{26}`).Filter(func(s string) bool {
-					return s <= largestText
-				}), "text")
-
-				got, err := ksuid.Parse(s)
-				assert.NoError(c, err, "Parse must accept the encoding")
-				assert.Equal(c, ksuid.Format(got), s, "Format of the decoded ID must return the encoding")
+			below := prop.StringMatching(`[0-9A-Za][0-9A-Za-z]{26}`).Filter(func(s string) bool {
+				return s <= largestText
 			})
+			prop.RoundTrip(t, ksuid.Parse, func(i id.ID) (string, error) { return ksuid.Format(i), nil },
+				"Parse must decode every encoding that does not overflow", prop.Using(below))
 		})
 
 		t.Run("returns ErrOverflow for every encoding above the largest KSUID", func(t *testing.T) {
@@ -305,8 +301,6 @@ func parsesText(c *prop.Case) {
 // encoding that Format returns for it.
 func roundTrips(c *prop.Case) {
 	want := c.Draw(ksuids, "id")
-
-	got, err := ksuid.Parse(ksuid.Format(want))
-	assert.NoError(c, err, "Parse must accept the encoding that Format returns")
-	assert.Equal(c, got, want, "Parse must return the ID that Format encoded")
+	assert.RoundTrip(c, func(i id.ID) (string, error) { return ksuid.Format(i), nil }, ksuid.Parse, want,
+		"Parse must return the ID that Format encoded")
 }

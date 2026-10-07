@@ -383,9 +383,8 @@ func parsesText(c *prop.Case) {
 
 	got, err := ulid.ParseULID(s)
 	if err == nil {
-		again, err := ulid.ParseULID(ulid.Format(got))
-		assert.NoError(c, err, "ParseULID must accept the encoding that Format returns")
-		assert.Equal(c, again, got, "the encoding must decode to the same ID")
+		assert.RoundTrip(c, func(i id.ID) (string, error) { return ulid.Format(i), nil }, ulid.ParseULID, got,
+			"the encoding must decode to the same ID")
 	}
 }
 
@@ -393,8 +392,6 @@ func parsesText(c *prop.Case) {
 // encoding that Format returns for it.
 func roundTrips(c *prop.Case) {
 	want := c.Draw(ulids, "id")
-
-	got, err := ulid.ParseULID(ulid.Format(want))
-	assert.NoError(c, err, "ParseULID must accept the encoding that Format returns")
-	assert.Equal(c, got, want, "ParseULID must return the ID that Format encoded")
+	assert.RoundTrip(c, func(i id.ID) (string, error) { return ulid.Format(i), nil }, ulid.ParseULID, want,
+		"ParseULID must return the ID that Format encoded")
 }

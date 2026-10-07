@@ -255,8 +255,7 @@ func parsesText(c *prop.Case) {
 // form that Format returns for it.
 func roundTrips(c *prop.Case) {
 	want := c.Draw(uuids, "id")
-
-	got, err := uuidtext.Parse(uuidtext.Format(want), sentinels)
-	assert.NoError(c, err, "Parse must accept the text form that Format returns")
-	assert.Equal(c, got, want, "Parse must return the ID that Format encoded")
+	assert.RoundTrip(c, func(i id.ID) (string, error) { return uuidtext.Format(i), nil },
+		func(s string) (id.ID, error) { return uuidtext.Parse(s, sentinels) }, want,
+		"Parse must return the ID that Format encoded")
 }

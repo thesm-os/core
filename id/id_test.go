@@ -279,10 +279,8 @@ func TestID(t *testing.T) {
 
 		t.Run("returns id: followed by the hexadecimal of the bytes", func(t *testing.T) {
 			t.Parallel()
-			prop.ForAll(t, "String must write the prefix and the hexadecimal bytes", func(c *prop.Case) {
-				i := c.Draw(ids, "id")
-				assert.Equal(c, i.String(), "id:"+hex.EncodeToString(i.Bytes()), "String must encode the bytes")
-			})
+			prop.Equal(t, id.ID.String, func(i id.ID) string { return "id:" + hex.EncodeToString(i.Bytes()) },
+				"String must write the prefix and the hexadecimal bytes", prop.Using(ids))
 		})
 	})
 }
