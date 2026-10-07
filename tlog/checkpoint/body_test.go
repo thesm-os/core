@@ -5,17 +5,17 @@ package checkpoint_test
 
 import (
 	"encoding/base64"
-	"math/rand/v2"
 	"os"
 	"strings"
 	"testing"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/bench"
+	"go.dokimi.dev/assert/expect"
+	"go.dokimi.dev/assert/prop"
 
 	"go.thesmos.sh/core/crypto"
-	"go.thesmos.sh/core/crypto/sign"
 	"go.thesmos.sh/core/errs"
-	"go.thesmos.sh/core/note"
 	"go.thesmos.sh/core/tlog/checkpoint"
 )
 
@@ -27,127 +27,54 @@ const (
 	exampleBody   = exampleOrigin + "\n20852163\n" + exampleRoot + "\n"
 )
 
-const (
-	// benchRuns is the number of calls over which a benchmark averages the
-	// allocations that it checks.
-	benchRuns = 100
-
-	// properties is the number of random values of each property test.
-	properties = 2000
-)
-
-// Sinks receive the results of the benchmarks, so that the compiler keeps
-// every call that they measure.
-var (
-	sinkBool     bool
-	sinkBytes    []byte
-	sinkBody     checkpoint.Body
-	sinkPolicy   checkpoint.Policy
-	sinkRule     sign.Rule
-	sinkVerifier note.Verifier
-	sinkSigner   note.Signer
-	sinkChecker  *checkpoint.Verifier
-	errSink      error
-)
-
-// lineRunes are the characters of the lines that randomBody draws: a
+// lineAlphabet are the characters of the lines that lines generates: a
 // space, a plus, characters outside ASCII, and U+007F to U+009F.
-var lineRunes = []rune("ab +/例λ\u007f\u0080\u009f")
+const lineAlphabet = "ab +/例λ\u007f\u0080\u009f"
 
-// benchZeroAlloc reports the cost of call, and fails when call allocates.
-func benchZeroAlloc(b *testing.B, call func()) {
-	b.Helper()
-	benchAllocs(b, 0, call)
-}
+// parsedBody is the label under which the property of the canonical form
+// counts a changed body that ParseBody accepts. About one changed body in
+// eight parses, so 1,000 cases check about 130 of them.
+const parsedBody = "a changed body that ParseBody accepts"
 
-// benchAllocs reports the cost of call, and fails when call does not
-// allocate want times per call.
-func benchAllocs(b *testing.B, want float64, call func()) {
-	b.Helper()
+// The generators of the properties of Body.
+var (
+	// lines generates valid lines of 1 to 20 characters of lineAlphabet.
+	lines = prop.String(prop.Alphabet(lineAlphabet), prop.MinSize(1), prop.MaxSize(20))
 
-	if allocs := testing.AllocsPerRun(benchRuns, call); allocs != want {
-		b.Fatalf("allocates %v times per call, want %v", allocs, want)
-	}
+	// roots generates roots of 32, 48 or 64 bytes.
+	roots = prop.Composite(func(c *prop.Case) crypto.Digest {
+		size := c.Draw(prop.SampledFrom(crypto.DigestSize256, 48, 64), "size")
+		d, err := crypto.DigestFromBytes(c.Draw(prop.Bytes(prop.MinSize(size), prop.MaxSize(size)), "root"))
+		assert.NoError(c, err, "a root of 32, 48 or 64 bytes must be a digest")
 
-	b.ReportAllocs()
-	for b.Loop() {
-		call()
-	}
-}
+		return d
+	})
 
-// readFile returns the content of the file name of testdata.
-func readFile(tb testing.TB, name string) []byte {
-	tb.Helper()
+	// bodies generates valid bodies: an origin of lines, any size, a root
+	// of roots, and up to two extension lines of lines.
+	bodies = prop.Composite(func(c *prop.Case) checkpoint.Body {
+		b := checkpoint.Body{
+			Origin: checkpoint.Origin(c.Draw(lines, "origin")),
+			Size:   c.Draw(prop.Of[uint64](), "size"),
+			Root:   c.Draw(roots, "root"),
+		}
+		for _, e := range c.Draw(prop.List(lines, prop.MaxSize(2)), "extensions") {
+			b.Extensions = append(b.Extensions, checkpoint.Extension(e))
+		}
 
-	b, err := os.ReadFile("testdata/" + name)
-	testkit.NoError(tb, err, "the fixture "+name+" must be readable")
+		return b
+	})
 
-	return b
-}
+	// changedBodies generates the texts of bodies with one byte replaced
+	// by any byte.
+	changedBodies = prop.Composite(func(c *prop.Case) []byte {
+		text, err := c.Draw(bodies, "body").AppendText(nil)
+		assert.NoError(c, err, "AppendText must accept a valid body")
+		text[c.Draw(prop.Integer(0, len(text)-1), "position")] = c.Draw(prop.Of[byte](), "byte")
 
-// root returns the root of n bytes whose byte i is i + 1.
-func root(tb testing.TB, n int) crypto.Digest {
-	tb.Helper()
-
-	raw := make([]byte, n)
-	for i := range raw {
-		raw[i] = byte(i + 1)
-	}
-
-	d, err := crypto.DigestFromBytes(raw)
-	testkit.NoError(tb, err, "the root must have the size of a digest")
-
-	return d
-}
-
-// encode returns the padded standard base64 of the bytes of d.
-func encode(d crypto.Digest) string {
-	return base64.StdEncoding.EncodeToString(d.Bytes())
-}
-
-// exampleDigest returns the root of the example of tlog-checkpoint.
-func exampleDigest(tb testing.TB) crypto.Digest {
-	tb.Helper()
-
-	raw, err := base64.StdEncoding.DecodeString(exampleRoot)
-	testkit.NoError(tb, err, "the fixture must decode")
-
-	d, err := crypto.DigestFromBytes(raw)
-	testkit.NoError(tb, err, "the fixture must be 32 bytes")
-
-	return d
-}
-
-// randomLine returns a valid line of 1 to 20 characters of lineRunes.
-func randomLine(r *rand.Rand) string {
-	var s strings.Builder
-	for range 1 + r.IntN(20) {
-		s.WriteRune(lineRunes[r.IntN(len(lineRunes))])
-	}
-
-	return s.String()
-}
-
-// randomBody returns a valid body: a random origin and size, a root of 32,
-// 48 or 64 random bytes, and zero to two extension lines.
-func randomBody(tb testing.TB, r *rand.Rand) checkpoint.Body {
-	tb.Helper()
-
-	raw := make([]byte, []int{32, 48, 64}[r.IntN(3)])
-	for i := range raw {
-		raw[i] = byte(r.Uint32())
-	}
-
-	d, err := crypto.DigestFromBytes(raw)
-	testkit.NoError(tb, err, "the root must have the size of a digest")
-
-	b := checkpoint.Body{Origin: checkpoint.Origin(randomLine(r)), Size: r.Uint64() >> r.IntN(64), Root: d}
-	for range r.IntN(3) {
-		b.Extensions = append(b.Extensions, checkpoint.Extension(randomLine(r)))
-	}
-
-	return b
-}
+		return text
+	})
+)
 
 func TestBody(t *testing.T) {
 	t.Parallel()
@@ -155,46 +82,59 @@ func TestBody(t *testing.T) {
 	t.Run("Origin", func(t *testing.T) {
 		t.Parallel()
 
-		tests := []struct {
-			name string
-			give checkpoint.Origin
-			want bool
-		}{
-			{name: "reports true for the origin of the example of tlog-checkpoint", give: exampleOrigin, want: true},
-			{name: "reports true for an origin with a space and a plus", give: "a b+c", want: true},
-			{name: "reports true for U+007F and U+0080 to U+009F", give: "a\u007f\u0080\u009f", want: true},
-			{name: "reports false for the empty origin", give: "", want: false},
-			{name: "reports false for an origin that is not valid UTF-8", give: "a\xff", want: false},
-			{name: "reports false for an origin with a newline", give: "a\nb", want: false},
-			{name: "reports false for an origin with U+001F", give: "a\x1f", want: false},
-			{name: "reports false for an origin with a NUL", give: "\x00", want: false},
-		}
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				t.Parallel()
-				testkit.Equal(t, tt.give.Valid(), tt.want, "Valid must report whether the origin is a line")
-			})
-		}
+		t.Run("Valid", func(t *testing.T) {
+			t.Parallel()
+
+			tests := []struct {
+				name string
+				give checkpoint.Origin
+				want bool
+			}{
+				{
+					name: "reports true for the origin of the example of tlog-checkpoint",
+					give: exampleOrigin,
+					want: true,
+				},
+				{name: "reports true for an origin with a space", give: "a b", want: true},
+				{name: "reports true for an origin with a plus", give: "a+b", want: true},
+				{name: "reports true for U+007F to U+009F", give: "a\u007f\u0080\u009f", want: true},
+				{name: "reports false for the empty origin", give: "", want: false},
+				{name: "reports false for an origin that is not valid UTF-8", give: "a\xff", want: false},
+				{name: "reports false for an origin with a newline", give: "a\nb", want: false},
+				{name: "reports false for an origin with U+001F", give: "a\x1f", want: false},
+				{name: "reports false for an origin with a NUL", give: "\x00", want: false},
+			}
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					t.Parallel()
+					assert.Equal(t, tt.give.Valid(), tt.want, "Valid must report whether the origin is a line")
+				})
+			}
+		})
 	})
 
 	t.Run("Extension", func(t *testing.T) {
 		t.Parallel()
 
-		tests := []struct {
-			name string
-			give checkpoint.Extension
-			want bool
-		}{
-			{name: "reports true for a line with a space", give: "an extension line", want: true},
-			{name: "reports false for the empty line", give: "", want: false},
-			{name: "reports false for a line with a carriage return", give: "a\r", want: false},
-		}
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
-				t.Parallel()
-				testkit.Equal(t, tt.give.Valid(), tt.want, "Valid must report whether the extension is a line")
-			})
-		}
+		t.Run("Valid", func(t *testing.T) {
+			t.Parallel()
+
+			tests := []struct {
+				name string
+				give checkpoint.Extension
+				want bool
+			}{
+				{name: "reports true for a line with a space", give: "an extension line", want: true},
+				{name: "reports false for the empty line", give: "", want: false},
+				{name: "reports false for a line with a carriage return", give: "a\r", want: false},
+			}
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					t.Parallel()
+					assert.Equal(t, tt.give.Valid(), tt.want, "Valid must report whether the extension is a line")
+				})
+			}
+		})
 	})
 
 	t.Run("ParseBody", func(t *testing.T) {
@@ -203,80 +143,83 @@ func TestBody(t *testing.T) {
 		t.Run("returns the body of the example of tlog-checkpoint", func(t *testing.T) {
 			t.Parallel()
 			got, err := checkpoint.ParseBody([]byte(exampleBody))
-			testkit.NoError(t, err, "ParseBody must accept the example")
-			want := checkpoint.Body{Origin: exampleOrigin, Size: exampleSize, Root: exampleDigest(t)}
-			testkit.Equal(t, got, want, "ParseBody must return the origin, the size and the root")
+			assert.NoError(t, err, "ParseBody must accept the example")
+			assert.Equal(t, got, checkpoint.Body{Origin: exampleOrigin, Size: exampleSize, Root: exampleDigest(t)},
+				"ParseBody must return the origin, the size and the root")
 		})
 
 		t.Run("returns the extension lines in order", func(t *testing.T) {
 			t.Parallel()
 			got, err := checkpoint.ParseBody([]byte(exampleBody + "first\nsecond line\n"))
-			testkit.NoError(t, err, "ParseBody must accept extension lines")
-			testkit.Equal(t, got.Extensions, []checkpoint.Extension{"first", "second line"},
+			assert.NoError(t, err, "ParseBody must accept extension lines")
+			assert.Equal(t, got.Extensions, []checkpoint.Extension{"first", "second line"},
 				"ParseBody must return each extension line without its newline")
 		})
 
 		t.Run("returns the size 0", func(t *testing.T) {
 			t.Parallel()
 			got, err := checkpoint.ParseBody([]byte("a\n0\n" + exampleRoot + "\n"))
-			testkit.NoError(t, err, "ParseBody must accept the size 0")
-			testkit.Equal(t, got.Size, uint64(0), "ParseBody must return the size 0")
+			assert.NoError(t, err, "ParseBody must accept the size 0")
+			assert.Equal(t, got.Size, uint64(0), "ParseBody must return the size 0")
 		})
 
 		t.Run("returns the largest uint64", func(t *testing.T) {
 			t.Parallel()
 			got, err := checkpoint.ParseBody([]byte("a\n18446744073709551615\n" + exampleRoot + "\n"))
-			testkit.NoError(t, err, "ParseBody must accept the largest uint64")
-			testkit.Equal(t, got.Size, ^uint64(0), "ParseBody must return the largest uint64")
+			assert.NoError(t, err, "ParseBody must accept the largest uint64")
+			assert.Equal(t, got.Size, ^uint64(0), "ParseBody must return the largest uint64")
 		})
 
 		t.Run("returns a root of 48 bytes", func(t *testing.T) {
 			t.Parallel()
-			got, err := checkpoint.ParseBody([]byte("a\n1\n" + encode(root(t, 48)) + "\n"))
-			testkit.NoError(t, err, "ParseBody must accept a root of 48 bytes")
-			testkit.Equal(t, got.Root, root(t, 48), "ParseBody must return the root of 48 bytes")
+			got, err := checkpoint.ParseBody(
+				[]byte("a\n1\n" + base64.StdEncoding.EncodeToString(root(t, 48).Bytes()) + "\n"),
+			)
+			assert.NoError(t, err, "ParseBody must accept a root of 48 bytes")
+			assert.Equal(t, got.Root, root(t, 48), "ParseBody must return the root of 48 bytes")
 		})
 
 		t.Run("returns a root of 64 bytes", func(t *testing.T) {
 			t.Parallel()
-			got, err := checkpoint.ParseBody([]byte("a\n1\n" + encode(root(t, 64)) + "\n"))
-			testkit.NoError(t, err, "ParseBody must accept a root of 64 bytes")
-			testkit.Equal(t, got.Root, root(t, 64), "ParseBody must return the root of 64 bytes")
+			got, err := checkpoint.ParseBody(
+				[]byte("a\n1\n" + base64.StdEncoding.EncodeToString(root(t, 64).Bytes()) + "\n"),
+			)
+			assert.NoError(t, err, "ParseBody must accept a root of 64 bytes")
+			assert.Equal(t, got.Root, root(t, 64), "ParseBody must return the root of 64 bytes")
 		})
 
 		t.Run("returns a body that does not alias text", func(t *testing.T) {
 			t.Parallel()
 			text := []byte(exampleBody + "ext\n")
 			got, err := checkpoint.ParseBody(text)
-			testkit.NoError(t, err, "ParseBody must accept the body")
+			assert.NoError(t, err, "ParseBody must accept the body")
 			clear(text)
-			testkit.Equal(
-				t,
-				got.Origin,
-				checkpoint.Origin(exampleOrigin),
-				"a change to text must not change the origin",
-			)
-			testkit.Equal(t, got.Extensions, []checkpoint.Extension{"ext"}, "a change to text must not change a line")
+			expect.Equal(t, got.Origin, checkpoint.Origin(exampleOrigin), "a change to text must not change the origin")
+			expect.Equal(t, got.Extensions, []checkpoint.Extension{"ext"}, "a change to text must not change a line")
 		})
 
-		t.Run("accepts exactly the texts that AppendText writes", func(t *testing.T) {
+		t.Run("returns the body that AppendText writes", func(t *testing.T) {
 			t.Parallel()
-			r := testkit.SeededRand(t)
-			for range properties {
-				b := randomBody(t, r)
-				text, err := b.AppendText(nil)
-				testkit.NoError(t, err, "AppendText must accept a valid body")
-				got, err := checkpoint.ParseBody(text)
-				testkit.NoError(t, err, "ParseBody must accept "+string(text))
-				testkit.Equal(t, got, b, "ParseBody must return the body that AppendText wrote")
+			prop.RoundTrip(t, func(b checkpoint.Body) ([]byte, error) { return b.AppendText(nil) },
+				checkpoint.ParseBody, "ParseBody must return the body that AppendText writes", prop.Using(bodies),
+				assert.EquateEmpty())
+		})
 
-				text[r.IntN(len(text))] = byte(r.Uint32())
-				if changed, err := checkpoint.ParseBody(text); err == nil {
-					again, err := changed.AppendText(nil)
-					testkit.NoError(t, err, "AppendText must accept a body that ParseBody returns")
-					testkit.Equal(t, string(again), string(text), "ParseBody must accept only what AppendText writes")
-				}
-			}
+		t.Run("returns only bodies that AppendText writes back byte for byte", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "ParseBody must return only bodies that AppendText writes back byte for byte",
+				func(c *prop.Case) {
+					text := c.Draw(changedBodies, "text")
+					b, err := checkpoint.ParseBody(text)
+					if err != nil {
+						return
+					}
+					c.Classify(parsedBody)
+
+					again, err := b.AppendText(nil)
+					assert.NoError(c, err, "AppendText must accept a body that ParseBody returns")
+					assert.Equal(c, again, text, "AppendText must write back the body that ParseBody returned")
+				}, prop.Cases(1_000), prop.Require(parsedBody, 0.05))
 		})
 
 		tests := []struct {
@@ -332,9 +275,9 @@ func TestBody(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
 				got, err := checkpoint.ParseBody([]byte(tt.give))
-				testkit.ErrorIs(t, err, checkpoint.ErrBody, "ParseBody must refuse the text")
-				testkit.Equal(t, errs.Classify(err), errs.Invalid, "the error must classify as Invalid")
-				testkit.Equal(t, got, checkpoint.Body{}, "ParseBody must return the zero Body with an error")
+				expect.ErrorIs(t, err, checkpoint.ErrBody, "ParseBody must refuse the text")
+				expect.Equal(t, errs.Classify(err), errs.Invalid, "the error must classify as Invalid")
+				expect.Equal(t, got, checkpoint.Body{}, "ParseBody must return the zero Body with an error")
 			})
 		}
 	})
@@ -367,7 +310,7 @@ func TestBody(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-				testkit.Equal(t, tt.give.Valid(), tt.want, "Valid must report whether the body is complete")
+				assert.Equal(t, tt.give.Valid(), tt.want, "Valid must report whether the body is complete")
 			})
 		}
 	})
@@ -379,8 +322,8 @@ func TestBody(t *testing.T) {
 			t.Parallel()
 			b := checkpoint.Body{Origin: exampleOrigin, Size: exampleSize, Root: exampleDigest(t)}
 			got, err := b.AppendText([]byte("body:"))
-			testkit.NoError(t, err, "AppendText must accept a valid body")
-			testkit.Equal(t, string(got), "body:"+exampleBody, "AppendText must append the three lines")
+			assert.NoError(t, err, "AppendText must accept a valid body")
+			assert.Equal(t, string(got), "body:"+exampleBody, "AppendText must append the three lines")
 		})
 
 		t.Run("appends each extension line", func(t *testing.T) {
@@ -388,16 +331,16 @@ func TestBody(t *testing.T) {
 			b := checkpoint.Body{Origin: exampleOrigin, Size: exampleSize, Root: exampleDigest(t)}
 			b.Extensions = []checkpoint.Extension{"first", "second line"}
 			got, err := b.AppendText(nil)
-			testkit.NoError(t, err, "AppendText must accept extension lines")
-			testkit.Equal(t, string(got), exampleBody+"first\nsecond line\n", "AppendText must append the lines")
+			assert.NoError(t, err, "AppendText must accept extension lines")
+			assert.Equal(t, string(got), exampleBody+"first\nsecond line\n", "AppendText must append the lines")
 		})
 
-		t.Run("returns dst unchanged and ErrBody for a Body that is not Valid", func(t *testing.T) {
+		t.Run("returns ErrBody with dst unchanged for a Body that is not Valid", func(t *testing.T) {
 			t.Parallel()
 			got, err := checkpoint.Body{Origin: exampleOrigin}.AppendText([]byte("body:"))
-			testkit.ErrorIs(t, err, checkpoint.ErrBody, "AppendText must refuse a body without a root")
-			testkit.Equal(t, errs.Classify(err), errs.Invalid, "the error must classify as Invalid")
-			testkit.Equal(t, string(got), "body:", "AppendText must return dst unchanged")
+			expect.ErrorIs(t, err, checkpoint.ErrBody, "AppendText must refuse a body without a root")
+			expect.Equal(t, errs.Classify(err), errs.Invalid, "the error must classify as Invalid")
+			expect.Equal(t, string(got), "body:", "AppendText must return dst unchanged")
 		})
 	})
 
@@ -407,25 +350,24 @@ func TestBody(t *testing.T) {
 		t.Run("returns the text that AppendText appends", func(t *testing.T) {
 			t.Parallel()
 			got, err := checkpoint.Body{Origin: exampleOrigin, Size: exampleSize, Root: exampleDigest(t)}.MarshalText()
-			testkit.NoError(t, err, "MarshalText must accept a valid body")
-			testkit.Equal(t, string(got), exampleBody, "MarshalText must return the text")
+			assert.NoError(t, err, "MarshalText must accept a valid body")
+			assert.Equal(t, string(got), exampleBody, "MarshalText must return the text")
 		})
 
 		t.Run("returns a text whose capacity is its length", func(t *testing.T) {
 			t.Parallel()
-			r := testkit.SeededRand(t)
-			for range properties {
-				got, err := randomBody(t, r).MarshalText()
-				testkit.NoError(t, err, "MarshalText must accept a valid body")
-				testkit.Equal(t, cap(got), len(got), "MarshalText must allocate the text at its length")
-			}
+			prop.ForAll(t, "MarshalText must return a text whose capacity is its length", func(c *prop.Case) {
+				got, err := c.Draw(bodies, "body").MarshalText()
+				assert.NoError(c, err, "MarshalText must accept a valid body")
+				assert.Equal(c, cap(got), len(got), "MarshalText must allocate the text at its length")
+			})
 		})
 
-		t.Run("returns nil and ErrBody for a Body that is not Valid", func(t *testing.T) {
+		t.Run("returns nil with ErrBody for a Body that is not Valid", func(t *testing.T) {
 			t.Parallel()
 			got, err := checkpoint.Body{}.MarshalText()
-			testkit.ErrorIs(t, err, checkpoint.ErrBody, "MarshalText must refuse the zero Body")
-			testkit.True(t, got == nil, "MarshalText must return nil with an error")
+			expect.ErrorIs(t, err, checkpoint.ErrBody, "MarshalText must refuse the zero Body")
+			expect.Nil(t, got, "MarshalText must return nil with an error")
 		})
 	})
 
@@ -435,37 +377,33 @@ func TestBody(t *testing.T) {
 		t.Run("sets b to the body of the text", func(t *testing.T) {
 			t.Parallel()
 			var b checkpoint.Body
-			testkit.NoError(t, b.UnmarshalText([]byte(exampleBody)), "UnmarshalText must accept the example")
-			testkit.Equal(t, b, checkpoint.Body{Origin: exampleOrigin, Size: exampleSize, Root: exampleDigest(t)},
+			assert.NoError(t, b.UnmarshalText([]byte(exampleBody)), "UnmarshalText must accept the example")
+			assert.Equal(t, b, checkpoint.Body{Origin: exampleOrigin, Size: exampleSize, Root: exampleDigest(t)},
 				"UnmarshalText must set the body")
 		})
 
 		t.Run("sets b to the body of each text in turn", func(t *testing.T) {
 			t.Parallel()
-			r := testkit.SeededRand(t)
-			var b checkpoint.Body
-			for range properties {
-				want := randomBody(t, r)
-				text, err := want.AppendText(nil)
-				testkit.NoError(t, err, "AppendText must accept a valid body")
-				testkit.NoError(t, b.UnmarshalText(text), "UnmarshalText must accept "+string(text))
-				testkit.Equal(t, b.Origin, want.Origin, "UnmarshalText must set the origin")
-				testkit.Equal(t, b.Size, want.Size, "UnmarshalText must set the size")
-				testkit.Equal(t, b.Root, want.Root, "UnmarshalText must set the root")
-				testkit.Equal(t, len(b.Extensions), len(want.Extensions), "UnmarshalText must set every extension line")
-				for i, e := range want.Extensions {
-					testkit.Equal(t, b.Extensions[i], e, "UnmarshalText must set each extension line")
+			prop.ForAll(t, "UnmarshalText must set b to the body of each text in turn", func(c *prop.Case) {
+				var b checkpoint.Body
+				for _, want := range c.Draw(prop.List(bodies, prop.MinSize(1), prop.MaxSize(4)), "bodies") {
+					text, err := want.AppendText(nil)
+					assert.NoError(c, err, "AppendText must accept a valid body")
+					assert.NoError(c, b.UnmarshalText(text),
+						"UnmarshalText must accept the text that AppendText writes")
+					assert.Equal(c, b, want, "UnmarshalText must set the body that AppendText wrote",
+						assert.EquateEmpty())
 				}
-			}
+			})
 		})
 
 		t.Run("sets b to the body of another origin", func(t *testing.T) {
 			t.Parallel()
 			var b checkpoint.Body
-			testkit.NoError(t, b.UnmarshalText([]byte(exampleBody+"first\n")), "UnmarshalText must accept the body")
-			testkit.NoError(t, b.UnmarshalText([]byte("other\n1\n"+exampleRoot+"\nfirst\nsecond\n")),
+			assert.NoError(t, b.UnmarshalText([]byte(exampleBody+"first\n")), "UnmarshalText must accept the body")
+			assert.NoError(t, b.UnmarshalText([]byte("other\n1\n"+exampleRoot+"\nfirst\nsecond\n")),
 				"UnmarshalText must accept the body")
-			testkit.Equal(t, b, checkpoint.Body{
+			assert.Equal(t, b, checkpoint.Body{
 				Origin: "other", Size: 1, Root: exampleDigest(t), Extensions: []checkpoint.Extension{"first", "second"},
 			}, "UnmarshalText must set the origin and each line")
 		})
@@ -473,32 +411,27 @@ func TestBody(t *testing.T) {
 		t.Run("reuses the slice of extension lines of b", func(t *testing.T) {
 			t.Parallel()
 			var b checkpoint.Body
-			testkit.NoError(
-				t,
-				b.UnmarshalText([]byte(exampleBody+"first\nsecond\n")),
-				"UnmarshalText must accept the body",
-			)
+			assert.NoError(t, b.UnmarshalText([]byte(exampleBody+"first\nsecond\n")),
+				"UnmarshalText must accept the body")
 			first := &b.Extensions[0]
-			testkit.NoError(
-				t,
-				b.UnmarshalText([]byte(exampleBody+"first\nother\n")),
-				"UnmarshalText must accept the body",
-			)
-			testkit.True(t, &b.Extensions[0] == first, "UnmarshalText must reuse the slice of extension lines")
-			testkit.Equal(t, b.Extensions, []checkpoint.Extension{"first", "other"}, "UnmarshalText must set each line")
+			assert.NoError(t, b.UnmarshalText([]byte(exampleBody+"first\nother\n")),
+				"UnmarshalText must accept the body")
+			expect.Equal(t, &b.Extensions[0], first, "UnmarshalText must reuse the slice of extension lines",
+				expect.ByIdentity())
+			expect.Equal(t, b.Extensions, []checkpoint.Extension{"first", "other"}, "UnmarshalText must set each line")
 		})
 
 		t.Run("sets Extensions to an empty slice with the capacity of b for a body without extension lines",
 			func(t *testing.T) {
 				t.Parallel()
 				var b checkpoint.Body
-				testkit.NoError(t, b.UnmarshalText([]byte(exampleBody+"first\n")), "UnmarshalText must accept the body")
-				testkit.NoError(t, b.UnmarshalText([]byte(exampleBody)), "UnmarshalText must accept the body")
-				testkit.Len(t, b.Extensions, 0, "UnmarshalText must set no extension line")
-				testkit.Equal(t, cap(b.Extensions), 1, "UnmarshalText must keep the capacity of b")
+				assert.NoError(t, b.UnmarshalText([]byte(exampleBody+"first\n")), "UnmarshalText must accept the body")
+				assert.NoError(t, b.UnmarshalText([]byte(exampleBody)), "UnmarshalText must accept the body")
+				expect.Empty(t, b.Extensions, "UnmarshalText must set no extension line")
+				expect.Equal(t, cap(b.Extensions), 1, "UnmarshalText must keep the capacity of b")
 			})
 
-		t.Run("returns the error of ParseBody and leaves b unchanged", func(t *testing.T) {
+		t.Run("returns the error of ParseBody with b unchanged", func(t *testing.T) {
 			t.Parallel()
 			want := checkpoint.Body{
 				Origin: exampleOrigin, Size: exampleSize, Root: exampleDigest(t),
@@ -506,12 +439,108 @@ func TestBody(t *testing.T) {
 			}
 			b := want
 			err := b.UnmarshalText([]byte(exampleBody + "\n"))
-			testkit.ErrorIs(t, err, checkpoint.ErrBody, "UnmarshalText must refuse a text that is not a body")
-			testkit.Equal(t, b, want, "UnmarshalText must leave b unchanged")
+			expect.ErrorIs(t, err, checkpoint.ErrBody, "UnmarshalText must refuse a text that is not a body")
+			expect.Equal(t, b, want, "UnmarshalText must leave b unchanged")
 		})
 	})
 }
 
+// TestBodyAllocs checks the allocation contract of each function and
+// method. MaxAllocs counts the allocations of the whole process, so the
+// test does not run in parallel.
+//
+//nolint:paralleltest // see above
+func TestBodyAllocs(t *testing.T) {
+	text := []byte(exampleBody + "an extension line\n")
+	body := checkpoint.Body{
+		Origin: exampleOrigin, Size: exampleSize, Root: exampleDigest(t),
+		Extensions: []checkpoint.Extension{"an extension line"},
+	}
+
+	t.Run("Origin", func(t *testing.T) {
+		t.Run("Valid", func(t *testing.T) {
+			var got bool
+			expect.MaxAllocs(t, func() { got = body.Origin.Valid() }, 0, "Valid must not allocate")
+			assert.True(t, got, "the test must measure a valid origin")
+		})
+	})
+
+	t.Run("Extension", func(t *testing.T) {
+		t.Run("Valid", func(t *testing.T) {
+			var got bool
+			expect.MaxAllocs(t, func() { got = body.Extensions[0].Valid() }, 0, "Valid must not allocate")
+			assert.True(t, got, "the test must measure a valid extension line")
+		})
+	})
+
+	t.Run("ParseBody", func(t *testing.T) {
+		t.Run("of a body with an extension line", func(t *testing.T) {
+			var err error
+			expect.MaxAllocs(t, func() { _, err = checkpoint.ParseBody(text) }, 2,
+				"ParseBody must allocate the string of the text and the extension lines alone")
+			assert.NoError(t, err, "the test must measure a body that ParseBody accepts")
+		})
+
+		t.Run("of a body without extension lines", func(t *testing.T) {
+			three := []byte(exampleBody)
+
+			var err error
+			expect.MaxAllocs(t, func() { _, err = checkpoint.ParseBody(three) }, 1,
+				"ParseBody must allocate the string of the text alone")
+			assert.NoError(t, err, "the test must measure a body that ParseBody accepts")
+		})
+	})
+
+	t.Run("Valid", func(t *testing.T) {
+		var got bool
+		expect.MaxAllocs(t, func() { got = body.Valid() }, 0, "Valid must not allocate")
+		assert.True(t, got, "the test must measure a valid body")
+	})
+
+	t.Run("AppendText", func(t *testing.T) {
+		buf := make([]byte, 0, len(text))
+
+		var err error
+		expect.MaxAllocs(t, func() { _, err = body.AppendText(buf[:0]) }, 0,
+			"AppendText must not allocate into a buffer with room")
+		assert.NoError(t, err, "the test must measure a valid body")
+	})
+
+	t.Run("MarshalText", func(t *testing.T) {
+		var err error
+		expect.MaxAllocs(t, func() { _, err = body.MarshalText() }, 1, "MarshalText must allocate the text alone")
+		assert.NoError(t, err, "the test must measure a valid body")
+	})
+
+	t.Run("UnmarshalText", func(t *testing.T) {
+		t.Run("of the body of b", func(t *testing.T) {
+			var reused checkpoint.Body
+			assert.NoError(t, reused.UnmarshalText(text), "UnmarshalText must accept the body")
+
+			var err error
+			expect.MaxAllocs(t, func() { err = reused.UnmarshalText(text) }, 0,
+				"UnmarshalText must not allocate for the body of b")
+			assert.NoError(t, err, "the test must measure a body that UnmarshalText accepts")
+		})
+
+		t.Run("of two bodies in turn with two other extension lines", func(t *testing.T) {
+			first := []byte(exampleBody + "a first line\na second line\n")
+			second := []byte(exampleBody + "another first line\nanother second line\n")
+
+			var reused checkpoint.Body
+
+			var err error
+			expect.MaxAllocs(t, func() {
+				_ = reused.UnmarshalText(first)
+				err = reused.UnmarshalText(second)
+			}, 2, "UnmarshalText must allocate the string of each text once")
+			assert.NoError(t, err, "the test must measure a body that UnmarshalText accepts")
+		})
+	})
+}
+
+// BenchmarkBody reports the cost of each function and method, and fails
+// above the allocations that their contracts state.
 func BenchmarkBody(b *testing.B) {
 	text := []byte(exampleBody + "an extension line\n")
 	body := checkpoint.Body{
@@ -519,48 +548,179 @@ func BenchmarkBody(b *testing.B) {
 		Extensions: []checkpoint.Extension{"an extension line"},
 	}
 
-	b.Run("Origin.Valid", func(b *testing.B) {
-		benchZeroAlloc(b, func() { sinkBool = body.Origin.Valid() })
+	b.Run("Origin", func(b *testing.B) {
+		b.Run("Valid", func(b *testing.B) {
+			var got bool
+
+			c := bench.Start(b).MaxAllocs(0)
+			defer c.End()
+
+			for c.Loop() {
+				got = body.Origin.Valid()
+			}
+
+			assert.True(b, got, "the benchmark must measure a valid origin")
+		})
 	})
 
-	b.Run("Extension.Valid", func(b *testing.B) {
-		benchZeroAlloc(b, func() { sinkBool = body.Extensions[0].Valid() })
+	b.Run("Extension", func(b *testing.B) {
+		b.Run("Valid", func(b *testing.B) {
+			var got bool
+
+			c := bench.Start(b).MaxAllocs(0)
+			defer c.End()
+
+			for c.Loop() {
+				got = body.Extensions[0].Valid()
+			}
+
+			assert.True(b, got, "the benchmark must measure a valid extension line")
+		})
 	})
 
 	b.Run("ParseBody", func(b *testing.B) {
-		benchAllocs(b, 2, func() { sinkBody, errSink = checkpoint.ParseBody(text) })
-	})
+		b.Run("of a body with an extension line", func(b *testing.B) {
+			var err error
 
-	b.Run("ParseBody without extension lines", func(b *testing.B) {
-		three := []byte(exampleBody)
-		benchAllocs(b, 1, func() { sinkBody, errSink = checkpoint.ParseBody(three) })
+			c := bench.Start(b).MaxAllocs(2)
+			defer c.End()
+
+			for c.Loop() {
+				_, err = checkpoint.ParseBody(text)
+			}
+
+			assert.NoError(b, err, "the benchmark must measure a body that ParseBody accepts")
+		})
+
+		b.Run("of a body without extension lines", func(b *testing.B) {
+			three := []byte(exampleBody)
+
+			var err error
+
+			c := bench.Start(b).MaxAllocs(1)
+			defer c.End()
+
+			for c.Loop() {
+				_, err = checkpoint.ParseBody(three)
+			}
+
+			assert.NoError(b, err, "the benchmark must measure a body that ParseBody accepts")
+		})
 	})
 
 	b.Run("Valid", func(b *testing.B) {
-		benchZeroAlloc(b, func() { sinkBool = body.Valid() })
+		var got bool
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			got = body.Valid()
+		}
+
+		assert.True(b, got, "the benchmark must measure a valid body")
 	})
 
 	b.Run("AppendText", func(b *testing.B) {
 		buf := make([]byte, 0, len(text))
-		benchZeroAlloc(b, func() { sinkBytes, errSink = body.AppendText(buf[:0]) })
+
+		var err error
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			_, err = body.AppendText(buf[:0])
+		}
+
+		assert.NoError(b, err, "the benchmark must measure a valid body")
 	})
 
 	b.Run("MarshalText", func(b *testing.B) {
-		benchAllocs(b, 1, func() { sinkBytes, errSink = body.MarshalText() })
+		var err error
+
+		c := bench.Start(b).MaxAllocs(1)
+		defer c.End()
+
+		for c.Loop() {
+			_, err = body.MarshalText()
+		}
+
+		assert.NoError(b, err, "the benchmark must measure a valid body")
 	})
 
 	b.Run("UnmarshalText", func(b *testing.B) {
-		var reused checkpoint.Body
-		testkit.NoError(b, reused.UnmarshalText(text), "UnmarshalText must accept the body")
-		benchZeroAlloc(b, func() { errSink = reused.UnmarshalText(text) })
-	})
+		b.Run("of the body of b", func(b *testing.B) {
+			var reused checkpoint.Body
+			assert.NoError(b, reused.UnmarshalText(text), "UnmarshalText must accept the body")
 
-	b.Run("UnmarshalText of two bodies in turn with other extension lines", func(b *testing.B) {
-		other := []byte(exampleBody + "another extension line\n")
-		var reused checkpoint.Body
-		benchAllocs(b, 2, func() {
-			errSink = reused.UnmarshalText(text)
-			errSink = reused.UnmarshalText(other)
+			var err error
+
+			c := bench.Start(b).MaxAllocs(0)
+			defer c.End()
+
+			for c.Loop() {
+				err = reused.UnmarshalText(text)
+			}
+
+			assert.NoError(b, err, "the benchmark must measure a body that UnmarshalText accepts")
+		})
+
+		b.Run("of two bodies in turn with two other extension lines", func(b *testing.B) {
+			first := []byte(exampleBody + "a first line\na second line\n")
+			second := []byte(exampleBody + "another first line\nanother second line\n")
+
+			var reused checkpoint.Body
+
+			var err error
+
+			c := bench.Start(b).MaxAllocs(2)
+			defer c.End()
+
+			for c.Loop() {
+				_ = reused.UnmarshalText(first)
+				err = reused.UnmarshalText(second)
+			}
+
+			assert.NoError(b, err, "the benchmark must measure a body that UnmarshalText accepts")
 		})
 	})
+}
+
+// readFile returns the content of the file name of testdata.
+func readFile(tb testing.TB, name string) []byte {
+	tb.Helper()
+
+	b, err := os.ReadFile("testdata/" + name)
+	assert.NoError(tb, err, "the fixture "+name+" must be readable")
+
+	return b
+}
+
+// root returns the root of n bytes whose byte i is i + 1.
+func root(tb testing.TB, n int) crypto.Digest {
+	tb.Helper()
+
+	raw := make([]byte, n)
+	for i := range raw {
+		raw[i] = byte(i + 1)
+	}
+
+	d, err := crypto.DigestFromBytes(raw)
+	assert.NoError(tb, err, "the root must have the size of a digest")
+
+	return d
+}
+
+// exampleDigest returns the root of the example of tlog-checkpoint.
+func exampleDigest(tb testing.TB) crypto.Digest {
+	tb.Helper()
+
+	raw, err := base64.StdEncoding.DecodeString(exampleRoot)
+	assert.NoError(tb, err, "the fixture must decode")
+
+	d, err := crypto.DigestFromBytes(raw)
+	assert.NoError(tb, err, "the fixture must be 32 bytes")
+
+	return d
 }

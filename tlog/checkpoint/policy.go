@@ -45,10 +45,6 @@ const (
 	// verifier key.
 	keySeparator = '+'
 
-	// thresholdBits bounds the value of a numeric threshold to 31 bits,
-	// so that it is an int on every platform.
-	thresholdBits = 31
-
 	// stackRules is the number of rules whose children
 	// [Policy.QuorumRule] collects on the stack.
 	stackRules = 32
@@ -313,7 +309,7 @@ type Policy struct {
 // one buffer for the public keys of every key: six allocations for a
 // policy with groups. A type without an assigned byte allocates once more
 // for each run of keys of that type. UnmarshalText into a Policy that
-// holds the policy of text is the path without these allocations.
+// contains the policy of text is the path without these allocations.
 func ParsePolicy(text []byte) (Policy, error) {
 	var p Policy
 	if err := p.UnmarshalText(text); err != nil {
@@ -358,7 +354,7 @@ func ParsePolicy(text []byte) (Policy, error) {
 //
 // # Allocation contract
 //
-// Zero-alloc when text repeats the policy that p holds, or its first
+// Zero-alloc when text repeats the policy that p contains, or its first
 // lines. It compares each key with the verifier key that it writes into a
 // pooled buffer. Otherwise allocates what ParsePolicy allocates, apart
 // from the slices of p that have room.
@@ -641,8 +637,8 @@ type policyParser[S ~string | ~[]byte] struct {
 	// cur contains the lines so far.
 	cur Policy
 
-	// members is the memory of the members of the groups that the parse
-	// has not reached.
+	// members is the memory of the members of the groups after the line
+	// that the parse is at.
 	members []PolicyName
 
 	// typ is the type of the last key, which the next key reuses when its
@@ -650,8 +646,8 @@ type policyParser[S ~string | ~[]byte] struct {
 	// share one Type.
 	typ note.Type
 
-	// keys is the memory of the public keys of the keys that the parse has
-	// not reached.
+	// keys is the memory of the public keys of the lines after the line
+	// that the parse is at.
 	keys []byte
 
 	// fresh reports whether the parser builds the lines of a string.
@@ -722,7 +718,9 @@ func (pp *policyParser[S]) size(text S) {
 			witnesses++
 			keys += keyBytes(vkey)
 		case keywordGroup:
+			//dokimi:mutate-skip sbr-delete: an item that the count does not skip adds one slot to the memory of the members, which no group takes
 			_, items = nextItem(items)
+			//dokimi:mutate-skip sbr-delete: an item that the count does not skip adds one slot to the memory of the members, which no group takes
 			_, items = nextItem(items)
 			groups++
 			members += countItems(items)
@@ -939,14 +937,17 @@ func (pp *policyParser[S]) key(vkey S) (note.Key, error) {
 
 // sameKey reports whether vkey is the verifier key of k. It writes the
 // verifier key of k into a pooled buffer, and compares the two.
+// AppendText appends nothing for a key that is not Valid, and each caller
+// refuses an empty vkey first, so such a key compares unequal without a
+// check of the error of AppendText.
 func sameKey[S ~string | ~[]byte](k note.Key, vkey S) bool {
 	buf := buffers.Get()
 	defer buffers.Put(buf)
 
-	text, err := k.AppendText((*buf)[:0])
+	text, _ := k.AppendText((*buf)[:0])
 	*buf = text[:0]
 
-	return err == nil && string(text) == string(vkey)
+	return string(text) == string(vkey)
 }
 
 // sameGroup reports whether g is the group of a line with name, threshold
@@ -1017,9 +1018,13 @@ func countItems[S ~string | ~[]byte](s S) int {
 }
 
 // parseThreshold returns the threshold of item for a group of n members:
-// 1 for "any", n for "all", and the value of ASCII digits from 1 to n.
-// strconv.ParseUint accepts only digits in base 10. It reports false for
-// any other item.
+// 1 for "any", n for "all", and the value of ASCII digits from 1 to n. It
+// reports false for any other item.
+//
+// strconv.ParseUint accepts only the digits of base 10. It returns 0 for
+// an item with any other byte, and the largest uint64 for a number that
+// does not fit 64 bits. The bounds refuse both, so the error of ParseUint
+// adds no case to them.
 func parseThreshold[S ~string | ~[]byte](item S, n int) (int, bool) {
 	switch string(item) {
 	case thresholdAny:
@@ -1028,10 +1033,12 @@ func parseThreshold[S ~string | ~[]byte](item S, n int) (int, bool) {
 		return n, true
 	}
 
-	k, err := strconv.ParseUint(string(item), 10, thresholdBits)
-	t := int(k) //nolint:gosec // ParseUint bounds k to 31 bits
+	k, _ := strconv.ParseUint(string(item), 10, 64)
+	if k < 1 || k > uint64(n) { //nolint:gosec // n counts the members of a line, so it is not negative
+		return 0, false
+	}
 
-	return t, err == nil && t >= 1 && t <= n
+	return int(k), true //nolint:gosec // k is at most n
 }
 
 // definable reports whether n can name a witness or a group: a Valid name

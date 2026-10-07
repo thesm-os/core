@@ -62,7 +62,7 @@ const (
 //
 // Verify allocates nothing apart from what the Verifiers of the keys
 // allocate, as [Verifier.Verify] documents. Reset allocates nothing for
-// the policy that the Verifier holds, as on the reload of an unchanged
+// the policy of the Reset before it, as on the reload of an unchanged
 // policy file.
 type Verifier struct {
 	// keys builds the note Verifier of each key of the policy, and keeps
@@ -136,7 +136,7 @@ func NewVerifier(p *Policy, r note.Resolver) (*Verifier, error) {
 // # Allocation contract
 //
 // Zero-alloc when v has room for the rules and the trees of p and keeps
-// the Verifier of each key, as when v holds the policy of p. Otherwise
+// the Verifier of each key, as after a Reset of v to p. Otherwise
 // allocates the Verifier of each new key, and the growth of the memory of
 // v. It collects the rules of up to 8 log keys of one origin on the
 // stack.

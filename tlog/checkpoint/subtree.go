@@ -160,7 +160,7 @@ func (c *SubtreeV1Signer) Reset(
 		return fmt.Errorf("%w: a name of %d bytes, above 255", note.ErrKey, len(name))
 	}
 
-	if got, ok := contextOf(s); ok && t == TypeMLDSA44Cosignature && got != "" {
+	if got := contextOf(s); t == TypeMLDSA44Cosignature && got != "" {
 		return fmt.Errorf("%w: type %s signs with the empty context, and the signer with %q", note.ErrKey, t, got)
 	}
 
@@ -211,15 +211,16 @@ func appendSubtreeV1(b []byte, name note.Name, t uint64, text []byte) ([]byte, e
 
 // contextOf returns the FIPS 204 context string that s reports through a
 // Context() string method, or that the first signer in the chain of its
-// decorators reports, and reports whether one reports it. It follows each
+// decorators reports. It returns the empty string, the context of the
+// assigned type, when no signer of the chain reports one. It follows each
 // decorator's Unwrap() Signer or Unwrap() Verifier, as the As functions of
 // [sign] do.
-func contextOf(s sign.Signer) (string, bool) {
+func contextOf(s sign.Signer) string {
 	var v sign.Verifier = s
 
 	for {
 		if c, ok := v.(interface{ Context() string }); ok {
-			return c.Context(), true
+			return c.Context()
 		}
 
 		switch u := v.(type) {
@@ -228,7 +229,7 @@ func contextOf(s sign.Signer) (string, bool) {
 		case interface{ Unwrap() sign.Verifier }:
 			v = u.Unwrap()
 		default:
-			return "", false
+			return ""
 		}
 	}
 }
