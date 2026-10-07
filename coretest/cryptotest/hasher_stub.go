@@ -10,6 +10,10 @@ import (
 	"go.thesmos.sh/core/crypto"
 )
 
+// samplePayload is the payload that [SampleBytes] returns to every
+// caller. No caller writes to it.
+var samplePayload = []byte("sample payload")
+
 // stdlibHasher is a [crypto.Hasher] companion backed by stdlib.
 // Used as the inner delegate for [NewStdlibHasherStub] — the
 // generated [HasherStub] wraps it via [HasherStubDelegateTo] to
@@ -98,8 +102,11 @@ func SampleBinaryRole(crypto.Hasher) crypto.Role { return 0x81 }
 // SampleBytes returns a non-empty payload for the generated stub and
 // benchmark surfaces. Content is irrelevant; only that it is stable
 // across calls, so a generated determinism assertion compares like
-// with like.
-func SampleBytes(crypto.Hasher) []byte { return []byte("sample payload") }
+// with like. It returns the one slice of samplePayload, so a generated
+// benchmark that passes it to a method whose argument escapes, as
+// [crypto.Hasher.HashTagged] passes data to [crypto.Stream.Write],
+// measures no allocation of its own. The caller must not modify it.
+func SampleBytes(crypto.Hasher) []byte { return samplePayload }
 
 // digestFromBytes wraps a byte slice from a stdlib hash output
 // in a [crypto.Digest] of the matching size. Bridges the stdlib
