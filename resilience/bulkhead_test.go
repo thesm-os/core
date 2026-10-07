@@ -220,9 +220,10 @@ func TestBulkhead(t *testing.T) {
 				cancel()
 
 				err := await(t, got, "Acquire must return")
-				expect.ErrorIs(t, err, context.Canceled, "a cancellation must surface as the error of the context")
-				expect.ErrorIsNot(t, err, resilience.ErrFull, "a cancellation must not read as a rejection")
-				expect.ErrorIsNot(t, err, resilience.ErrWaitTimeout, "a cancellation must not read as a timeout")
+				expect.That(t, err).
+					ErrorIs(context.Canceled, "a cancellation must surface as the error of the context").
+					ErrorIsNot(resilience.ErrFull, "a cancellation must not read as a rejection").
+					ErrorIsNot(resilience.ErrWaitTimeout, "a cancellation must not read as a timeout")
 			})
 		}
 

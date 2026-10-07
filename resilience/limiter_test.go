@@ -412,10 +412,8 @@ func TestLimiter(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
 				l := newLimiter(t, tt.give)
-				ctx, cancel := context.WithCancel(t.Context())
-				cancel()
-
-				assert.ErrorIs(t, l.WaitN(ctx, 1), context.Canceled, "an ended context must stop the call")
+				assert.HonoursCancellation(t, func(ctx context.Context) error { return l.WaitN(ctx, 1) },
+					"an ended context must stop the call")
 			})
 		}
 

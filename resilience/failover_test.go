@@ -200,9 +200,10 @@ func TestFailover(t *testing.T) {
 		t.Run("lets errors.Is find the error of each target", func(t *testing.T) {
 			t.Parallel()
 			err := everyTargetFailed(t, &codeError{code: 7})
-			expect.ErrorIs(t, err, errDependency, "errors.Is must find the error of the first target")
-			expect.ErrorIs(t, err, resilience.ErrOpen, "errors.Is must find the refusal of the open circuit")
-			expect.ErrorIsNot(t, err, context.Canceled, "errors.Is must not find an error that no target returned")
+			expect.That(t, err).
+				ErrorIs(errDependency, "errors.Is must find the error of the first target").
+				ErrorIs(resilience.ErrOpen, "errors.Is must find the refusal of the open circuit").
+				ErrorIsNot(context.Canceled, "errors.Is must not find an error that no target returned")
 		})
 
 		t.Run("lets errors.As find the error of a target", func(t *testing.T) {

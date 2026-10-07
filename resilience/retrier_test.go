@@ -328,8 +328,9 @@ func TestRetrier(t *testing.T) {
 			fn, calls := failFor(99, errTransient)
 
 			_, err := resilience.Do(bounded(t), r, fn)
-			expect.ErrorIs(t, err, resilience.ErrBudget, "the refusal must name the budget")
-			expect.ErrorIs(t, err, errTransient, "the failure before the refusal must reach the caller")
+			expect.That(t, err).
+				ErrorIs(resilience.ErrBudget, "the refusal must name the budget").
+				ErrorIs(errTransient, "the error must wrap the failure before the refusal")
 			expect.Equal(t, *calls, 1, "the retry must not run")
 		})
 
