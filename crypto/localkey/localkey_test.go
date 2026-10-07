@@ -190,11 +190,10 @@ func TestKeeper(t *testing.T) {
 			t.Parallel()
 			a, err := aesgcm.New(rootKey)
 			assert.NoError(t, err, "aesgcm.New must accept the root key")
-			sealed, err := crypto.Seal(a, randcrypto.New(), []byte("data-key"), nil)
-			assert.NoError(t, err, "Seal must succeed")
-			got, err := mustNew(t, testKeyID, rootKey).Unwrap(t.Context(), sealed)
-			assert.NoError(t, err, "Unwrap must open an envelope from aesgcm.New")
-			assert.Equal(t, got, []byte("data-key"), "Unwrap must return the data key")
+			keeper := mustNew(t, testKeyID, rootKey)
+			assert.RoundTrip(t, func(d []byte) ([]byte, error) { return crypto.Seal(a, randcrypto.New(), d, nil) },
+				func(sealed []byte) ([]byte, error) { return keeper.Unwrap(t.Context(), sealed) },
+				[]byte("data-key"), "Unwrap must return the data key of an envelope from aesgcm.New")
 		})
 
 		t.Run("returns ErrKeyDestroyed after Destroy", func(t *testing.T) {
@@ -468,13 +467,11 @@ func TestKeeper(t *testing.T) {
 		t.Run("returns a Keeper of the key passed to New", func(t *testing.T) {
 			t.Parallel()
 			creator := mustNew(t, testKeyID, rootKey)
-			wrapped, err := creator.Wrap(t.Context(), []byte("data-key"))
-			assert.NoError(t, err, "Wrap must succeed")
 			opened, err := creator.OpenKey(t.Context(), testKeyID)
 			assert.NoError(t, err, "OpenKey must open the key passed to New")
-			got, err := opened.Unwrap(t.Context(), wrapped)
-			assert.NoError(t, err, "the opened Keeper must unwrap the material of the creator")
-			assert.Equal(t, got, []byte("data-key"), "the opened Keeper must return the data key")
+			assert.RoundTrip(t, func(d []byte) ([]byte, error) { return creator.Wrap(t.Context(), d) },
+				func(wrapped []byte) ([]byte, error) { return opened.Unwrap(t.Context(), wrapped) },
+				[]byte("data-key"), "the opened Keeper must unwrap the data key that the creator wrapped")
 		})
 
 		t.Run("returns ErrKeyID for a key of another table", func(t *testing.T) {
@@ -511,11 +508,9 @@ func TestFIPSOnlyMode(t *testing.T) {
 	t.Run("round-trips a data key", func(t *testing.T) {
 		t.Parallel()
 		keeper := mustNew(t, testKeyID, rootKey)
-		wrapped, err := keeper.Wrap(t.Context(), []byte("data-key"))
-		assert.NoError(t, err, "Wrap must succeed in FIPS 140-only mode")
-		got, err := keeper.Unwrap(t.Context(), wrapped)
-		assert.NoError(t, err, "Unwrap must succeed in FIPS 140-only mode")
-		assert.Equal(t, got, []byte("data-key"), "Unwrap must return the data key")
+		assert.RoundTrip(t, func(d []byte) ([]byte, error) { return keeper.Wrap(t.Context(), d) },
+			func(wrapped []byte) ([]byte, error) { return keeper.Unwrap(t.Context(), wrapped) },
+			[]byte("data-key"), "Unwrap must return the data key in FIPS 140-only mode")
 	})
 
 	t.Run("generates a data key that unwraps", func(t *testing.T) {
@@ -532,11 +527,9 @@ func TestFIPSOnlyMode(t *testing.T) {
 		t.Parallel()
 		created, err := mustNew(t, testKeyID, rootKey).CreateKey(t.Context())
 		assert.NoError(t, err, "CreateKey must succeed in FIPS 140-only mode")
-		wrapped, err := created.Wrap(t.Context(), []byte("data-key"))
-		assert.NoError(t, err, "a created key must wrap in FIPS 140-only mode")
-		got, err := created.Unwrap(t.Context(), wrapped)
-		assert.NoError(t, err, "a created key must unwrap in FIPS 140-only mode")
-		assert.Equal(t, got, []byte("data-key"), "Unwrap must return the data key")
+		assert.RoundTrip(t, func(d []byte) ([]byte, error) { return created.Wrap(t.Context(), d) },
+			func(wrapped []byte) ([]byte, error) { return created.Unwrap(t.Context(), wrapped) },
+			[]byte("data-key"), "a created key must return the data key that it wrapped in FIPS 140-only mode")
 	})
 }
 
