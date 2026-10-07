@@ -93,10 +93,10 @@ func TestCounter(t *testing.T) {
 			assert.True(t, o.Finished, "every client must finish its calls")
 		}
 
-		history.Linearizable(t, h, history.Model[epoch.Epoch]{
-			Init: func() epoch.Epoch { return epoch.Zero },
-			Step: func(s epoch.Epoch, op history.Op) []epoch.Epoch {
-				if op.Known && op.Output != s.Successor() {
+		history.Linearizable(t, h, history.Spec[epoch.Epoch]{
+			Initial: func() epoch.Epoch { return epoch.Zero },
+			Next: func(s epoch.Epoch, op history.Operation) []epoch.Epoch {
+				if !op.Returned(s.Successor()) {
 					return nil
 				}
 

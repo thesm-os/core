@@ -172,11 +172,11 @@ func TestWatermark(t *testing.T) {
 			assert.True(t, o.Finished, "every client must finish its admits")
 		}
 
-		history.Linearizable(t, h, history.Model[epoch.Epoch]{
-			Init: func() epoch.Epoch { return epoch.Zero },
-			Step: func(s epoch.Epoch, op history.Op) []epoch.Epoch {
-				if op.Operation == "current" {
-					if op.Known && op.Output != s {
+		history.Linearizable(t, h, history.Spec[epoch.Epoch]{
+			Initial: func() epoch.Epoch { return epoch.Zero },
+			Next: func(s epoch.Epoch, op history.Operation) []epoch.Epoch {
+				if op.Name == "current" {
+					if !op.Returned(s) {
 						return nil
 					}
 

@@ -143,7 +143,7 @@ func TestInstant(t *testing.T) {
 				i := c.Draw(prop.Of[clock.Instant](), "i")
 				got := i.Time()
 				assert.Equal(c, got.UnixNano(), i.Wall, "Time must keep every nanosecond of Wall")
-				assert.True(c, got.Location() == time.UTC, "Time must be in UTC")
+				assert.Equal(c, got.Location(), time.UTC, "Time must be in UTC", assert.ByIdentity())
 			})
 		})
 	})

@@ -6,7 +6,6 @@ package arena_test
 import (
 	"bytes"
 	"math/bits"
-	"reflect"
 	"slices"
 	"testing"
 
@@ -162,8 +161,7 @@ func TestSlabs(t *testing.T) {
 			b := s.Alloc(100)
 			assert.NoError(t, s.Free(b), "Free must take the slice back")
 			c := s.Alloc(120)
-			assert.Equal(t, reflect.ValueOf(c).Pointer(), reflect.ValueOf(b).Pointer(),
-				"Alloc must return the memory of the freed slice")
+			assert.Equal(t, &c[0], &b[0], "Alloc must return the memory of the freed slice", assert.ByIdentity())
 			assert.Equal(t, cap(c), 128, "the slice must keep the capacity of its class")
 			assert.Length(t, slabLens(s), 1, "Alloc must take no new slab")
 		})
@@ -173,14 +171,14 @@ func TestSlabs(t *testing.T) {
 			s := arena.NewSlabs(slabSize)
 			b := s.Alloc(arena.MinClass)
 			assert.NoError(t, s.Free(b), "Free must take the slice back")
-			assert.NoDuplicates(t, func() ([]uintptr, error) {
-				addresses := make([]uintptr, 0, 3)
+			assert.NoDuplicates(t, func() ([][]byte, error) {
+				got := make([][]byte, 0, 3)
 				for range 3 {
-					addresses = append(addresses, reflect.ValueOf(s.Alloc(arena.MinClass)).Pointer())
+					got = append(got, s.Alloc(arena.MinClass))
 				}
 
-				return addresses, nil
-			}, "Alloc must return a freed slice once")
+				return got, nil
+			}, "Alloc must return a freed slice once", assert.ByIdentity())
 		})
 
 		t.Run("keeps the slices of one class apart", func(t *testing.T) {
@@ -193,15 +191,15 @@ func TestSlabs(t *testing.T) {
 			for _, b := range kept[:4] {
 				assert.NoError(t, s.Free(b), "Free must take the slice back")
 			}
-			assert.NoDuplicates(t, func() ([]uintptr, error) {
-				addresses := make([]uintptr, 0, 6)
-				addresses = append(addresses, reflect.ValueOf(kept[4]).Pointer())
+			assert.NoDuplicates(t, func() ([][]byte, error) {
+				got := make([][]byte, 0, 6)
+				got = append(got, kept[4])
 				for range 5 {
-					addresses = append(addresses, reflect.ValueOf(s.Alloc(arena.MinClass)).Pointer())
+					got = append(got, s.Alloc(arena.MinClass))
 				}
 
-				return addresses, nil
-			}, "no two slices in use may share memory")
+				return got, nil
+			}, "no two slices in use may share memory", assert.ByIdentity())
 		})
 
 		t.Run("zeroes the whole class of the slice", func(t *testing.T) {

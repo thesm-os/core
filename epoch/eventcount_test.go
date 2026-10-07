@@ -223,15 +223,15 @@ func TestEventCount(t *testing.T) {
 			assert.True(t, o.Finished, "every client must finish its calls")
 		}
 
-		history.Linearizable(t, h, history.Model[epoch.Epoch]{
-			Init: func() epoch.Epoch { return epoch.Zero },
-			Step: func(s epoch.Epoch, op history.Op) []epoch.Epoch {
+		history.Linearizable(t, h, history.Spec[epoch.Epoch]{
+			Initial: func() epoch.Epoch { return epoch.Zero },
+			Next: func(s epoch.Epoch, op history.Operation) []epoch.Epoch {
 				v := op.Args[0].(epoch.Epoch)
-				if op.Operation == "advance" {
+				if op.Name == "advance" {
 					return []epoch.Epoch{max(s, v)}
 				}
 
-				if s < v || op.Known && op.Output != nil {
+				if s < v || !op.Returned(nil) {
 					return nil
 				}
 
@@ -281,9 +281,9 @@ func TestEventCount(t *testing.T) {
 			}
 
 			stateful.Steps(c, stateful.Machine[countState]{
-				Model: history.Model[countState]{
-					Init: func() countState { return countState{} },
-					Step: stepCount,
+				Spec: history.Spec[countState]{
+					Initial: func() countState { return countState{} },
+					Next:    stepCount,
 				},
 				Actions: []stateful.Action[countState]{
 					{
@@ -373,18 +373,18 @@ func TestEventCountAllocs(t *testing.T) {
 	})
 }
 
-// stepCount is the sequential model of an EventCount. Advance raises the
+// stepCount is the sequential spec of an EventCount. Advance raises the
 // count, Fail marks the count failed, and Current returns the count. A Wait
 // with an ended context returns nil for a met target, the error of Fail for
 // a failed count, and context.Canceled for any other.
-func stepCount(s countState, op history.Op) []countState {
-	switch op.Operation {
+func stepCount(s countState, op history.Operation) []countState {
+	switch op.Name {
 	case "advance":
 		return []countState{{count: max(s.count, op.Args[0].(epoch.Epoch)), failed: s.failed}}
 	case "fail":
 		return []countState{{count: s.count, failed: true}}
 	case "current":
-		if op.Known && op.Output != s.count {
+		if !op.Returned(s.count) {
 			return nil
 		}
 
