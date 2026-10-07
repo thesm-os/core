@@ -7,12 +7,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"strings"
 	"sync/atomic"
 	"testing"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/expect"
 
+	"go.thesmos.sh/core/errs"
 	"go.thesmos.sh/core/net/httpclient"
 )
 
@@ -34,8 +35,7 @@ func TestReach(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-
-				testkit.Equal(t, tt.give.Valid(), tt.want, "Valid")
+				assert.Equal(t, tt.give.Valid(), tt.want, "Valid must report the constants of Reach")
 			})
 		}
 	})
@@ -53,25 +53,21 @@ func TestReach(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-
 				var hits atomic.Int32
 				srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hits.Add(1) }))
 				t.Cleanup(srv.Close)
 
 				u, err := url.Parse(srv.URL)
-				testkit.NoError(t, err, "the URL of the server must parse")
+				assert.NoError(t, err, "the URL of the server must parse")
 
 				c, err := httpclient.New(dependency, required, httpclient.WithHosts(tt.host))
-				testkit.NoError(t, err, "New must accept the options")
+				assert.NoError(t, err, "New must accept the options")
 
 				_, _, err = get(t, c, "http://"+tt.host+":"+u.Port()+"/")
-				testkit.ErrorIs(t, err, httpclient.ErrBlocked, "Do must refuse the address")
-				testkit.True(
-					t,
-					strings.Contains(err.Error(), "is not a public address"),
-					"the error must name the address",
-				)
-				testkit.Equal(t, hits.Load(), int32(0), "the server must receive no request")
+				assert.ErrorIs(t, err, httpclient.ErrBlocked, "Do must refuse the address")
+				expect.Equal(t, errs.Classify(err), errs.Denied, "a refused address must keep the class of ErrBlocked")
+				expect.Contains(t, err.Error(), "is not a public address", "the error must name the address")
+				expect.Equal(t, hits.Load(), int32(0), "the server must receive no request")
 			})
 		}
 	})
@@ -81,17 +77,16 @@ func TestReach(t *testing.T) {
 
 		t.Run("admits a loopback address", func(t *testing.T) {
 			t.Parallel()
-
 			srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 			t.Cleanup(srv.Close)
 
 			c, err := httpclient.New(dependency, required,
 				httpclient.WithHosts("127.0.0.1"), httpclient.WithReach(httpclient.ReachPrivate))
-			testkit.NoError(t, err, "New must accept the options")
+			assert.NoError(t, err, "New must accept the options")
 
 			status, _, err := get(t, c, srv.URL)
-			testkit.NoError(t, err, "Do")
-			testkit.Equal(t, status, http.StatusOK, "the status")
+			assert.NoError(t, err, "Do must connect to a loopback address")
+			assert.Equal(t, status, http.StatusOK, "Do must return the response of the server")
 		})
 	})
 }

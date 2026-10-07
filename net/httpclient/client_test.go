@@ -21,7 +21,8 @@ import (
 	"testing"
 	"time"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/expect"
 
 	"go.thesmos.sh/core/clock/fake"
 	"go.thesmos.sh/core/coretest/telemetrytest"
@@ -62,13 +63,9 @@ const (
 	spanID  telemetry.SpanID  = "00f067aa0ba902b7"
 )
 
-// The message and the keys of the log record of a call that failed, which
-// the cases pin.
-const (
-	messageFailed = "call failed"
-	keyDependency = "dependency"
-	keyError      = "error"
-)
+// The message of the log record of a call that failed, which the cases
+// pin.
+const messageFailed = "call failed"
 
 // origin is the time of the fake clocks of the cases.
 var origin = time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
@@ -231,26 +228,23 @@ func TestClient(t *testing.T) {
 
 		t.Run("returns ErrConfig for an empty name", func(t *testing.T) {
 			t.Parallel()
-
 			_, err := httpclient.New("", required, loopback)
-			testkit.ErrorIs(t, err, httpclient.ErrConfig, "New must refuse an empty name")
-			testkit.Equal(t, errs.Classify(err), errs.Invalid, "the class of the error")
+			expect.ErrorIs(t, err, httpclient.ErrConfig, "New must refuse an empty name")
+			expect.Equal(t, errs.Classify(err), errs.Invalid, "ErrConfig must classify as Invalid")
 		})
 
 		t.Run("returns ErrConfig without the options that it requires", func(t *testing.T) {
 			t.Parallel()
-
 			_, err := httpclient.New(dependency)
-			testkit.ErrorIs(t, err, httpclient.ErrConfig, "New must refuse a Client without a clock")
-			testkit.Contains(t, err.Error(), "WithClock", "the error must name the missing option")
+			assert.ErrorIs(t, err, httpclient.ErrConfig, "New must refuse a Client without a clock")
+			assert.Contains(t, err.Error(), "WithClock", "the error must name the missing option")
 		})
 
 		t.Run("returns ErrConfig without a host", func(t *testing.T) {
 			t.Parallel()
-
 			_, err := httpclient.New(dependency, required)
-			testkit.ErrorIs(t, err, httpclient.ErrConfig, "New must refuse a Client without hosts")
-			testkit.Contains(t, err.Error(), "WithHosts", "the error must name the missing option")
+			assert.ErrorIs(t, err, httpclient.ErrConfig, "New must refuse a Client without hosts")
+			assert.Contains(t, err.Error(), "WithHosts", "the error must name the missing option")
 		})
 
 		refused := []struct {
@@ -299,29 +293,18 @@ func TestClient(t *testing.T) {
 		for _, tt := range refused {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-
 				_, err := httpclient.New(dependency, required, loopback, tt.give)
-				testkit.ErrorIs(t, err, httpclient.ErrConfig, "New must refuse the option")
-				testkit.Equal(t, errs.Classify(err), errs.Invalid, "the class of the error")
+				expect.ErrorIs(t, err, httpclient.ErrConfig, "New must refuse the option")
+				expect.Equal(t, errs.Classify(err), errs.Invalid, "ErrConfig must classify as Invalid")
 			})
 		}
 
-		t.Run("accepts every form of host", func(t *testing.T) {
+		t.Run("returns a Client for every form of host", func(t *testing.T) {
 			t.Parallel()
-
-			_, err := httpclient.New(
-				dependency,
-				required,
-				httpclient.WithHosts(
-					"example.com",
-					".example.com",
-					"10.0.0.1",
-					"::1",
-					"_service.internal",
-					"Example.COM",
-				),
-			)
-			testkit.NoError(t, err, "New must accept the hosts")
+			_, err := httpclient.New(dependency, required, httpclient.WithHosts(
+				"example.com", ".example.com", "10.0.0.1", "::1", "_service.internal", "Example.COM",
+			))
+			assert.NoError(t, err, "New must accept the hosts")
 		})
 	})
 
@@ -330,24 +313,22 @@ func TestClient(t *testing.T) {
 
 		t.Run("returns the response of a request to an admitted host", func(t *testing.T) {
 			t.Parallel()
-
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				_, _ = io.WriteString(w, body)
 			}))
 			t.Cleanup(srv.Close)
 
 			c, err := httpclient.New(dependency, required, loopback)
-			testkit.NoError(t, err, "New must accept the options")
+			assert.NoError(t, err, "New must accept the options")
 
 			status, got, err := get(t, c, srv.URL)
-			testkit.NoError(t, err, "Do")
-			testkit.Equal(t, status, http.StatusOK, "the status")
-			testkit.Equal(t, got, body, "the body")
+			assert.NoError(t, err, "Do must return the response")
+			expect.Equal(t, status, http.StatusOK, "Do must return the status of the response")
+			expect.Equal(t, got, body, "Do must return the body of the response")
 		})
 
 		t.Run("returns the response of a status that the classification refuses without an error", func(t *testing.T) {
 			t.Parallel()
-
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(http.StatusServiceUnavailable)
 			}))
@@ -355,16 +336,30 @@ func TestClient(t *testing.T) {
 
 			l := &logs{}
 			c, err := httpclient.New(dependency, required, loopback, httpclient.WithLogger(slog.New(l)))
-			testkit.NoError(t, err, "New must accept the options")
+			assert.NoError(t, err, "New must accept the options")
 
 			status, _, err := get(t, c, srv.URL)
-			testkit.NoError(t, err, "Do must return the response")
-			testkit.Equal(t, status, http.StatusServiceUnavailable, "the status")
+			assert.NoError(t, err, "Do must return the response")
+			assert.Equal(t, status, http.StatusServiceUnavailable, "Do must return the status of the response")
 
 			records := l.all()
-			testkit.Len(t, records, 1, "Do must log the failed call")
-			testkit.Equal(t, records[0].Level, slog.LevelWarn, "the level of the record")
-			testkit.Equal(t, records[0].Message, messageFailed, "the message of the record")
+			assert.Length(t, records, 1, "Do must log the failed call")
+			expect.Equal(t, records[0].Level, slog.LevelWarn, "the record must have the level Warn")
+			expect.Equal(t, records[0].Message, messageFailed, "the record must have the message of a failed call")
+		})
+
+		t.Run("logs no call that succeeded", func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+			t.Cleanup(srv.Close)
+
+			l := &logs{}
+			c, err := httpclient.New(dependency, required, loopback, httpclient.WithLogger(slog.New(l)))
+			assert.NoError(t, err, "New must accept the options")
+
+			_, _, err = get(t, c, srv.URL)
+			assert.NoError(t, err, "Do must return the response")
+			assert.Empty(t, l.all(), "Do must not log a call that succeeded")
 		})
 
 		blocked := []struct {
@@ -377,28 +372,26 @@ func TestClient(t *testing.T) {
 		for _, tt := range blocked {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-
 				l := &logs{}
 				c, err := httpclient.New(dependency, required, loopback, httpclient.WithLogger(slog.New(l)))
-				testkit.NoError(t, err, "New must accept the options")
+				assert.NoError(t, err, "New must accept the options")
 
 				_, _, err = get(t, c, tt.url)
-				testkit.ErrorIs(t, err, httpclient.ErrBlocked, "Do must refuse the request")
-				testkit.Equal(t, errs.Classify(err), errs.Denied, "the class of the error")
-				testkit.Len(t, l.all(), 1, "Do must log the refused call")
+				expect.ErrorIs(t, err, httpclient.ErrBlocked, "Do must refuse the request")
+				expect.Equal(t, errs.Classify(err), errs.Denied, "ErrBlocked must classify as Denied")
+				expect.Length(t, l.all(), 1, "Do must log the refused call")
 			})
 		}
 
 		t.Run("returns ErrBlocked for a request without a URL", func(t *testing.T) {
 			t.Parallel()
-
 			c, err := httpclient.New(dependency, required, loopback)
-			testkit.NoError(t, err, "New must accept the options")
+			assert.NoError(t, err, "New must accept the options")
 
 			req := (&http.Request{Method: http.MethodGet}).WithContext(t.Context())
 
 			_, err = c.Do(req) //nolint:bodyclose // Do returns no response with the error
-			testkit.ErrorIs(t, err, httpclient.ErrBlocked, "Do must refuse a request without a URL")
+			assert.ErrorIs(t, err, httpclient.ErrBlocked, "Do must refuse a request without a URL")
 		})
 
 		admitted := []struct {
@@ -412,18 +405,17 @@ func TestClient(t *testing.T) {
 		for _, tt := range admitted {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-
 				// The resolver fails, so an admitted host fails at the
 				// resolution and a refused host fails before it.
 				c, err := httpclient.New(dependency, required,
 					httpclient.WithHosts("api.example.test", ".example.test"), httpclient.WithResolver(failing))
-				testkit.NoError(t, err, "New must accept the options")
+				assert.NoError(t, err, "New must accept the options")
 
 				_, _, err = get(t, c, tt.url)
-				testkit.ErrorIsNot(t, err, httpclient.ErrBlocked, "Do must admit the host")
+				assert.ErrorIsNot(t, err, httpclient.ErrBlocked, "Do must admit the host")
 
-				dnsErr := testkit.ErrorAs[*net.DNSError](t, err, "the call must query the resolver")
-				testkit.Equal(t, dnsErr.Err, errDNS.Error(), "the error of the resolver")
+				dnsErr := assert.ErrorAs[*net.DNSError](t, err, "the call must query the resolver")
+				assert.Equal(t, dnsErr.Err, errDNS.Error(), "the call must fail with the error of the resolver")
 			})
 		}
 
@@ -437,50 +429,46 @@ func TestClient(t *testing.T) {
 		for _, tt := range refusedHosts {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-
 				c, err := httpclient.New(dependency, required,
 					httpclient.WithHosts(".example.test"), httpclient.WithResolver(failing))
-				testkit.NoError(t, err, "New must accept the options")
+				assert.NoError(t, err, "New must accept the options")
 
 				_, _, err = get(t, c, tt.url)
-				testkit.ErrorIs(t, err, httpclient.ErrBlocked, "Do must refuse the host")
+				assert.ErrorIs(t, err, httpclient.ErrBlocked, "Do must refuse the host")
 			})
 		}
 
 		t.Run("returns a Transient error for a failure of the transport", func(t *testing.T) {
 			t.Parallel()
-
 			srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 			srv.Close()
 
 			c, err := httpclient.New(dependency, required, loopback)
-			testkit.NoError(t, err, "New must accept the options")
+			assert.NoError(t, err, "New must accept the options")
 
 			_, _, err = get(t, c, srv.URL)
-			testkit.Error(t, err, "Do must fail without a server")
-			testkit.Equal(t, errs.Classify(err), errs.Transient, "the class of the error")
-			testkit.Contains(t, err.Error(), "httpclient: "+dependency, "the error must name the dependency")
+			assert.HasError(t, err, "Do must fail without a server")
+			expect.Equal(t, errs.Classify(err), errs.Transient, "a failure of the transport must be Transient")
+			expect.Contains(t, err.Error(), "httpclient: "+dependency, "the error must name the dependency")
 		})
 
 		t.Run("returns a Transient error for an attempt beyond the timeout", func(t *testing.T) {
 			t.Parallel()
-
 			release := make(chan struct{})
 			srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { <-release }))
 			t.Cleanup(srv.Close)
 			t.Cleanup(func() { close(release) })
 
 			c, err := httpclient.New(dependency, required, loopback, httpclient.WithTimeout(50*time.Millisecond))
-			testkit.NoError(t, err, "New must accept the options")
+			assert.NoError(t, err, "New must accept the options")
 
 			_, _, err = get(t, c, srv.URL)
-			testkit.ErrorIs(t, err, context.DeadlineExceeded, "Do must end at the timeout")
-			testkit.Equal(t, errs.Classify(err), errs.Transient, "the class of the error")
+			expect.ErrorIs(t, err, context.DeadlineExceeded, "Do must end at the timeout")
+			expect.Equal(t, errs.Classify(err), errs.Transient, "an attempt beyond its timeout must be Transient")
 		})
 
 		t.Run("returns the error of the context without a log when the caller cancels", func(t *testing.T) {
 			t.Parallel()
-
 			entered, release := make(chan struct{}), make(chan struct{})
 			srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 				close(entered)
@@ -491,11 +479,11 @@ func TestClient(t *testing.T) {
 
 			l := &logs{}
 			c, err := httpclient.New(dependency, required, loopback, httpclient.WithLogger(slog.New(l)))
-			testkit.NoError(t, err, "New must accept the options")
+			assert.NoError(t, err, "New must accept the options")
 
 			ctx, cancel := context.WithCancel(t.Context())
 			req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, http.NoBody)
-			testkit.NoError(t, err, "the request must build")
+			assert.NoError(t, err, "the request must build")
 
 			go func() {
 				<-entered
@@ -503,14 +491,60 @@ func TestClient(t *testing.T) {
 			}()
 
 			_, err = c.Do(req) //nolint:bodyclose // the call fails without a response
-			testkit.ErrorIs(t, err, context.Canceled, "Do must return the error of the context")
-			testkit.Equal(t, errs.Classify(err), errs.Unspecified, "the error of a context has no class")
-			testkit.Len(t, l.all(), 0, "Do must not log a call that its caller cancelled")
+			expect.ErrorIs(t, err, context.Canceled, "Do must return the error of the context")
+			expect.Equal(t, errs.Classify(err), errs.Unspecified, "the error of a context must have no class")
+			expect.Empty(t, l.all(), "Do must not log a call that its caller cancelled")
+		})
+
+		t.Run("returns the response when the context ends after a classification that succeeded", func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, body)
+			}))
+			t.Cleanup(srv.Close)
+
+			ctx, cancel := context.WithCancel(t.Context())
+			classify := func(*http.Response) error {
+				cancel()
+
+				return nil
+			}
+			c, err := httpclient.New(dependency, required, loopback, httpclient.WithClassify(classify))
+			assert.NoError(t, err, "New must accept the options")
+
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, http.NoBody)
+			assert.NoError(t, err, "the request must build")
+
+			resp, err := c.Do(req)
+			assert.NoError(t, err, "Do must return the response of a call that succeeded")
+			assert.NotNil(t, resp, "Do must return the response of a call that succeeded")
+			assert.NoError(t, resp.Body.Close(), "the body must close")
+		})
+
+		t.Run("sends the headers of the caller's request", func(t *testing.T) {
+			t.Parallel()
+			received := make(chan string, 1)
+			srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				received <- r.Header.Get("Accept")
+			}))
+			t.Cleanup(srv.Close)
+
+			c, err := httpclient.New(dependency, required, loopback)
+			assert.NoError(t, err, "New must accept the options")
+
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL, http.NoBody)
+			assert.NoError(t, err, "the request must build")
+			req.Header.Set("Accept", "application/json")
+
+			resp, err := c.Do(req)
+			assert.NoError(t, err, "Do must return the response")
+			assert.NoError(t, resp.Body.Close(), "the body must close")
+			assert.Equal(t, await(t, received, "the server must receive the request"), "application/json",
+				"the server must receive the header of the caller")
 		})
 
 		t.Run("injects the trace of the span of the attempt", func(t *testing.T) {
 			t.Parallel()
-
 			parents := make(chan string, 1)
 			srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 				parents <- r.Header.Get("Traceparent")
@@ -519,27 +553,22 @@ func TestClient(t *testing.T) {
 
 			r := newReporter(t)
 			c, err := httpclient.New(dependency, required, loopback, httpclient.WithReporter(r))
-			testkit.NoError(t, err, "New must accept the options")
+			assert.NoError(t, err, "New must accept the options")
 
 			_, _, err = get(t, c, srv.URL)
-			testkit.NoError(t, err, "Do")
-			testkit.Equal(t, await(t, parents, "the handler must run"), "00-"+string(traceID)+"-"+string(spanID)+"-00",
-				"the traceparent")
+			assert.NoError(t, err, "Do must return the response")
+			assert.Equal(t, await(t, parents, "the handler must run"), "00-"+string(traceID)+"-"+string(spanID)+"-00",
+				"the request must carry the traceparent of the span")
 
 			spans := r.started()
-			testkit.Len(t, spans, 1, "the client must start a span per attempt")
-			testkit.Equal(
-				t,
-				telemetry.ApplySpanOptions(spans[0].opts),
-				telemetry.SpanKindClient,
-				"the kind of the span",
-			)
+			assert.Length(t, spans, 1, "the client must start a span per attempt")
+			expect.Equal(t, telemetry.ApplySpanOptions(spans[0].opts), telemetry.SpanKindClient,
+				"the span must be of the kind client")
 			spans[0].OnEnd.AssertCalledOnce(t, "the span must end")
 		})
 
 		t.Run("records the duration of an attempt into the set of its request", func(t *testing.T) {
 			t.Parallel()
-
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(http.StatusNotFound)
 			}))
@@ -547,34 +576,72 @@ func TestClient(t *testing.T) {
 
 			r := newReporter(t)
 			c, err := httpclient.New(dependency, required, loopback, httpclient.WithReporter(r))
-			testkit.NoError(t, err, "New must accept the options")
+			assert.NoError(t, err, "New must accept the options")
 
 			_, _, err = get(t, c, srv.URL)
-			testkit.NoError(t, err, "Do")
-
-			u, err := url.Parse(srv.URL)
-			testkit.NoError(t, err, "the URL of the server must parse")
-			port, err := strconv.Atoi(u.Port())
-			testkit.NoError(t, err, "the port of the server must parse")
+			assert.NoError(t, err, "Do must return the response")
 
 			sets := r.bound()
-			testkit.Len(t, sets, 1, "the client must bind one set")
-			testkit.Equal(t, sets[0].attrs, []telemetry.Attr{
+			assert.Length(t, sets, 1, "the client must bind one set")
+			assert.Equal(t, sets[0].attrs, []telemetry.Attr{
 				telemetry.AttrString(semconv.RequestMethod, http.MethodGet),
 				telemetry.AttrString(semconv.ServerAddress, "127.0.0.1"),
-				telemetry.AttrInt(semconv.ServerPort, int64(port)),
+				telemetry.AttrInt(semconv.ServerPort, int64(port(t, srv.URL))),
 				telemetry.AttrInt(semconv.ResponseStatusCode, http.StatusNotFound),
 				telemetry.AttrString(semconv.ErrorType, "NotFound"),
-			}, "the attributes of the set")
+			}, "the set must have the attributes of the request")
 			sets[0].OnRecord.AssertCalledOnce(t, "the set must record the attempt")
 
 			attrs := r.started()[0].OnSetAttributes.AssertCalledOnce(t, "the span must receive the attributes").Attrs
-			testkit.Equal(t, attrs, sets[0].attrs, "the attributes of the span")
+			assert.Equal(t, attrs, sets[0].attrs, "the span must receive the attributes of the set")
+		})
+
+		t.Run("records no error type for an attempt that succeeded", func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+			t.Cleanup(srv.Close)
+
+			r := newReporter(t)
+			c, err := httpclient.New(dependency, required, loopback, httpclient.WithReporter(r))
+			assert.NoError(t, err, "New must accept the options")
+
+			_, _, err = get(t, c, srv.URL)
+			assert.NoError(t, err, "Do must return the response")
+
+			sets := r.bound()
+			assert.Length(t, sets, 1, "the client must bind one set")
+			assert.Equal(t, sets[0].attrs, []telemetry.Attr{
+				telemetry.AttrString(semconv.RequestMethod, http.MethodGet),
+				telemetry.AttrString(semconv.ServerAddress, "127.0.0.1"),
+				telemetry.AttrInt(semconv.ServerPort, int64(port(t, srv.URL))),
+				telemetry.AttrInt(semconv.ResponseStatusCode, http.StatusOK),
+			}, "the set of an attempt that succeeded must have no error type")
+		})
+
+		t.Run("records no status for an attempt without a response", func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+			srv.Close()
+
+			r := newReporter(t)
+			c, err := httpclient.New(dependency, required, loopback, httpclient.WithReporter(r))
+			assert.NoError(t, err, "New must accept the options")
+
+			_, _, err = get(t, c, srv.URL)
+			assert.HasError(t, err, "Do must fail without a server")
+
+			sets := r.bound()
+			assert.Length(t, sets, 1, "the client must bind one set")
+			assert.Equal(t, sets[0].attrs, []telemetry.Attr{
+				telemetry.AttrString(semconv.RequestMethod, http.MethodGet),
+				telemetry.AttrString(semconv.ServerAddress, "127.0.0.1"),
+				telemetry.AttrInt(semconv.ServerPort, int64(port(t, srv.URL))),
+				telemetry.AttrString(semconv.ErrorType, "Transient"),
+			}, "the set of an attempt without a response must have no status")
 		})
 
 		t.Run("calls the function of WithPrepare on the request of each attempt", func(t *testing.T) {
 			t.Parallel()
-
 			tokens := make(chan string, attempts)
 			var hits atomic.Int32
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -586,51 +653,59 @@ func TestClient(t *testing.T) {
 			t.Cleanup(srv.Close)
 
 			var issued atomic.Int32
-			c, err := httpclient.New(
-				dependency,
-				required,
-				loopback,
+			c, err := httpclient.New(dependency, required, loopback,
 				httpclient.WithRetrier(retrier(t, fake.New(origin))),
 				httpclient.WithPrepare(func(r *http.Request) error {
 					r.Header.Set("Authorization", "Bearer "+strconv.Itoa(int(issued.Add(1))))
 
 					return nil
-				}),
-			)
-			testkit.NoError(t, err, "New must accept the options")
+				}))
+			assert.NoError(t, err, "New must accept the options")
 
 			status, _, err := get(t, c, srv.URL)
-			testkit.NoError(t, err, "Do")
-			testkit.Equal(t, status, http.StatusOK, "the status of the retried request")
-			testkit.Equal(
-				t,
-				await(t, tokens, "the first attempt must arrive"),
-				"Bearer 1",
-				"the token of the first attempt",
-			)
-			testkit.Equal(t, await(t, tokens, "the second attempt must arrive"), "Bearer 2",
-				"the token of the second attempt")
+			assert.NoError(t, err, "Do must return the response of the retry")
+			expect.Equal(t, status, http.StatusOK, "the retry must succeed")
+			expect.Equal(t, await(t, tokens, "the first attempt must arrive"), "Bearer 1",
+				"the first attempt must carry the first token")
+			expect.Equal(t, await(t, tokens, "the second attempt must arrive"), "Bearer 2",
+				"the second attempt must carry a token of its own")
 		})
 
 		t.Run("returns the error of the function of WithPrepare without a request", func(t *testing.T) {
 			t.Parallel()
-
 			var hits atomic.Int32
 			srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hits.Add(1) }))
 			t.Cleanup(srv.Close)
 
 			c, err := httpclient.New(dependency, required, loopback,
 				httpclient.WithPrepare(func(*http.Request) error { return errBoom }))
-			testkit.NoError(t, err, "New must accept the options")
+			assert.NoError(t, err, "New must accept the options")
 
 			_, _, err = get(t, c, srv.URL)
-			testkit.ErrorIs(t, err, errBoom, "Do must return the error of prepare")
-			testkit.Equal(t, hits.Load(), int32(0), "the server must receive no request")
+			assert.ErrorIs(t, err, errBoom, "Do must return the error of prepare")
+			expect.Equal(t, err.Error(), "httpclient: "+dependency+": prepare the request: "+errBoom.Error(),
+				"the error must name the dependency and the step")
+			expect.Equal(t, hits.Load(), int32(0), "the server must receive no request")
+		})
+
+		t.Run("ends the span of an attempt whose preparation failed", func(t *testing.T) {
+			t.Parallel()
+			r := newReporter(t)
+			c, err := httpclient.New(dependency, required, loopback, httpclient.WithReporter(r),
+				httpclient.WithPrepare(func(*http.Request) error { return errBoom }))
+			assert.NoError(t, err, "New must accept the options")
+
+			_, _, err = get(t, c, "http://127.0.0.1/")
+			assert.ErrorIs(t, err, errBoom, "Do must return the error of prepare")
+
+			spans := r.started()
+			assert.Length(t, spans, 1, "the client must start a span for the attempt")
+			end := spans[0].OnEnd.AssertCalledOnce(t, "the span must end once")
+			assert.ErrorIs(t, end.Err, errBoom, "the span must end with the error of prepare")
 		})
 
 		t.Run("leaves the headers of the caller's request unchanged", func(t *testing.T) {
 			t.Parallel()
-
 			srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 			t.Cleanup(srv.Close)
 
@@ -640,124 +715,135 @@ func TestClient(t *testing.T) {
 
 					return nil
 				}))
-			testkit.NoError(t, err, "New must accept the options")
+			assert.NoError(t, err, "New must accept the options")
 
 			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL, http.NoBody)
-			testkit.NoError(t, err, "the request must build")
+			assert.NoError(t, err, "the request must build")
 
 			resp, err := c.Do(req)
-			testkit.NoError(t, err, "Do")
-			testkit.NoError(t, resp.Body.Close(), "the body must close")
-			testkit.Equal(t, req.Header, http.Header{}, "the headers of the caller's request")
+			assert.NoError(t, err, "Do must return the response")
+			assert.NoError(t, resp.Body.Close(), "the body must close")
+			assert.Equal(t, req.Header, http.Header{}, "Do must leave the headers of the caller's request unchanged")
 		})
 
 		t.Run("sends a request without headers", func(t *testing.T) {
 			t.Parallel()
-
 			srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 			t.Cleanup(srv.Close)
 
 			c, err := httpclient.New(dependency, required, loopback, httpclient.WithReporter(newReporter(t)))
-			testkit.NoError(t, err, "New must accept the options")
+			assert.NoError(t, err, "New must accept the options")
 
 			u, err := url.Parse(srv.URL)
-			testkit.NoError(t, err, "the URL of the server must parse")
+			assert.NoError(t, err, "the URL of the server must parse")
 
 			resp, err := c.Do((&http.Request{Method: http.MethodGet, URL: u}).WithContext(t.Context()))
-			testkit.NoError(t, err, "Do must send a request without a header map")
-			testkit.NoError(t, resp.Body.Close(), "the body must close")
+			assert.NoError(t, err, "Do must send a request without a header map")
+			assert.NoError(t, resp.Body.Close(), "the body must close")
 		})
 
 		t.Run("follows a redirect to an admitted host", func(t *testing.T) {
 			t.Parallel()
-
 			srv := httptest.NewServer(redirector())
 			t.Cleanup(srv.Close)
 
 			c, err := httpclient.New(dependency, required, loopback)
-			testkit.NoError(t, err, "New must accept the options")
+			assert.NoError(t, err, "New must accept the options")
 
 			status, got, err := get(t, c, srv.URL+"/redirect/1")
-			testkit.NoError(t, err, "Do")
-			testkit.Equal(t, status, http.StatusOK, "the status after the redirect")
-			testkit.Equal(t, got, body, "the body after the redirect")
+			assert.NoError(t, err, "Do must follow the redirect")
+			expect.Equal(t, status, http.StatusOK, "Do must return the status after the redirect")
+			expect.Equal(t, got, body, "Do must return the body after the redirect")
+		})
+
+		t.Run("follows a redirect from https to https", func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewTLSServer(redirector())
+			t.Cleanup(srv.Close)
+
+			transport, ok := srv.Client().Transport.(*http.Transport)
+			assert.True(t, ok, "the client of httptest must have an http.Transport")
+
+			c, err := httpclient.New(dependency, required, loopback, httpclient.WithTLS(transport.TLSClientConfig))
+			assert.NoError(t, err, "New must accept the options")
+
+			status, _, err := get(t, c, srv.URL+"/redirect/1")
+			assert.NoError(t, err, "Do must follow a redirect that keeps https")
+			assert.Equal(t, status, http.StatusOK, "Do must return the status after the redirect")
 		})
 
 		t.Run("follows 5 redirects", func(t *testing.T) {
 			t.Parallel()
-
 			srv := httptest.NewServer(redirector())
 			t.Cleanup(srv.Close)
 
 			c, err := httpclient.New(dependency, required, loopback)
-			testkit.NoError(t, err, "New must accept the options")
+			assert.NoError(t, err, "New must accept the options")
 
 			status, _, err := get(t, c, srv.URL+"/redirect/5")
-			testkit.NoError(t, err, "Do")
-			testkit.Equal(t, status, http.StatusOK, "the status after 5 redirects")
+			assert.NoError(t, err, "Do must follow the redirects")
+			assert.Equal(t, status, http.StatusOK, "Do must return the status after 5 redirects")
 		})
 
 		t.Run("returns the sixth redirect response as it is", func(t *testing.T) {
 			t.Parallel()
-
 			srv := httptest.NewServer(redirector())
 			t.Cleanup(srv.Close)
 
 			c, err := httpclient.New(dependency, required, loopback)
-			testkit.NoError(t, err, "New must accept the options")
+			assert.NoError(t, err, "New must accept the options")
 
 			status, _, err := get(t, c, srv.URL+"/redirect/6")
-			testkit.NoError(t, err, "Do must return the redirect response")
-			testkit.Equal(t, status, http.StatusFound, "the status of the sixth redirect")
+			assert.NoError(t, err, "Do must return the redirect response")
+			assert.Equal(t, status, http.StatusFound, "Do must return the status of the sixth redirect")
 		})
 
 		t.Run("returns ErrBlocked for a redirect to a host that WithHosts does not admit", func(t *testing.T) {
 			t.Parallel()
-
 			srv := httptest.NewServer(http.RedirectHandler("http://127.0.0.2/", http.StatusFound))
 			t.Cleanup(srv.Close)
 
 			c, err := httpclient.New(dependency, required, loopback)
-			testkit.NoError(t, err, "New must accept the options")
+			assert.NoError(t, err, "New must accept the options")
 
 			_, _, err = get(t, c, srv.URL)
-			testkit.ErrorIs(t, err, httpclient.ErrBlocked, "Do must refuse the redirect")
+			assert.ErrorIs(t, err, httpclient.ErrBlocked, "Do must refuse the redirect")
 		})
 
 		t.Run("returns ErrBlocked for a redirect from https to http", func(t *testing.T) {
 			t.Parallel()
-
 			plain := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 			t.Cleanup(plain.Close)
 
 			secure := httptest.NewTLSServer(http.RedirectHandler(plain.URL, http.StatusFound))
 			t.Cleanup(secure.Close)
 
-			cfg := secure.Client().Transport.(*http.Transport).TLSClientConfig
-			c, err := httpclient.New(dependency, required, loopback, httpclient.WithTLS(cfg))
-			testkit.NoError(t, err, "New must accept the options")
+			transport, ok := secure.Client().Transport.(*http.Transport)
+			assert.True(t, ok, "the client of httptest must have an http.Transport")
+
+			c, err := httpclient.New(dependency, required, loopback, httpclient.WithTLS(transport.TLSClientConfig))
+			assert.NoError(t, err, "New must accept the options")
 
 			_, _, err = get(t, c, secure.URL)
-			testkit.ErrorIs(t, err, httpclient.ErrBlocked, "Do must refuse the downgrade")
+			assert.ErrorIs(t, err, httpclient.ErrBlocked, "Do must refuse the downgrade")
 		})
 
 		t.Run("uses the classification of WithClassify", func(t *testing.T) {
 			t.Parallel()
-
 			srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 			t.Cleanup(srv.Close)
 
 			r := newReporter(t)
 			c, err := httpclient.New(dependency, required, loopback, httpclient.WithReporter(r),
 				httpclient.WithClassify(func(*http.Response) error { return errs.WithClass(errBoom, errs.Conflict) }))
-			testkit.NoError(t, err, "New must accept the options")
+			assert.NoError(t, err, "New must accept the options")
 
 			status, _, err := get(t, c, srv.URL)
-			testkit.NoError(t, err, "Do returns the response that the classification refuses")
-			testkit.Equal(t, status, http.StatusOK, "the status")
+			assert.NoError(t, err, "Do must return the response that the classification refuses")
+			assert.Equal(t, status, http.StatusOK, "Do must return the status of the response")
 
 			end := r.started()[0].OnEnd.AssertCalledOnce(t, "the span must end once")
-			testkit.ErrorIs(t, end.Err, errBoom, "the span must end with the error of the classification")
+			assert.ErrorIs(t, end.Err, errBoom, "the span must end with the error of the classification")
 		})
 	})
 
@@ -766,23 +852,21 @@ func TestClient(t *testing.T) {
 
 		t.Run("returns the body of a response that succeeded", func(t *testing.T) {
 			t.Parallel()
-
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				_, _ = io.WriteString(w, body)
 			}))
 			t.Cleanup(srv.Close)
 
 			c, err := httpclient.New(dependency, required, loopback)
-			testkit.NoError(t, err, "New must accept the options")
+			assert.NoError(t, err, "New must accept the options")
 
 			got, err := fetch(t, c, http.MethodGet, srv.URL, http.NoBody, nil)
-			testkit.NoError(t, err, "Fetch")
-			testkit.Equal(t, string(got), body, "the body")
+			assert.NoError(t, err, "Fetch must read the body")
+			assert.Equal(t, string(got), body, "Fetch must return the body")
 		})
 
 		t.Run("returns a StatusError with the first 1 KiB of the body of a refused response", func(t *testing.T) {
 			t.Parallel()
-
 			long := strings.Repeat("e", 2048)
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(http.StatusNotFound)
@@ -791,19 +875,18 @@ func TestClient(t *testing.T) {
 			t.Cleanup(srv.Close)
 
 			c, err := httpclient.New(dependency, required, loopback)
-			testkit.NoError(t, err, "New must accept the options")
+			assert.NoError(t, err, "New must accept the options")
 
 			_, err = fetch(t, c, http.MethodGet, srv.URL, http.NoBody, nil)
-			se := testkit.ErrorAs[*httpclient.StatusError](t, err, "Fetch must return a StatusError")
-			testkit.Equal(t, se.Status, http.StatusNotFound, "the status")
-			testkit.Equal(t, se.Dependency, dependency, "the dependency")
-			testkit.Equal(t, string(se.Body), long[:1024], "the first 1 KiB of the body")
-			testkit.Equal(t, errs.Classify(err), errs.NotFound, "the class of the error")
+			se := assert.ErrorAs[*httpclient.StatusError](t, err, "Fetch must return a StatusError")
+			expect.Equal(t, se.Status, http.StatusNotFound, "the StatusError must carry the status")
+			expect.Equal(t, se.Dependency, dependency, "the StatusError must name the dependency")
+			expect.Equal(t, string(se.Body), long[:1024], "the StatusError must carry the first 1 KiB of the body")
+			expect.Equal(t, errs.Classify(err), errs.NotFound, "a 404 must classify as NotFound")
 		})
 
 		t.Run("returns a StatusError for a status of 300", func(t *testing.T) {
 			t.Parallel()
-
 			// net/http follows no redirect for 300.
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(http.StatusMultipleChoices)
@@ -811,16 +894,15 @@ func TestClient(t *testing.T) {
 			t.Cleanup(srv.Close)
 
 			c, err := httpclient.New(dependency, required, loopback)
-			testkit.NoError(t, err, "New must accept the options")
+			assert.NoError(t, err, "New must accept the options")
 
 			_, err = fetch(t, c, http.MethodGet, srv.URL, http.NoBody, nil)
-			se := testkit.ErrorAs[*httpclient.StatusError](t, err, "Fetch must refuse a status of 300")
-			testkit.Equal(t, se.Status, http.StatusMultipleChoices, "the status")
+			se := assert.ErrorAs[*httpclient.StatusError](t, err, "Fetch must refuse a status of 300")
+			assert.Equal(t, se.Status, http.StatusMultipleChoices, "the StatusError must carry the status")
 		})
 
 		t.Run("returns nil for a response to HEAD", func(t *testing.T) {
 			t.Parallel()
-
 			// The server declares the length of the body that a GET returns.
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				_, _ = io.WriteString(w, body)
@@ -828,16 +910,15 @@ func TestClient(t *testing.T) {
 			t.Cleanup(srv.Close)
 
 			c, err := httpclient.New(dependency, required, loopback)
-			testkit.NoError(t, err, "New must accept the options")
+			assert.NoError(t, err, "New must accept the options")
 
 			got, err := fetch(t, c, http.MethodHead, srv.URL, http.NoBody, nil)
-			testkit.NoError(t, err, "Fetch")
-			testkit.True(t, got == nil, "the body of a HEAD must be nil")
+			assert.NoError(t, err, "Fetch must accept a response to HEAD")
+			assert.Nil(t, got, "the body of a HEAD must be nil")
 		})
 
 		t.Run("returns a Transient error for a body that ends early", func(t *testing.T) {
 			t.Parallel()
-
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.Header().Set("Content-Length", "10")
 				_, _ = io.WriteString(w, "ab")
@@ -849,11 +930,13 @@ func TestClient(t *testing.T) {
 			t.Cleanup(srv.Close)
 
 			c, err := httpclient.New(dependency, required, loopback)
-			testkit.NoError(t, err, "New must accept the options")
+			assert.NoError(t, err, "New must accept the options")
 
 			_, err = fetch(t, c, http.MethodGet, srv.URL, http.NoBody, nil)
-			testkit.Error(t, err, "Fetch must fail on a body that ends early")
-			testkit.Equal(t, errs.Classify(err), errs.Transient, "the class of the error")
+			assert.HasError(t, err, "Fetch must fail on a body that ends early")
+			expect.Equal(t, errs.Classify(err), errs.Transient, "a read that fails must be Transient")
+			expect.Contains(t, err.Error(), "httpclient: "+dependency+": read the body",
+				"the error must name the dependency and the step")
 		})
 
 		// stalled sends the header of a body of 10 bytes, and no byte of the
@@ -893,22 +976,21 @@ func TestClient(t *testing.T) {
 		for _, tt := range stalls {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-
 				srv := httptest.NewServer(stalled)
 				t.Cleanup(srv.Close)
 
 				c, err := httpclient.New(dependency, required, loopback, httpclient.Options(tt.opts...))
-				testkit.NoError(t, err, "New must accept the options")
+				assert.NoError(t, err, "New must accept the options")
 
 				ctx, cancel := context.WithTimeout(t.Context(), tt.deadline)
 				defer cancel()
 
 				req, err := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL, http.NoBody)
-				testkit.NoError(t, err, "the request must build")
+				assert.NoError(t, err, "the request must build")
 
 				_, err = c.Fetch(req)
-				testkit.ErrorIs(t, err, context.DeadlineExceeded, "the read must end at the earlier deadline")
-				testkit.Equal(t, errs.Classify(err), tt.want, "the class of the error")
+				expect.ErrorIs(t, err, context.DeadlineExceeded, "the read must end at the earlier deadline")
+				expect.Equal(t, errs.Classify(err), tt.want, "the error must have the class of its deadline")
 			})
 		}
 
@@ -958,7 +1040,6 @@ func TestClient(t *testing.T) {
 		for _, tt := range limits {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-
 				payload := strings.Repeat("a", tt.size)
 				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 					if tt.chunked {
@@ -970,18 +1051,18 @@ func TestClient(t *testing.T) {
 				t.Cleanup(srv.Close)
 
 				c, err := httpclient.New(dependency, required, loopback, httpclient.Options(tt.opts...))
-				testkit.NoError(t, err, "New must accept the options")
+				assert.NoError(t, err, "New must accept the options")
 
 				got, err := fetch(t, c, http.MethodGet, srv.URL, http.NoBody, nil)
 				if tt.fails {
-					testkit.ErrorIs(t, err, httpclient.ErrTooLarge, "Fetch must refuse the body")
-					testkit.Equal(t, errs.Classify(err), errs.Invalid, "the class of the error")
+					expect.ErrorIs(t, err, httpclient.ErrTooLarge, "Fetch must refuse the body")
+					expect.Equal(t, errs.Classify(err), errs.Invalid, "ErrTooLarge must classify as Invalid")
 
 					return
 				}
 
-				testkit.NoError(t, err, "Fetch")
-				testkit.Equal(t, string(got), payload, "the body")
+				assert.NoError(t, err, "Fetch must read the body")
+				assert.Equal(t, string(got), payload, "Fetch must return the body")
 			})
 		}
 	})
@@ -1005,7 +1086,6 @@ func TestClient(t *testing.T) {
 		for _, tt := range appends {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-
 				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 					if tt.chunked {
 						w.(http.Flusher).Flush()
@@ -1016,15 +1096,16 @@ func TestClient(t *testing.T) {
 				t.Cleanup(srv.Close)
 
 				c, err := httpclient.New(dependency, required, loopback)
-				testkit.NoError(t, err, "New must accept the options")
+				assert.NoError(t, err, "New must accept the options")
 
 				dst := append(make([]byte, 0, len(prefix)+tt.room), prefix...)
 				got, err := appendFetch(t, c, dst, http.MethodGet, srv.URL)
-				testkit.NoError(t, err, "AppendFetch")
-				testkit.Equal(t, string(got), prefix+body, "the bytes of dst and the body")
+				assert.NoError(t, err, "AppendFetch must read the body")
+				assert.Equal(t, string(got), prefix+body, "AppendFetch must keep the bytes of dst before the body")
 
 				if tt.room > 0 {
-					testkit.True(t, &got[0] == &dst[0], "AppendFetch must write into the array of dst")
+					assert.Equal(t, &got[0], &dst[0], "AppendFetch must write into the array of dst",
+						assert.ByIdentity())
 				}
 			})
 		}
@@ -1037,20 +1118,9 @@ func TestClient(t *testing.T) {
 			chunked bool
 			fails   bool
 		}{
-			{
-				name: "returns a declared body of the limit after the bytes of dst",
-				size: 8,
-			},
-			{
-				name:    "returns a body of unknown length of the limit after the bytes of dst",
-				size:    8,
-				chunked: true,
-			},
-			{
-				name:  "returns dst with ErrTooLarge for a declared body beyond the limit",
-				size:  9,
-				fails: true,
-			},
+			{name: "returns a declared body of the limit after the bytes of dst", size: 8},
+			{name: "returns a body of unknown length of the limit after the bytes of dst", size: 8, chunked: true},
+			{name: "returns dst with ErrTooLarge for a declared body beyond the limit", size: 9, fails: true},
 			{
 				name:    "returns dst with ErrTooLarge for a body of unknown length beyond the limit",
 				size:    9,
@@ -1061,7 +1131,6 @@ func TestClient(t *testing.T) {
 		for _, tt := range limits {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-
 				payload := strings.Repeat("a", tt.size)
 				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 					if tt.chunked {
@@ -1073,24 +1142,23 @@ func TestClient(t *testing.T) {
 				t.Cleanup(srv.Close)
 
 				c, err := httpclient.New(dependency, required, loopback, httpclient.WithMaxResponseBytes(8))
-				testkit.NoError(t, err, "New must accept the options")
+				assert.NoError(t, err, "New must accept the options")
 
 				got, err := appendFetch(t, c, []byte(prefix), http.MethodGet, srv.URL)
 				if tt.fails {
-					testkit.ErrorIs(t, err, httpclient.ErrTooLarge, "AppendFetch must refuse the body")
-					testkit.Equal(t, string(got), prefix, "AppendFetch must return dst unchanged")
+					expect.ErrorIs(t, err, httpclient.ErrTooLarge, "AppendFetch must refuse the body")
+					expect.Equal(t, string(got), prefix, "AppendFetch must return dst unchanged")
 
 					return
 				}
 
-				testkit.NoError(t, err, "AppendFetch")
-				testkit.Equal(t, string(got), prefix+payload, "the bytes of dst and the body")
+				assert.NoError(t, err, "AppendFetch must read the body")
+				assert.Equal(t, string(got), prefix+payload, "AppendFetch must keep the bytes of dst before the body")
 			})
 		}
 
 		t.Run("returns dst with a StatusError for a refused response", func(t *testing.T) {
 			t.Parallel()
-
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(http.StatusNotFound)
 				_, _ = io.WriteString(w, body)
@@ -1098,17 +1166,16 @@ func TestClient(t *testing.T) {
 			t.Cleanup(srv.Close)
 
 			c, err := httpclient.New(dependency, required, loopback)
-			testkit.NoError(t, err, "New must accept the options")
+			assert.NoError(t, err, "New must accept the options")
 
 			got, err := appendFetch(t, c, []byte(prefix), http.MethodGet, srv.URL)
-			se := testkit.ErrorAs[*httpclient.StatusError](t, err, "AppendFetch must return a StatusError")
-			testkit.Equal(t, string(se.Body), body, "the body of the error")
-			testkit.Equal(t, string(got), prefix, "AppendFetch must return dst unchanged")
+			se := assert.ErrorAs[*httpclient.StatusError](t, err, "AppendFetch must return a StatusError")
+			expect.Equal(t, string(se.Body), body, "the StatusError must carry the body")
+			expect.Equal(t, string(got), prefix, "AppendFetch must return dst unchanged")
 		})
 
 		t.Run("returns dst for a response to HEAD", func(t *testing.T) {
 			t.Parallel()
-
 			// The server declares the length of the body that a GET returns.
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 				_, _ = io.WriteString(w, body)
@@ -1116,16 +1183,15 @@ func TestClient(t *testing.T) {
 			t.Cleanup(srv.Close)
 
 			c, err := httpclient.New(dependency, required, loopback)
-			testkit.NoError(t, err, "New must accept the options")
+			assert.NoError(t, err, "New must accept the options")
 
 			got, err := appendFetch(t, c, []byte(prefix), http.MethodHead, srv.URL)
-			testkit.NoError(t, err, "AppendFetch")
-			testkit.Equal(t, string(got), prefix, "AppendFetch must append nothing for HEAD")
+			assert.NoError(t, err, "AppendFetch must accept a response to HEAD")
+			assert.Equal(t, string(got), prefix, "AppendFetch must append nothing for HEAD")
 		})
 
 		t.Run("drops the bytes of an attempt that failed", func(t *testing.T) {
 			t.Parallel()
-
 			// The first attempt declares 10 bytes, sends 2 and closes the
 			// connection, so its read fails with a Transient error after it
 			// wrote 2 bytes into the room of dst.
@@ -1146,15 +1212,15 @@ func TestClient(t *testing.T) {
 			}))
 			t.Cleanup(srv.Close)
 
-			c, err := httpclient.New(dependency, required, loopback,
-				httpclient.WithRetrier(retrier(t, fake.New(origin))))
-			testkit.NoError(t, err, "New must accept the options")
+			retry := retrier(t, fake.New(origin))
+			c, err := httpclient.New(dependency, required, loopback, httpclient.WithRetrier(retry))
+			assert.NoError(t, err, "New must accept the options")
 
 			dst := append(make([]byte, 0, len(prefix)+1024), prefix...)
 			got, err := appendFetch(t, c, dst, http.MethodGet, srv.URL)
-			testkit.NoError(t, err, "AppendFetch must return the body of the retry")
-			testkit.Equal(t, string(got), prefix+body, "the bytes of dst and the body of the retry")
-			testkit.Equal(t, hits.Load(), int32(2), "the attempts")
+			assert.NoError(t, err, "AppendFetch must return the body of the retry")
+			expect.Equal(t, string(got), prefix+body, "AppendFetch must keep dst and the body of the retry alone")
+			expect.Equal(t, hits.Load(), int32(2), "the client must send two attempts")
 		})
 	})
 }
@@ -1165,7 +1231,7 @@ func get(t *testing.T, c *httpclient.Client, url string) (int, string, error) {
 	t.Helper()
 
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, url, http.NoBody)
-	testkit.NoError(t, err, "the request of the case must build")
+	assert.NoError(t, err, "the request of the case must build")
 
 	resp, err := c.Do(req)
 	if err != nil {
@@ -1175,7 +1241,7 @@ func get(t *testing.T, c *httpclient.Client, url string) (int, string, error) {
 	defer resp.Body.Close()
 
 	b, err := io.ReadAll(resp.Body)
-	testkit.NoError(t, err, "the body of the response must read")
+	assert.NoError(t, err, "the body of the response must read")
 
 	return resp.StatusCode, string(b), nil
 }
@@ -1186,7 +1252,7 @@ func fetch(t *testing.T, c *httpclient.Client, method, url string, body io.Reade
 	t.Helper()
 
 	req, err := http.NewRequestWithContext(t.Context(), method, url, body)
-	testkit.NoError(t, err, "the request of the case must build")
+	assert.NoError(t, err, "the request of the case must build")
 	maps.Copy(req.Header, header)
 
 	return c.Fetch(req)
@@ -1198,9 +1264,23 @@ func appendFetch(t *testing.T, c *httpclient.Client, dst []byte, method, url str
 	t.Helper()
 
 	req, err := http.NewRequestWithContext(t.Context(), method, url, http.NoBody)
-	testkit.NoError(t, err, "the request of the case must build")
+	assert.NoError(t, err, "the request of the case must build")
 
 	return c.AppendFetch(dst, req)
+}
+
+// port returns the port of the URL of a test server, and fails t when the
+// URL has none.
+func port(t *testing.T, rawURL string) int {
+	t.Helper()
+
+	u, err := url.Parse(rawURL)
+	assert.NoError(t, err, "the URL of the server must parse")
+
+	n, err := strconv.Atoi(u.Port())
+	assert.NoError(t, err, "the port of the server must parse")
+
+	return n
 }
 
 // await returns the next value of ch, and fails t when no value arrives

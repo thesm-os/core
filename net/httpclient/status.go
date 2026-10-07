@@ -115,6 +115,7 @@ func retryAfter(h http.Header, now time.Time) time.Duration {
 	}
 
 	at, err := http.ParseTime(v)
+	//dokimi:mutate-skip sbr-delete,ror-false: a failed parse returns the zero time, whose delay max(at.Sub(now), 0) is 0
 	if err != nil {
 		return 0
 	}

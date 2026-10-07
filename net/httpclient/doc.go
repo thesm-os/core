@@ -105,6 +105,8 @@
 //   - Do of a traced request: 60 objects.
 //   - Do with a breaker and a retrier: 54 objects.
 //   - Fetch: 55 objects, the body included.
+//   - Fetch of a declared body of 8 KiB: 56 objects. net/http allocates the
+//     value of a Content-Length header of more than one digit.
 //   - AppendFetch into a buffer with room for the body: 54 objects.
 //   - AppendFetch of a chunked response into a buffer with room: 57
 //     objects. net/http allocates the key and the value of its

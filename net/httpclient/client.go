@@ -323,9 +323,9 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 		return resp, err
 	})
 
-	// The breaker can refuse the last attempt after an earlier one received
-	// a response.
-	if k.prev != nil && k.prev != resp {
+	// When the breaker refuses the last attempt, the call returns no
+	// response, and the response of the attempt before it is still open.
+	if resp == nil && k.prev != nil {
 		discard(k.prev)
 	}
 
@@ -468,17 +468,18 @@ func attempts[T any](k *call, read func(*http.Response, error) (T, error)) (T, e
 		k.port, _ = strconv.Atoi(p)
 	}
 
+	// Every attempt ends in read, which records the response of the attempt
+	// in k.prev for Do, so the next attempt discards the response before it.
 	attempt := func(ctx context.Context) (T, error) {
 		if k.prev != nil {
 			discard(k.prev)
-			k.prev = nil
 		}
 
 		body := req.Body
 		if k.sent && req.GetBody != nil {
 			replayed, err := req.GetBody()
 			if err != nil {
-				return zero, fmt.Errorf("httpclient: %s: replay the body: %w", c.name, err)
+				return read(nil, fmt.Errorf("httpclient: %s: replay the body: %w", c.name, err))
 			}
 
 			body = replayed

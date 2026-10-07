@@ -5,17 +5,25 @@ package httpclient_test
 
 import (
 	"maps"
+	"math"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"testing"
 	"time"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/expect"
+	"go.dokimi.dev/assert/prop"
 
 	"go.thesmos.sh/core/errs"
 	"go.thesmos.sh/core/net/httpclient"
 )
+
+// listed are the statuses outside 500 to 599 that the documentation of
+// StatusError gives a class.
+var listed = []int{400, 401, 403, 404, 405, 406, 408, 409, 410, 411, 412, 413, 414, 415, 422, 425, 429}
 
 func TestStatus(t *testing.T) {
 	t.Parallel()
@@ -23,11 +31,11 @@ func TestStatus(t *testing.T) {
 	t.Run("Error", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("returns the dependency and the status", func(t *testing.T) {
+		t.Run("returns the message of the status of the dependency", func(t *testing.T) {
 			t.Parallel()
-
 			err := &httpclient.StatusError{Dependency: dependency, Status: http.StatusServiceUnavailable}
-			testkit.Equal(t, err.Error(), "httpclient: registry: 503 Service Unavailable", "the message")
+			assert.Equal(t, err.Error(), "httpclient: registry: 503 Service Unavailable",
+				"Error must name the package, the dependency and the status")
 		})
 	})
 
@@ -50,13 +58,31 @@ func TestStatus(t *testing.T) {
 			for _, status := range tt.statuses {
 				t.Run("returns "+tt.want.String()+" for "+strconv.Itoa(status), func(t *testing.T) {
 					t.Parallel()
-
 					err := &httpclient.StatusError{Dependency: dependency, Status: status}
-					testkit.Equal(t, err.Class(), tt.want, "the class")
-					testkit.Equal(t, errs.Classify(err), tt.want, "the class under errs.Classify")
+					expect.Equal(t, err.Class(), tt.want, "Class must return the class of the status")
+					expect.Equal(t, errs.Classify(err), tt.want, "errs.Classify must return the class of the status")
 				})
 			}
 		}
+
+		t.Run("returns Transient for every status of 5xx but 501", func(t *testing.T) {
+			t.Parallel()
+			prop.Equal(t, func(status int) errs.Class {
+				return (&httpclient.StatusError{Dependency: dependency, Status: status}).Class()
+			}, func(int) errs.Class { return errs.Transient }, "a server error other than 501 must be Transient",
+				prop.Using(prop.Integer(500, 599).Filter(func(status int) bool { return status != 501 })))
+		})
+
+		t.Run("returns Unspecified for every other status", func(t *testing.T) {
+			t.Parallel()
+			others := prop.Integer(math.MinInt, math.MaxInt).Filter(func(status int) bool {
+				return !slices.Contains(listed, status) && (status < 500 || status > 599)
+			})
+			prop.Equal(t, func(status int) errs.Class {
+				return (&httpclient.StatusError{Dependency: dependency, Status: status}).Class()
+			}, func(int) errs.Class { return errs.Unspecified }, "a status without a listed class must be Unspecified",
+				prop.Using(others))
+		})
 	})
 
 	t.Run("RetryAfter", func(t *testing.T) {
@@ -123,7 +149,6 @@ func TestStatus(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-
 				// A nil value, such as the one of Date, removes the header that
 				// net/http would add.
 				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -133,14 +158,14 @@ func TestStatus(t *testing.T) {
 				t.Cleanup(srv.Close)
 
 				c, err := httpclient.New(dependency, required, loopback)
-				testkit.NoError(t, err, "New must accept the options")
+				assert.NoError(t, err, "New must accept the options")
 
 				_, err = fetch(t, c, http.MethodGet, srv.URL, http.NoBody, nil)
-				se := testkit.ErrorAs[*httpclient.StatusError](t, err, "Fetch must return a StatusError")
-				testkit.Equal(t, se.RetryAfter(), tt.want, "the delay")
+				se := assert.ErrorAs[*httpclient.StatusError](t, err, "Fetch must return a StatusError")
+				expect.Equal(t, se.RetryAfter(), tt.want, "RetryAfter must return the delay of the header")
 
 				delay, _ := errs.RetryAfter(err)
-				testkit.Equal(t, delay, tt.want, "the delay under errs.RetryAfter")
+				expect.Equal(t, delay, tt.want, "errs.RetryAfter must return the delay of the header")
 			})
 		}
 	})
