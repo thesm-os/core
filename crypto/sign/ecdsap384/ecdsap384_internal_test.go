@@ -7,83 +7,87 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	stdrand "crypto/rand"
+	"errors"
 	"testing"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
 )
 
-// TestWrapGenerate exercises the error branch of [wrapGenerate]
-// directly. The branch is unreachable through the public
-// [Generate] API because Go 1.26's [ecdsa.GenerateKey] uses an
-// internal secure RNG that cannot fail in default mode; the
-// extraction lets us cover the wrap behaviour without depending
-// on stdlib-internal failure modes.
-func TestWrapGenerate(t *testing.T) {
+// The prefixes that pin the text of the errors of wrapGenerate and
+// wrapSign.
+const (
+	generatePrefix = "ecdsap384: generate: "
+	signPrefix     = "ecdsap384: sign: "
+)
+
+// TestECDSAP384Results checks the unexported functions that finish the
+// result of a call into crypto/ecdsa. Generation and signing use the
+// secure source of the runtime, which cannot fail in default mode, so
+// only these tests run the error branches.
+func TestECDSAP384Results(t *testing.T) {
 	t.Parallel()
 
-	t.Run("propagates stdlib error wrapped with package context", func(t *testing.T) {
+	t.Run("wrapGenerate", func(t *testing.T) {
 		t.Parallel()
-		stdErr := testkit.TestError("entropy source failure")
-		_, err := wrapGenerate(nil, stdErr)
-		testkit.Error(t, err, "wrapGenerate must return non-nil error")
-		testkit.ErrorIs(t, err, stdErr, "wrap must preserve the stdlib cause")
-		testkit.Contains(t, err.Error(), "ecdsap384: generate:",
-			"wrap must include package context")
+
+		t.Run("wraps the error of crypto/ecdsa under the prefix of the operation", func(t *testing.T) {
+			t.Parallel()
+			errGenerate := errors.New("entropy source failed")
+			_, err := wrapGenerate(nil, errGenerate)
+			assert.ErrorIs(t, err, errGenerate, "wrapGenerate must wrap the error of crypto/ecdsa")
+			assert.HasPrefix(t, err.Error(), generatePrefix, "the error must name the package and the operation")
+		})
+
+		t.Run("returns a Signer of the key", func(t *testing.T) {
+			t.Parallel()
+			priv, err := ecdsa.GenerateKey(elliptic.P384(), stdrand.Reader)
+			assert.NoError(t, err, "GenerateKey must generate a P-384 key")
+			s, err := wrapGenerate(priv, nil)
+			assert.NoError(t, err, "wrapGenerate must accept a P-384 key")
+			assert.Equal(t, s.priv, priv, "the Signer must sign with the key", assert.ByIdentity())
+		})
 	})
 
-	t.Run("success path delegates to New", func(t *testing.T) {
+	t.Run("wrapSign", func(t *testing.T) {
 		t.Parallel()
-		// Generate a real keypair via the production path so
-		// New(priv) actually succeeds.
-		priv, err := ecdsa.GenerateKey(elliptic.P384(), stdrand.Reader)
-		testkit.NoError(t, err, "GenerateKey")
-		s, werr := wrapGenerate(priv, nil)
-		testkit.NoError(t, werr, "wrapGenerate(priv, nil)")
-		testkit.True(t, s != nil, "wrapGenerate must return non-nil signer on success")
-	})
-}
 
-// TestWrapSign exercises the error branch of [wrapSign]
-// directly. Same rationale as [TestWrapGenerate].
-func TestWrapSign(t *testing.T) {
-	t.Parallel()
+		t.Run("wraps the error of crypto/ecdsa under the prefix of the operation", func(t *testing.T) {
+			t.Parallel()
+			errSign := errors.New("signing failed")
+			_, err := wrapSign(nil, errSign)
+			assert.ErrorIs(t, err, errSign, "wrapSign must wrap the error of crypto/ecdsa")
+			assert.HasPrefix(t, err.Error(), signPrefix, "the error must name the package and the operation")
+		})
 
-	t.Run("propagates stdlib error wrapped with package context", func(t *testing.T) {
-		t.Parallel()
-		stdErr := testkit.TestError("signing failure")
-		_, err := wrapSign(nil, stdErr)
-		testkit.Error(t, err, "wrapSign must return non-nil error")
-		testkit.ErrorIs(t, err, stdErr, "wrap must preserve the stdlib cause")
-		testkit.Contains(t, err.Error(), "ecdsap384: sign:",
-			"wrap must include package context")
+		t.Run("returns the signature", func(t *testing.T) {
+			t.Parallel()
+			got, err := wrapSign([]byte{0x01, 0x02, 0x03}, nil)
+			assert.NoError(t, err, "wrapSign must accept a signature")
+			assert.Equal(t, got, []byte{0x01, 0x02, 0x03}, "wrapSign must return the signature unchanged")
+		})
 	})
 
-	t.Run("success path returns the signature unchanged", func(t *testing.T) {
+	t.Run("appendSignature", func(t *testing.T) {
 		t.Parallel()
-		want := []byte{0x01, 0x02, 0x03}
-		got, err := wrapSign(want, nil)
-		testkit.NoError(t, err, "wrapSign(sig, nil)")
-		testkit.Equal(t, got, want, "wrapSign must return the signature unchanged on success")
-	})
-}
 
-// TestAppendSignature exercises the error branch of [appendSignature]
-// directly. Same rationale as [TestWrapGenerate].
-func TestAppendSignature(t *testing.T) {
-	t.Parallel()
+		t.Run("returns the error of Sign", func(t *testing.T) {
+			t.Parallel()
+			errSign := errors.New("signing failed")
+			_, err := appendSignature([]byte("dst"), nil, errSign)
+			assert.ErrorIs(t, err, errSign, "appendSignature must return the error of Sign")
+		})
 
-	t.Run("returns dst unchanged and the error of Sign", func(t *testing.T) {
-		t.Parallel()
-		signErr := testkit.TestError("signing failure")
-		got, err := appendSignature([]byte("dst"), nil, signErr)
-		testkit.ErrorIs(t, err, signErr, "appendSignature must return the error of Sign")
-		testkit.Equal(t, string(got), "dst", "appendSignature must return dst unchanged")
-	})
+		t.Run("returns dst unchanged for an error of Sign", func(t *testing.T) {
+			t.Parallel()
+			got, _ := appendSignature([]byte("dst"), []byte("sig"), errors.New("signing failed"))
+			assert.Equal(t, string(got), "dst", "appendSignature must not append after an error")
+		})
 
-	t.Run("appends the signature to dst", func(t *testing.T) {
-		t.Parallel()
-		got, err := appendSignature([]byte("dst"), []byte("sig"), nil)
-		testkit.NoError(t, err, "appendSignature must accept a signature")
-		testkit.Equal(t, string(got), "dstsig", "appendSignature must append the signature")
+		t.Run("appends the signature to dst", func(t *testing.T) {
+			t.Parallel()
+			got, err := appendSignature([]byte("dst"), []byte("sig"), nil)
+			assert.NoError(t, err, "appendSignature must accept a signature")
+			assert.Equal(t, string(got), "dstsig", "appendSignature must append the signature")
+		})
 	})
 }

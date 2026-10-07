@@ -4,6 +4,7 @@
 package ecdsap384_test
 
 import (
+	"bytes"
 	"crypto/ecdsa"
 	stded25519 "crypto/ed25519"
 	"crypto/elliptic"
@@ -11,64 +12,48 @@ import (
 	"crypto/sha512"
 	"crypto/x509"
 	"encoding/hex"
-	"fmt"
-	"io"
 	"math/big"
+	"slices"
+	"strconv"
 	"testing"
+	"time"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/bench"
+	"go.dokimi.dev/assert/expect"
+	"go.dokimi.dev/assert/history"
+	"go.dokimi.dev/assert/prop"
 
 	"go.thesmos.sh/core/coretest/cryptotest"
 	"go.thesmos.sh/core/crypto"
 	"go.thesmos.sh/core/crypto/sign"
 	signecdsa "go.thesmos.sh/core/crypto/sign/ecdsap384"
 	"go.thesmos.sh/core/errs"
-	"go.thesmos.sh/core/rand"
-	"go.thesmos.sh/core/rand/seeded"
 )
 
-// stdlibSign returns a function that signs msg with the stdlib's
-// ECDSA P-384 + SHA-384 under priv. The cross-stdlib assertions use
-// it as the reference. A signing error fails tb.
-func stdlibSign(tb testing.TB, priv *ecdsa.PrivateKey) func([]byte) []byte {
-	tb.Helper()
-	return func(msg []byte) []byte {
-		digest := sha512.Sum384(msg)
-		sig, err := ecdsa.SignASN1(stdrand.Reader, priv, digest[:])
-		testkit.NoError(tb, err, "stdlib ecdsa.SignASN1")
-		return sig
-	}
-}
+// resolveAllocs is the ceiling of Resolve. crypto/x509 allocates 14
+// objects to parse the key, and crypto/ecdsa allocates 6 to encode its
+// point for the KeyID. Resolve allocates its copy of the encoding and the
+// Verifier.
+const resolveAllocs = 22
 
-// stdlibVerify reports whether sig is a valid ECDSA P-384 +
-// SHA-384 signature over msg under the PKIX-encoded pub, verified by
-// the stdlib.
-func stdlibVerify(pub, msg, sig []byte) bool {
-	parsed, err := x509.ParsePKIXPublicKey(pub)
-	if err != nil {
-		return false
-	}
-	pk, ok := parsed.(*ecdsa.PublicKey)
-	if !ok {
-		return false
-	}
-	digest := sha512.Sum384(msg)
-	return ecdsa.VerifyASN1(pk, digest[:], sig)
-}
+// The goroutines of a concurrent case, and the calls that each makes.
+const (
+	goroutines = 8
+	rounds     = 20
+)
 
-// mustSigner wraps a fixture priv in a [signecdsa.Signer]. Caller
-// supplies the fixture so the same instance is reused across the
-// rest of the test (Sample / KeyID / etc.) without a second
-// [cryptotest.NewECDSAP384Sample] call.
-func mustSigner(tb testing.TB, fix cryptotest.ECDSAP384Fixture) *signecdsa.Signer {
-	tb.Helper()
-	s, err := signecdsa.New(fix.StdlibPriv)
-	testkit.NoError(tb, err, "ecdsap384.New from fixture")
-	return s
-}
+// offCurve is the point X=1, Y=2. It names P-384 as its curve but is not
+// on it, so KeyIDFromPub refuses it through ecdsa.PublicKey.Bytes. Only
+// the deprecated raw coordinates build such a key. The tests only read
+// it.
+//
+//nolint:staticcheck // an invalid key is the subject of the tests
+var offCurve = &ecdsa.PublicKey{Curve: elliptic.P384(), X: big.NewInt(1), Y: big.NewInt(2)}
 
-// --- testkit-driven contract layer ---
-
+// TestECDSAP384VerifierContract runs the contract suite of sign.Verifier
+// with the Algorithm, the KeyID and the signatures of the standard
+// library.
 func TestECDSAP384VerifierContract(t *testing.T) {
 	t.Parallel()
 	fix := cryptotest.NewECDSAP384Sample()
@@ -86,6 +71,9 @@ func TestECDSAP384VerifierContract(t *testing.T) {
 	)
 }
 
+// TestECDSAP384SignerContract runs the contract suite of sign.Signer
+// with the Algorithm, the KeyID, the signatures and the verification of
+// the standard library, and the AppendSigner capability.
 func TestECDSAP384SignerContract(t *testing.T) {
 	t.Parallel()
 	fix := cryptotest.NewECDSAP384Sample()
@@ -104,17 +92,20 @@ func TestECDSAP384SignerContract(t *testing.T) {
 	)
 }
 
+// TestECDSAP384SignStreamContract runs the contract suite of
+// sign.SignStream.
 func TestECDSAP384SignStreamContract(t *testing.T) {
 	t.Parallel()
 	signer := mustSigner(t, cryptotest.NewECDSAP384Sample())
-	verify := func(msg, sig []byte) bool { return signer.Verify(msg, sig) }
 
 	cryptotest.AssertSignStreamContract(t,
 		func() sign.SignStream { return signer.NewSignStream() },
-		cryptotest.SignStreamContractAssertions(verify)...,
+		cryptotest.SignStreamContractAssertions(signer.Verify)...,
 	)
 }
 
+// TestECDSAP384VerifyStreamContract runs the contract suite of
+// sign.VerifyStream.
 func TestECDSAP384VerifyStreamContract(t *testing.T) {
 	t.Parallel()
 	fix := cryptotest.NewECDSAP384Sample()
@@ -127,16 +118,330 @@ func TestECDSAP384VerifyStreamContract(t *testing.T) {
 	)
 }
 
+func TestECDSAP384(t *testing.T) {
+	t.Parallel()
+
+	t.Run("Verifier", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("implements StreamingVerifier", func(t *testing.T) {
+			t.Parallel()
+			_, ok := any(mustSigner(t, cryptotest.NewECDSAP384Sample()).Verifier).(sign.StreamingVerifier)
+			assert.True(t, ok, "an ECDSA P-384 Verifier must implement sign.StreamingVerifier")
+		})
+
+		t.Run("NewVerifyStream", func(t *testing.T) {
+			t.Parallel()
+
+			t.Run("returns a stream whose Write reports the length of p", func(t *testing.T) {
+				t.Parallel()
+				v := mustSigner(t, cryptotest.NewECDSAP384Sample()).Verifier
+				prop.Equal(t, func(p []byte) int {
+					n, _ := v.NewVerifyStream().Write(p)
+
+					return n
+				}, func(p []byte) int { return len(p) }, "Write must report every byte of p as written",
+					prop.Using(prop.Bytes(prop.MaxSize(256))), prop.Example([]byte("payload")))
+			})
+		})
+
+		t.Run("Verify", func(t *testing.T) {
+			t.Parallel()
+
+			t.Run("reports true for a valid signature to goroutines that verify at once", func(t *testing.T) {
+				t.Parallel()
+				fix := cryptotest.NewECDSAP384Sample()
+				v := mustSigner(t, fix).Verifier
+				outcomes := history.Concurrently(goroutines, 10*time.Second, func(int) (any, error) {
+					verified := make([]bool, 0, rounds)
+					for range rounds {
+						verified = append(verified, v.Verify(fix.Message, fix.Signature))
+					}
+
+					return verified, nil
+				})
+				for _, o := range outcomes {
+					assert.True(t, o.Finished, "every goroutine must finish")
+					verified, _ := o.Output.([]bool)
+					assert.Equal(t, verified, slices.Repeat([]bool{true}, rounds),
+						"every Verify must accept the signature")
+				}
+			})
+		})
+	})
+
+	t.Run("NewVerifier", func(t *testing.T) {
+		t.Parallel()
+
+		tests := []struct {
+			name string
+			give *ecdsa.PublicKey
+			want error
+		}{
+			{name: "returns ErrNilKey for a nil public key", give: nil, want: signecdsa.ErrNilKey},
+			{
+				name: "returns ErrWrongCurve for a P-256 public key",
+				give: &p256Key(t).PublicKey,
+				want: signecdsa.ErrWrongCurve,
+			},
+			{name: "returns ErrOffCurve for a point off the curve", give: offCurve, want: signecdsa.ErrOffCurve},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				_, err := signecdsa.NewVerifier(tt.give)
+				expect.ErrorIs(t, err, tt.want, "NewVerifier must return the sentinel of the key")
+				expect.Equal(t, errs.Classify(err), errs.Invalid, "the sentinel must classify as Invalid")
+			})
+		}
+	})
+
+	t.Run("NewVerifierFromPKIX", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the Verifier of the encoded key", func(t *testing.T) {
+			t.Parallel()
+			fix := cryptotest.NewECDSAP384Sample()
+			v, err := signecdsa.NewVerifierFromPKIX(fix.PublicKey)
+			assert.NoError(t, err, "NewVerifierFromPKIX must accept the encoding")
+			expect.Equal(t, v.PublicKey(), fix.PublicKey, "PublicKey must return the encoding")
+			expect.Equal(t, v.KeyID(), fix.KeyID, "KeyID must return the KeyID of the key")
+		})
+
+		// The PKIX encoding of a P-384 key takes 120 bytes, so no input
+		// of the generator encodes one.
+		t.Run("returns ErrInvalidPublicKey for bytes that are not PKIX", func(t *testing.T) {
+			t.Parallel()
+			prop.ErrorIs(t, func(b []byte) error {
+				_, err := signecdsa.NewVerifierFromPKIX(b)
+
+				return err
+			}, signecdsa.ErrInvalidPublicKey, "bytes that do not parse must be refused",
+				prop.Using(prop.Bytes(prop.MaxSize(64))),
+				prop.Example([]byte{}), prop.Example([]byte{0x00}), prop.Example([]byte("not asn.1 der at all")))
+		})
+
+		t.Run("returns ErrInvalidPublicKey for the PKIX of an Ed25519 key", func(t *testing.T) {
+			t.Parallel()
+			pkix, err := x509.MarshalPKIXPublicKey(make(stded25519.PublicKey, stded25519.PublicKeySize))
+			assert.NoError(t, err, "MarshalPKIXPublicKey must encode the key")
+			_, err = signecdsa.NewVerifierFromPKIX(pkix)
+			assert.ErrorIs(t, err, signecdsa.ErrInvalidPublicKey, "the PKIX of an Ed25519 key must be refused")
+		})
+
+		// crypto/x509 returns a nil *ecdsa.PublicKey with the error of a
+		// point off the curve.
+		t.Run("returns ErrInvalidPublicKey for the PKIX of a point off the curve", func(t *testing.T) {
+			t.Parallel()
+			pkix := bytes.Clone(cryptotest.NewECDSAP384Sample().PublicKey)
+			pkix[len(pkix)-1] ^= 0x01 // the last byte of the Y coordinate
+			_, err := signecdsa.NewVerifierFromPKIX(pkix)
+			assert.ErrorIs(t, err, signecdsa.ErrInvalidPublicKey, "the PKIX of a point off the curve must be refused")
+		})
+
+		t.Run("returns ErrWrongCurve for the PKIX of a P-256 key", func(t *testing.T) {
+			t.Parallel()
+			pkix, err := x509.MarshalPKIXPublicKey(&p256Key(t).PublicKey)
+			assert.NoError(t, err, "MarshalPKIXPublicKey must encode the key")
+			_, err = signecdsa.NewVerifierFromPKIX(pkix)
+			assert.ErrorIs(t, err, signecdsa.ErrWrongCurve, "the PKIX of a P-256 key must be refused")
+		})
+
+		t.Run("returns a Verifier that a later write to the bytes leaves unchanged", func(t *testing.T) {
+			t.Parallel()
+			fix := cryptotest.NewECDSAP384Sample()
+			src := bytes.Clone(fix.PublicKey)
+			v, err := signecdsa.NewVerifierFromPKIX(src)
+			assert.NoError(t, err, "NewVerifierFromPKIX must accept the encoding")
+			clear(src)
+			assert.Equal(t, v.PublicKey(), fix.PublicKey,
+				"zeroing the buffer of the caller must not change the key of the Verifier")
+		})
+	})
+
+	t.Run("Resolve", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns a Verifier for the PKIX public key", func(t *testing.T) {
+			t.Parallel()
+			fix := cryptotest.NewECDSAP384Sample()
+			v, err := signecdsa.Resolve(fix.PublicKey)
+			assert.NoError(t, err, "Resolve must accept a PKIX P-384 key")
+			expect.Equal(t, v.KeyID(), fix.KeyID, "the Verifier must have the KeyID of the key")
+			expect.True(t, v.Verify(fix.Message, fix.Signature), "the Verifier must accept the signature of the key")
+		})
+
+		t.Run("returns ErrInvalidPublicKey for bytes that are not PKIX", func(t *testing.T) {
+			t.Parallel()
+			_, err := signecdsa.Resolve([]byte("not a PKIX key"))
+			assert.ErrorIs(t, err, signecdsa.ErrInvalidPublicKey, "malformed bytes must be refused")
+		})
+
+		t.Run("returns an error of class Invalid for bytes that are not PKIX", func(t *testing.T) {
+			t.Parallel()
+			_, err := signecdsa.Resolve([]byte("not a PKIX key"))
+			assert.Equal(t, errs.Classify(err), errs.Invalid, "ErrInvalidPublicKey must classify as Invalid")
+		})
+
+		t.Run("returns a nil Verifier for bytes that are not PKIX", func(t *testing.T) {
+			t.Parallel()
+			v, err := signecdsa.Resolve([]byte("not a PKIX key"))
+			assert.HasError(t, err, "the test must resolve bytes that are refused")
+			assert.Nil(t, v, "the Verifier must be a nil interface")
+		})
+	})
+
+	t.Run("Signer", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("implements StreamingSigner", func(t *testing.T) {
+			t.Parallel()
+			_, ok := any(mustSigner(t, cryptotest.NewECDSAP384Sample())).(sign.StreamingSigner)
+			assert.True(t, ok, "an ECDSA P-384 Signer must implement sign.StreamingSigner")
+		})
+
+		t.Run("NewSignStream", func(t *testing.T) {
+			t.Parallel()
+
+			t.Run("returns a stream whose Write reports the length of p", func(t *testing.T) {
+				t.Parallel()
+				s := mustSigner(t, cryptotest.NewECDSAP384Sample())
+				prop.Equal(t, func(p []byte) int {
+					n, _ := s.NewSignStream().Write(p)
+
+					return n
+				}, func(p []byte) int { return len(p) }, "Write must report every byte of p as written",
+					prop.Using(prop.Bytes(prop.MaxSize(256))), prop.Example([]byte("payload")))
+			})
+		})
+
+		// ECDSA draws a fresh nonce for each signature, so two signatures
+		// of one message differ and only the Verifier checks them.
+		t.Run("Sign", func(t *testing.T) {
+			t.Parallel()
+
+			t.Run("returns signatures that the Verifier accepts to goroutines that sign at once", func(t *testing.T) {
+				t.Parallel()
+				s := mustSigner(t, cryptotest.NewECDSAP384Sample())
+				outcomes := history.Concurrently(goroutines, 10*time.Second, func(client int) (any, error) {
+					msg := []byte("message " + strconv.Itoa(client))
+					sigs := make([][]byte, 0, rounds)
+					for range rounds {
+						sig, err := s.Sign(msg)
+						if err != nil {
+							return sigs, err
+						}
+						sigs = append(sigs, sig)
+					}
+
+					return sigs, nil
+				})
+				for _, o := range outcomes {
+					assert.True(t, o.Finished, "every goroutine must finish")
+					assert.NoError(t, o.Error, "Sign must sign on every goroutine")
+					sigs, _ := o.Output.([][]byte)
+					assert.Length(t, sigs, rounds, "every goroutine must return its signatures")
+					for _, sig := range sigs {
+						expect.True(t, s.Verify([]byte("message "+strconv.Itoa(o.Client)), sig),
+							"the Verifier must accept every signature")
+					}
+				}
+			})
+		})
+	})
+
+	t.Run("New", func(t *testing.T) {
+		t.Parallel()
+
+		tests := []struct {
+			name string
+			give *ecdsa.PrivateKey
+			want error
+		}{
+			{name: "returns ErrNilKey for a nil private key", give: nil, want: signecdsa.ErrNilKey},
+			{name: "returns ErrWrongCurve for a P-256 private key", give: p256Key(t), want: signecdsa.ErrWrongCurve},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				_, err := signecdsa.New(tt.give)
+				assert.ErrorIs(t, err, tt.want, "New must return the sentinel of the key")
+			})
+		}
+	})
+
+	// crypto/ecdsa.GenerateKey ignores the supplied reader and uses the
+	// secure source of the runtime unless GODEBUG=cryptocustomrand=1 is
+	// set, so the package promises no deterministic keys.
+	t.Run("Generate", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns another key pair on each call", func(t *testing.T) {
+			t.Parallel()
+			a, err := signecdsa.Generate()
+			assert.NoError(t, err, "Generate must succeed")
+			b, err := signecdsa.Generate()
+			assert.NoError(t, err, "Generate must succeed")
+			assert.NotEqual(t, a.PublicKey(), b.PublicKey(), "two calls must produce two key pairs")
+		})
+	})
+
+	// The KeyID derivation, SHA-256 of the SEC 1 uncompressed point
+	// truncated to 16 bytes, for the base point G of FIPS 186-5 and SEC 2.
+	t.Run("KeyIDFromPub", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the first 16 bytes of the SHA-256 of the SEC 1 point", func(t *testing.T) {
+			t.Parallel()
+			params := elliptic.P384().Params()
+			//nolint:staticcheck // the published coordinates of G are the fixture
+			pub := &ecdsa.PublicKey{Curve: elliptic.P384(), X: params.Gx, Y: params.Gy}
+			got, err := signecdsa.KeyIDFromPub(pub)
+			assert.NoError(t, err, "KeyIDFromPub must accept the base point")
+			assert.Equal(t, hex.EncodeToString(got[:]), "8c2eb3e0b8d6cc2a197a52c92860f7b1",
+				"the KeyID must match SHA-256(SEC 1 point)[:16]")
+		})
+
+		t.Run("returns ErrOffCurve for a point off the curve", func(t *testing.T) {
+			t.Parallel()
+			_, err := signecdsa.KeyIDFromPub(offCurve)
+			assert.ErrorIs(t, err, signecdsa.ErrOffCurve, "a point off the curve must be refused")
+		})
+	})
+}
+
+// TestECDSAP384Allocs checks the allocation ceiling of Resolve.
+// MaxAllocs counts the allocations of the whole process, so the test
+// does not run in parallel.
+//
+//nolint:paralleltest // see above
+func TestECDSAP384Allocs(t *testing.T) {
+	pub := mustSigner(t, cryptotest.NewECDSAP384Sample()).PublicKey()
+
+	t.Run("Resolve", func(t *testing.T) {
+		var v sign.Verifier
+		expect.MaxAllocs(t, func() { v, _ = signecdsa.Resolve(pub) }, resolveAllocs,
+			"Resolve must allocate only what the parse and the encoding of the key allocate")
+		assert.NotNil(t, v, "the test must measure a resolution that succeeds")
+	})
+}
+
+// BenchmarkECDSAP384Verifier runs the benchmarks of the contract suite
+// of sign.Verifier.
 func BenchmarkECDSAP384Verifier(b *testing.B) {
 	signer := mustSigner(b, cryptotest.NewECDSAP384Sample())
 	cryptotest.BenchmarkVerifierContract(b, func() sign.Verifier { return signer.Verifier })
 }
 
+// BenchmarkECDSAP384Signer runs the benchmarks of the contract suite of
+// sign.Signer.
 func BenchmarkECDSAP384Signer(b *testing.B) {
 	signer := mustSigner(b, cryptotest.NewECDSAP384Sample())
 	cryptotest.BenchmarkSignerContract(b, func() sign.Signer { return signer })
 }
 
+// BenchmarkECDSAP384SignStream runs the benchmarks of the contract suite
+// of sign.SignStream.
 func BenchmarkECDSAP384SignStream(b *testing.B) {
 	signer := mustSigner(b, cryptotest.NewECDSAP384Sample())
 	cryptotest.BenchmarkSignStreamContract(b,
@@ -144,6 +449,8 @@ func BenchmarkECDSAP384SignStream(b *testing.B) {
 	)
 }
 
+// BenchmarkECDSAP384VerifyStream runs the benchmarks of the contract
+// suite of sign.VerifyStream.
 func BenchmarkECDSAP384VerifyStream(b *testing.B) {
 	signer := mustSigner(b, cryptotest.NewECDSAP384Sample())
 	cryptotest.BenchmarkVerifyStreamContract(b,
@@ -151,251 +458,74 @@ func BenchmarkECDSAP384VerifyStream(b *testing.B) {
 	)
 }
 
-// sinkVerifier receives the Verifiers of BenchmarkResolve, so that the
-// compiler keeps every call that it measures.
-var sinkVerifier sign.Verifier
+// BenchmarkECDSAP384 reports the cost of Resolve, and fails when it
+// allocates more than TestECDSAP384Allocs allows.
+func BenchmarkECDSAP384(b *testing.B) {
+	b.Run("Resolve", func(b *testing.B) {
+		pub := mustSigner(b, cryptotest.NewECDSAP384Sample()).PublicKey()
+		var v sign.Verifier
 
-func BenchmarkResolve(b *testing.B) {
-	pub := mustSigner(b, cryptotest.NewECDSAP384Sample()).PublicKey()
+		c := bench.Start(b).MaxAllocs(resolveAllocs)
+		defer c.End()
 
-	// crypto/x509 parses the key and crypto/ecdsa encodes its point for
-	// the KeyID, and Resolve allocates its copy of the encoding and the
-	// Verifier.
-	if allocs := testing.AllocsPerRun(100, func() { sinkVerifier, _ = signecdsa.Resolve(pub) }); allocs != 22 {
-		b.Fatalf("Resolve allocates %v times per call, want 22", allocs)
+		for c.Loop() {
+			v, _ = signecdsa.Resolve(pub)
+		}
+
+		assert.NotNil(b, v, "the benchmark must measure a resolution that succeeds")
+	})
+}
+
+// stdlibSign returns a function that signs msg with the ECDSA P-384 and
+// SHA-384 of the standard library under priv. The cross-stdlib
+// assertions use it as the reference. A signing error fails tb.
+func stdlibSign(tb testing.TB, priv *ecdsa.PrivateKey) func([]byte) []byte {
+	tb.Helper()
+
+	return func(msg []byte) []byte {
+		digest := sha512.Sum384(msg)
+		sig, err := ecdsa.SignASN1(stdrand.Reader, priv, digest[:])
+		assert.NoError(tb, err, "ecdsa.SignASN1 must sign")
+
+		return sig
 	}
+}
 
-	b.ReportAllocs()
-	for b.Loop() {
-		sinkVerifier, _ = signecdsa.Resolve(pub)
+// stdlibVerify reports whether sig is a valid ECDSA P-384 and SHA-384
+// signature over msg under the PKIX-encoded pub, verified by the
+// standard library.
+func stdlibVerify(pub, msg, sig []byte) bool {
+	parsed, err := x509.ParsePKIXPublicKey(pub)
+	if err != nil {
+		return false
 	}
+	pk, ok := parsed.(*ecdsa.PublicKey)
+	if !ok {
+		return false
+	}
+	digest := sha512.Sum384(msg)
+
+	return ecdsa.VerifyASN1(pk, digest[:], sig)
 }
 
-// --- impl-specific tests ---
+// mustSigner wraps the private key of fix in a Signer. It fails tb when
+// New refuses the key.
+func mustSigner(tb testing.TB, fix cryptotest.ECDSAP384Fixture) *signecdsa.Signer {
+	tb.Helper()
 
-// TestStreamingImplemented checks that ECDSA P-384, a hash-then-sign
-// algorithm, implements [sign.StreamingSigner] and
-// [sign.StreamingVerifier].
-func TestStreamingImplemented(t *testing.T) {
-	t.Parallel()
+	s, err := signecdsa.New(fix.StdlibPriv)
+	assert.NoError(tb, err, "New must accept the private key of the fixture")
 
-	t.Run("Signer implements sign.StreamingSigner", func(t *testing.T) {
-		t.Parallel()
-		_, ok := any(mustSigner(t, cryptotest.NewECDSAP384Sample())).(sign.StreamingSigner)
-		testkit.True(t, ok, "ECDSA P-384 Signer must implement sign.StreamingSigner")
-	})
-
-	t.Run("Verifier implements sign.StreamingVerifier", func(t *testing.T) {
-		t.Parallel()
-		_, ok := any(mustSigner(t, cryptotest.NewECDSAP384Sample()).Verifier).(sign.StreamingVerifier)
-		testkit.True(t, ok, "ECDSA P-384 Verifier must implement sign.StreamingVerifier")
-	})
+	return s
 }
 
-// TestNewVerifier covers the constructor's refusals. The point X=1,
-// Y=2 names P-384 as its curve but is not on it, so KeyIDFromPub
-// refuses it through [ecdsa.PublicKey.Bytes].
-func TestNewVerifier(t *testing.T) {
-	t.Parallel()
+// p256Key returns the P-256 private key whose scalar is 32 bytes of
+// 0x01. It fails tb when ParseRawPrivateKey refuses the scalar.
+func p256Key(tb testing.TB) *ecdsa.PrivateKey {
+	tb.Helper()
 
-	t.Run("returns ErrNilKey for a nil public key", func(t *testing.T) {
-		t.Parallel()
-		_, err := signecdsa.NewVerifier(nil)
-		testkit.ErrorIs(t, err, signecdsa.ErrNilKey, "nil pub must return ErrNilKey")
-		testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrNilKey must classify as Invalid")
-	})
+	priv, err := ecdsa.ParseRawPrivateKey(elliptic.P256(), bytes.Repeat([]byte{0x01}, 32))
+	assert.NoError(tb, err, "ParseRawPrivateKey must accept the scalar")
 
-	t.Run("returns ErrWrongCurve for a P-256 public key", func(t *testing.T) {
-		t.Parallel()
-		priv, err := ecdsa.GenerateKey(elliptic.P256(), randReader{r: seeded.New(rand.Seed(1))})
-		testkit.NoError(t, err, "GenerateKey(P-256)")
-		_, verr := signecdsa.NewVerifier(&priv.PublicKey)
-		testkit.ErrorIs(t, verr, signecdsa.ErrWrongCurve, "P-256 pub must return ErrWrongCurve")
-		testkit.Equal(t, errs.Classify(verr), errs.Invalid, "ErrWrongCurve must classify as Invalid")
-	})
-
-	t.Run("returns ErrOffCurve for a point off the curve", func(t *testing.T) {
-		t.Parallel()
-		//nolint:staticcheck // raw coordinates are deprecated because they
-		// can build an invalid key. An invalid key is the subject here.
-		pub := &ecdsa.PublicKey{
-			Curve: elliptic.P384(),
-			X:     big.NewInt(1),
-			Y:     big.NewInt(2),
-		}
-		_, err := signecdsa.NewVerifier(pub)
-		testkit.ErrorIs(t, err, signecdsa.ErrOffCurve, "off-curve point must return ErrOffCurve")
-		testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrOffCurve must classify as Invalid")
-	})
-}
-
-func TestNewVerifierFromPKIX(t *testing.T) {
-	t.Parallel()
-
-	t.Run("round-trips PublicKey() bytes", func(t *testing.T) {
-		t.Parallel()
-		fix := cryptotest.NewECDSAP384Sample()
-		v, err := signecdsa.NewVerifierFromPKIX(fix.PublicKey)
-		testkit.NoError(t, err, "NewVerifierFromPKIX")
-		testkit.Equal(t, v.PublicKey(), fix.PublicKey, "PublicKey round-trip must preserve bytes")
-		testkit.Equal(t, v.KeyID(), fix.KeyID, "KeyID round-trip must preserve identity")
-	})
-
-	t.Run("returns ErrInvalidPublicKey for malformed bytes", func(t *testing.T) {
-		t.Parallel()
-		cases := [][]byte{nil, {}, {0x00}, []byte("not asn.1 der at all")}
-		for _, c := range cases {
-			_, err := signecdsa.NewVerifierFromPKIX(c)
-			testkit.ErrorIs(t, err, signecdsa.ErrInvalidPublicKey,
-				fmt.Sprintf("len %d malformed bytes must return ErrInvalidPublicKey", len(c)))
-		}
-	})
-
-	t.Run("returns ErrInvalidPublicKey for the PKIX of an Ed25519 key", func(t *testing.T) {
-		t.Parallel()
-		pubBytes := buildEd25519PKIX(t)
-		_, verr := signecdsa.NewVerifierFromPKIX(pubBytes)
-		testkit.ErrorIs(t, verr, signecdsa.ErrInvalidPublicKey,
-			"Ed25519 PKIX must return ErrInvalidPublicKey")
-	})
-
-	t.Run("returns ErrWrongCurve for the PKIX of a P-256 key", func(t *testing.T) {
-		t.Parallel()
-		priv, err := ecdsa.GenerateKey(elliptic.P256(), randReader{r: seeded.New(rand.Seed(1))})
-		testkit.NoError(t, err, "GenerateKey(P-256)")
-		pkix, err := x509.MarshalPKIXPublicKey(&priv.PublicKey)
-		testkit.NoError(t, err, "MarshalPKIX")
-		_, verr := signecdsa.NewVerifierFromPKIX(pkix)
-		testkit.ErrorIs(t, verr, signecdsa.ErrWrongCurve,
-			"P-256 PKIX must return ErrWrongCurve")
-	})
-
-	t.Run("copies the source buffer", func(t *testing.T) {
-		t.Parallel()
-		fix := cryptotest.NewECDSAP384Sample()
-		src := append([]byte(nil), fix.PublicKey...)
-		v, err := signecdsa.NewVerifierFromPKIX(src)
-		testkit.NoError(t, err, "NewVerifierFromPKIX")
-		want := append([]byte(nil), src...)
-		clear(src)
-		testkit.Equal(t, v.PublicKey(), want,
-			"zeroing the caller's buffer must not change the Verifier's key")
-	})
-}
-
-func TestResolve(t *testing.T) {
-	t.Parallel()
-
-	t.Run("returns a Verifier for the PKIX public key", func(t *testing.T) {
-		t.Parallel()
-		fix := cryptotest.NewECDSAP384Sample()
-		v, err := signecdsa.Resolve(fix.PublicKey)
-		testkit.NoError(t, err, "Resolve must accept a PKIX P-384 key")
-		testkit.Equal(t, v.KeyID(), fix.KeyID, "the Verifier must have the key's KeyID")
-		testkit.True(t, v.Verify(fix.Message, fix.Signature), "the Verifier must accept the key's signature")
-	})
-
-	t.Run("returns a nil Verifier with ErrInvalidPublicKey", func(t *testing.T) {
-		t.Parallel()
-		v, err := signecdsa.Resolve([]byte("not a PKIX key"))
-		testkit.ErrorIs(t, err, signecdsa.ErrInvalidPublicKey, "malformed bytes must be refused")
-		testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrInvalidPublicKey must classify as Invalid")
-		testkit.True(t, v == nil, "the Verifier must be a nil interface")
-	})
-}
-
-func TestNew(t *testing.T) {
-	t.Parallel()
-
-	t.Run("returns ErrNilKey for a nil private key", func(t *testing.T) {
-		t.Parallel()
-		_, err := signecdsa.New(nil)
-		testkit.ErrorIs(t, err, signecdsa.ErrNilKey, "nil priv must return ErrNilKey")
-	})
-
-	t.Run("returns ErrWrongCurve for a P-256 private key", func(t *testing.T) {
-		t.Parallel()
-		priv, err := ecdsa.GenerateKey(elliptic.P256(), randReader{r: seeded.New(rand.Seed(1))})
-		testkit.NoError(t, err, "GenerateKey(P-256)")
-		_, nerr := signecdsa.New(priv)
-		testkit.ErrorIs(t, nerr, signecdsa.ErrWrongCurve,
-			"P-256 priv must return ErrWrongCurve")
-	})
-}
-
-// TestGenerate covers key generation. [crypto/ecdsa.GenerateKey]
-// ignores the supplied reader and uses the runtime's secure RNG unless
-// `GODEBUG=cryptocustomrand=1` is set, so the seam does not promise
-// deterministic ECDSA P-384 keys and no test asserts them.
-func TestGenerate(t *testing.T) {
-	t.Parallel()
-
-	t.Run("returns a different keypair on each call", func(t *testing.T) {
-		t.Parallel()
-		a, err := signecdsa.Generate()
-		testkit.NoError(t, err, "Generate (a)")
-		b, err := signecdsa.Generate()
-		testkit.NoError(t, err, "Generate (b)")
-		testkit.NotEqual(t, a.PublicKey(), b.PublicKey(),
-			"successive Generate calls must produce distinct keypairs")
-	})
-}
-
-// TestKeyIDStability pins the KeyID derivation, SHA-256 of the SEC 1
-// uncompressed point truncated to 16 bytes, for the P-384 base point
-// G of FIPS 186-5 and SEC 2. G is on the curve, so
-// [crypto/ecdsa.PublicKey.Bytes] accepts it.
-func TestKeyIDStability(t *testing.T) {
-	t.Parallel()
-
-	t.Run("matches SEC 1 + SHA-256[:16] for the base point", func(t *testing.T) {
-		t.Parallel()
-		params := elliptic.P384().Params()
-		//nolint:staticcheck // the published coordinates of G are the
-		// fixture; parsing an encoding of them would test the parser.
-		pub := &ecdsa.PublicKey{
-			Curve: elliptic.P384(),
-			X:     params.Gx,
-			Y:     params.Gy,
-		}
-		const wantHex = "8c2eb3e0b8d6cc2a197a52c92860f7b1"
-		got, err := signecdsa.KeyIDFromPub(pub)
-		testkit.NoError(t, err, "KeyIDFromPub(G)")
-		testkit.Equal(t, hex.EncodeToString(got[:]), wantHex,
-			"KeyID encoding must match SEC 1 + SHA-256[:16]")
-	})
-
-	t.Run("returns ErrOffCurve for a point off the curve", func(t *testing.T) {
-		t.Parallel()
-		//nolint:staticcheck // raw coordinates are deprecated because they
-		// can build an invalid key. An invalid key is the subject here.
-		pub := &ecdsa.PublicKey{
-			Curve: elliptic.P384(),
-			X:     big.NewInt(1),
-			Y:     big.NewInt(2),
-		}
-		_, err := signecdsa.KeyIDFromPub(pub)
-		testkit.ErrorIs(t, err, signecdsa.ErrOffCurve, "off-curve point must return ErrOffCurve")
-	})
-}
-
-// --- helpers ---
-
-type randReader struct{ r rand.Rand }
-
-func (rr randReader) Read(p []byte) (int, error) { return rr.r.Read(p) }
-
-// Compile-time assertion that randReader is an [io.Reader], as
-// stdlib functions such as ecdsa.GenerateKey require.
-var _ io.Reader = randReader{}
-
-// buildEd25519PKIX returns the PKIX encoding of a fresh Ed25519
-// public key, which NewVerifierFromPKIX must refuse.
-func buildEd25519PKIX(t *testing.T) []byte {
-	t.Helper()
-	pub, _, err := stded25519.GenerateKey(randReader{r: seeded.New(rand.Seed(1))})
-	testkit.NoError(t, err, "ed25519 GenerateKey")
-	out, err := x509.MarshalPKIXPublicKey(pub)
-	testkit.NoError(t, err, "MarshalPKIX")
-	return out
+	return priv
 }
