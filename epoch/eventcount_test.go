@@ -81,7 +81,7 @@ func TestEventCount(t *testing.T) {
 		var c epoch.EventCount
 		// A Wait with an ended context takes the wake-up channel
 		// without blocking, as a waiter that Fail releases does.
-		assert.ErrorIs(t, c.Wait(endedContext(t), 1), context.Canceled,
+		assert.HonoursCancellation(t, func(ctx context.Context) error { return c.Wait(ctx, 1) },
 			"an unmet target must return the context's error")
 		c.Fail(errEngine)
 		c.Advance(4)
@@ -121,7 +121,7 @@ func TestEventCount(t *testing.T) {
 			synctest.Wait()
 			c.Advance(2)
 			synctest.Wait()
-			assert.Length(t, done, 0, "Wait(3) must block at a count of 2")
+			assert.Empty(t, done, "Wait(3) must block at a count of 2")
 			c.Advance(3)
 			assert.NoError(t, <-done, "the waiter must return nil once the count meets its target")
 		})
@@ -245,10 +245,10 @@ func TestEventCount(t *testing.T) {
 		var c epoch.EventCount
 		// A Wait with an ended context takes the wake-up channel
 		// without blocking, so Fail(nil) finds a channel to keep.
-		assert.ErrorIs(t, c.Wait(endedContext(t), 1), context.Canceled,
+		assert.HonoursCancellation(t, func(ctx context.Context) error { return c.Wait(ctx, 1) },
 			"an unmet target must return the context's error")
 		c.Fail(nil)
-		assert.ErrorIs(t, c.Wait(endedContext(t), 1), context.Canceled,
+		assert.HonoursCancellation(t, func(ctx context.Context) error { return c.Wait(ctx, 1) },
 			"Fail(nil) must leave the count unfailed")
 		c.Advance(1)
 		assert.NoError(t, c.Wait(endedContext(t), 1), "Advance must wake the waiters after Fail(nil)")
