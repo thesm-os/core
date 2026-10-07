@@ -6,6 +6,7 @@ package sign_test
 import (
 	"bytes"
 	"errors"
+	"maps"
 	"runtime"
 	"slices"
 	"sync/atomic"
@@ -101,25 +102,72 @@ func (k *key) forged() sign.Signature {
 
 // shape is a test-side policy tree, which the reference evaluator
 // walks without stopping early. A shape with keys is a key set, and a
-// shape without keys is a threshold over its children.
+// shape without keys is a threshold over its children. A shape whose
+// party is true is a rule that AsParty marks.
 type shape struct {
 	keys      []*key
 	children  []shape
 	threshold int
+	party     bool
 }
 
 // rule returns s as a sign.Rule.
 func (s shape) rule() sign.Rule {
-	if len(s.keys) > 0 {
-		return allOf("set", s.keys...)
+	r := allOf("set", s.keys...)
+	if len(s.keys) == 0 {
+		rules := make([]sign.Rule, len(s.children))
+		for i, c := range s.children {
+			rules[i] = c.rule()
+		}
+
+		r = sign.AtLeast("group", s.threshold, rules...)
 	}
 
-	rules := make([]sign.Rule, len(s.children))
+	if s.party {
+		return r.AsParty()
+	}
+
+	return r
+}
+
+// unmarked returns s without the marks of its parties.
+func (s shape) unmarked() shape {
+	children := make([]shape, len(s.children))
 	for i, c := range s.children {
-		rules[i] = c.rule()
+		children[i] = c.unmarked()
 	}
 
-	return sign.AtLeast("group", s.threshold, rules...)
+	return shape{keys: s.keys, children: children, threshold: s.threshold}
+}
+
+// parties returns the parties of the root s: its marked shapes, or in a
+// tree without a marked shape the children of s, or s itself when it is
+// a key set.
+func (s shape) parties() []shape {
+	if marked := s.marked(); len(marked) > 0 {
+		return marked
+	}
+
+	if len(s.keys) > 0 {
+		return []shape{s}
+	}
+
+	return s.children
+}
+
+// marked returns the marked shapes of s in depth-first order, without
+// the shapes inside a marked shape.
+func (s shape) marked() []shape {
+	if s.party {
+		return []shape{s}
+	}
+
+	var marked []shape
+	for _, c := range s.children {
+		marked = append(marked, c.marked()...)
+	}
+
+	return marked
 }
 
 // all returns every key of s in depth-first order.
@@ -157,23 +205,27 @@ func (s shape) counts(valid map[*key]bool) bool {
 
 // satisfied reports whether the root s counts when the keys in valid
 // have a counting signature and the parties that contain a key in out
-// are excluded. The parties are the children of s, or s itself when it
-// is a key set.
+// are excluded. The keys of an excluded party count as keys without a
+// signature.
 func (s shape) satisfied(valid, out map[*key]bool) bool {
-	parties, threshold := s.children, s.threshold
-	if len(s.keys) > 0 {
-		parties, threshold = []shape{s}, 1
-	}
-
-	n := 0
-	for _, party := range parties {
-		excludedKey := slices.ContainsFunc(party.all(), func(k *key) bool { return out[k] })
-		if !excludedKey && party.counts(valid) {
-			n++
+	counting := maps.Clone(valid)
+	for _, party := range s.parties() {
+		keys := party.all()
+		if slices.ContainsFunc(keys, func(k *key) bool { return out[k] }) {
+			for _, k := range keys {
+				delete(counting, k)
+			}
 		}
 	}
 
-	return n >= threshold
+	return s.counts(counting)
+}
+
+// staff are the keys of the approval policy: five administrators, of
+// whom Bob signs with a laptop key or with a token, and three security
+// officers.
+type staff struct {
+	ada, bobLaptop, bobToken, carol, dan, eve, fay, gus, hal *key
 }
 
 func TestPolicy(t *testing.T) {
@@ -214,6 +266,27 @@ func TestPolicy(t *testing.T) {
 			children[0] = r
 			assert.NoError(t, mustTree(t, r).Check(message, signedBy(a)),
 				"storing a rule in the slice it was built from must not make it its own child")
+		})
+	})
+
+	t.Run("AsParty", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns a rule that counts as the rule that it copies", func(t *testing.T) {
+			t.Parallel()
+			a, b := newKey(1), newKey(2)
+			assert.NoError(t, mustTree(t, allOf("w", a, b).AsParty()).Check(message, signedBy(a, b)),
+				"a marked key set must count when every key signs")
+		})
+
+		t.Run("leaves the rule that it copies unmarked", func(t *testing.T) {
+			t.Parallel()
+			a, b, c := newKey(1), newKey(2), newKey(3)
+			r := allOf("a", a)
+			_ = r.AsParty()
+			p := mustTree(t, sign.AtLeast("r", 2, r, allOf("b", b), allOf("c", c)))
+			assert.NoError(t, p.Check(message, signedBy(a, c), b.id),
+				"the rule must keep the parties of a tree without marks")
 		})
 	})
 
@@ -483,8 +556,10 @@ func TestPolicy(t *testing.T) {
 	t.Run("NewPolicyTree", func(t *testing.T) {
 		t.Parallel()
 
-		a := newKey(1)
+		a, b := newKey(1), newKey(2)
 		alias := &key{pub: a.pub, alg: a.alg, id: sign.KeyID{0xFF}}
+		// mid is an unmarked rule with a party inside it.
+		mid := sign.AtLeast("mid", 1, allOf("y", b).AsParty())
 
 		// Each give is a rule whose rule at path is invalid for reason.
 		tests := []struct {
@@ -541,6 +616,24 @@ func TestPolicy(t *testing.T) {
 				path:   "bad/y",
 				reason: "key " + alias.id.String() + " repeats another key's public key",
 			},
+			{
+				name:   "a party inside another party",
+				give:   sign.AtLeast("bad", 1, allOf("x", a), mid).AsParty(),
+				path:   "bad/mid/y",
+				reason: "a party inside another party",
+			},
+			{
+				name:   "a key set outside every party before the first party",
+				give:   sign.AtLeast("bad", 2, allOf("x", a), allOf("y", b).AsParty()),
+				path:   "bad/x",
+				reason: "a key set outside every party",
+			},
+			{
+				name:   "a key set outside every party after the first party",
+				give:   sign.AtLeast("bad", 2, allOf("x", a).AsParty(), allOf("y", b)),
+				path:   "bad/y",
+				reason: "a key set outside every party",
+			},
 		}
 		for _, tt := range tests {
 			t.Run("returns ErrPolicy for "+tt.name+" at the root", func(t *testing.T) {
@@ -565,6 +658,14 @@ func TestPolicy(t *testing.T) {
 			t.Parallel()
 			_, err := sign.NewPolicyTree(sign.Rule{})
 			assert.Equal(t, errs.Classify(err), errs.Invalid, "ErrPolicy must classify as Invalid")
+		})
+
+		t.Run("returns ErrPolicy for a key set outside every party before a repeated key", func(t *testing.T) {
+			t.Parallel()
+			_, err := sign.NewPolicyTree(sign.AtLeast("bad", 1, allOf("x", a).AsParty(), allOf("y", a)))
+			assert.ErrorIs(t, err, sign.ErrPolicy, "a tree with two faults must be refused")
+			assert.Contains(t, err.Error(), `rule "bad/y": a key set outside every party`,
+				"the fault of the parties must come before the repeated key")
 		})
 
 		t.Run("returns a Policy for a chain of 64 rules", func(t *testing.T) {
@@ -791,7 +892,7 @@ func TestPolicy(t *testing.T) {
 			err := p.Check(message, []sign.Signature{a.forged(), b.signed(), c.signed()})
 			assert.ErrorIs(t, err, sign.ErrThreshold, "a forged signature must fail a unanimous policy")
 			expect.Equal(t, calls(a, b, c), int32(1), "Check must stop once three parties are out of reach")
-			expect.Contains(t, err.Error(), "at most 2 of 3 required parties",
+			expect.Contains(t, err.Error(), "at most 2 of 3 required rules",
 				"the error must count the parties that Check did not reach")
 		})
 
@@ -809,7 +910,7 @@ func TestPolicy(t *testing.T) {
 			err := mustPolicy(t, 3, solo(a, b, c)...).Check(message, signedBy(a, b))
 			assert.ErrorIs(t, err, sign.ErrThreshold, "two of three parties must fail a unanimous policy")
 			expect.Equal(t, calls(a, b, c), int32(0), "a threshold out of reach must cost no verification")
-			expect.Contains(t, err.Error(), "at most 2 of 3 required parties",
+			expect.Contains(t, err.Error(), "at most 2 of 3 required rules",
 				"the error must count the parties that signed")
 		})
 
@@ -818,7 +919,7 @@ func TestPolicy(t *testing.T) {
 			a, b, c := newKey(1), newKey(2), newKey(3)
 			err := mustPolicy(t, 2, solo(a, b, c)...).Check(message, signedBy(a, b), a.id)
 			assert.ErrorIs(t, err, sign.ErrThreshold, "the own signature of the requester must not count")
-			assert.Contains(t, err.Error(), "at most 1 of 2 required parties",
+			assert.Contains(t, err.Error(), "at most 1 of 2 required rules",
 				"the error must not count the excluded party")
 		})
 
@@ -861,7 +962,7 @@ func TestPolicy(t *testing.T) {
 			a, b := newKey(1), newKey(2)
 			err := mustPolicy(t, 2, solo(a, b)...).Check(message, signedBy(a))
 			assert.ErrorIs(t, err, sign.ErrThreshold, "one of two must not satisfy a threshold of two")
-			assert.Contains(t, err.Error(), "at most 1 of 2 required parties",
+			assert.Contains(t, err.Error(), "at most 1 of 2 required rules",
 				"the error must state the most parties that could count")
 		})
 
@@ -905,7 +1006,7 @@ func TestPolicy(t *testing.T) {
 			err := mustTree(t, allOf("w", a, b)).Check(message, signedBy(a, b), b.id)
 			assert.ErrorIs(t, err, sign.ErrThreshold, "an excluded key must remove the root that is its party")
 			expect.Equal(t, calls(a, b), int32(0), "an excluded root must cost no verification")
-			expect.Contains(t, err.Error(), "at most 0 of 1 required parties", "the root must be the only party")
+			expect.Contains(t, err.Error(), "at most 0 of 1 required rules", "the root must be the only party")
 		})
 
 		t.Run("returns ErrThreshold for an AllOf root with a forged signature", func(t *testing.T) {
@@ -942,7 +1043,7 @@ func TestPolicy(t *testing.T) {
 			t.Parallel()
 			err := witnesses.Check(message, signedBy(y1, y2, y3, x2))
 			assert.ErrorIs(t, err, sign.ErrThreshold, "one X witness must not satisfy the X group")
-			assert.Contains(t, err.Error(), "at most 1 of 2 required parties",
+			assert.Contains(t, err.Error(), "at most 1 of 2 required rules",
 				"the error must count the groups at the root")
 		})
 
@@ -975,7 +1076,7 @@ func TestPolicy(t *testing.T) {
 				"Check must verify one key of each witness of the first")
 			expect.Equal(t, calls(append(orgKeys(keys, 1), orgKeys(keys, 2)...)...), int32(0),
 				"Check must stop once the other organisations cannot make three")
-			expect.Contains(t, err.Error(), "at most 2 of 3 required parties",
+			expect.Contains(t, err.Error(), "at most 2 of 3 required rules",
 				"the error must count the organisations that Check did not rule out")
 		})
 
@@ -1010,31 +1111,76 @@ func TestPolicy(t *testing.T) {
 				"excluding Carol must not remove Alice")
 		})
 
+		approval, _, people := approvalTree()
+		approvals := mustTree(t, approval)
+
+		t.Run("counts the other members of the group of an excluded party", func(t *testing.T) {
+			t.Parallel()
+			err := approvals.Check(message, signedBy(people.bobLaptop, people.carol, people.fay), people.ada.id)
+			assert.NoError(t, err, "Bob, Carol and Fay must approve the request of Ada")
+		})
+
+		t.Run("does not count the signature of an excluded party inside a group", func(t *testing.T) {
+			t.Parallel()
+			err := approvals.Check(message, signedBy(people.ada, people.bobLaptop, people.fay), people.ada.id)
+			assert.ErrorIs(t, err, sign.ErrThreshold, "Ada must not approve her own request")
+			expect.Contains(t, err.Error(), "at most 1 of 2 required rules",
+				"the error must count the groups at the root")
+		})
+
+		t.Run("does not count the other key set of an excluded party inside a group", func(t *testing.T) {
+			t.Parallel()
+			sigs := signedBy(people.bobToken, people.carol, people.fay)
+			assert.ErrorIs(t, approvals.Check(message, sigs, people.bobLaptop.id), sign.ErrThreshold,
+				"Bob must not approve his own request with his token")
+		})
+
+		t.Run("does not count a marked root with an excluded key", func(t *testing.T) {
+			t.Parallel()
+			a, b, c := newKey(1), newKey(2), newKey(3)
+			p := mustTree(t, sign.AtLeast("approvers", 2, allOf("a", a), allOf("b", b), allOf("c", c)).AsParty())
+			err := p.Check(message, signedBy(a, b, c), c.id)
+			assert.ErrorIs(t, err, sign.ErrThreshold, "an excluded key must remove the marked root")
+			expect.Equal(t, calls(a, b, c), int32(0), "a removed root must cost no verification")
+		})
+
+		t.Run("checks a tree with parties as the tree without its marks for no excluded key", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "a mark must change no check without an exclusion", func(c *prop.Case) {
+				next := byte(0)
+				s := drawShape(c, &next, 3, true)
+				keys := s.all()
+				sigs := drawSignatures(c, keys)
+
+				marked := mustTree(c, s.rule()).Check(message, sigs)
+				markedCalls := make([]int32, len(keys))
+				for i, k := range keys {
+					markedCalls[i] = k.calls.Swap(0)
+				}
+
+				plain := mustTree(c, s.unmarked().rule()).Check(message, sigs)
+				plainCalls := make([]int32, len(keys))
+				for i, k := range keys {
+					plainCalls[i] = k.calls.Load()
+				}
+
+				assert.Equal(c, marked, plain, "a mark must not change the result")
+				assert.Equal(c, markedCalls, plainCalls, "a mark must not change the verifications")
+			})
+		})
+
 		t.Run("returns what a reference evaluator returns for generated trees", func(t *testing.T) {
 			t.Parallel()
 			prop.ForAll(t, "Check must return what the reference evaluator returns", func(c *prop.Case) {
 				next := byte(0)
-				s := drawShape(c, &next, 3)
+				s := drawShape(c, &next, 3, c.Draw(prop.Boolean(), "parties"))
 				keys := s.all()
 				byID := make(map[sign.KeyID]*key, len(keys))
 				for _, k := range keys {
 					byID[k.id] = k
 				}
 
-				var sigs []sign.Signature
-				for _, k := range keys {
-					choice := c.Draw(prop.Integer(0, 3), "signatures of a key")
-					if choice == 1 {
-						sigs = append(sigs, k.signed())
-					}
-					if choice >= 2 {
-						sigs = append(sigs, k.forged())
-					}
-					if choice == 3 {
-						sigs = append(sigs, k.signed())
-					}
-				}
-				sigs = c.Draw(prop.Permutation(sigs...), "order of the signatures")
+				sigs := drawSignatures(c, keys)
 
 				valid := map[*key]bool{}
 				seen := map[*key]bool{}
@@ -1078,6 +1224,9 @@ func TestPolicyAllocs(t *testing.T) {
 	example, rebuild, satisfying := exampleTree()
 	wide := allOf("all", keys...)
 	parties := solo(keys[:5]...)
+	approval, rebuildApproval, people := approvalTree()
+	approvals := mustTree(t, approval)
+	peopleSigs := signedBy(people.bobLaptop, people.carol, people.fay)
 
 	t.Run("Check", func(t *testing.T) {
 		t.Run("allocates nothing for 64 keys", func(t *testing.T) {
@@ -1090,6 +1239,13 @@ func TestPolicyAllocs(t *testing.T) {
 			var err error
 			expect.MaxAllocs(t, func() { err = allButOne.Check(message, sigs, keys[0].id) }, 0,
 				"Check with an exclusion must not allocate")
+			assert.NoError(t, err, "the test must measure a check that succeeds")
+		})
+
+		t.Run("allocates nothing for a tree with parties and an exclusion", func(t *testing.T) {
+			var err error
+			expect.MaxAllocs(t, func() { err = approvals.Check(message, peopleSigs, people.ada.id) }, 0,
+				"Check of a tree with parties must not allocate")
 			assert.NoError(t, err, "the test must measure a check that succeeds")
 		})
 	})
@@ -1157,10 +1313,20 @@ func TestPolicyAllocs(t *testing.T) {
 			assert.NoError(t, mustTree(t, r).Check(message, signedBy(satisfying...)),
 				"the test must measure a tree that counts")
 		})
+
+		t.Run("rebuilds a tree with parties in their own memory without allocating", func(t *testing.T) {
+			var rules sign.Rules
+			var r sign.Rule
+			rebuildApproval(&rules)
+			expect.MaxAllocs(t, func() { r = rebuildApproval(&rules) }, 0,
+				"Rules must rebuild a tree with parties in their own memory")
+			assert.NoError(t, mustTree(t, r).Check(message, peopleSigs, people.ada.id),
+				"the test must measure a tree that counts")
+		})
 	})
 }
 
-// BenchmarkPolicy reports the cost of Check for five policies, of the
+// BenchmarkPolicy reports the cost of Check for six policies, of the
 // construction of a policy in new memory, and of Reset and Rules in the
 // memory of the last construction, and fails when one of them allocates
 // more than TestPolicyAllocs allows. The policies of Check are:
@@ -1172,7 +1338,9 @@ func TestPolicyAllocs(t *testing.T) {
 //   - 3 of 4 organisations, each with two witnesses of two test-double
 //     keys, which Check satisfies with the first witness of three;
 //   - 64 test-double keys in 128 rules, the largest policy whose
-//     bookkeeping fits on the stack.
+//     bookkeeping fits on the stack;
+//   - 2 of 5 administrators and 1 of 3 security officers of test-double
+//     keys, each person a party, with the key of the requester excluded.
 func BenchmarkPolicy(b *testing.B) {
 	approvers := make([]sign.Party, 5)
 	approvals := make([]sign.Signature, 0, 5)
@@ -1203,11 +1371,15 @@ func BenchmarkPolicy(b *testing.B) {
 	}
 	deep[len(deep)-1] = allOf("k", doubles[len(doubles)-1])
 
+	approval, rebuildApproval, people := approvalTree()
+	peopleSigs := signedBy(people.bobLaptop, people.carol, people.fay)
+
 	b.Run("Check", func(b *testing.B) {
 		for _, tt := range []struct {
-			name   string
-			policy sign.Policy
-			sigs   []sign.Signature
+			name    string
+			policy  sign.Policy
+			sigs    []sign.Signature
+			exclude []sign.KeyID
 		}{
 			{name: "of 3 of 5 Ed25519", policy: mustPolicy(b, 3, approvers...), sigs: approvals},
 			{
@@ -1230,6 +1402,12 @@ func BenchmarkPolicy(b *testing.B) {
 				policy: mustTree(b, sign.AtLeast("root", len(deep), deep...)),
 				sigs:   signedBy(doubles...),
 			},
+			{
+				name:    "of a tree with parties and an exclusion",
+				policy:  mustTree(b, approval),
+				sigs:    peopleSigs,
+				exclude: []sign.KeyID{people.ada.id},
+			},
 		} {
 			b.Run(tt.name, func(b *testing.B) {
 				var err error
@@ -1238,7 +1416,7 @@ func BenchmarkPolicy(b *testing.B) {
 				defer c.End()
 
 				for c.Loop() {
-					err = tt.policy.Check(message, tt.sigs)
+					err = tt.policy.Check(message, tt.sigs, tt.exclude...)
 				}
 
 				assert.NoError(b, err, "the benchmark must measure a check that succeeds")
@@ -1327,6 +1505,21 @@ func BenchmarkPolicy(b *testing.B) {
 			}
 
 			assert.NoError(b, mustTree(b, r).Check(message, signedBy(satisfying...)),
+				"the benchmark must measure a tree that counts")
+		})
+
+		b.Run("of a tree with parties", func(b *testing.B) {
+			var rules sign.Rules
+			r := rebuildApproval(&rules)
+
+			c := bench.Start(b).MaxAllocs(0)
+			defer c.End()
+
+			for c.Loop() {
+				r = rebuildApproval(&rules)
+			}
+
+			assert.NoError(b, mustTree(b, r).Check(message, peopleSigs, people.ada.id),
 				"the benchmark must measure a tree that counts")
 		})
 	})
@@ -1464,10 +1657,44 @@ func exampleTree() (sign.Rule, func(*sign.Rules) sign.Rule, []*key) {
 	return example, rebuild, []*key{x1, x2, y1}
 }
 
+// approvalTree returns the approval policy of 2 of 5 administrators and 1
+// of 3 security officers, in which each person is a party, and the keys of
+// the people. It also returns a function that builds the same tree with
+// the Rules that it receives after their Reset.
+func approvalTree() (sign.Rule, func(*sign.Rules) sign.Rule, staff) {
+	s := staff{
+		ada: newKey(21), bobLaptop: newKey(22), bobToken: newKey(23), carol: newKey(24), dan: newKey(25),
+		eve: newKey(26), fay: newKey(27), gus: newKey(28), hal: newKey(29),
+	}
+	rebuild := func(rules *sign.Rules) sign.Rule {
+		rules.Reset()
+		bob := rules.AtLeast("bob", 1, rules.AllOf("bob laptop", s.bobLaptop), rules.AllOf("bob token", s.bobToken))
+
+		return rules.AtLeast("approval", 2,
+			rules.AtLeast("administrators", 2,
+				rules.AllOf("ada", s.ada).AsParty(),
+				bob.AsParty(),
+				rules.AllOf("carol", s.carol).AsParty(),
+				rules.AllOf("dan", s.dan).AsParty(),
+				rules.AllOf("eve", s.eve).AsParty(),
+			),
+			rules.AtLeast("security officers", 1,
+				rules.AllOf("fay", s.fay).AsParty(),
+				rules.AllOf("gus", s.gus).AsParty(),
+				rules.AllOf("hal", s.hal).AsParty(),
+			),
+		)
+	}
+
+	return rebuild(new(sign.Rules)), rebuild, s
+}
+
 // drawShape draws a tree of at most depth threshold levels above key sets
 // of one or two keys. next numbers the keys, so every key of the tree is
-// distinct.
-func drawShape(c *prop.Case, next *byte, depth int) shape {
+// distinct. When parties is true, drawShape marks the parties of the tree
+// so that each key set lies in exactly one marked shape: it draws a mark
+// for each threshold, and marks each key set that no drawn mark contains.
+func drawShape(c *prop.Case, next *byte, depth int, parties bool) shape {
 	if depth == 0 || c.Draw(prop.Integer(0, 2), "a key set") == 0 {
 		keys := make([]*key, c.Draw(prop.Integer(1, 2), "keys of the set"))
 		for i := range keys {
@@ -1475,15 +1702,37 @@ func drawShape(c *prop.Case, next *byte, depth int) shape {
 			*next++
 		}
 
-		return shape{keys: keys}
+		return shape{keys: keys, party: parties}
 	}
 
+	party := parties && c.Draw(prop.Boolean(), "a party")
 	children := make([]shape, c.Draw(prop.Integer(1, 3), "children"))
 	for i := range children {
-		children[i] = drawShape(c, next, depth-1)
+		children[i] = drawShape(c, next, depth-1, parties && !party)
 	}
 
-	return shape{children: children, threshold: c.Draw(prop.Integer(1, len(children)), "threshold")}
+	return shape{children: children, threshold: c.Draw(prop.Integer(1, len(children)), "threshold"), party: party}
+}
+
+// drawSignatures draws for each key of keys no signature, its valid
+// signature, a forged one, or a forged one and then the valid one, and
+// returns the signatures in a drawn order.
+func drawSignatures(c *prop.Case, keys []*key) []sign.Signature {
+	var sigs []sign.Signature
+	for _, k := range keys {
+		choice := c.Draw(prop.Integer(0, 3), "signatures of a key")
+		if choice == 1 {
+			sigs = append(sigs, k.signed())
+		}
+		if choice >= 2 {
+			sigs = append(sigs, k.forged())
+		}
+		if choice == 3 {
+			sigs = append(sigs, k.signed())
+		}
+	}
+
+	return c.Draw(prop.Permutation(sigs...), "order of the signatures")
 }
 
 // assertCollected fails tb unless the garbage collector frees the key

@@ -550,9 +550,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a slice of the caller. `AppendRequest` and `ParseRequest` allocate
   nothing when their buffers have room, and `AppendCosignatures`
   allocates nothing for the Ed25519 key of a witness. See RFC-0054.
+- `sign.Rule.AsParty`: a marked rule is one party of a `sign.Policy` at
+  any depth, and a key that `Policy.Check` excludes removes the marked
+  rule that contains it. A policy of 2 of 5 administrators and 1 of 3
+  security officers then excludes the requester alone, where the
+  exclusion removed the whole group of administrators. `NewPolicyTree`
+  refuses a marked rule inside another marked rule, and a key set outside
+  every marked rule of a tree with a marker. A tree without a marker
+  keeps the children of its root as its parties. `AsParty` and a `Check`
+  with an exclusion allocate nothing. See RFC-0055 and ADR-0046.
 
 ### Changed
 
+- The error of `sign.Policy.Check` that wraps `sign.ErrThreshold` counts
+  "required rules" in place of "required parties", because the children
+  of the root are not the parties of a tree with a marker. The count does
+  not change.
 - **Breaking:** `blob.Store.Put` classifies a content type that
   `blob.ValidContentType` rejects as `errs.Invalid`, and returns before
   it touches storage. `blob/memory` implements the check, and

@@ -55,7 +55,8 @@ type Party struct {
 // sign, or a threshold over child rules. [AllOf] and [AtLeast], and the
 // methods of [Rules] that share their names, build a Rule without
 // validating it, and [NewPolicyTree] validates the whole tree. The zero
-// Rule is invalid in a policy.
+// Rule is invalid in a policy. [Rule.AsParty] marks a rule as one party
+// of the policy.
 //
 // A Rule contains copies of its keys and children and has no exported
 // fields, so it contains only rules built before it, and no rule is its
@@ -73,6 +74,9 @@ type Rule struct {
 
 	// threshold is the number of children that must count.
 	threshold int
+
+	// party reports whether AsParty marked the rule as one party.
+	party bool
 }
 
 // AllOf returns a rule that counts when every one of keys has a valid
@@ -99,6 +103,23 @@ func AllOf(name string, keys ...Verifier) Rule {
 // empty. [Rules.AtLeast] copies into memory that a caller reuses.
 func AtLeast(name string, threshold int, children ...Rule) Rule {
 	return Rule{name: name, children: slices.Clone(children), threshold: threshold}
+}
+
+// AsParty returns a copy of r that is one party of a policy: a key that
+// [Policy.Check] excludes removes the whole rule, whatever signatures its
+// other keys have. A tree that marks one rule must mark every party:
+// [NewPolicyTree] refuses a marked rule inside another marked rule, and a
+// key set outside every marked rule. A tree without a marked rule has the
+// parties that [Policy] describes. AsParty leaves r unchanged, and it
+// does not validate the copy.
+//
+// # Allocation contract
+//
+// Zero-alloc. The copy shares the keys and the children of r.
+func (r Rule) AsParty() Rule {
+	r.party = true
+
+	return r
 }
 
 // Rules is the memory of the rules of a tree. Its AllOf and AtLeast
@@ -176,8 +197,9 @@ func (r *Rules) Reset() {
 // a classical and a post-quantum key, and the alternatives of one
 // party.
 //
-// The parties of a policy are the children of its root, or the root
-// itself when the root is an AllOf rule. A key that [Policy.Check]
+// The parties of a policy are the rules that [Rule.AsParty] marks. In a
+// tree without a marked rule, they are the children of its root, or the
+// root itself when the root is an AllOf rule. A key that [Policy.Check]
 // excludes removes its party.
 //
 // Build a Policy with [NewPolicy] or [NewPolicyTree], and build it again
@@ -233,13 +255,15 @@ func NewPolicy(threshold int, parties ...Party) (Policy, error) {
 // Returns [ErrPolicy], classified [errs.Invalid], when a threshold is
 // not between 1 and the number of its rule's children, when a rule has
 // neither keys nor children, when a key is nil, when the tree is deeper
-// than 64 rules, and when one key appears twice anywhere in the tree.
-// The key check compares KeyIDs and encoded public keys, so one key
-// cannot be listed under two identities. The error reports the path of
-// the offending rule: the names of the rules from the root to it,
-// joined by "/", such as "X-and-Y/X-witnesses". A tree with several
-// faults reports the first that a check of its shape finds, and then the
-// first repeated key in depth-first order.
+// than 64 rules, when one key appears twice anywhere in the tree, when a
+// marked rule is inside another marked rule, and when a tree with a
+// marked rule has a key set outside every marked rule. The key check
+// compares KeyIDs and encoded public keys, so one key cannot be listed
+// under two identities. The error reports the path of the offending
+// rule: the names of the rules from the root to it, joined by "/", such
+// as "X-and-Y/X-witnesses". A tree with several faults reports the first
+// that a check of its shape finds, then the first fault of its marked
+// rules, and then the first repeated key, each in depth-first order.
 //
 // # Allocation contract
 //
@@ -286,9 +310,10 @@ func (p *Policy) Reset(root Rule) error {
 }
 
 // reset is Policy.Reset without the emptying of p on an error. It checks
-// the shape of the tree and counts its keys and rules first, so that it
-// sizes the memory of p once, and then copies the tree in depth-first
-// order, where it finds repeated keys.
+// the shape of the tree and counts its keys and rules first, then checks
+// the marked rules of a tree that has one, so that it sizes the memory of
+// p once, and then copies the tree in depth-first order, where it finds
+// repeated keys.
 func (p *Policy) reset(root Rule) error {
 	var (
 		b     builder
@@ -298,6 +323,12 @@ func (p *Policy) reset(root Rule) error {
 
 	if err := b.check(root, root, at[:0]); err != nil {
 		return err
+	}
+
+	if b.marked {
+		if err := checkParties(root, root, at[:0]); err != nil {
+			return err
+		}
 	}
 
 	if p.index == nil {
@@ -333,9 +364,10 @@ func (p *Policy) reset(root Rule) error {
 //   - p is satisfied when its root counts.
 //
 // A party with a key in exclude does not count. This keeps a requester
-// from approving their own request. The parties are the root's
-// children, or the root itself when it is an AllOf rule, so one
-// excluded key removes every key set of its party.
+// from approving their own request. The parties are the rules that
+// [Rule.AsParty] marks, or in a tree without a marked rule the root's
+// children, or the root itself when it is an AllOf rule, so one excluded
+// key removes every key set of its party.
 //
 // Check bounds its verifications:
 //
@@ -349,9 +381,10 @@ func (p *Policy) reset(root Rule) error {
 //     whatever the number of signatures in sigs.
 //
 // Returns nil when the root counts. Otherwise returns [ErrThreshold],
-// classified [errs.Integrity], wrapped with the most parties that could
-// count and the number of parties the root requires. Returns
-// [ErrPolicy] for the zero Policy.
+// classified [errs.Integrity], wrapped with the most rules that could
+// count and the number of rules that the root requires: its children, or
+// the root itself when it is an AllOf rule. Returns [ErrPolicy] for the
+// zero Policy.
 //
 // # Allocation contract
 //
@@ -413,7 +446,7 @@ func (p Policy) Check(message []byte, sigs []Signature, exclude ...KeyID) error 
 		return nil
 	}
 
-	return fmt.Errorf("%w: at most %d of %d required parties", ErrThreshold, counted+left, required)
+	return fmt.Errorf("%w: at most %d of %d required rules", ErrThreshold, counted+left, required)
 }
 
 // reachable returns the number of rule i's children, or of a key set's
@@ -555,12 +588,19 @@ type builder struct {
 	// nkeys and nrules are the number of keys and rules that check
 	// counted.
 	nkeys, nrules int
+
+	// marked reports whether check found a marked rule. add then starts
+	// a party at each marked rule, and otherwise at each child of the
+	// root.
+	marked bool
 }
 
-// check checks the shape of r and of its subtree, and adds their keys and
-// rules to the counts of b. at contains the positions of the children on
-// the path from root to r, so its length is the depth of r. check finds
-// every fault but a repeated key, which add finds.
+// check checks the shape of r and of its subtree, adds their keys and
+// rules to the counts of b, and records whether they have a marked rule.
+// at contains the positions of the children on the path from root to r,
+// so its length is the depth of r. check finds every fault but those of
+// the marked rules, which checkParties finds, and a repeated key, which
+// add finds.
 func (b *builder) check(root, r Rule, at []int) error {
 	if len(at) == maxDepth {
 		return errRule(root, at, "deeper than %d rules", maxDepth)
@@ -571,6 +611,10 @@ func (b *builder) check(root, r Rule, at []int) error {
 	}
 
 	b.nrules++
+
+	if r.party {
+		b.marked = true
+	}
 
 	if len(r.keys) > 0 {
 		if slices.Contains(r.keys, nil) {
@@ -597,13 +641,14 @@ func (b *builder) check(root, r Rule, at []int) error {
 
 // add appends r and its subtree in depth-first order. at locates r below
 // root as check documents, and party is the position of the party that r
-// belongs to. A child of the root starts a party of its own. order
-// contains the positions of the keys copied so far, sorted by public key,
-// and add returns it with the positions of the keys that it copies.
-// check has checked the shape of the tree.
+// belongs to. A marked rule starts a party of its own, and in a tree
+// without a marked rule, so does each child of the root. order contains
+// the positions of the keys copied so far, sorted by public key, and add
+// returns it with the positions of the keys that it copies. check and
+// checkParties have checked the tree.
 func (b *builder) add(root, r Rule, at []int, party int, order []int) ([]int, error) {
 	pos := len(b.rules)
-	if len(at) == 1 {
+	if r.party || (!b.marked && len(at) == 1) {
 		party = pos
 	}
 
@@ -660,6 +705,46 @@ func (b *builder) addKey(root Rule, at []int, key Verifier, party int, order []i
 	b.keys = append(b.keys, policyKey{key: key, party: party})
 
 	return slices.Insert(order, i, pos), nil
+}
+
+// checkParties checks the marked rules of r, a rule of a tree that has a
+// marked rule: each key set of r must lie in exactly one marked rule. It
+// returns an error for the first fault in depth-first order, which is a
+// marked rule inside another marked rule or a key set outside every
+// marked rule. at locates r below root as check documents.
+func checkParties(root, r Rule, at []int) error {
+	if r.party {
+		return checkInsideParty(root, r, at)
+	}
+
+	if len(r.keys) > 0 {
+		return errRule(root, at, "a key set outside every party")
+	}
+
+	for i, child := range r.children {
+		if err := checkParties(root, child, append(at, i)); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// checkInsideParty returns an error for the first marked rule below r in
+// depth-first order, where r is a marked rule. at locates r below root as
+// check documents.
+func checkInsideParty(root, r Rule, at []int) error {
+	for i, child := range r.children {
+		if child.party {
+			return errRule(root, append(at, i), "a party inside another party")
+		}
+
+		if err := checkInsideParty(root, child, append(at, i)); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // scratch returns n zeroed ints: the first n of stack when they fit, or

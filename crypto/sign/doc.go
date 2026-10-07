@@ -85,6 +85,12 @@
 // C2SP tlog-policy. [Policy.Check] counts each key once and verifies at
 // most one signature per key of the policy.
 //
+// [Policy.Check] takes keys to exclude, such as the key of the requester
+// of an approval, and removes the whole party of an excluded key. The
+// parties of a tree are the children of its root, or the rules that
+// [Rule.AsParty] marks at any depth, such as each person of a policy of
+// groups of people.
+//
 // A caller that builds its policy again, such as at each load of a
 // configuration, builds the rules in a [Rules] and the policy with
 // [Policy.Reset], both of which reuse the memory of the last build.
