@@ -133,8 +133,9 @@ func TestQuorum(t *testing.T) {
 			return err
 		}, "Quorum must return once its calls return")
 
-		assert.ErrorIs(t, err, cause, "the end of ctx must be the result")
-		assert.ErrorIsNot(t, err, task.ErrNoQuorum, "a quorum cut short by ctx must not report ErrNoQuorum")
+		assert.That(t, err).
+			ErrorIs(cause, "the end of ctx must be the result").
+			ErrorIsNot(task.ErrNoQuorum, "a quorum cut short by ctx must not report ErrNoQuorum")
 	})
 
 	t.Run("returns the cause of ctx when ctx ends with elements unclaimed", func(t *testing.T) {

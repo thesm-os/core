@@ -158,8 +158,9 @@ func TestScope(t *testing.T) {
 					return err
 				}, "the call must return once its tasks return")
 
-				assert.ErrorIs(t, err, errBoom, "the first error must be the result")
-				assert.ErrorIsNot(t, err, errLate, "an error after the cancellation must be discarded")
+				assert.That(t, err).
+					ErrorIs(errBoom, "the first error must be the result").
+					ErrorIsNot(errLate, "an error after the cancellation must be discarded")
 			})
 
 			t.Run("records ErrExited for a task that calls runtime.Goexit", func(t *testing.T) {

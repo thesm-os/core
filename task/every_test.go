@@ -82,7 +82,7 @@ func (l *loop) noCall(t *testing.T, c *fake.Clock) {
 	t.Helper()
 
 	c.AwaitWaiters(1)
-	assert.Length(t, l.calls, 0, "fn must not be called before its time")
+	assert.Empty(t, l.calls, "fn must not be called before its time")
 }
 
 // result returns Every's result, or fails the test when Every has not
