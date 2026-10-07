@@ -9,27 +9,29 @@ import (
 	"go.thesmos.sh/core/id"
 )
 
-// alphabet is Crockford's base32 alphabet (no I, L, O, U).
+// alphabet is Crockford's base32 alphabet, without I, L, O and U.
 const alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
 // Format returns the canonical 26-character Crockford base32
-// encoding of u.
+// encoding of the first 128 bits of u, as the ULID specification
+// defines it.
 //
 // Layout:
 //
 //	chars  0..9 : 48-bit timestamp prefix
 //	chars 10..25: 80-bit random suffix
 //
-// The timestamp half encodes 50 bits of base-32 over a 48-bit
-// payload; the leading 2 bits are always zero. The random half
-// encodes 80 bits of base-32 over an 80-bit payload exactly.
+// The timestamp half encodes the 48-bit timestamp in the low 48 of
+// its 50 bits, so its leading 2 bits are zero and its first character
+// is in the range '0'..'7'. The random half encodes 80 bits of base-32
+// over an 80-bit payload exactly.
 //
 // Returns the empty string if u is shorter than [id.Size128]
 // (for example [id.Zero]).
 //
 // # Allocation contract
 //
-// Allocates the 26-byte result string.
+// Format allocates the 26-byte result string.
 func Format(u id.ID) string {
 	b := u.Bytes()
 	if len(b) < id.Size128 {
@@ -38,21 +40,16 @@ func Format(u id.ID) string {
 
 	// 50 bits for the 48-bit timestamp half, 80 bits for the
 	// 80-bit random half: 130 bits total = 26 base-32 chars.
-	// The first character carries only 2 of the 5 bit slots,
-	// always 0 for valid timestamps; we still encode it so the
-	// output is exactly 26 chars.
 	var out [26]byte
 
 	// Timestamp half: bytes 0..5 → chars 0..9.
 	// Pack the 48 timestamp bits into a uint64 (high 16 bits
 	// zero), then emit 10 base-32 chars from the high end down.
+	// The first character encodes the top 3 timestamp bits.
 	var ts uint64
 	for _, x := range b[0:6] {
 		ts = (ts << 8) | uint64(x)
 	}
-	// 10 chars × 5 bits = 50 bits; shift the 48-bit payload up by
-	// 2 so the top char is the high 2 bits (always 0).
-	ts <<= 2
 	for i := range 10 {
 		shift := uint(50 - 5 - i*5)
 		out[i] = alphabet[(ts>>shift)&0x1F]
@@ -85,50 +82,43 @@ func Format(u id.ID) string {
 //
 // Returns [ErrInvalidLength] if s is not exactly 26 characters,
 // or [ErrInvalidChar] if s contains a character outside the
-// Crockford base32 alphabet (case-insensitive — both upper and
-// lower case are accepted, plus the Crockford I/L → 1, O → 0
-// substitutions per the original ULID spec).
+// Crockford base32 alphabet. Both cases of a letter are accepted,
+// and so are the Crockford substitutions I and L for 1 and O for 0.
 //
-// The first character must be in the range '0'..'7' since the
-// 50-bit timestamp half encodes only 48 bits of payload (the
-// top 2 bits are zero for any valid ULID); a leading character
-// '8'..'Z' produces a value beyond the 48-bit timestamp range
-// and ParseULID returns [ErrInvalidTimestamp].
+// The first character must be in the range '0'..'7', because the
+// 50-bit timestamp half encodes 48 bits of payload and its top 2 bits
+// are zero. A leading character '8'..'Z' encodes a value beyond the
+// 48-bit timestamp range, and ParseULID returns
+// [ErrInvalidTimestamp].
 //
 // # Allocation contract
 //
-// Allocates the returned [id.ID] only — zero string-handling
-// allocations beyond that.
+// ParseULID does not allocate. It returns the [id.ID] by value.
 func ParseULID(s string) (id.ID, error) {
 	if len(s) != 26 {
 		return id.Zero, ErrInvalidLength
 	}
-	// First char carries only 2 bits; reject values that would
-	// push the timestamp beyond 48 bits.
-	first := decodeChar(s[0])
-	if first < 0 {
-		return id.Zero, ErrInvalidChar
-	}
-	if first > 7 {
+	// The first char encodes the top 2 bits of the 50, which must be
+	// zero, and the top 3 timestamp bits. The table gives -1 for a char
+	// outside the alphabet, which the loop below refuses.
+	if crockfordTable[s[0]] > 7 {
 		return id.Zero, ErrInvalidTimestamp
 	}
 
 	var raw [id.Size128]byte
 
 	// Decode the 10-char timestamp half into bits 49..0 of a
-	// uint64, then write the low 48 bits into bytes 0..5.
+	// uint64, whose top 2 bits are zero, as checked above. Its low
+	// 48 bits are the timestamp, which goes big-endian into bytes
+	// 0..5.
 	var ts uint64
 	for i := range 10 {
-		v := decodeChar(s[i])
+		v := crockfordTable[s[i]]
 		if v < 0 {
 			return id.Zero, ErrInvalidChar
 		}
 		ts = (ts << 5) | uint64(v)
 	}
-	// ts now holds 50 bits with the top 2 always zero (enforced
-	// above). Right-shift by 2 to recover the 48-bit timestamp,
-	// then write big-endian into bytes 0..5.
-	ts >>= 2
 	for i := 5; i >= 0; i-- {
 		raw[i] = byte(ts & 0xFF)
 		ts >>= 8
@@ -141,7 +131,7 @@ func ParseULID(s string) (id.ID, error) {
 	bitCount := 0
 	out := 6
 	for i := 10; i < 26; i++ {
-		v := decodeChar(s[i])
+		v := crockfordTable[s[i]]
 		if v < 0 {
 			return id.Zero, ErrInvalidChar
 		}
@@ -158,9 +148,9 @@ func ParseULID(s string) (id.ID, error) {
 }
 
 // crockfordTable maps each byte to its Crockford base32 value
-// (0..31), or -1 for non-Crockford bytes. Both upper- and
-// lower-case letters map to the same value, and the original
-// ULID spec's I/L → 1, O → 0 substitutions are baked in.
+// (0..31), or -1 for non-Crockford bytes. Both cases of a letter map
+// to the same value, and the table contains the substitutions of the
+// ULID specification: I and L for 1, and O for 0.
 //
 // The lookup-table form is faster than a branching switch and
 // removes per-character conditional code from the hot path.
@@ -172,9 +162,9 @@ var crockfordTable = func() (t [256]int8) {
 	for c := byte('0'); c <= '9'; c++ {
 		t[c] = int8(c - '0')
 	}
-	// The Crockford alphabet excludes I, L, O, U; the ULID
-	// spec retroactively accepts I/L → 1, O → 0 to handle
-	// transcription. U is reserved (not a valid char).
+	// The Crockford alphabet excludes I, L, O and U. The ULID
+	// specification accepts I and L for 1 and O for 0, so that a
+	// transcribed identifier decodes. U is no character of it.
 	letterValue := map[byte]int8{
 		'A': 10, 'B': 11, 'C': 12, 'D': 13, 'E': 14,
 		'F': 15, 'G': 16, 'H': 17,
@@ -192,14 +182,3 @@ var crockfordTable = func() (t [256]int8) {
 	}
 	return t
 }()
-
-// decodeChar returns the Crockford base32 value (0..31) for c,
-// or -1 if c is not a valid Crockford character. Constant-time
-// table lookup.
-//
-// # Allocation contract
-//
-// Zero alloc.
-func decodeChar(c byte) int {
-	return int(crockfordTable[c])
-}

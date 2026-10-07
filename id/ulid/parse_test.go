@@ -37,15 +37,15 @@ func TestFormat(t *testing.T) {
 			"all-zero ID must encode to 26 zeros")
 	})
 
-	t.Run("returns a leading 04 for a first timestamp byte of 0x01", func(t *testing.T) {
+	t.Run("returns a leading 01 for a first timestamp byte of 0x01", func(t *testing.T) {
 		t.Parallel()
-		// 48-bit timestamp 0x010000000000 = 2^40; shifted
-		// left by 2 = 2^42. Top 5 bits (49..45) of a 50-bit
-		// field are zero; next 5 bits (44..40) carry the
-		// '4' (= 4). Remaining chars are zero.
+		// The 48-bit timestamp 0x010000000000 is 2^40 in the low
+		// 48 bits of a 50-bit field. Its top 5 bits (49..45) are
+		// zero, and its next 5 bits (44..40) are 1. The remaining
+		// chars are zero, as github.com/oklog/ulid/v2 encodes it.
 		u := idFromBytes(0x01)
-		testkit.Equal(t, ulid.Format(u), "04000000000000000000000000",
-			"timestamp byte 0 = 0x01 must encode to leading '04'")
+		testkit.Equal(t, ulid.Format(u), "01000000000000000000000000",
+			"timestamp byte 0 = 0x01 must encode to leading '01'")
 	})
 
 	t.Run("returns 16 Zs for a random half of all ones", func(t *testing.T) {
@@ -83,24 +83,22 @@ func TestFormat(t *testing.T) {
 			0x01, 0x23, 0x45, 0x67, 0x89, 0xAB,
 			0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0xFE, 0xDC,
 		)
-		testkit.Equal(t, ulid.Format(u), "04HMASW9NC04HMASW9NF6YZZPW",
+		testkit.Equal(t, ulid.Format(u), "014D2PF2DB04HMASW9NF6YZZPW",
 			"mixed timestamp+random must encode to expected vector")
 	})
 
-	t.Run("all-ones encodes timestamp prefix 'ZZZZZZZZZW'", func(t *testing.T) {
+	t.Run("all-ones encodes the largest ULID", func(t *testing.T) {
 		t.Parallel()
-		// 48-bit timestamp 0xFFFFFFFFFFFF shifted left by 2
-		// gives a 50-bit value with bits 49..2 set and bits
-		// 1..0 zero. Top 9 chars (5 bits each, all 1s) → 'Z';
-		// last char's bits are 11100 = 28 = 'W' in the
-		// Crockford alphabet (0..9, A-H, J, K, M, N, P, Q, R,
-		// S, T, V, W, X, Y, Z).
+		// The 48-bit timestamp 0xFFFFFFFFFFFF sets bits 47..0 of
+		// a 50-bit field. Its first char carries bits 49..45,
+		// 00111 = 7, and every other char is 'Z', as
+		// github.com/oklog/ulid/v2 encodes it.
 		u := idFromBytes(
 			0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
 			0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
 		)
-		testkit.Equal(t, ulid.Format(u), "ZZZZZZZZZWZZZZZZZZZZZZZZZZ",
-			"all-ones must encode timestamp prefix 'ZZZZZZZZZW'")
+		testkit.Equal(t, ulid.Format(u), "7ZZZZZZZZZZZZZZZZZZZZZZZZZ",
+			"all-ones must encode to the largest ULID")
 	})
 
 	t.Run("returns 26 characters of the Crockford alphabet", func(t *testing.T) {
@@ -143,7 +141,7 @@ func TestParseULID(t *testing.T) {
 
 	t.Run("decodes asymmetric vector", func(t *testing.T) {
 		t.Parallel()
-		got, err := ulid.ParseULID("04HMASW9NC04HMASW9NF6YZZPW")
+		got, err := ulid.ParseULID("014D2PF2DB04HMASW9NF6YZZPW")
 		testkit.NoError(t, err, "ParseULID")
 		want := idFromBytes(
 			0x01, 0x23, 0x45, 0x67, 0x89, 0xAB,
@@ -318,18 +316,13 @@ func FuzzULIDRoundTrip(f *testing.F) {
 		0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0xFE, 0xDC,
 	})
 	f.Add([]byte{
-		0x3F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+		0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
 		0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
 	})
 
 	f.Fuzz(func(t *testing.T, data []byte) {
 		var raw [id.Size128]byte
 		copy(raw[:], data)
-		// Mask the top 2 bits of byte 0: [ParseULID] rejects
-		// first Crockford char > 7, which translates to the
-		// 48-bit timestamp value being < 2^46. Bits 47..46 of
-		// the timestamp are bits 7..6 of byte 0.
-		raw[0] &= 0x3F
 		u := id.New128(raw)
 
 		formatted := ulid.Format(u)
