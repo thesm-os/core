@@ -9,10 +9,9 @@ import (
 	"go.thesmos.sh/core/rand"
 )
 
-// Rand returns the same Uint64 on every call. Useful in tests that
-// assert on a specific branch of probabilistic logic ("if the draw
-// is below 0.3, fire the fault") — pick the constant that drives
-// the branch under test.
+// Rand returns the same Uint64 on every call. A test of a branch of
+// probabilistic logic, such as "inject the fault when the value is below
+// 0.3", passes the constant that selects the branch under test.
 //
 // The zero-value Rand returns 0 on every Uint64 call; use [New] to
 // pick a specific value.
@@ -60,7 +59,9 @@ func (r Rand) Uint64() uint64 {
 }
 
 // Read fills p with the little-endian encoding of the configured
-// value, repeated as needed. Always returns (len(p), nil).
+// value, repeated as needed. Always returns (len(p), nil). The fill
+// copies once for each started 8 bytes of p, a count fixed before the
+// loop starts.
 //
 // # Allocation contract
 //
@@ -68,9 +69,8 @@ func (r Rand) Uint64() uint64 {
 func (r Rand) Read(p []byte) (int, error) {
 	var chunk [8]byte
 	binary.LittleEndian.PutUint64(chunk[:], r.value)
-	written := 0
-	for written < len(p) {
-		written += copy(p[written:], chunk[:])
+	for i := range (len(p) + len(chunk) - 1) / len(chunk) {
+		copy(p[i*len(chunk):], chunk[:])
 	}
 	return len(p), nil
 }
