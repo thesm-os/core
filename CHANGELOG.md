@@ -542,6 +542,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   epoch are not positive. `CheckText` returns the error that
   `AppendSignAt` returns for a text that the format does not sign. Both
   allocate nothing for Ed25519. See RFC-0054.
+- `witness.AppendRequest`, `witness.ParseRequest` and
+  `witness.Client.AppendCosignatures`. A protocol that extends
+  add-checkpoint writes and checks the lines of a body before its note,
+  and checks the cosignature lines of a response, with the code of
+  `tlog/witness`. `ParseRequest` appends the hashes of the proof lines to
+  a slice of the caller. `AppendRequest` and `ParseRequest` allocate
+  nothing when their buffers have room, and `AppendCosignatures`
+  allocates nothing for the Ed25519 key of a witness. See RFC-0054.
 
 ### Changed
 

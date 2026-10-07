@@ -189,7 +189,7 @@ func (c *Client) AddCheckpoint(
 	// closes the body, as http.RoundTripper permits. The body is a copy of
 	// the scratch buffer in memory of its own, of its exact length.
 	scratch := buffers.Get()
-	*scratch = appendRequest((*scratch)[:0], oldSize, proof, msg)
+	*scratch = AppendRequest((*scratch)[:0], oldSize, proof, msg)
 	body := bytes.Clone(*scratch)
 	buffers.Put(scratch)
 
@@ -208,20 +208,29 @@ func (c *Client) AddCheckpoint(
 		return dst, statusError(err)
 	}
 
-	return c.appendLines(dst, text, *resp)
+	return c.AppendCosignatures(dst, text, *resp)
 }
 
-// appendLines appends to dst the first line of each key of c among lines,
-// the cosignature lines of a response, after it verifies every line of
-// the keys of c over text.
+// AppendCosignatures checks lines, the cosignature lines of a response of
+// the witness of c, over text, the text of the note that the witness
+// cosigned, as AddCheckpoint checks the lines of a 200. It parses text, a
+// blank line and lines as a note in pooled memory, verifies every line of
+// a key of c, and ignores the lines of other keys. It then appends to dst
+// the first line of each key of c, in the order of the configuration. A
+// protocol that extends add-checkpoint checks the lines of its own
+// responses with it.
 //
-// It parses the lines as the note of text and lines in pooled memory: the
-// text, a blank line and lines.
+// Returns dst unchanged with an error that wraps [ErrCosignature],
+// classified [errs.Integrity], for lines that are not signature lines, an
+// invalid line of a key, a line of a key whose timestamp is 0, and a key
+// without a line.
 //
-// Returns dst unchanged with an error that wraps ErrCosignature for lines
-// that are not signature lines, an invalid line of a key, a line of a key
-// whose timestamp is 0, and a key without a line.
-func (c *Client) appendLines(dst, text, lines []byte) ([]byte, error) {
+// # Allocation contract
+//
+// Zero-alloc when dst has room for the lines and the Verifier of each key
+// allocates nothing, as the Verifier of an Ed25519 key does. A parse into
+// a pooled note of other key names allocates those names.
+func (c *Client) AppendCosignatures(dst, text, lines []byte) ([]byte, error) {
 	buf := buffers.Get()
 	defer buffers.Put(buf)
 

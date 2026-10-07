@@ -141,63 +141,96 @@ type request struct {
 	oldSize uint64
 }
 
-// parse sets r to the request of body, and reuses the capacity of
-// r.proof. It checks the lines before the note as check 1 of the protocol
-// requires them: an old size line in decimal without leading zeros, at
-// most 63 proof lines, each the canonical padded standard base64 of a
-// 32, 48 or 64-byte hash, and a blank line. It leaves the note to its
-// caller. On an error r is unchanged.
+// parse sets r to the request of body, as ParseRequest checks it, and
+// reuses the capacity of r.proof. It leaves the note to its caller. On an
+// error the fields of r are unchanged.
 //
-// Returns an error that wraps [ErrRequest] for any other body.
+// Returns the errors of ParseRequest.
 func (r *request) parse(body []byte) error {
-	line, rest, ok := bytes.Cut(body, []byte{'\n'})
-	if !ok {
-		return fmt.Errorf("%w: a body without an old size line", ErrRequest)
+	oldSize, proof, msg, err := ParseRequest(body, r.proof[:0])
+	if err != nil {
+		return err
 	}
 
-	digits, ok := bytes.CutPrefix(line, []byte(oldPrefix))
-	if !ok {
-		return fmt.Errorf("%w: a first line that does not start with %q", ErrRequest, oldPrefix)
-	}
-
-	oldSize, ok := parseSize(digits)
-	if !ok {
-		return fmt.Errorf("%w: an old size that is not the decimal of a uint64 without leading zeros", ErrRequest)
-	}
-
-	proof := r.proof[:0]
-
-	for {
-		line, rest, ok = bytes.Cut(rest, []byte{'\n'})
-		if !ok {
-			return fmt.Errorf("%w: a body without a blank line before the note", ErrRequest)
-		}
-
-		if len(line) == 0 {
-			break
-		}
-
-		if len(proof) == maxProof {
-			return fmt.Errorf("%w: more than %d proof lines", ErrRequest, maxProof)
-		}
-
-		h, ok := parseHash(line)
-		if !ok {
-			return fmt.Errorf("%w: a proof line that is not the canonical base64 of a hash", ErrRequest)
-		}
-
-		proof = append(proof, h)
-	}
-
-	r.note, r.proof, r.oldSize = rest, proof, oldSize
+	r.note, r.proof, r.oldSize = msg, proof, oldSize
 
 	return nil
 }
 
-// appendRequest appends to dst the body of an add-checkpoint request: the
+// ParseRequest checks the lines of body before its note, as check 1 of
+// tlog-witness requires them: an old size line in decimal without leading
+// zeros, at most 63 proof lines, each the canonical padded standard base64
+// of a 32, 48 or 64-byte hash, and a blank line. It returns the old size,
+// proof with the hash of each proof line appended in the order of body,
+// and rest, the bytes of body after the blank line. It leaves the note in
+// rest to its caller, so a protocol that extends add-checkpoint parses the
+// lines before a body of its own.
+//
+// Returns an error that wraps [ErrRequest], classified [errs.Invalid], for
+// any other body, with proof unchanged and rest nil. Before it fails,
+// ParseRequest can write hashes into the capacity of proof beyond its
+// length.
+//
+// # Allocation contract
+//
+// Zero-alloc when proof has room for the hashes of body, apart from the
+// error of a body that it refuses.
+func ParseRequest(body []byte, proof []crypto.Digest) (oldSize uint64, hashes []crypto.Digest, rest []byte, err error) {
+	line, after, ok := bytes.Cut(body, []byte{'\n'})
+	if !ok {
+		return 0, proof, nil, fmt.Errorf("%w: a body without an old size line", ErrRequest)
+	}
+
+	digits, ok := bytes.CutPrefix(line, []byte(oldPrefix))
+	if !ok {
+		return 0, proof, nil, fmt.Errorf("%w: a first line that does not start with %q", ErrRequest, oldPrefix)
+	}
+
+	size, ok := parseSize(digits)
+	if !ok {
+		return 0, proof, nil, fmt.Errorf("%w: an old size that is not the decimal of a uint64 without leading zeros",
+			ErrRequest)
+	}
+
+	hashes = proof
+
+	for n := 0; ; n++ {
+		line, after, ok = bytes.Cut(after, []byte{'\n'})
+		if !ok {
+			return 0, proof, nil, fmt.Errorf("%w: a body without a blank line before the note", ErrRequest)
+		}
+
+		if len(line) == 0 {
+			return size, hashes, after, nil
+		}
+
+		if n == maxProof {
+			return 0, proof, nil, fmt.Errorf("%w: more than %d proof lines", ErrRequest, maxProof)
+		}
+
+		h, ok := parseHash(line)
+		if !ok {
+			return 0, proof, nil, fmt.Errorf("%w: a proof line that is not the canonical base64 of a hash",
+				ErrRequest)
+		}
+
+		hashes = append(hashes, h)
+	}
+}
+
+// AppendRequest appends to dst the body of an add-checkpoint request: the
 // old size line, one line of padded standard base64 per hash of proof, a
-// blank line, and msg.
-func appendRequest(dst []byte, oldSize uint64, proof []crypto.Digest, msg []byte) []byte {
+// blank line, and msg. A protocol that extends add-checkpoint writes the
+// lines before a body of its own with it.
+//
+// AppendRequest checks none of its arguments. ParseRequest refuses the
+// body of a proof of more than 63 hashes, and a witness refuses a msg that
+// is not a checkpoint note.
+//
+// # Allocation contract
+//
+// Zero-alloc when dst has room for the body.
+func AppendRequest(dst []byte, oldSize uint64, proof []crypto.Digest, msg []byte) []byte {
 	dst = append(dst, oldPrefix...)
 	dst = strconv.AppendUint(dst, oldSize, 10)
 	dst = append(dst, '\n')

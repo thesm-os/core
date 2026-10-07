@@ -13,6 +13,11 @@
 // to the buffer of the caller. [Client.Checkpoint] reads the checkpoint
 // that the witness serves for an origin on its monitor retrieval route.
 //
+// A protocol that extends add-checkpoint shares its parts.
+// [AppendRequest] and [ParseRequest] write and check the lines of a body
+// before its note, and [Client.AppendCosignatures] checks the cosignature
+// lines of a response as AddCheckpoint does.
+//
 // # Server
 //
 // A [Server] is a witness. [Server.AddCheckpoint] returns the handler of
@@ -115,6 +120,9 @@
 //   - Client.AddCheckpoint allocates 66 objects, and Client.Checkpoint 59,
 //     on a connection that the transport reuses. net/http and httpclient
 //     allocate 64 and 58 of them.
+//   - AppendRequest and ParseRequest allocate nothing when their buffers
+//     have room, and Client.AppendCosignatures allocates nothing for the
+//     Ed25519 key of a witness.
 //   - NewServer allocates 29 objects over an empty store, and NewClient 7.
 //
 // # Dependency position

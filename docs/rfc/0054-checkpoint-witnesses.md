@@ -4,7 +4,7 @@ title: Checkpoint Witnesses
 author: Roy Klopper <roy.klopper@stealthscale.io>
 status: Accepted
 created: 2026-10-05
-updated: 2026-10-05
+updated: 2026-10-07
 discussion: none
 supersedes: none
 superseded-by: none
@@ -128,6 +128,8 @@ since a log last advanced must not add to it.
 | `Client`, `ClientConfig`, `NewClient` | One witness's prefixes, its keys and the HTTP client that calls it |
 | `Client.AddCheckpoint` | Sends a checkpoint and a consistency proof, and returns the witness's verified cosignature lines |
 | `Client.Checkpoint` | Reads the checkpoint that the witness serves for an origin to monitors |
+| `AppendRequest`, `ParseRequest` | Write and check the lines of an `add-checkpoint` body before its note |
+| `Client.AppendCosignatures` | Checks the cosignature lines of a response over the text of a note, as `AddCheckpoint` does |
 | `Server`, `ServerConfig`, `Log`, `NewServer` | A witness: its cosigners and their circuits, its UTC source, the logs that it accepts, and its journal |
 | `Server.AddCheckpoint`, `Server.Checkpoint` | The HTTP handlers of `add-checkpoint` and of the monitor retrieval route |
 | `Server.Advance`, `Update`, `Failure` | One atomic advance of up to 4,096 origins under one note |
@@ -268,6 +270,23 @@ func (c *Client) AddCheckpoint(ctx context.Context, msg []byte, oldSize uint64, 
 // does not verify the response.
 func (c *Client) Checkpoint(ctx context.Context, origin checkpoint.Origin, dst []byte) ([]byte, bool, error)
 
+// AppendCosignatures checks lines, the cosignature lines of a response of
+// the witness, over text, as AddCheckpoint checks the lines of a 200, and
+// appends the first line of each key to dst. It returns dst unchanged with
+// ErrCosignature as AddCheckpoint does.
+func (c *Client) AppendCosignatures(dst, text, lines []byte) ([]byte, error)
+
+// AppendRequest appends to dst the body of an add-checkpoint request: the
+// old size line, one line of padded standard base64 per hash of proof, a
+// blank line, and msg.
+func AppendRequest(dst []byte, oldSize uint64, proof []crypto.Digest, msg []byte) []byte
+
+// ParseRequest checks the lines of body before its note, as check 1
+// requires them, and returns the old size, the hashes appended to proof,
+// and the rest of body after the blank line. It returns ErrRequest for
+// any other body, with proof unchanged.
+func ParseRequest(body []byte, proof []crypto.Digest) (oldSize uint64, hashes []crypto.Digest, rest []byte, err error)
+
 // SizeError is the error of a 409: the witness committed another size of
 // the origin last.
 type SizeError struct {
@@ -306,6 +325,14 @@ forbids in a response (`tlog-witness.md:178-179`). `Checkpoint` returns
 the served bytes as they are. A monitor
 verifies them against its policy, and a log format with a prefix before
 its note serves bytes that only that format's monitors parse.
+
+A protocol that extends `add-checkpoint`, such as a request with the
+checkpoints of many origins, writes and checks the same lines before each
+of its bodies, and checks the cosignature lines of its responses by the
+same rules. `AppendRequest`, `ParseRequest` and
+`Client.AppendCosignatures` export the encoding, the parse and the check,
+so such a protocol and this package share one implementation of each.
+The server parses each request with `ParseRequest`.
 
 ### The server
 

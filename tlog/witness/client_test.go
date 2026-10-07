@@ -264,7 +264,7 @@ func TestClient(t *testing.T) {
 
 		ed := ed25519Cosigner(t, witnessName)
 		pq := mldsaCosigner(t, witnessName, fake.New(clockTime))
-		msg := logNote(t, logName, 5)
+		msg := logNote(t)
 		text := noteText(t, msg)
 		proof := []crypto.Digest{
 			crypto.NewDigest256(sha256.Sum256([]byte("1"))),
@@ -332,95 +332,13 @@ func TestClient(t *testing.T) {
 			assert.HasPrefix(t, string(got), "old 3\n", "the second call must leave the first body intact")
 		})
 
-		t.Run("ignores the lines of other keys", func(t *testing.T) {
+		t.Run("returns the ErrCosignature of lines that AppendCosignatures refuses", func(t *testing.T) {
 			t.Parallel()
-			other := ed25519Cosigner(t, "example.com/other")
-			w := newFakeWitness(t, func([]byte) (int, []byte) {
-				return http.StatusOK, append(garbageLine(other.Key()), cosignLines(t, text, ed)...)
-			})
-			c := newClient(t, w, ed.Key())
-			got, err := c.AddCheckpoint(t.Context(), msg, 0, nil, nil)
-			assert.NoError(t, err, "AddCheckpoint must ignore a line of another key")
-			assert.Equal(t, string(got), string(cosignLines(t, text, ed)),
-				"AddCheckpoint must append the line of the key")
+			w := newFakeWitness(t, func([]byte) (int, []byte) { return http.StatusOK, garbageLine(ed.Key()) })
+			got, err := newClient(t, w, ed.Key()).AddCheckpoint(t.Context(), msg, 0, nil, []byte("prefix:"))
+			assert.ErrorIs(t, err, witness.ErrCosignature, "AddCheckpoint must refuse the response")
+			assert.Equal(t, string(got), "prefix:", "AddCheckpoint must return dst unchanged")
 		})
-
-		failures := []struct {
-			reply func(body []byte) (int, []byte)
-			name  string
-		}{
-			{
-				name: "returns ErrCosignature for an invalid line of a key",
-				reply: func([]byte) (int, []byte) {
-					return http.StatusOK, garbageLine(ed.Key())
-				},
-			},
-			{
-				name: "returns ErrCosignature for an invalid line of a key after a valid one",
-				reply: func([]byte) (int, []byte) {
-					return http.StatusOK, append(cosignLines(t, text, ed), garbageLine(ed.Key())...)
-				},
-			},
-			{
-				name: "returns ErrCosignature for an invalid line of a key beside a valid line of every other key",
-				reply: func([]byte) (int, []byte) {
-					return http.StatusOK, append(garbageLine(ed.Key()), cosignLines(t, text, pq)...)
-				},
-			},
-			{
-				name: "returns ErrCosignature for a line whose timestamp is 0 beside a valid line of every other key",
-				reply: func([]byte) (int, []byte) {
-					return http.StatusOK, append(cosignLines(t, text, ed),
-						cosignLines(t, text, mldsaCosigner(t, witnessName, nil))...)
-				},
-			},
-			{
-				name: "returns ErrCosignature for a key without a line",
-				reply: func([]byte) (int, []byte) {
-					return http.StatusOK, cosignLines(t, text, ed25519Cosigner(t, "example.com/other"))
-				},
-			},
-			{
-				name: "returns ErrCosignature for a response that is not a list of signature lines",
-				reply: func([]byte) (int, []byte) {
-					return http.StatusOK, []byte("not a signature line\n")
-				},
-			},
-		}
-		for _, tt := range failures {
-			t.Run(tt.name, func(t *testing.T) {
-				t.Parallel()
-				c := newClient(t, newFakeWitness(t, tt.reply), ed.Key(), pq.Key())
-				got, err := c.AddCheckpoint(t.Context(), msg, 0, nil, []byte("prefix:"))
-				assert.ErrorIs(t, err, witness.ErrCosignature, "AddCheckpoint must refuse the response")
-				assert.Equal(t, errs.Classify(err), errs.Integrity, "the error must classify as Integrity")
-				assert.Equal(t, string(got), "prefix:", "AddCheckpoint must return dst unchanged")
-			})
-		}
-
-		t.Run("ignores a line of another name with the key ID of a key", func(t *testing.T) {
-			t.Parallel()
-			sig := note.Signature{Name: "example.com/other", ID: ed.Key().ID(), Value: make([]byte, 72)}
-			other, _ := sig.AppendText(nil)
-			w := newFakeWitness(t, func([]byte) (int, []byte) {
-				return http.StatusOK, append(other, cosignLines(t, text, ed)...)
-			})
-			got, err := newClient(t, w, ed.Key()).AddCheckpoint(t.Context(), msg, 0, nil, nil)
-			assert.NoError(t, err, "AddCheckpoint must ignore the line of another name")
-			assert.Equal(t, string(got), string(cosignLines(t, text, ed)),
-				"AddCheckpoint must append the line of the key")
-		})
-
-		t.Run("returns an ErrCosignature that names a response that is not a list of signature lines",
-			func(t *testing.T) {
-				t.Parallel()
-				w := newFakeWitness(t, func([]byte) (int, []byte) {
-					return http.StatusOK, []byte("not a signature line\n")
-				})
-				_, err := newClient(t, w, ed.Key()).AddCheckpoint(t.Context(), msg, 0, nil, nil)
-				assert.ErrorIs(t, err, witness.ErrCosignature, "AddCheckpoint must refuse the response")
-				assert.Contains(t, err.Error(), "not a list of signature lines", "the error must name the response")
-			})
 
 		t.Run("returns ErrInconsistent for a 422 whose body is a size", func(t *testing.T) {
 			t.Parallel()
@@ -514,6 +432,125 @@ func TestClient(t *testing.T) {
 		})
 	})
 
+	t.Run("AppendCosignatures", func(t *testing.T) {
+		t.Parallel()
+
+		ed := ed25519Cosigner(t, witnessName)
+		pq := mldsaCosigner(t, witnessName, fake.New(clockTime))
+		text := noteText(t, logNote(t))
+
+		t.Run("appends the line of each key in the order of the configuration", func(t *testing.T) {
+			t.Parallel()
+			c := newClient(t, newFakeWitness(t, nil), ed.Key(), pq.Key())
+			got, err := c.AppendCosignatures([]byte("prefix:"), text, cosignLines(t, text, pq, ed))
+			assert.NoError(t, err, "AppendCosignatures must accept the lines")
+			assert.HasPrefix(t, string(got), "prefix:", "AppendCosignatures must keep dst")
+			lines := mustParse(t, append(append(append([]byte(nil), text...), '\n'), got[len("prefix:"):]...))
+			assert.Length(t, lines.Signatures, 2, "AppendCosignatures must append one line per key")
+			assert.Equal(t, lines.Signatures[0].ID, ed.Key().ID(), "the line of the first key must come first")
+			assert.Equal(t, lines.Signatures[1].ID, pq.Key().ID(), "the line of the second key must come second")
+		})
+
+		t.Run("appends the first line of a key with two lines", func(t *testing.T) {
+			t.Parallel()
+			later, err := checkpoint.NewCosignatureV1Signer(witnessName, checkpoint.TypeEd25519Cosignature,
+				ed25519Signer(t, witnessName), fake.New(clockTime.Add(time.Hour)), time.Second)
+			assert.NoError(t, err, "NewCosignatureV1Signer must accept the key")
+
+			lines := append(cosignLines(t, text, ed), cosignLines(t, text, later)...)
+			got, err := newClient(t, newFakeWitness(t, nil), ed.Key()).AppendCosignatures(nil, text, lines)
+			assert.NoError(t, err, "AppendCosignatures must accept both lines")
+			assert.Equal(t, string(got), string(cosignLines(t, text, ed)),
+				"AppendCosignatures must append the first line of the key")
+		})
+
+		t.Run("ignores the lines of other keys", func(t *testing.T) {
+			t.Parallel()
+			other := ed25519Cosigner(t, "example.com/other")
+			lines := append(garbageLine(other.Key()), cosignLines(t, text, ed)...)
+			got, err := newClient(t, newFakeWitness(t, nil), ed.Key()).AppendCosignatures(nil, text, lines)
+			assert.NoError(t, err, "AppendCosignatures must ignore a line of another key")
+			assert.Equal(t, string(got), string(cosignLines(t, text, ed)),
+				"AppendCosignatures must append the line of the key")
+		})
+
+		t.Run("ignores a line of another name with the key ID of a key", func(t *testing.T) {
+			t.Parallel()
+			sig := note.Signature{Name: "example.com/other", ID: ed.Key().ID(), Value: make([]byte, 72)}
+			lines, _ := sig.AppendText(nil)
+			lines = append(lines, cosignLines(t, text, ed)...)
+			got, err := newClient(t, newFakeWitness(t, nil), ed.Key()).AppendCosignatures(nil, text, lines)
+			assert.NoError(t, err, "AppendCosignatures must ignore the line of another name")
+			assert.Equal(t, string(got), string(cosignLines(t, text, ed)),
+				"AppendCosignatures must append the line of the key")
+		})
+
+		failures := []struct {
+			lines func(tb testing.TB) []byte
+			name  string
+		}{
+			{
+				name:  "returns ErrCosignature for an invalid line of a key",
+				lines: func(testing.TB) []byte { return garbageLine(ed.Key()) },
+			},
+			{
+				name: "returns ErrCosignature for an invalid line of a key after a valid one",
+				lines: func(tb testing.TB) []byte {
+					tb.Helper()
+
+					return append(cosignLines(tb, text, ed), garbageLine(ed.Key())...)
+				},
+			},
+			{
+				name: "returns ErrCosignature for an invalid line of a key beside a valid line of every other key",
+				lines: func(tb testing.TB) []byte {
+					tb.Helper()
+
+					return append(garbageLine(ed.Key()), cosignLines(tb, text, pq)...)
+				},
+			},
+			{
+				name: "returns ErrCosignature for a line whose timestamp is 0 beside a valid line of every other key",
+				lines: func(tb testing.TB) []byte {
+					tb.Helper()
+
+					return append(cosignLines(tb, text, ed),
+						cosignLines(tb, text, mldsaCosigner(tb, witnessName, nil))...)
+				},
+			},
+			{
+				name: "returns ErrCosignature for a key without a line",
+				lines: func(tb testing.TB) []byte {
+					tb.Helper()
+
+					return cosignLines(tb, text, ed25519Cosigner(tb, "example.com/other"))
+				},
+			},
+			{
+				name:  "returns ErrCosignature for lines that are not signature lines",
+				lines: func(testing.TB) []byte { return []byte("not a signature line\n") },
+			},
+		}
+		for _, tt := range failures {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				c := newClient(t, newFakeWitness(t, nil), ed.Key(), pq.Key())
+				got, err := c.AppendCosignatures([]byte("prefix:"), text, tt.lines(t))
+				assert.ErrorIs(t, err, witness.ErrCosignature, "AppendCosignatures must refuse the lines")
+				assert.Equal(t, errs.Classify(err), errs.Integrity, "the error must classify as Integrity")
+				assert.Equal(t, string(got), "prefix:", "AppendCosignatures must return dst unchanged")
+			})
+		}
+
+		t.Run("returns an ErrCosignature that names lines that are not signature lines", func(t *testing.T) {
+			t.Parallel()
+			c := newClient(t, newFakeWitness(t, nil), ed.Key())
+			_, err := c.AppendCosignatures(nil, text, []byte("not a signature line\n"))
+			assert.ErrorIs(t, err, witness.ErrCosignature, "AppendCosignatures must refuse the lines")
+			assert.Contains(t, err.Error(), "not a list of signature lines", "the error must name the lines")
+		})
+	})
+
 	t.Run("Checkpoint", func(t *testing.T) {
 		t.Parallel()
 
@@ -581,7 +618,7 @@ func TestClient(t *testing.T) {
 //nolint:paralleltest // see above
 func TestClientAllocs(t *testing.T) {
 	ed := ed25519Cosigner(t, witnessName)
-	msg := logNote(t, logName, 5)
+	msg := logNote(t)
 	lines := cosignLines(t, noteText(t, msg), ed)
 
 	t.Run("NewClient", func(t *testing.T) {
@@ -614,6 +651,25 @@ func TestClientAllocs(t *testing.T) {
 		assert.Equal(t, string(got), string(lines), "the test must measure the lines of the witness")
 	})
 
+	t.Run("AppendCosignatures", func(t *testing.T) {
+		client, err := witness.NewClient(pipedConfig(t, nil, ed.Key()))
+		assert.NoError(t, err, "NewClient must accept the configuration")
+
+		text := noteText(t, msg)
+		dst := make([]byte, 0, len(lines))
+
+		// The pools of the package keep the buffer and the note of the call
+		// that MaxAllocs makes first, and the measured calls reuse them.
+		runtime.GC()
+		runtime.GC()
+
+		var got []byte
+		expect.MaxAllocs(t, func() { got, err = client.AppendCosignatures(dst[:0], text, lines) }, 0,
+			"AppendCosignatures must not allocate into a buffer with room")
+		assert.NoError(t, err, "the test must measure verified lines")
+		assert.Equal(t, string(got), string(lines), "the test must measure the lines of the witness")
+	})
+
 	t.Run("Checkpoint", func(t *testing.T) {
 		served := append(append([]byte(nil), msg...), lines...)
 		client, err := witness.NewClient(pipedConfig(t, served, ed.Key()))
@@ -639,7 +695,7 @@ func TestClientAllocs(t *testing.T) {
 
 func BenchmarkClient(b *testing.B) {
 	ed := ed25519Cosigner(b, witnessName)
-	msg := logNote(b, logName, 5)
+	msg := logNote(b)
 	lines := cosignLines(b, noteText(b, msg), ed)
 
 	b.Run("NewClient", func(b *testing.B) {
@@ -676,6 +732,25 @@ func BenchmarkClient(b *testing.B) {
 		var got []byte
 		for c.Loop() {
 			got, err = client.AddCheckpoint(b.Context(), msg, 0, nil, dst[:0])
+		}
+
+		assert.NoError(b, err, "the benchmark must measure verified lines")
+		assert.Equal(b, string(got), string(lines), "the benchmark must measure the lines of the witness")
+	})
+
+	b.Run("AppendCosignatures", func(b *testing.B) {
+		client, err := witness.NewClient(pipedConfig(b, nil, ed.Key()))
+		assert.NoError(b, err, "NewClient must accept the configuration")
+
+		text := noteText(b, msg)
+		dst := make([]byte, 0, len(lines))
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		var got []byte
+		for c.Loop() {
+			got, err = client.AppendCosignatures(dst[:0], text, lines)
 		}
 
 		assert.NoError(b, err, "the benchmark must measure verified lines")
@@ -924,19 +999,19 @@ func mldsaCosigner(tb testing.TB, name note.Name, utc *fake.Clock) *checkpoint.S
 	return s
 }
 
-// logNote returns a checkpoint note of the log name for the tree of size
-// leaves whose root is SHA-256 of the decimal of size, signed by the
-// Ed25519 key of name.
-func logNote(tb testing.TB, name note.Name, size uint64) []byte {
+// logNote returns the checkpoint note of the log logName for a tree of 5
+// leaves, whose root is the SHA-256 of "5", signed by the Ed25519 key of
+// logName.
+func logNote(tb testing.TB) []byte {
 	tb.Helper()
 
-	root := crypto.NewDigest256(sha256.Sum256([]byte(strconv.FormatUint(size, 10))))
-	body := checkpoint.Body{Origin: checkpoint.Origin(name), Size: size, Root: root}
+	root := crypto.NewDigest256(sha256.Sum256([]byte("5")))
+	body := checkpoint.Body{Origin: logName, Size: 5, Root: root}
 
 	text, err := body.MarshalText()
 	assert.NoError(tb, err, "MarshalText must write the body")
 
-	s, err := note.NewTextSigner(name, note.TypeEd25519, ed25519Signer(tb, string(name)))
+	s, err := note.NewTextSigner(logName, note.TypeEd25519, ed25519Signer(tb, logName))
 	assert.NoError(tb, err, "NewTextSigner must accept the key")
 
 	n, err := note.Sign(tb.Context(), text, s)
