@@ -572,6 +572,13 @@ func TestCommitInternal(t *testing.T) {
 		// which another server committed the first update of l, and a
 		// function that commits the next update of l there and makes the
 		// state of the idle server catch up and make a snapshot due.
+		//
+		// Both servers act as if the journal up to the first update were
+		// snapshotBytes long, so the first snapshot of the idle server is due,
+		// and its End is the end of the journal of the writer. The writer
+		// takes that snapshot before its next commit, and then finds no
+		// snapshot due after the commit, so it writes no snapshot beside the
+		// case.
 		idle := func(tb testing.TB) (*internalFixture, *Server, func(size uint64)) {
 			tb.Helper()
 
@@ -590,9 +597,11 @@ func TestCommitInternal(t *testing.T) {
 				s.mu.Unlock()
 			}
 
-			s.mu.Lock()
-			s.st.end = snapshotBytes
-			s.mu.Unlock()
+			for _, srv := range []*Server{writer, s} {
+				srv.mu.Lock()
+				srv.st.end = snapshotBytes
+				srv.mu.Unlock()
+			}
 
 			return f, s, next
 		}
