@@ -9,8 +9,8 @@ import (
 	"go.thesmos.sh/core/id"
 )
 
-// alphabet is the canonical base62 alphabet:
-// 0..9, A..Z, a..z. 62 characters.
+// alphabet is the canonical base62 alphabet of 62 characters: 0..9, A..Z
+// and a..z, in the order of their values.
 const alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
 // encodedLen is the canonical KSUID encoded length:
@@ -24,16 +24,15 @@ const encodedLen = 27
 // extracted base62 digit).
 const chunks = 5
 
-// Format returns the canonical 27-character base62 encoding of
-// u. Diagnostic and serialization use; allocates the result
-// string.
+// Format returns the canonical 27-character base62 encoding of the
+// first 160 bits of u, for diagnostics and serialization.
 //
 // Returns the empty string if u is shorter than [id.Size160]
 // (for example [id.Zero]).
 //
 // # Allocation contract
 //
-// Allocates the 27-byte result string.
+// Format allocates the 27-byte result string.
 func Format(u id.ID) string {
 	b := u.Bytes()
 	if len(b) < id.Size160 {
@@ -74,7 +73,7 @@ func Format(u id.ID) string {
 //
 // # Allocation contract
 //
-// Allocates the returned [id.ID] only.
+// Parse does not allocate. It returns the [id.ID] by value.
 func Parse(s string) (id.ID, error) {
 	if len(s) != encodedLen {
 		return id.Zero, ErrInvalidLength
@@ -82,17 +81,17 @@ func Parse(s string) (id.ID, error) {
 
 	// Multiply-and-add across 5 uint32 chunks: for each input
 	// digit, num = num*62 + digit, propagating carry across
-	// chunks. After 27 digits, num holds the decoded 160-bit
+	// chunks. After 27 digits, num contains the decoded 160-bit
 	// value; a non-zero carry past chunk 0 means the input
 	// encoded a value > 2^160.
 	var num [chunks]uint32
 	for i := range encodedLen {
-		v := decodeChar(s[i])
+		v := base62Table[s[i]]
 		if v < 0 {
 			return id.Zero, ErrInvalidChar
 		}
-		// v ∈ [0, 61] by decodeChar; widen to uint64 for the
-		// multiply.
+		// base62Table gives v in [0, 61] here. The multiply needs it
+		// as a uint64.
 		//#nosec G115 -- v is constrained to [0, 61]
 		carry := uint64(v)
 		for j := chunks - 1; j >= 0; j-- {
@@ -131,13 +130,3 @@ var base62Table = func() (t [256]int8) {
 	}
 	return t
 }()
-
-// decodeChar returns the base62 value (0..61) for c, or -1 if c
-// is not a valid base62 character. Constant-time table lookup.
-//
-// # Allocation contract
-//
-// Zero alloc.
-func decodeChar(c byte) int {
-	return int(base62Table[c])
-}

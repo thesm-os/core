@@ -6,235 +6,307 @@ package ksuid_test
 import (
 	"strings"
 	"testing"
-	"time"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/bench"
+	"go.dokimi.dev/assert/expect"
+	"go.dokimi.dev/assert/prop"
 
-	"go.thesmos.sh/core/clock/fake"
 	"go.thesmos.sh/core/errs"
 	"go.thesmos.sh/core/id"
 	"go.thesmos.sh/core/id/ksuid"
-	"go.thesmos.sh/core/rand"
-	"go.thesmos.sh/core/rand/seeded"
 )
 
-func TestFormat(t *testing.T) {
-	t.Parallel()
+// The contracts of parsesText and roundTrips, which the tests and the
+// fuzz targets check.
+const (
+	parseContract     = "Format of the ID that Parse returns must equal the text"
+	roundTripContract = "Parse must return the ID whose encoding Format returns"
+)
 
-	t.Run("Zero formats to empty (size 0)", func(t *testing.T) {
-		t.Parallel()
-		testkit.Equal(t, ksuid.Format(id.Zero), "", "Format(Zero) must be empty")
-	})
+// The reference KSUID of segmentio/ksuid: its bytes, a timestamp of
+// 2017-10-09T21:46:47Z and 16 random bytes, and its encoding.
+var (
+	referenceBytes = [id.Size160]byte{
+		0x06, 0x69, 0xf7, 0xef,
+		0xb5, 0xa1, 0xcd, 0x34, 0xb5, 0xf9, 0x9d, 0x12,
+		0x14, 0xe5, 0xb9, 0x16, 0x9d, 0xa6, 0x9c, 0x32,
+	}
+	referenceText = "0ujtsYcgvSTl8PAuR7PHXnl95SE"
+)
 
-	t.Run("returns 27 zeros for an all-zero ID", func(t *testing.T) {
-		t.Parallel()
-		u := id.New160([id.Size160]byte{})
-		const want = "000000000000000000000000000"
-		testkit.Equal(t, ksuid.Format(u), want, "Format of all-zero ID must encode to 27 zeros")
-	})
+// largestText is the encoding of the largest KSUID, whose 160 bits are
+// all set. An encoding above it in the order of the alphabet overflows.
+var largestText = ksuid.Format(id.New160([id.Size160]byte{
+	0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+	0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+}))
 
-	// Frozen-output vector cross-checked against the segmentio/ksuid
-	// reference encoding for the same byte payload.
-	t.Run("returns the reference encoding of a known KSUID", func(t *testing.T) {
-		t.Parallel()
-		// Bytes 0..3: timestamp 107608047 (offset from KSUID epoch
-		// → 2017-10-09T21:46:47Z absolute).
-		// Bytes 4..19: 16-byte random payload from segmentio/ksuid
-		// README example.
-		raw := [id.Size160]byte{
-			0x06, 0x69, 0xf7, 0xef,
-			0xb5, 0xa1, 0xcd, 0x34, 0xb5, 0xf9, 0x9d, 0x12,
-			0x14, 0xe5, 0xb9, 0x16, 0x9d, 0xa6, 0x9c, 0x32,
-		}
-		u := id.New160(raw)
-		const want = "0ujtsYcgvSTl8PAuR7PHXnl95SE"
-		testkit.Equal(t, ksuid.Format(u), want, "Format must match segmentio/ksuid reference")
-	})
-}
+// ksuids generates IDs of 160 bits.
+var ksuids = prop.Bytes(prop.MinSize(id.Size160), prop.MaxSize(id.Size160)).Map(func(b []byte) id.ID {
+	return id.New160([id.Size160]byte(b))
+})
 
 func TestParse(t *testing.T) {
 	t.Parallel()
 
-	t.Run("round-trips Format on a generated KSUID", func(t *testing.T) {
+	t.Run("Format", func(t *testing.T) {
 		t.Parallel()
-		origin := time.Date(2026, 6, 15, 12, 34, 56, 0, time.UTC)
-		g := ksuid.New(fake.New(origin), seeded.New(rand.Seed(7)))
-		want := g.Generate()
 
-		got, err := ksuid.Parse(ksuid.Format(want))
-		testkit.NoError(t, err, "Parse")
-		testkit.Equal(t, got, want, "Parse(Format(x)) must round-trip")
+		tests := []struct {
+			name string
+			give id.ID
+			want string
+		}{
+			{name: "returns the empty string for Zero", give: id.Zero, want: ""},
+			{
+				name: "returns the empty string for an ID shorter than 160 bits",
+				give: id.New128([id.Size128]byte{1}),
+				want: "",
+			},
+			{
+				name: "returns 27 zeros for an ID of zero bytes",
+				give: id.New160([id.Size160]byte{}),
+				want: strings.Repeat("0", 27),
+			},
+			{
+				name: "returns the reference encoding of segmentio/ksuid",
+				give: id.New160(referenceBytes),
+				want: referenceText,
+			},
+			{
+				name: "returns the encoding of the first 160 bits of a 256-bit ID",
+				give: id.New256([id.Size256]byte(append(referenceBytes[:], make([]byte, 12)...))),
+				want: referenceText,
+			},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				assert.Equal(t, ksuid.Format(tt.give), tt.want, "Format must return the base62 encoding")
+			})
+		}
 	})
 
-	t.Run("decodes the all-zero canonical encoding", func(t *testing.T) {
+	t.Run("Parse", func(t *testing.T) {
 		t.Parallel()
-		got, err := ksuid.Parse("000000000000000000000000000")
-		testkit.NoError(t, err, "Parse")
-		testkit.Equal(t, got, id.New160([id.Size160]byte{}),
-			"all-zero parse must decode to all-zero 160-bit ID")
-	})
 
-	t.Run("decodes the known segmentio reference vector", func(t *testing.T) {
-		t.Parallel()
-		got, err := ksuid.Parse("0ujtsYcgvSTl8PAuR7PHXnl95SE")
-		testkit.NoError(t, err, "Parse")
-		want := id.New160([id.Size160]byte{
-			0x06, 0x69, 0xf7, 0xef,
-			0xb5, 0xa1, 0xcd, 0x34, 0xb5, 0xf9, 0x9d, 0x12,
-			0x14, 0xe5, 0xb9, 0x16, 0x9d, 0xa6, 0x9c, 0x32,
+		t.Run("returns the ID that Format encodes", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, roundTripContract, roundTrips)
 		})
-		testkit.Equal(t, got, want, "Parse must decode to the segmentio reference bytes")
-	})
 
-	t.Run("returns ErrInvalidLength for a string of the wrong length", func(t *testing.T) {
-		t.Parallel()
-		cases := []string{
-			"",
-			"0",
-			strings.Repeat("0", 26),
-			strings.Repeat("0", 28),
-			strings.Repeat("0", 100),
+		t.Run("returns the ID of the reference encoding of segmentio/ksuid", func(t *testing.T) {
+			t.Parallel()
+			got, err := ksuid.Parse(referenceText)
+			assert.NoError(t, err, "Parse must accept the reference encoding")
+			assert.Equal(t, got, id.New160(referenceBytes), "Parse must decode the reference bytes")
+		})
+
+		t.Run("returns the ID of zero bytes for 27 zeros", func(t *testing.T) {
+			t.Parallel()
+			got, err := ksuid.Parse(strings.Repeat("0", 27))
+			assert.NoError(t, err, "Parse must accept 27 zeros")
+			assert.Equal(t, got, id.New160([id.Size160]byte{}), "Parse must decode the ID of zero bytes")
+		})
+
+		t.Run("returns an ID whose encoding is the text for every text it accepts", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, parseContract, parsesText)
+		})
+
+		t.Run("returns an ID for every encoding up to the largest KSUID", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "Parse must decode every encoding that does not overflow", func(c *prop.Case) {
+				s := c.Draw(prop.StringMatching(`[0-9A-Za][0-9A-Za-z]{26}`).Filter(func(s string) bool {
+					return s <= largestText
+				}), "text")
+
+				got, err := ksuid.Parse(s)
+				assert.NoError(c, err, "Parse must accept the encoding")
+				assert.Equal(c, ksuid.Format(got), s, "Format of the decoded ID must return the encoding")
+			})
+		})
+
+		t.Run("returns ErrOverflow for every encoding above the largest KSUID", func(t *testing.T) {
+			t.Parallel()
+			above := prop.StringMatching(`[a-z][0-9A-Za-z]{26}`).Filter(func(s string) bool { return s > largestText })
+			prop.ErrorIs(t, func(s string) error {
+				_, err := ksuid.Parse(s)
+
+				return err
+			}, ksuid.ErrOverflow, "an encoding above 2^160 must overflow",
+				prop.Using(above), prop.Example(strings.Repeat("z", 27)))
+		})
+
+		t.Run("returns ErrInvalidLength for a text that is not 27 characters", func(t *testing.T) {
+			t.Parallel()
+			prop.ErrorIs(t, func(n int) error {
+				_, err := ksuid.Parse(strings.Repeat("0", n))
+
+				return err
+			}, ksuid.ErrInvalidLength, "a text of another length must be refused",
+				prop.Using(prop.Integer(0, 100).Filter(func(n int) bool { return n != 27 })),
+				prop.Example(0), prop.Example(1), prop.Example(26), prop.Example(28), prop.Example(100))
+		})
+
+		t.Run("returns ErrInvalidChar for a character outside the base62 alphabet", func(t *testing.T) {
+			t.Parallel()
+			outside := prop.Integer(0, 255).Filter(func(b int) bool {
+				return !strings.ContainsRune("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz", rune(b))
+			})
+			prop.ForAll(t, "Parse must refuse a character outside the alphabet", func(c *prop.Case) {
+				at := c.Draw(prop.Integer(0, 26), "position")
+				b := c.Draw(outside, "character")
+
+				text := []byte(strings.Repeat("0", 27))
+				text[at] = byte(b)
+				_, err := ksuid.Parse(string(text))
+				assert.ErrorIs(c, err, ksuid.ErrInvalidChar, "Parse must return ErrInvalidChar")
+			})
+		})
+
+		classes := []struct {
+			name string
+			give string
+		}{
+			{name: "returns an error of class Invalid for a text that is not 27 characters", give: "0"},
+			{
+				name: "returns an error of class Invalid for a character outside the alphabet",
+				give: "!" + strings.Repeat("0", 26),
+			},
+			{name: "returns an error of class Invalid for an encoding above 2^160", give: strings.Repeat("z", 27)},
 		}
-		for _, s := range cases {
-			_, err := ksuid.Parse(s)
-			testkit.ErrorIs(t, err, ksuid.ErrInvalidLength,
-				"wrong-length input must return ErrInvalidLength")
-			testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrInvalidLength must classify as Invalid")
+		for _, tt := range classes {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				_, err := ksuid.Parse(tt.give)
+				assert.Equal(t, errs.Classify(err), errs.Invalid, "the refusal must classify as Invalid")
+			})
 		}
-	})
 
-	t.Run("returns ErrInvalidChar for a character outside the base62 alphabet", func(t *testing.T) {
-		t.Parallel()
-		// '!' at position 0 is not alphanumeric.
-		_, err := ksuid.Parse("!" + strings.Repeat("0", 26))
-		testkit.ErrorIs(t, err, ksuid.ErrInvalidChar,
-			"non-alphanumeric input must return ErrInvalidChar")
-		testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrInvalidChar must classify as Invalid")
+		t.Run("returns an ID for every KSUID of a real-world corpus", func(t *testing.T) {
+			t.Parallel()
+			corpus := []string{
+				"3DMNSJaqdg8XxB3ebyUCpTsfLua", "3DMNSD2051qXOhPcHPVbTFKTz4C", "3DMNSFiMJNt5TsQQ5MNFhqKJ4Gp",
+				"3DMNSJjvkmc4nEWQL9vVdeXZlTL", "3DMNSHCOLcZxIO8wibbUGZCw0KP", "3DMNSEDrad9BA3jFMjhGmJxXXTy",
+				"3DMNSJ5wZHLRbxza4VKLzm2iflc", "3DMNSKiQLBh4sDALxEiQR5zS9yS", "3DMNSGziNSXhSdsWDEYW6y3PD1I",
+				"3DMNSD4nrmkBBDAdfOjlcEy0hlS", "3DMNSDp2ZPdf8VJuKaziSckFXga", "3DMNSHMmRXGequYgSilf9WPvxUY",
+				"3DMNSKGZEskZA16SLP34v87f3Zj", "3DMNSFt1TrtUHtqiA60h4DleULA", "3DMNSG7R6P4YNlH2TwteNRuQxoT",
+				"3DMNSDgBY1BCzO9h948yViUSt7G", "3DMNSGBkGhe2JIKZ4zfXi34WCoM", "3DMNSDGIxVHwPGoQSQRsuVgaHuR",
+				"3DMNSK8j7CpI1vYudpsF7cnhixa", "3DMNSECLNkKXAzGQIoFjswYCU8T", "3DMNSGFZxAFDnrccaxRAqZfB9bE",
+				"3DMNSF2ZMLQYcEJRXepTknRKLdb", "3DMNSFUge6Cu6lo3FkaYSAFgnF4", "3DMNSDOFP5RkewlijSxs7FBmF3R",
+				"3DMNSGjRdUN8gJyehGQk5IflM9x",
+			}
+			assert.Total(t, func(s string) error {
+				_, err := ksuid.Parse(s)
 
-		// Hyphen mid-string.
-		_, err = ksuid.Parse(strings.Repeat("0", 13) + "-" + strings.Repeat("0", 13))
-		testkit.ErrorIs(t, err, ksuid.ErrInvalidChar,
-			"hyphen mid-string must return ErrInvalidChar")
-	})
-
-	t.Run("returns ErrOverflow for a value above 2^160", func(t *testing.T) {
-		t.Parallel()
-		// 27 'z' chars = 62^27 - 1, the maximum representable
-		// base62 27-character value (~2.66e48), well above 2^160
-		// (~1.46e48).
-		_, err := ksuid.Parse(strings.Repeat("z", 27))
-		testkit.ErrorIs(t, err, ksuid.ErrOverflow,
-			"value above 2^160 must return ErrOverflow")
-		testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrOverflow must classify as Invalid")
-	})
-
-	// Alphabet-coverage corpus. Real-world KSUIDs sampled at a
-	// single timestamp prefix ("3DMNS...") with diverse random
-	// suffixes. Collectively the suffix bytes exercise every
-	// branch of the base62 decoder ([decodeChar]) — digits,
-	// uppercase A-Z, lowercase a-z.
-	t.Run("parses every KSUID of a real-world corpus", func(t *testing.T) {
-		t.Parallel()
-		corpus := []string{
-			"3DMNSJaqdg8XxB3ebyUCpTsfLua",
-			"3DMNSD2051qXOhPcHPVbTFKTz4C",
-			"3DMNSFiMJNt5TsQQ5MNFhqKJ4Gp",
-			"3DMNSJjvkmc4nEWQL9vVdeXZlTL",
-			"3DMNSHCOLcZxIO8wibbUGZCw0KP",
-			"3DMNSEDrad9BA3jFMjhGmJxXXTy",
-			"3DMNSJ5wZHLRbxza4VKLzm2iflc",
-			"3DMNSKiQLBh4sDALxEiQR5zS9yS",
-			"3DMNSGziNSXhSdsWDEYW6y3PD1I",
-			"3DMNSD4nrmkBBDAdfOjlcEy0hlS",
-			"3DMNSDp2ZPdf8VJuKaziSckFXga",
-			"3DMNSHMmRXGequYgSilf9WPvxUY",
-			"3DMNSKGZEskZA16SLP34v87f3Zj",
-			"3DMNSFt1TrtUHtqiA60h4DleULA",
-			"3DMNSG7R6P4YNlH2TwteNRuQxoT",
-			"3DMNSDgBY1BCzO9h948yViUSt7G",
-			"3DMNSGBkGhe2JIKZ4zfXi34WCoM",
-			"3DMNSDGIxVHwPGoQSQRsuVgaHuR",
-			"3DMNSK8j7CpI1vYudpsF7cnhixa",
-			"3DMNSECLNkKXAzGQIoFjswYCU8T",
-			"3DMNSGFZxAFDnrccaxRAqZfB9bE",
-			"3DMNSF2ZMLQYcEJRXepTknRKLdb",
-			"3DMNSFUge6Cu6lo3FkaYSAFgnF4",
-			"3DMNSDOFP5RkewlijSxs7FBmF3R",
-			"3DMNSGjRdUN8gJyehGQk5IflM9x",
-		}
-		for _, s := range corpus {
-			got, err := ksuid.Parse(s)
-			testkit.NoError(t, err, "Parse "+s)
-			testkit.False(t, got.IsZero(), "Parse must not produce Zero for non-zero input")
-			// Round-trip: Format(Parse(s)) must equal s.
-			testkit.Equal(t, ksuid.Format(got), s, "Format(Parse(s)) must equal s")
-		}
+				return err
+			}, corpus, "Parse must accept every KSUID of the corpus")
+		})
 	})
 }
 
-// FuzzParse asserts [ksuid.Parse] never panics on arbitrary
-// input, and that successful parses round-trip exactly through
-// Format. KSUID's base62 encoding is bytewise-stable, so
-// Format(Parse(s)) == s for every parseable s.
+// TestParseAllocs checks the allocation contracts of Format and Parse.
+// MaxAllocs counts the allocations of the whole process, so the test does
+// not run in parallel.
+//
+//nolint:paralleltest // see above
+func TestParseAllocs(t *testing.T) {
+	u := id.New160(referenceBytes)
+
+	t.Run("Format", func(t *testing.T) {
+		var s string
+		expect.MaxAllocs(t, func() { s = ksuid.Format(u) }, 1, "Format must allocate only the returned string")
+		assert.Equal(t, s, referenceText, "the test must measure the encoding of the KSUID")
+	})
+
+	t.Run("Parse", func(t *testing.T) {
+		var (
+			got id.ID
+			err error
+		)
+		expect.MaxAllocs(t, func() { got, err = ksuid.Parse(referenceText) }, 0, "Parse must not allocate")
+		assert.NoError(t, err, "the test must measure an encoding that Parse accepts")
+		assert.Equal(t, got, u, "the test must measure the ID of the encoding")
+	})
+}
+
+// BenchmarkParse reports the cost of Format and Parse, and fails when one
+// allocates more than TestParseAllocs allows.
+func BenchmarkParse(b *testing.B) {
+	u := id.New160(referenceBytes)
+
+	b.Run("Format", func(b *testing.B) {
+		var s string
+
+		c := bench.Start(b).MaxAllocs(1)
+		defer c.End()
+
+		for c.Loop() {
+			s = ksuid.Format(u)
+		}
+
+		assert.Equal(b, s, referenceText, "the benchmark must measure the encoding of the KSUID")
+	})
+
+	b.Run("Parse", func(b *testing.B) {
+		var (
+			got id.ID
+			err error
+		)
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			got, err = ksuid.Parse(referenceText)
+		}
+
+		assert.NoError(b, err, "the benchmark must measure an encoding that Parse accepts")
+		assert.Equal(b, got, u, "the benchmark must measure the ID of the encoding")
+	})
+}
+
+// FuzzParse checks the contract of parsesText on the texts that a fuzzer
+// finds. Each seed is a text after the octet of its length that the bridge
+// reads first.
 func FuzzParse(f *testing.F) {
-	f.Add("0ujtsYcgvSTl8PAuR7PHXnl95SE")
-	f.Add("000000000000000000000000000")
+	for _, s := range []string{referenceText, strings.Repeat("0", 27)} {
+		f.Add(append([]byte{byte(len(s))}, s...))
+	}
 
-	f.Fuzz(func(t *testing.T, s string) {
-		got, err := ksuid.Parse(s)
-		if err != nil {
-			return
-		}
-		testkit.Equal(t, ksuid.Format(got), s, "Format(Parse(s)) must equal s")
-	})
+	prop.Fuzz(f, parseContract, parsesText)
 }
 
-// FuzzRoundTrip asserts the Format → Parse round-trip on
-// arbitrary 160-bit payloads: any [id.ID] produced from 20
-// bytes must Format to a string that Parse decodes back to the
-// original ID. This exercises the base62 big-int divide-by-62
-// encode loop and the multiply-by-62 decode loop end-to-end.
+// FuzzRoundTrip checks the contract of roundTrips on the IDs that a fuzzer
+// finds.
 func FuzzRoundTrip(f *testing.F) {
 	f.Add(make([]byte, id.Size160))
-	f.Add([]byte{
-		0x06, 0x69, 0xf7, 0xef,
-		0xb5, 0xa1, 0xcd, 0x34, 0xb5, 0xf9, 0x9d, 0x12,
-		0x14, 0xe5, 0xb9, 0x16, 0x9d, 0xa6, 0x9c, 0x32,
-	})
-	f.Add([]byte{
-		0xff, 0xff, 0xff, 0xff,
-		0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-		0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-	})
+	f.Add(referenceBytes[:])
+	f.Add([]byte(strings.Repeat("\xff", id.Size160)))
 
-	f.Fuzz(func(t *testing.T, data []byte) {
-		var raw [id.Size160]byte
-		copy(raw[:], data)
-		u := id.New160(raw)
-
-		formatted := ksuid.Format(u)
-		parsed, err := ksuid.Parse(formatted)
-		testkit.NoError(t, err, "Parse(Format(x))")
-		testkit.Equal(t, parsed, u, "Format → Parse round-trip must preserve the ID")
-	})
+	prop.Fuzz(f, roundTripContract, roundTrips)
 }
 
-func BenchmarkFormat(b *testing.B) {
-	u := id.New160([id.Size160]byte{
-		0x06, 0x69, 0xf7, 0xef, 0xb5, 0xa1, 0xcd, 0x34,
-		0xb5, 0xf9, 0x9d, 0x12, 0x14, 0xe5, 0xb9, 0x16,
-		0x9d, 0xa6, 0x9c, 0x32,
-	})
-	b.ReportAllocs()
-	for b.Loop() {
-		_ = ksuid.Format(u)
+// parsesText checks that Parse refuses a drawn text, or returns an ID
+// whose encoding is the text. The base62 encoding of a KSUID has one form,
+// so the comparison is exact.
+func parsesText(c *prop.Case) {
+	s := string(c.Draw(prop.Bytes(prop.MaxSize(54)), "text"))
+
+	got, err := ksuid.Parse(s)
+	if err == nil {
+		assert.Equal(c, ksuid.Format(got), s, "Format(Parse(s)) must equal s")
 	}
 }
 
-func BenchmarkParse(b *testing.B) {
-	encoded := "0ujtsYcgvSTl8PAuR7PHXnl95SE"
-	b.ReportAllocs()
-	for b.Loop() {
-		_, _ = ksuid.Parse(encoded)
-	}
+// roundTrips checks that Parse returns a drawn 160-bit ID from the
+// encoding that Format returns for it.
+func roundTrips(c *prop.Case) {
+	want := c.Draw(ksuids, "id")
+
+	got, err := ksuid.Parse(ksuid.Format(want))
+	assert.NoError(c, err, "Parse must accept the encoding that Format returns")
+	assert.Equal(c, got, want, "Parse must return the ID that Format encoded")
 }
