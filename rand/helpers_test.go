@@ -217,13 +217,13 @@ func TestHelpersAllocs(t *testing.T) {
 		calls := 0
 		expect.MaxAllocs(t, func() { rand.Shuffle(r, 16, func(int, int) { calls++ }) }, 0,
 			"Shuffle must not allocate")
-		assert.True(t, calls > 0, "the test must measure calls of swap")
+		assert.InRange(t, calls, 1, 1<<63, "the test must measure calls of swap")
 	})
 
 	t.Run("Uint64N", func(t *testing.T) {
 		var got uint64
 		expect.MaxAllocs(t, func() { got = rand.Uint64N(r, 100) }, 0, "Uint64N must not allocate")
-		assert.True(t, got < 100, "the test must measure a value below n")
+		assert.InRange(t, got, 0, 99, "the test must measure a value below n")
 	})
 }
 
@@ -266,7 +266,7 @@ func BenchmarkHelpers(b *testing.B) {
 					rand.Shuffle(r, size.n, swap)
 				}
 
-				assert.True(b, calls > 0, "the benchmark must measure calls of swap")
+				assert.InRange(b, calls, 1, 1<<63, "the benchmark must measure calls of swap")
 			})
 		}
 	})
@@ -283,6 +283,6 @@ func BenchmarkHelpers(b *testing.B) {
 			got = rand.Uint64N(r, 1024)
 		}
 
-		assert.True(b, got < 1024, "the benchmark must measure a value below n")
+		assert.InRange(b, got, 0, 1023, "the benchmark must measure a value below n")
 	})
 }
