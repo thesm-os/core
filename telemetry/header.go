@@ -103,14 +103,22 @@ func (c HeaderCarrier) Set(key, value string) {
 }
 
 // Keys returns the key of every header in the carrier, in unspecified
-// order, and nil for a carrier without headers.
-func (c HeaderCarrier) Keys() []string { return slices.Collect(maps.Keys(c)) }
+// order, and nil for a carrier without headers. It allocates the slice
+// once, with room for every key.
+func (c HeaderCarrier) Keys() []string {
+	if len(c) == 0 {
+		return nil
+	}
+
+	return slices.AppendSeq(make([]string, 0, len(c)), maps.Keys(c))
+}
 
 // canonical appends the canonical form of key to dst in one pass, returns
 // the result, and reports whether it differs from key. It reports false for
-// a key that is canonical already, and for a key with a byte outside the
-// token characters of RFC 9110, which the carrier uses as it is. The token
-// characters are the letters, the digits and !#$%&'*+-.^_`|~.
+// a key that is canonical already. For a key with a byte outside the token
+// characters of RFC 9110, which the carrier uses as it is, it returns no
+// slice and reports false. The token characters are the letters, the
+// digits and !#$%&'*+-.^_`|~.
 func canonical(key string, dst []byte) ([]byte, bool) {
 	changed, upper := false, true
 	for i := range len(key) {
@@ -124,7 +132,7 @@ func canonical(key string, dst []byte) ([]byte, bool) {
 		}
 
 		if !token {
-			return dst, false
+			return nil, false
 		}
 
 		if upper && lower {

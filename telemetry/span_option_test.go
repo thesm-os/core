@@ -6,8 +6,9 @@ package telemetry_test
 import (
 	"testing"
 
+	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/bench"
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert/expect"
 
 	"go.thesmos.sh/core/telemetry"
 )
@@ -25,6 +26,13 @@ var (
 		SpanID:  "b7ad6b7169203331",
 	}
 )
+
+// options are the options of the allocation ceilings: a kind and a remote
+// parent.
+var options = []telemetry.SpanOption{
+	telemetry.WithSpanKind(telemetry.SpanKindServer),
+	telemetry.WithRemoteParent(remote),
+}
 
 func TestSpanOption(t *testing.T) {
 	t.Parallel()
@@ -72,8 +80,8 @@ func TestSpanOption(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-
-				testkit.Equal(t, telemetry.ApplySpanOptions(tt.give), tt.want, "ApplySpanOptions")
+				assert.Equal(t, telemetry.ApplySpanOptions(tt.give), tt.want,
+					"ApplySpanOptions must return the kind that the options set")
 			})
 		}
 	})
@@ -127,42 +135,102 @@ func TestSpanOption(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-
 				got, ok := telemetry.RemoteParent(tt.give)
-				testkit.Equal(t, ok, tt.wantOK, "RemoteParent must report whether an option set a parent")
-				testkit.Equal(t, got, tt.want, "RemoteParent")
+				expect.Equal(t, ok, tt.wantOK, "RemoteParent must report whether an option set a parent")
+				expect.Equal(t, got, tt.want, "RemoteParent must return the parent that the options set")
 			})
 		}
 	})
 }
 
-func BenchmarkSpanOption(b *testing.B) {
-	opts := []telemetry.SpanOption{
-		telemetry.WithSpanKind(telemetry.SpanKindServer),
-		telemetry.WithRemoteParent(remote),
-	}
+// TestSpanOptionAllocs checks the allocation contract of the options and
+// of the functions that read them. MaxAllocs counts the allocations of the
+// whole process, so the test does not run in parallel.
+//
+//nolint:paralleltest // see above
+func TestSpanOptionAllocs(t *testing.T) {
+	var opt telemetry.SpanOption
 
-	b.Run("ApplySpanOptions", func(b *testing.B) {
+	t.Run("WithSpanKind", func(t *testing.T) {
+		expect.MaxAllocs(t, func() { opt = telemetry.WithSpanKind(telemetry.SpanKindServer) }, 0,
+			"WithSpanKind must not allocate")
+		assert.Equal(t, telemetry.ApplySpanOptions([]telemetry.SpanOption{opt}), telemetry.SpanKindServer,
+			"the test must measure an option of a kind")
+	})
+
+	t.Run("WithRemoteParent", func(t *testing.T) {
+		expect.MaxAllocs(t, func() { opt = telemetry.WithRemoteParent(remote) }, 0,
+			"WithRemoteParent must not allocate")
+		_, ok := telemetry.RemoteParent([]telemetry.SpanOption{opt})
+		assert.True(t, ok, "the test must measure an option of a parent")
+	})
+
+	t.Run("ApplySpanOptions", func(t *testing.T) {
+		var kind telemetry.SpanKind
+		expect.MaxAllocs(t, func() { kind = telemetry.ApplySpanOptions(options) }, 0,
+			"ApplySpanOptions must not allocate")
+		assert.Equal(t, kind, telemetry.SpanKindServer, "the test must measure an option that sets a kind")
+	})
+
+	t.Run("RemoteParent", func(t *testing.T) {
+		var ok bool
+		expect.MaxAllocs(t, func() { _, ok = telemetry.RemoteParent(options) }, 0, "RemoteParent must not allocate")
+		assert.True(t, ok, "the test must measure an option that sets a parent")
+	})
+}
+
+// BenchmarkSpanOption reports the cost of the options and of the functions
+// that read them, and fails when one allocates.
+func BenchmarkSpanOption(b *testing.B) {
+	var opt telemetry.SpanOption
+
+	b.Run("WithSpanKind", func(b *testing.B) {
 		c := bench.Start(b).MaxAllocs(0)
 		defer c.End()
 
-		var kind telemetry.SpanKind
 		for c.Loop() {
-			kind = telemetry.ApplySpanOptions(opts)
+			opt = telemetry.WithSpanKind(telemetry.SpanKindServer)
 		}
 
-		testkit.Equal(b, kind, telemetry.SpanKindServer, "the benchmark must measure an option that sets a kind")
+		assert.Equal(b, telemetry.ApplySpanOptions([]telemetry.SpanOption{opt}), telemetry.SpanKindServer,
+			"the benchmark must measure an option of a kind")
+	})
+
+	b.Run("WithRemoteParent", func(b *testing.B) {
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			opt = telemetry.WithRemoteParent(remote)
+		}
+
+		_, ok := telemetry.RemoteParent([]telemetry.SpanOption{opt})
+		assert.True(b, ok, "the benchmark must measure an option of a parent")
+	})
+
+	b.Run("ApplySpanOptions", func(b *testing.B) {
+		var kind telemetry.SpanKind
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			kind = telemetry.ApplySpanOptions(options)
+		}
+
+		assert.Equal(b, kind, telemetry.SpanKindServer, "the benchmark must measure an option that sets a kind")
 	})
 
 	b.Run("RemoteParent", func(b *testing.B) {
+		var ok bool
+
 		c := bench.Start(b).MaxAllocs(0)
 		defer c.End()
 
-		var ok bool
 		for c.Loop() {
-			_, ok = telemetry.RemoteParent(opts)
+			_, ok = telemetry.RemoteParent(options)
 		}
 
-		testkit.True(b, ok, "the benchmark must measure an option that sets a parent")
+		assert.True(b, ok, "the benchmark must measure an option that sets a parent")
 	})
 }

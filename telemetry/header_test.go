@@ -6,23 +6,55 @@ package telemetry_test
 import (
 	"net/http"
 	"net/textproto"
-	"slices"
 	"strconv"
 	"strings"
 	"testing"
 
+	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/bench"
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert/expect"
+	"go.dokimi.dev/assert/prop"
 
 	"go.thesmos.sh/core/telemetry"
 )
 
-// headerValue is the value of every header that the cases store.
-const headerValue = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+// The fixture values of the cases of HeaderCarrier.
+const (
+	// headerValue is the value of every header that the cases store.
+	headerValue = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+
+	// storesCanonically is the contract of the property and of the fuzz
+	// target of Set and Get.
+	storesCanonically = "Set must store a value under the key that textproto canonicalises"
+)
 
 // longKey is a key longer than the buffer in which HeaderCarrier builds a
 // canonical key on its stack.
 var longKey = "x-" + strings.Repeat("ab", 40)
+
+// The keys of the allocation ceilings of Get and Set, with the allocations
+// that the contract of HeaderCarrier states for each.
+var (
+	gets = []struct {
+		name string
+		key  string
+		want uint64
+	}{
+		{name: "of a key that is not canonical", key: "traceparent"},
+		{name: "of a canonical key", key: "Traceparent"},
+		{name: "of a key longer than the stack buffer", key: longKey, want: 1},
+	}
+
+	sets = []struct {
+		name string
+		key  string
+		want uint64
+	}{
+		{name: "of an interned key that is not canonical", key: "traceparent", want: 1},
+		{name: "of a key that is not canonical", key: "x-request-id", want: 2},
+		{name: "of a canonical key", key: "Traceparent", want: 1},
+	}
+)
 
 func TestHeaderCarrier(t *testing.T) {
 	t.Parallel()
@@ -31,8 +63,8 @@ func TestHeaderCarrier(t *testing.T) {
 		t.Parallel()
 
 		tests := []struct {
-			name string
 			give telemetry.HeaderCarrier
+			name string
 			key  string
 			want string
 		}{
@@ -84,25 +116,23 @@ func TestHeaderCarrier(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-
-				testkit.Equal(t, tt.give.Get(tt.key), tt.want, "Get")
+				assert.Equal(t, tt.give.Get(tt.key), tt.want, "Get must return the first value of the header")
 			})
 		}
 
 		t.Run("returns the value that net/http's Header.Set wrote", func(t *testing.T) {
 			t.Parallel()
-
 			h := http.Header{}
 			h.Set("traceparent", headerValue)
-			testkit.Equal(t, telemetry.HeaderCarrier(h).Get("traceparent"), headerValue, "Get")
+			assert.Equal(t, telemetry.HeaderCarrier(h).Get("traceparent"), headerValue,
+				"Get must read the key of net/http")
 		})
 
 		t.Run("returns the value under every key that textproto canonicalises", func(t *testing.T) {
 			t.Parallel()
-
 			for _, key := range probeKeys() {
 				c := telemetry.HeaderCarrier{textproto.CanonicalMIMEHeaderKey(key): {headerValue}}
-				testkit.Equal(t, c.Get(key), headerValue, "Get of "+strconv.Quote(key))
+				expect.Equal(t, c.Get(key), headerValue, "Get must read the textproto key of "+strconv.Quote(key))
 			}
 		})
 	})
@@ -111,10 +141,10 @@ func TestHeaderCarrier(t *testing.T) {
 		t.Parallel()
 
 		tests := []struct {
-			name string
 			give telemetry.HeaderCarrier
-			key  string
 			want telemetry.HeaderCarrier
+			name string
+			key  string
 		}{
 			{
 				name: "stores the value under the canonical form of the key",
@@ -144,29 +174,31 @@ func TestHeaderCarrier(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-
 				tt.give.Set(tt.key, headerValue)
-				testkit.Equal(t, tt.give, tt.want, "Set")
+				assert.Equal(t, tt.give, tt.want, "Set must store the value under the canonical key")
 			})
 		}
 
 		t.Run("writes the header that net/http's Header.Get reads", func(t *testing.T) {
 			t.Parallel()
-
 			h := http.Header{}
 			telemetry.HeaderCarrier(h).Set("traceparent", headerValue)
-			testkit.Equal(t, h.Get("Traceparent"), headerValue, "Header.Get")
+			assert.Equal(t, h.Get("Traceparent"), headerValue, "Set must write the key of net/http")
 		})
 
 		t.Run("stores every key under the key that textproto canonicalises", func(t *testing.T) {
 			t.Parallel()
-
 			for _, key := range probeKeys() {
 				c := telemetry.HeaderCarrier{}
 				c.Set(key, headerValue)
-				want := telemetry.HeaderCarrier{textproto.CanonicalMIMEHeaderKey(key): {headerValue}}
-				testkit.Equal(t, c, want, "Set of "+strconv.Quote(key))
+				expect.Equal(t, c, telemetry.HeaderCarrier{textproto.CanonicalMIMEHeaderKey(key): {headerValue}},
+					"Set must store under the textproto key of "+strconv.Quote(key))
 			}
+		})
+
+		t.Run("stores any key under the key that textproto canonicalises", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, storesCanonically, storesUnderTextprotoKey)
 		})
 	})
 
@@ -175,103 +207,128 @@ func TestHeaderCarrier(t *testing.T) {
 
 		t.Run("returns the key of every header", func(t *testing.T) {
 			t.Parallel()
-
 			c := telemetry.HeaderCarrier{"Traceparent": {headerValue}, "Tracestate": {"a=1"}}
-			keys := c.Keys()
-			slices.Sort(keys)
-			testkit.Equal(t, keys, []string{"Traceparent", "Tracestate"}, "Keys")
+			assert.Permutation(t, c.Keys(), []string{"Traceparent", "Tracestate"},
+				"Keys must return the key of every header")
 		})
 
 		t.Run("returns nil for a carrier without headers", func(t *testing.T) {
 			t.Parallel()
-
-			testkit.Equal(t, telemetry.HeaderCarrier{}.Keys(), []string(nil), "Keys")
+			assert.Nil(t, telemetry.HeaderCarrier{}.Keys(), "Keys must return nil for a carrier without headers")
 		})
 	})
 }
 
-func FuzzHeaderCarrier(f *testing.F) {
-	for _, key := range []string{"traceparent", "Tracestate", "x-b3-traceid", "trace parent", "", "-", "a--b", longKey} {
-		f.Add(key)
+// TestHeaderCarrierAllocs checks the allocation contract of each method.
+// MaxAllocs counts the allocations of the whole process, so the test does
+// not run in parallel.
+//
+//nolint:paralleltest // see above
+func TestHeaderCarrierAllocs(t *testing.T) {
+	carrier := telemetry.HeaderCarrier{
+		"Traceparent": {headerValue},
+		textproto.CanonicalMIMEHeaderKey(longKey): {headerValue},
 	}
 
-	f.Fuzz(func(t *testing.T, key string) {
-		want := textproto.CanonicalMIMEHeaderKey(key)
+	t.Run("Get", func(t *testing.T) {
+		for _, tt := range gets {
+			t.Run(tt.name, func(t *testing.T) {
+				var got string
+				expect.MaxAllocs(t, func() { got = carrier.Get(tt.key) }, tt.want,
+					"Get must allocate as its contract states")
+				assert.Equal(t, got, headerValue, "the test must measure a header that is present")
+			})
+		}
+	})
 
-		c := telemetry.HeaderCarrier{}
-		c.Set(key, headerValue)
-		testkit.Equal(t, c, telemetry.HeaderCarrier{want: {headerValue}}, "Set must store under the textproto key")
-		testkit.Equal(t, c.Get(key), headerValue, "Get must read what Set stored")
+	t.Run("Set", func(t *testing.T) {
+		for _, tt := range sets {
+			t.Run(tt.name, func(t *testing.T) {
+				expect.MaxAllocs(t, func() { carrier.Set(tt.key, headerValue) }, tt.want,
+					"Set must allocate as its contract states")
+				assert.Equal(t, carrier.Get(tt.key), headerValue, "the test must measure a stored header")
+			})
+		}
+	})
+
+	t.Run("Keys", func(t *testing.T) {
+		var got []string
+		expect.MaxAllocs(t, func() { got = carrier.Keys() }, 1, "Keys must allocate its slice alone")
+		assert.NotEmpty(t, got, "the test must measure a carrier with headers")
 	})
 }
 
+// BenchmarkHeaderCarrier reports the cost of each method, and fails above
+// the allocations that their contracts state.
 func BenchmarkHeaderCarrier(b *testing.B) {
-	carrier := telemetry.HeaderCarrier{"Traceparent": {headerValue}}
+	carrier := telemetry.HeaderCarrier{
+		"Traceparent": {headerValue},
+		textproto.CanonicalMIMEHeaderKey(longKey): {headerValue},
+	}
 
-	b.Run("Get of a key that is not canonical", func(b *testing.B) {
-		c := bench.Start(b).MaxAllocs(0)
-		defer c.End()
+	b.Run("Get", func(b *testing.B) {
+		for _, tt := range gets {
+			b.Run(tt.name, func(b *testing.B) {
+				var got string
 
-		var got string
-		for c.Loop() {
-			got = carrier.Get("traceparent")
-		}
+				c := bench.Start(b).MaxAllocs(tt.want)
+				defer c.End()
 
-		testkit.Equal(b, got, headerValue, "the benchmark must measure a header that is present")
-	})
+				for c.Loop() {
+					got = carrier.Get(tt.key)
+				}
 
-	b.Run("Get of a canonical key", func(b *testing.B) {
-		c := bench.Start(b).MaxAllocs(0)
-		defer c.End()
-
-		var got string
-		for c.Loop() {
-			got = carrier.Get("Traceparent")
-		}
-
-		testkit.Equal(b, got, headerValue, "the benchmark must measure a header that is present")
-	})
-
-	b.Run("Set of an interned key that is not canonical", func(b *testing.B) {
-		c := bench.Start(b).MaxAllocs(1)
-		defer c.End()
-
-		for c.Loop() {
-			carrier.Set("traceparent", headerValue)
+				assert.Equal(b, got, headerValue, "the benchmark must measure a header that is present")
+			})
 		}
 	})
 
-	b.Run("Set of a key that is not canonical", func(b *testing.B) {
-		other := telemetry.HeaderCarrier{"X-Request-Id": {headerValue}}
+	b.Run("Set", func(b *testing.B) {
+		for _, tt := range sets {
+			b.Run(tt.name, func(b *testing.B) {
+				c := bench.Start(b).MaxAllocs(tt.want)
+				defer c.End()
 
-		c := bench.Start(b).MaxAllocs(2)
-		defer c.End()
+				for c.Loop() {
+					carrier.Set(tt.key, headerValue)
+				}
 
-		for c.Loop() {
-			other.Set("x-request-id", headerValue)
-		}
-	})
-
-	b.Run("Set of a canonical key", func(b *testing.B) {
-		c := bench.Start(b).MaxAllocs(1)
-		defer c.End()
-
-		for c.Loop() {
-			carrier.Set("Traceparent", headerValue)
+				assert.Equal(b, carrier.Get(tt.key), headerValue, "the benchmark must measure a stored header")
+			})
 		}
 	})
 
 	b.Run("Keys", func(b *testing.B) {
+		var got []string
+
 		c := bench.Start(b).MaxAllocs(1)
 		defer c.End()
 
-		var keys []string
 		for c.Loop() {
-			keys = carrier.Keys()
+			got = carrier.Keys()
 		}
 
-		testkit.Equal(b, keys, []string{"Traceparent"}, "the benchmark must measure a carrier with a header")
+		assert.NotEmpty(b, got, "the benchmark must measure a carrier with headers")
 	})
+}
+
+// FuzzHeaderCarrier checks storesUnderTextprotoKey for the keys that the
+// fuzzer finds.
+func FuzzHeaderCarrier(f *testing.F) {
+	prop.Fuzz(f, storesCanonically, storesUnderTextprotoKey)
+}
+
+// storesUnderTextprotoKey checks that Set stores a value under the key that
+// textproto canonicalises for a drawn key, and that Get reads the value
+// back with the same key.
+func storesUnderTextprotoKey(c *prop.Case) {
+	key := c.Draw(prop.String(), "key")
+	carrier := telemetry.HeaderCarrier{}
+	carrier.Set(key, headerValue)
+
+	assert.Equal(c, carrier, telemetry.HeaderCarrier{textproto.CanonicalMIMEHeaderKey(key): {headerValue}},
+		"Set must store the value under the textproto key")
+	assert.Equal(c, carrier.Get(key), headerValue, "Get must read the value that Set stored")
 }
 
 // probeKeys returns keys that place every byte value at the start of a key,

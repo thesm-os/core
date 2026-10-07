@@ -92,5 +92,16 @@ func (c MapCarrier) Get(key string) string { return c[key] }
 // Set writes key, replacing any existing value.
 func (c MapCarrier) Set(key, value string) { c[key] = value }
 
-// Keys lists every key of the map, in unspecified order.
-func (c MapCarrier) Keys() []string { return slices.Collect(maps.Keys(c)) }
+// Keys lists every key of the map, in unspecified order, and returns nil
+// for an empty map.
+//
+// # Allocation contract
+//
+// One allocation, for the slice of the keys.
+func (c MapCarrier) Keys() []string {
+	if len(c) == 0 {
+		return nil
+	}
+
+	return slices.AppendSeq(make([]string, 0, len(c)), maps.Keys(c))
+}
