@@ -168,7 +168,8 @@ func (n *Note) sign(ctx context.Context, text []byte, signers []Signer) error {
 	if !validText(text) {
 		return fmt.Errorf(
 			"%w: a text ends in a newline, is valid UTF-8, and has no character below U+0020 other than newline",
-			ErrNote)
+			ErrNote,
+		)
 	}
 
 	if len(signers) == 0 {
@@ -410,7 +411,7 @@ func (n *Note) unmarshal(msg []byte) error {
 			off += bound
 		}
 
-		s, _, err := parseSignature(prev.Name, encoded, dst)
+		s, err := parseSignature(prev.Name, encoded, dst)
 		if err != nil {
 			return err
 		}

@@ -22,9 +22,9 @@ const (
 	// encoded signature. No key name contains it.
 	lineSeparator = ' '
 
-	// headText is the number of base64 characters that decodeSignature
-	// decodes first: the key ID and the first two bytes of the signature,
-	// or the whole value of a line of five or six bytes.
+	// headText is the number of base64 characters that decodeHead decodes:
+	// the key ID and the first two bytes of the signature, or the whole
+	// value of a line of five or six bytes.
 	headText = 8
 
 	// headBytes is the number of bytes that headText characters decode to
@@ -141,25 +141,25 @@ func splitLine(line []byte) (name, encoded []byte, err error) {
 
 // parseSignature returns the signature line of name and encoded, the
 // base64 of its key ID and signature, with the signature decoded into the
-// end of dst, and the extended dst. The Value of the line aliases dst, and
-// its capacity ends with it, so that an append to it copies.
+// end of dst. The Value of the line aliases dst, and its capacity ends with
+// it, so that an append to it copies.
 //
 // Returns [ErrNote] for an invalid name, and for an encoding that is not
 // the padded standard base64 of a key ID and at least one byte of
 // signature.
-func parseSignature(name Name, encoded, dst []byte) (Signature, []byte, error) {
+func parseSignature(name Name, encoded, dst []byte) (Signature, error) {
 	if !name.Valid() {
-		return Signature{}, dst, errInvalidName(name)
+		return Signature{}, errInvalidName(name)
 	}
 
 	start := len(dst)
 
 	id, out, ok := decodeSignature(dst, encoded)
 	if !ok {
-		return Signature{}, dst, errEncoding(name)
+		return Signature{}, errEncoding(name)
 	}
 
-	return Signature{Name: name, Value: out[start:len(out):len(out)], ID: id}, out, nil
+	return Signature{Name: name, Value: out[start:len(out):len(out)], ID: id}, nil
 }
 
 // checkLine returns nil when name and encoded, the parts of a signature
@@ -196,20 +196,25 @@ func errEncoding[N ~string | ~[]byte](name N) error {
 // standard base64 of a key ID and a signature: the key ID and the first two
 // bytes of the signature, or the whole value of a line of five or six
 // bytes. It returns them, their number, and the characters after the
-// eight. It reports false for an encoding of fewer than eight characters
-// or of a length that is not a multiple of four, for eight characters that
-// the strict decoder refuses or that decode to fewer than five bytes, and
-// for padding in the eight characters before more characters.
+// eight. It reports false, with zero values, for an encoding of fewer than
+// eight characters or of a length that is not a multiple of four, for eight
+// characters that the strict decoder refuses or that decode to fewer than
+// five bytes, and for padding in the eight characters before more
+// characters.
 func decodeHead(encoded []byte) (head [headBytes]byte, n int, tail []byte, ok bool) {
 	if len(encoded) < headText || len(encoded)%base64Quantum != 0 {
-		return head, 0, nil, false
+		return [headBytes]byte{}, 0, nil, false
 	}
 
 	n, err := strictBase64.Decode(head[:], encoded[:headText])
-	tail = encoded[headText:]
+	//dokimi:mutate-skip sbr-delete,ror-false: Decode writes no byte of a group that it refuses, so eight characters that it refuses decode to at most three bytes, which the check of n refuses
+	if err != nil {
+		return [headBytes]byte{}, 0, nil, false
+	}
 
-	if err != nil || n <= keyIDSize || n < headBytes && len(tail) > 0 {
-		return head, 0, nil, false
+	tail = encoded[headText:]
+	if n <= keyIDSize || n < headBytes && len(tail) > 0 {
+		return [headBytes]byte{}, 0, nil, false
 	}
 
 	return head, n, tail, true
@@ -250,9 +255,10 @@ func validEncoding(encoded []byte) bool {
 
 // decodeSignature decodes encoded, the padded standard base64 of a key ID
 // and a signature, appends the signature to dst, and returns the key ID
-// and the extended dst. It reports false for an encoding that the strict
-// decoder refuses, and for one of fewer than five bytes. encoded contains
-// no carriage return and no newline, which the decoder skips.
+// and the extended dst. It reports false, with zero values, for an
+// encoding that the strict decoder refuses, and for one of fewer than five
+// bytes. encoded contains no carriage return and no newline, which the
+// decoder skips.
 //
 // It decodes the first eight characters, the key ID and the first two
 // bytes of the signature, on the stack, and the rest straight into dst.
@@ -262,7 +268,7 @@ func validEncoding(encoded []byte) bool {
 func decodeSignature(dst, encoded []byte) (uint32, []byte, bool) {
 	head, n, tail, ok := decodeHead(encoded)
 	if !ok {
-		return 0, dst, false
+		return 0, nil, false
 	}
 
 	dst = append(dst, head[keyIDSize:n]...)
@@ -272,7 +278,7 @@ func decodeSignature(dst, encoded []byte) (uint32, []byte, bool) {
 
 	m, err := strictBase64.Decode(dst[start:start+size], tail)
 	if err != nil {
-		return 0, dst[:start], false
+		return 0, nil, false
 	}
 
 	return binary.BigEndian.Uint32(head[:]), dst[:start+m], true

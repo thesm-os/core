@@ -4,39 +4,27 @@
 package note_test
 
 import (
-	"math/rand/v2"
-	"strings"
+	"strconv"
 	"testing"
+	"unicode"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/bench"
+	"go.dokimi.dev/assert/expect"
+	"go.dokimi.dev/assert/prop"
 
 	"go.thesmos.sh/core/note"
 )
 
-// nameRunes are the characters of the names that randomName draws:
-// letters, digits and punctuation of key names, a character outside
-// ASCII, and the characters from U+007F to U+009F that are not spaces.
-var nameRunes = []rune("abz09./:-_λ例\u007f\u0080\u009f")
+// nameAlphabet are the characters of the names that names generates:
+// letters, digits and punctuation of key names, characters of two and three
+// bytes outside ASCII, and the characters from U+007F to U+009F that are
+// not spaces.
+const nameAlphabet = "abz09./:-_λ例\u007f\u0080\u009f"
 
-// randomName returns a valid key name of 1 to 40 characters.
-func randomName(r *rand.Rand) note.Name {
-	var b strings.Builder
-	for range 1 + r.IntN(40) {
-		b.WriteRune(nameRunes[r.IntN(len(nameRunes))])
-	}
-
-	return note.Name(b.String())
-}
-
-// randomBytes returns from minLen to maxLen random bytes.
-func randomBytes(r *rand.Rand, minLen, maxLen int) []byte {
-	b := make([]byte, minLen+r.IntN(maxLen-minLen+1))
-	for i := range b {
-		b[i] = byte(r.Uint32())
-	}
-
-	return b
-}
+// names generates valid key names of 1 to 40 characters of nameAlphabet.
+var names = prop.String(prop.Alphabet(nameAlphabet), prop.MinSize(1), prop.MaxSize(40)).
+	Map(func(s string) note.Name { return note.Name(s) })
 
 func TestName(t *testing.T) {
 	t.Parallel()
@@ -57,41 +45,71 @@ func TestName(t *testing.T) {
 			{name: "reports true for a name with U+009F", give: "a\u009fb", want: true},
 			{name: "reports false for the empty name", give: "", want: false},
 			{name: "reports false for a name with a plus", give: "a+b", want: false},
-			{name: "reports false for a name with a space", give: "a b", want: false},
-			{name: "reports false for a name with a no-break space", give: "a b", want: false},
-			{name: "reports false for a name with U+0085", give: "a\u0085b", want: false},
-			{name: "reports false for a name with a line separator", give: "a b", want: false},
 			{name: "reports false for a name that is not valid UTF-8", give: "a\xffb", want: false},
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-				testkit.Equal(t, tt.give.Valid(), tt.want, "Valid must report whether the name is a key name")
+				assert.Equal(t, tt.give.Valid(), tt.want, "Valid must report whether the name is a key name")
 			})
 		}
 
 		t.Run("reports false for a name with a character below U+0020", func(t *testing.T) {
 			t.Parallel()
 			for c := range rune(0x20) {
-				testkit.False(t, note.Name("a"+string(c)+"b").Valid(),
-					"Valid must refuse the character "+string(c))
+				expect.False(t, note.Name("a"+string(c)+"b").Valid(),
+					"Valid must report false for "+strconv.QuoteRune(c))
 			}
 		})
 
-		t.Run("reports true for random names of the characters of key names", func(t *testing.T) {
+		t.Run("reports false for a name with a character of the White_Space property", func(t *testing.T) {
 			t.Parallel()
-			r := testkit.SeededRand(t)
-			for range 500 {
-				name := randomName(r)
-				testkit.True(t, name.Valid(), "Valid must accept "+string(name))
+			for _, r := range unicode.White_Space.R16 {
+				for c := rune(r.Lo); c <= rune(r.Hi); c += rune(r.Stride) {
+					expect.False(t, note.Name("a"+string(c)+"b").Valid(),
+						"Valid must report false for "+strconv.QuoteRune(c))
+				}
 			}
+		})
+
+		t.Run("reports true for a name of the characters of key names", func(t *testing.T) {
+			t.Parallel()
+			prop.True(t, note.Name.Valid, "Valid must report true for a name of the characters of key names",
+				prop.Using(names))
 		})
 	})
 }
 
+// TestNameAllocs checks the allocation contract of Valid. MaxAllocs counts
+// the allocations of the whole process, so the test does not run in
+// parallel.
+//
+//nolint:paralleltest // see above
+func TestNameAllocs(t *testing.T) {
+	t.Run("Valid", func(t *testing.T) {
+		name := note.Name(exampleName)
+
+		var got bool
+		expect.MaxAllocs(t, func() { got = name.Valid() }, 0, "Valid must not allocate")
+		assert.True(t, got, "the test must measure a valid name")
+	})
+}
+
+// BenchmarkName reports the cost of Valid, and fails above the allocations
+// that its contract states.
 func BenchmarkName(b *testing.B) {
 	b.Run("Valid", func(b *testing.B) {
-		name := note.Name("example.com/log42")
-		benchZeroAlloc(b, func() { sinkBool = name.Valid() })
+		name := note.Name(exampleName)
+
+		var got bool
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			got = name.Valid()
+		}
+
+		assert.True(b, got, "the benchmark must measure a valid name")
 	})
 }

@@ -27,6 +27,10 @@ const (
 	// hexIDSize is the length of a key ID in hexadecimal digits.
 	hexIDSize = 8
 
+	// upperHex are the uppercase hexadecimal digits, which hex.Decode
+	// accepts and a key ID does not contain.
+	upperHex = "ABCDEF"
+
 	// idSeparator separates the key name from the type in the bytes that
 	// a key ID hashes.
 	idSeparator = '\n'
@@ -217,7 +221,7 @@ func (k Key) MarshalText() ([]byte, error) {
 //
 // Zero-alloc when the type of vkey is a type of one byte or the type of
 // k, and the public key of k has room for the public key of vkey, as when
-// k holds the key of vkey. Otherwise allocates the new type and the
+// k contains the key of vkey. Otherwise allocates the new type and the
 // public key. It decodes into a pooled buffer, and copies the base64 to
 // the stack in chunks, so that the string vkey costs no conversion.
 func (k *Key) Set(vkey string) error {
@@ -243,8 +247,8 @@ func (k *Key) Set(vkey string) error {
 // # Allocation contract
 //
 // Zero-alloc when the name and the type of text equal those of k and the
-// public key of k has room for its public key, as when k holds the key of
-// text. Otherwise allocates the new name, a new type without an assigned
+// public key of k has room for its public key, as when k contains the key
+// of text. Otherwise allocates the new name, a new type without an assigned
 // byte, and the public key.
 func (k *Key) UnmarshalText(text []byte) error {
 	name, t, pub, err := parseKey(text, k.Name, k.Type, k.PublicKey)
@@ -258,7 +262,8 @@ func (k *Key) UnmarshalText(text []byte) error {
 }
 
 // String returns the verifier key of k, or the empty string for a Key that
-// is not Valid. It implements [fmt.Stringer].
+// is not Valid, to which AppendText appends nothing. It implements
+// [fmt.Stringer].
 //
 // # Allocation contract
 //
@@ -268,10 +273,7 @@ func (k *Key) UnmarshalText(text []byte) error {
 func (k Key) String() string {
 	var buf [stringBuffer]byte
 
-	b, err := k.AppendText(buf[:0])
-	if err != nil {
-		return ""
-	}
+	b, _ := k.AppendText(buf[:0])
 
 	return string(b)
 }
@@ -287,8 +289,10 @@ func (k Key) textLen() int {
 // verifier key in a string or a byte slice, as [Key.Set] documents. It
 // returns name when the name of vkey equals it, and t when the type of
 // vkey equals it, and copies the public key into the capacity of pub. It
-// takes and returns values, and no pointer to a Key, so that the Key of a
-// caller in another package stays on the stack of that caller.
+// decodes the type and the public key into a pooled buffer, which keeps
+// the capacity of each key that parseKey accepts. It takes and returns
+// values, and no pointer to a Key, so that the Key of a caller in another
+// package does not escape to the heap.
 func parseKey[S ~string | ~[]byte](vkey S, name Name, t Type, pub []byte) (Name, Type, []byte, error) {
 	part, rest, ok := cut(vkey, keySeparator)
 	if !ok {
@@ -317,11 +321,11 @@ func parseKey[S ~string | ~[]byte](vkey S, name Name, t Type, pub []byte) (Name,
 	defer keyBuffers.Put(buf)
 
 	raw, ok := appendDecode((*buf)[:0], encoded)
-	*buf = raw[:0]
-
 	if !ok {
 		return "", "", nil, fmt.Errorf("%w: the type and the public key are not padded standard base64", ErrKey)
 	}
+
+	*buf = raw[:0]
 
 	t, key, ok := splitType(raw, t)
 	if !ok {
@@ -336,8 +340,9 @@ func parseKey[S ~string | ~[]byte](vkey S, name Name, t Type, pub []byte) (Name,
 }
 
 // cut slices s around its first byte sep, and returns the bytes before
-// and after it and true, or s, an empty tail and false when s has no sep.
-// It is strings.Cut and bytes.Cut for a string or a byte slice.
+// and after it and true. It returns two empty values and false when s has
+// no sep. It splits as strings.Cut and bytes.Cut do, for a string or a byte
+// slice.
 func cut[S ~string | ~[]byte](s S, sep byte) (before, after S, found bool) {
 	for i := range len(s) {
 		if s[i] == sep {
@@ -345,11 +350,14 @@ func cut[S ~string | ~[]byte](s S, sep byte) (before, after S, found bool) {
 		}
 	}
 
-	return s, s[len(s):], false
+	var none S
+
+	return none, none, false
 }
 
 // parseKeyID returns the key ID that s spells in 8 lowercase hexadecimal
-// digits, and reports whether s spells one.
+// digits, and reports whether s spells one. It refuses the uppercase
+// digits that hex.Decode accepts before it decodes s.
 func parseKeyID[S ~string | ~[]byte](s S) (uint32, bool) {
 	if len(s) != hexIDSize {
 		return 0, false
@@ -358,13 +366,12 @@ func parseKeyID[S ~string | ~[]byte](s S) (uint32, bool) {
 	var digits [hexIDSize]byte
 	copy(digits[:], s)
 
-	var id [keyIDSize]byte
-	if _, err := hex.Decode(id[:], digits[:]); err != nil {
+	if bytes.ContainsAny(digits[:], upperHex) {
 		return 0, false
 	}
 
-	var lower [hexIDSize]byte
-	if !bytes.Equal(hex.AppendEncode(lower[:0], id[:]), digits[:]) {
+	var id [keyIDSize]byte
+	if _, err := hex.Decode(id[:], digits[:]); err != nil {
 		return 0, false
 	}
 
@@ -372,13 +379,13 @@ func parseKeyID[S ~string | ~[]byte](s S) (uint32, bool) {
 }
 
 // appendDecode appends the bytes that s spells in padded standard base64
-// to dst, and returns the extended slice and whether s spells bytes. It
-// copies s to the stack in chunks of 256 characters and decodes each
-// chunk, so that a string s costs no conversion to bytes. Padding may end
-// only the last chunk, so the chunks decode to the bytes that s spells as
-// a whole. It refuses spare bits that are not zero, and the carriage
-// returns and newlines that the decoder skips, so that every byte string
-// has one encoding.
+// to dst, and returns the extended slice and true. It returns nil and false
+// when s does not spell bytes. It copies s to the stack in chunks of 256
+// characters and decodes each chunk, so that a string s costs no
+// conversion to bytes. Padding may end only the last chunk, so the chunks
+// decode to the bytes that s spells as a whole. It refuses spare bits that
+// are not zero, and the carriage returns and newlines that the decoder
+// skips, so that every byte string has one encoding.
 func appendDecode[S ~string | ~[]byte](dst []byte, s S) ([]byte, bool) {
 	var chunk [decodeChunk]byte
 
@@ -388,12 +395,12 @@ func appendDecode[S ~string | ~[]byte](dst []byte, s S) ([]byte, bool) {
 		s = s[n:]
 
 		if bytes.ContainsAny(part, newlines) || len(s) != 0 && bytes.IndexByte(part, padding) != -1 {
-			return dst, false
+			return nil, false
 		}
 
 		var err error
 		if dst, err = strictBase64.AppendDecode(dst, part); err != nil {
-			return dst, false
+			return nil, false
 		}
 	}
 

@@ -48,10 +48,12 @@ func (n Name) valid() error {
 	return nil
 }
 
-// validName reports whether b is a key name, as [Name.Valid] reports it
-// for Name(b), without the conversion, which allocates.
+// validName reports whether b, bytes of valid UTF-8, are a key name, as
+// [Name.Valid] reports it for Name(b), without the conversion, which
+// allocates. It does not check the encoding, which [TextOf] checks for the
+// whole note before it checks a name.
 func validName(b []byte) bool {
-	return len(b) > 0 && utf8.Valid(b) && !bytes.ContainsFunc(b, notNameRune)
+	return len(b) > 0 && !bytes.ContainsFunc(b, notNameRune)
 }
 
 // notNameRune reports whether a key name excludes r: a character below
