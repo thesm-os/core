@@ -6,55 +6,52 @@ package task_test
 import (
 	"context"
 	"errors"
-	"runtime"
 	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/bench"
+	"go.dokimi.dev/assert/expect"
+	"go.dokimi.dev/assert/prop"
 
 	"go.thesmos.sh/core/task"
 )
 
-// double is an existing function with the shape Map expects.
-func double(_ context.Context, n int) (int, error) {
-	return n * 2, nil
-}
+// sweepAllocs is the number of allocations of one call of Each, whatever
+// the number of its elements: the derived context, its state, the sweep
+// and the closure that its goroutines share.
+const sweepAllocs = 4
 
-// TestEach covers Each. In the failure test, element 0 fails only once
-// element 1 is running, and element 1 returns nil only once the failure
-// has cancelled the context, so both workers are busy until the failure
-// is recorded. Element 1's worker then goes back to claiming, and only
-// the context check can stop it. Any third call was claimed after the
-// failure.
+// Generators of the properties over sweeps.
+var (
+	// limits generates the limit of a call.
+	limits = prop.Integer(1, 16)
+
+	// elements generates the elements of a call, the empty slice included.
+	elements = prop.List(prop.Integer(-1000, 1000), prop.MaxSize(200))
+)
+
 func TestEach(t *testing.T) {
 	t.Parallel()
 
 	t.Run("passes every element with its index", func(t *testing.T) {
 		t.Parallel()
+		prop.ForAll(t, "Each must call fn with the element at each index", func(c *prop.Case) {
+			items := c.Draw(elements, "items")
 
-		items := make([]string, 200)
-		for i := range items {
-			items[i] = strconv.Itoa(i)
-		}
-
-		var (
-			mismatches atomic.Int32
-			err        error
-		)
-		within(t, func() {
-			err = task.Each(t.Context(), 4, items, func(_ context.Context, i int, item string) error {
-				if item != strconv.Itoa(i) {
+			var mismatches atomic.Int32
+			err := task.Each(c.Context(), c.Draw(limits, "limit"), items, func(_ context.Context, i, item int) error {
+				if item != items[i] {
 					mismatches.Add(1)
 				}
 
 				return nil
 			})
+			assert.NoError(c, err, "Each must succeed")
+			assert.Equal(c, mismatches.Load(), 0, "every call must receive the element at its index")
 		})
-
-		testkit.NoError(t, err, "Each must succeed")
-		testkit.Equal(t, mismatches.Load(), int32(0), "every call must receive the element at its index")
 	})
 
 	t.Run("returns nil for an empty slice without calling fn", func(t *testing.T) {
@@ -67,20 +64,25 @@ func TestEach(t *testing.T) {
 			return errBoom
 		})
 
-		testkit.NoError(t, err, "an empty slice must succeed")
-		testkit.Equal(t, runs.Load(), int32(0), "an empty slice must not call fn")
+		assert.NoError(t, err, "an empty slice must succeed")
+		assert.Equal(t, runs.Load(), 0, "an empty slice must not call fn")
 	})
 
 	t.Run("stops claiming indices after a failure", func(t *testing.T) {
 		t.Parallel()
 
+		// Element 0 fails only once element 1 is running, and element 1
+		// returns nil only once the failure has cancelled the context, so
+		// both workers are busy until the failure is recorded. Element 1's
+		// worker then goes back to claiming, and only the context check
+		// can stop it. Any third call was claimed after the failure.
 		var (
 			runs     atomic.Int32
 			err      error
 			started1 = make(chan struct{})
 		)
-		within(t, func() {
-			err = task.Each(t.Context(), 2, indices(1000), func(ctx context.Context, i, _ int) error {
+		assert.CompletesWithin(t, returnBound, func(ctx context.Context) error {
+			err = task.Each(ctx, 2, indices(1000), func(ctx context.Context, i, _ int) error {
 				runs.Add(1)
 				switch i {
 				case 0:
@@ -96,10 +98,12 @@ func TestEach(t *testing.T) {
 					return nil
 				}
 			})
-		})
 
-		testkit.ErrorIs(t, err, errBoom, "the failure must be the result")
-		testkit.Equal(t, runs.Load(), int32(2), "no index may be claimed after the failure is recorded")
+			return err
+		}, "Each must return once its calls return")
+
+		assert.ErrorIs(t, err, errBoom, "the failure must be the result")
+		assert.Equal(t, runs.Load(), 2, "no index may be claimed after the failure is recorded")
 	})
 }
 
@@ -108,22 +112,21 @@ func TestMap(t *testing.T) {
 
 	t.Run("returns the results in the order of items", func(t *testing.T) {
 		t.Parallel()
-
-		var (
-			got []string
-			err error
-		)
-		within(t, func() {
-			got, err = task.Map(t.Context(), 8, indices(1000), func(_ context.Context, n int) (string, error) {
+		prop.Equal(t, func(items []int) []string {
+			// A failed call returns nil, which differs from every want.
+			got, _ := task.Map(t.Context(), 8, items, func(_ context.Context, n int) (string, error) {
 				return strconv.Itoa(n), nil
 			})
-		})
 
-		testkit.NoError(t, err, "Map must succeed")
-		testkit.Len(t, got, 1000, "Map must return one result per element")
-		for i, s := range got {
-			testkit.Equal(t, s, strconv.Itoa(i), "result "+strconv.Itoa(i)+" must belong to element "+strconv.Itoa(i))
-		}
+			return got
+		}, func(items []int) []string {
+			want := make([]string, len(items))
+			for i, n := range items {
+				want[i] = strconv.Itoa(n)
+			}
+
+			return want
+		}, "Map must return the result of each element at the element's index", prop.Using(elements))
 	})
 
 	t.Run("returns nil results with the first error", func(t *testing.T) {
@@ -133,38 +136,32 @@ func TestMap(t *testing.T) {
 			got []int
 			err error
 		)
-		within(t, func() {
-			got, err = task.Map(t.Context(), 2, indices(3), func(_ context.Context, n int) (int, error) {
+		assert.CompletesWithin(t, returnBound, func(ctx context.Context) error {
+			got, err = task.Map(ctx, 2, indices(3), func(_ context.Context, n int) (int, error) {
 				if n == 1 {
 					return 0, errBoom
 				}
 
 				return n, nil
 			})
-		})
 
-		testkit.ErrorIs(t, err, errBoom, "the failure must be the result")
-		testkit.Equal(t, got, []int(nil), "a partial result must not be returned")
+			return err
+		}, "Map must return once its calls return")
+
+		assert.ErrorIs(t, err, errBoom, "the failure must be the result")
+		assert.Nil(t, got, "a partial result must not be returned")
 	})
 
 	t.Run("accepts an existing function", func(t *testing.T) {
 		t.Parallel()
-
-		var (
-			got []int
-			err error
-		)
-		within(t, func() {
-			got, err = task.Map(t.Context(), 2, []int{1, 2, 3}, double)
-		})
-
-		testkit.NoError(t, err, "Map must succeed")
-		testkit.Equal(t, got, []int{2, 4, 6}, "Map must return what the function returned")
+		got, err := task.Map(t.Context(), 2, []int{1, 2, 3}, double)
+		assert.NoError(t, err, "Map must succeed")
+		assert.Equal(t, got, []int{2, 4, 6}, "Map must return what the function returned")
 	})
 }
 
-// TestAll covers All. In the concurrency test each function waits for
-// the other, so All passes only when both run at once.
+// TestAll covers All. In the concurrency case each function waits for the
+// other, so All passes only when both run at once.
 func TestAll(t *testing.T) {
 	t.Parallel()
 
@@ -179,113 +176,156 @@ func TestAll(t *testing.T) {
 				case <-theirs:
 					return nil
 				case <-time.After(time.Second):
-					return errors.New("the functions did not run at once")
+					return errors.New("task_test: the functions did not run at once")
 				}
 			}
 		}
 
 		var err error
-		within(t, func() {
-			err = task.All(t.Context(), meet(a, b), meet(b, a))
-		})
+		assert.CompletesWithin(t, returnBound, func(ctx context.Context) error {
+			err = task.All(ctx, meet(a, b), meet(b, a))
 
-		testkit.NoError(t, err, "All must run its functions at once")
+			return err
+		}, "All must return once its functions return")
+
+		assert.NoError(t, err, "All must run its functions at once")
 	})
 
 	t.Run("returns nil for no functions", func(t *testing.T) {
 		t.Parallel()
-
-		testkit.NoError(t, task.All(t.Context()), "All with no functions must succeed")
+		assert.NoError(t, task.All(t.Context()), "All with no functions must succeed")
 	})
 }
 
-// TestZeroAlloc enforces the allocation contract of Each, Map, Stream
-// and Quorum: allocations per call do not grow with the number of
-// elements. testing.AllocsPerRun reads a process-global malloc
-// counter, so this test does not call t.Parallel. Quorum runs with k
-// equal to the number of elements, so it calls fn for every one.
+// TestEachAllocs checks the allocation contracts of Each, Map and All: a
+// fixed number of allocations per call, whatever the number of elements.
+// The calls run on one worker, so each waits for its worker in the same
+// way. MaxAllocs counts the allocations of the whole process, so the test
+// does not run in parallel.
 //
-// Both lengths exceed the limit, so both calls wait for their worker
-// in the same way, and the runtime's allocations for that wait appear
-// on both sides. An allocation per element would add 448 to one side.
-// The deadline makes a Stream that never starts a worker return
-// instead of hanging the test.
-func TestZeroAlloc(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
-	defer cancel()
-	noop := func(context.Context, int) error { return nil }
-	short, long := indices(64), indices(512)
+//nolint:paralleltest // see above
+func TestEachAllocs(t *testing.T) {
+	ctx := t.Context()
+	noop := func(context.Context, int, int) error { return nil }
 
-	cases := []struct {
-		name  string
-		short func()
-		long  func()
-	}{
-		{
-			name: "Each",
-			short: func() {
-				_ = task.Each(ctx, 1, short, func(ctx context.Context, i, _ int) error { return noop(ctx, i) })
-			},
-			long: func() { _ = task.Each(ctx, 1, long, func(ctx context.Context, i, _ int) error { return noop(ctx, i) }) },
-		},
-		{
-			name:  "Map",
-			short: func() { _, _ = task.Map(ctx, 1, short, double) },
-			long:  func() { _, _ = task.Map(ctx, 1, long, double) },
-		},
-		{
-			name:  "Stream",
-			short: func() { _ = task.Stream(ctx, 1, sequence(len(short), nil), noop) },
-			long:  func() { _ = task.Stream(ctx, 1, sequence(len(long), nil), noop) },
-		},
-		{
-			name: "Quorum",
-			short: func() {
-				_ = task.Quorum(ctx, 1, len(short), short, func(ctx context.Context, i, _ int) error {
-					return noop(ctx, i)
-				})
-			},
-			long: func() {
-				_ = task.Quorum(ctx, 1, len(long), long, func(ctx context.Context, i, _ int) error {
-					return noop(ctx, i)
-				})
-			},
-		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			testkit.Equal(t, testing.AllocsPerRun(100, tc.long), testing.AllocsPerRun(100, tc.short),
-				tc.name+" must allocate the same for 512 elements as for 64")
+	t.Run("Each", func(t *testing.T) {
+		for _, n := range []int{64, 512} {
+			t.Run(strconv.Itoa(n), func(t *testing.T) {
+				items := indices(n)
+
+				var err error
+				expect.MaxAllocs(t, func() { err = task.Each(ctx, 1, items, noop) }, sweepAllocs,
+					"Each must allocate a fixed amount, whatever the number of elements")
+				assert.NoError(t, err, "the test must measure a call that succeeds")
+			})
+		}
+
+		t.Run("0", func(t *testing.T) {
+			var err error
+			expect.MaxAllocs(t, func() { err = task.Each(ctx, 1, []int(nil), noop) }, 0,
+				"Each of no elements must not allocate")
+			assert.NoError(t, err, "the test must measure a call that succeeds")
 		})
-	}
-}
+	})
 
-func BenchmarkEach(b *testing.B) {
-	b.ReportAllocs()
+	t.Run("Map", func(t *testing.T) {
+		for _, n := range []int{64, 512} {
+			t.Run(strconv.Itoa(n), func(t *testing.T) {
+				items := indices(n)
 
-	items := make([]int, b.N)
-	var sink atomic.Int64
+				var (
+					got []int
+					err error
+				)
+				expect.MaxAllocs(t, func() { got, err = task.Map(ctx, 1, items, double) }, sweepAllocs+1,
+					"Map must allocate what Each allocates, and the results")
+				assert.NoError(t, err, "the test must measure a call that succeeds")
+				assert.Length(t, got, n, "the test must measure a result per element")
+			})
+		}
+	})
 
-	b.ResetTimer()
-	_ = task.Each(b.Context(), runtime.GOMAXPROCS(0)*2, items, func(_ context.Context, i, _ int) error {
-		sink.Add(int64(i))
+	t.Run("All", func(t *testing.T) {
+		fns := []func(context.Context) error{
+			func(context.Context) error { return nil },
+			func(context.Context) error { return nil },
+			func(context.Context) error { return nil },
+		}
 
-		return nil
+		var err error
+		expect.MaxAllocs(t, func() { err = task.All(ctx, fns...) }, sweepAllocs,
+			"All must allocate what Each allocates")
+		assert.NoError(t, err, "the test must measure a call that succeeds")
 	})
 }
 
-func BenchmarkAll(b *testing.B) {
-	b.ReportAllocs()
+// BenchmarkEach reports the cost of Each, Map and All over 1,024 elements
+// or three functions, and fails when a call allocates more than its
+// allocation contract allows.
+func BenchmarkEach(b *testing.B) {
+	items := indices(1024)
+	limit := 8
 
-	var sink atomic.Int64
-	lookup := func(context.Context) error {
-		sink.Add(1)
+	b.Run("Each", func(b *testing.B) {
+		var sum atomic.Int64
+		fn := func(_ context.Context, i, _ int) error {
+			sum.Add(int64(i))
 
-		return nil
-	}
-	fns := []func(context.Context) error{lookup, lookup, lookup}
+			return nil
+		}
 
-	for b.Loop() {
-		_ = task.All(b.Context(), fns...)
-	}
+		var err error
+
+		c := bench.Start(b).Warmup(benchWarmup).MaxAllocs(sweepAllocs)
+		defer c.End()
+
+		for c.Loop() {
+			err = task.Each(b.Context(), limit, items, fn)
+		}
+
+		assert.NoError(b, err, "the benchmark must measure calls that succeed")
+	})
+
+	b.Run("Map", func(b *testing.B) {
+		var (
+			got []int
+			err error
+		)
+
+		c := bench.Start(b).Warmup(benchWarmup).MaxAllocs(sweepAllocs + 1)
+		defer c.End()
+
+		for c.Loop() {
+			got, err = task.Map(b.Context(), limit, items, double)
+		}
+
+		assert.NoError(b, err, "the benchmark must measure calls that succeed")
+		assert.Length(b, got, len(items), "the benchmark must measure a result per element")
+	})
+
+	b.Run("All", func(b *testing.B) {
+		var sum atomic.Int64
+		lookup := func(context.Context) error {
+			sum.Add(1)
+
+			return nil
+		}
+		fns := []func(context.Context) error{lookup, lookup, lookup}
+
+		var err error
+
+		c := bench.Start(b).Warmup(benchWarmup).MaxAllocs(sweepAllocs)
+		defer c.End()
+
+		for c.Loop() {
+			err = task.All(b.Context(), fns...)
+		}
+
+		assert.NoError(b, err, "the benchmark must measure calls that succeed")
+	})
+}
+
+// double is an existing function with the shape Map expects.
+func double(_ context.Context, n int) (int, error) {
+	return n * 2, nil
 }

@@ -62,7 +62,10 @@ func Every(
 
 	for ctx.Err() == nil {
 		if err := fn(ctx); err != nil {
-			if stopped(ctx, err) {
+			// A call cut short by the end of ctx returns ctx's error or
+			// cause. Both are nil until ctx ends, and errors.Is with a nil
+			// target reports false for a non-nil err.
+			if errors.Is(err, ctx.Err()) || errors.Is(err, context.Cause(ctx)) {
 				return nil
 			}
 
@@ -82,10 +85,4 @@ func Every(
 	}
 
 	return nil
-}
-
-// stopped reports whether err is the end of ctx: ctx has ended, and err
-// is its error or its cause.
-func stopped(ctx context.Context, err error) bool {
-	return ctx.Err() != nil && (errors.Is(err, ctx.Err()) || errors.Is(err, context.Cause(ctx)))
 }

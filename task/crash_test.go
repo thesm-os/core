@@ -12,7 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/expect"
 )
 
 // crashEnv names the environment variable that tells a child test
@@ -63,9 +64,9 @@ func TestCrash(t *testing.T) {
 			out, err := cmd.CombinedOutput()
 			trace := string(out)
 
-			testkit.Error(t, err, "the child process must die of the panic")
-			testkit.NotContains(t, trace, returnedMarker, "the call must not return before the crash")
-			testkit.Contains(t, trace, "panickingTask", "the crash trace must include the task's frame")
+			assert.HasError(t, err, "the child process must die of the panic")
+			expect.NotContains(t, trace, returnedMarker, "the call must not return before the crash")
+			expect.Contains(t, trace, "panickingTask", "the crash trace must include the task's frame")
 		})
 	}
 }

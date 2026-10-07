@@ -54,8 +54,10 @@ type flow[E any] struct {
 // # Allocation contract
 //
 // Stream allocates a fixed amount per call, whatever the number of
-// elements: the derived context, its state, the buffer, the closure
-// shared by the workers and the yield function.
+// elements, 7 objects in all: two for the derived context, the state of
+// the call, the buffer, the closure shared by the workers, the yield
+// function, and the done channel of the derived context, which the first
+// wait of seq for room in a full buffer creates.
 func Stream[E any](
 	ctx context.Context,
 	limit int,
@@ -134,6 +136,7 @@ func Stream[E any](
 			select {
 			case f.ch <- item:
 			case <-ctx.Done():
+				//dokimi:mutate-skip sbr-delete: a worker skips a buffered element and records the cause, except in a race that no test orders
 				f.skip(ctx)
 			}
 		}

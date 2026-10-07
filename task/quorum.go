@@ -77,7 +77,8 @@ type quorum struct {
 //
 // Quorum allocates a fixed amount per call, whatever the length of
 // items: the derived context, its state and one closure shared by the
-// goroutines. Each failure allocates its wrapped error.
+// goroutines. Each failure allocates its wrapped error, and the list of
+// failures grows by [append].
 func Quorum[E any](
 	ctx context.Context,
 	limit, k int,
@@ -95,6 +96,7 @@ func Quorum[E any](
 	parent := ctx
 	q := &quorum{k: k, n: len(items)}
 	ctx, q.cancel = context.WithCancelCause(ctx)
+	//dokimi:mutate-skip sbr-delete: every return follows a decision, which cancels, or the end of ctx
 	defer q.cancel(nil)
 
 	n := int64(len(items))
@@ -147,8 +149,9 @@ func Quorum[E any](
 
 // record counts the result of the call for item i and decides the
 // quorum when k successes are recorded or become impossible. parent is
-// the caller's context: a failure that decides the quorum after parent
-// has ended returns parent's cause.
+// the caller's context. A failure that makes k successes impossible after
+// parent has ended decides nothing, so Quorum returns parent's cause.
+// Every later call adds no success, because k successes are impossible.
 func (q *quorum) record(parent context.Context, i int, err error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -166,21 +169,14 @@ func (q *quorum) record(parent context.Context, i int, err error) {
 		return
 	}
 
-	// The decision comes at the latest with failure n-k+1, so n is
-	// room enough. A capacity computed from k would give a mutation tool
-	// a mutant that only changes the capacity, which no test can see.
-	if q.failures == nil {
-		q.failures = make([]error, 0, q.n)
-	}
-
 	q.failures = append(q.failures, fmt.Errorf("item %d: %w", i, err))
 	if q.n-len(q.failures) >= q.k {
 		return
 	}
 
-	if cause := context.Cause(parent); cause != nil {
-		q.decide(cause, cause)
-
+	// After parent has ended, the quorum stays undecided, and Quorum
+	// returns the cause that parent passed to the derived context.
+	if context.Cause(parent) != nil {
 		return
 	}
 

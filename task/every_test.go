@@ -5,10 +5,14 @@ package task_test
 
 import (
 	"context"
+	"errors"
+	"math"
+	"sync/atomic"
 	"testing"
 	"time"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/prop"
 
 	"go.thesmos.sh/core/clock/fake"
 	"go.thesmos.sh/core/errs"
@@ -20,6 +24,8 @@ import (
 // period is the period of every loop in TestEvery.
 const period = time.Minute
 
+// origin is the virtual time at which the fake clock of every case
+// starts.
 var origin = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
 // loop is one call to Every on its own goroutine. calls receives the
@@ -53,8 +59,8 @@ func startEvery(
 	return l
 }
 
-// call returns the virtual time of the next call to fn, or fails the
-// test when there is none within a second.
+// call returns the virtual time of the next call to fn, or fails the test
+// when there is none within a second.
 func (l *loop) call(t *testing.T) time.Time {
 	t.Helper()
 
@@ -69,19 +75,14 @@ func (l *loop) call(t *testing.T) time.Time {
 }
 
 // noCall fails the test when fn has been called since the last call to
-// call. It first waits until Every waits on c again. Every sends on
-// calls inside fn, before it registers its next timer, so a call that
-// ran early is on calls by then.
+// call. It first waits until Every waits on c again. Every sends on calls
+// inside fn, before it registers its next timer, so a call that ran early
+// is on calls by then.
 func (l *loop) noCall(t *testing.T, c *fake.Clock) {
 	t.Helper()
 
 	c.AwaitWaiters(1)
-
-	select {
-	case at := <-l.calls:
-		t.Fatalf("fn was called early, at %s", at)
-	default:
-	}
+	assert.Length(t, l.calls, 0, "fn must not be called before its time")
 }
 
 // result returns Every's result, or fails the test when Every has not
@@ -99,18 +100,16 @@ func (l *loop) result(t *testing.T) error {
 	}
 }
 
-func succeed(context.Context, int) error { return nil }
-
-// TestEvery drives Every with a fake clock. A test advances the clock
-// only after AwaitWaiters reports that Every is waiting, so each
-// assertion about when fn runs is deterministic.
+// TestEvery drives Every with a fake clock. A case advances the clock only
+// after AwaitWaiters reports that Every is waiting, so each assertion
+// about when fn runs is deterministic.
 //
-// The jitter tests pin the draw with rand/constant. A constant of all
-// ones draws one below the bound, and a constant of one draws zero. A
-// constant zero never leaves rand.Uint64N's rejection band.
+// The jitter cases pin the draw with rand/constant. A constant of all ones
+// draws one below the bound, and a constant of one draws zero. A constant
+// zero never leaves the rejection band of rand.Uint64N.
 //
-// A test in which fn must not run has fn return errBoom. A loop that
-// starts by mistake then ends at its first call, and the test fails
+// A case in which fn must not run has fn return errBoom. A loop that
+// starts by mistake then ends at its first call, and the case fails
 // instead of hanging.
 func TestEvery(t *testing.T) {
 	t.Parallel()
@@ -119,17 +118,17 @@ func TestEvery(t *testing.T) {
 		t.Parallel()
 		ctx, cancel := context.WithCancel(t.Context())
 		c := fake.New(origin)
-		l := startEvery(ctx, c, nil, 0, succeed)
+		l := startEvery(ctx, c, nil, 0, func(context.Context, int) error { return nil })
 
-		testkit.Equal(t, l.call(t), origin, "the first call must run at once")
+		assert.Equal(t, l.call(t), origin, "the first call must run at once")
 		c.AwaitWaiters(1)
 		c.Advance(period - time.Nanosecond)
 		l.noCall(t, c)
 		c.Advance(time.Nanosecond)
-		testkit.Equal(t, l.call(t), origin.Add(period), "the second call must run one period later")
+		assert.Equal(t, l.call(t), origin.Add(period), "the second call must run one period later")
 
 		cancel()
-		testkit.NoError(t, l.result(t), "cancelling ctx must stop the loop with nil")
+		assert.NoError(t, l.result(t), "cancelling ctx must stop the loop with nil")
 	})
 
 	t.Run("starts the wait when a slow call returns", func(t *testing.T) {
@@ -149,44 +148,46 @@ func TestEvery(t *testing.T) {
 		c.Advance(period - time.Nanosecond)
 		l.noCall(t, c)
 		c.Advance(time.Nanosecond)
-		testkit.Equal(t, l.call(t), origin.Add(6*period),
+		assert.Equal(t, l.call(t), origin.Add(6*period),
 			"the next call must run one period after the slow call returned")
 
 		cancel()
-		testkit.NoError(t, l.result(t), "cancelling ctx must stop the loop with nil")
+		assert.NoError(t, l.result(t), "cancelling ctx must stop the loop with nil")
 	})
 
 	t.Run("adds a jitter below its bound", func(t *testing.T) {
 		t.Parallel()
 		ctx, cancel := context.WithCancel(t.Context())
 		c := fake.New(origin)
-		l := startEvery(ctx, c, constant.New(^uint64(0)), time.Second, succeed)
+		l := startEvery(ctx, c, constant.New(math.MaxUint64), time.Second, func(context.Context, int) error {
+			return nil
+		})
 
 		l.call(t)
 		c.AwaitWaiters(1)
 		c.Advance(period + time.Second - 2*time.Nanosecond)
 		l.noCall(t, c)
 		c.Advance(time.Nanosecond)
-		testkit.Equal(t, l.call(t), origin.Add(period+time.Second-time.Nanosecond),
+		assert.Equal(t, l.call(t), origin.Add(period+time.Second-time.Nanosecond),
 			"the largest draw must wait one nanosecond less than period plus jitter")
 
 		cancel()
-		testkit.NoError(t, l.result(t), "cancelling ctx must stop the loop with nil")
+		assert.NoError(t, l.result(t), "cancelling ctx must stop the loop with nil")
 	})
 
 	t.Run("waits the bare period for the smallest jitter draw", func(t *testing.T) {
 		t.Parallel()
 		ctx, cancel := context.WithCancel(t.Context())
 		c := fake.New(origin)
-		l := startEvery(ctx, c, constant.New(1), time.Second, succeed)
+		l := startEvery(ctx, c, constant.New(1), time.Second, func(context.Context, int) error { return nil })
 
 		l.call(t)
 		c.AwaitWaiters(1)
 		c.Advance(period)
-		testkit.Equal(t, l.call(t), origin.Add(period), "a draw of zero must wait exactly one period")
+		assert.Equal(t, l.call(t), origin.Add(period), "a draw of zero must wait exactly one period")
 
 		cancel()
-		testkit.NoError(t, l.result(t), "cancelling ctx must stop the loop with nil")
+		assert.NoError(t, l.result(t), "cancelling ctx must stop the loop with nil")
 	})
 
 	t.Run("returns fn's error", func(t *testing.T) {
@@ -204,13 +205,13 @@ func TestEvery(t *testing.T) {
 		c.AwaitWaiters(1)
 		c.Advance(period)
 		l.call(t)
-		testkit.ErrorIs(t, l.result(t), errBoom, "fn's error must end the loop")
+		assert.ErrorIs(t, l.result(t), errBoom, "fn's error must end the loop")
 	})
 
-	t.Run("returns nil when a call returns the error of its ended context", func(t *testing.T) {
+	t.Run("returns nil when a call returns the cause of its ended context", func(t *testing.T) {
 		t.Parallel()
 		ctx, cancel := context.WithCancelCause(t.Context())
-		cause := testkit.TestError("shutting down")
+		cause := errors.New("task_test: shutting down")
 		l := startEvery(ctx, fake.New(origin), nil, 0, func(ctx context.Context, _ int) error {
 			cancel(cause)
 
@@ -218,7 +219,20 @@ func TestEvery(t *testing.T) {
 		})
 
 		l.call(t)
-		testkit.NoError(t, l.result(t), "a call cut short by the end of ctx must stop the loop with nil")
+		assert.NoError(t, l.result(t), "a call cut short by the end of ctx must stop the loop with nil")
+	})
+
+	t.Run("returns nil when a call returns the error of a context that ended with a cause", func(t *testing.T) {
+		t.Parallel()
+		ctx, cancel := context.WithCancelCause(t.Context())
+		l := startEvery(ctx, fake.New(origin), nil, 0, func(ctx context.Context, _ int) error {
+			cancel(errBoom)
+
+			return ctx.Err()
+		})
+
+		l.call(t)
+		assert.NoError(t, l.result(t), "a call that returns ctx.Err() after the end of ctx must stop the loop with nil")
 	})
 
 	t.Run("returns a failure that coincides with the end of its context", func(t *testing.T) {
@@ -231,7 +245,7 @@ func TestEvery(t *testing.T) {
 		})
 
 		l.call(t)
-		testkit.ErrorIs(t, l.result(t), errBoom, "a failure unrelated to ctx must be returned")
+		assert.ErrorIs(t, l.result(t), errBoom, "a failure unrelated to ctx must be returned")
 	})
 
 	t.Run("returns nil without calling fn when ctx has already ended", func(t *testing.T) {
@@ -245,32 +259,51 @@ func TestEvery(t *testing.T) {
 
 			return errBoom
 		})
-		testkit.NoError(t, err, "an ended ctx must stop the loop with nil")
-		testkit.Equal(t, calls, 0, "fn must not run under an ended ctx")
+		assert.NoError(t, err, "an ended ctx must stop the loop with nil")
+		assert.Equal(t, calls, 0, "fn must not run under an ended ctx")
 	})
 
-	t.Run("returns ErrPeriod for a period that is not positive or a negative jitter", func(t *testing.T) {
+	t.Run("returns ErrPeriod for a period that is not positive", func(t *testing.T) {
 		t.Parallel()
-		for _, tc := range []struct {
-			period, jitter time.Duration
-		}{{0, 0}, {-time.Second, 0}, {time.Second, -time.Nanosecond}} {
-			err := task.Every(t.Context(), fake.New(origin), nil, tc.period, tc.jitter, func(context.Context) error {
-				t.Error("fn must not run for an invalid period")
+
+		var calls atomic.Int32
+		prop.ErrorIs(t, func(p time.Duration) error {
+			return task.Every(t.Context(), fake.New(origin), nil, p, 0, func(context.Context) error {
+				calls.Add(1)
 
 				return errBoom
 			})
-			testkit.ErrorIs(t, err, task.ErrPeriod, "an invalid period or jitter must be refused")
-			testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrPeriod must classify as Invalid")
-		}
+		}, task.ErrPeriod, "a period that is not positive must be refused",
+			prop.Using(prop.Duration(math.MinInt64, 0)), prop.Example(time.Duration(0)), prop.Example(-time.Second))
+		assert.Equal(t, calls.Load(), 0, "fn must not run for a refused period")
+		assert.Equal(t, errs.Classify(task.ErrPeriod), errs.Invalid, "ErrPeriod must classify as Invalid")
+	})
+
+	t.Run("returns ErrPeriod for a negative jitter", func(t *testing.T) {
+		t.Parallel()
+
+		var calls atomic.Int32
+		prop.ErrorIs(t, func(jitter time.Duration) error {
+			return task.Every(t.Context(), fake.New(origin), nil, time.Second, jitter, func(context.Context) error {
+				calls.Add(1)
+
+				return errBoom
+			})
+		}, task.ErrPeriod, "a negative jitter must be refused",
+			prop.Using(prop.Duration(math.MinInt64, -1)), prop.Example(-time.Nanosecond))
+		assert.Equal(t, calls.Load(), 0, "fn must not run for a refused jitter")
 	})
 
 	t.Run("returns ErrPeriod for a positive jitter without a source", func(t *testing.T) {
 		t.Parallel()
+
+		calls := 0
 		err := task.Every(t.Context(), fake.New(origin), nil, period, time.Second, func(context.Context) error {
-			t.Error("fn must not run without a jitter source")
+			calls++
 
 			return errBoom
 		})
-		testkit.ErrorIs(t, err, task.ErrPeriod, "a jitter without a source must be refused")
+		assert.ErrorIs(t, err, task.ErrPeriod, "a jitter without a source must be refused")
+		assert.Equal(t, calls, 0, "fn must not run without a jitter source")
 	})
 }
