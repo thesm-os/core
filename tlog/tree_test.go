@@ -8,20 +8,31 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"os"
-	"runtime/debug"
 	"strconv"
 	"strings"
 	"testing"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/bench"
+	"go.dokimi.dev/assert/expect"
 
 	"go.thesmos.sh/core/crypto"
 	coresha256 "go.thesmos.sh/core/crypto/sha256"
 	"go.thesmos.sh/core/tlog"
 )
 
-// vectorBound is the largest tree size the recorded proofs cover.
-const vectorBound = 64
+// The fixture values of the cases of the trees in memory.
+const (
+	// vectorBound is the largest tree size the recorded proofs cover.
+	vectorBound = 64
+
+	// measuredSize is the size of the tree of the allocation tests and the
+	// benchmarks, and measuredIndex and measuredOld the leaf and the old
+	// size of their proofs.
+	measuredSize  = 1000
+	measuredIndex = 517
+	measuredOld   = 333
+)
 
 // vectors are the values recorded from golang.org/x/mod/sumdb/tlog in
 // testdata/vectors.txt.
@@ -38,19 +49,196 @@ type tileVector struct {
 	root   crypto.Digest
 }
 
+func TestTree(t *testing.T) {
+	t.Parallel()
+
+	v := loadVectors(t)
+	h := coresha256.New()
+	all := leaves(vectorBound)
+
+	t.Run("Root", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the recorded root of every tree up to 64 leaves", func(t *testing.T) {
+			t.Parallel()
+			for n := range uint64(vectorBound + 1) {
+				expect.Equal(t, tlog.Root(h, all[:n]), v.roots[n], "the root of "+strconv.FormatUint(n, 10)+" leaves")
+			}
+		})
+
+		t.Run("returns the hash of no input for no leaves", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tlog.Root(h, nil), h.Hash(nil), "the root of no leaves must be HASH()")
+		})
+	})
+
+	t.Run("InclusionProof", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the recorded proof of every leaf of every tree up to 64 leaves", func(t *testing.T) {
+			t.Parallel()
+			var proofs [][]crypto.Digest
+			for n := 1; n <= vectorBound; n++ {
+				for i := range uint64(n) {
+					p, err := tlog.InclusionProof(h, all[:n], i, nil)
+					assert.NoError(t, err, "InclusionProof must succeed")
+					proofs = append(proofs, p)
+				}
+			}
+			assert.Equal(t, digestOf(t, proofs), v.inclusion, "the proofs must match the recorded ones")
+		})
+
+		t.Run("appends the proof to dst", func(t *testing.T) {
+			t.Parallel()
+			prefix := []crypto.Digest{h.Hash([]byte("kept"))}
+			p, err := tlog.InclusionProof(h, all[:5], 2, prefix)
+			assert.NoError(t, err, "InclusionProof must succeed")
+			assert.Length(t, p, 4, "the proof must follow the kept digest")
+			assert.Equal(t, p[0], prefix[0], "dst must keep its contents")
+		})
+
+		t.Run("returns ErrRange with dst unchanged for an index at the size", func(t *testing.T) {
+			t.Parallel()
+			prefix := []crypto.Digest{h.Hash([]byte("kept"))}
+			p, err := tlog.InclusionProof(h, all[:5], 5, prefix)
+			expect.ErrorIs(t, err, tlog.ErrRange, "an index past the tree must be ErrRange")
+			expect.Equal(t, p, prefix, "dst must be returned unchanged")
+		})
+	})
+
+	t.Run("ConsistencyProof", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the recorded proof of every pair of trees up to 64 leaves", func(t *testing.T) {
+			t.Parallel()
+			var proofs [][]crypto.Digest
+			for n := 1; n <= vectorBound; n++ {
+				for m := uint64(1); m <= uint64(n); m++ {
+					p, err := tlog.ConsistencyProof(h, all[:n], m, nil)
+					assert.NoError(t, err, "ConsistencyProof must succeed")
+					proofs = append(proofs, p)
+				}
+			}
+			assert.Equal(t, digestOf(t, proofs), v.consistency, "the proofs must match the recorded ones")
+		})
+
+		t.Run("returns an empty proof for equal sizes", func(t *testing.T) {
+			t.Parallel()
+			p, err := tlog.ConsistencyProof(h, all[:9], 9, nil)
+			assert.NoError(t, err, "ConsistencyProof must succeed")
+			assert.Empty(t, p, "the proof between equal trees must be empty")
+		})
+
+		tests := []struct {
+			name string
+			old  uint64
+		}{
+			{name: "returns ErrRange with dst unchanged for an old size of zero", old: 0},
+			{name: "returns ErrRange with dst unchanged for an old size past the tree", old: 10},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				prefix := []crypto.Digest{h.Hash([]byte("kept"))}
+				p, err := tlog.ConsistencyProof(h, all[:9], tt.old, prefix)
+				expect.ErrorIs(t, err, tlog.ErrRange, "the old size must be ErrRange")
+				expect.Equal(t, p, prefix, "dst must be returned unchanged")
+			})
+		}
+	})
+}
+
+// TestTreeAllocs checks the allocation contract of each function.
+// MaxAllocs counts the allocations of the whole process, so the test does
+// not run in parallel.
+//
+//nolint:paralleltest // see above
+func TestTreeAllocs(t *testing.T) {
+	h := coresha256.New()
+	all := leaves(measuredSize)
+	dst := make([]crypto.Digest, 0, vectorBound)
+
+	t.Run("Root", func(t *testing.T) {
+		var got crypto.Digest
+		expect.MaxAllocs(t, func() { got = tlog.Root(h, all) }, 0, "Root must not allocate")
+		assert.NotEqual(t, got, crypto.Digest{}, "the test must measure a root")
+	})
+
+	t.Run("InclusionProof", func(t *testing.T) {
+		var got []crypto.Digest
+		expect.MaxAllocs(t, func() { got, _ = tlog.InclusionProof(h, all, measuredIndex, dst[:0]) }, 0,
+			"InclusionProof must not allocate into a dst with room")
+		assert.NotEmpty(t, got, "the test must measure a proof")
+	})
+
+	t.Run("ConsistencyProof", func(t *testing.T) {
+		var got []crypto.Digest
+		expect.MaxAllocs(t, func() { got, _ = tlog.ConsistencyProof(h, all, measuredOld, dst[:0]) }, 0,
+			"ConsistencyProof must not allocate into a dst with room")
+		assert.NotEmpty(t, got, "the test must measure a proof")
+	})
+}
+
+// BenchmarkTree reports the cost of each function, and fails above the
+// allocations that their contracts state.
+func BenchmarkTree(b *testing.B) {
+	h := coresha256.New()
+	all := leaves(measuredSize)
+	dst := make([]crypto.Digest, 0, vectorBound)
+
+	b.Run("Root", func(b *testing.B) {
+		var got crypto.Digest
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			got = tlog.Root(h, all)
+		}
+
+		assert.NotEqual(b, got, crypto.Digest{}, "the benchmark must measure a root")
+	})
+
+	b.Run("InclusionProof", func(b *testing.B) {
+		var got []crypto.Digest
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			got, _ = tlog.InclusionProof(h, all, measuredIndex, dst[:0])
+		}
+
+		assert.NotEmpty(b, got, "the benchmark must measure a proof")
+	})
+
+	b.Run("ConsistencyProof", func(b *testing.B) {
+		var got []crypto.Digest
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			got, _ = tlog.ConsistencyProof(h, all, measuredOld, dst[:0])
+		}
+
+		assert.NotEmpty(b, got, "the benchmark must measure a proof")
+	})
+}
+
 // loadVectors reads testdata/vectors.txt.
 func loadVectors(tb testing.TB) vectors {
 	tb.Helper()
 
 	f, err := os.Open("testdata/vectors.txt")
-	testkit.NoError(tb, err, "the vectors must open")
+	assert.NoError(tb, err, "the vectors must open")
 	defer f.Close()
 
 	digest := func(s string) crypto.Digest {
 		b, err := hex.DecodeString(s)
-		testkit.NoError(tb, err, "a vector must be hex")
+		assert.NoError(tb, err, "a vector must be hex")
 		d, err := crypto.DigestFromBytes(b)
-		testkit.NoError(tb, err, "a vector must be a digest")
+		assert.NoError(tb, err, "a vector must be a digest")
 
 		return d
 	}
@@ -64,7 +252,7 @@ func loadVectors(tb testing.TB) vectors {
 		}
 
 		size, err := strconv.ParseUint(fields[1], 10, 64)
-		testkit.NoError(tb, err, "a vector size must be a number")
+		assert.NoError(tb, err, "a vector size must be a number")
 
 		switch fields[0] {
 		case "root":
@@ -77,7 +265,7 @@ func loadVectors(tb testing.TB) vectors {
 			v.tiles[size] = tileVector{digest: digest(fields[2]), root: digest(fields[3])}
 		}
 	}
-	testkit.NoError(tb, lines.Err(), "the vectors must read")
+	assert.NoError(tb, lines.Err(), "the vectors must read")
 
 	return v
 }
@@ -94,23 +282,6 @@ func leaves(n int) []crypto.Digest {
 	return out
 }
 
-// skipUnderRace skips an allocation test in a binary built with the
-// race detector. The detector makes sync.Pool drop values at random, so
-// a pooled path allocates by chance.
-func skipUnderRace(t *testing.T) {
-	t.Helper()
-
-	info, ok := debug.ReadBuildInfo()
-	if !ok {
-		return
-	}
-	for _, s := range info.Settings {
-		if s.Key == "-race" && s.Value == "true" {
-			t.Skip("sync.Pool drops values at random under the race detector")
-		}
-	}
-}
-
 // digestOf returns the SHA-256 digest of every hash of proofs, in order.
 func digestOf(tb testing.TB, proofs [][]crypto.Digest) crypto.Digest {
 	tb.Helper()
@@ -123,135 +294,7 @@ func digestOf(tb testing.TB, proofs [][]crypto.Digest) crypto.Digest {
 	}
 
 	d, err := crypto.DigestFromBytes(s.Sum(nil))
-	testkit.NoError(tb, err, "a SHA-256 sum must be a digest")
+	assert.NoError(tb, err, "a SHA-256 sum must be a digest")
 
 	return d
-}
-
-func TestRoot(t *testing.T) {
-	t.Parallel()
-
-	v := loadVectors(t)
-	h := coresha256.New()
-	all := leaves(vectorBound)
-
-	t.Run("matches the recorded root of every tree up to 64 leaves", func(t *testing.T) {
-		t.Parallel()
-
-		for n := range uint64(vectorBound + 1) {
-			testkit.Equal(t, tlog.Root(h, all[:n]), v.roots[n], "the root of "+strconv.FormatUint(n, 10)+" leaves")
-		}
-	})
-
-	t.Run("is the hash of no input for no leaves", func(t *testing.T) {
-		t.Parallel()
-		testkit.Equal(t, tlog.Root(h, nil), h.Hash(nil), "the empty root must be HASH()")
-	})
-}
-
-func TestInclusionProof(t *testing.T) {
-	t.Parallel()
-
-	v := loadVectors(t)
-	h := coresha256.New()
-	all := leaves(vectorBound)
-
-	t.Run("matches the recorded proof of every leaf of every tree up to 64 leaves", func(t *testing.T) {
-		t.Parallel()
-
-		var proofs [][]crypto.Digest
-		for n := 1; n <= vectorBound; n++ {
-			for i := range uint64(n) {
-				p, err := tlog.InclusionProof(h, all[:n], i, nil)
-				testkit.NoError(t, err, "InclusionProof must succeed")
-				proofs = append(proofs, p)
-			}
-		}
-		testkit.Equal(t, digestOf(t, proofs), v.inclusion, "the proofs must match the recorded ones")
-	})
-
-	t.Run("appends to dst", func(t *testing.T) {
-		t.Parallel()
-
-		prefix := []crypto.Digest{h.Hash([]byte("kept"))}
-		p, err := tlog.InclusionProof(h, all[:5], 2, prefix)
-		testkit.NoError(t, err, "InclusionProof must succeed")
-		testkit.Len(t, p, 4, "the proof must follow the kept digest")
-		testkit.Equal(t, p[0], prefix[0], "dst must keep its contents")
-	})
-
-	t.Run("refuses an index at or past the size", func(t *testing.T) {
-		t.Parallel()
-
-		p, err := tlog.InclusionProof(h, all[:5], 5, nil)
-		testkit.ErrorIs(t, err, tlog.ErrRange, "an index past the tree must be ErrRange")
-		testkit.Len(t, p, 0, "dst must be returned unchanged")
-	})
-}
-
-func TestConsistencyProof(t *testing.T) {
-	t.Parallel()
-
-	v := loadVectors(t)
-	h := coresha256.New()
-	all := leaves(vectorBound)
-
-	t.Run("matches the recorded proof of every pair of trees up to 64 leaves", func(t *testing.T) {
-		t.Parallel()
-
-		var proofs [][]crypto.Digest
-		for n := 1; n <= vectorBound; n++ {
-			for m := uint64(1); m <= uint64(n); m++ {
-				p, err := tlog.ConsistencyProof(h, all[:n], m, nil)
-				testkit.NoError(t, err, "ConsistencyProof must succeed")
-				proofs = append(proofs, p)
-			}
-		}
-		testkit.Equal(t, digestOf(t, proofs), v.consistency, "the proofs must match the recorded ones")
-	})
-
-	t.Run("is empty for equal sizes", func(t *testing.T) {
-		t.Parallel()
-
-		p, err := tlog.ConsistencyProof(h, all[:9], 9, nil)
-		testkit.NoError(t, err, "ConsistencyProof must succeed")
-		testkit.Len(t, p, 0, "the proof between equal trees must be empty")
-	})
-
-	t.Run("refuses an old size of zero or past the tree", func(t *testing.T) {
-		t.Parallel()
-
-		for _, old := range []uint64{0, 10} {
-			p, err := tlog.ConsistencyProof(h, all[:9], old, nil)
-			testkit.ErrorIs(t, err, tlog.ErrRange, "old size "+strconv.FormatUint(old, 10)+" must be ErrRange")
-			testkit.Len(t, p, 0, "dst must be returned unchanged")
-		}
-	})
-}
-
-// TestRootZeroAlloc enforces the allocation contract of Root.
-// testing.AllocsPerRun reads a process-wide counter, so this test does
-// not call t.Parallel, and it skips in a race build.
-//
-//nolint:paralleltest // see comment above
-func TestRootZeroAlloc(t *testing.T) {
-	skipUnderRace(t)
-
-	h := coresha256.New()
-	all := leaves(1000)
-
-	t.Run("Root", func(t *testing.T) {
-		testkit.Equal(t, testing.AllocsPerRun(20, func() { _ = tlog.Root(h, all) }), float64(0),
-			"Root must not allocate")
-	})
-}
-
-func BenchmarkRoot(b *testing.B) {
-	h := coresha256.New()
-	all := leaves(4096)
-	b.ReportAllocs()
-
-	for b.Loop() {
-		_ = tlog.Root(h, all)
-	}
 }

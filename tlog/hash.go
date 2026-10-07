@@ -4,6 +4,8 @@
 package tlog
 
 import (
+	"math/bits"
+
 	"go.thesmos.sh/core/crypto"
 	"go.thesmos.sh/core/pool"
 )
@@ -85,18 +87,15 @@ func pairHash(s crypto.Stream, pair []byte) crypto.Digest {
 // power of two. subtreeRoot folds in scratch, which has room for at
 // least len(data) bytes, and hashes through s.
 func subtreeRoot(s crypto.Stream, size int, data, scratch []byte) crypto.Digest {
-	n := copy(scratch, data)
+	copy(scratch, data)
 
-	// A full tile of 256 hashes halves to one in tileHeight passes. Each
-	// pass halves n and hashes each pair of the level into the first half
-	// of scratch.
-	for range tileHeight {
-		if n == size {
-			break
-		}
-
-		n /= 2
-		for j := range n / size {
+	// A power of two of hashes halves to one in as many passes as its
+	// trailing zero bits, eight for a full tile. Each pass halves count and
+	// hashes each pair of the level into the first half of scratch.
+	count := len(data) / size
+	for range bits.TrailingZeros(uint(count)) {
+		count /= 2
+		for j := range count {
 			d := pairHash(s, scratch[2*j*size:(2*j+2)*size])
 			copy(scratch[j*size:], d.Bytes())
 		}

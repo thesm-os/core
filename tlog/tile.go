@@ -119,40 +119,45 @@ func appendIndex(b []byte, index uint64, width uint16) []byte {
 // for a tile of level 0 to 7, width 1 to 256, and an index that a tree
 // of up to 2^64 leaves has at that level.
 //
+// ParseTilePath reads a tile from path leniently, and then compares path
+// with the path that Tile.Path writes for that tile. The comparison
+// refuses every path that the reading lets through: one without the
+// prefix or a slash, leading zeros, a missing or misplaced x, a group of
+// more than three digits, and a width of 256 or more. A group or a width
+// that is not a number reads as zero, and one past the range of its type
+// as the largest value. No tile has a width of zero, and the comparison
+// refuses the other values. An index past 2^64 wraps, and Path writes
+// every uint64 in one form, so the wrapped index has another path.
+//
 // # Allocation contract
 //
 // One allocation to check the path against [Tile.Path].
 func ParseTilePath(path string) (Tile, error) {
-	rest, ok := strings.CutPrefix(path, tilePrefix)
-	level, rest, found := strings.Cut(rest, "/")
-	if !ok || !found || len(level) != 1 || level[0] < '0' || level[0] > '7' {
+	level, rest, _ := strings.Cut(strings.TrimPrefix(path, tilePrefix), "/")
+
+	// The subtraction wraps for a byte below '0', so the comparison refuses
+	// every byte that is not the digit of a level.
+	if len(level) != 1 || level[0]-'0' >= tileLevels {
 		return Tile{}, ErrTilePath
 	}
 
 	t := Tile{Level: level[0] - '0', Width: tileWidth}
 
 	if index, width, partial := strings.Cut(rest, partialInfix); partial {
-		w, err := strconv.ParseUint(width, 10, 16)
-		if err != nil || w == 0 {
+		w, _ := strconv.ParseUint(width, 10, 16)
+		if w == 0 {
 			return Tile{}, ErrTilePath
 		}
+
 		t.Width = uint16(w)
 		rest = index
 	}
 
 	for group := range strings.SplitSeq(rest, "/") {
-		g, err := strconv.ParseUint(strings.TrimPrefix(group, "x"), 10, 64)
-		if err != nil {
-			return Tile{}, ErrTilePath
-		}
+		g, _ := strconv.ParseUint(strings.TrimPrefix(group, "x"), 10, 64)
 		t.Index = t.Index*pathBase + g
 	}
 
-	// Leading zeros, a missing or misplaced x, a group of more than three
-	// digits, a width of 256 or more and a width with a sign all parse,
-	// and the round trip rejects each of them. It also rejects an index
-	// past 2^64, which wraps: Path writes every uint64 in one form, so the
-	// wrapped index has another path.
 	if t.Index > maxTileIndex(t.Level) || t.Path() != path {
 		return Tile{}, ErrTilePath
 	}

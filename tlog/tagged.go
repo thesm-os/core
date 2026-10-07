@@ -5,6 +5,7 @@ package tlog
 
 import (
 	"fmt"
+	"math/bits"
 
 	"go.thesmos.sh/core/crypto"
 )
@@ -26,7 +27,7 @@ import (
 // # Allocation contract
 //
 // Reset allocates only to grow the tree's storage, which is about twice as
-// many digests as leaves. A TaggedTree that has held a tree of at least as
+// many digests as leaves. A TaggedTree that contained a tree of at least as
 // many leaves allocates nothing. InclusionProof allocates only to grow
 // dst.
 type TaggedTree struct {
@@ -49,8 +50,8 @@ type TaggedTree struct {
 //
 // # Allocation contract
 //
-// Allocates only when t has not held a tree of as many leaves before. It
-// hashes each of the len(leaves) - 1 interior nodes once.
+// Allocates only when t has not contained a tree of as many leaves before.
+// It hashes each of the len(leaves) - 1 interior nodes once.
 func (t *TaggedTree) Reset(h crypto.Hasher, node crypto.Role, leaves []crypto.Digest) {
 	t.size = 0
 
@@ -60,14 +61,12 @@ func (t *TaggedTree) Reset(h crypto.Hasher, node crypto.Role, leaves []crypto.Di
 	t.nodes = append(t.nodes[:0], leaves...)
 
 	// start is the index in t.nodes of the first node of the level that
-	// the loop pairs, and width is the width of that level. The loop ends
-	// at the level of width one, the root.
+	// the loop pairs, and width is the width of that level. A tree of n
+	// leaves has bits.Len64(n - 1) levels above its leaves, the last of
+	// width one, the root.
 	start, width := uint64(0), uint64(len(leaves))
-	for range maxPath {
-		if width == 1 {
-			break
-		}
-
+	//dokimi:mutate-skip aor: a pass past the root appends a copy of the root after it, which Root returns as the root
+	for range bits.Len64(width - 1) {
 		end := start + width
 		for i := start; i+1 < end; i += 2 {
 			t.nodes = append(t.nodes, h.CombineTagged(node, t.nodes[i], t.nodes[i+1]))
@@ -194,8 +193,9 @@ func TaggedInclusionProof(
 // Returns [ErrRange] when index is not below size, and [ErrProof] when
 // the proof does not recompute root or contains a hash whose size is not
 // the size of leaf. A proof from an untrusted source therefore never makes
-// CombineTagged panic. Panics when node is a unary role, and, through
-// CombineTagged, when leaf is not a digest of h.
+// CombineTagged panic. It returns ErrProof at the first hash of a proof
+// longer than the path, without hashing it. Panics when node is a unary
+// role, and, through CombineTagged, when leaf is not a digest of h.
 //
 // # Allocation contract
 //

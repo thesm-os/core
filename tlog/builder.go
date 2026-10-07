@@ -54,10 +54,11 @@ type Builder struct {
 //
 // # Allocation contract
 //
-// Allocates the Builder's state once: its right edge and one tile of
-// scratch. ReadTiles appends each partial tile to a buffer of its own,
-// and NewBuilder copies the tiles into the state once their lengths
-// check.
+// Allocates the Builder and its state: its right edge and one tile of
+// scratch. A size above zero also allocates the list of tiles and the list
+// of buffers that NewBuilder passes to ReadTiles, and what ReadTiles
+// allocates. ReadTiles appends each partial tile to a buffer of its own,
+// and NewBuilder copies the tiles into the state once their lengths check.
 func NewBuilder(ctx context.Context, h crypto.Hasher, size uint64, r TileReader) (*Builder, error) {
 	empty := h.Hash(nil)
 	ds := empty.Size()
@@ -250,7 +251,7 @@ func rootOf(s crypto.Stream, ds int, edge *[tileLevels][]byte, scratch []byte) c
 				continue
 			}
 			m := (1 << bit) * ds
-			//nolint:gosec // G602: eight levels of eight bits, so n stays below 64
+			//nolint:gosec // G602: eight levels of eight bits, so n is below 64
 			stack[n] = subtreeRoot(s, ds, p[off:off+m], scratch)
 			n++
 			off += m
@@ -330,10 +331,7 @@ func (u *Update) Root() crypto.Digest { return u.root }
 // One closure per call. Iterating allocates nothing.
 func (u *Update) Tiles() iter.Seq2[Tile, []byte] {
 	return func(yield func(Tile, []byte) bool) {
-		if u.b == nil {
-			return
-		}
-
+		// The zero Update has no tiles, so the loop never reads u.b of it.
 		data := u.data.Bytes()
 		for _, p := range u.tiles {
 			end := p.off + int(p.tile.Width)*u.b.digestSize

@@ -10,7 +10,9 @@ import "go.thesmos.sh/core/crypto"
 // 9162, section 2.1.3.2.
 //
 // Returns [ErrRange] when index is not below size, and [ErrProof] when
-// the proof does not recompute root.
+// the proof does not recompute root. It returns ErrProof at the first hash
+// of a proof longer than the path, without hashing it, so a long proof
+// from an untrusted source costs no more than the path.
 //
 // # Allocation contract
 //
@@ -57,7 +59,9 @@ func VerifyInclusion(h crypto.Hasher, index, size uint64, leaf, root crypto.Dige
 //
 // Returns [ErrRange] unless 0 < oldSize <= newSize, and [ErrProof] when
 // the proof does not recompute both roots. When the sizes are equal,
-// the proof must be empty and the roots equal.
+// the proof must be empty and the roots equal. It returns ErrProof at the
+// first hash of a proof longer than the proof between the sizes, without
+// hashing it.
 //
 // # Allocation contract
 //
