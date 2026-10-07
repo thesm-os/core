@@ -6,73 +6,104 @@ package constant_test
 import (
 	"testing"
 
-	"go.thesmos.sh/testkit"
-	"go.thesmos.sh/testkit/bench"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/bench"
+	"go.dokimi.dev/assert/expect"
+	"go.dokimi.dev/assert/prop"
+	testkitbench "go.thesmos.sh/testkit/bench"
 
 	"go.thesmos.sh/core/coretest/idtest"
 	"go.thesmos.sh/core/id"
 	"go.thesmos.sh/core/id/constant"
 )
 
-// constantSampleID is the canonical configured value used by the
-// SUT factory. Reused across the contract suite + impl-specific
-// subtests so failure messages reference one well-known fixture.
+// constantSampleID is the configured value of the Generator of the
+// contract suite.
 var constantSampleID = id.New128([id.Size128]byte{
 	1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
 })
 
-func newConstant() id.Generator { return constant.New(constantSampleID) }
+// validBytes generates byte strings of the three lengths of an ID.
+var validBytes = prop.SampledFrom(id.Size128, id.Size160, id.Size256).Bind(func(n int) prop.Generator[[]byte] {
+	return prop.Bytes(prop.MinSize(n), prop.MaxSize(n))
+})
 
-// --- testkit-driven contract layer ---
-
-// constant.Generator deliberately returns the same value on every
-// call — opt out of the distinctness assertion, opt INTO the
-// reproducibility assertion.
+// TestConstantGeneratorContract runs the contract suite of id.Generator. A
+// constant Generator returns the same value on every call, so it opts out
+// of the distinctness assertion.
 func TestConstantGeneratorContract(t *testing.T) {
 	t.Parallel()
-	idtest.AssertGeneratorContract(t, newConstant,
+	idtest.AssertGeneratorContract(t, func() id.Generator { return constant.New(constantSampleID) },
 		append(idtest.GeneratorAllowZeroAndDuplicates(),
 			idtest.GeneratorSizeAssertion(id.Size128),
 		)...,
 	)
 }
 
-func BenchmarkConstantGenerator(b *testing.B) {
-	idtest.BenchmarkGeneratorContract(b, newConstant,
-		idtest.GeneratorBenchOnGenerate(bench.PureAllocsWithin[id.Generator, id.ID](0)),
-	)
-}
-
-// --- constant-specific tests ---
-
 func TestGenerator(t *testing.T) {
 	t.Parallel()
 
-	t.Run("zero-value Generator returns Zero", func(t *testing.T) {
+	t.Run("Generate", func(t *testing.T) {
 		t.Parallel()
-		var g constant.Generator
-		testkit.True(t, g.Generate().IsZero(),
-			"zero-value Generator must return id.Zero")
-	})
 
-	t.Run("Generate returns the configured value", func(t *testing.T) {
-		t.Parallel()
+		t.Run("returns Zero for the zero Generator", func(t *testing.T) {
+			t.Parallel()
+			var g constant.Generator
+			assert.True(t, g.Generate().IsZero(), "the zero Generator must return id.Zero")
+		})
+
+		t.Run("returns the value of New", func(t *testing.T) {
+			t.Parallel()
+			prop.Equal(t, func(b []byte) id.ID {
+				v, _ := id.FromBytes(b)
+
+				return constant.New(v).Generate()
+			}, func(b []byte) id.ID {
+				v, _ := id.FromBytes(b)
+
+				return v
+			}, "Generate must return the value of New", prop.Using(validBytes))
+		})
+	})
+}
+
+// TestGeneratorAllocs checks the allocation contract of Generate.
+// MaxAllocs counts the allocations of the whole process, so the test does
+// not run in parallel.
+//
+//nolint:paralleltest // see above
+func TestGeneratorAllocs(t *testing.T) {
+	g := constant.New(constantSampleID)
+
+	t.Run("Generate", func(t *testing.T) {
+		var got id.ID
+		expect.MaxAllocs(t, func() { got = g.Generate() }, 0, "Generate must not allocate")
+		assert.Equal(t, got, constantSampleID, "the test must measure the configured value")
+	})
+}
+
+// BenchmarkConstantGenerator runs the benchmarks of the contract suite of
+// id.Generator.
+func BenchmarkConstantGenerator(b *testing.B) {
+	idtest.BenchmarkGeneratorContract(b, func() id.Generator { return constant.New(constantSampleID) },
+		idtest.GeneratorBenchOnGenerate(testkitbench.PureAllocsWithin[id.Generator, id.ID](0)),
+	)
+}
+
+// BenchmarkGenerator reports the cost of Generate, and fails when it
+// allocates.
+func BenchmarkGenerator(b *testing.B) {
+	b.Run("Generate", func(b *testing.B) {
 		g := constant.New(constantSampleID)
-		testkit.Equal(t, g.Generate(), constantSampleID,
-			"Generate must return the configured value")
-	})
+		var got id.ID
 
-	t.Run("works with all three sizes", func(t *testing.T) {
-		t.Parallel()
-		w128 := id.New128([id.Size128]byte{1})
-		w160 := id.New160([id.Size160]byte{2})
-		w256 := id.New256([id.Size256]byte{3})
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
 
-		testkit.Equal(t, constant.New(w128).Generate().Size(), id.Size128,
-			"constant.New on a 128-bit ID must produce a 128-bit Generator")
-		testkit.Equal(t, constant.New(w160).Generate().Size(), id.Size160,
-			"constant.New on a 160-bit ID must produce a 160-bit Generator")
-		testkit.Equal(t, constant.New(w256).Generate().Size(), id.Size256,
-			"constant.New on a 256-bit ID must produce a 256-bit Generator")
+		for c.Loop() {
+			got = g.Generate()
+		}
+
+		assert.Equal(b, got, constantSampleID, "the benchmark must measure the configured value")
 	})
 }
