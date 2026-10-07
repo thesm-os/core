@@ -7,21 +7,35 @@ import (
 	"strings"
 	"testing"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/bench"
+	"go.dokimi.dev/assert/expect"
+	"go.dokimi.dev/assert/prop"
 
+	"go.thesmos.sh/core/errs"
 	"go.thesmos.sh/core/fsm"
 )
 
-// fire delivers every event in order and fails the test on the first
-// error.
-func fire(tb testing.TB, m *fsm.Machine[state, event, job], events ...event) {
-	tb.Helper()
+// light is the state of a toggle, for the allocation tests and the
+// benchmarks.
+type light uint8
 
-	for _, e := range events {
-		_, err := m.Fire(e)
-		testkit.NoError(tb, err, "Fire("+e.String()+") must be accepted")
-	}
-}
+const (
+	off light = iota
+	on
+)
+
+// String returns the name of l.
+func (l light) String() string { return [...]string{"Off", "On"}[l] }
+
+// flip is the one event of a toggle.
+type flip uint8
+
+// String returns the name of the event.
+func (flip) String() string { return "Flip" }
+
+// count is the data of a toggle: the number of times its actions ran.
+type count struct{ n int }
 
 func TestMachine(t *testing.T) {
 	t.Parallel()
@@ -35,18 +49,21 @@ func TestMachine(t *testing.T) {
 			t.Parallel()
 			m := spec.Start(job{})
 			to, err := m.Fire(start)
-			testkit.NoError(t, err, "Start must be accepted in pending")
-			testkit.Equal(t, to, running, "Fire must return the new state")
-			testkit.Equal(t, m.State(), running, "the machine must be in the new state")
+			assert.NoError(t, err, "Pending must accept Start")
+			expect.Equal(t, to, running, "Fire must return the new state")
+			expect.Equal(t, m.State(), running, "the machine must be in the new state")
 		})
 
-		t.Run("runs the exit, edge and entry actions in that order", func(t *testing.T) {
+		t.Run("runs the actions of a transition in their documented order", func(t *testing.T) {
 			t.Parallel()
 			m := spec.Start(job{limit: 3})
-			fire(t, &m, start, fail)
-			testkit.Equal(t, strings.Join(m.Data().log, ","),
-				"start,enter running,exit running,retry",
-				"actions must run exit, then edge, then entry")
+			assert.Total(t, func(e event) error {
+				_, err := m.Fire(e)
+
+				return err
+			}, []event{start, fail}, "the machine must accept Start then Fail")
+			assert.Equal(t, strings.Join(m.Data().log, ","), "start,enter running,exit running,retry",
+				"Fire must run the exit action, then the edge action, then the entry action")
 		})
 
 		t.Run("enters the new state before its entry action runs", func(t *testing.T) {
@@ -58,84 +75,104 @@ func TestMachine(t *testing.T) {
 				Terminal(succeeded).
 				OnEnter(succeeded, func(*job) { seen = m.State() }).
 				Build()
-			testkit.NoError(t, err, "the spec must build")
+			assert.NoError(t, err, "the spec must build")
+
 			m = s.Start(job{})
-			fire(t, &m, finish)
-			testkit.Equal(t, seen, succeeded, "the entry action must see the new state")
+			_, err = m.Fire(finish)
+			assert.NoError(t, err, "Pending must accept Finish")
+			assert.Equal(t, seen, succeeded, "the entry action must see the new state")
 		})
 
 		t.Run("runs only the edge action on an edge back to its own state", func(t *testing.T) {
 			t.Parallel()
 			s, err := fsm.NewBuilder[state, event, job](pending).
-				Edge(pending, start, pending, fsm.Do(func(j *job) { j.record("loop") })).
+				Edge(pending, start, pending, fsm.Do(func(j *job) { j.log = append(j.log, "loop") })).
 				Edge(pending, finish, succeeded).
-				OnExit(pending, func(j *job) { j.record("exit") }).
-				OnEnter(pending, func(j *job) { j.record("enter") }).
+				OnExit(pending, func(j *job) { j.log = append(j.log, "exit") }).
+				OnEnter(pending, func(j *job) { j.log = append(j.log, "enter") }).
 				Terminal(succeeded).
 				Build()
-			testkit.NoError(t, err, "the spec must build")
+			assert.NoError(t, err, "the spec must build")
+
 			m := s.Start(job{})
-			fire(t, &m, start)
-			testkit.Equal(t, strings.Join(m.Data().log, ","), "loop", "a loop must not run exit or entry actions")
+			_, err = m.Fire(start)
+			assert.NoError(t, err, "Pending must accept Start")
+			assert.Equal(t, m.Data().log, []string{"loop"}, "a loop must not run the exit or the entry action")
 		})
 
-		t.Run("falls through to the next edge when a guard fails", func(t *testing.T) {
+		t.Run("takes the next edge when a guard fails", func(t *testing.T) {
 			t.Parallel()
 			m := spec.Start(job{limit: 1})
-			fire(t, &m, start, fail)
-			testkit.Equal(t, m.State(), failed, "the unguarded edge must be taken once attempts run out")
+			assert.Total(t, func(e event) error {
+				_, err := m.Fire(e)
+
+				return err
+			}, []event{start, fail}, "the machine must accept Start then Fail")
+			assert.Equal(t, m.State(), failed, "the unguarded edge must be taken once the attempts run out")
 		})
 
-		t.Run("rejects an event without changing state or data", func(t *testing.T) {
+		t.Run("returns ErrRejected for an event that no edge accepts", func(t *testing.T) {
 			t.Parallel()
 			m := spec.Start(job{})
 			to, err := m.Fire(finish)
-			testkit.ErrorIs(t, err, fsm.ErrRejected, "an event without an edge must be rejected")
-			testkit.Equal(t, to, pending, "Fire must return the current state")
-			testkit.Equal(t, m.State(), pending, "a rejected event must not change the state")
-			testkit.Len(t, m.Data().log, 0, "a rejected event must not run an action")
+			expect.ErrorIs(t, err, fsm.ErrRejected, "Pending must refuse Finish")
+			expect.Equal(t, errs.Classify(err), errs.Conflict, "ErrRejected must classify as Conflict")
+			expect.Equal(t, to, pending, "Fire must return the current state")
+			expect.Equal(t, m.State(), pending, "a refused event must not change the state")
+			expect.Empty(t, m.Data().log, "a refused event must not run an action")
 		})
 
-		t.Run("rejects an event when every guard fails", func(t *testing.T) {
+		t.Run("returns ErrRejected when every guard fails", func(t *testing.T) {
 			t.Parallel()
-			s, err := fsm.NewBuilder[state, event, job](pending).
-				Edge(pending, finish, succeeded, fsm.If(func(*job) bool { return false })).
-				Edge(pending, cancel, cancelled).
-				Terminal(succeeded, cancelled).
-				Build()
-			testkit.NoError(t, err, "the spec must build")
-			m := s.Start(job{})
-			_, err = m.Fire(finish)
-			testkit.ErrorIs(t, err, fsm.ErrRejected, "an event whose guards all fail must be rejected")
-			fire(t, &m, cancel)
+			m := guarded(t).Start(job{})
+			_, err := m.Fire(finish)
+			assert.ErrorIs(t, err, fsm.ErrRejected, "an event whose guards all fail must be refused")
 		})
 
-		t.Run("rejects an event beyond the spec", func(t *testing.T) {
+		t.Run("returns no error for the next event after every guard failed", func(t *testing.T) {
+			t.Parallel()
+			m := guarded(t).Start(job{})
+			_, _ = m.Fire(finish)
+			_, err := m.Fire(cancel)
+			assert.NoError(t, err, "the machine must accept an event after a refusal")
+		})
+
+		t.Run("returns ErrRejected for an event beyond the spec", func(t *testing.T) {
 			t.Parallel()
 			m := spec.Start(job{})
 			_, err := m.Fire(unknown)
-			testkit.ErrorIs(t, err, fsm.ErrRejected, "an event beyond the spec must be rejected")
-			fire(t, &m, start)
+			assert.ErrorIs(t, err, fsm.ErrRejected, "an event beyond the spec must be refused")
 		})
 
-		t.Run("rejects an event beyond the spec where the next cell holds an edge", func(t *testing.T) {
-			t.Parallel()
-			// The toggle has one event, so off on event 1 would index on's
-			// cell for event 0 if the bound were off by one.
-			m := toggle(t, false).Start(count{})
-			_, err := m.Fire(1)
-			testkit.ErrorIs(t, err, fsm.ErrRejected, "an event beyond the spec must be rejected")
-			testkit.Equal(t, m.State(), off, "a rejected event must not change the state")
-		})
-
-		t.Run("rejects every event in a terminal state", func(t *testing.T) {
+		t.Run("returns no error for the next event after an event beyond the spec", func(t *testing.T) {
 			t.Parallel()
 			m := spec.Start(job{})
-			fire(t, &m, cancel)
-			for e := range unknown {
+			_, _ = m.Fire(unknown)
+			_, err := m.Fire(start)
+			assert.NoError(t, err, "the machine must accept an event after a refusal")
+		})
+
+		t.Run("returns ErrRejected for an event beyond the spec next to a cell with an edge", func(t *testing.T) {
+			t.Parallel()
+			// The toggle has one event, so Off on event 1 would index the
+			// cell of On for event 0 if the bound were off by one.
+			m := toggle(t, false).Start(count{})
+			_, err := m.Fire(1)
+			expect.ErrorIs(t, err, fsm.ErrRejected, "an event beyond the spec must be refused")
+			expect.Equal(t, m.State(), off, "a refused event must not change the state")
+		})
+
+		t.Run("returns ErrRejected for every event in a terminal state", func(t *testing.T) {
+			t.Parallel()
+			m := spec.Start(job{})
+			_, err := m.Fire(cancel)
+			assert.NoError(t, err, "Pending must accept Cancel")
+
+			prop.ErrorIs(t, func(e event) error {
 				_, err := m.Fire(e)
-				testkit.ErrorIs(t, err, fsm.ErrRejected, "a terminal state must reject "+e.String())
-			}
+
+				return err
+			}, fsm.ErrRejected, "a terminal state must refuse every event", prop.Using(prop.Integer[event](0, 0xff)))
 		})
 
 		t.Run("returns ErrReentrant to an action that fires its own machine", func(t *testing.T) {
@@ -147,12 +184,14 @@ func TestMachine(t *testing.T) {
 				Edge(running, finish, succeeded).
 				Terminal(succeeded).
 				Build()
-			testkit.NoError(t, err, "the spec must build")
+			assert.NoError(t, err, "the spec must build")
+
 			m = s.Start(job{})
-			fire(t, &m, start)
-			testkit.ErrorIs(t, inner, fsm.ErrReentrant, "the inner Fire must be refused")
-			testkit.Equal(t, m.State(), running, "the outer transition must complete")
-			fire(t, &m, finish)
+			_, err = m.Fire(start)
+			assert.NoError(t, err, "the outer Fire must succeed")
+			expect.ErrorIs(t, inner, fsm.ErrReentrant, "the inner Fire must be refused")
+			expect.Equal(t, errs.Classify(inner), errs.Invalid, "ErrReentrant must classify as Invalid")
+			expect.Equal(t, m.State(), running, "the outer transition must complete")
 		})
 
 		t.Run("returns ErrReentrant to a guard that fires its own machine", func(t *testing.T) {
@@ -169,14 +208,16 @@ func TestMachine(t *testing.T) {
 				Edge(running, finish, succeeded).
 				Terminal(succeeded, cancelled).
 				Build()
-			testkit.NoError(t, err, "the spec must build")
+			assert.NoError(t, err, "the spec must build")
+
 			m = s.Start(job{})
-			fire(t, &m, start)
-			testkit.ErrorIs(t, inner, fsm.ErrReentrant, "the Fire from the guard must be refused")
-			testkit.Equal(t, m.State(), running, "the outer transition must complete")
+			_, err = m.Fire(start)
+			assert.NoError(t, err, "the outer Fire must succeed")
+			expect.ErrorIs(t, inner, fsm.ErrReentrant, "the Fire from the guard must be refused")
+			expect.Equal(t, m.State(), running, "the outer transition must complete")
 		})
 
-		t.Run("refuses every event after an action panicked", func(t *testing.T) {
+		t.Run("returns ErrReentrant after an action panicked", func(t *testing.T) {
 			t.Parallel()
 			s, err := fsm.NewBuilder[state, event, job](pending).
 				Edge(pending, start, running, fsm.Do(func(*job) {
@@ -185,62 +226,183 @@ func TestMachine(t *testing.T) {
 				Edge(running, finish, succeeded).
 				Terminal(succeeded).
 				Build()
-			testkit.NoError(t, err, "the spec must build")
+			assert.NoError(t, err, "the spec must build")
+
 			m := s.Start(job{})
-			testkit.Panics(t, func() { _, _ = m.Fire(start) }, "the action's panic must reach the caller")
+			assert.Panics(t, func() { _, _ = m.Fire(start) }, "the panic of the action must reach the caller")
 			_, err = m.Fire(start)
-			testkit.ErrorIs(t, err, fsm.ErrReentrant, "a machine stopped mid-transition must refuse events")
+			assert.ErrorIs(t, err, fsm.ErrReentrant, "a machine stopped in a transition must refuse every event")
 		})
 
-		t.Run("leaves the machine usable after a rejected event", func(t *testing.T) {
+		t.Run("takes the next transitions after a rejected event", func(t *testing.T) {
 			t.Parallel()
 			m := spec.Start(job{})
-			_, err := m.Fire(finish)
-			testkit.ErrorIs(t, err, fsm.ErrRejected, "the event must be rejected")
-			fire(t, &m, start, finish)
-			testkit.Equal(t, m.State(), succeeded, "the machine must accept events after a rejection")
+			_, _ = m.Fire(finish)
+			assert.Total(t, func(e event) error {
+				_, err := m.Fire(e)
+
+				return err
+			}, []event{start, finish}, "the machine must accept Start then Finish after a refusal")
+			assert.Equal(t, m.State(), succeeded, "the machine must take the transitions after a refusal")
 		})
 	})
 
 	t.Run("Data", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("returns the data that guards and actions see", func(t *testing.T) {
+		t.Run("returns the data that a guard reads", func(t *testing.T) {
 			t.Parallel()
 			m := spec.Start(job{limit: 1})
-			fire(t, &m, start)
+			_, err := m.Fire(start)
+			assert.NoError(t, err, "Pending must accept Start")
+
 			m.Data().limit = 5
-			fire(t, &m, fail)
-			testkit.Equal(t, m.State(), pending, "a guard must see an update made through Data")
-			testkit.Equal(t, m.Data().attempts, 1, "Data must show what the action recorded")
+			_, err = m.Fire(fail)
+			assert.NoError(t, err, "Running must accept Fail")
+			assert.Equal(t, m.State(), pending, "the guard must see the limit that Data updated")
+		})
+
+		t.Run("returns the data that an action updates", func(t *testing.T) {
+			t.Parallel()
+			m := spec.Start(job{})
+			_, err := m.Fire(start)
+			assert.NoError(t, err, "Pending must accept Start")
+			assert.Equal(t, m.Data().attempts, 1, "Data must show the attempt that the action counted")
 		})
 	})
 }
 
-// light is a two-state toggle for the allocation test and benchmarks.
-type light uint8
+// TestMachineAllocs checks the allocation contract of a Machine.
+// MaxAllocs counts the allocations of the whole process, so the test does
+// not run in parallel.
+//
+//nolint:paralleltest // see above
+func TestMachineAllocs(t *testing.T) {
+	t.Run("Fire", func(t *testing.T) {
+		t.Run("of an unguarded edge", func(t *testing.T) {
+			m := toggle(t, false).Start(count{})
 
-const (
-	off light = iota
-	on
-)
+			var err error
+			expect.MaxAllocs(t, func() { _, err = m.Fire(0) }, 0, "Fire must not allocate")
+			assert.NoError(t, err, "the test must measure a transition")
+		})
 
-func (l light) String() string { return [...]string{"Off", "On"}[l] }
+		t.Run("of a guarded edge with actions", func(t *testing.T) {
+			m := toggle(t, true).Start(count{})
 
-type flip uint8
+			var err error
+			expect.MaxAllocs(t, func() { _, err = m.Fire(0) }, 0, "Fire must not allocate")
+			assert.NoError(t, err, "the test must measure a transition")
+		})
+	})
 
-func (flip) String() string { return "Flip" }
+	t.Run("State", func(t *testing.T) {
+		m := toggle(t, false).Start(count{})
 
-type count struct{ n int }
+		var got light
+		expect.MaxAllocs(t, func() { got = m.State() }, 0, "State must not allocate")
+		assert.Equal(t, got, off, "the test must measure the initial state")
+	})
 
-// toggle declares off and on, each flipping to the other. Guarded
-// toggles add a guard, an edge action and an entry action.
-func toggle(tb testing.TB, guarded bool) *fsm.Spec[light, flip, count] {
+	t.Run("Data", func(t *testing.T) {
+		m := toggle(t, false).Start(count{n: 7})
+
+		var got *count
+		expect.MaxAllocs(t, func() { got = m.Data() }, 0, "Data must not allocate")
+		assert.Equal(t, got.n, 7, "the test must measure the data of the machine")
+	})
+}
+
+// BenchmarkMachine reports the cost of a Machine, and fails when a method
+// allocates.
+func BenchmarkMachine(b *testing.B) {
+	b.Run("Fire", func(b *testing.B) {
+		b.Run("of an unguarded edge", func(b *testing.B) {
+			m := toggle(b, false).Start(count{})
+
+			var err error
+
+			c := bench.Start(b).MaxAllocs(0)
+			defer c.End()
+
+			for c.Loop() {
+				_, err = m.Fire(0)
+			}
+
+			assert.NoError(b, err, "the benchmark must measure a transition")
+		})
+
+		b.Run("of a guarded edge with actions", func(b *testing.B) {
+			m := toggle(b, true).Start(count{})
+
+			var err error
+
+			c := bench.Start(b).MaxAllocs(0)
+			defer c.End()
+
+			for c.Loop() {
+				_, err = m.Fire(0)
+			}
+
+			assert.NoError(b, err, "the benchmark must measure a transition")
+		})
+	})
+
+	b.Run("State", func(b *testing.B) {
+		m := toggle(b, false).Start(count{})
+
+		var got light
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			got = m.State()
+		}
+
+		assert.Equal(b, got, off, "the benchmark must measure the initial state")
+	})
+
+	b.Run("Data", func(b *testing.B) {
+		m := toggle(b, false).Start(count{n: 7})
+
+		var got *count
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			got = m.Data()
+		}
+
+		assert.Equal(b, got.n, 7, "the benchmark must measure the data of the machine")
+	})
+}
+
+// guarded declares Pending with a Finish whose guard always fails and an
+// unguarded Cancel, and fails tb when it does not build.
+func guarded(tb testing.TB) *fsm.Spec[state, event, job] {
+	tb.Helper()
+
+	spec, err := fsm.NewBuilder[state, event, job](pending).
+		Edge(pending, finish, succeeded, fsm.If(func(*job) bool { return false })).
+		Edge(pending, cancel, cancelled).
+		Terminal(succeeded, cancelled).
+		Build()
+	assert.NoError(tb, err, "the spec must build")
+
+	return spec
+}
+
+// toggle declares Off and On, each flipping to the other, and fails tb
+// when it does not build. With actions, the toggle adds a guard and an
+// edge action to each edge, and an entry action to On.
+func toggle(tb testing.TB, withActions bool) *fsm.Spec[light, flip, count] {
 	tb.Helper()
 
 	b := fsm.NewBuilder[light, flip, count](off)
 
-	if guarded {
+	if withActions {
 		always := fsm.If(func(c *count) bool { return c.n >= 0 })
 		bump := fsm.Do(func(c *count) { c.n++ })
 		b.Edge(off, 0, on, always, bump).
@@ -251,47 +413,7 @@ func toggle(tb testing.TB, guarded bool) *fsm.Spec[light, flip, count] {
 	}
 
 	spec, err := b.Build()
-	testkit.NoError(tb, err, "the toggle must build")
+	assert.NoError(tb, err, "the toggle must build")
 
 	return spec
-}
-
-// TestZeroAlloc enforces the allocation contract of Fire, Next and
-// Allows. testing.AllocsPerRun reads a process-global malloc counter,
-// so this test does not call t.Parallel.
-func TestZeroAlloc(t *testing.T) {
-	spec := toggle(t, true)
-	m := spec.Start(count{})
-	c := count{}
-
-	cases := []struct {
-		name string
-		fn   func()
-	}{
-		{"Machine.Fire", func() { _, _ = m.Fire(0) }},
-		{"Spec.Next", func() { _, _ = spec.Next(on, 0, &c) }},
-		{"Spec.Allows", func() { _ = spec.Allows(on, off) }},
-		{"Spec.Terminal", func() { _ = spec.Terminal(on) }},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			testkit.Equal(t, testing.AllocsPerRun(1000, tc.fn), float64(0), tc.name+" must not allocate")
-		})
-	}
-}
-
-func BenchmarkFire(b *testing.B) {
-	m := toggle(b, false).Start(count{})
-
-	for b.Loop() {
-		_, _ = m.Fire(0)
-	}
-}
-
-func BenchmarkFireGuardedWithActions(b *testing.B) {
-	m := toggle(b, true).Start(count{})
-
-	for b.Loop() {
-		_, _ = m.Fire(0)
-	}
 }
