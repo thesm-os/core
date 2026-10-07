@@ -242,9 +242,8 @@ func (m *mirror[O]) pop(c *prop.Case, remove, peek func() (int, int, bool), outs
 	if !ok {
 		return
 	}
-	want, present := m.model[k]
-	assert.True(c, present, "a pop must return a key of the model")
-	assert.Equal(c, v, want, "a pop must return the value of the model")
+	assert.Contains(c, m.model, k, "a pop must return a key of the model")
+	assert.Equal(c, v, m.model[k], "a pop must return the value of the model")
 	delete(m.model, k)
 	if rest, _, ok := peek(); ok {
 		assert.True(c, outside(k, rest), "a pop must remove the key at the end of the order")
