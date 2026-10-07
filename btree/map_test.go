@@ -761,14 +761,12 @@ func TestMap(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
 				m, keys := filled(tt.n)
-				prop.Equal(t, func(i int) item {
-					var got item
-					got.key, got.value, got.found = m.At(i)
-
-					return got
-				}, func(i int) item {
-					return item{key: keys[i], value: -keys[i], found: true}
-				}, "At must return the key at each index and its value", prop.Using(prop.Integer(0, tt.n-1)))
+				got, want := make([]item, tt.n), make([]item, tt.n)
+				for i := range tt.n {
+					got[i].key, got[i].value, got[i].found = m.At(i)
+					want[i] = item{key: keys[i], value: -keys[i], found: true}
+				}
+				assert.Equal(t, got, want, "At must return the key at each index and its value")
 			})
 		}
 

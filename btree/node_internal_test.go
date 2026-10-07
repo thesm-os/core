@@ -237,6 +237,26 @@ func TestNode(t *testing.T) {
 			expect.Length(t, tr.freeInnerParents, maxFree, "the list of parents of internal nodes must stop at maxFree")
 		})
 
+		t.Run("keeps a parent of leaves while the list of parents of internal nodes is full", func(t *testing.T) {
+			t.Parallel()
+			var tr ints
+			for range maxFree {
+				tr.releaseInner(&inner[int, int]{inners: new([maxChildren]*inner[int, int])})
+			}
+			tr.releaseInner(&inner[int, int]{leaves: new([maxChildren]*leaf[int, int])})
+			assert.Length(t, tr.freeLeafParents, 1, "a parent of leaves must count against its own free list")
+		})
+
+		t.Run("keeps a parent of internal nodes while the list of parents of leaves is full", func(t *testing.T) {
+			t.Parallel()
+			var tr ints
+			for range maxFree {
+				tr.releaseInner(&inner[int, int]{leaves: new([maxChildren]*leaf[int, int])})
+			}
+			tr.releaseInner(&inner[int, int]{inners: new([maxChildren]*inner[int, int])})
+			assert.Length(t, tr.freeInnerParents, 1, "a parent of internal nodes must count against its own free list")
+		})
+
 		t.Run("leaves an internal node of another tree as it is", func(t *testing.T) {
 			t.Parallel()
 			tr := ints{owner: 1}
