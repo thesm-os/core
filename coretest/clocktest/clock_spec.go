@@ -100,6 +100,7 @@ func ClockContractAssertions() []ClockOption {
 
 		ClockCustom("NewTimer zero fires immediately", func(t *testing.T, c clock.Clock) {
 			tm := c.NewTimer(0)
+			//dokimi:lint-skip completes-within: the suites of coretest use testkit until they move to assert
 			select {
 			case <-tm.C():
 			case <-time.After(time.Second):
@@ -109,6 +110,7 @@ func ClockContractAssertions() []ClockOption {
 
 		ClockCustom("NewTimer negative fires immediately", func(t *testing.T, c clock.Clock) {
 			tm := c.NewTimer(-time.Second)
+			//dokimi:lint-skip completes-within: the suites of coretest use testkit until they move to assert
 			select {
 			case <-tm.C():
 			case <-time.After(time.Second):

@@ -37,6 +37,7 @@ func TestNewTimer(t *testing.T) {
 		c := fake.New(origin)
 		tm := c.NewTimer(5 * time.Second)
 		c.Advance(6 * time.Second)
+		//dokimi:lint-skip completes-within: the tests of clock/fake use testkit until they move to assert
 		select {
 		case <-tm.C():
 		case <-time.After(time.Second):
@@ -61,6 +62,7 @@ func TestNewTimer(t *testing.T) {
 		c := fake.New(origin)
 		tm := c.NewTimer(time.Hour)
 		tm.Reset(0)
+		//dokimi:lint-skip completes-within: the tests of clock/fake use testkit until they move to assert
 		select {
 		case <-tm.C():
 		case <-time.After(time.Second):
@@ -89,6 +91,7 @@ func TestNewTimer(t *testing.T) {
 		}
 
 		c.Advance(2 * time.Hour)
+		//dokimi:lint-skip completes-within: the tests of clock/fake use testkit until they move to assert
 		select {
 		case <-tm.C():
 		case <-time.After(time.Second):
@@ -109,6 +112,7 @@ func TestFireWaiters(t *testing.T) {
 	later := c.NewTimer(time.Hour)
 	c.Advance(2 * time.Second)
 
+	//dokimi:lint-skip completes-within: the tests of clock/fake use testkit until they move to assert
 	select {
 	case <-due.C():
 	case <-time.After(time.Second):

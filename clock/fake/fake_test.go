@@ -253,6 +253,7 @@ func TestAwaitWaiters(t *testing.T) {
 
 		const settle = 5 * time.Second
 
+		//dokimi:lint-skip completes-within: the tests of clock/fake use testkit until they move to assert
 		select {
 		case <-drained:
 		case <-time.After(settle):

@@ -45,6 +45,7 @@ func TimerContractAssertions() []TimerOption {
 
 		TimerCustom("Stop after fire returns false", func(t *testing.T, tm clock.Timer) {
 			tm.Reset(0)
+			//dokimi:lint-skip completes-within: the suites of coretest use testkit until they move to assert
 			select {
 			case <-tm.C():
 			case <-time.After(time.Second):
@@ -68,6 +69,7 @@ func TimerContractAssertions() []TimerOption {
 
 		TimerCustom("Reset after fire returns false", func(t *testing.T, tm clock.Timer) {
 			tm.Reset(0)
+			//dokimi:lint-skip completes-within: the suites of coretest use testkit until they move to assert
 			select {
 			case <-tm.C():
 			case <-time.After(time.Second):
@@ -83,6 +85,7 @@ func TimerContractAssertions() []TimerOption {
 			// honoured by both real-time (hlc) and virtual-time
 			// (fake, fires immediately on non-positive d) impls.
 			testkit.True(t, tm.Reset(0), "Reset on pending must return true")
+			//dokimi:lint-skip completes-within: the suites of coretest use testkit until they move to assert
 			select {
 			case <-tm.C():
 			case <-time.After(time.Second):

@@ -40,6 +40,7 @@ func TestNewTimer(t *testing.T) {
 		t.Parallel()
 		c := hlc.New(0)
 		tm := c.NewTimer(10 * time.Millisecond)
+		//dokimi:lint-skip completes-within: the tests of clock/hlc use testkit until they move to assert
 		select {
 		case <-tm.C():
 		case <-time.After(time.Second):
@@ -52,6 +53,7 @@ func TestNewTimer(t *testing.T) {
 		c := hlc.New(0)
 		tm := c.NewTimer(time.Hour)
 		testkit.True(t, tm.Reset(10*time.Millisecond), "Reset on active timer must return true")
+		//dokimi:lint-skip completes-within: the tests of clock/hlc use testkit until they move to assert
 		select {
 		case <-tm.C():
 		case <-time.After(time.Second):

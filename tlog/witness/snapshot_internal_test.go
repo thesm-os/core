@@ -617,6 +617,7 @@ func TestSnapshotInternal(t *testing.T) {
 
 			msg := batch.note(t, 5)
 
+			//dokimi:lint-skip for-all: a fixed workload of 12 snapshots, which prop.ForAll would run 100 times
 			for range 12 {
 				updates := make([]Update, 0, maxUpdates)
 				seen := map[int]bool{}

@@ -389,6 +389,7 @@ func churn[V comparable, O order[int]](t *testing.T, tr *tree[int, V, O], value 
 	got := make([]outcome[V], 0, checkEvery)
 	want := make([]outcome[V], 0, checkEvery)
 	from := 0
+	//dokimi:lint-skip for-all: a fixed churn of the free lists, which prop.ForAll would run 100 times
 	for op := range operations {
 		if op > 0 && op%(2*phase) == 0 {
 			tr.reset()

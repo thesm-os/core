@@ -53,6 +53,7 @@ func ReleaseAllocsWithin[T interface{ Release() }](bind func(T) T, maxAllocs int
 			bound[next].Release()
 			next++
 		})
+		//dokimi:lint-skip max-allocs: the suites of coretest use testkit until they move to assert
 		if int(allocs) > maxAllocs {
 			b.Fatalf("Release allocates %v times per call, above the budget of %d", allocs, maxAllocs)
 		}
