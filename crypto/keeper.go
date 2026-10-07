@@ -236,24 +236,23 @@ func AsKeyCreator(k Keeper) (KeyCreator, bool) {
 }
 
 // find returns the first value of type T in the chain that starts at k
-// and follows UnwrapKeeper() Keeper.
+// and follows UnwrapKeeper() Keeper. A nil Keeper ends the chain,
+// because a type assertion on a nil interface value reports false.
 func find[T any](k Keeper) (T, bool) {
-	for k != nil {
+	for {
 		if t, ok := k.(T); ok {
 			return t, true
 		}
 
 		u, ok := k.(interface{ UnwrapKeeper() Keeper })
 		if !ok {
-			break
+			var zero T
+
+			return zero, false
 		}
 
 		k = u.UnwrapKeeper()
 	}
-
-	var zero T
-
-	return zero, false
 }
 
 // GenerateKey returns a fresh data key of size bytes, in the clear and

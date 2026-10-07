@@ -165,7 +165,7 @@ func (d Digest) MarshalBinary() ([]byte, error) {
 // and returns the same error, so the two decode paths agree on every
 // input. It copies data into d and clears the rest of d's array, so the
 // decoded d equals, under ==, the Digest that DigestFromBytes returns for
-// data, whatever d held before. On an error d is unchanged. Implements
+// data, whatever d contained before. On an error d is unchanged. Implements
 // [encoding.BinaryUnmarshaler].
 //
 // # Allocation contract
@@ -265,13 +265,11 @@ func (d Digest) Equal(other Digest) bool {
 // value from an untrusted party. [Digest.Equal] and == leak the
 // position of the first differing byte through their duration.
 //
-// A size mismatch returns false at once. The producing algorithm
-// determines the size, so the size is public and the early return does
-// not leak a secret.
+// A size mismatch returns false at once, because
+// [subtle.ConstantTimeCompare] returns 0 at once for slices of two
+// lengths. The producing algorithm determines the size, so the size is
+// public and the early return does not leak a secret.
 func (d Digest) ConstantTimeEqual(other Digest) bool {
-	if d.size != other.size {
-		return false
-	}
 	return subtle.ConstantTimeCompare(d.bytes[:d.size], other.bytes[:other.size]) == 1
 }
 
