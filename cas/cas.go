@@ -205,20 +205,19 @@ type Streamer interface {
 //
 // Zero alloc.
 func AsStreamer(s Store) (Streamer, bool) {
-	for s != nil {
+	// A nil s satisfies neither assertion, so the loop ends there too.
+	for {
 		if st, ok := s.(Streamer); ok {
 			return st, true
 		}
 
 		u, ok := s.(interface{ Unwrap() Store })
 		if !ok {
-			break
+			return nil, false
 		}
 
 		s = u.Unwrap()
 	}
-
-	return nil, false
 }
 
 // PutStream streams r into s under d.
@@ -256,8 +255,8 @@ func PutStream(ctx context.Context, s Store, d crypto.Digest, r io.Reader) (bool
 // # Allocation contract
 //
 // Nothing beyond what the implementation allocates on the native
-// path. One buffer the size of the object plus one reader wrapper
-// on the fallback path.
+// path. One buffer the size of the object plus one reader on the
+// fallback path.
 func GetStream(ctx context.Context, s Store, d crypto.Digest) (io.ReadCloser, error) {
 	if st, ok := AsStreamer(s); ok {
 		return st.GetStream(ctx, d)
@@ -268,7 +267,30 @@ func GetStream(ctx context.Context, s Store, d crypto.Digest) (io.ReadCloser, er
 		return nil, err
 	}
 
-	return io.NopCloser(bytes.NewReader(data)), nil
+	r := new(bufferedReader)
+	r.Reset(data)
+
+	return r, nil
+}
+
+// bufferedReader is the [io.ReadCloser] of the fallback path of
+// [GetStream]: a [bytes.Reader] over a buffer that the caller received
+// alone, so Close releases nothing.
+//
+// # Concurrency
+//
+// Not safe for concurrent use, as a [bytes.Reader] is not.
+//
+// # Allocation contract
+//
+// Zero alloc. GetStream allocates the reader itself.
+type bufferedReader struct {
+	bytes.Reader
+}
+
+// Close returns nil. A read after Close reads the buffer as before.
+func (*bufferedReader) Close() error {
+	return nil
 }
 
 // Verify wraps rc so that reading it proves the bytes hash to d
