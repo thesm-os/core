@@ -534,8 +534,9 @@ func TestCosignature(t *testing.T) {
 					ed25519Signer(t, "a"), failingUTC{err: failure}, time.Second)
 				assert.NoError(t, err, "NewCosignatureV1Signer must accept the signer")
 				_, err = s.Sign([]byte(cosignedText))
-				expect.ErrorIs(t, err, checkpoint.ErrClock, "Sign must refuse to sign without a reading")
-				expect.ErrorIs(t, err, failure, "Sign must return the error of the UTC source")
+				expect.That(t, err).
+					ErrorIs(checkpoint.ErrClock, "Sign must refuse to sign without a reading").
+					ErrorIs(failure, "Sign must return the error of the UTC source")
 				expect.Equal(t, errs.Classify(err), errs.Transient, "the error must classify as Transient")
 			})
 
@@ -675,10 +676,14 @@ func TestCosignature(t *testing.T) {
 
 			t.Run("returns dst unchanged with the cause of a context that ended", func(t *testing.T) {
 				t.Parallel()
-				ctx, cancel := context.WithCancel(t.Context())
-				cancel()
-				got, err := witness(t, "a").AppendSign(ctx, []byte(prefix), []byte(cosignedText))
-				expect.ErrorIs(t, err, context.Canceled, "AppendSign must return the cause of the context")
+				s := witness(t, "a")
+				var got []byte
+				expect.HonoursCancellation(t, func(ctx context.Context) error {
+					var err error
+					got, err = s.AppendSign(ctx, []byte(prefix), []byte(cosignedText))
+
+					return err
+				}, "AppendSign must return the cause of the context")
 				expect.Equal(t, string(got), prefix, "AppendSign must return dst unchanged")
 			})
 
@@ -727,12 +732,10 @@ func TestCosignature(t *testing.T) {
 
 			t.Run("signs at the first second after the Unix epoch", func(t *testing.T) {
 				t.Parallel()
-				first := time.Unix(1, 0).UTC()
-				got, err := witness(t, "a").AppendSignAt(t.Context(), nil, []byte(cosignedText), first)
-				assert.NoError(t, err, "AppendSignAt must sign at the timestamp 1")
-				stamp, err := checkpoint.Timestamp(got)
-				assert.NoError(t, err, "Timestamp must read the value")
-				assert.Equal(t, stamp, first, "the value must contain the timestamp 1")
+				s := witness(t, "a")
+				assert.RoundTrip(t, func(at time.Time) ([]byte, error) {
+					return s.AppendSignAt(t.Context(), nil, []byte(cosignedText), at)
+				}, checkpoint.Timestamp, time.Unix(1, 0).UTC(), "the value must contain the timestamp 1")
 			})
 
 			t.Run("passes the message of the time of the caller to a signer that is not an AppendSigner",
@@ -785,10 +788,14 @@ func TestCosignature(t *testing.T) {
 
 			t.Run("returns dst unchanged with the cause of a context that ended", func(t *testing.T) {
 				t.Parallel()
-				ctx, cancel := context.WithCancel(t.Context())
-				cancel()
-				got, err := witness(t, "a").AppendSignAt(ctx, []byte(prefix), []byte(cosignedText), at)
-				expect.ErrorIs(t, err, context.Canceled, "AppendSignAt must return the cause of the context")
+				s := witness(t, "a")
+				var got []byte
+				expect.HonoursCancellation(t, func(ctx context.Context) error {
+					var err error
+					got, err = s.AppendSignAt(ctx, []byte(prefix), []byte(cosignedText), at)
+
+					return err
+				}, "AppendSignAt must return the cause of the context")
 				expect.Equal(t, string(got), prefix, "AppendSignAt must return dst unchanged")
 			})
 
