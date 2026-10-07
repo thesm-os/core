@@ -219,9 +219,9 @@ func (c *Cache[K, V]) examine(now time.Time, keep *entry[K, V], gone *victims[K,
 	hit := e.freq.Load() > 0 && !force && !e.expired(now)
 	if e == keep || e.pinned() || hit || !e.evict() {
 		q.remove(e)
-		if hit && q.id == inSmall {
+		if q.id == inSmall {
 			e.freq.Store(0)
-		} else if hit {
+		} else if e.freq.Load() > 0 {
 			e.freq.Add(-1)
 		}
 

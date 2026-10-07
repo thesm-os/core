@@ -335,6 +335,31 @@ func TestExamine(t *testing.T) {
 			testkit.Equal(t, mainKeys(c), []string{"a"}, "the pinned entry must move to the main queue")
 			testkit.Equal(t, keysOf(&gone), []string(nil), "the pinned entry must not leave")
 		})
+
+		t.Run("resets the hits of a pinned entry of the small queue when it forces", func(t *testing.T) {
+			t.Parallel()
+			c := policyCache(t, 10)
+			es := attachNew(c, "a")
+			es[0].pin()
+			es[0].freq.Store(3)
+
+			var gone victims[string, int]
+			c.examine(origin, nil, &gone, true)
+			testkit.Equal(t, es[0].freq.Load(), int32(0), "the entry must start the main queue without hits")
+		})
+
+		t.Run("takes one hit from a pinned entry of the main queue when it forces", func(t *testing.T) {
+			t.Parallel()
+			c := policyCache(t, 20)
+			es := attachNew(c, "a", "b")
+			toMain(c, es...)
+			es[0].pin()
+			es[0].freq.Store(3)
+
+			var gone victims[string, int]
+			c.examine(origin, nil, &gone, true)
+			testkit.Equal(t, es[0].freq.Load(), int32(2), "the entry must lose one hit")
+		})
 	})
 
 	t.Run("evict", func(t *testing.T) {
