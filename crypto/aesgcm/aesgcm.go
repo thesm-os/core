@@ -104,17 +104,9 @@ func NewRandomNonce(key []byte) (crypto.AEAD, error) {
 // wraps the AES block in GCM with mode. small and large are the
 // identifiers for the 128- and 256-bit constructions.
 func build(key []byte, mode func(cipher.Block) (cipher.AEAD, error), small, large crypto.ID) (crypto.AEAD, error) {
-	// aes.NewCipher validates first, so its error is a live path
-	// rather than dead defensive code: every length AES rejects
-	// arrives here.
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return nil, crypto.ErrKeySize
-	}
-
-	// AES-192 reaches this switch — aes.NewCipher accepts a 24-byte
-	// key — and is rejected here, which is what narrows this package
-	// to the two sizes modern protocol profiles use.
+	// The switch refuses AES-192 too, a 24-byte key that aes.NewCipher
+	// accepts, which narrows this package to the two sizes modern
+	// protocol profiles use.
 	var (
 		id        crypto.ID
 		algorithm crypto.Algorithm
@@ -128,6 +120,10 @@ func build(key []byte, mode func(cipher.Block) (cipher.AEAD, error), small, larg
 	default:
 		return nil, crypto.ErrKeySize
 	}
+
+	// aes.NewCipher fails only for a key that is not 16, 24 or 32 bytes
+	// long, and the switch has refused every such key.
+	block, _ := aes.NewCipher(key)
 
 	return newGCM(block, mode, id, algorithm)
 }
