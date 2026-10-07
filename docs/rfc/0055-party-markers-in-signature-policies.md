@@ -2,13 +2,13 @@
 rfc: 0055
 title: Party Markers in Signature Policies
 author: Roy Klopper <roy.klopper@stealthscale.io>
-status: Draft
+status: Accepted
 created: 2026-10-07
 updated: 2026-10-07
 discussion: none
 supersedes: none
 superseded-by: none
-produces-adr: tbd
+produces-adr: ADR-0046
 ---
 
 # RFC-0055: Party Markers in Signature Policies

@@ -117,7 +117,7 @@ Start from [`docs/templates/RFC.md`](../templates/RFC.md).
 | [0052](0052-failover.md) | Failover Between Redundant Dependencies | Draft |
 | [0053](0053-http-servers-and-clients.md) | HTTP Servers and Clients | Accepted |
 | [0054](0054-checkpoint-witnesses.md) | Checkpoint Witnesses | Accepted |
-| [0055](0055-party-markers-in-signature-policies.md) | Party Markers in Signature Policies | Draft |
+| [0055](0055-party-markers-in-signature-policies.md) | Party Markers in Signature Policies | Accepted |
 
 ## Canonical first RFC
 

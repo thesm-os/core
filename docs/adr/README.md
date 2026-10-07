@@ -98,5 +98,6 @@ Start from [`docs/templates/ADR.md`](../templates/ADR.md).
 | [0043](0043-core-structs-have-canonical-codecs.md) | Core Structs Have Canonical kanon Codecs | Accepted |
 | [0044](0044-a-blob-reader-may-fail-after-removal.md) | A Blob Reader May Fail Once Its Version Is Removed | Accepted |
 | [0045](0045-core-ships-io-built-on-the-standard-library.md) | Core Ships IO Built on the Standard Library | Accepted |
+| [0046](0046-a-marked-rule-is-a-party-at-any-depth.md) | A Marked Rule Is a Party at Any Depth | Accepted |
 
 [nygard]: https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions
