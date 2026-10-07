@@ -6,179 +6,272 @@ package fixed_test
 import (
 	"bytes"
 	"encoding"
+	"slices"
 	"testing"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/bench"
+	"go.dokimi.dev/assert/expect"
+	"go.dokimi.dev/assert/prop"
 
 	"go.thesmos.sh/core/errs"
 	"go.thesmos.sh/core/fixed"
 )
 
-// The encoding interfaces this package promises to satisfy. A
-// compile-time check rather than a runtime one: a missing method is a
-// build failure, which is where it belongs.
+// The binary interfaces that Fixed64 implements. A missing method fails
+// the build.
 var (
 	_ encoding.BinaryAppender    = fixed.Zero
 	_ encoding.BinaryMarshaler   = fixed.Zero
 	_ encoding.BinaryUnmarshaler = (*fixed.Fixed64)(nil)
-	_ encoding.TextAppender      = fixed.Zero
-	_ encoding.TextMarshaler     = fixed.Zero
-	_ encoding.TextUnmarshaler   = (*fixed.Fixed64)(nil)
 )
 
-func TestMarshalBinary(t *testing.T) {
+// decodeContract is the contract of decodesCanonically, which TestBinary
+// and FuzzUnmarshalBinary check.
+const decodeContract = "UnmarshalBinary must leave the receiver unchanged, or decode the value whose binary form is the input"
+
+// binaryForms generates inputs of exactly Size octets, and inputs of any
+// length up to twice Size.
+var binaryForms = prop.OneOf(
+	prop.Bytes(prop.MinSize(fixed.Size), prop.MaxSize(fixed.Size)),
+	prop.Bytes(prop.MaxSize(2*fixed.Size)),
+)
+
+func TestBinary(t *testing.T) {
 	t.Parallel()
 
-	t.Run("is eight bytes big-endian two's complement", func(t *testing.T) {
+	t.Run("AppendBinary", func(t *testing.T) {
 		t.Parallel()
 
-		cases := map[string]struct {
-			in   fixed.Fixed64
+		t.Run("appends the binary form after dst", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "AppendBinary must extend dst with the binary form of the value", func(c *prop.Case) {
+				dst := c.Draw(prop.Bytes(prop.MaxSize(2*fixed.Size)), "dst")
+				f := c.Draw(values, "f")
+
+				form, err := f.MarshalBinary()
+				assert.NoError(c, err, "MarshalBinary must accept every value of the domain")
+				want := append(slices.Clip(dst), form...)
+
+				got, err := f.AppendBinary(dst)
+				assert.NoError(c, err, "AppendBinary must accept every value of the domain")
+				assert.Equal(c, got, want, "AppendBinary must keep dst and append the binary form")
+			})
+		})
+
+		t.Run("returns dst unchanged with ErrRange for math.MinInt64", func(t *testing.T) {
+			t.Parallel()
+			got, err := outOfDomain.AppendBinary([]byte{0xaa})
+			expect.ErrorIs(t, err, fixed.ErrRange, "AppendBinary must refuse the bypass value")
+			expect.Equal(t, got, []byte{0xaa}, "a refused append must leave dst unchanged")
+		})
+	})
+
+	t.Run("MarshalBinary", func(t *testing.T) {
+		t.Parallel()
+
+		tests := []struct {
+			name string
+			give fixed.Fixed64
 			want []byte
 		}{
-			"zero":     {fixed.Zero, []byte{0, 0, 0, 0, 0, 0, 0, 0}},
-			"smallest": {fixed.Smallest, []byte{0, 0, 0, 0, 0, 0, 0, 1}},
-			"minus one raw unit": {
-				-fixed.Smallest,
-				[]byte{255, 255, 255, 255, 255, 255, 255, 255},
+			{name: "encodes Zero as eight zero octets", give: fixed.Zero, want: []byte{0, 0, 0, 0, 0, 0, 0, 0}},
+			{
+				name: "encodes Smallest with a last octet of 1",
+				give: fixed.Smallest,
+				want: []byte{0, 0, 0, 0, 0, 0, 0, 1},
 			},
-			"one": {fixed.One, []byte{0, 0, 0, 0, 5, 245, 225, 0}},
-			"max": {
-				fixed.Max,
-				[]byte{127, 255, 255, 255, 255, 255, 255, 255},
+			{
+				name: "encodes minus Smallest as eight octets of 0xff",
+				give: -fixed.Smallest, want: []byte{0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
 			},
-			"min": {
-				fixed.Min,
-				[]byte{128, 0, 0, 0, 0, 0, 0, 1},
+			{name: "encodes One as 0x05f5e100", give: fixed.One, want: []byte{0, 0, 0, 0, 0x05, 0xf5, 0xe1, 0x00}},
+			{
+				name: "encodes Max with a first octet of 0x7f",
+				give: fixed.Max, want: []byte{0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
+			},
+			{
+				name: "encodes Min with a first octet of 0x80",
+				give: fixed.Min, want: []byte{0x80, 0, 0, 0, 0, 0, 0, 1},
 			},
 		}
-		for name, tc := range cases {
-			t.Run(name, func(t *testing.T) {
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-
-				got, err := tc.in.MarshalBinary()
-
-				testkit.NoError(t, err, "MarshalBinary must succeed")
-				testkit.Equal(t, got, tc.want,
-					"the layout is a stable wire contract")
+				got, err := tt.give.MarshalBinary()
+				assert.NoError(t, err, "MarshalBinary must accept every value of the domain")
+				assert.Equal(t, got, tt.want, "the layout must be big-endian two's complement")
 			})
 		}
+
+		t.Run("returns ErrRange for math.MinInt64", func(t *testing.T) {
+			t.Parallel()
+			_, err := outOfDomain.MarshalBinary()
+			assert.ErrorIs(t, err, fixed.ErrRange, "no value outside the domain may reach the wire")
+		})
+
+		t.Run("encodes a negative value to sort above a positive one", func(t *testing.T) {
+			t.Parallel()
+			negative, err := (-fixed.One).MarshalBinary()
+			assert.NoError(t, err, "MarshalBinary must accept minus One")
+			positive, err := fixed.One.MarshalBinary()
+			assert.NoError(t, err, "MarshalBinary must accept One")
+			assert.Equal(t, bytes.Compare(negative, positive), 1,
+				"the binary form of minus One must sort above that of One")
+		})
 	})
 
-	t.Run("returns ErrRange for the excluded value", func(t *testing.T) {
+	t.Run("UnmarshalBinary", func(t *testing.T) {
 		t.Parallel()
 
-		_, err := outOfDomain.MarshalBinary()
+		t.Run("returns the value that MarshalBinary encodes", func(t *testing.T) {
+			t.Parallel()
+			prop.RoundTrip(t, fixed.Fixed64.MarshalBinary, func(form []byte) (fixed.Fixed64, error) {
+				var f fixed.Fixed64
+				err := f.UnmarshalBinary(form)
 
-		testkit.ErrorIs(t, err, fixed.ErrRange,
-			"nothing outside the domain may reach the wire")
-	})
+				return f, err
+			}, "UnmarshalBinary must undo MarshalBinary for every value of the domain", prop.Using(values))
+		})
 
-	t.Run("encodes a negative value to sort above a positive one", func(t *testing.T) {
-		t.Parallel()
-
-		// The documented caveat, asserted so it cannot regress into a
-		// silent promise: a caller sorting encoded keys does NOT get
-		// numeric order without their own sign-bit flip.
-		neg, err := (-fixed.One).MarshalBinary()
-		testkit.NoError(t, err, "MarshalBinary must succeed")
-
-		pos, err := fixed.One.MarshalBinary()
-		testkit.NoError(t, err, "MarshalBinary must succeed")
-
-		testkit.True(t, bytes.Compare(neg, pos) > 0,
-			"the encoded negative must sort above the encoded positive")
-		testkit.True(t, -fixed.One < fixed.One,
-			"while the values themselves order correctly")
-	})
-}
-
-func TestAppendBinary(t *testing.T) {
-	t.Parallel()
-
-	t.Run("appends to an existing buffer", func(t *testing.T) {
-		t.Parallel()
-
-		got, err := fixed.Smallest.AppendBinary([]byte{0xAA})
-
-		testkit.NoError(t, err, "AppendBinary must succeed")
-		testkit.Equal(t, got, []byte{0xAA, 0, 0, 0, 0, 0, 0, 0, 1},
-			"AppendBinary must append rather than replace")
-	})
-
-	t.Run("returns dst unchanged with ErrRange", func(t *testing.T) {
-		t.Parallel()
-
-		got, err := outOfDomain.AppendBinary([]byte{0xAA})
-
-		testkit.ErrorIs(t, err, fixed.ErrRange,
-			"AppendBinary must refuse the excluded value")
-		testkit.Equal(t, got, []byte{0xAA},
-			"a refused append must not modify dst")
-	})
-}
-
-func TestUnmarshalBinary(t *testing.T) {
-	t.Parallel()
-
-	t.Run("decodes what MarshalBinary produced", func(t *testing.T) {
-		t.Parallel()
-
-		values := []fixed.Fixed64{
-			fixed.Zero, fixed.One, fixed.Smallest, -fixed.Smallest,
-			fixed.Max, fixed.Min, 1234567890, -1234567890,
-		}
-		for _, want := range values {
-			b, err := want.MarshalBinary()
-			testkit.NoError(t, err, "MarshalBinary must succeed")
-
-			var got fixed.Fixed64
-
-			testkit.NoError(t, got.UnmarshalBinary(b),
-				"UnmarshalBinary must accept its own output")
-			testkit.Equal(t, got, want, "the round trip must be exact")
-		}
-	})
-
-	t.Run("returns ErrSize for any length but Size", func(t *testing.T) {
-		t.Parallel()
-
-		cases := map[string][]byte{
-			"nil":      nil,
-			"empty":    {},
-			"short":    {0, 0, 0, 0, 0, 0, 0},
-			"long":     {0, 0, 0, 0, 0, 0, 0, 0, 0},
-			"one byte": {1},
-		}
-		for name, data := range cases {
-			t.Run(name, func(t *testing.T) {
-				t.Parallel()
+		t.Run("returns ErrSize for any length but Size", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "UnmarshalBinary must refuse every length but Size", func(c *prop.Case) {
+				data := c.Draw(prop.Bytes(prop.MaxSize(2*fixed.Size)).Filter(func(b []byte) bool {
+					return len(b) != fixed.Size
+				}), "data")
 
 				got := fixed.One
 
-				err := got.UnmarshalBinary(data)
-
-				testkit.ErrorIs(t, err, fixed.ErrSize,
-					"a wrong-length input must be a decode error")
-				testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrSize must classify as Invalid")
-				testkit.Equal(t, got, fixed.One,
-					"a rejected decode must not modify the receiver")
+				var err error
+				assert.Pure(c, func() fixed.Fixed64 { return got }, func() { err = got.UnmarshalBinary(data) },
+					"a refused input must leave the receiver unchanged")
+				assert.ErrorIs(c, err, fixed.ErrSize, "an input of another length must return ErrSize")
 			})
+		})
+
+		t.Run("returns ErrSize that classifies as Invalid", func(t *testing.T) {
+			t.Parallel()
+			var got fixed.Fixed64
+			err := got.UnmarshalBinary(nil)
+			assert.Equal(t, errs.Classify(err), errs.Invalid, "ErrSize must classify as Invalid")
+		})
+
+		t.Run("returns ErrRange for the binary form of math.MinInt64", func(t *testing.T) {
+			t.Parallel()
+			got := fixed.One
+
+			var err error
+			assert.Pure(t, func() fixed.Fixed64 { return got }, func() {
+				err = got.UnmarshalBinary([]byte{0x80, 0, 0, 0, 0, 0, 0, 0})
+			}, "a refused input must leave the receiver unchanged")
+			assert.ErrorIs(t, err, fixed.ErrRange, "the binary form of the bypass value must return ErrRange")
+		})
+
+		t.Run("decodes an input to the value whose binary form it is", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, decodeContract, decodesCanonically)
+		})
+	})
+}
+
+// FuzzUnmarshalBinary checks the contract of decodesCanonically on the
+// inputs that a fuzzer finds.
+func FuzzUnmarshalBinary(f *testing.F) {
+	prop.Fuzz(f, decodeContract, decodesCanonically)
+}
+
+// TestBinaryAllocs checks the allocation contract of the binary methods.
+// MarshalBinary allocates its result. MaxAllocs counts the allocations of
+// the whole process, so the test does not run in parallel.
+//
+//nolint:paralleltest // see above
+func TestBinaryAllocs(t *testing.T) {
+	f := fixed.Fixed64(-1234567890)
+	form := []byte{0xff, 0xff, 0xff, 0xff, 0xb6, 0x69, 0xfd, 0x2e}
+	dst := make([]byte, 0, fixed.Size)
+
+	t.Run("AppendBinary", func(t *testing.T) {
+		var got []byte
+		expect.MaxAllocs(t, func() { got, _ = f.AppendBinary(dst[:0]) }, 0,
+			"AppendBinary must not allocate when dst has room for the binary form")
+		assert.Equal(t, got, form, "the test must measure the binary form")
+	})
+
+	t.Run("MarshalBinary", func(t *testing.T) {
+		var got []byte
+		expect.MaxAllocs(t, func() { got, _ = f.MarshalBinary() }, 1, "MarshalBinary must allocate its result alone")
+		assert.Equal(t, got, form, "the test must measure the binary form")
+	})
+
+	t.Run("UnmarshalBinary", func(t *testing.T) {
+		var got fixed.Fixed64
+		expect.MaxAllocs(t, func() { _ = got.UnmarshalBinary(form) }, 0, "UnmarshalBinary must not allocate")
+		assert.Equal(t, got, f, "the test must measure the value of the binary form")
+	})
+}
+
+// BenchmarkBinary reports the cost of the binary methods, and fails when
+// one allocates more than its contract states.
+func BenchmarkBinary(b *testing.B) {
+	f := fixed.Fixed64(-1234567890)
+	form := []byte{0xff, 0xff, 0xff, 0xff, 0xb6, 0x69, 0xfd, 0x2e}
+	dst := make([]byte, 0, fixed.Size)
+
+	b.Run("AppendBinary", func(b *testing.B) {
+		var got []byte
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			got, _ = f.AppendBinary(dst[:0])
 		}
+
+		assert.Equal(b, got, form, "the benchmark must measure the binary form")
 	})
 
-	t.Run("returns ErrRange for the encoding of the excluded value", func(t *testing.T) {
-		t.Parallel()
+	b.Run("MarshalBinary", func(b *testing.B) {
+		var got []byte
 
-		// The bit pattern of math.MinInt64. No encoder in this package
-		// produces it; a hostile or corrupted peer can still send it.
-		got := fixed.One
+		c := bench.Start(b).MaxAllocs(1)
+		defer c.End()
 
-		err := got.UnmarshalBinary([]byte{128, 0, 0, 0, 0, 0, 0, 0})
+		for c.Loop() {
+			got, _ = f.MarshalBinary()
+		}
 
-		testkit.ErrorIs(t, err, fixed.ErrRange,
-			"a decoded out-of-domain value must be rejected")
-		testkit.Equal(t, got, fixed.One,
-			"a rejected decode must not modify the receiver")
+		assert.Equal(b, got, form, "the benchmark must measure the binary form")
 	})
+
+	b.Run("UnmarshalBinary", func(b *testing.B) {
+		var got fixed.Fixed64
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			_ = got.UnmarshalBinary(form)
+		}
+
+		assert.Equal(b, got, f, "the benchmark must measure the value of the binary form")
+	})
+}
+
+// decodesCanonically decodes an input that the case draws into a receiver
+// of One. A refused input leaves the receiver at One, and a decoded value
+// encodes to the input.
+func decodesCanonically(c *prop.Case) {
+	data := c.Draw(binaryForms, "data")
+
+	got := fixed.One
+	if err := got.UnmarshalBinary(data); err != nil {
+		assert.Equal(c, got, fixed.One, "a refused input must leave the receiver unchanged")
+
+		return
+	}
+
+	form, err := got.MarshalBinary()
+	assert.NoError(c, err, "a decoded value must be in the domain")
+	assert.Equal(c, form, data, "a decoded value must encode to the input")
 }

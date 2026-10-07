@@ -197,11 +197,7 @@ func (f Fixed64) Neg() Fixed64 {
 // Abs returns the magnitude of f. It cannot fail. [Fixed64.Neg]
 // explains why, and names the one value for which Abs is wrong.
 func (f Fixed64) Abs() Fixed64 {
-	if f < Zero {
-		return -f
-	}
-
-	return f
+	return max(f, -f)
 }
 
 // magnitude returns |f| as a uint64, for the 128-bit paths.
@@ -210,6 +206,7 @@ func (f Fixed64) Abs() Fixed64 {
 // negating math.MinInt64 returns math.MinInt64, whose bit pattern as a
 // uint64 is 2⁶³, its magnitude.
 func magnitude(f Fixed64) uint64 {
+	//dokimi:mutate-skip ror-boundary: both branches return 0 for Zero
 	if f < Zero {
 		return uint64(-f)
 	}
