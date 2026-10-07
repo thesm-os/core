@@ -42,8 +42,9 @@ const (
 //
 // # Allocation contract
 //
-// Construction, comparison and storage do not allocate. [ID.String]
-// allocates the returned string.
+// Construction, comparison and storage do not allocate. [ID.Bytes]
+// allocates the copy that its slice refers to when the slice escapes, and
+// [ID.String] allocates the returned string.
 type ID struct {
 	bytes [MaxSize]byte
 	size  uint8
@@ -104,8 +105,10 @@ func New256(b [Size256]byte) ID {
 //
 // Zero alloc.
 func FromBytes(b []byte) (ID, error) {
-	size, ok := idSize(len(b))
-	if !ok || size == 0 {
+	// idSize returns 0 for the empty form of Zero and for every length
+	// that no ID has, and FromBytes refuses both.
+	size, _ := idSize(len(b))
+	if size == 0 {
 		return Zero, ErrSize
 	}
 
@@ -125,6 +128,13 @@ func (i ID) Size() int {
 // Bytes returns the active prefix of i. Bytes has a value receiver,
 // so the slice refers to a copy of i, and a write through the slice
 // does not change i.
+//
+// # Allocation contract
+//
+// Bytes allocates the copy of i when the slice escapes the caller. The
+// compiler inlines Bytes, so a caller whose slice does not escape keeps
+// the copy on its stack. [ID.AppendBinary] copies the bytes into a buffer
+// of the caller without an allocation.
 func (i ID) Bytes() []byte {
 	return i.bytes[:i.size]
 }
@@ -184,7 +194,7 @@ func (i ID) String() string {
 
 // idSize returns the size of the ID whose binary form is n bytes long: 0
 // for the empty form of [Zero], and 16, 20 or 32 for any other ID. It
-// returns false for a length that no ID has. [FromBytes] and
+// returns 0 and false for a length that no ID has. [FromBytes] and
 // [ID.UnmarshalBinary] share it, so the two decode paths accept the same
 // lengths, apart from the empty form, which FromBytes rejects.
 func idSize(n int) (uint8, bool) {

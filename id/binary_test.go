@@ -4,22 +4,21 @@
 package id_test
 
 import (
+	"bytes"
 	"encoding"
 	"errors"
-	"runtime"
-	"strconv"
+	"slices"
 	"testing"
 
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/bench"
+	"go.dokimi.dev/assert/expect"
+	"go.dokimi.dev/assert/prop"
 	"go.thesmos.sh/kanon/kanontest"
-	"go.thesmos.sh/testkit"
 
 	"go.thesmos.sh/core/errs"
 	"go.thesmos.sh/core/id"
 )
-
-// benchRuns is the number of calls over which a benchmark averages the
-// allocations that it checks.
-const benchRuns = 100
 
 // The encoding interfaces ID satisfies. A missing method is a build
 // failure.
@@ -36,149 +35,139 @@ var shapes = []struct {
 	id   id.ID
 	want []byte
 }{
-	{"zero", id.Zero, []byte{}},
-	{"Size128", id.New128(fill128(0x11)), fill128Slice(0x11)},
-	{"Size160", id.New160(fill160(0x22)), fill160Slice(0x22)},
-	{"Size256", id.New256(fill256(0x33)), fill256Slice(0x33)},
+	{name: "zero", id: id.Zero, want: []byte{}},
+	{name: "Size128", id: id.New128(fill128(0x11)), want: bytes.Repeat([]byte{0x11}, id.Size128)},
+	{name: "Size160", id: id.New160(fill160(0x22)), want: bytes.Repeat([]byte{0x22}, id.Size160)},
+	{name: "Size256", id: id.New256(fill256(0x33)), want: bytes.Repeat([]byte{0x33}, id.Size256)},
 }
 
-func TestMarshalBinary(t *testing.T) {
+func TestBinary(t *testing.T) {
 	t.Parallel()
 
-	for _, tc := range shapes {
-		t.Run("returns the bytes of an ID of "+tc.name, func(t *testing.T) {
-			t.Parallel()
-			got, err := tc.id.MarshalBinary()
-			testkit.NoError(t, err, "MarshalBinary must succeed")
-			testkit.Equal(t, got, tc.want, "the encoding must be the identifier's bytes")
-		})
-	}
-}
-
-func TestAppendBinary(t *testing.T) {
-	t.Parallel()
-
-	t.Run("appends the bytes of the ID to dst", func(t *testing.T) {
+	t.Run("MarshalBinary", func(t *testing.T) {
 		t.Parallel()
-		got, err := id.New128(fill128(0x44)).AppendBinary([]byte{0xAA})
-		testkit.NoError(t, err, "AppendBinary must succeed")
-		testkit.Equal(t, got, append([]byte{0xAA}, fill128Slice(0x44)...), "AppendBinary must extend dst")
-	})
 
-	t.Run("appends nothing for the zero ID", func(t *testing.T) {
-		t.Parallel()
-		got, err := id.Zero.AppendBinary([]byte{0xAA})
-		testkit.NoError(t, err, "AppendBinary must succeed")
-		testkit.Equal(t, got, []byte{0xAA}, "the zero ID must encode as no bytes")
-	})
-}
-
-func TestUnmarshalBinary(t *testing.T) {
-	t.Parallel()
-
-	for _, tc := range shapes {
-		t.Run("decodes the encoding of an ID of "+tc.name, func(t *testing.T) {
-			t.Parallel()
-			got := id.New160(fill160(0x55))
-			testkit.NoError(t, got.UnmarshalBinary(tc.want), "UnmarshalBinary must accept the encoding")
-			testkit.True(t, got == tc.id, "the round trip must return the same ID")
-		})
-	}
-
-	t.Run("decodes nil as the zero ID", func(t *testing.T) {
-		t.Parallel()
-		got := id.New128(fill128(0x66))
-		testkit.NoError(t, got.UnmarshalBinary(nil), "UnmarshalBinary must accept nil")
-		testkit.True(t, got.IsZero(), "nil must decode to the zero ID")
-	})
-
-	tests := []struct {
-		name string
-		give int
-	}{
-		{name: "returns ErrSize for one byte", give: 1},
-		{name: "returns ErrSize for one byte short of Size128", give: id.Size128 - 1},
-		{name: "returns ErrSize for a length between Size128 and Size160", give: 18},
-		{name: "returns ErrSize for one byte past Size256", give: id.Size256 + 1},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			want := id.New128(fill128(0x77))
-			got := want
-			err := got.UnmarshalBinary(make([]byte, tt.give))
-			testkit.ErrorIs(t, err, id.ErrSize, "a wrong length must be a decode error")
-			testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrSize must classify as Invalid")
-			testkit.True(t, got == want, "a rejected decode must leave the ID unchanged")
-		})
-	}
-
-	t.Run("does not alias the input", func(t *testing.T) {
-		t.Parallel()
-		data := fill128Slice(0x88)
-		var got id.ID
-		testkit.NoError(t, got.UnmarshalBinary(data), "UnmarshalBinary must accept a valid length")
-		data[0] = 0
-		testkit.Equal(t, got.Bytes()[0], byte(0x88), "changing the input must not change the ID")
-	})
-
-	t.Run("returns the result of FromBytes for every length from 1 to Size256+1", func(t *testing.T) {
-		t.Parallel()
-		for n := 1; n <= id.Size256+1; n++ {
-			data := make([]byte, n)
-			for k := range data {
-				data[k] = byte(k + 1)
-			}
-			want, wantErr := id.FromBytes(data)
-			var got id.ID
-			err := got.UnmarshalBinary(data)
-			testkit.True(t, errors.Is(err, wantErr),
-				"UnmarshalBinary must return the error of FromBytes for "+strconv.Itoa(n)+" bytes")
-			testkit.True(t, got == want,
-				"UnmarshalBinary must decode the ID of FromBytes for "+strconv.Itoa(n)+" bytes")
+		for _, tt := range shapes {
+			t.Run("returns the bytes of an ID of "+tt.name, func(t *testing.T) {
+				t.Parallel()
+				got, err := tt.id.MarshalBinary()
+				assert.NoError(t, err, "MarshalBinary must succeed")
+				assert.Equal(t, got, tt.want, "the encoding must be the bytes of the identifier")
+			})
 		}
 	})
 
-	cleared := []struct {
-		name string
-		held id.ID
-		give id.ID
-	}{
-		{
-			name: "clears the bytes of a Size256 ID under a Size128 one",
-			held: id.New256(fill256(0x33)),
-			give: id.New128(fill128(0x11)),
-		},
-		{
-			name: "clears the bytes of a Size256 ID under a Size160 one",
-			held: id.New256(fill256(0x33)),
-			give: id.New160(fill160(0x22)),
-		},
-		{
-			name: "clears the bytes of a Size160 ID under a Size128 one",
-			held: id.New160(fill160(0x22)),
-			give: id.New128(fill128(0x11)),
-		},
-	}
-	for _, tt := range cleared {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			got := tt.held
-			testkit.NoError(t, got.UnmarshalBinary(tt.give.Bytes()), "UnmarshalBinary must accept the encoding")
-			testkit.True(t, got == tt.give, "the decoded ID must equal the ID built from the same bytes")
-		})
-	}
-}
+	t.Run("AppendBinary", func(t *testing.T) {
+		t.Parallel()
 
-func TestSizeKanon(t *testing.T) {
-	t.Parallel()
-
-	for _, tc := range shapes {
-		t.Run("returns the length of the encoding of an ID of "+tc.name, func(t *testing.T) {
+		t.Run("appends the bytes of the ID to dst", func(t *testing.T) {
 			t.Parallel()
-			testkit.Equal(t, tc.id.SizeKanon(), len(tc.want), "SizeKanon must equal the length of the encoding")
+			prop.ForAll(t, "AppendBinary must keep dst and append the bytes of the ID", func(c *prop.Case) {
+				dst := c.Draw(prop.Bytes(prop.MaxSize(id.MaxSize)), "dst")
+				i := c.Draw(ids, "id")
+				want := append(slices.Clone(dst), i.Bytes()...)
+
+				got, err := i.AppendBinary(dst)
+				assert.NoError(c, err, "AppendBinary must succeed")
+				assert.Equal(c, got, want, "AppendBinary must extend dst with the bytes of the ID")
+			})
 		})
-	}
+	})
+
+	t.Run("AppendKanon", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("appends what AppendBinary appends", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "AppendKanon must append the binary form of the ID", func(c *prop.Case) {
+				dst := c.Draw(prop.Bytes(prop.MaxSize(id.MaxSize)), "dst")
+				i := c.Draw(ids, "id")
+
+				want, err := i.AppendBinary(slices.Clone(dst))
+				assert.NoError(c, err, "AppendBinary must succeed")
+				assert.Equal(c, i.AppendKanon(dst), want, "AppendKanon must equal AppendBinary")
+			})
+		})
+	})
+
+	t.Run("SizeKanon", func(t *testing.T) {
+		t.Parallel()
+
+		for _, tt := range shapes {
+			t.Run("returns the length of the encoding of an ID of "+tt.name, func(t *testing.T) {
+				t.Parallel()
+				assert.Equal(t, tt.id.SizeKanon(), len(tt.want), "SizeKanon must equal the length of the encoding")
+			})
+		}
+	})
+
+	t.Run("UnmarshalBinary", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the ID that AppendBinary encodes", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "UnmarshalBinary must decode the encoding of any ID over any ID", func(c *prop.Case) {
+				prior := c.Draw(ids, "prior")
+				want := c.Draw(ids, "id")
+
+				got := prior
+				assert.NoError(c, got.UnmarshalBinary(want.Bytes()), "UnmarshalBinary must accept the encoding")
+				assert.Equal(c, got, want, "the decoded ID must equal the encoded one")
+			})
+		})
+
+		t.Run("returns Zero for nil", func(t *testing.T) {
+			t.Parallel()
+			got := id.New128(fill128(0x66))
+			assert.NoError(t, got.UnmarshalBinary(nil), "UnmarshalBinary must accept nil")
+			assert.True(t, got.IsZero(), "nil must decode to the zero ID")
+		})
+
+		t.Run("returns the result of FromBytes for every nonempty length", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "UnmarshalBinary must agree with FromBytes on nonempty data", func(c *prop.Case) {
+				data := c.Draw(prop.Bytes(prop.MinSize(1), prop.MaxSize(id.Size256+1)), "data")
+
+				want, wantErr := id.FromBytes(data)
+				var got id.ID
+				err := got.UnmarshalBinary(data)
+				assert.True(c, errors.Is(err, wantErr), "UnmarshalBinary must return the error of FromBytes")
+				assert.Equal(c, got, want, "UnmarshalBinary must decode the ID of FromBytes")
+			})
+		})
+
+		t.Run("returns ErrSize for a length that no encoding has", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "UnmarshalBinary must refuse a length that no ID encodes to", func(c *prop.Case) {
+				n := c.Draw(prop.Integer(1, 2*id.MaxSize).Filter(func(n int) bool {
+					return n != id.Size128 && n != id.Size160 && n != id.Size256
+				}), "length")
+
+				got := id.New128(fill128(0x77))
+
+				var err error
+				assert.Pure(c, func() id.ID { return got }, func() { err = got.UnmarshalBinary(make([]byte, n)) },
+					"a refused decode must leave the ID unchanged")
+				assert.ErrorIs(c, err, id.ErrSize, "a wrong length must be a decode error")
+			})
+		})
+
+		t.Run("returns an error of class Invalid for a length that no encoding has", func(t *testing.T) {
+			t.Parallel()
+			var got id.ID
+			assert.Equal(t, errs.Classify(got.UnmarshalBinary(make([]byte, 18))), errs.Invalid,
+				"ErrSize must classify as Invalid")
+		})
+
+		t.Run("returns an ID that a later write to data leaves unchanged", func(t *testing.T) {
+			t.Parallel()
+			data := bytes.Repeat([]byte{0x88}, id.Size128)
+			var got id.ID
+			assert.NoError(t, got.UnmarshalBinary(data), "UnmarshalBinary must accept a valid length")
+			data[0] = 0
+			assert.Equal(t, got.Bytes()[0], byte(0x88), "a write to data must not change the ID")
+		})
+	})
 }
 
 // TestExactKanon checks the two guarantees that ExactKanon declares with
@@ -189,77 +178,127 @@ func TestExactKanon(t *testing.T) {
 	kanontest.RunExact[id.ID](t)
 }
 
-func BenchmarkAppendBinary(b *testing.B) {
+// TestBinaryAllocs checks the allocation contracts of the binary methods.
+// MaxAllocs counts the allocations of the whole process, so the test does
+// not run in parallel.
+//
+//nolint:paralleltest // see above
+func TestBinaryAllocs(t *testing.T) {
 	u := id.New256(fill256(0x7f))
-	buf := make([]byte, 0, id.MaxSize)
-	b.ReportAllocs()
-	for b.Loop() {
-		buf, _ = u.AppendBinary(buf[:0])
-	}
-	runtime.KeepAlive(buf)
+	data := bytes.Repeat([]byte{0x7f}, id.Size256)
+
+	t.Run("AppendBinary", func(t *testing.T) {
+		buf := make([]byte, 0, id.MaxSize)
+
+		var err error
+		expect.MaxAllocs(t, func() { buf, err = u.AppendBinary(buf[:0]) }, 0,
+			"AppendBinary must not allocate when dst has room for the ID")
+		assert.NoError(t, err, "AppendBinary must succeed")
+		assert.Length(t, buf, id.Size256, "the test must measure the encoding of the ID")
+	})
+
+	t.Run("AppendKanon", func(t *testing.T) {
+		buf := make([]byte, 0, id.MaxSize)
+		expect.MaxAllocs(t, func() { buf = u.AppendKanon(buf[:0]) }, 0,
+			"AppendKanon must not allocate when dst has room for the ID")
+		assert.Length(t, buf, id.Size256, "the test must measure the encoding of the ID")
+	})
+
+	t.Run("MarshalBinary", func(t *testing.T) {
+		t.Run("allocates only the slice that it returns", func(t *testing.T) {
+			var got []byte
+			expect.MaxAllocs(t, func() { got, _ = u.MarshalBinary() }, 1,
+				"MarshalBinary must allocate only the returned slice")
+			assert.Length(t, got, id.Size256, "the test must measure the encoding of the ID")
+		})
+
+		t.Run("allocates nothing for Zero", func(t *testing.T) {
+			got := []byte{0}
+			expect.MaxAllocs(t, func() { got, _ = id.Zero.MarshalBinary() }, 0,
+				"MarshalBinary must not allocate for Zero")
+			assert.Empty(t, got, "the test must measure the encoding of Zero")
+		})
+	})
+
+	t.Run("SizeKanon", func(t *testing.T) {
+		var n int
+		expect.MaxAllocs(t, func() { n = u.SizeKanon() }, 0, "SizeKanon must not allocate")
+		assert.Equal(t, n, id.Size256, "the test must measure the size of the ID")
+	})
+
+	t.Run("UnmarshalBinary", func(t *testing.T) {
+		var (
+			got id.ID
+			err error
+		)
+		expect.MaxAllocs(t, func() { err = got.UnmarshalBinary(data) }, 0, "UnmarshalBinary must not allocate")
+		assert.NoError(t, err, "the test must measure a decode that succeeds")
+		assert.Equal(t, got, u, "the test must measure the decode of the ID")
+	})
 }
 
-// BenchmarkAppendKanon reports the cost of AppendKanon of a 32-byte ID
-// into a buffer with room, and fails when it allocates. The allocation
-// check appends to a buffer of its own, so the closure that captures it
-// does not change the code of the timed loop.
-func BenchmarkAppendKanon(b *testing.B) {
+// BenchmarkBinary reports the cost of the binary methods of a 32-byte ID,
+// and fails when one allocates more than TestBinaryAllocs allows.
+func BenchmarkBinary(b *testing.B) {
 	u := id.New256(fill256(0x7f))
 
-	probe := make([]byte, 0, id.MaxSize)
-	if allocs := testing.AllocsPerRun(benchRuns, func() { probe = u.AppendKanon(probe[:0]) }); allocs != 0 {
-		b.Fatalf("AppendKanon allocates %v times per call, want 0", allocs)
-	}
+	b.Run("AppendBinary", func(b *testing.B) {
+		buf := make([]byte, 0, id.MaxSize)
+		var err error
 
-	buf := make([]byte, 0, id.MaxSize)
-	b.ReportAllocs()
-	for b.Loop() {
-		buf = u.AppendKanon(buf[:0])
-	}
-	runtime.KeepAlive(buf)
-}
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
 
-func BenchmarkMarshalBinary(b *testing.B) {
-	u := id.New256(fill256(0x7f))
-	b.ReportAllocs()
-	var sink []byte
-	for b.Loop() {
-		sink, _ = u.MarshalBinary()
-	}
-	runtime.KeepAlive(sink)
-}
+		for c.Loop() {
+			buf, err = u.AppendBinary(buf[:0])
+		}
 
-// BenchmarkUnmarshalBinary reports the cost of a decode of 32 bytes into
-// an ID, and fails when the decode allocates. The allocation check
-// decodes into an ID of its own, so the closure that captures it does not
-// change the code of the timed loop.
-func BenchmarkUnmarshalBinary(b *testing.B) {
-	data := fill256Slice(0x7f)
+		assert.NoError(b, err, "AppendBinary must succeed")
+		assert.Length(b, buf, id.Size256, "the benchmark must measure the encoding of the ID")
+	})
 
-	var probe id.ID
-	if allocs := testing.AllocsPerRun(benchRuns, func() { _ = probe.UnmarshalBinary(data) }); allocs != 0 {
-		b.Fatalf("UnmarshalBinary allocates %v times per call, want 0", allocs)
-	}
+	b.Run("AppendKanon", func(b *testing.B) {
+		buf := make([]byte, 0, id.MaxSize)
 
-	var u id.ID
-	b.ReportAllocs()
-	for b.Loop() {
-		_ = u.UnmarshalBinary(data)
-	}
-	runtime.KeepAlive(u)
-}
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
 
-func fill128Slice(b byte) []byte {
-	a := fill128(b)
-	return a[:]
-}
+		for c.Loop() {
+			buf = u.AppendKanon(buf[:0])
+		}
 
-func fill160Slice(b byte) []byte {
-	a := fill160(b)
-	return a[:]
-}
+		assert.Length(b, buf, id.Size256, "the benchmark must measure the encoding of the ID")
+	})
 
-func fill256Slice(b byte) []byte {
-	a := fill256(b)
-	return a[:]
+	b.Run("MarshalBinary", func(b *testing.B) {
+		var got []byte
+
+		c := bench.Start(b).MaxAllocs(1)
+		defer c.End()
+
+		for c.Loop() {
+			got, _ = u.MarshalBinary()
+		}
+
+		assert.Length(b, got, id.Size256, "the benchmark must measure the encoding of the ID")
+	})
+
+	b.Run("UnmarshalBinary", func(b *testing.B) {
+		data := bytes.Repeat([]byte{0x7f}, id.Size256)
+
+		var (
+			got id.ID
+			err error
+		)
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			err = got.UnmarshalBinary(data)
+		}
+
+		assert.NoError(b, err, "the benchmark must measure a decode that succeeds")
+		assert.Equal(b, got, u, "the benchmark must measure the decode of the ID")
+	})
 }
