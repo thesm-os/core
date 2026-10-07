@@ -169,9 +169,10 @@ func TestReader(t *testing.T) {
 				t.Parallel()
 				r := der.NewReader(tt.give)
 
-				_, _, _, ok := r.Next()
+				var ok bool
+				expect.Pure(t, func() der.Reader { return r }, func() { _, _, _, ok = r.Next() },
+					"Next must read nothing")
 				expect.False(t, ok, "Next must refuse the element")
-				expect.Equal(t, r, der.NewReader(tt.give), "Next must read nothing")
 			})
 		}
 	})
@@ -201,8 +202,8 @@ func TestReader(t *testing.T) {
 			t.Parallel()
 			r := der.NewReader([]byte{0x02, 0x01, 0x05})
 
-			_, _ = r.Read(der.TagOctetString)
-			assert.Equal(t, r, der.NewReader([]byte{0x02, 0x01, 0x05}), "the refused element must remain unread")
+			assert.Pure(t, func() der.Reader { return r }, func() { _, _ = r.Read(der.TagOctetString) },
+				"the refused element must remain unread")
 		})
 
 		t.Run("reports false for a malformed element", func(t *testing.T) {
@@ -255,10 +256,11 @@ func TestReader(t *testing.T) {
 			t.Parallel()
 			r := der.NewReader([]byte{0x81, 0x01, 0x07})
 
-			_, present, ok := r.Optional(der.Context(0))
+			var present, ok bool
+			expect.Pure(t, func() der.Reader { return r }, func() { _, present, ok = r.Optional(der.Context(0)) },
+				"the element of another tag must remain unread")
 			expect.True(t, ok, "another tag must not be an error")
 			expect.False(t, present, "another tag must not be present")
-			expect.Equal(t, r, der.NewReader([]byte{0x81, 0x01, 0x07}), "the element of another tag must remain unread")
 		})
 
 		t.Run("reads nothing from an empty input", func(t *testing.T) {
@@ -274,10 +276,11 @@ func TestReader(t *testing.T) {
 			t.Parallel()
 			r := der.NewReader([]byte{0x80, 0x02, 0x07})
 
-			_, present, ok := r.Optional(der.Context(0))
+			var present, ok bool
+			expect.Pure(t, func() der.Reader { return r }, func() { _, present, ok = r.Optional(der.Context(0)) },
+				"the malformed element must remain unread")
 			expect.False(t, ok, "a malformed element of the tag must be an error")
 			expect.False(t, present, "a malformed element must not be present")
-			expect.Equal(t, r, der.NewReader([]byte{0x80, 0x02, 0x07}), "the malformed element must remain unread")
 		})
 	})
 }
