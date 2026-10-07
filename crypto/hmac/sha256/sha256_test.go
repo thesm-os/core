@@ -92,11 +92,11 @@ func TestMAC(t *testing.T) {
 			t.Parallel()
 			key := []byte("mutable-key")
 			m := hmacsha256.New(key)
-			want := m.Sign([]byte("payload"))
-			for i := range key {
-				key[i] = 0xff
-			}
-			assert.Equal(t, m.Sign([]byte("payload")), want, "a write to key must not change the tag")
+			assert.Pure(t, func() crypto.Digest { return m.Sign([]byte("payload")) }, func() {
+				for i := range key {
+					key[i] = 0xff
+				}
+			}, "a write to key must not change the tag")
 		})
 	})
 
