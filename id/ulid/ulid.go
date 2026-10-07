@@ -16,21 +16,19 @@ import (
 //
 // # Concurrency
 //
-// Safe for concurrent use when the underlying [clock.Clock] and
-// [rand.Rand] are both safe. The reference implementations in
-// this module ([clock/hlc.Clock], [rand/crypto.Rand],
-// [rand/seeded.Rand]) are; [rand/pcg.Rand] is not.
+// A Generator is safe for concurrent use when the underlying
+// [clock.Clock] and [rand.Rand] are both safe. [clock/hlc.Clock],
+// [rand/crypto.Rand] and [rand/seeded.Rand] are safe, and
+// [rand/pcg.Rand] is not.
 //
 // # Allocation contract
 //
-// [Generator.New] reads entropy via [rand.Rand.Uint64] (returning
-// uint64 by value) rather than [rand.Rand.Read] (which would
-// escape a slice through the interface boundary). [Generator.New]
-// inherits the underlying source's [rand.Rand.Uint64] allocation
-// contract: zero-alloc for [rand/seeded], [rand/pcg], and
-// [rand/constant]; one alloc per call for [rand/crypto] (an
-// unavoidable cost of the [io.Reader] indirection in
-// [rand/crypto.Rand.Uint64]).
+// [Generator.Generate] reads entropy through [rand.Rand.Uint64], which
+// returns a uint64 by value, and not through [rand.Rand.Read], whose
+// slice would escape through the interface. Generate allocates what
+// the Uint64 of its source allocates: nothing for [rand/seeded],
+// [rand/pcg] and [rand/constant], and once per call for [rand/crypto],
+// whose Uint64 reads through an [io.Reader].
 type Generator struct {
 	clk clock.Clock
 	rng rand.Rand
@@ -45,20 +43,20 @@ func New(clk clock.Clock, rng rand.Rand) *Generator {
 	return &Generator{clk: clk, rng: rng}
 }
 
-// Generate returns a fresh ULID. Layout:
+// Generate returns a fresh ULID of this layout:
 //
 //	bytes 0..5 : 48-bit Unix-millisecond timestamp, big-endian
 //	bytes 6..15: 80 random bits
 //
-// Timestamps before the Unix epoch (negative milliseconds) wrap
-// to the truncated unsigned representation; consumers running
-// before 1970 are out of scope. Timestamps beyond
-// 10889 AD overflow the 48-bit field; consumers running after
-// then are also out of scope.
+// A timestamp before the Unix epoch, a negative number of
+// milliseconds, wraps to its truncated unsigned form, and a consumer
+// that runs before 1970 is out of scope. A timestamp beyond 10889 AD
+// overflows the 48-bit field, and is out of scope too.
 //
 // # Allocation contract
 //
-// Inherits the underlying [rand.Rand.Uint64] allocation contract.
+// Generate allocates what the [rand.Rand.Uint64] of its source
+// allocates.
 func (g *Generator) Generate() id.ID {
 	var u [id.Size128]byte
 	// Encode the millisecond timestamp into bytes 0..5
@@ -89,15 +87,16 @@ func (g *Generator) Generate() id.ID {
 // from u, treating bytes 0..5 of [id.ID.Bytes] as a 48-bit
 // big-endian unsigned integer.
 //
-// Defined for any [id.ID] of size [id.Size128] or larger; the
-// result is meaningful only when u was produced by a ULID
-// generator. Returns 0 for [id.Zero] or any shorter [id.ID].
+// TimestampMillis is defined for any [id.ID] of size [id.Size128] or
+// larger, and its result is meaningful only when a ULID generator
+// produced u. It returns 0 for [id.Zero].
 //
 // # Allocation contract
 //
-// Zero alloc.
+// TimestampMillis does not allocate.
 func TimestampMillis(u id.ID) uint64 {
 	b := u.Bytes()
+	//dokimi:mutate-skip sbr-delete,ror-false: the only ID shorter than 128 bits is Zero, whose zero bytes decode to 0
 	if len(b) < id.Size128 {
 		return 0
 	}

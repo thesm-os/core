@@ -6,351 +6,395 @@ package ulid_test
 import (
 	"strings"
 	"testing"
-	"time"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/bench"
+	"go.dokimi.dev/assert/expect"
+	"go.dokimi.dev/assert/prop"
 
-	"go.thesmos.sh/core/clock/fake"
 	"go.thesmos.sh/core/errs"
 	"go.thesmos.sh/core/id"
 	"go.thesmos.sh/core/id/ulid"
-	"go.thesmos.sh/core/rand"
-	"go.thesmos.sh/core/rand/seeded"
 )
 
-func TestFormat(t *testing.T) {
+// The contracts of parsesText and roundTrips, which the tests and the
+// fuzz targets check.
+const (
+	parseContract     = "Parse of the encoding of the ID that ParseULID returns must return the same ID"
+	roundTripContract = "ParseULID must return the ID whose encoding Format returns"
+)
+
+// The canonical form of a ULID: a first character of '0' to '7', and 25
+// characters of the Crockford alphabet.
+const canonical = `[0-7][0-9A-HJKMNP-TV-Z]{25}`
+
+// specText is the example ULID of the ULID specification, and specBytes
+// its bytes, whose timestamp is 1469922850259 milliseconds, as
+// github.com/oklog/ulid/v2 decodes them.
+var (
+	specText  = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+	specBytes = [id.Size128]byte{
+		0x01, 0x56, 0x3e, 0x3a, 0xb5, 0xd3, 0xd6, 0x76, 0x4c, 0x61, 0xef, 0xb9, 0x93, 0x02, 0xbd, 0x5b,
+	}
+)
+
+// asymmetric is an ID whose 5-bit groups map to distinct characters, and
+// asymmetricText its encoding, as github.com/oklog/ulid/v2 encodes it.
+var (
+	asymmetric = id.New128([id.Size128]byte{
+		0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0xFE, 0xDC,
+	})
+	asymmetricText = "014D2PF2DB04HMASW9NF6YZZPW"
+)
+
+// ulids generates IDs of 128 bits.
+var ulids = prop.Bytes(prop.MinSize(id.Size128), prop.MaxSize(id.Size128)).Map(func(b []byte) id.ID {
+	return id.New128([id.Size128]byte(b))
+})
+
+func TestParse(t *testing.T) {
 	t.Parallel()
 
-	t.Run("Zero formats to empty (size 0)", func(t *testing.T) {
+	t.Run("Format", func(t *testing.T) {
 		t.Parallel()
-		testkit.Equal(t, ulid.Format(id.Zero), "", "Format(Zero) must be empty")
-	})
 
-	// Frozen-output vectors. Each was hand-derived from the
-	// ULID Crockford base32 layout (50 bits of timestamp, 80
-	// bits of randomness). The vectors lock the arithmetic in
-	// the shift-calculation loops against silent regression.
-	t.Run("returns 26 zeros for an all-zero ID", func(t *testing.T) {
-		t.Parallel()
-		u := id.New128([id.Size128]byte{})
-		testkit.Equal(t, ulid.Format(u), "00000000000000000000000000",
-			"all-zero ID must encode to 26 zeros")
-	})
-
-	t.Run("returns a leading 01 for a first timestamp byte of 0x01", func(t *testing.T) {
-		t.Parallel()
-		// The 48-bit timestamp 0x010000000000 is 2^40 in the low
-		// 48 bits of a 50-bit field. Its top 5 bits (49..45) are
-		// zero, and its next 5 bits (44..40) are 1. The remaining
-		// chars are zero, as github.com/oklog/ulid/v2 encodes it.
-		u := idFromBytes(0x01)
-		testkit.Equal(t, ulid.Format(u), "01000000000000000000000000",
-			"timestamp byte 0 = 0x01 must encode to leading '01'")
-	})
-
-	t.Run("returns 16 Zs for a random half of all ones", func(t *testing.T) {
-		t.Parallel()
-		// Timestamp half zero → 10 zero chars. Random half:
-		// hi = 0xFFFFFFFFFFFFFFFF, tail = 0xFFFFF — both
-		// produce 'Z' for every 5-bit chunk.
-		u := idFromBytes(
-			0, 0, 0, 0, 0, 0,
-			0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-		)
-		testkit.Equal(t, ulid.Format(u), "0000000000ZZZZZZZZZZZZZZZZ",
-			"random half all-ones must encode to 16 Zs")
-	})
-
-	t.Run("returns the recorded encoding of an asymmetric random half", func(t *testing.T) {
-		t.Parallel()
-		// Asymmetric bytes so that each 5-bit chunk maps to a
-		// distinct char: a regression in the per-iteration
-		// shift arithmetic (`i*5` mutated to `i+5` etc.) would
-		// produce a different output for one or more chars.
-		u := idFromBytes(
-			0, 0, 0, 0, 0, 0,
-			0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0, 0x12, 0x34,
-		)
-		testkit.Equal(t, ulid.Format(u), "000000000028T5CY4TQKFF04HM",
-			"asymmetric random half must encode to expected vector")
-	})
-
-	t.Run("returns the recorded encoding of an asymmetric ID", func(t *testing.T) {
-		t.Parallel()
-		// Both halves carry asymmetric bytes — defends against
-		// the timestamp-half shift mutations as well.
-		u := idFromBytes(
-			0x01, 0x23, 0x45, 0x67, 0x89, 0xAB,
-			0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0xFE, 0xDC,
-		)
-		testkit.Equal(t, ulid.Format(u), "014D2PF2DB04HMASW9NF6YZZPW",
-			"mixed timestamp+random must encode to expected vector")
-	})
-
-	t.Run("all-ones encodes the largest ULID", func(t *testing.T) {
-		t.Parallel()
-		// The 48-bit timestamp 0xFFFFFFFFFFFF sets bits 47..0 of
-		// a 50-bit field. Its first char carries bits 49..45,
-		// 00111 = 7, and every other char is 'Z', as
-		// github.com/oklog/ulid/v2 encodes it.
-		u := idFromBytes(
-			0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-			0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-		)
-		testkit.Equal(t, ulid.Format(u), "7ZZZZZZZZZZZZZZZZZZZZZZZZZ",
-			"all-ones must encode to the largest ULID")
-	})
-
-	t.Run("returns 26 characters of the Crockford alphabet", func(t *testing.T) {
-		t.Parallel()
-		const alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
-		origin := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
-		g := ulid.New(fake.New(origin), seeded.New(rand.Seed(1)))
-		got := ulid.Format(g.Generate())
-		testkit.Equal(t, len(got), 26, "Format output must be 26 characters")
-		for i, ch := range got {
-			testkit.True(t, strings.ContainsRune(alphabet, ch),
-				"char "+string(ch)+" at position must be in Crockford alphabet")
-			_ = i
+		// The encodings of github.com/oklog/ulid/v2 for the same bytes.
+		tests := []struct {
+			name string
+			give id.ID
+			want string
+		}{
+			{name: "returns the empty string for Zero", give: id.Zero, want: ""},
+			{
+				name: "returns 26 zeros for an ID of zero bytes",
+				give: id.New128([id.Size128]byte{}),
+				want: strings.Repeat("0", 26),
+			},
+			{
+				name: "returns a leading 01 for a first timestamp byte of 0x01",
+				give: id.New128([id.Size128]byte{0x01}),
+				want: "01" + strings.Repeat("0", 24),
+			},
+			{
+				name: "returns 16 Zs for a random half of all ones",
+				give: id.New128([id.Size128]byte{
+					0, 0, 0, 0, 0, 0, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+				}),
+				want: strings.Repeat("0", 10) + strings.Repeat("Z", 16),
+			},
+			{
+				name: "returns the reference encoding of an asymmetric random half",
+				give: id.New128([id.Size128]byte{
+					0, 0, 0, 0, 0, 0, 0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0, 0x12, 0x34,
+				}),
+				want: "000000000028T5CY4TQKFF04HM",
+			},
+			{name: "returns the reference encoding of an asymmetric ID", give: asymmetric, want: asymmetricText},
+			{
+				name: "returns the largest ULID for an ID of all ones",
+				give: id.New128([id.Size128]byte{
+					0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+				}),
+				want: "7" + strings.Repeat("Z", 25),
+			},
+			{
+				name: "returns the example of the specification for its bytes",
+				give: id.New128(specBytes),
+				want: specText,
+			},
+			{
+				name: "returns the encoding of the first 128 bits of a 256-bit ID",
+				give: id.New256([id.Size256]byte(append(specBytes[:], make([]byte, 16)...))),
+				want: specText,
+			},
 		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				assert.Equal(t, ulid.Format(tt.give), tt.want, "Format must return the Crockford base32 encoding")
+			})
+		}
+
+		t.Run("returns a canonical ULID for every 128-bit ID", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "Format must return the canonical form of a ULID", func(c *prop.Case) {
+				s := ulid.Format(c.Draw(ulids, "id"))
+				assert.Matches(c, s, "^"+canonical+"$", "Format must return a canonical ULID")
+			})
+		})
+	})
+
+	t.Run("ParseULID", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the ID that Format encodes", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, roundTripContract, roundTrips)
+		})
+
+		t.Run("returns the ID of the example of the specification", func(t *testing.T) {
+			t.Parallel()
+			got, err := ulid.ParseULID(specText)
+			assert.NoError(t, err, "ParseULID must accept the example")
+			expect.Equal(t, got, id.New128(specBytes), "ParseULID must decode the bytes of the example")
+			expect.Equal(t, ulid.TimestampMillis(got), uint64(1469922850259),
+				"ParseULID must decode the timestamp of the example")
+		})
+
+		vectors := []struct {
+			name string
+			give string
+			want id.ID
+		}{
+			{
+				name: "returns the ID of zero bytes for 26 zeros",
+				give: strings.Repeat("0", 26),
+				want: id.New128([id.Size128]byte{}),
+			},
+			{
+				name: "returns the ID of the reference encoding of an asymmetric ID",
+				give: asymmetricText,
+				want: asymmetric,
+			},
+			{
+				name: "returns the reference ID of the uppercase characters 0 to S",
+				give: "0123456789ABCDEFGHJKMNPQRS",
+				want: id.New128([id.Size128]byte{
+					0x01, 0x10, 0xc8, 0x53, 0x1d, 0x09, 0x52, 0xd8, 0xd7, 0x3e, 0x11, 0x94, 0xe9, 0x5b, 0x5f, 0x19,
+				}),
+			},
+			{
+				name: "returns the reference ID of the lowercase characters",
+				give: "0abcdefghjkmnpqrstvwxyz000",
+				want: id.New128([id.Size128]byte{
+					0x0a, 0x5b, 0x1a, 0xe7, 0xc2, 0x32, 0x9d, 0x2b, 0x6b, 0xe3, 0x3a, 0xdf, 0x3b, 0xef, 0x80, 0x00,
+				}),
+			},
+			{
+				name: "returns the ID of all ones for the largest ULID",
+				give: "7" + strings.Repeat("Z", 25),
+				want: id.New128([id.Size128]byte{
+					0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+				}),
+			},
+		}
+		for _, tt := range vectors {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				got, err := ulid.ParseULID(tt.give)
+				assert.NoError(t, err, "ParseULID must accept the encoding")
+				assert.Equal(t, got, tt.want, "ParseULID must decode the reference bytes")
+			})
+		}
+
+		t.Run("returns the ID of the uppercase form for a lowercase form", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "ParseULID must ignore the case of a letter", func(c *prop.Case) {
+				want := c.Draw(ulids, "id")
+
+				got, err := ulid.ParseULID(strings.ToLower(ulid.Format(want)))
+				assert.NoError(c, err, "ParseULID must accept the lowercase form")
+				assert.Equal(c, got, want, "the lowercase form must decode to the ID")
+			})
+		})
+
+		substitutions := []struct {
+			name string
+			give string
+			want string
+		}{
+			{name: "returns the ID of 1 for an uppercase I", give: "I", want: "1"},
+			{name: "returns the ID of 1 for a lowercase i", give: "i", want: "1"},
+			{name: "returns the ID of 1 for an uppercase L", give: "L", want: "1"},
+			{name: "returns the ID of 1 for a lowercase l", give: "l", want: "1"},
+			{name: "returns the ID of 0 for an uppercase O", give: "O", want: "0"},
+			{name: "returns the ID of 0 for a lowercase o", give: "o", want: "0"},
+		}
+		for _, tt := range substitutions {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				prefix := "0" + strings.Repeat("7", 5)
+				suffix := strings.Repeat("Z", 19)
+				got, err := ulid.ParseULID(prefix + tt.give + suffix)
+				assert.NoError(t, err, "ParseULID must accept the substitution")
+				want, err := ulid.ParseULID(prefix + tt.want + suffix)
+				assert.NoError(t, err, "ParseULID must accept the digit")
+				assert.Equal(t, got, want, "the substitution must decode as its digit")
+			})
+		}
+
+		t.Run("returns ErrInvalidLength for a text that is not 26 characters", func(t *testing.T) {
+			t.Parallel()
+			prop.ErrorIs(t, func(n int) error {
+				_, err := ulid.ParseULID(strings.Repeat("0", n))
+
+				return err
+			}, ulid.ErrInvalidLength, "a text of another length must be refused",
+				prop.Using(prop.Integer(0, 100).Filter(func(n int) bool { return n != 26 })),
+				prop.Example(0), prop.Example(1), prop.Example(25), prop.Example(27), prop.Example(100))
+		})
+
+		t.Run("returns ErrInvalidChar for a character outside the Crockford alphabet", func(t *testing.T) {
+			t.Parallel()
+			outside := prop.Integer(0, 255).Filter(func(b int) bool {
+				return !strings.ContainsRune("0123456789ABCDEFGHIJKLMNOPQRSTVWXYZabcdefghijklmnopqrstvwxyz", rune(b))
+			})
+			prop.ForAll(t, "ParseULID must refuse a character outside the alphabet", func(c *prop.Case) {
+				at := c.Draw(prop.Integer(0, 25), "position")
+				b := c.Draw(outside, "character")
+
+				text := []byte(strings.Repeat("0", 26))
+				text[at] = byte(b)
+				_, err := ulid.ParseULID(string(text))
+				assert.ErrorIs(c, err, ulid.ErrInvalidChar, "ParseULID must return ErrInvalidChar")
+			})
+		})
+
+		t.Run("returns ErrInvalidChar for the U that the Crockford alphabet excludes", func(t *testing.T) {
+			t.Parallel()
+			_, err := ulid.ParseULID("U" + strings.Repeat("0", 25))
+			assert.ErrorIs(t, err, ulid.ErrInvalidChar, "ParseULID must refuse a U")
+		})
+
+		t.Run("returns ErrInvalidTimestamp for a first character above 7", func(t *testing.T) {
+			t.Parallel()
+			prop.ErrorIs(t, func(first string) error {
+				_, err := ulid.ParseULID(first + strings.Repeat("0", 25))
+
+				return err
+			}, ulid.ErrInvalidTimestamp, "a first character above 7 must overflow the timestamp",
+				prop.Using(prop.StringMatching(`[89A-HJKMNP-TV-Za-hjkmnp-tv-z]`)), prop.Example("8"), prop.Example("Z"))
+		})
+
+		classes := []struct {
+			name string
+			give string
+		}{
+			{name: "returns an error of class Invalid for a text that is not 26 characters", give: "0"},
+			{
+				name: "returns an error of class Invalid for a character outside the alphabet",
+				give: "U" + strings.Repeat("0", 25),
+			},
+			{
+				name: "returns an error of class Invalid for a first character above 7",
+				give: "8" + strings.Repeat("0", 25),
+			},
+		}
+		for _, tt := range classes {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				_, err := ulid.ParseULID(tt.give)
+				assert.Equal(t, errs.Classify(err), errs.Invalid, "the refusal must classify as Invalid")
+			})
+		}
+
+		t.Run("returns an ID that Format encodes again for every text that it accepts", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, parseContract, parsesText)
+		})
 	})
 }
 
-func TestParseULID(t *testing.T) {
-	t.Parallel()
-
-	t.Run("round-trips Format", func(t *testing.T) {
-		t.Parallel()
-		origin := time.Date(2026, 6, 15, 12, 34, 56, 0, time.UTC)
-		g := ulid.New(fake.New(origin), seeded.New(rand.Seed(7)))
-		want := g.Generate()
-		encoded := ulid.Format(want)
-
-		got, err := ulid.ParseULID(encoded)
-		testkit.NoError(t, err, "ParseULID")
-		testkit.Equal(t, got, want, "ParseULID(Format(x)) must round-trip")
+// TestParseAllocs checks the allocation contracts of Format and ParseULID.
+// MaxAllocs counts the allocations of the whole process, so the test does
+// not run in parallel.
+//
+//nolint:paralleltest // see above
+func TestParseAllocs(t *testing.T) {
+	t.Run("Format", func(t *testing.T) {
+		var s string
+		expect.MaxAllocs(t, func() { s = ulid.Format(asymmetric) }, 1, "Format must allocate only the returned string")
+		assert.Equal(t, s, asymmetricText, "the test must measure the encoding of the ULID")
 	})
 
-	t.Run("decodes the all-zero canonical encoding", func(t *testing.T) {
-		t.Parallel()
-		got, err := ulid.ParseULID("00000000000000000000000000")
-		testkit.NoError(t, err, "ParseULID")
-		testkit.Equal(t, got, id.New128([id.Size128]byte{}),
-			"all-zero parse must decode to all-zero 128-bit ID")
-	})
-
-	t.Run("decodes asymmetric vector", func(t *testing.T) {
-		t.Parallel()
-		got, err := ulid.ParseULID("014D2PF2DB04HMASW9NF6YZZPW")
-		testkit.NoError(t, err, "ParseULID")
-		want := idFromBytes(
-			0x01, 0x23, 0x45, 0x67, 0x89, 0xAB,
-			0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0xFE, 0xDC,
+	t.Run("ParseULID", func(t *testing.T) {
+		var (
+			got id.ID
+			err error
 		)
-		testkit.Equal(t, got, want, "asymmetric vector must round-trip")
-	})
-
-	t.Run("returns the same ID for lowercase input", func(t *testing.T) {
-		t.Parallel()
-		upper, err := ulid.ParseULID("04HMASW9NC04HMASW9NF6YZZPW")
-		testkit.NoError(t, err, "ParseULID upper")
-		lower, err := ulid.ParseULID("04hmasw9nc04hmasw9nf6yzzpw")
-		testkit.NoError(t, err, "ParseULID lower")
-		testkit.Equal(t, upper, lower,
-			"upper- and lower-case must decode identically (case folding)")
-	})
-
-	t.Run("substitutes Crockford I/L/O for 1/1/0", func(t *testing.T) {
-		t.Parallel()
-		// '1' and 'L' should decode identically.
-		_, err := ulid.ParseULID("1000000000000000000000000O")
-		testkit.NoError(t, err, "ParseULID with O")
-		_, err = ulid.ParseULID("L0000000000000000000000000")
-		testkit.NoError(t, err, "ParseULID with L")
-	})
-
-	t.Run("returns ErrInvalidLength for a string of the wrong length", func(t *testing.T) {
-		t.Parallel()
-		cases := []string{
-			"",
-			"0",
-			strings.Repeat("0", 25),
-			strings.Repeat("0", 27),
-			strings.Repeat("0", 100),
-		}
-		for _, s := range cases {
-			_, err := ulid.ParseULID(s)
-			testkit.ErrorIs(t, err, ulid.ErrInvalidLength,
-				"wrong-length input must return ErrInvalidLength")
-			testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrInvalidLength must classify as Invalid")
-		}
-	})
-
-	t.Run("returns ErrInvalidChar for a character outside the Crockford alphabet", func(t *testing.T) {
-		t.Parallel()
-		// 'U' is excluded from Crockford to avoid V/U confusion.
-		_, err := ulid.ParseULID("U" + strings.Repeat("0", 25))
-		testkit.ErrorIs(t, err, ulid.ErrInvalidChar,
-			"'U' (excluded from Crockford) must return ErrInvalidChar")
-		testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrInvalidChar must classify as Invalid")
-
-		// Punctuation: not in alphabet at any position.
-		_, err = ulid.ParseULID(strings.Repeat("0", 10) + "!" + strings.Repeat("0", 15))
-		testkit.ErrorIs(t, err, ulid.ErrInvalidChar,
-			"punctuation must return ErrInvalidChar")
-	})
-
-	t.Run("returns ErrInvalidTimestamp for a first character above '7'", func(t *testing.T) {
-		t.Parallel()
-		// First char '8' (Crockford value 8) means timestamp bits
-		// 49..45 = 01000, which sets bit 48 — beyond the 48-bit
-		// timestamp slot.
-		_, err := ulid.ParseULID("8" + strings.Repeat("0", 25))
-		testkit.ErrorIs(t, err, ulid.ErrInvalidTimestamp,
-			"first char '8' must return ErrInvalidTimestamp")
-		testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrInvalidTimestamp must classify as Invalid")
-
-		// 'Z' (value 31): top 2 bits non-zero.
-		_, err = ulid.ParseULID("Z" + strings.Repeat("0", 25))
-		testkit.ErrorIs(t, err, ulid.ErrInvalidTimestamp,
-			"first char 'Z' must return ErrInvalidTimestamp")
-	})
-
-	t.Run("decodes a first character of '7'", func(t *testing.T) {
-		t.Parallel()
-		// Locks the boundary: first char '7' (Crockford value 7)
-		// means timestamp bits 49..45 = 00111, which leaves bit
-		// 48 unset — within the 48-bit timestamp slot. The
-		// boundary check `first > 7` must accept exactly 7.
-		got, err := ulid.ParseULID("7" + strings.Repeat("0", 25))
-		testkit.NoError(t, err, "first char '7' must parse")
-		testkit.False(t, got.IsZero(), "first char '7' must produce non-Zero ID")
-	})
-
-	t.Run("returns ErrInvalidChar for an invalid character in the timestamp half", func(t *testing.T) {
-		t.Parallel()
-		// '!' at position 5 — inside the timestamp half (chars
-		// 0..9), past the leading-char check. Exercises the
-		// in-loop invalid-char branch that the leading-char
-		// check doesn't cover.
-		_, err := ulid.ParseULID("00000!0000" + strings.Repeat("0", 16))
-		testkit.ErrorIs(t, err, ulid.ErrInvalidChar,
-			"invalid char inside timestamp half must return ErrInvalidChar")
-	})
-
-	// Alphabet-coverage tests. Each test parses a complete 26-
-	// character ULID string whose body collectively exercises
-	// every branch of the Crockford decoder (decodeChar). Two
-	// strings of 26 distinct chars cover the 32-char alphabet;
-	// a third covers the I/L/O substitutions and lowercase
-	// variants.
-
-	t.Run("decodes the uppercase characters 0 to S", func(t *testing.T) {
-		t.Parallel()
-		// 26 distinct chars: 0..9, A-H, J, K, M, N, P, Q, R, S
-		// (covers Crockford values 0..25). First char '0' so the
-		// timestamp boundary check passes.
-		_, err := ulid.ParseULID("0123456789ABCDEFGHJKMNPQRS")
-		testkit.NoError(t, err, "uppercase chars 0-S must decode")
-	})
-
-	t.Run("decodes the uppercase characters T to Z", func(t *testing.T) {
-		t.Parallel()
-		// Covers the T, V, W, X, Y, Z branches (values 26..31)
-		// plus padding.
-		_, err := ulid.ParseULID("0TVWXYZ" + strings.Repeat("0", 19))
-		testkit.NoError(t, err, "uppercase chars T-Z must decode")
-	})
-
-	t.Run("decodes the lowercase characters", func(t *testing.T) {
-		t.Parallel()
-		// 25 lowercase chars covering a..h, j, k, m, n, p..t,
-		// v..z plus one '0' padder.
-		_, err := ulid.ParseULID("0abcdefghjkmnpqrstvwxyz000")
-		testkit.NoError(t, err, "lowercase chars a-z must decode")
-	})
-
-	t.Run("decodes the Crockford substitute letters", func(t *testing.T) {
-		t.Parallel()
-		// The ULID spec retroactively accepts I/L → 1 and O → 0
-		// to handle handwritten or transcribed identifiers; both
-		// upper- and lower-case forms are accepted.
-		_, err := ulid.ParseULID("0IiLlOo" + strings.Repeat("0", 19))
-		testkit.NoError(t, err, "I/L/O substitutions must decode")
+		expect.MaxAllocs(t, func() { got, err = ulid.ParseULID(asymmetricText) }, 0, "ParseULID must not allocate")
+		assert.NoError(t, err, "the test must measure an encoding that ParseULID accepts")
+		assert.Equal(t, got, asymmetric, "the test must measure the ID of the encoding")
 	})
 }
 
-// FuzzParseULID asserts [ulid.ParseULID] never panics on
-// arbitrary input, and that successful parses are idempotent —
-// Parse(Format(Parse(s))) == Parse(s). Idempotency is the right
-// shape for ULID: the parser is case-insensitive and applies
-// I/L→1, O→0 substitutions, so the input string is not bytewise
-// recovered, but the parsed [id.ID] is.
+// BenchmarkParse reports the cost of Format and ParseULID, and fails when
+// one allocates more than TestParseAllocs allows.
+func BenchmarkParse(b *testing.B) {
+	b.Run("Format", func(b *testing.B) {
+		var s string
+
+		c := bench.Start(b).MaxAllocs(1)
+		defer c.End()
+
+		for c.Loop() {
+			s = ulid.Format(asymmetric)
+		}
+
+		assert.Equal(b, s, asymmetricText, "the benchmark must measure the encoding of the ULID")
+	})
+
+	b.Run("ParseULID", func(b *testing.B) {
+		var (
+			got id.ID
+			err error
+		)
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			got, err = ulid.ParseULID(asymmetricText)
+		}
+
+		assert.NoError(b, err, "the benchmark must measure an encoding that ParseULID accepts")
+		assert.Equal(b, got, asymmetric, "the benchmark must measure the ID of the encoding")
+	})
+}
+
+// FuzzParseULID checks the contract of parsesText on the texts that a
+// fuzzer finds. Each seed is a text after the octet of its length that the
+// bridge reads first.
 func FuzzParseULID(f *testing.F) {
-	f.Add("01ARZ3NDEKTSV4RRFFQ69G5FAV")
-	f.Add("00000000000000000000000000")
-	f.Add("7ZZZZZZZZZZZZZZZZZZZZZZZZZ")
-	f.Add("0iIlLoO" + strings.Repeat("0", 19))
+	for _, s := range []string{
+		specText, strings.Repeat("0", 26), "7" + strings.Repeat("Z", 25), "0iIlLoO" + strings.Repeat("0", 19),
+	} {
+		f.Add(append([]byte{byte(len(s))}, s...))
+	}
 
-	f.Fuzz(func(t *testing.T, s string) {
-		got, err := ulid.ParseULID(s)
-		if err != nil {
-			return
-		}
-		formatted := ulid.Format(got)
-		again, err := ulid.ParseULID(formatted)
-		testkit.NoError(t, err, "re-parse of Format(Parse(s))")
-		testkit.Equal(t, again, got,
-			"Parse(Format(Parse(s))) must equal Parse(s) — idempotent")
-	})
+	prop.Fuzz(f, parseContract, parsesText)
 }
 
-// FuzzULIDRoundTrip asserts the Format → Parse round-trip on
-// arbitrary 128-bit payloads: any [id.ID] produced from 16 bytes
-// must Format to a string that Parse decodes back to the
-// original ID.
+// FuzzULIDRoundTrip checks the contract of roundTrips on the IDs that a
+// fuzzer finds.
 func FuzzULIDRoundTrip(f *testing.F) {
 	f.Add(make([]byte, id.Size128))
-	f.Add([]byte{
-		0x01, 0x23, 0x45, 0x67, 0x89, 0xAB,
-		0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0xFE, 0xDC,
-	})
-	f.Add([]byte{
-		0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-		0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
-	})
+	f.Add(specBytes[:])
+	f.Add([]byte(strings.Repeat("\xff", id.Size128)))
 
-	f.Fuzz(func(t *testing.T, data []byte) {
-		var raw [id.Size128]byte
-		copy(raw[:], data)
-		u := id.New128(raw)
-
-		formatted := ulid.Format(u)
-		parsed, err := ulid.ParseULID(formatted)
-		testkit.NoError(t, err, "Parse(Format(x))")
-		testkit.Equal(t, parsed, u, "Format → Parse round-trip must preserve the ID")
-	})
+	prop.Fuzz(f, roundTripContract, roundTrips)
 }
 
-func BenchmarkFormat(b *testing.B) {
-	u := id.New128([id.Size128]byte{
-		0x01, 0x9a, 0x2b, 0x3c, 0x4d, 0x5e, 0x6f, 0x70,
-		0x81, 0x92, 0xa3, 0xb4, 0xc5, 0xd6, 0xe7, 0xf8,
-	})
-	b.ReportAllocs()
-	for b.Loop() {
-		_ = ulid.Format(u)
+// parsesText checks that ParseULID refuses a drawn text, or returns an ID
+// that it returns again from the encoding of the ID. ParseULID ignores
+// case and accepts substitutions, so the text itself is not recovered.
+func parsesText(c *prop.Case) {
+	s := string(c.Draw(prop.Bytes(prop.MaxSize(52)), "text"))
+
+	got, err := ulid.ParseULID(s)
+	if err == nil {
+		again, err := ulid.ParseULID(ulid.Format(got))
+		assert.NoError(c, err, "ParseULID must accept the encoding that Format returns")
+		assert.Equal(c, again, got, "the encoding must decode to the same ID")
 	}
 }
 
-func BenchmarkParseULID(b *testing.B) {
-	u := id.New128([id.Size128]byte{
-		0x01, 0x9a, 0x2b, 0x3c, 0x4d, 0x5e, 0x6f, 0x70,
-		0x81, 0x92, 0xa3, 0xb4, 0xc5, 0xd6, 0xe7, 0xf8,
-	})
-	encoded := ulid.Format(u)
-	b.ReportAllocs()
-	for b.Loop() {
-		_, _ = ulid.ParseULID(encoded)
-	}
+// roundTrips checks that ParseULID returns a drawn 128-bit ID from the
+// encoding that Format returns for it.
+func roundTrips(c *prop.Case) {
+	want := c.Draw(ulids, "id")
+
+	got, err := ulid.ParseULID(ulid.Format(want))
+	assert.NoError(c, err, "ParseULID must accept the encoding that Format returns")
+	assert.Equal(c, got, want, "ParseULID must return the ID that Format encoded")
 }
