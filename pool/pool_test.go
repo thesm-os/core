@@ -4,11 +4,14 @@
 package pool_test
 
 import (
-	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/bench"
+	"go.dokimi.dev/assert/expect"
+	"go.dokimi.dev/assert/history"
 
 	"go.thesmos.sh/core/pool"
 )
@@ -16,131 +19,137 @@ import (
 func TestPool(t *testing.T) {
 	t.Parallel()
 
-	t.Run("Get on empty pool calls newFn", func(t *testing.T) {
+	t.Run("Get", func(t *testing.T) {
 		t.Parallel()
-		var calls atomic.Int32
-		p := pool.NewPool(func() *int {
-			calls.Add(1)
-			v := 42
-			return &v
+
+		t.Run("calls newFn once for an empty pool", func(t *testing.T) {
+			t.Parallel()
+			var calls atomic.Int32
+			p := pool.NewPool(func() *int {
+				calls.Add(1)
+				v := 42
+
+				return &v
+			})
+			v := p.Get()
+			expect.Equal(t, calls.Load(), int32(1), "Get of an empty pool must call newFn once")
+			expect.Equal(t, *v, 42, "Get must return the value of newFn")
 		})
-		v := p.Get()
-		testkit.Equal(t, calls.Load(), int32(1), "Get on empty pool must call newFn exactly once")
-		testkit.Equal(t, *v, 42, "Get must return the newFn-created value")
-	})
 
-	t.Run("Put then Get returns the same value when cached", func(t *testing.T) {
-		t.Parallel()
-		p := pool.NewPool(func() *int {
-			v := 0
-			return &v
+		t.Run("returns the type of newFn", func(t *testing.T) {
+			t.Parallel()
+			p := pool.NewPool(func() string { return "hello" })
+			assert.Equal(t, p.Get(), "hello", "Get must return the typed value")
 		})
-		original := p.Get()
-		*original = 99
-		p.Put(original)
 
-		got := p.Get()
-		// sync.Pool may evict under GC pressure; the only
-		// guarantee is that Get may return a previously-Put
-		// value. We test that *if* we get the same pointer
-		// back, the state is preserved.
-		if got == original {
-			testkit.Equal(t, *got, 99,
-				"if Get returns the same pointer, the value must be preserved")
-		}
-	})
-
-	t.Run("Get is type-safe (no any cast at call site)", func(t *testing.T) {
-		t.Parallel()
-		p := pool.NewPool(func() string { return "hello" })
-		// Get returns string, not any — the assignment to a
-		// typed variable would fail to compile if the signature
-		// drifted to any.
-		testkit.Equal(t, p.Get(), "hello", "typed Get must return the typed value")
-	})
-
-	t.Run("Put is best-effort (no panic on full pool)", func(t *testing.T) {
-		t.Parallel()
-		p := pool.NewPool(func() int { return 0 })
-		// Repeated Puts must not panic regardless of pool state.
-		testkit.AssertNilSafe(t, func() {
-			for i := range 100 {
-				p.Put(i)
+		t.Run("returns a value that Put returned with its state", func(t *testing.T) {
+			t.Parallel()
+			p := pool.NewPool(func() *int { return new(int) })
+			original := p.Get()
+			*original = 99
+			p.Put(original)
+			// A sync.Pool may drop a value at a collection, so only a
+			// Get that returns the same pointer states anything.
+			if got := p.Get(); got == original {
+				assert.Equal(t, *got, 99, "a pooled value must keep its state")
 			}
 		})
-	})
 
-	t.Run("concurrent Get/Put is safe", func(t *testing.T) {
-		t.Parallel()
-		p := pool.NewPool(func() *int {
-			v := 0
-			return &v
-		})
-		const goroutines = 16
-		const iterations = 1000
-		var wg sync.WaitGroup
-		wg.Add(goroutines)
-		for range goroutines {
-			go func() {
-				defer wg.Done()
-				for range iterations {
+		t.Run("returns a value of its own to each concurrent caller", func(t *testing.T) {
+			t.Parallel()
+			p := pool.NewPool(func() *atomic.Int32 { return new(atomic.Int32) })
+			outcomes := history.Concurrently(16, 10*time.Second, func(int) (any, error) {
+				shared := 0
+				for range 1_000 {
 					v := p.Get()
-					*v++
+					if v.Add(1) != 1 {
+						shared++
+					}
+					v.Add(-1)
 					p.Put(v)
 				}
-			}()
-		}
-		wg.Wait()
+
+				return shared, nil
+			})
+			for _, o := range outcomes {
+				expect.True(t, o.Finished, "every client must finish")
+				expect.Equal(t, o.Output, any(0), "no two callers may hold one value at once")
+			}
+		})
+	})
+
+	t.Run("Put", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("accepts any number of values", func(t *testing.T) {
+			t.Parallel()
+			p := pool.NewPool(func() int { return 0 })
+			assert.NotPanics(t, func() {
+				for i := range 100 {
+					p.Put(i)
+				}
+			}, "Put must accept every value")
+		})
 	})
 }
 
-// TestPoolZeroAlloc cannot run in parallel —
-// testing.AllocsPerRun panics if any other test is running.
+// TestPoolAllocs checks that a Get of a pooled pointer and its Put do not
+// allocate. MaxAllocs counts the allocations of the whole process, so the
+// test does not run in parallel.
 //
-//nolint:paralleltest // see comment above
-func TestPoolZeroAlloc(t *testing.T) {
-	p := pool.NewPool(func() *int {
-		v := 0
-		return &v
-	})
-	// Warm the pool so Get hits the cache.
-	v := p.Get()
-	p.Put(v)
+//nolint:paralleltest // see above
+func TestPoolAllocs(t *testing.T) {
+	p := pool.NewPool(func() *int { return new(int) })
+	p.Put(p.Get())
 
-	t.Run("Get on warm pool", func(t *testing.T) {
-		// Maintain the invariant: Put before each Get so the
-		// pool is always warm for the next iteration.
-		testkit.Equal(t, testing.AllocsPerRun(100, func() {
-			v := p.Get()
+	t.Run("Get", func(t *testing.T) {
+		var v *int
+		expect.MaxAllocs(t, func() {
+			v = p.Get()
 			p.Put(v)
-		}), float64(0), "Get+Put cycle on warm pool must be zero-alloc")
+		}, 0, "a Get of a pooled pointer and its Put must not allocate")
+		assert.NotNil(t, v, "the test must measure a Get that returns a value")
 	})
 }
 
-// BenchmarkPool exercises the typed [pool.Pool] Get/Put cycle —
-// the same pattern HMAC, [rand/crypto.Rand.Uint64], and other
-// hot-path consumers in core use. Sub-benchmarks: sequential is
-// the steady-state single-goroutine cost; parallel exercises
-// per-P caching under fan-out.
+// BenchmarkPool reports the cost of a Get and its Put, the pattern of the
+// pools of HMAC and rand/crypto, on one goroutine and on goroutines in
+// parallel, and fails when the pair allocates.
 func BenchmarkPool(b *testing.B) {
 	p := pool.NewPool(func() *resettable { return new(resettable) })
-	p.Put(p.Get()) // warm
+	p.Put(p.Get())
 
-	b.Run("sequential", func(b *testing.B) {
-		b.ReportAllocs()
-		for b.Loop() {
-			v := p.Get()
-			p.Put(v)
-		}
-	})
+	b.Run("Get", func(b *testing.B) {
+		b.Run("of a pooled pointer followed by its Put", func(b *testing.B) {
+			var v *resettable
 
-	b.Run("parallel", func(b *testing.B) {
-		b.ReportAllocs()
-		b.RunParallel(func(pb *testing.PB) {
-			for pb.Next() {
-				v := p.Get()
+			c := bench.Start(b).MaxAllocs(0)
+			defer c.End()
+
+			for c.Loop() {
+				v = p.Get()
 				p.Put(v)
 			}
+
+			assert.NotNil(b, v, "the benchmark must measure a Get that returns a value")
+		})
+
+		b.Run("of goroutines in parallel followed by its Put", func(b *testing.B) {
+			var gets atomic.Int64
+
+			c := bench.Start(b).MaxAllocs(0)
+			defer c.End()
+
+			c.RunParallel(func(pb *bench.PB) {
+				n := int64(0)
+				for pb.Next() {
+					p.Put(p.Get())
+					n++
+				}
+				gets.Add(n)
+			})
+
+			assert.NotEqual(b, gets.Load(), int64(0), "the benchmark must measure Gets")
 		})
 	})
 }

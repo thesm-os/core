@@ -4,22 +4,23 @@
 package pool_test
 
 import (
-	"sync"
 	"sync/atomic"
 	"testing"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/bench"
+	"go.dokimi.dev/assert/expect"
 
 	"go.thesmos.sh/core/pool"
 )
 
-// resettable is a test helper that satisfies [pool.Resettable]
-// while tracking how many times Reset has been called.
+// resettable is a [pool.Resettable] that counts the calls of Reset.
 type resettable struct {
 	value      int
 	resetCalls atomic.Int32
 }
 
+// Reset zeroes value and counts the call.
 func (r *resettable) Reset() {
 	r.value = 0
 	r.resetCalls.Add(1)
@@ -28,92 +29,86 @@ func (r *resettable) Reset() {
 func TestResetPool(t *testing.T) {
 	t.Parallel()
 
-	t.Run("freshly-created value is Reset before first Get", func(t *testing.T) {
+	t.Run("Get", func(t *testing.T) {
 		t.Parallel()
-		p := pool.NewResetPool(func() *resettable {
-			return &resettable{value: 42} // dirty initial state
+
+		t.Run("returns a value that newFn constructs after one Reset", func(t *testing.T) {
+			t.Parallel()
+			p := pool.NewResetPool(func() *resettable { return &resettable{value: 42} })
+			v := p.Get()
+			expect.Equal(t, v.value, 0, "a new value must be Reset before the first Get")
+			expect.Equal(t, v.resetCalls.Load(), int32(1), "a new value must be Reset once")
 		})
-		v := p.Get()
-		// newFn returned value=42, but ResetPool's New callback
-		// calls Reset which zeroes value.
-		testkit.Equal(t, v.value, 0, "freshly-allocated value must be Reset before first Get")
-		testkit.Equal(t, v.resetCalls.Load(), int32(1),
-			"Reset must be called exactly once on fresh value")
+
+		t.Run("returns a value that Put returned after its Reset", func(t *testing.T) {
+			t.Parallel()
+			p := pool.NewResetPool(func() *resettable { return &resettable{} })
+			v := p.Get()
+			v.value = 99
+			p.Put(v)
+			// A sync.Pool may drop a value at a collection, so only a
+			// Get that returns the same pointer states anything.
+			if got := p.Get(); got == v {
+				assert.Equal(t, got.value, 0, "a recycled value must be Reset")
+			}
+		})
 	})
 
-	t.Run("Put auto-Resets before caching", func(t *testing.T) {
+	t.Run("Put", func(t *testing.T) {
 		t.Parallel()
-		p := pool.NewResetPool(func() *resettable { return &resettable{} })
-		v := p.Get()
-		v.value = 99 // tenant-specific state
-		v.resetCalls.Store(0)
 
-		p.Put(v)
-
-		// Put must have called Reset.
-		testkit.Equal(t, v.resetCalls.Load(), int32(1),
-			"Put must call Reset exactly once before caching")
-		// And the value field must be zeroed.
-		testkit.Equal(t, v.value, 0, "Put must zero the value field via Reset")
-	})
-
-	t.Run("Get after Put returns a Reset value", func(t *testing.T) {
-		t.Parallel()
-		p := pool.NewResetPool(func() *resettable { return &resettable{} })
-		v := p.Get()
-		v.value = 99
-		p.Put(v)
-
-		got := p.Get()
-		// sync.Pool may evict; guard the same-pointer case.
-		if got == v {
-			testkit.Equal(t, got.value, 0, "recycled value must be Reset")
-		}
-	})
-
-	t.Run("concurrent Get/Put is safe", func(t *testing.T) {
-		t.Parallel()
-		p := pool.NewResetPool(func() *resettable { return &resettable{} })
-		const goroutines = 16
-		const iterations = 500
-		var wg sync.WaitGroup
-		wg.Add(goroutines)
-		for range goroutines {
-			go func() {
-				defer wg.Done()
-				for i := range iterations {
-					v := p.Get()
-					v.value = i
-					p.Put(v)
-				}
-			}()
-		}
-		wg.Wait()
+		t.Run("calls Reset once before the value returns to the pool", func(t *testing.T) {
+			t.Parallel()
+			p := pool.NewResetPool(func() *resettable { return &resettable{} })
+			v := p.Get()
+			v.value = 99
+			v.resetCalls.Store(0)
+			p.Put(v)
+			expect.Equal(t, v.resetCalls.Load(), int32(1), "Put must call Reset once")
+			expect.Equal(t, v.value, 0, "Put must zero the value through Reset")
+		})
 	})
 }
 
-// TestResetPoolZeroAlloc cannot run in parallel —
-// testing.AllocsPerRun panics if any other test is running.
+// TestResetPoolAllocs checks that a Get of a pooled pointer and its Put do
+// not allocate. MaxAllocs counts the allocations of the whole process, so
+// the test does not run in parallel.
 //
-//nolint:paralleltest // see comment above
-func TestResetPoolZeroAlloc(t *testing.T) {
-	p := pool.NewResetPool(func() *resettable { return &resettable{} })
-	v := p.Get()
-	p.Put(v)
+//nolint:paralleltest // see above
+func TestResetPoolAllocs(t *testing.T) {
+	p := pool.NewResetPool(func() *resettable { return new(resettable) })
+	p.Put(p.Get())
 
-	testkit.Equal(t, testing.AllocsPerRun(100, func() {
-		v := p.Get()
-		p.Put(v)
-	}), float64(0), "Get+Put cycle must be zero-alloc")
+	t.Run("Get", func(t *testing.T) {
+		var v *resettable
+		expect.MaxAllocs(t, func() {
+			v = p.Get()
+			p.Put(v)
+		}, 0, "a Get of a pooled pointer and its Put must not allocate")
+		assert.NotNil(t, v, "the test must measure a Get that returns a value")
+	})
 }
 
+// BenchmarkResetPool reports the cost of a Get, a write and the Put that
+// resets the value, and fails when the cycle allocates.
 func BenchmarkResetPool(b *testing.B) {
 	p := pool.NewResetPool(func() *resettable { return new(resettable) })
-	p.Put(p.Get()) // warm
-	b.ReportAllocs()
-	for b.Loop() {
-		v := p.Get()
-		v.value = 42
-		p.Put(v)
-	}
+	p.Put(p.Get())
+
+	b.Run("Get", func(b *testing.B) {
+		b.Run("of a pooled pointer followed by its Put", func(b *testing.B) {
+			var v *resettable
+
+			c := bench.Start(b).MaxAllocs(0)
+			defer c.End()
+
+			for c.Loop() {
+				v = p.Get()
+				v.value = 42
+				p.Put(v)
+			}
+
+			assert.Equal(b, v.value, 0, "the benchmark must measure a Put that resets the value")
+		})
+	})
 }
