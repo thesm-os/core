@@ -194,6 +194,31 @@ func TestReader(t *testing.T) {
 				assert.ErrorIs(t, err, task.ErrLimit, "a limit of zero must be task.ErrLimit")
 			})
 
+			t.Run("appends an object of width hashes of MaxDigestSize bytes", func(t *testing.T) {
+				t.Parallel()
+				wide := tlog.Tile{Width: 255}
+				data := make([]byte, int(wide.Width)*crypto.MaxDigestSize)
+				_, err := blob.PutBytes(t.Context(), s, "wide/"+wide.Path(), data, blob.PutOptions{})
+				assert.NoError(t, err, "PutBytes must succeed")
+
+				dst := make([][]byte, 1)
+				assert.NoError(t, tlog.BlobTiles(s, "wide/", readLimit).ReadTiles(t.Context(), []tlog.Tile{wide}, dst),
+					"ReadTiles must read a tile of the largest digest")
+				assert.Length(t, dst[0], len(data), "the tile must be read whole")
+			})
+
+			t.Run("returns an error classified Invalid for an object too large for its tile", func(t *testing.T) {
+				t.Parallel()
+				wide := tlog.Tile{Width: 255}
+				data := make([]byte, int(wide.Width)*crypto.MaxDigestSize+1)
+				_, err := blob.PutBytes(t.Context(), s, "past/"+wide.Path(), data, blob.PutOptions{})
+				assert.NoError(t, err, "PutBytes must succeed")
+
+				dst := make([][]byte, 1)
+				err = tlog.BlobTiles(s, "past/", readLimit).ReadTiles(t.Context(), []tlog.Tile{wide}, dst)
+				assert.Equal(t, errs.Classify(err), errs.Invalid, "an object too large for its tile must be Invalid")
+			})
+
 			readErr, closeErr := errors.New("read failed"), errors.New("close failed")
 			tests := []struct {
 				want   error

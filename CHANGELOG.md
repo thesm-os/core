@@ -901,6 +901,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   allocate their slice once, as their allocation contracts state.
   `HeaderCarrier.Keys` grew its slice as it appended, so the keys of
   three headers cost three allocations.
+- `tlog.BlobTiles` reads each tile under a limit of its width times
+  `crypto.MaxDigestSize`, and returns an error that classifies as
+  `errs.Invalid` for a larger object. It read the whole object under the
+  key of a tile, whatever its size, before `tlog.TreeRoot`,
+  `ProveInclusion` and `ProveConsistency` checked its length.
 
 ## [0.6.1] - 2026-08-05
 

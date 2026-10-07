@@ -34,17 +34,24 @@ type TileReader interface {
 // limit tiles concurrently through [task.Each], and returns
 // [task.ErrLimit] when limit is below one.
 //
+// The reader reads each tile with [blob.AppendBytes], under a limit of the
+// tile's width times [crypto.MaxDigestSize], the size of the tile under
+// the largest digest. An object above the limit fails the read with an
+// error that classifies as [go.thesmos.sh/core/errs.Invalid], so a store
+// cannot make a proof allocate without bound. The prove functions return
+// [ErrTileSize] for an object within the limit that is not the tile's
+// width times the digest size of the tree.
+//
 // A tile that is replaced or deleted while ReadTiles reads it can fail
 // the read with an error that wraps
 // [go.thesmos.sh/core/version.ErrMismatch], as [blob.Store.Get] permits.
 //
 // # Allocation contract
 //
-// One allocation for the reader. ReadTiles allocates one key per tile
-// and what the store allocates. It reads each body with
-// [bytes.Buffer.ReadFrom], so it allocates nothing to store the data
-// when dst[i] has room for the tile and [bytes.MinRead] more bytes,
-// which ReadFrom needs to see the end of the body.
+// One allocation for the reader. ReadTiles allocates one key per tile,
+// and what [task.Each] and the store allocate. It allocates nothing to
+// store the data when dst[i] has room for the tile and [bytes.MinRead]
+// more bytes, as blob.AppendBytes states.
 func BlobTiles(s blob.Store, prefix string, limit int) TileReader {
 	return &blobTiles{s: s, prefix: prefix, limit: limit}
 }
@@ -56,8 +63,9 @@ type blobTiles struct {
 	limit  int
 }
 
-// ReadTiles reads every tile through Get and appends its body to its
-// buffer. It returns [ErrRange] when dst has fewer entries than tiles.
+// ReadTiles appends the body of every tile to its buffer with
+// [blob.AppendBytes], under the limit that [BlobTiles] states. It returns
+// [ErrRange] when dst has fewer entries than tiles.
 func (r *blobTiles) ReadTiles(ctx context.Context, tiles []Tile, dst [][]byte) error {
 	if len(dst) < len(tiles) {
 		return ErrRange
@@ -68,17 +76,8 @@ func (r *blobTiles) ReadTiles(ctx context.Context, tiles []Tile, dst [][]byte) e
 	return task.Each(ctx, r.limit, tiles, func(ctx context.Context, i int, t Tile) error {
 		key := r.prefix + t.Path()
 
-		rc, _, err := r.s.Get(ctx, key)
-		if err != nil {
-			return fmt.Errorf("tlog: read %s: %w", key, err)
-		}
-
-		buf := bytes.NewBuffer(dst[i])
-		_, err = buf.ReadFrom(rc)
-		dst[i] = buf.Bytes()
-		if cerr := rc.Close(); err == nil {
-			err = cerr
-		}
+		var err error
+		dst[i], _, err = blob.AppendBytes(ctx, r.s, key, dst[i], int64(t.Width)*crypto.MaxDigestSize)
 		if err != nil {
 			return fmt.Errorf("tlog: read %s: %w", key, err)
 		}
@@ -235,9 +234,9 @@ func prove(
 	}
 
 	// Each tile buffer has bytes.MinRead bytes of room past the tile, so
-	// a reader that reads with bytes.Buffer.ReadFrom, as BlobTiles does,
-	// sees the end of the body without growing the buffer. The buffers
-	// fill mem exactly.
+	// a reader that reads in steps of bytes.MinRead, as BlobTiles does
+	// through blob.AppendBytes, sees the end of the body without growing
+	// the buffer. The buffers fill mem exactly.
 	mem := p.mem.Alloc(total*ds + len(p.tiles)*bytes.MinRead)
 	off := 0
 	for _, t := range p.tiles {
