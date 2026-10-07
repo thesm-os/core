@@ -623,8 +623,9 @@ func TestServer(t *testing.T) {
 			assert.NoError(t, err, "New must accept the options")
 
 			err = s.Run(t.Context())
-			expect.ErrorIs(t, err, httpserver.ErrListen, "Run must return ErrListen")
-			expect.ErrorIs(t, err, inUse, "the error must contain its cause")
+			expect.That(t, err).
+				ErrorIs(httpserver.ErrListen, "Run must return ErrListen").
+				ErrorIs(inUse, "the error must contain its cause")
 			expect.Equal(t, errs.Classify(err), errs.Transient, "ErrListen must classify as Transient")
 		})
 
@@ -640,8 +641,9 @@ func TestServer(t *testing.T) {
 			assert.NoError(t, err, "New must accept the options")
 
 			err = s.Run(t.Context())
-			expect.ErrorIs(t, err, httpserver.ErrServe, "Run must return ErrServe")
-			expect.ErrorIs(t, err, errAccept, "the error must contain its cause")
+			expect.That(t, err).
+				ErrorIs(httpserver.ErrServe, "Run must return ErrServe").
+				ErrorIs(errAccept, "the error must contain its cause")
 			expect.Equal(t, errs.Classify(err), errs.Transient, "ErrServe must classify as Transient")
 		})
 
@@ -666,8 +668,9 @@ func TestServer(t *testing.T) {
 			clk.Advance(time.Second)
 
 			err = await(t, done, "Run must return")
-			expect.ErrorIs(t, err, httpserver.ErrServe, "Run must return ErrServe")
-			expect.ErrorIs(t, err, errAccept, "the error must contain its cause")
+			expect.That(t, err).
+				ErrorIs(httpserver.ErrServe, "Run must return ErrServe").
+				ErrorIs(errAccept, "the error must contain its cause")
 		})
 
 		t.Run("serves for the drain delay while Ready responds with 503", func(t *testing.T) {
@@ -708,8 +711,9 @@ func TestServer(t *testing.T) {
 			f.clock.Advance(time.Minute)
 
 			err := f.stop()
-			expect.ErrorIs(t, err, httpserver.ErrShutdown, "Run must return ErrShutdown")
-			expect.ErrorIs(t, err, context.DeadlineExceeded, "the error must contain the elapsed deadline")
+			expect.That(t, err).
+				ErrorIs(httpserver.ErrShutdown, "Run must return ErrShutdown").
+				ErrorIs(context.DeadlineExceeded, "the error must contain the elapsed deadline")
 			expect.Equal(t, errs.Classify(err), errs.Unspecified, "ErrShutdown must have no class")
 			expect.HasError(t, await(t, sent, "the request must end"), "the request in flight must lose its connection")
 		})
@@ -745,8 +749,9 @@ func TestServer(t *testing.T) {
 			assert.NoError(t, request(t, f.client, f.url), "the request before the drain must succeed")
 
 			err := f.stop()
-			expect.ErrorIs(t, err, httpserver.ErrShutdown, "Run must return ErrShutdown")
-			expect.ErrorIs(t, err, errClose, "the error must contain its cause")
+			expect.That(t, err).
+				ErrorIs(httpserver.ErrShutdown, "Run must return ErrShutdown").
+				ErrorIs(errClose, "the error must contain its cause")
 		})
 
 		t.Run("serves HTTP/2 to a cleartext client that starts with its preface", func(t *testing.T) {

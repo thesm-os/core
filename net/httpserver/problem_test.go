@@ -120,8 +120,9 @@ func TestProblem(t *testing.T) {
 			assert.NoError(t, f.stop(), "Run must drain")
 
 			logged, _ := value(t, &f.logs.find(messageRequest)[0], keyError).Any().(error)
-			expect.ErrorIs(t, logged, first, "the record must contain the first error")
-			expect.ErrorIsNot(t, logged, second, "the record must not contain the second error")
+			expect.That(t, logged).
+				ErrorIs(first, "the record must contain the first error").
+				ErrorIsNot(second, "the record must not contain the second error")
 		})
 
 		t.Run("only records the error when the handler wrote the header", func(t *testing.T) {

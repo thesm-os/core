@@ -146,8 +146,9 @@ func TestChain(t *testing.T) {
 			records := f.logs.find(messageRequest)
 			assert.Length(t, records, 1, "the server must write one record")
 			keys := keysOf(&records[0])
-			expect.NotContains(t, keys, keyPanic, "the record of an abort must contain no panic")
-			expect.NotContains(t, keys, keyStack, "the record of an abort must contain no stack")
+			expect.That(t, keys).
+				NotContains(keyPanic, "the record of an abort must contain no panic").
+				NotContains(keyStack, "the record of an abort must contain no stack")
 		})
 
 		t.Run("records 500 for a panic with http.ErrAbortHandler before a header", func(t *testing.T) {
