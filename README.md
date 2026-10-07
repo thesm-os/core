@@ -1,402 +1,194 @@
 # core
 
-[![CI](https://github.com/thesmos-ai/core/actions/workflows/ci.yml/badge.svg)](https://github.com/thesmos-ai/core/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/github/v/release/thesmos-ai/core)](https://github.com/thesmos-ai/core/releases/latest)
+[![CI](https://github.com/thesm-os/core/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/thesm-os/core/actions/workflows/ci.yml)
 [![Go Reference](https://pkg.go.dev/badge/go.thesmos.sh/core.svg)](https://pkg.go.dev/go.thesmos.sh/core)
-[![Go Report Card](https://goreportcard.com/badge/go.thesmos.sh/core)](https://goreportcard.com/report/go.thesmos.sh/core)
-[![Go Version](https://img.shields.io/github/go-mod/go-version/thesmos-ai/core)](go.mod)
-[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![codecov](https://codecov.io/gh/thesmos-ai/core/graph/badge.svg)](https://codecov.io/gh/thesmos-ai/core)
-[![Mutation](https://img.shields.io/badge/mutation-99%25%20effective-brightgreen.svg)](README.md)
+[![Release](https://img.shields.io/github/v/release/thesm-os/core)](https://github.com/thesm-os/core/releases/latest)
+[![Go version](https://img.shields.io/github/go-mod/go-version/thesm-os/core)](go.mod)
+[![License](https://img.shields.io/badge/license-Apache_2.0-blue.svg)](LICENSE)
 
-Foundational interfaces for the [thesmos][thesmos] ecosystem.
-
-`core` is a [stdlib-first][adr-0015] Go module that defines the contract
-seams every other thesmos library and framework depends on:
-
-- **Clock** — abstracts `time.Now`, `time.Sleep`, and timers so
-  libraries remain deterministic under simulation and test. Returns
-  Hybrid Logical Clock instants for distributed callers and a stdlib
-  `time.Time` projection for the common case. Implementations:
-  `clock/hlc` (production HLC), `clock/fake` (virtual time).
-  `UTCSource` returns a UTC reading with a bound on its error, and
-  `clock/kernel` reads the bound from the Linux kernel. See
-  [RFC-0001][rfc-0001] and [RFC-0036][rfc-0036].
-- **Rand** — unified randomness seam exposing both `Uint64` and
-  `Read([]byte)`. Implementations: `rand/pcg` (non-crypto PCG),
-  `rand/crypto` (CSPRNG over `crypto/rand`), `rand/seeded`
-  (HMAC-SHA-256 deterministic CSPRNG), `rand/constant` (constant for
-  tests). See [RFC-0002][rfc-0002].
-- **Crypto** — cryptographic-hash seam producing comparable
-  fixed-shape digests covering 256/384/512-bit outputs in one
-  type, with a stable per-implementation `ID` and long-term
-  `Algorithm` identifier so receipts and audit chains survive
-  algorithm rotation. `Hash` computes a content address.
-  `HashTagged` and `CombineTagged` hash the leaves and interior
-  nodes of a tree or chain under a one-byte role whose high bit
-  gives the arity, so a leaf hash cannot equal a node hash.
-  `Stream` hashes inputs that do not fit in memory.
-  Implementations: `crypto/sha256`, `crypto/sha512` (SHA-384,
-  SHA-512), `crypto/sha3` (SHA3-256, SHA3-384, SHA3-512). See
-  [RFC-0003][rfc-0003] and [RFC-0029][rfc-0029].
-- **HMAC** — keyed-authentication peer of the hash seam.
-  `crypto.MAC` mirrors `crypto.Hasher`'s shape (same `Digest`
-  output, same `ID` + `Algorithm` model, same `Stream`) with
-  first-class constant-time `Verify` and a `Digest.ConstantTimeEqual`
-  helper for streaming verification. Implementations:
-  `crypto/hmac/sha256`, `crypto/hmac/sha512` (HMAC-SHA-384,
-  HMAC-SHA-512), `crypto/hmac/sha3` (HMAC-SHA3-{256,384,512}).
-  See [RFC-0012][rfc-0012].
-- **Sign** — asymmetric-signing seam. `crypto/sign.Signer` /
-  `Verifier` split (verifier-only consumers don't construct a
-  signer), `KeyID` value type with canonical per-algorithm
-  derivation, optional `StreamingSigner` / `StreamingVerifier`
-  capability interfaces for hash-then-sign algorithms.
-  Implementations: `crypto/sign/ed25519` (Ed25519 PureEdDSA per
-  RFC 8032 §5.1.6), `crypto/sign/ecdsap384` (ECDSA P-384 +
-  SHA-384 per FIPS 186-5, ASN.1 DER signatures, also satisfies
-  the streaming interfaces), `crypto/sign/mldsa` (ML-DSA-44,
-  ML-DSA-65 and ML-DSA-87 per FIPS 204, with the context string
-  fixed per signer). `SignContext` bounds a signer that crosses a
-  process boundary with a context. `Resolver` builds a verifier
-  from a stored algorithm name out of a table the caller writes,
-  and `Policy` requires valid signatures from a tree of key sets
-  and thresholds over them, such as k of n parties, counting each
-  key once. `AppendSign` writes a signature into a buffer of the
-  caller, which the Ed25519 signer fills without an allocation, and
-  `Rules` and `Policy.Reset` build a policy again in its own memory.
-  See [RFC-0013][rfc-0013], [RFC-0033][rfc-0033],
-  [RFC-0035][rfc-0035], [RFC-0039][rfc-0039],
-  [RFC-0044][rfc-0044] and [RFC-0047][rfc-0047].
-- **Framer** — unambiguous domain separation for hashed and
-  signed inputs. `Domain` (name + version) plus a `Framer`
-  builder that length-prefixes every part, so no two distinct
-  inputs can encode to the same bytes. `HashDomain` is built on
-  it. See [RFC-0016][rfc-0016].
-- **AEAD** — authenticated-encryption seam. `crypto.AEAD`
-  embeds stdlib `cipher.AEAD` and adds the same `ID` +
-  `Algorithm` identity model as the hash and signing seams, so
-  a ciphertext at rest records what produced it. `Seal` / `Open`
-  helpers carry the nonce with the ciphertext. Implementation:
-  `crypto/aesgcm` (AES-128-GCM, AES-256-GCM). See
-  [RFC-0017][rfc-0017].
-- **Keeper** — key-custody seam. `Keeper` wraps and unwraps data
-  keys without exposing the root key, with optional `Destroyer`
-  and `KeyGenerator` capability interfaces. The shape is the one
-  a KMS or HSM already has, so a consumer swaps custody without
-  touching call sites. `Destroy` schedules the destruction of a
-  wrapping key and returns the time at which it becomes
-  irreversible. `KeyCreator` creates wrapping keys and opens them by
-  key ID, so a caller rotates its wrapping key without an operator.
-  Implementation: `crypto/localkey` (in-process, for development and
-  tests). See [RFC-0018][rfc-0018], [RFC-0034][rfc-0034] and
-  [ADR-0041][adr-0041].
-- **XOF** — extendable-output-function seam. `crypto.XOF` /
-  `XOFStream` produce arbitrary-length output for key
-  derivation and deterministic padding, where a fixed-size
-  `Digest` cannot. Implementation: `crypto/shake` (SHAKE128,
-  SHAKE256). See [RFC-0019][rfc-0019].
-- **Telemetry** — metric and trace seams for hot-path
-  observability. An instrument binds its attributes once with
-  `.With([]Attr)`, so the emit path does not allocate. The emit
-  methods take a `context.Context` for OTel exemplars, baggage and
-  trace correlation. `Release` ends a bound instrument, so an
-  adapter can forget its attribute set. A gauge declares whether
-  its sets combine as a sum or a maximum. Kind-tagged `Attr` bridges to
-  stdlib `log/slog`. `Propagator` and `Carrier` transport a
-  `SpanContext` across a process boundary, with `MapCarrier` for
-  the common case. Implementations: `telemetry/noop`,
-  `telemetry/w3c` (W3C Trace Context `traceparent` /
-  `tracestate`). `ShardedCounter` adds to padded cells without
-  contention, `BoundedHistogram` samples successful calls down to a
-  rate per second, and `RateLimitHandler` passes one log record per
-  interval of each event. See [RFC-0004][rfc-0004], [RFC-0020][rfc-0020],
-  [RFC-0046][rfc-0046] and [RFC-0051][rfc-0051].
-- **Epoch** — in-process strictly-monotonic 64-bit counter for
-  leader generations, schema versions, optimistic-concurrency
-  tokens. `epoch.Epoch` value type plus thread-safe
-  `epoch.Counter`. `Admissible` and `Watermark` admit a write whose
-  fence epoch is at or above the scope's watermark, and `ErrFenced`
-  reports revoked authority. Goroutines wait on an `epoch.EventCount`
-  until its count is at least a position, with a context and without
-  an allocation per wait. See [RFC-0005][rfc-0005],
-  [RFC-0026][rfc-0026] and [ADR-0040][adr-0040].
-- **Tag** — snapshot-immutable string key/value pairs used in
-  place of `map[string]string` on value-type structs that cross
-  async-buffered, cached, or cross-goroutine boundaries. A kanon
-  record encodes a `Tag` through the codec that core generates, with
-  `Key` 1 and `Value` 2, and its decode accepts only that encoding.
-  See [RFC-0006][rfc-0006] and [ADR-0043][adr-0043].
-- **Version** — opaque CAS token (`Version`), `WriteOptions`
-  with IfMatch / IfNoneMatch preconditions, and `Versioned[T]`
-  for read-your-writes optimistic-concurrency loops. A `Version`
-  proves identity, never order. See [RFC-0007][rfc-0007] and
-  [RFC-0026][rfc-0026].
-- **Page** — pagination request (`Page` with `WithDefault`
-  helper) and response (`Cursor[T]`) shape with
-  `SliceCursor[T]` and `MapCursor[K, V]` generic helpers.
-  Range-over-func iteration makes "forgot to check err"
-  syntactically impossible. See [RFC-0008][rfc-0008].
-- **ID** — fixed-max-size identifier value type (`id.ID`)
-  covering 128-, 160-, and 256-bit shapes in one comparable
-  type, with five generator subpackages: `id/ulid`
-  (128-bit time-sortable Crockford base32), `id/uuidv4`
-  (128-bit random, RFC 9562), `id/uuidv7` (128-bit ordered by
-  creation time, RFC 9562, generated without allocating),
-  `id/ksuid` (160-bit K-sortable
-  base62 — alphanumeric encoding and 128-bit entropy floor
-  for gov / defense / fintech / health consumers), `id/constant`
-  (constant for fixtures). Every subpackage ships `Format`
-  and `Parse` for canonical serialization.
-  See [RFC-0009][rfc-0009].
-- **Pool** — typed `sync.Pool` wrappers: `Pool[T any]` for
-  arbitrary values, `ResetPool[T Resettable]` that
-  auto-clears state on `Put` (preventing cross-tenant data
-  leaks at the type level), and `NewBufferPool` for byte buffers,
-  whose `pool.Buffer` zeroes its whole capacity on `Reset`.
-  `Bounded[T]` is the fixed-capacity peer
-  for objects that are scarce rather than merely reusable — a
-  connection, a decoder, a hardware handle — where exhaustion
-  must be reported (`ErrLimit`) rather than allocated around.
-  See [RFC-0010][rfc-0010] and [RFC-0021][rfc-0021].
-- **Arena** — bump allocator for hot-path variable-length
-  output. `Append` / `Alloc` return three-index-capped
-  sub-slices into a contiguous backing buffer; epoch-tagged
-  `Marker` + `SliceSince` capture multi-call regions
-  safely. Pool integration via `Reset` (satisfies
-  `pool.Resettable`) keeps the backing buffer warm across
-  requests. `List` stores typed values in chunks of 4,096 that
-  do not move once the first chunk is full, so appending copies
-  no element and a truncated `List` fills again without
-  allocating. `Slabs` allocates byte slices of power-of-two size
-  classes from slabs and takes each one back singly, for a store whose
-  values come and go. See [RFC-0011][rfc-0011].
-- **Errs** — error-classification seam: a closed eight-value
-  taxonomy of what a caller should *do* about a failure, not
-  what went wrong. `Classify` walks an error tree
-  zero-allocation and recognises stdlib sentinels, so a
-  producer that has never heard of the package still classifies
-  usefully; `Retryable` is the shorthand a retry loop or a
-  circuit breaker asks for. See [RFC-0015][rfc-0015].
-- **Resilience** — the algorithms every caller of a remote
-  dependency needs: `Breaker` (per-target circuit, single-probe
-  half-open, injectable failure judgement for transports where
-  failure is not an error), `Bulkhead` (concurrency limit with
-  optional queue, rejection / timeout / cancellation kept
-  distinct), and `Retrier` (attempt count *and* a sliding-window
-  budget, full-jitter `Backoff`), and `Limiter` (a token bucket of a
-  rate and a burst, whose waits reserve their units in order).
-  `Failover` calls redundant targets one after another under their
-  circuits, and its error remains retryable while any target's error is.
-  All read time through `clock.Clock`, so their transitions are exact
-  under a virtual clock. See [RFC-0023][rfc-0023], [RFC-0050][rfc-0050]
-  and [RFC-0052][rfc-0052].
-- **Batch** — request coalescing: `Loader[K, V]` accumulates
-  concurrent single-key loads into one batched call and
-  deduplicates concurrent loads of the same key. Not a cache —
-  results are not retained past the in-flight window.
-  See [RFC-0024][rfc-0024].
-- **Fixed** — `fixed.Fixed64`, a decimal at eight places stored as
-  one `int64`. `Add`, `Sub`, `Mul` and `Div` return an error on
-  overflow instead of wrapping. The text form renders all eight
-  places and round-trips exactly, and the package has no conversion
-  from `float64`. See [RFC-0025][rfc-0025].
-- **CAS** — content-addressed storage. A `cas.Store` is bound to one
-  hasher. `Put` verifies that the data hashes to its address, stores
-  nothing when it does not, and reports exactly one write per address
-  under concurrency. `cas.Store` has no `Delete`. Implementation:
-  `cas/memory`. See [RFC-0027][rfc-0027].
-- **Blob** — named object storage, streamed in both directions, with
-  conditional writes through the `version` vocabulary. A failed `Put`
-  leaves the key as it was, and a listing walked to the end over an
-  unchanging store returns every object once. An open reader returns
-  only bytes of the version that it opened, and can fail with
-  `version.ErrMismatch` once that version is replaced or deleted. `Put`
-  returns an invalid-argument error for a content type of more than 255
-  bytes or with a byte outside printable ASCII. Implementation:
-  `blob/memory`. See [RFC-0028][rfc-0028], [ADR-0042][adr-0042] and
-  [ADR-0044][adr-0044].
-- **Conformance** — `coretest/castest` and `coretest/blobtest` check
-  any store against the rules of its package, across a restart and a
-  crash when the adapter supplies them. Core's tests run each suite
-  against a broken store for every case. `cas.AsStreamer`,
-  `crypto.AsDestroyer` and the other `As` functions find a capability
-  behind decorators that implement `Unwrap`, or `UnwrapKeeper` for a
-  `crypto.Keeper`. See [RFC-0038][rfc-0038].
-- **Task** — structured concurrency: `All`, `Each`, `Map`, `Stream`
-  and `Run` return only after every goroutine they started has
-  returned. The first error cancels the other tasks and is the
-  result, and a task that panics crashes the process from its own
-  goroutine. `Each`, `Map` and `Stream` run on a fixed set of workers
-  and do not allocate per element. `Every` calls a function
-  repeatedly with a delay and jitter between calls, and `Quorum`
-  returns as soon as k of n calls succeed. See [RFC-0030][rfc-0030]
-  and [RFC-0037][rfc-0037].
-- **FSM** — finite state machines over small integer states and
-  events. A `Spec` is a transition table, built once and validated at
-  construction: unreachable states, states that cannot be left and
-  edges that can never be taken are errors. In a Spec with terminal
-  states, so is a state with no path to one. `Allows` checks a stored
-  status change before a compare-and-swap, and a `Machine` runs guards
-  and exit, edge and entry actions for one event at a time. Neither
-  allocates per event. See [RFC-0031][rfc-0031] and
-  [ADR-0024][adr-0024].
-- **Tlog** — the Merkle tree of RFC 9162 over any `crypto.Hasher`,
-  stored as the 256-hash tiles of C2SP tlog-tiles. With SHA-256 the
-  bytes match RFC 6962, so C2SP witnesses verify the tree. `Builder`
-  integrates batches of leaves with at most 96 KiB of state, and
-  `ProveInclusion` and `ProveConsistency` build a proof from one
-  batched read of at most two tiles per level. Hashing, verification
-  and integration into a reused `Update` do not allocate.
-  `TaggedRoot`, `TaggedInclusionProof` and `VerifyTaggedInclusion`
-  build trees of the same shape whose interior nodes are hashed under a
-  binary role that a protocol assigns. A `TaggedTree` returns every
-  path of a batch after hashing each interior node once. See
-  [RFC-0032][rfc-0032] and [ADR-0025][adr-0025].
-- **Notes and checkpoints** — C2SP signed-note in `note`, and the
-  checkpoints, cosignatures and policy files of a transparency log in
-  `tlog/checkpoint`. A note key is a `sign.Verifier`, so a
-  `sign.Policy` verifies a note with at most one verification per key,
-  and a tlog-policy file becomes one policy per log origin. The caller
-  lists the signature types that it accepts in a `note.Resolver`,
-  including ML-DSA types that signed-note assigns no byte. Verifying a
-  checkpoint, cosigning into a reused note and reloading an unchanged
-  policy file allocate nothing, and `note.TextOf` reads the text of a
-  note of any keys without an allocation. See [RFC-0047][rfc-0047].
-- **BTree** — ordered maps and sets as in-memory B+ trees. `Map`,
-  `MapFunc`, which orders its keys by a function of the caller, and `Set`
-  have point operations, `Floor` and `Ceil`, `At` and `Rank` in O(log n),
-  range iterators in both directions, and `Clone` in O(1) with
-  copy-on-write nodes. Lookups, iteration, and a delete and an insert at a
-  steady size do not allocate, and a map that `Reset` empties refills from
-  its own nodes. See [RFC-0043][rfc-0043] and [ADR-0027][adr-0027].
-- **Cache** — a bounded map whose entries leave by eviction, expiry or
-  removal. A `cache.Cache` bounds the sum of the costs of its entries and
-  evicts with S3-FIFO. A lookup takes no lock and does not allocate, a
-  pinned entry is not evicted before `Unpin`, and a callback receives
-  every entry that leaves. See [RFC-0049][rfc-0049].
-- **Time stamps** — the Time-Stamp Protocol of RFC 3161 in `crypto/tsp`.
-  `AppendRequest` encodes a request, `ParseResponse` checks a response,
-  and a `Verifier` verifies a token offline against the caller's roots
-  and policies, with RSA, ECDSA, Ed25519 and ML-DSA signatures. A token
-  of a known certificate verifies without an allocation for Ed25519 and
-  ML-DSA. `coretest/tsptest` is a time-stamp authority for tests. See
-  [RFC-0048][rfc-0048].
-- **HTTP** — a server and a client on `net/http`. `net/httpserver`
-  limits every phase of a connection by default, drains before it shuts
-  down, recovers from panics, refuses the cross-origin requests of
-  browsers, and records the duration, a log record and a span of each
-  request. `net/httpclient` calls one dependency on a transport of its
-  own, refuses an address that is not public, and guards and retries each
-  call with `resilience`. Both take the clock, the logger, the reporter
-  and the propagator as required options. `telemetry.HeaderCarrier`
-  propagates a trace over HTTP headers. See [RFC-0053][rfc-0053] and
-  [ADR-0045][adr-0045].
-
-These interfaces — and the others added over time — share three
-properties:
-
-1. **Stdlib first.** Production code imports the Go standard library,
-   the module itself, golang.org/x modules that have no module
-   requirements, and the runtime packages of kanon, which the
-   generated encodings of core's types import. The dependency guard
-   lists each by name and fails CI on any other import. Test code may
-   import from a closed allow-list. Extending either list takes an ADR.
-   ([ADR-0015][adr-0015], [ADR-0035][adr-0035])
-2. **Single module.** One `go.mod`. Submodules are not needed because
-   there are no heavy deps to isolate. ([ADR-0002][adr-0002])
-3. **Apache 2.0.** Unencumbered for production and downstream
-   redistribution. ([ADR-0003][adr-0003])
-
-## Status
-
-Pre-1.0. The primitive set is chosen for coherence of the layer model
-rather than per-item demand, and lands incrementally. Breaking changes
-are possible until `v1.0.0`; once tagged, the standard Go module
-versioning rules apply. ([ADR-0005][adr-0005])
+core defines the interfaces through which a Go service reads time and
+randomness, protects and signs data, stores objects, records telemetry
+and calls other services. Each interface comes with implementations
+built on the Go standard library, and every [thesmos][thesmos] library
+builds on them.
 
 ## Install
 
-```bash
-go get go.thesmos.sh/core
+```sh
+go get go.thesmos.sh/core@latest
 ```
 
-Module path: `go.thesmos.sh/core` · Repo: `github.com/thesmos-ai/core`
+core requires Go 1.27 or later.
+
+## Quick start
+
+An implementation that reads time or randomness takes a clock and a
+source of randomness as arguments. This program generates a UUIDv7 from
+the system clock. It then generates one from a virtual clock and a
+seeded source, as a test does, and that ID is the same on every run:
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+
+    "go.thesmos.sh/core/clock/fake"
+    "go.thesmos.sh/core/clock/hlc"
+    "go.thesmos.sh/core/id/uuidv7"
+    "go.thesmos.sh/core/rand/crypto"
+    "go.thesmos.sh/core/rand/seeded"
+)
+
+func main() {
+    // In production, the IDs read the system clock and crypto/rand.
+    ids := uuidv7.New(hlc.New(1), crypto.New())
+    fmt.Println(uuidv7.Format(ids.Generate()))
+
+    // In a test, a virtual clock and a seeded source return the same IDs on every run.
+    clk := fake.New(time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC))
+    ids = uuidv7.New(clk, seeded.New(42))
+    fmt.Println(uuidv7.Format(ids.Generate())) // 019b76da-a800-7000-8ee6-a2507be62ce9
+}
+```
+
+## Packages
+
+Each package states its contract, the classes of its errors, its rules
+for concurrent use and its allocations in its
+[reference documentation][reference].
+
+| Area | Packages | Provides |
+|---|---|---|
+| Time | [`clock`][clock], [`clock/hlc`][clock/hlc], [`clock/fake`][clock/fake], [`clock/kernel`][clock/kernel] | The `Clock` interface with Hybrid Logical Clock instants, a production clock, a virtual clock for tests, and UTC readings whose error bound the Linux kernel reports. |
+| Randomness | [`rand`][rand], [`rand/crypto`][rand/crypto], [`rand/pcg`][rand/pcg], [`rand/seeded`][rand/seeded], [`rand/constant`][rand/constant] | The `Rand` interface over `crypto/rand`, PCG, a seeded HMAC-SHA-256 generator for reproducible runs, and a constant source for tests. |
+| Identifiers | [`id`][id], [`id/uuidv7`][id/uuidv7], [`id/uuidv4`][id/uuidv4], [`id/ulid`][id/ulid], [`id/ksuid`][id/ksuid], [`id/constant`][id/constant] | One comparable `ID` type of 128, 160 or 256 bits, and generators of UUIDv7, UUIDv4, ULID and KSUID with their text forms. |
+| Values | [`epoch`][epoch], [`version`][version], [`tag`][tag], [`fixed`][fixed], [`page`][page] | Epochs that fence out a stale writer, opaque versions for compare-and-swap, immutable tags, decimals of eight places that refuse to overflow, and cursor pagination. |
+| Errors | [`errs`][errs] | Eight error classes, such as `Transient` and `Invalid`, and `Classify`, which also recognises the sentinels of the standard library. |
+| Concurrency | [`task`][task], [`fsm`][fsm], [`batch`][batch] | Structured concurrency, finite state machines that are validated when they are built, and batched loads of concurrent callers. |
+| Resilience | [`resilience`][resilience] | Circuit breakers, bulkheads, retries within a budget with jittered backoff, token-bucket rate limits, and failover between redundant targets. |
+| Hashing and encryption | [`crypto`][crypto], [`crypto/sha256`][crypto/sha256], [`crypto/sha512`][crypto/sha512], [`crypto/sha3`][crypto/sha3], [`crypto/hmac/sha256`][crypto/hmac/sha256], [`crypto/hmac/sha512`][crypto/hmac/sha512], [`crypto/hmac/sha3`][crypto/hmac/sha3], [`crypto/aesgcm`][crypto/aesgcm], [`crypto/shake`][crypto/shake], [`crypto/kek`][crypto/kek], [`crypto/localkey`][crypto/localkey] | The `Hasher`, `MAC`, `AEAD`, `XOF` and `Keeper` interfaces with SHA-2, SHA-3, HMAC, AES-GCM and SHAKE, data keys wrapped under a key-encryption key, and domain-separated framing of hashed input. |
+| Signatures | [`crypto/sign`][crypto/sign], [`crypto/sign/ed25519`][crypto/sign/ed25519], [`crypto/sign/ecdsap384`][crypto/sign/ecdsap384], [`crypto/sign/mldsa`][crypto/sign/mldsa], [`crypto/tsp`][crypto/tsp] | The `Signer` and `Verifier` interfaces with Ed25519, ECDSA P-384 and ML-DSA, threshold policies over sets of keys, and offline verification of RFC 3161 time stamps. |
+| Transparency logs | [`tlog`][tlog], [`tlog/checkpoint`][tlog/checkpoint], [`tlog/witness`][tlog/witness], [`note`][note] | Merkle trees of RFC 9162 stored as C2SP tiles with inclusion and consistency proofs, signed notes, checkpoints, cosignatures, witness policies, and both sides of the witness protocol. |
+| Storage | [`blob`][blob], [`blob/memory`][blob/memory], [`cas`][cas], [`cas/memory`][cas/memory] | Named object storage with conditional writes, content-addressed storage that checks each write against its address, and in-memory stores for tests. |
+| Data structures | [`btree`][btree], [`cache`][cache], [`pool`][pool], [`arena`][arena] | B+ tree maps and sets with copy-on-write clones, a bounded S3-FIFO cache, typed pools, and arenas for hot paths. |
+| Telemetry | [`telemetry`][telemetry], [`telemetry/noop`][telemetry/noop], [`telemetry/w3c`][telemetry/w3c] | Metric and trace interfaces whose bound instruments record without an allocation, and W3C Trace Context propagation. |
+| HTTP | [`net/httpserver`][net/httpserver], [`net/httpclient`][net/httpclient] | A server on `net/http` with limits, telemetry, panic recovery and graceful shutdown, and a client with a circuit breaker per host and retries. |
+| Testing | [`coretest`][coretest] | Conformance suites that check an implementation against its interface, generated test doubles, and a time-stamp authority for tests. |
+
+## Design
+
+- Production code imports the standard library, `golang.org/x/sync` and
+  the runtime packages of kanon, which generates the binary encodings of
+  core's types. A depguard rule fails CI on any other import.
+- Code reads time through `clock.Clock` and randomness through
+  `rand.Rand`, so a test controls both.
+- Interfaces such as `blob.Store`, `crypto.Keeper` and `sign.Signer` have
+  conformance suites in `coretest`, so an adapter for a cloud store, a
+  KMS or an HSM proves its contract with one test.
+- Each method on a hot path states its allocations, and a test and a
+  benchmark check the count.
+- `errs.Classify` maps an error to one of eight classes, so a retry loop
+  or a circuit breaker can tell a transient failure from a permanent one.
+- Wire formats follow their specifications: RFC 9162 and RFC 6962 for
+  Merkle trees, the C2SP specifications for tiles, signed notes,
+  checkpoints, cosignatures and witnesses, RFC 3161 for time stamps,
+  RFC 9562 for UUIDs, and FIPS 186-5 and FIPS 204 for ECDSA and ML-DSA.
+- CI runs the race detector on Linux, macOS and Windows, requires 100%
+  statement coverage, and runs mutation testing.
 
 ## Documentation
 
-- **[ADRs][adr]** — accepted architectural decisions
-- **[RFCs][rfc]** — proposals under discussion or accepted as direction
-- **[Contributing][contrib]** — local setup, conventions, PR flow
-- **[Security][sec]** — vulnerability disclosure policy
+- The [reference documentation][reference] on pkg.go.dev covers every
+  package.
+- The [guides](docs/guides/) explain how to test core and how to
+  generate its conformance suites.
+- The [RFCs](docs/rfc/) record each design with the alternatives that it
+  rejected, and the [ADRs](docs/adr/) record each decision.
+- The [changelog](CHANGELOG.md) lists the changes of each release.
+
+## Versioning
+
+Until v1.0.0, a minor release of core can change an exported API, which
+semantic versioning allows for major version zero. The changelog marks
+each such change as breaking. A byte layout that core persists or signs
+keeps its encoding from the release that first contains it.
+
+## Contributing
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before you open a pull request.
+A new interface or package starts with an issue, and a design with
+alternatives starts with an RFC.
+
+## Security
+
+Report a vulnerability privately, as [SECURITY.md](SECURITY.md)
+describes. Do not open a public issue for it.
 
 ## License
 
-Apache 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+core is licensed under the Apache License 2.0. See [LICENSE](LICENSE)
+and [NOTICE](NOTICE).
 
 [thesmos]: https://thesmos.sh
-[adr]: docs/adr/
-[rfc]: docs/rfc/
-[adr-0002]: docs/adr/0002-single-module-layout.md
-[adr-0003]: docs/adr/0003-apache-2-0-with-spdx-headers.md
-[adr-0005]: docs/adr/0005-primitive-set-chosen-for-coherence.md
-[adr-0015]: docs/adr/0015-dependency-free-x-modules-in-production.md
-[adr-0035]: docs/adr/0035-core-imports-the-kanon-runtime.md
-[adr-0024]: docs/adr/0024-specs-reject-states-that-cannot-finish.md
-[adr-0025]: docs/adr/0025-tlog-builds-tagged-trees.md
-[adr-0027]: docs/adr/0027-btree-reset-keeps-nodes.md
-[adr-0040]: docs/adr/0040-an-event-count-is-awaited-with-a-context.md
-[adr-0041]: docs/adr/0041-a-custodian-creates-wrapping-keys.md
-[adr-0042]: docs/adr/0042-a-content-type-is-bounded.md
-[adr-0043]: docs/adr/0043-core-structs-have-canonical-codecs.md
-[adr-0044]: docs/adr/0044-a-blob-reader-may-fail-after-removal.md
-[adr-0045]: docs/adr/0045-core-ships-io-built-on-the-standard-library.md
-[rfc-0001]: docs/rfc/0001-clock-seam.md
-[rfc-0002]: docs/rfc/0002-rand-seam.md
-[rfc-0003]: docs/rfc/0003-crypto-seam.md
-[rfc-0004]: docs/rfc/0004-telemetry-seam.md
-[rfc-0005]: docs/rfc/0005-epoch.md
-[rfc-0006]: docs/rfc/0006-tag.md
-[rfc-0007]: docs/rfc/0007-version.md
-[rfc-0008]: docs/rfc/0008-page.md
-[rfc-0009]: docs/rfc/0009-id.md
-[rfc-0010]: docs/rfc/0010-pool.md
-[rfc-0011]: docs/rfc/0011-arena.md
-[rfc-0012]: docs/rfc/0012-crypto-hmac-seam.md
-[rfc-0013]: docs/rfc/0013-crypto-sign-seam.md
-[rfc-0015]: docs/rfc/0015-error-classification.md
-[rfc-0016]: docs/rfc/0016-framed-domain-separation.md
-[rfc-0017]: docs/rfc/0017-authenticated-encryption.md
-[rfc-0018]: docs/rfc/0018-key-custody.md
-[rfc-0019]: docs/rfc/0019-extendable-output-functions.md
-[rfc-0020]: docs/rfc/0020-trace-context-propagation.md
-[rfc-0021]: docs/rfc/0021-bounded-pool.md
-[rfc-0023]: docs/rfc/0023-resilience-primitives.md
-[rfc-0024]: docs/rfc/0024-request-coalescing.md
-[rfc-0025]: docs/rfc/0025-fixed-point-decimals.md
-[rfc-0026]: docs/rfc/0026-ordering-and-fencing.md
-[rfc-0027]: docs/rfc/0027-content-addressed-storage.md
-[rfc-0028]: docs/rfc/0028-named-object-storage.md
-[rfc-0029]: docs/rfc/0029-domain-separated-tree-hashing.md
-[rfc-0030]: docs/rfc/0030-structured-concurrency.md
-[rfc-0031]: docs/rfc/0031-finite-state-machines.md
-[rfc-0032]: docs/rfc/0032-transparency-log-trees.md
-[rfc-0033]: docs/rfc/0033-ml-dsa-signatures.md
-[rfc-0034]: docs/rfc/0034-scheduled-key-destruction.md
-[rfc-0035]: docs/rfc/0035-context-aware-signing.md
-[rfc-0036]: docs/rfc/0036-utc-error-bounds.md
-[rfc-0037]: docs/rfc/0037-periodic-and-quorum-tasks.md
-[rfc-0038]: docs/rfc/0038-conformance-for-durable-adapters.md
-[rfc-0039]: docs/rfc/0039-signature-policies.md
-[rfc-0043]: docs/rfc/0043-btree-ordered-maps.md
-[rfc-0044]: docs/rfc/0044-nested-signature-policies.md
-[rfc-0046]: docs/rfc/0046-released-instruments-and-gauge-aggregation.md
-[rfc-0047]: docs/rfc/0047-signed-notes-and-checkpoints.md
-[rfc-0048]: docs/rfc/0048-time-stamp-tokens.md
-[rfc-0049]: docs/rfc/0049-bounded-cache.md
-[rfc-0050]: docs/rfc/0050-rate-limiter.md
-[rfc-0051]: docs/rfc/0051-bounded-hot-path-telemetry.md
-[rfc-0052]: docs/rfc/0052-failover.md
-[rfc-0053]: docs/rfc/0053-http-servers-and-clients.md
-[contrib]: CONTRIBUTING.md
-[sec]: SECURITY.md
+[reference]: https://pkg.go.dev/go.thesmos.sh/core
+[arena]: https://pkg.go.dev/go.thesmos.sh/core/arena
+[batch]: https://pkg.go.dev/go.thesmos.sh/core/batch
+[blob]: https://pkg.go.dev/go.thesmos.sh/core/blob
+[blob/memory]: https://pkg.go.dev/go.thesmos.sh/core/blob/memory
+[btree]: https://pkg.go.dev/go.thesmos.sh/core/btree
+[cache]: https://pkg.go.dev/go.thesmos.sh/core/cache
+[cas]: https://pkg.go.dev/go.thesmos.sh/core/cas
+[cas/memory]: https://pkg.go.dev/go.thesmos.sh/core/cas/memory
+[clock]: https://pkg.go.dev/go.thesmos.sh/core/clock
+[clock/fake]: https://pkg.go.dev/go.thesmos.sh/core/clock/fake
+[clock/hlc]: https://pkg.go.dev/go.thesmos.sh/core/clock/hlc
+[clock/kernel]: https://pkg.go.dev/go.thesmos.sh/core/clock/kernel
+[coretest]: https://pkg.go.dev/go.thesmos.sh/core/coretest
+[crypto]: https://pkg.go.dev/go.thesmos.sh/core/crypto
+[crypto/aesgcm]: https://pkg.go.dev/go.thesmos.sh/core/crypto/aesgcm
+[crypto/hmac/sha256]: https://pkg.go.dev/go.thesmos.sh/core/crypto/hmac/sha256
+[crypto/hmac/sha3]: https://pkg.go.dev/go.thesmos.sh/core/crypto/hmac/sha3
+[crypto/hmac/sha512]: https://pkg.go.dev/go.thesmos.sh/core/crypto/hmac/sha512
+[crypto/kek]: https://pkg.go.dev/go.thesmos.sh/core/crypto/kek
+[crypto/localkey]: https://pkg.go.dev/go.thesmos.sh/core/crypto/localkey
+[crypto/sha256]: https://pkg.go.dev/go.thesmos.sh/core/crypto/sha256
+[crypto/sha3]: https://pkg.go.dev/go.thesmos.sh/core/crypto/sha3
+[crypto/sha512]: https://pkg.go.dev/go.thesmos.sh/core/crypto/sha512
+[crypto/shake]: https://pkg.go.dev/go.thesmos.sh/core/crypto/shake
+[crypto/sign]: https://pkg.go.dev/go.thesmos.sh/core/crypto/sign
+[crypto/sign/ecdsap384]: https://pkg.go.dev/go.thesmos.sh/core/crypto/sign/ecdsap384
+[crypto/sign/ed25519]: https://pkg.go.dev/go.thesmos.sh/core/crypto/sign/ed25519
+[crypto/sign/mldsa]: https://pkg.go.dev/go.thesmos.sh/core/crypto/sign/mldsa
+[crypto/tsp]: https://pkg.go.dev/go.thesmos.sh/core/crypto/tsp
+[epoch]: https://pkg.go.dev/go.thesmos.sh/core/epoch
+[errs]: https://pkg.go.dev/go.thesmos.sh/core/errs
+[fixed]: https://pkg.go.dev/go.thesmos.sh/core/fixed
+[fsm]: https://pkg.go.dev/go.thesmos.sh/core/fsm
+[id]: https://pkg.go.dev/go.thesmos.sh/core/id
+[id/constant]: https://pkg.go.dev/go.thesmos.sh/core/id/constant
+[id/ksuid]: https://pkg.go.dev/go.thesmos.sh/core/id/ksuid
+[id/ulid]: https://pkg.go.dev/go.thesmos.sh/core/id/ulid
+[id/uuidv4]: https://pkg.go.dev/go.thesmos.sh/core/id/uuidv4
+[id/uuidv7]: https://pkg.go.dev/go.thesmos.sh/core/id/uuidv7
+[net/httpclient]: https://pkg.go.dev/go.thesmos.sh/core/net/httpclient
+[net/httpserver]: https://pkg.go.dev/go.thesmos.sh/core/net/httpserver
+[note]: https://pkg.go.dev/go.thesmos.sh/core/note
+[page]: https://pkg.go.dev/go.thesmos.sh/core/page
+[pool]: https://pkg.go.dev/go.thesmos.sh/core/pool
+[rand]: https://pkg.go.dev/go.thesmos.sh/core/rand
+[rand/constant]: https://pkg.go.dev/go.thesmos.sh/core/rand/constant
+[rand/crypto]: https://pkg.go.dev/go.thesmos.sh/core/rand/crypto
+[rand/pcg]: https://pkg.go.dev/go.thesmos.sh/core/rand/pcg
+[rand/seeded]: https://pkg.go.dev/go.thesmos.sh/core/rand/seeded
+[resilience]: https://pkg.go.dev/go.thesmos.sh/core/resilience
+[tag]: https://pkg.go.dev/go.thesmos.sh/core/tag
+[task]: https://pkg.go.dev/go.thesmos.sh/core/task
+[telemetry]: https://pkg.go.dev/go.thesmos.sh/core/telemetry
+[telemetry/noop]: https://pkg.go.dev/go.thesmos.sh/core/telemetry/noop
+[telemetry/w3c]: https://pkg.go.dev/go.thesmos.sh/core/telemetry/w3c
+[tlog]: https://pkg.go.dev/go.thesmos.sh/core/tlog
+[tlog/checkpoint]: https://pkg.go.dev/go.thesmos.sh/core/tlog/checkpoint
+[tlog/witness]: https://pkg.go.dev/go.thesmos.sh/core/tlog/witness
+[version]: https://pkg.go.dev/go.thesmos.sh/core/version
