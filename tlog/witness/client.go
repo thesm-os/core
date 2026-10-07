@@ -4,7 +4,6 @@
 package witness
 
 import (
-	"bytes"
 	"context"
 	"encoding/hex"
 	"errors"
@@ -20,10 +19,9 @@ import (
 	"go.thesmos.sh/core/tlog/checkpoint"
 )
 
-// buffers contains the scratch buffers of a Client: the body of a request
-// before its copy, the response that the Client reads, the text and the
-// lines that it parses as a note, and the URL of a monitor retrieval
-// route.
+// buffers contains the scratch buffers of a Client: the body of a request,
+// the response that the Client reads, the text and the lines that it parses
+// as a note, and the URL of a monitor retrieval route.
 var buffers = pool.NewPool(func() *[]byte { return new([]byte) })
 
 // notes contains the notes that a Client parses responses into, so that a
@@ -66,7 +64,8 @@ type ClientConfig struct {
 // # Allocation contract
 //
 // Each method documents its allocations. A call allocates the request that
-// net/http builds, and what [httpclient.Client.AppendFetch] allocates.
+// net/http builds, and what [httpclient.Client.AppendFetch] or
+// [httpclient.Client.AppendFetchBody] allocates.
 type Client struct {
 	// http calls the witness.
 	http *httpclient.Client
@@ -163,16 +162,16 @@ func NewClient(cfg *ClientConfig) (*Client, error) {
 //     timestamp is 0.
 //   - ErrRequest, classified Invalid, before any request, for a msg that
 //     is not a signed note and a proof of more than 63 hashes.
-//   - The errors of the HTTP client's AppendFetch, such as a
+//   - The errors of the HTTP client's AppendFetchBody, such as a
 //     *httpclient.StatusError for 400, 403 and 404.
 //
 // # Allocation contract
 //
-// Allocates the copy of the request body and its reader, the 5 objects of
-// the request that net/http builds, and what AppendFetch allocates for a
-// POST, when dst has room for the lines: 66 objects on a connection that
-// the transport reuses, with Go 1.27.1. It parses the response in pooled
-// memory, and the Verifier of an Ed25519 key allocates nothing.
+// Allocates the 3 objects of the request that net/http builds, and what
+// AppendFetchBody allocates for a POST of the body, when dst has room for
+// the lines: 65 objects on a connection that the transport reuses, with Go
+// 1.27.1. It builds the body and parses the response in pooled memory, and
+// the Verifier of an Ed25519 key allocates nothing.
 func (c *Client) AddCheckpoint(
 	ctx context.Context, msg []byte, oldSize uint64, proof []crypto.Digest, dst []byte,
 ) ([]byte, error) {
@@ -185,25 +184,24 @@ func (c *Client) AddCheckpoint(
 		return dst, fmt.Errorf("%w: %w", ErrRequest, err)
 	}
 
-	// The transport can read the body after the call returns, until it
-	// closes the body, as http.RoundTripper permits. The body is a copy of
-	// the scratch buffer in memory of its own, of its exact length.
-	scratch := buffers.Get()
-	*scratch = AppendRequest((*scratch)[:0], oldSize, proof, msg)
-	body := bytes.Clone(*scratch)
-	buffers.Put(scratch)
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.submission, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.submission, nil)
 	if err != nil {
 		return dst, fmt.Errorf("witness: build the request: %w", err)
 	}
 
+	// AppendFetchBody reads none of the body after it returns, so the body
+	// goes back to its pool after the call.
+	body := buffers.Get()
+	defer buffers.Put(body)
+
+	*body = AppendRequest((*body)[:0], oldSize, proof, msg)
+
 	resp := buffers.Get()
 	defer buffers.Put(resp)
 
-	// AppendFetch reads the response under the context of req, which is
+	// AppendFetchBody reads the response under the context of req, which is
 	// ctx.
-	*resp, err = c.http.AppendFetch((*resp)[:0], req) //nolint:contextcheck // see above
+	*resp, err = c.http.AppendFetchBody((*resp)[:0], req, *body) //nolint:contextcheck // see above
 	if err != nil {
 		return dst, statusError(err)
 	}

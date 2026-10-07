@@ -117,9 +117,9 @@
 //     for both.
 //   - The monitor retrieval route allocates nothing for an origin whose
 //     served update is its latest and whose object the cache contains.
-//   - Client.AddCheckpoint allocates 66 objects, and Client.Checkpoint 59,
+//   - Client.AddCheckpoint allocates 65 objects, and Client.Checkpoint 59,
 //     on a connection that the transport reuses. net/http and httpclient
-//     allocate 64 and 58 of them.
+//     allocate every object of AddCheckpoint, and 58 of Checkpoint.
 //   - AppendRequest and ParseRequest allocate nothing when their buffers
 //     have room, and Client.AppendCosignatures allocates nothing for the
 //     Ed25519 key of a witness.

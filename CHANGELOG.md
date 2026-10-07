@@ -792,6 +792,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   value.
 - `ecdsap384.NewVerifierFromPKIX` and `ecdsap384.Resolve` parse the PKIX
   key once and do not encode it again: 22 allocations instead of 50.
+- `witness.Client.AddCheckpoint` sends its body from pooled memory through
+  `httpclient.Client.AppendFetchBody`, where it sent a copy of the body
+  per call: 65 allocations per call instead of 66.
 
 ### Fixed
 

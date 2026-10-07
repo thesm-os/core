@@ -69,10 +69,10 @@ const (
 	newClientAllocs = 7
 
 	// clientAddCheckpointAllocs is the allocation contract of
-	// AddCheckpoint: the copy of the body and its reader, the 5 objects of
-	// the request that net/http builds, and 59 of httpclient's AppendFetch
-	// for a POST.
-	clientAddCheckpointAllocs = 66
+	// AddCheckpoint: the 3 objects of the request that net/http builds, and
+	// 62 of httpclient's AppendFetchBody for a POST of a body of 100 bytes
+	// or more.
+	clientAddCheckpointAllocs = 65
 
 	// clientCheckpointAllocs is the allocation contract of Checkpoint: the
 	// text of the URL, the 3 objects of the request that net/http builds,
@@ -298,18 +298,18 @@ func TestClient(t *testing.T) {
 			assert.Equal(t, lines.Signatures[1].ID, pq.Key().ID(), "the line of the second key must come second")
 		})
 
-		t.Run("keeps the body of a request intact after it returns", func(t *testing.T) {
+		t.Run("leaves no byte of the body of its request to read after it returns", func(t *testing.T) {
 			t.Parallel()
 			w := newFakeWitness(t, func([]byte) (int, []byte) { return http.StatusOK, cosignLines(t, text, ed) })
 
-			// The transport can read a body until it closes it, after the
-			// call returns. GetBody reads the memory of the body, as the
-			// transport does.
-			var replays []func() (io.ReadCloser, error)
+			// The body goes back to the pool of the client when the call
+			// returns, and net/http can read a body after its round trip
+			// returned, through the body itself and through GetBody.
+			var sent []*http.Request
 
 			h, err := httpclient.New("witness", required, httpclient.WithTimeout(10*time.Second),
 				httpclient.WithPrepare(func(r *http.Request) error {
-					replays = append(replays, r.GetBody)
+					sent = append(sent, r)
 
 					return nil
 				}))
@@ -321,15 +321,16 @@ func TestClient(t *testing.T) {
 			assert.NoError(t, err, "NewClient must accept the configuration")
 
 			_, err = c.AddCheckpoint(t.Context(), msg, 3, proof, nil)
-			assert.NoError(t, err, "the first call must succeed")
-			_, err = c.AddCheckpoint(t.Context(), msg, 4, proof, nil)
-			assert.NoError(t, err, "the second call must succeed")
+			assert.NoError(t, err, "AddCheckpoint must succeed")
+			assert.Length(t, sent, 1, "AddCheckpoint must send one request")
 
-			rc, err := replays[0]()
-			assert.NoError(t, err, "GetBody must return the body")
-			got, err := io.ReadAll(rc)
-			assert.NoError(t, err, "the body must read")
-			assert.HasPrefix(t, string(got), "old 3\n", "the second call must leave the first body intact")
+			n, err := sent[0].Body.Read(make([]byte, 16))
+			expect.HasError(t, err, "a Read of the body after the call must fail")
+			expect.Equal(t, n, 0, "a Read of the body after the call must read no byte")
+
+			replayed, err := sent[0].GetBody()
+			expect.HasError(t, err, "a GetBody after the call must fail")
+			expect.Nil(t, replayed, "a GetBody after the call must return no body")
 		})
 
 		t.Run("returns the ErrCosignature of lines that AppendCosignatures refuses", func(t *testing.T) {
