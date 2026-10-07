@@ -47,10 +47,9 @@ var (
 	id256 = crypto.ID{'s', 'h', 'a', 'k', 'e', '2', '5', '6', '/', 'v', '1'}
 )
 
-// xof is a SHAKE [crypto.XOF]. It holds no sponge state — that lives
-// on each stream — so a single value is safe to share.
+// xof is a SHAKE [crypto.XOF]. Each stream has its own sponge state,
+// and an xof has none, so a single value is safe to share.
 type xof struct {
-	newStream func() *sha3.SHAKE
 	algorithm crypto.Algorithm
 	id        crypto.ID
 }
@@ -60,12 +59,12 @@ var _ crypto.XOF = xof{}
 
 // New128 returns a SHAKE128 [crypto.XOF].
 func New128() crypto.XOF {
-	return xof{id: id128, algorithm: crypto.AlgSHAKE128, newStream: sha3.NewSHAKE128}
+	return xof{id: id128, algorithm: crypto.AlgSHAKE128}
 }
 
 // New256 returns a SHAKE256 [crypto.XOF].
 func New256() crypto.XOF {
-	return xof{id: id256, algorithm: crypto.AlgSHAKE256, newStream: sha3.NewSHAKE256}
+	return xof{id: id256, algorithm: crypto.AlgSHAKE256}
 }
 
 // ID returns the build-local implementation identifier.
@@ -75,21 +74,29 @@ func (x xof) ID() crypto.ID { return x.id }
 // [crypto.AlgSHAKE128] or [crypto.AlgSHAKE256].
 func (x xof) Algorithm() crypto.Algorithm { return x.algorithm }
 
-// NewXOFStream returns a fresh absorbing stream.
+// NewXOFStream returns a fresh absorbing stream. The stream contains
+// the sponge state by value, as the standard library copies a SHAKE
+// itself. The zero [sha3.SHAKE] is a SHAKE256 sponge, so only SHAKE128
+// sets one.
 //
 // # Allocation contract
 //
-// Allocates the sponge state once. Write and Read allocate nothing
-// thereafter.
+// Allocates the stream, with its sponge state, once. Write, Read and
+// Reset allocate nothing thereafter.
 func (x xof) NewXOFStream() crypto.XOFStream {
-	return &stream{shake: x.newStream()}
+	s := &stream{}
+	if x.algorithm == crypto.AlgSHAKE128 {
+		s.shake = *sha3.NewSHAKE128()
+	}
+
+	return s
 }
 
 // stream is a [crypto.XOFStream] over the standard library's sponge,
 // with the absorb/squeeze phase tracked here so a write after a read
 // is an error rather than the panic the standard library raises.
 type stream struct {
-	shake     *sha3.SHAKE
+	shake     sha3.SHAKE
 	squeezing bool
 }
 
