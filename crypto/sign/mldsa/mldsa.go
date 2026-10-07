@@ -72,12 +72,16 @@ func (p Params) std() (stdmldsa.Parameters, error) {
 }
 
 // Verifier verifies ML-DSA signatures under one public key and one
-// context string. Safe for concurrent use.
+// context string.
+//
+// # Concurrency
+//
+// A Verifier is safe for concurrent use.
 //
 // # Allocation contract
 //
 // [Verifier.KeyID], [Verifier.PublicKey], [Verifier.Algorithm] and
-// [Verifier.Verify] are zero-alloc. [NewVerifier] allocates the
+// [Verifier.Verify] do not allocate. [NewVerifier] allocates the
 // Verifier, its copy of the encoded key, and the key that
 // [crypto/mldsa.NewPublicKey] parses.
 type Verifier struct {
@@ -139,8 +143,8 @@ func parseVerifier(
 }
 
 // Resolver returns the [sign.Resolver] entry for parameter set p under
-// context. An ML-DSA verifier needs both, so the entry binds them, and
-// the Resolver's key for it is p.Algorithm().
+// context. An ML-DSA verifier needs both, so the entry binds them. The
+// key of the entry in a Resolver is p.Algorithm().
 //
 // The entry returns the errors [NewVerifier] returns, with a nil
 // Verifier. An invalid p or context fails on every call.
@@ -155,8 +159,9 @@ func Resolver(p Params, context string) func(pub []byte) (sign.Verifier, error) 
 	}
 }
 
-// unavailable reports that the FIPS 140-3 module in use does not
-// provide ML-DSA.
+// unavailable returns err under the package name, classified
+// [errs.Unsupported]. The callers pass the error of a FIPS 140-3 module
+// that does not provide ML-DSA.
 func unavailable(err error) error {
 	return errs.WithClass(fmt.Errorf("mldsa: %w", err), errs.Unsupported)
 }
@@ -180,8 +185,8 @@ func newVerifier(p Params, pk *stdmldsa.PublicKey, context string) *Verifier {
 func (v *Verifier) KeyID() sign.KeyID { return v.keyID }
 
 // PublicKey returns the FIPS 204 encoding of the public key. The
-// returned slice aliases internal storage; callers must treat it as
-// immutable.
+// returned slice aliases the storage of the Verifier. Callers must treat
+// it as immutable.
 func (v *Verifier) PublicKey() []byte { return v.enc }
 
 // Algorithm returns the parameter set's long-term name.
@@ -194,7 +199,7 @@ func (v *Verifier) Algorithm() crypto.Algorithm { return v.p.Algorithm() }
 //
 // # Allocation contract
 //
-// Zero-alloc.
+// Context does not allocate.
 func (v *Verifier) Context() string { return v.opts.Context }
 
 // Verify reports whether sig is a valid signature over msg under v's
@@ -205,8 +210,11 @@ func (v *Verifier) Verify(msg, sig []byte) bool {
 }
 
 // Signer signs with one ML-DSA private key under one context string.
-// Every Signer is a [Verifier] for the same key and context. Safe for
-// concurrent use.
+// Every Signer is a [Verifier] for the same key and context.
+//
+// # Concurrency
+//
+// A Signer is safe for concurrent use.
 //
 // # Allocation contract
 //
@@ -267,6 +275,8 @@ func expandSigner(
 
 // Generate returns a Signer for a fresh key whose seed is read from r,
 // under context. A seeded r gives a reproducible key, which tests use.
+// When r fills the seed, Generate zeroes the buffer before it returns,
+// so only the key contains the seed.
 //
 // Returns the errors [New] returns, and the error r returns when it
 // cannot fill the seed.
@@ -286,7 +296,7 @@ func Generate(p Params, r rand.Rand, context string) (*Signer, error) {
 //
 // # Allocation contract
 //
-// Allocates the signature once.
+// Sign allocates the signature once.
 func (s *Signer) Sign(msg []byte) ([]byte, error) {
 	return s.priv.Sign(nil, msg, &s.opts) //nolint:wrapcheck // returned as the standard library produced it
 }
@@ -301,9 +311,9 @@ func (s *Signer) Sign(msg []byte) ([]byte, error) {
 //
 // # Allocation contract
 //
-// Allocates the signature once, inside
-// [crypto/mldsa.PrivateKey.Sign], which returns a new slice, and the
-// growth of dst.
+// AppendSign allocates the signature once, inside
+// [crypto/mldsa.PrivateKey.Sign], which returns a new slice. It also
+// allocates when dst has no room for the signature.
 func (s *Signer) AppendSign(ctx context.Context, dst, msg []byte) ([]byte, error) {
 	if err := context.Cause(ctx); err != nil {
 		return dst, err
@@ -315,9 +325,9 @@ func (s *Signer) AppendSign(ctx context.Context, dst, msg []byte) ([]byte, error
 }
 
 // appendSignature appends sig to dst, or returns dst unchanged and err
-// when Sign failed. Extracted so tests can drive the error branch, which
-// [crypto/mldsa.PrivateKey.Sign] reaches only for the zero private key
-// that [New] never builds.
+// when Sign failed. It is a function of its own so that a test can run
+// the error branch. [crypto/mldsa.PrivateKey.Sign] fails only for the
+// zero private key, which [New] never builds.
 func appendSignature(dst, sig []byte, err error) ([]byte, error) {
 	if err != nil {
 		return dst, err
@@ -337,7 +347,7 @@ func (s *Signer) Seed() []byte { return s.priv.Bytes() }
 //
 // # Allocation contract
 //
-// Zero-alloc.
+// KeyIDFromPub does not allocate.
 func KeyIDFromPub(pub []byte) sign.KeyID {
 	h := sha256.Sum256(pub)
 

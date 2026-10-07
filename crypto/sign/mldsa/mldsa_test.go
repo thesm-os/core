@@ -7,100 +7,87 @@ import (
 	"bytes"
 	stdmldsa "crypto/mldsa"
 	"crypto/sha256"
-	"io"
+	"errors"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
+	"testing/iotest"
+	"time"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/bench"
+	"go.dokimi.dev/assert/expect"
+	"go.dokimi.dev/assert/history"
+	"go.dokimi.dev/assert/prop"
 
 	"go.thesmos.sh/core/coretest/cryptotest"
 	"go.thesmos.sh/core/crypto"
 	"go.thesmos.sh/core/crypto/sign"
 	"go.thesmos.sh/core/crypto/sign/mldsa"
+	"go.thesmos.sh/core/errs"
 	randcrypto "go.thesmos.sh/core/rand/crypto"
 )
 
+// testContext is the context string of the keys of the tests.
 const testContext = "core/test/v1"
 
+// The allocation ceilings. crypto/mldsa.PrivateKey.Sign returns a new
+// slice, which is the only allocation of Sign and of AppendSign into a
+// buffer with room. crypto/mldsa.NewPublicKey allocates the key that it
+// parses, and NewVerifier allocates the Verifier and its copy of the
+// encoding.
+const (
+	signAllocs        = 1
+	newVerifierAllocs = 3
+)
+
+// The goroutines of a concurrent case, and the calls that each makes.
+const (
+	goroutines = 8
+	rounds     = 10
+)
+
 // paramSets are the three FIPS 204 parameter sets with the values each
-// must report.
+// must report. keyID is the KeyID of the public key of the fixed seed,
+// which is a persisted encoding.
 var paramSets = []struct {
 	std       func() stdmldsa.Parameters
 	algorithm crypto.Algorithm
 	name      string
+	keyID     string
 	p         mldsa.Params
 }{
-	{stdmldsa.MLDSA44, crypto.AlgMLDSA44, "ML-DSA-44", mldsa.MLDSA44},
-	{stdmldsa.MLDSA65, crypto.AlgMLDSA65, "ML-DSA-65", mldsa.MLDSA65},
-	{stdmldsa.MLDSA87, crypto.AlgMLDSA87, "ML-DSA-87", mldsa.MLDSA87},
+	{stdmldsa.MLDSA44, crypto.AlgMLDSA44, "ML-DSA-44", "9f107644c1084526af3bc8098680b054", mldsa.MLDSA44},
+	{stdmldsa.MLDSA65, crypto.AlgMLDSA65, "ML-DSA-65", "d666806e11cee19a7c989f7445f90dd4", mldsa.MLDSA65},
+	{stdmldsa.MLDSA87, crypto.AlgMLDSA87, "ML-DSA-87", "91dc389cfaa01470b7f66eee45a4ae90", mldsa.MLDSA87},
 }
 
-// seed returns a fixed 32-byte seed: byte i is i.
-func seed() []byte {
-	s := make([]byte, mldsa.SeedSize)
-	for i := range s {
-		s[i] = byte(i)
+// invalidParams generates the Params values outside the three parameter
+// sets.
+var invalidParams = prop.Integer[mldsa.Params](0, 255).Filter(func(p mldsa.Params) bool {
+	return p < mldsa.MLDSA44 || p > mldsa.MLDSA87
+})
+
+// keepingSource writes 0x01 into every byte of p and keeps p, so a test
+// can read what the caller left in the buffer after the call. It is not
+// safe for concurrent use.
+type keepingSource struct{ seen []byte }
+
+// Read fills p, keeps it in s.seen, and reports len(p).
+func (s *keepingSource) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = 0x01
 	}
+	s.seen = p
 
-	return s
+	return len(p), nil
 }
 
-func mustSigner(tb testing.TB, p mldsa.Params, context string) *mldsa.Signer {
-	tb.Helper()
-
-	s, err := mldsa.New(p, seed(), context)
-	testkit.NoError(tb, err, "New must accept a 32-byte seed")
-
-	return s
-}
-
-// stdlibKeyID returns SHA-256 of the public key that crypto/mldsa
-// derives from the fixed seed, truncated to [sign.KeyIDSize] bytes.
-func stdlibKeyID(tb testing.TB, params stdmldsa.Parameters) sign.KeyID {
-	tb.Helper()
-
-	sk, err := stdmldsa.NewPrivateKey(params, seed())
-	testkit.NoError(tb, err, "the stdlib must accept the seed")
-
-	h := sha256.Sum256(sk.PublicKey().Bytes())
-
-	var id sign.KeyID
-	copy(id[:], h[:sign.KeyIDSize])
-
-	return id
-}
-
-// stdlibVerify verifies with crypto/mldsa directly, under testContext.
-func stdlibVerify(params stdmldsa.Parameters) func(pub, msg, sig []byte) bool {
-	return func(pub, msg, sig []byte) bool {
-		pk, err := stdmldsa.NewPublicKey(params, pub)
-		if err != nil {
-			return false
-		}
-
-		return stdmldsa.Verify(pk, msg, sig, &stdmldsa.Options{Context: testContext}) == nil
-	}
-}
-
-// stdlibSign signs with crypto/mldsa directly, from the fixed seed and
-// under testContext.
-func stdlibSign(tb testing.TB, params stdmldsa.Parameters) func(msg []byte) []byte {
-	tb.Helper()
-
-	sk, err := stdmldsa.NewPrivateKey(params, seed())
-	testkit.NoError(tb, err, "the stdlib must accept the seed")
-
-	return func(msg []byte) []byte {
-		sig, err := sk.Sign(nil, msg, &stdmldsa.Options{Context: testContext})
-		testkit.NoError(tb, err, "the stdlib must sign")
-
-		return sig
-	}
-}
-
-// --- testkit-driven contract layer ---
-
-func TestSignerContract(t *testing.T) {
+// TestMLDSASignerContract runs the contract suite of sign.Signer for each
+// parameter set, with the Algorithm, the KeyID, the signatures and the
+// verification of the standard library, and the AppendSigner capability.
+func TestMLDSASignerContract(t *testing.T) {
 	t.Parallel()
 
 	for _, tt := range paramSets {
@@ -123,7 +110,10 @@ func TestSignerContract(t *testing.T) {
 	}
 }
 
-func TestVerifierContract(t *testing.T) {
+// TestMLDSAVerifierContract runs the contract suite of sign.Verifier for
+// each parameter set, with the Algorithm and the signatures of the
+// standard library.
+func TestMLDSAVerifierContract(t *testing.T) {
 	t.Parallel()
 
 	for _, tt := range paramSets {
@@ -132,7 +122,7 @@ func TestVerifierContract(t *testing.T) {
 			s := mustSigner(t, tt.p, testContext)
 			msg := []byte("a message to verify")
 			sig, err := s.Sign(msg)
-			testkit.NoError(t, err, "Sign must succeed")
+			assert.NoError(t, err, "Sign must succeed")
 			sample := cryptotest.VerifierSample{Message: msg, Signature: sig}
 
 			cryptotest.AssertVerifierContract(t,
@@ -147,334 +137,618 @@ func TestVerifierContract(t *testing.T) {
 	}
 }
 
-// --- impl-specific ---
-
-func TestParams(t *testing.T) {
+func TestMLDSA(t *testing.T) {
 	t.Parallel()
 
-	for _, tt := range paramSets {
-		t.Run(tt.name+" reports its algorithm", func(t *testing.T) {
+	t.Run("Params", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("Algorithm", func(t *testing.T) {
 			t.Parallel()
-			testkit.Equal(t, tt.p.Algorithm(), tt.algorithm, "Algorithm must name the parameter set")
+
+			for _, tt := range paramSets {
+				t.Run("returns the name of "+tt.name, func(t *testing.T) {
+					t.Parallel()
+					assert.Equal(t, tt.p.Algorithm(), tt.algorithm, "Algorithm must name the parameter set")
+				})
+			}
+
+			t.Run("returns the empty name for a value outside the parameter sets", func(t *testing.T) {
+				t.Parallel()
+				prop.Equal(t, mldsa.Params.Algorithm, func(mldsa.Params) crypto.Algorithm { return "" },
+					"a value outside the parameter sets must name no algorithm",
+					prop.Using(invalidParams), prop.Example(mldsa.Params(0)), prop.Example(mldsa.Params(4)))
+			})
 		})
-	}
-
-	t.Run("the zero value names no algorithm", func(t *testing.T) {
-		t.Parallel()
-		testkit.Equal(t, mldsa.Params(0).Algorithm(), crypto.Algorithm(""),
-			"the zero Params must not name an algorithm")
 	})
-}
 
-func TestNew(t *testing.T) {
-	t.Parallel()
-
-	t.Run("rejects an unknown parameter set", func(t *testing.T) {
+	t.Run("Verifier", func(t *testing.T) {
 		t.Parallel()
-		for _, p := range []mldsa.Params{0, 4, 255} {
-			_, err := mldsa.New(p, seed(), testContext)
-			testkit.ErrorIs(t, err, mldsa.ErrParams, "an unknown parameter set must be refused")
+
+		t.Run("Context", func(t *testing.T) {
+			t.Parallel()
+
+			t.Run("returns the context of NewVerifier", func(t *testing.T) {
+				t.Parallel()
+				pub := mustSigner(t, mldsa.MLDSA44, testContext).PublicKey()
+				v, err := mldsa.NewVerifier(mldsa.MLDSA44, pub, testContext)
+				assert.NoError(t, err, "NewVerifier must accept the public key")
+				assert.Equal(t, v.Context(), testContext, "Context must return the context of NewVerifier")
+			})
+		})
+
+		t.Run("Verify", func(t *testing.T) {
+			t.Parallel()
+
+			t.Run("reports false for a signature under another context", func(t *testing.T) {
+				t.Parallel()
+				checkpoints := mustSigner(t, mldsa.MLDSA87, "core/checkpoint/v1")
+				cosignatures := mustSigner(t, mldsa.MLDSA87, "core/cosignature/v1")
+				assert.Equal(t, checkpoints.KeyID(), cosignatures.KeyID(), "the two Signers must share the key")
+				sig, err := checkpoints.Sign([]byte("payload"))
+				assert.NoError(t, err, "Sign must succeed")
+				assert.True(t, checkpoints.Verify([]byte("payload"), sig), "the signing context must verify")
+				assert.False(t, cosignatures.Verify([]byte("payload"), sig), "another context must not verify")
+			})
+
+			t.Run("reports false under the empty context for a signature under another", func(t *testing.T) {
+				t.Parallel()
+				sig, err := mustSigner(t, mldsa.MLDSA44, testContext).Sign([]byte("payload"))
+				assert.NoError(t, err, "Sign must succeed")
+				assert.False(t, mustSigner(t, mldsa.MLDSA44, "").Verify([]byte("payload"), sig),
+					"the empty context must not verify a signature made under another")
+			})
+
+			t.Run("reports true for a valid signature to goroutines that verify at once", func(t *testing.T) {
+				t.Parallel()
+				s := mustSigner(t, mldsa.MLDSA44, testContext)
+				sig, err := s.Sign([]byte("payload"))
+				assert.NoError(t, err, "Sign must succeed")
+				outcomes := history.Concurrently(goroutines, 10*time.Second, func(int) (any, error) {
+					verified := make([]bool, 0, rounds)
+					for range rounds {
+						verified = append(verified, s.Verify([]byte("payload"), sig))
+					}
+
+					return verified, nil
+				})
+				for _, o := range outcomes {
+					assert.True(t, o.Finished, "every goroutine must finish")
+					verified, _ := o.Output.([]bool)
+					assert.Equal(t, verified, slices.Repeat([]bool{true}, rounds),
+						"every Verify must accept the signature")
+				}
+			})
+		})
+	})
+
+	t.Run("NewVerifier", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the Verifier of the public key of a Signer", func(t *testing.T) {
+			t.Parallel()
+			s := mustSigner(t, mldsa.MLDSA65, testContext)
+			sig, err := s.Sign([]byte("payload"))
+			assert.NoError(t, err, "Sign must succeed")
+			v, err := mldsa.NewVerifier(mldsa.MLDSA65, s.PublicKey(), testContext)
+			assert.NoError(t, err, "NewVerifier must accept the public key")
+			expect.Equal(t, v.KeyID(), s.KeyID(), "the Verifier must have the KeyID of the Signer")
+			expect.True(t, v.Verify([]byte("payload"), sig), "the Verifier must accept the signature of the Signer")
+		})
+
+		t.Run("returns a Verifier that a later write to pub leaves unchanged", func(t *testing.T) {
+			t.Parallel()
+			want := mustSigner(t, mldsa.MLDSA44, testContext).PublicKey()
+			pub := bytes.Clone(want)
+			v, err := mldsa.NewVerifier(mldsa.MLDSA44, pub, testContext)
+			assert.NoError(t, err, "NewVerifier must accept the public key")
+			clear(pub)
+			assert.Equal(t, v.PublicKey(), want,
+				"zeroing the key of the caller must not change the key of the Verifier")
+		})
+
+		t.Run("returns ErrParams for a value outside the parameter sets", func(t *testing.T) {
+			t.Parallel()
+			pub := make([]byte, stdmldsa.MLDSA44PublicKeySize)
+			prop.ErrorIs(t, func(p mldsa.Params) error {
+				_, err := mldsa.NewVerifier(p, pub, testContext)
+
+				return err
+			}, mldsa.ErrParams, "a value outside the parameter sets must be refused",
+				prop.Using(invalidParams), prop.Example(mldsa.Params(0)), prop.Example(mldsa.Params(4)))
+		})
+
+		t.Run("returns ErrPublicKey for a public key of another size", func(t *testing.T) {
+			t.Parallel()
+			size := stdmldsa.MLDSA44PublicKeySize
+			prop.ErrorIs(t, func(n int) error {
+				_, err := mldsa.NewVerifier(mldsa.MLDSA44, make([]byte, n), testContext)
+
+				return err
+			}, mldsa.ErrPublicKey, "a public key that is not 1,312 bytes must be refused",
+				prop.Using(prop.Integer(0, 4096).Filter(func(n int) bool { return n != size })),
+				prop.Example(0), prop.Example(size-1), prop.Example(size+1),
+				prop.Example(stdmldsa.MLDSA65PublicKeySize), prop.Example(stdmldsa.MLDSA87PublicKeySize))
+		})
+
+		t.Run("returns ErrContext for a context longer than 255 bytes", func(t *testing.T) {
+			t.Parallel()
+			pub := mustSigner(t, mldsa.MLDSA44, testContext).PublicKey()
+			prop.ErrorIs(t, func(n int) error {
+				_, err := mldsa.NewVerifier(mldsa.MLDSA44, pub, strings.Repeat("c", n))
+
+				return err
+			}, mldsa.ErrContext, "a context longer than 255 bytes must be refused",
+				prop.Using(prop.Integer(256, 1024)), prop.Example(256))
+		})
+
+		t.Run("returns a Verifier for a context of at most 255 bytes", func(t *testing.T) {
+			t.Parallel()
+			pub := mustSigner(t, mldsa.MLDSA44, testContext).PublicKey()
+			prop.NoError(t, func(n int) error {
+				_, err := mldsa.NewVerifier(mldsa.MLDSA44, pub, strings.Repeat("c", n))
+
+				return err
+			}, "a context of at most 255 bytes must be accepted",
+				prop.Using(prop.Integer(0, 255)), prop.Example(255))
+		})
+
+		classes := []struct {
+			name    string
+			p       mldsa.Params
+			pub     []byte
+			context string
+		}{
+			{
+				name:    "returns an error of class Invalid for the zero Params",
+				pub:     make([]byte, stdmldsa.MLDSA44PublicKeySize),
+				context: testContext,
+			},
+			{
+				name:    "returns an error of class Invalid for a public key of another size",
+				p:       mldsa.MLDSA87,
+				pub:     make([]byte, stdmldsa.MLDSA44PublicKeySize),
+				context: testContext,
+			},
+			{
+				name:    "returns an error of class Invalid for a context longer than 255 bytes",
+				p:       mldsa.MLDSA44,
+				pub:     make([]byte, stdmldsa.MLDSA44PublicKeySize),
+				context: strings.Repeat("c", 256),
+			},
+		}
+		for _, tt := range classes {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				_, err := mldsa.NewVerifier(tt.p, tt.pub, tt.context)
+				assert.Equal(t, errs.Classify(err), errs.Invalid, "the refusal must classify as Invalid")
+			})
 		}
 	})
 
-	t.Run("rejects a seed of the wrong length", func(t *testing.T) {
+	t.Run("Resolver", func(t *testing.T) {
 		t.Parallel()
-		for _, n := range []int{0, 31, 33, 64} {
-			_, err := mldsa.New(mldsa.MLDSA65, make([]byte, n), testContext)
-			testkit.ErrorIs(t, err, mldsa.ErrSeed, "only a 32-byte seed is valid")
+
+		t.Run("returns an entry whose Verifier has the bound parameter set", func(t *testing.T) {
+			t.Parallel()
+			v, err := mldsa.Resolver(mldsa.MLDSA65, testContext)(mustSigner(t, mldsa.MLDSA65, testContext).PublicKey())
+			assert.NoError(t, err, "the entry must accept the public key")
+			assert.Equal(t, v.Algorithm(), crypto.AlgMLDSA65, "the Verifier must have the bound parameter set")
+		})
+
+		t.Run("returns an entry whose Verifier verifies under the bound context", func(t *testing.T) {
+			t.Parallel()
+			s := mustSigner(t, mldsa.MLDSA65, testContext)
+			sig, err := s.Sign([]byte("payload"))
+			assert.NoError(t, err, "Sign must succeed")
+			v, err := mldsa.Resolver(mldsa.MLDSA65, testContext)(s.PublicKey())
+			assert.NoError(t, err, "the entry must accept the public key")
+			assert.True(t, v.Verify([]byte("payload"), sig),
+				"the Verifier must accept a signature under the bound context")
+		})
+
+		t.Run("returns an entry that returns ErrParams for an unknown parameter set", func(t *testing.T) {
+			t.Parallel()
+			_, err := mldsa.Resolver(0, testContext)(make([]byte, stdmldsa.MLDSA44PublicKeySize))
+			assert.ErrorIs(t, err, mldsa.ErrParams, "an unknown parameter set must be refused")
+		})
+
+		t.Run("returns an entry that returns a nil Verifier for an error", func(t *testing.T) {
+			t.Parallel()
+			v, err := mldsa.Resolver(0, testContext)(make([]byte, stdmldsa.MLDSA44PublicKeySize))
+			assert.HasError(t, err, "the test must resolve a key that is refused")
+			assert.Nil(t, v, "the Verifier must be a nil interface")
+		})
+	})
+
+	t.Run("Signer", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("Seed", func(t *testing.T) {
+			t.Parallel()
+
+			t.Run("returns the seed of New", func(t *testing.T) {
+				t.Parallel()
+				assert.Equal(t, mustSigner(t, mldsa.MLDSA87, testContext).Seed(), seed(),
+					"Seed must return the seed of New")
+			})
+		})
+
+		// FIPS 204 hedges each signature with fresh randomness, so two
+		// signatures of one message differ and only the Verifier checks
+		// them.
+		t.Run("Sign", func(t *testing.T) {
+			t.Parallel()
+
+			t.Run("returns signatures that the Verifier accepts to goroutines that sign at once", func(t *testing.T) {
+				t.Parallel()
+				s := mustSigner(t, mldsa.MLDSA44, testContext)
+				outcomes := history.Concurrently(goroutines, 10*time.Second, func(client int) (any, error) {
+					msg := []byte("message " + strconv.Itoa(client))
+					sigs := make([][]byte, 0, rounds)
+					for range rounds {
+						sig, err := s.Sign(msg)
+						if err != nil {
+							return sigs, err
+						}
+						sigs = append(sigs, sig)
+					}
+
+					return sigs, nil
+				})
+				for _, o := range outcomes {
+					assert.True(t, o.Finished, "every goroutine must finish")
+					assert.NoError(t, o.Error, "Sign must sign on every goroutine")
+					sigs, _ := o.Output.([][]byte)
+					assert.Length(t, sigs, rounds, "every goroutine must return its signatures")
+					for _, sig := range sigs {
+						expect.True(t, s.Verify([]byte("message "+strconv.Itoa(o.Client)), sig),
+							"the Verifier must accept every signature")
+					}
+				}
+			})
+		})
+	})
+
+	t.Run("New", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns a Signer under the context", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, mustSigner(t, mldsa.MLDSA87, testContext).Context(), testContext,
+				"the Signer must sign under the context of New")
+		})
+
+		t.Run("returns a Signer that a later write to the seed leaves unchanged", func(t *testing.T) {
+			t.Parallel()
+			s := seed()
+			signer, err := mldsa.New(mldsa.MLDSA44, s, testContext)
+			assert.NoError(t, err, "New must accept the seed")
+			clear(s)
+			assert.Equal(t, signer.Seed(), seed(), "zeroing the seed of the caller must not change the key")
+		})
+
+		t.Run("returns ErrParams for a value outside the parameter sets", func(t *testing.T) {
+			t.Parallel()
+			prop.ErrorIs(t, func(p mldsa.Params) error {
+				_, err := mldsa.New(p, seed(), testContext)
+
+				return err
+			}, mldsa.ErrParams, "a value outside the parameter sets must be refused",
+				prop.Using(invalidParams), prop.Example(mldsa.Params(0)), prop.Example(mldsa.Params(4)))
+		})
+
+		t.Run("returns ErrSeed for a seed of another size", func(t *testing.T) {
+			t.Parallel()
+			prop.ErrorIs(t, func(n int) error {
+				_, err := mldsa.New(mldsa.MLDSA65, make([]byte, n), testContext)
+
+				return err
+			}, mldsa.ErrSeed, "a seed that is not 32 bytes must be refused",
+				prop.Using(prop.Integer(0, 128).Filter(func(n int) bool { return n != mldsa.SeedSize })),
+				prop.Example(0), prop.Example(31), prop.Example(33), prop.Example(64))
+		})
+
+		t.Run("returns an error of class Invalid for a seed of another size", func(t *testing.T) {
+			t.Parallel()
+			_, err := mldsa.New(mldsa.MLDSA65, make([]byte, 31), testContext)
+			assert.Equal(t, errs.Classify(err), errs.Invalid, "ErrSeed must classify as Invalid")
+		})
+
+		t.Run("returns ErrContext for a context longer than 255 bytes", func(t *testing.T) {
+			t.Parallel()
+			prop.ErrorIs(t, func(n int) error {
+				_, err := mldsa.New(mldsa.MLDSA44, seed(), strings.Repeat("c", n))
+
+				return err
+			}, mldsa.ErrContext, "a context longer than 255 bytes must be refused",
+				prop.Using(prop.Integer(256, 1024)), prop.Example(256))
+		})
+
+		t.Run("returns a Signer for a context of at most 255 bytes", func(t *testing.T) {
+			t.Parallel()
+			prop.NoError(t, func(n int) error {
+				_, err := mldsa.New(mldsa.MLDSA44, seed(), strings.Repeat("c", n))
+
+				return err
+			}, "a context of at most 255 bytes must be accepted",
+				prop.Using(prop.Integer(0, 255)), prop.Example(255))
+		})
+	})
+
+	t.Run("Generate", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the Signer of the seed that the source supplies", func(t *testing.T) {
+			t.Parallel()
+			s, err := mldsa.Generate(mldsa.MLDSA65, randcrypto.NewWithReader(bytes.NewReader(seed())), testContext)
+			assert.NoError(t, err, "Generate must succeed")
+			assert.Equal(t, s.Seed(), seed(), "the seed must be the bytes of the source")
+		})
+
+		t.Run("returns the error of the source", func(t *testing.T) {
+			t.Parallel()
+			errSource := errors.New("entropy source failed")
+			_, err := mldsa.Generate(mldsa.MLDSA65, randcrypto.NewWithReader(iotest.ErrReader(errSource)), testContext)
+			assert.ErrorIs(t, err, errSource, "Generate must return the failure of the source")
+		})
+
+		t.Run("zeroes the seed that it read from the source", func(t *testing.T) {
+			t.Parallel()
+			source := &keepingSource{}
+			_, err := mldsa.Generate(mldsa.MLDSA65, randcrypto.NewWithReader(source), testContext)
+			assert.NoError(t, err, "Generate must succeed")
+			assert.Equal(t, source.seen, make([]byte, mldsa.SeedSize),
+				"the seed must be zeroed before Generate returns")
+		})
+
+		t.Run("returns ErrParams for an unknown parameter set", func(t *testing.T) {
+			t.Parallel()
+			_, err := mldsa.Generate(0, randcrypto.New(), testContext)
+			assert.ErrorIs(t, err, mldsa.ErrParams, "an unknown parameter set must be refused")
+		})
+	})
+
+	// The KeyID derivation, SHA-256(pub)[:16], for the public key of the
+	// fixed seed in each parameter set.
+	t.Run("KeyIDFromPub", func(t *testing.T) {
+		t.Parallel()
+
+		for _, tt := range paramSets {
+			t.Run("returns the recorded KeyID of the "+tt.name+" key of the seed", func(t *testing.T) {
+				t.Parallel()
+				id := mldsa.KeyIDFromPub(mustSigner(t, tt.p, testContext).PublicKey())
+				assert.Equal(t, id.String(), tt.keyID, "the KeyID must match its recorded value")
+			})
 		}
 	})
-
-	t.Run("accepts a context of 255 bytes and refuses 256", func(t *testing.T) {
-		t.Parallel()
-		_, err := mldsa.New(mldsa.MLDSA44, seed(), strings.Repeat("c", 255))
-		testkit.NoError(t, err, "a 255-byte context must be accepted")
-
-		_, err = mldsa.New(mldsa.MLDSA44, seed(), strings.Repeat("c", 256))
-		testkit.ErrorIs(t, err, mldsa.ErrContext, "a 256-byte context must be refused")
-	})
-
-	t.Run("round-trips the seed", func(t *testing.T) {
-		t.Parallel()
-		testkit.Equal(t, mustSigner(t, mldsa.MLDSA87, testContext).Seed(), seed(),
-			"Seed must return the seed the Signer was built from")
-	})
-
-	t.Run("copies the seed", func(t *testing.T) {
-		t.Parallel()
-		s := seed()
-		signer, err := mldsa.New(mldsa.MLDSA44, s, testContext)
-		testkit.NoError(t, err, "New must succeed")
-		clear(s)
-		testkit.Equal(t, signer.Seed(), seed(), "zeroing the caller's seed must not change the key")
-	})
 }
 
-func TestNewVerifier(t *testing.T) {
-	t.Parallel()
-
-	t.Run("accepts the public key a Signer reports", func(t *testing.T) {
-		t.Parallel()
-		s := mustSigner(t, mldsa.MLDSA65, testContext)
-		v, err := mldsa.NewVerifier(mldsa.MLDSA65, s.PublicKey(), testContext)
-		testkit.NoError(t, err, "NewVerifier must accept the public key")
-		testkit.Equal(t, v.KeyID(), s.KeyID(), "the Verifier must have the Signer's KeyID")
-
-		sig, err := s.Sign([]byte("payload"))
-		testkit.NoError(t, err, "Sign must succeed")
-		testkit.True(t, v.Verify([]byte("payload"), sig), "the Verifier must accept the Signer's signature")
-	})
-
-	t.Run("copies the public key", func(t *testing.T) {
-		t.Parallel()
-		pub := bytes.Clone(mustSigner(t, mldsa.MLDSA44, testContext).PublicKey())
-		v, err := mldsa.NewVerifier(mldsa.MLDSA44, pub, testContext)
-		testkit.NoError(t, err, "NewVerifier must succeed")
-		want := bytes.Clone(pub)
-		clear(pub)
-		testkit.Equal(t, v.PublicKey(), want, "zeroing the caller's buffer must not change the key")
-	})
-
-	t.Run("rejects an unknown parameter set", func(t *testing.T) {
-		t.Parallel()
-		_, err := mldsa.NewVerifier(0, make([]byte, stdmldsa.MLDSA44PublicKeySize), testContext)
-		testkit.ErrorIs(t, err, mldsa.ErrParams, "an unknown parameter set must be refused")
-	})
-
-	t.Run("rejects a public key of another parameter set", func(t *testing.T) {
-		t.Parallel()
-		pub := mustSigner(t, mldsa.MLDSA44, testContext).PublicKey()
-		_, err := mldsa.NewVerifier(mldsa.MLDSA87, pub, testContext)
-		testkit.ErrorIs(t, err, mldsa.ErrPublicKey, "a 44 key must not parse as an 87 key")
-	})
-
-	t.Run("accepts a context of 255 bytes and refuses 256", func(t *testing.T) {
-		t.Parallel()
-		pub := mustSigner(t, mldsa.MLDSA44, testContext).PublicKey()
-		_, err := mldsa.NewVerifier(mldsa.MLDSA44, pub, strings.Repeat("c", 255))
-		testkit.NoError(t, err, "a 255-byte context must be accepted")
-
-		_, err = mldsa.NewVerifier(mldsa.MLDSA44, pub, strings.Repeat("c", 256))
-		testkit.ErrorIs(t, err, mldsa.ErrContext, "a 256-byte context must be refused")
-	})
-}
-
-func TestResolver(t *testing.T) {
-	t.Parallel()
-
-	t.Run("builds a Verifier under the bound parameter set and context", func(t *testing.T) {
-		t.Parallel()
-		s := mustSigner(t, mldsa.MLDSA65, testContext)
-		sig, err := s.Sign([]byte("payload"))
-		testkit.NoError(t, err, "Sign must succeed")
-
-		v, err := mldsa.Resolver(mldsa.MLDSA65, testContext)(s.PublicKey())
-		testkit.NoError(t, err, "the entry must accept the public key")
-		testkit.Equal(t, v.Algorithm(), crypto.AlgMLDSA65, "the Verifier must report the bound parameter set")
-		testkit.True(t, v.Verify([]byte("payload"), sig), "the Verifier must accept the signature")
-	})
-
-	t.Run("returns NewVerifier's error and a nil Verifier", func(t *testing.T) {
-		t.Parallel()
-		v, err := mldsa.Resolver(0, testContext)(make([]byte, stdmldsa.MLDSA44PublicKeySize))
-		testkit.ErrorIs(t, err, mldsa.ErrParams, "an unknown parameter set must be refused")
-		testkit.True(t, v == nil, "the Verifier must be a nil interface")
-	})
-}
-
-func TestContextSeparation(t *testing.T) {
-	t.Parallel()
-
-	t.Run("a signature does not verify under another context", func(t *testing.T) {
-		t.Parallel()
-		checkpoints := mustSigner(t, mldsa.MLDSA87, "core/checkpoint/v1")
-		cosignatures := mustSigner(t, mldsa.MLDSA87, "core/cosignature/v1")
-		testkit.Equal(t, checkpoints.KeyID(), cosignatures.KeyID(), "one seed gives one KeyID")
-
-		sig, err := checkpoints.Sign([]byte("payload"))
-		testkit.NoError(t, err, "Sign must succeed")
-		testkit.True(t, checkpoints.Verify([]byte("payload"), sig), "the signing context must verify")
-		testkit.False(t, cosignatures.Verify([]byte("payload"), sig), "another context must not verify")
-	})
-
-	t.Run("a signature does not verify under the empty context", func(t *testing.T) {
-		t.Parallel()
-		sig, err := mustSigner(t, mldsa.MLDSA44, testContext).Sign([]byte("payload"))
-		testkit.NoError(t, err, "Sign must succeed")
-		testkit.False(t, mustSigner(t, mldsa.MLDSA44, "").Verify([]byte("payload"), sig),
-			"the empty context must not verify a signature made under another")
-	})
-}
-
-func TestContext(t *testing.T) {
-	t.Parallel()
-
-	t.Run("returns the context of a Verifier", func(t *testing.T) {
-		t.Parallel()
-		pub := mustSigner(t, mldsa.MLDSA44, testContext).PublicKey()
-		v, err := mldsa.NewVerifier(mldsa.MLDSA44, pub, testContext)
-		testkit.NoError(t, err, "NewVerifier must succeed")
-		testkit.Equal(t, v.Context(), testContext, "Context must return the context of NewVerifier")
-	})
-
-	t.Run("returns the context of a Signer", func(t *testing.T) {
-		t.Parallel()
-		testkit.Equal(t, mustSigner(t, mldsa.MLDSA87, testContext).Context(), testContext,
-			"Context must return the context of New")
-	})
-
-	t.Run("returns the empty context of a key built without one", func(t *testing.T) {
-		t.Parallel()
-		testkit.Equal(t, mustSigner(t, mldsa.MLDSA44, "").Context(), "",
-			"Context must return the empty context")
-	})
-}
-
-func TestGenerate(t *testing.T) {
-	t.Parallel()
-
-	t.Run("reads the seed from the source", func(t *testing.T) {
-		t.Parallel()
-		s, err := mldsa.Generate(mldsa.MLDSA65, randcrypto.NewWithReader(bytes.NewReader(seed())), testContext)
-		testkit.NoError(t, err, "Generate must succeed")
-		testkit.Equal(t, s.Seed(), seed(), "the seed must be the bytes the source supplied")
-	})
-
-	t.Run("returns the source's failure", func(t *testing.T) {
-		t.Parallel()
-		failing := randcrypto.NewWithReader(&testkit.FailingReader{
-			Source: bytes.NewReader(nil), Err: io.ErrUnexpectedEOF,
-		})
-		_, err := mldsa.Generate(mldsa.MLDSA65, failing, testContext)
-		testkit.ErrorIs(t, err, io.ErrUnexpectedEOF, "the entropy failure must be returned")
-	})
-
-	t.Run("returns New's refusal", func(t *testing.T) {
-		t.Parallel()
-		_, err := mldsa.Generate(0, randcrypto.New(), testContext)
-		testkit.ErrorIs(t, err, mldsa.ErrParams, "an unknown parameter set must be refused")
-	})
-}
-
-// TestKeyIDStability pins the KeyID of the fixed seed's public key for
-// each parameter set. The derivation is a persisted encoding.
-func TestKeyIDStability(t *testing.T) {
-	t.Parallel()
-
-	want := map[mldsa.Params]string{
-		mldsa.MLDSA44: "9f107644c1084526af3bc8098680b054",
-		mldsa.MLDSA65: "d666806e11cee19a7c989f7445f90dd4",
-		mldsa.MLDSA87: "91dc389cfaa01470b7f66eee45a4ae90",
-	}
-	for _, tt := range paramSets {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			testkit.Equal(t, mustSigner(t, tt.p, testContext).KeyID().String(), want[tt.p],
-				"the KeyID of the fixed seed must match its recorded value")
-		})
-	}
-}
-
-// TestZeroAlloc enforces the allocation contract of the Verifier.
-// testing.AllocsPerRun reads a process-global malloc counter, so this
-// test does not call t.Parallel.
+// TestMLDSAAllocs checks the allocation contracts of the Verifier, of
+// Sign, AppendSign and NewVerifier, and of KeyIDFromPub, for ML-DSA-44.
+// MaxAllocs counts the allocations of the whole process, so the test
+// does not run in parallel.
 //
-//nolint:paralleltest // see comment above
-func TestZeroAlloc(t *testing.T) {
+//nolint:paralleltest // see above
+func TestMLDSAAllocs(t *testing.T) {
 	s := mustSigner(t, mldsa.MLDSA44, testContext)
+	pub := s.PublicKey()
+	want := stdlibKeyID(t, stdmldsa.MLDSA44())
 	msg := []byte("payload")
 	sig, err := s.Sign(msg)
-	testkit.NoError(t, err, "Sign must succeed")
+	assert.NoError(t, err, "Sign must succeed")
 
-	tests := []struct {
-		fn   func()
-		name string
-	}{
-		{func() { _ = s.Verify(msg, sig) }, "Verify"},
-		{func() { _ = s.KeyID() }, "KeyID"},
-		{func() { _ = s.PublicKey() }, "PublicKey"},
-		{func() { _ = s.Algorithm() }, "Algorithm"},
-		{func() { _ = s.Context() }, "Context"},
-		{func() { _ = mldsa.KeyIDFromPub(s.PublicKey()) }, "KeyIDFromPub"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			testkit.Equal(t, testing.AllocsPerRun(20, tt.fn), float64(0), tt.name+" must not allocate")
+	t.Run("Verifier", func(t *testing.T) {
+		t.Run("Verify", func(t *testing.T) {
+			var ok bool
+			expect.MaxAllocs(t, func() { ok = s.Verify(msg, sig) }, 0, "Verify must not allocate")
+			assert.True(t, ok, "the test must measure a signature that verifies")
 		})
+
+		t.Run("KeyID", func(t *testing.T) {
+			var id sign.KeyID
+			expect.MaxAllocs(t, func() { id = s.KeyID() }, 0, "KeyID must not allocate")
+			assert.Equal(t, id, want, "the test must measure the KeyID of the key")
+		})
+
+		t.Run("PublicKey", func(t *testing.T) {
+			var got []byte
+			expect.MaxAllocs(t, func() { got = s.PublicKey() }, 0, "PublicKey must not allocate")
+			assert.Length(t, got, stdmldsa.MLDSA44PublicKeySize, "the test must measure the encoding of the key")
+		})
+
+		t.Run("Algorithm", func(t *testing.T) {
+			var alg crypto.Algorithm
+			expect.MaxAllocs(t, func() { alg = s.Algorithm() }, 0, "Algorithm must not allocate")
+			assert.Equal(t, alg, crypto.AlgMLDSA44, "the test must measure the name of the parameter set")
+		})
+
+		t.Run("Context", func(t *testing.T) {
+			var got string
+			expect.MaxAllocs(t, func() { got = s.Context() }, 0, "Context must not allocate")
+			assert.Equal(t, got, testContext, "the test must measure the context of the key")
+		})
+	})
+
+	t.Run("NewVerifier", func(t *testing.T) {
+		var v *mldsa.Verifier
+		expect.MaxAllocs(t, func() { v, _ = mldsa.NewVerifier(mldsa.MLDSA44, pub, testContext) }, newVerifierAllocs,
+			"NewVerifier must allocate only the key, its encoding and the Verifier")
+		assert.NotNil(t, v, "the test must measure a Verifier that NewVerifier accepts")
+	})
+
+	t.Run("Signer", func(t *testing.T) {
+		t.Run("Sign", func(t *testing.T) {
+			var got []byte
+			expect.MaxAllocs(t, func() { got, _ = s.Sign(msg) }, signAllocs, "Sign must allocate only the signature")
+			assert.True(t, s.Verify(msg, got), "the test must measure a signature that verifies")
+		})
+
+		t.Run("AppendSign", func(t *testing.T) {
+			buf := make([]byte, 0, stdmldsa.MLDSA44SignatureSize)
+			expect.MaxAllocs(t, func() { buf, _ = s.AppendSign(t.Context(), buf[:0], msg) }, signAllocs,
+				"AppendSign into a buffer with room must allocate only the signature of Sign")
+			assert.True(t, s.Verify(msg, buf), "the test must measure a signature that verifies")
+		})
+	})
+
+	t.Run("KeyIDFromPub", func(t *testing.T) {
+		var id sign.KeyID
+		expect.MaxAllocs(t, func() { id = mldsa.KeyIDFromPub(pub) }, 0, "KeyIDFromPub must not allocate")
+		assert.Equal(t, id, want, "the test must measure the KeyID of the key")
+	})
+}
+
+// BenchmarkMLDSA reports the cost of Verify, Sign, AppendSign into a
+// buffer with room and NewVerifier for each parameter set, and fails
+// when one allocates more than TestMLDSAAllocs allows.
+func BenchmarkMLDSA(b *testing.B) {
+	msg := make([]byte, 64)
+
+	b.Run("Verifier", func(b *testing.B) {
+		b.Run("Verify", func(b *testing.B) {
+			for _, tt := range paramSets {
+				b.Run(tt.name, func(b *testing.B) {
+					s := mustSigner(b, tt.p, testContext)
+					sig, err := s.Sign(msg)
+					assert.NoError(b, err, "Sign must succeed")
+					var ok bool
+
+					c := bench.Start(b).MaxAllocs(0)
+					defer c.End()
+
+					for c.Loop() {
+						ok = s.Verify(msg, sig)
+					}
+
+					assert.True(b, ok, "the benchmark must measure a signature that verifies")
+				})
+			}
+		})
+	})
+
+	b.Run("NewVerifier", func(b *testing.B) {
+		for _, tt := range paramSets {
+			b.Run(tt.name, func(b *testing.B) {
+				pub := mustSigner(b, tt.p, testContext).PublicKey()
+				var v *mldsa.Verifier
+
+				c := bench.Start(b).MaxAllocs(newVerifierAllocs)
+				defer c.End()
+
+				for c.Loop() {
+					v, _ = mldsa.NewVerifier(tt.p, pub, testContext)
+				}
+
+				assert.NotNil(b, v, "the benchmark must measure a Verifier that NewVerifier accepts")
+			})
+		}
+	})
+
+	b.Run("Signer", func(b *testing.B) {
+		b.Run("Sign", func(b *testing.B) {
+			for _, tt := range paramSets {
+				b.Run(tt.name, func(b *testing.B) {
+					s := mustSigner(b, tt.p, testContext)
+					var sig []byte
+
+					c := bench.Start(b).MaxAllocs(signAllocs)
+					defer c.End()
+
+					for c.Loop() {
+						sig, _ = s.Sign(msg)
+					}
+
+					assert.True(b, s.Verify(msg, sig), "the benchmark must measure a signature that verifies")
+				})
+			}
+		})
+
+		b.Run("AppendSign", func(b *testing.B) {
+			for _, tt := range paramSets {
+				b.Run(tt.name, func(b *testing.B) {
+					s := mustSigner(b, tt.p, testContext)
+					buf := make([]byte, 0, tt.std().SignatureSize())
+
+					c := bench.Start(b).MaxAllocs(signAllocs)
+					defer c.End()
+
+					for c.Loop() {
+						buf, _ = s.AppendSign(b.Context(), buf[:0], msg)
+					}
+
+					assert.True(b, s.Verify(msg, buf), "the benchmark must measure a signature that verifies")
+				})
+			}
+		})
+	})
+}
+
+// seed returns a fixed 32-byte seed whose byte i is i. Each call returns
+// a new slice, so a test may zero it.
+func seed() []byte {
+	s := make([]byte, mldsa.SeedSize)
+	for i := range s {
+		s[i] = byte(i)
+	}
+
+	return s
+}
+
+// mustSigner returns the Signer of the fixed seed in parameter set p
+// under context. It fails tb when New refuses them.
+func mustSigner(tb testing.TB, p mldsa.Params, context string) *mldsa.Signer {
+	tb.Helper()
+
+	s, err := mldsa.New(p, seed(), context)
+	assert.NoError(tb, err, "New must accept a 32-byte seed")
+
+	return s
+}
+
+// stdlibKeyID returns SHA-256 of the public key that crypto/mldsa
+// derives from the fixed seed, truncated to sign.KeyIDSize bytes. It
+// fails tb when crypto/mldsa refuses the seed.
+func stdlibKeyID(tb testing.TB, params stdmldsa.Parameters) sign.KeyID {
+	tb.Helper()
+
+	sk, err := stdmldsa.NewPrivateKey(params, seed())
+	assert.NoError(tb, err, "crypto/mldsa must accept the seed")
+
+	h := sha256.Sum256(sk.PublicKey().Bytes())
+
+	var id sign.KeyID
+	copy(id[:], h[:sign.KeyIDSize])
+
+	return id
+}
+
+// stdlibVerify returns a function that verifies with crypto/mldsa
+// directly, under testContext.
+func stdlibVerify(params stdmldsa.Parameters) func(pub, msg, sig []byte) bool {
+	return func(pub, msg, sig []byte) bool {
+		pk, err := stdmldsa.NewPublicKey(params, pub)
+		if err != nil {
+			return false
+		}
+
+		return stdmldsa.Verify(pk, msg, sig, &stdmldsa.Options{Context: testContext}) == nil
 	}
 }
 
-func BenchmarkSign(b *testing.B) {
-	for _, tt := range paramSets {
-		b.Run(tt.name, func(b *testing.B) {
-			s := mustSigner(b, tt.p, testContext)
-			msg := make([]byte, 64)
-			b.ReportAllocs()
-			for b.Loop() {
-				_, _ = s.Sign(msg)
-			}
-		})
-	}
-}
+// stdlibSign returns a function that signs with crypto/mldsa directly,
+// with the key of the fixed seed and under testContext. A failure of
+// crypto/mldsa fails tb.
+func stdlibSign(tb testing.TB, params stdmldsa.Parameters) func(msg []byte) []byte {
+	tb.Helper()
 
-func BenchmarkAppendSign(b *testing.B) {
-	for _, tt := range paramSets {
-		b.Run(tt.name, func(b *testing.B) {
-			s := mustSigner(b, tt.p, testContext)
-			msg := make([]byte, 64)
-			buf := make([]byte, 0, tt.std().SignatureSize())
-			ctx := b.Context()
+	sk, err := stdmldsa.NewPrivateKey(params, seed())
+	assert.NoError(tb, err, "crypto/mldsa must accept the seed")
 
-			// crypto/mldsa.PrivateKey.Sign returns a new slice, which is the
-			// only allocation of AppendSign into a buffer with room.
-			if allocs := testing.AllocsPerRun(20, func() { buf, _ = s.AppendSign(ctx, buf[:0], msg) }); allocs != 1 {
-				b.Fatalf("AppendSign allocates %v times per call, want 1", allocs)
-			}
+	return func(msg []byte) []byte {
+		sig, err := sk.Sign(nil, msg, &stdmldsa.Options{Context: testContext})
+		assert.NoError(tb, err, "crypto/mldsa must sign")
 
-			b.ReportAllocs()
-			for b.Loop() {
-				buf, _ = s.AppendSign(ctx, buf[:0], msg)
-			}
-		})
-	}
-}
-
-// sinkVerifier receives the Verifiers of BenchmarkNewVerifier, so that
-// the compiler keeps every call that it measures.
-var sinkVerifier *mldsa.Verifier
-
-func BenchmarkNewVerifier(b *testing.B) {
-	for _, tt := range paramSets {
-		b.Run(tt.name, func(b *testing.B) {
-			pub := mustSigner(b, tt.p, testContext).PublicKey()
-
-			// crypto/mldsa.NewPublicKey allocates the key that it parses,
-			// and NewVerifier the Verifier and its copy of the encoding.
-			if allocs := testing.AllocsPerRun(20, func() {
-				sinkVerifier, _ = mldsa.NewVerifier(tt.p, pub, testContext)
-			}); allocs != 3 {
-				b.Fatalf("NewVerifier allocates %v times per call, want 3", allocs)
-			}
-
-			b.ReportAllocs()
-			for b.Loop() {
-				sinkVerifier, _ = mldsa.NewVerifier(tt.p, pub, testContext)
-			}
-		})
-	}
-}
-
-func BenchmarkVerify(b *testing.B) {
-	for _, tt := range paramSets {
-		b.Run(tt.name, func(b *testing.B) {
-			s := mustSigner(b, tt.p, testContext)
-			msg := make([]byte, 64)
-			sig, err := s.Sign(msg)
-			testkit.NoError(b, err, "Sign must succeed")
-			b.ReportAllocs()
-			for b.Loop() {
-				_ = s.Verify(msg, sig)
-			}
-		})
+		return sig
 	}
 }

@@ -5,58 +5,69 @@ package mldsa
 
 import (
 	stdmldsa "crypto/mldsa"
+	"errors"
 	"testing"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/expect"
 
 	"go.thesmos.sh/core/errs"
 )
 
-// TestUnavailable covers the path where the FIPS 140-3 module in use
-// does not provide ML-DSA. The standard library's parser and key
-// expansion fail only then, so the tests pass a failing function to
-// [parseVerifier] and [expandSigner].
-func TestUnavailable(t *testing.T) {
+// TestMLDSAResults checks the unexported functions that take the result
+// of a call into crypto/mldsa. The parser and the key expansion fail
+// only in a FIPS 140-3 module without ML-DSA, and Sign only for the zero
+// private key, so only these tests run the error branches.
+func TestMLDSAResults(t *testing.T) {
 	t.Parallel()
 
-	moduleErr := testkit.TestError("module does not provide ML-DSA")
+	errModule := errors.New("module does not provide ML-DSA")
 
-	t.Run("parseVerifier returns the parser's error classified Unsupported", func(t *testing.T) {
+	t.Run("parseVerifier", func(t *testing.T) {
 		t.Parallel()
-		parse := func(stdmldsa.Parameters, []byte) (*stdmldsa.PublicKey, error) { return nil, moduleErr }
 
-		_, err := parseVerifier(MLDSA44, make([]byte, stdmldsa.MLDSA44PublicKeySize), "", parse)
-		testkit.ErrorIs(t, err, moduleErr, "the parser's error must be returned")
-		testkit.Equal(t, errs.Classify(err), errs.Unsupported, "the error must classify as Unsupported")
+		t.Run("returns the error of the parser under the class Unsupported", func(t *testing.T) {
+			t.Parallel()
+			parse := func(stdmldsa.Parameters, []byte) (*stdmldsa.PublicKey, error) { return nil, errModule }
+			_, err := parseVerifier(MLDSA44, make([]byte, stdmldsa.MLDSA44PublicKeySize), "", parse)
+			expect.ErrorIs(t, err, errModule, "parseVerifier must wrap the error of the parser")
+			expect.Equal(t, errs.Classify(err), errs.Unsupported, "the error must classify as Unsupported")
+		})
 	})
 
-	t.Run("expandSigner returns the expansion's error classified Unsupported", func(t *testing.T) {
+	t.Run("expandSigner", func(t *testing.T) {
 		t.Parallel()
-		expand := func(stdmldsa.Parameters, []byte) (*stdmldsa.PrivateKey, error) { return nil, moduleErr }
 
-		_, err := expandSigner(MLDSA44, make([]byte, SeedSize), "", expand)
-		testkit.ErrorIs(t, err, moduleErr, "the expansion's error must be returned")
-		testkit.Equal(t, errs.Classify(err), errs.Unsupported, "the error must classify as Unsupported")
-	})
-}
-
-// TestAppendSignature covers the error branch of [appendSignature],
-// which the standard library reaches only for a zero private key.
-func TestAppendSignature(t *testing.T) {
-	t.Parallel()
-
-	t.Run("returns dst unchanged and the error of Sign", func(t *testing.T) {
-		t.Parallel()
-		signErr := testkit.TestError("signing failure")
-		got, err := appendSignature([]byte("dst"), nil, signErr)
-		testkit.ErrorIs(t, err, signErr, "appendSignature must return the error of Sign")
-		testkit.Equal(t, string(got), "dst", "appendSignature must return dst unchanged")
+		t.Run("returns the error of the expansion under the class Unsupported", func(t *testing.T) {
+			t.Parallel()
+			expand := func(stdmldsa.Parameters, []byte) (*stdmldsa.PrivateKey, error) { return nil, errModule }
+			_, err := expandSigner(MLDSA44, make([]byte, SeedSize), "", expand)
+			expect.ErrorIs(t, err, errModule, "expandSigner must wrap the error of the expansion")
+			expect.Equal(t, errs.Classify(err), errs.Unsupported, "the error must classify as Unsupported")
+		})
 	})
 
-	t.Run("appends the signature to dst", func(t *testing.T) {
+	t.Run("appendSignature", func(t *testing.T) {
 		t.Parallel()
-		got, err := appendSignature([]byte("dst"), []byte("sig"), nil)
-		testkit.NoError(t, err, "appendSignature must accept a signature")
-		testkit.Equal(t, string(got), "dstsig", "appendSignature must append the signature")
+
+		t.Run("returns the error of Sign", func(t *testing.T) {
+			t.Parallel()
+			errSign := errors.New("signing failed")
+			_, err := appendSignature([]byte("dst"), nil, errSign)
+			assert.ErrorIs(t, err, errSign, "appendSignature must return the error of Sign")
+		})
+
+		t.Run("returns dst unchanged for an error of Sign", func(t *testing.T) {
+			t.Parallel()
+			got, _ := appendSignature([]byte("dst"), []byte("sig"), errors.New("signing failed"))
+			assert.Equal(t, string(got), "dst", "appendSignature must not append after an error")
+		})
+
+		t.Run("appends the signature to dst", func(t *testing.T) {
+			t.Parallel()
+			got, err := appendSignature([]byte("dst"), []byte("sig"), nil)
+			assert.NoError(t, err, "appendSignature must accept a signature")
+			assert.Equal(t, string(got), "dstsig", "appendSignature must append the signature")
+		})
 	})
 }
