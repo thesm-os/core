@@ -407,10 +407,14 @@ func TestText(t *testing.T) {
 
 			t.Run("returns dst unchanged with the cause of a context that ended", func(t *testing.T) {
 				t.Parallel()
-				ctx, cancel := context.WithCancel(t.Context())
-				cancel()
-				got, err := peterSigner(t).AppendSign(ctx, []byte(prefix), []byte(peterText))
-				expect.ErrorIs(t, err, context.Canceled, "AppendSign must return the cause of the context")
+				s := peterSigner(t)
+				var got []byte
+				expect.HonoursCancellation(t, func(ctx context.Context) error {
+					var err error
+					got, err = s.AppendSign(ctx, []byte(prefix), []byte(peterText))
+
+					return err
+				}, "AppendSign must return the cause of the context")
 				expect.Equal(t, string(got), prefix, "AppendSign must return dst unchanged")
 			})
 

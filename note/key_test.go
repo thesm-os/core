@@ -436,11 +436,16 @@ func TestKey(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
 				k := mustParseKey(t, peterKey)
-				err := k.UnmarshalText([]byte(tt.give))
+				var err error
+				expect.Pure(t, func() note.Key {
+					snapshot := k
+					snapshot.PublicKey = slices.Clone(k.PublicKey)
+
+					return snapshot
+				}, func() { err = k.UnmarshalText([]byte(tt.give)) }, "UnmarshalText must leave k unchanged")
 				assert.ErrorIs(t, err, note.ErrKey, "UnmarshalText must refuse the key")
 				expect.Equal(t, err.Error(), note.ErrKey.Error()+": "+tt.detail, "the error must name the rule")
 				expect.Equal(t, errs.Classify(err), errs.Invalid, "the error must classify as Invalid")
-				expect.Equal(t, k, mustParseKey(t, peterKey), "UnmarshalText must leave k unchanged")
 			})
 		}
 	})
@@ -489,11 +494,16 @@ func TestKey(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
 				k := mustParseKey(t, peterKey)
-				err := k.Set(tt.give)
+				var err error
+				expect.Pure(t, func() note.Key {
+					snapshot := k
+					snapshot.PublicKey = slices.Clone(k.PublicKey)
+
+					return snapshot
+				}, func() { err = k.Set(tt.give) }, "Set must leave k unchanged")
 				assert.ErrorIs(t, err, note.ErrKey, "Set must refuse the key")
 				expect.Equal(t, err.Error(), note.ErrKey.Error()+": "+tt.detail, "the error must name the rule")
 				expect.Equal(t, errs.Classify(err), errs.Invalid, "the error must classify as Invalid")
-				expect.Equal(t, k, mustParseKey(t, peterKey), "Set must leave k unchanged")
 			})
 		}
 	})
