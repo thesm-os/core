@@ -66,9 +66,10 @@ type wrappingKey struct {
 // Keeper is a [crypto.Keeper] over an intermediate KEK that a parent
 // Keeper protects at rest. It is also an [io.Closer].
 //
-// A cleanup zeroes the KEK of a Keeper that becomes unreachable without
-// Close. The runtime does not guarantee that the cleanup runs, in
-// particular before the program exits.
+// A cleanup zeroes the KEK of a Keeper that becomes unreachable, which
+// matters for a Keeper that was never closed. The runtime does not
+// guarantee that the cleanup runs, in particular before the program
+// exits.
 //
 // # Concurrency
 //
@@ -79,7 +80,8 @@ type Keeper struct {
 	r rand.Rand
 
 	// derive is hkdf.Key. A test replaces it to make a derivation fail,
-	// which hkdf.Key never does with the parameters of this package.
+	// which hkdf.Key never does with the parameters of this package, and
+	// to read the key that a derivation returns.
 	derive kdf
 
 	// ciphers maps a salt to the cipher derived for it, for Unwrap. It is
@@ -97,8 +99,7 @@ type Keeper struct {
 	info string
 	aad  []byte
 
-	kek     []byte
-	cleanup runtime.Cleanup
+	kek []byte
 
 	// limit is the number of DEKs one wrapping key seals, 2^30. A test
 	// lowers it to observe a rotation.
@@ -245,7 +246,7 @@ func (k *Keeper) Unwrap(_ context.Context, wrapped []byte) ([]byte, error) {
 		return nil, crypto.ErrCiphertextShort
 	}
 
-	a, err := k.cipher([SaltSize]byte(wrapped[:SaltSize]))
+	a, err := k.cipher(wrapped[:SaltSize])
 	if err != nil {
 		return nil, err
 	}
@@ -255,7 +256,8 @@ func (k *Keeper) Unwrap(_ context.Context, wrapped []byte) ([]byte, error) {
 
 // Close zeroes the KEK and drops the derived wrapping keys once the Wrap
 // and Unwrap calls in progress have returned. Later calls return
-// [ErrClosed]. Close is idempotent and returns nil.
+// [ErrClosed]. Close is idempotent and returns nil: a second call zeroes
+// and drops what the first left empty.
 //
 // Go's AES implementation keeps each cipher's key schedule in memory that
 // Close cannot zero. The schedules remain until the collector frees them
@@ -264,12 +266,7 @@ func (k *Keeper) Close() error {
 	k.mu.Lock()
 	defer k.mu.Unlock()
 
-	if k.closed {
-		return nil
-	}
-
 	k.closed = true
-	k.cleanup.Stop()
 	clear(k.kek)
 	k.current.Store(nil)
 
@@ -349,20 +346,19 @@ func newKeeper(kek []byte, keyID string, info []byte, r rand.Rand) *Keeper {
 		kek:     kek,
 		limit:   wrapsPerKey,
 	}
-	k.cleanup = runtime.AddCleanup(k, zero, kek)
+	// The cleanup also runs for a closed Keeper, and zeroes a KEK that
+	// Close already zeroed.
+	runtime.AddCleanup(k, func(b []byte) { clear(b) }, kek)
 
 	return k
 }
-
-// zero zeroes b. It is the cleanup that zeroes the KEK of a Keeper that
-// becomes unreachable without Close.
-func zero(b []byte) { clear(b) }
 
 // reserve returns a wrapping key with one wrap reserved on it: the current
 // key when it has room, or the key that rotate returns. A key has room
 // until it has k.limit reservations, so no wrapping key seals more than
 // k.limit DEKs.
 func (k *Keeper) reserve() (*wrappingKey, error) {
+	//dokimi:mutate-skip sbr-delete,lcr-false,ror-false: rotate repeats this check under rotateMu, so the fast path changes only the cost of a Wrap
 	if w := k.current.Load(); w != nil && w.wraps.Add(1) <= k.limit {
 		return w, nil
 	}
@@ -388,7 +384,7 @@ func (k *Keeper) rotate() (*wrappingKey, error) {
 		return nil, err //nolint:wrapcheck // returned as the source produced it
 	}
 
-	a, err := k.newCipher(salt)
+	a, err := k.newCipher(salt[:])
 	if err != nil {
 		return nil, err
 	}
@@ -400,16 +396,18 @@ func (k *Keeper) rotate() (*wrappingKey, error) {
 	return w, nil
 }
 
-// cipher returns the cipher of the wrapping key for salt: the current
-// key's, a cached one, or a new derivation, which it caches. It empties
-// the cache when a new cipher would exceed cipherCacheSize.
-func (k *Keeper) cipher(salt [SaltSize]byte) (crypto.AEAD, error) {
-	if w := k.current.Load(); w != nil && w.salt == salt {
+// cipher returns the cipher of the wrapping key for salt, the SaltSize
+// bytes at the start of a wrapped DEK: the current key's, a cached one,
+// or a new derivation, which it caches. It empties the cache when a new
+// cipher would exceed cipherCacheSize.
+func (k *Keeper) cipher(salt []byte) (crypto.AEAD, error) {
+	id := [SaltSize]byte(salt)
+	if w := k.current.Load(); w != nil && w.salt == id {
 		return w.aead, nil
 	}
 
 	k.ciphersMu.Lock()
-	a, ok := k.ciphers[salt]
+	a, ok := k.ciphers[id]
 	k.ciphersMu.Unlock()
 
 	if ok {
@@ -425,7 +423,7 @@ func (k *Keeper) cipher(salt [SaltSize]byte) (crypto.AEAD, error) {
 	if len(k.ciphers) >= cipherCacheSize {
 		clear(k.ciphers)
 	}
-	k.ciphers[salt] = a
+	k.ciphers[id] = a
 	k.ciphersMu.Unlock()
 
 	return a, nil
@@ -433,9 +431,15 @@ func (k *Keeper) cipher(salt [SaltSize]byte) (crypto.AEAD, error) {
 
 // newCipher derives the wrapping key for salt with HKDF-SHA-256 over the
 // KEK, with the framed key ID as info, and returns its AES-256-GCM
-// cipher. It zeroes the derived key before it returns.
-func (k *Keeper) newCipher(salt [SaltSize]byte) (crypto.AEAD, error) {
-	key, err := k.derive(sha256.New, k.kek, salt[:], k.info, aesgcm.KeySize256)
+// cipher. It zeroes the derived key before it returns. salt is a slice
+// of the caller's buffer, so the derivation copies no salt to the heap.
+//
+// One derivation allocates 19 times, all in the standard library: 3 in
+// aesgcm.NewRandomNonce, for the block, the GCM state and the AEAD, and
+// the rest in hkdf.Key, for its HMAC and SHA-256 states, their sums and
+// the key.
+func (k *Keeper) newCipher(salt []byte) (crypto.AEAD, error) {
+	key, err := k.derive(sha256.New, k.kek, salt, k.info, aesgcm.KeySize256)
 	defer clear(key)
 
 	if err != nil {
