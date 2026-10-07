@@ -5,11 +5,14 @@ package sign_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync/atomic"
 	"testing"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/bench"
+	"go.dokimi.dev/assert/expect"
 
 	"go.thesmos.sh/core/coretest/cryptotest"
 	"go.thesmos.sh/core/crypto/sign"
@@ -25,6 +28,7 @@ type counting struct {
 	signContexts atomic.Int32
 }
 
+// Sign counts the call and signs message with the wrapped Signer.
 func (c *counting) Sign(message []byte) ([]byte, error) {
 	c.signs.Add(1)
 
@@ -37,6 +41,8 @@ type contextual struct {
 	counting
 }
 
+// SignContext counts the call, returns the cause of a context that has
+// ended, and signs message with the wrapped Signer otherwise.
 func (c *contextual) SignContext(ctx context.Context, message []byte) ([]byte, error) {
 	c.signContexts.Add(1)
 
@@ -47,92 +53,8 @@ func (c *contextual) SignContext(ctx context.Context, message []byte) ([]byte, e
 	return c.Signer.Sign(message) //nolint:wrapcheck // the test double passes the error through
 }
 
-func newEd25519(tb testing.TB) sign.Signer {
-	tb.Helper()
-
-	s, err := ed25519.Generate(randcrypto.New())
-	testkit.NoError(tb, err, "Generate must succeed")
-
-	return s
-}
-
-func TestSignContext(t *testing.T) {
-	t.Parallel()
-
-	t.Run("calls SignContext on a signer that has it", func(t *testing.T) {
-		t.Parallel()
-		s := &contextual{counting{Signer: newEd25519(t)}}
-
-		sig, err := sign.SignContext(t.Context(), s, []byte("payload"))
-		testkit.NoError(t, err, "SignContext must succeed")
-		testkit.True(t, s.Verify([]byte("payload"), sig), "the signature must verify")
-		testkit.Equal(t, s.signContexts.Load(), int32(1), "SignContext must be called once")
-		testkit.Equal(t, s.signs.Load(), int32(0), "Sign must not be called")
-	})
-
-	t.Run("calls SignContext on a signer behind a decorator", func(t *testing.T) {
-		t.Parallel()
-		s := &contextual{counting{Signer: newEd25519(t)}}
-
-		sig, err := sign.SignContext(t.Context(), signerDecorator{s}, []byte("payload"))
-		testkit.NoError(t, err, "SignContext must succeed")
-		testkit.True(t, s.Verify([]byte("payload"), sig), "the signature must verify")
-		testkit.Equal(t, s.signContexts.Load(), int32(1), "SignContext must be called on the wrapped signer")
-		testkit.Equal(t, s.signs.Load(), int32(0), "Sign must not be called")
-	})
-
-	t.Run("calls Sign on a signer without SignContext", func(t *testing.T) {
-		t.Parallel()
-		s := &counting{Signer: newEd25519(t)}
-
-		sig, err := sign.SignContext(t.Context(), s, []byte("payload"))
-		testkit.NoError(t, err, "SignContext must succeed")
-		testkit.True(t, s.Verify([]byte("payload"), sig), "the signature must verify")
-		testkit.Equal(t, s.signs.Load(), int32(1), "Sign must be called once")
-	})
-
-	t.Run("returns the cause of an ended context without calling Sign", func(t *testing.T) {
-		t.Parallel()
-		s := &counting{Signer: newEd25519(t)}
-		cause := testkit.TestError("the caller gave up")
-		ctx, cancel := context.WithCancelCause(t.Context())
-		cancel(cause)
-
-		sig, err := sign.SignContext(ctx, s, []byte("payload"))
-		testkit.ErrorIs(t, err, cause, "SignContext must return the context's cause")
-		testkit.Equal(t, sig, []byte(nil), "SignContext must return no signature with an error")
-		testkit.Equal(t, s.signs.Load(), int32(0), "Sign must not be called")
-	})
-}
-
-// TestSignContextZeroAlloc enforces the allocation contract of
-// SignContext: it allocates what the signer allocates and nothing
-// more. testing.AllocsPerRun reads a process-global malloc counter, so
-// this test does not call t.Parallel.
-//
-//nolint:paralleltest // see comment above
-func TestSignContextZeroAlloc(t *testing.T) {
-	s := newEd25519(t)
-	msg := []byte("payload")
-	ctx := t.Context()
-
-	t.Run("SignContext allocates what Sign allocates", func(t *testing.T) {
-		sign1 := testing.AllocsPerRun(100, func() { _, _ = s.Sign(msg) })
-		signCtx := testing.AllocsPerRun(100, func() { _, _ = sign.SignContext(ctx, s, msg) })
-		testkit.Equal(t, signCtx, sign1, "SignContext must add no allocation to Sign")
-	})
-}
-
-func BenchmarkSignContext(b *testing.B) {
-	s := newEd25519(b)
-	msg := []byte("payload")
-	b.ReportAllocs()
-
-	for b.Loop() {
-		_, _ = sign.SignContext(b.Context(), s, msg)
-	}
-}
-
+// TestContextSignerContract runs the contract suite of sign.Signer with
+// the assertion of the ContextSigner capability.
 func TestContextSignerContract(t *testing.T) {
 	t.Parallel()
 
@@ -142,4 +64,101 @@ func TestContextSignerContract(t *testing.T) {
 			cryptotest.ContextSignerAssertion(),
 		)...,
 	)
+}
+
+func TestContext(t *testing.T) {
+	t.Parallel()
+
+	t.Run("SignContext", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("calls SignContext on a signer that has it", func(t *testing.T) {
+			t.Parallel()
+			s := &contextual{counting{Signer: newEd25519(t)}}
+			sig, err := sign.SignContext(t.Context(), s, []byte("payload"))
+			assert.NoError(t, err, "SignContext must succeed")
+			expect.True(t, s.Verify([]byte("payload"), sig), "the signature must verify")
+			expect.Equal(t, s.signContexts.Load(), int32(1), "SignContext must be called once")
+			expect.Equal(t, s.signs.Load(), int32(0), "Sign must not be called")
+		})
+
+		t.Run("calls SignContext on a signer behind a decorator", func(t *testing.T) {
+			t.Parallel()
+			s := &contextual{counting{Signer: newEd25519(t)}}
+			sig, err := sign.SignContext(t.Context(), signerDecorator{s}, []byte("payload"))
+			assert.NoError(t, err, "SignContext must succeed")
+			expect.True(t, s.Verify([]byte("payload"), sig), "the signature must verify")
+			expect.Equal(t, s.signContexts.Load(), int32(1), "SignContext must be called on the wrapped signer")
+			expect.Equal(t, s.signs.Load(), int32(0), "Sign must not be called")
+		})
+
+		t.Run("calls Sign on a signer without SignContext", func(t *testing.T) {
+			t.Parallel()
+			s := &counting{Signer: newEd25519(t)}
+			sig, err := sign.SignContext(t.Context(), s, []byte("payload"))
+			assert.NoError(t, err, "SignContext must succeed")
+			expect.True(t, s.Verify([]byte("payload"), sig), "the signature must verify")
+			expect.Equal(t, s.signs.Load(), int32(1), "Sign must be called once")
+		})
+
+		t.Run("returns the cause of an ended context without calling Sign", func(t *testing.T) {
+			t.Parallel()
+			s := &counting{Signer: newEd25519(t)}
+			cause := errors.New("the caller gave up")
+			ctx, cancel := context.WithCancelCause(t.Context())
+			cancel(cause)
+			sig, err := sign.SignContext(ctx, s, []byte("payload"))
+			assert.ErrorIs(t, err, cause, "SignContext must return the cause of the context")
+			expect.Nil(t, sig, "SignContext must return no signature with an error")
+			expect.Equal(t, s.signs.Load(), int32(0), "Sign must not be called")
+		})
+	})
+}
+
+// TestContextAllocs checks that SignContext of an Ed25519 signer
+// allocates only the signature that Sign allocates. MaxAllocs counts the
+// allocations of the whole process, so the test does not run in
+// parallel.
+//
+//nolint:paralleltest // see above
+func TestContextAllocs(t *testing.T) {
+	s := newEd25519(t)
+	msg := []byte("payload")
+
+	t.Run("SignContext", func(t *testing.T) {
+		var sig []byte
+		expect.MaxAllocs(t, func() { sig, _ = sign.SignContext(t.Context(), s, msg) }, 1,
+			"SignContext must add no allocation to the signature of Sign")
+		assert.True(t, s.Verify(msg, sig), "the test must measure a signature that verifies")
+	})
+}
+
+// BenchmarkContext reports the cost of SignContext of an Ed25519 signer,
+// and fails when it allocates more than the signature.
+func BenchmarkContext(b *testing.B) {
+	b.Run("SignContext", func(b *testing.B) {
+		s := newEd25519(b)
+		msg := []byte("payload")
+		var sig []byte
+
+		c := bench.Start(b).MaxAllocs(1)
+		defer c.End()
+
+		for c.Loop() {
+			sig, _ = sign.SignContext(b.Context(), s, msg)
+		}
+
+		assert.True(b, s.Verify(msg, sig), "the benchmark must measure a signature that verifies")
+	})
+}
+
+// newEd25519 returns an Ed25519 signer over a new key. It fails tb when
+// Generate fails.
+func newEd25519(tb testing.TB) sign.Signer {
+	tb.Helper()
+
+	s, err := ed25519.Generate(randcrypto.New())
+	assert.NoError(tb, err, "Generate must succeed")
+
+	return s
 }

@@ -7,18 +7,20 @@ import (
 	"encoding/hex"
 	"testing"
 
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/bench"
+	"go.dokimi.dev/assert/expect"
 	"go.thesmos.sh/kanon"
-	"go.thesmos.sh/testkit"
 
 	"go.thesmos.sh/core/crypto"
 	"go.thesmos.sh/core/crypto/sign"
 )
 
-// The recorded encodings of recordedSignature.
+// The recorded encodings of recorded.
 const (
-	// signatureHex pins the kanon encoding of recordedSignature, which a
-	// consumer persists, so it never changes: field 1 is the algorithm
-	// ed25519, field 2 the value 01 02 03, and field 3 the key ID 01 to 10.
+	// signatureHex pins the kanon encoding of recorded, which a consumer
+	// persists, so it never changes: field 1 is the algorithm ed25519,
+	// field 2 the value 01 02 03, and field 3 the key ID 01 to 10.
 	signatureHex = "0a07" + "65643235353139" +
 		"1203" + "010203" +
 		"1a10" + "0102030405060708090a0b0c0d0e0f10"
@@ -30,26 +32,12 @@ const (
 		"1a10" + "0102030405060708090a0b0c0d0e0f10"
 )
 
-// benchRuns is the number of calls over which a benchmark averages the
-// allocations that it checks.
-const benchRuns = 100
-
-// recordedSignature is the signature whose encoding signatureHex pins.
-func recordedSignature() sign.Signature {
-	return sign.Signature{
-		Algorithm: crypto.AlgEd25519,
-		Value:     []byte{1, 2, 3},
-		KeyID:     sign.KeyID{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
-	}
-}
-
-// recordedSignatureWith returns recordedSignature after change has
-// changed it.
-func recordedSignatureWith(change func(*sign.Signature)) *sign.Signature {
-	s := recordedSignature()
-	change(&s)
-
-	return &s
+// recorded is the signature whose encoding signatureHex pins. A test
+// that changes it changes a copy.
+var recorded = sign.Signature{
+	Algorithm: crypto.AlgEd25519,
+	Value:     []byte{1, 2, 3},
+	KeyID:     sign.KeyID{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16},
 }
 
 func TestSignature(t *testing.T) {
@@ -58,7 +46,7 @@ func TestSignature(t *testing.T) {
 	t.Run("Complete", func(t *testing.T) {
 		t.Parallel()
 
-		complete := recordedSignature()
+		complete := recorded
 		tests := []struct {
 			name string
 			give *sign.Signature
@@ -67,22 +55,22 @@ func TestSignature(t *testing.T) {
 			{name: "reports true for a signature with every field", give: &complete, want: true},
 			{
 				name: "reports false for a signature without an algorithm",
-				give: recordedSignatureWith(func(s *sign.Signature) { s.Algorithm = "" }),
+				give: recordedWith(func(s *sign.Signature) { s.Algorithm = "" }),
 				want: false,
 			},
 			{
 				name: "reports false for a signature with a nil value",
-				give: recordedSignatureWith(func(s *sign.Signature) { s.Value = nil }),
+				give: recordedWith(func(s *sign.Signature) { s.Value = nil }),
 				want: false,
 			},
 			{
 				name: "reports false for a signature with an empty value",
-				give: recordedSignatureWith(func(s *sign.Signature) { s.Value = []byte{} }),
+				give: recordedWith(func(s *sign.Signature) { s.Value = []byte{} }),
 				want: false,
 			},
 			{
 				name: "reports false for a signature with the zero key ID",
-				give: recordedSignatureWith(func(s *sign.Signature) { s.KeyID = sign.KeyID{} }),
+				give: recordedWith(func(s *sign.Signature) { s.KeyID = sign.KeyID{} }),
 				want: false,
 			},
 			{name: "reports false for the zero Signature", give: &sign.Signature{}, want: false},
@@ -91,7 +79,7 @@ func TestSignature(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-				testkit.Equal(t, tt.give.Complete(), tt.want, "Complete must report whether every field is set")
+				assert.Equal(t, tt.give.Complete(), tt.want, "Complete must report whether every field is set")
 			})
 		}
 	})
@@ -101,11 +89,10 @@ func TestSignature(t *testing.T) {
 
 		t.Run("appends the recorded encoding of a signature", func(t *testing.T) {
 			t.Parallel()
-			s := recordedSignature()
+			s := recorded
 			got, err := s.AppendBinary(nil)
-			testkit.NoError(t, err, "AppendBinary must encode the signature")
-			testkit.Equal(t, hex.EncodeToString(got), signatureHex,
-				"AppendBinary must write field 1 to 3 as recorded")
+			assert.NoError(t, err, "AppendBinary must encode the signature")
+			assert.Equal(t, hex.EncodeToString(got), signatureHex, "AppendBinary must write field 1 to 3 as recorded")
 		})
 	})
 
@@ -115,35 +102,60 @@ func TestSignature(t *testing.T) {
 		t.Run("returns the signature of the recorded encoding", func(t *testing.T) {
 			t.Parallel()
 			data, err := hex.DecodeString(signatureHex)
-			testkit.NoError(t, err, "the recorded encoding must be hexadecimal")
+			assert.NoError(t, err, "the recorded encoding must be hexadecimal")
 			var got sign.Signature
-			testkit.NoError(t, got.UnmarshalBinary(data), "UnmarshalBinary must decode the recorded encoding")
-			testkit.Equal(t, got, recordedSignature(), "UnmarshalBinary must return the recorded signature")
+			assert.NoError(t, got.UnmarshalBinary(data), "UnmarshalBinary must decode the recorded encoding")
+			assert.Equal(t, got, recorded, "UnmarshalBinary must return the recorded signature")
 		})
 
 		t.Run("returns ErrNotCanonical for the recorded fields in another order", func(t *testing.T) {
 			t.Parallel()
 			data, err := hex.DecodeString(swappedHex)
-			testkit.NoError(t, err, "the swapped encoding must be hexadecimal")
+			assert.NoError(t, err, "the swapped encoding must be hexadecimal")
 			var got sign.Signature
-			testkit.ErrorIs(t, got.UnmarshalBinary(data), kanon.ErrNotCanonical,
+			assert.ErrorIs(t, got.UnmarshalBinary(data), kanon.ErrNotCanonical,
 				"UnmarshalBinary must reject an encoding that the encode does not write")
 		})
 	})
 }
 
-// BenchmarkComplete reports the cost of Complete, and fails when it
-// allocates. The allocation check calls a signature of its own, so the
-// closure that captures it does not change the code of the timed loop.
-func BenchmarkComplete(b *testing.B) {
-	probe := recordedSignature()
-	if allocs := testing.AllocsPerRun(benchRuns, func() { _ = probe.Complete() }); allocs != 0 {
-		b.Fatalf("Complete allocates %v times per call, want 0", allocs)
-	}
+// TestSignatureAllocs checks that Complete allocates nothing. MaxAllocs
+// counts the allocations of the whole process, so the test does not run
+// in parallel.
+//
+//nolint:paralleltest // see above
+func TestSignatureAllocs(t *testing.T) {
+	s := recorded
 
-	s := recordedSignature()
-	b.ReportAllocs()
-	for b.Loop() {
-		_ = s.Complete()
-	}
+	t.Run("Complete", func(t *testing.T) {
+		var ok bool
+		expect.MaxAllocs(t, func() { ok = s.Complete() }, 0, "Complete must not allocate")
+		assert.True(t, ok, "the test must measure a complete signature")
+	})
+}
+
+// BenchmarkSignature reports the cost of Complete, and fails when it
+// allocates.
+func BenchmarkSignature(b *testing.B) {
+	b.Run("Complete", func(b *testing.B) {
+		s := recorded
+		var ok bool
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			ok = s.Complete()
+		}
+
+		assert.True(b, ok, "the benchmark must measure a complete signature")
+	})
+}
+
+// recordedWith returns a copy of recorded after change has changed it.
+func recordedWith(change func(*sign.Signature)) *sign.Signature {
+	s := recorded
+	change(&s)
+
+	return &s
 }

@@ -4,36 +4,47 @@
 package sign_test
 
 import (
+	"encoding/hex"
 	"testing"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/prop"
 
 	"go.thesmos.sh/core/crypto/sign"
 )
 
-func TestKeyIDString(t *testing.T) {
+func TestSign(t *testing.T) {
 	t.Parallel()
 
-	t.Run("zero KeyID hex-encodes to all zeros", func(t *testing.T) {
+	t.Run("KeyID", func(t *testing.T) {
 		t.Parallel()
-		var k sign.KeyID
-		testkit.Equal(t, k.String(), "00000000000000000000000000000000",
-			"zero KeyID must hex-encode to 32 zeros")
+
+		t.Run("has KeyIDSize bytes", func(t *testing.T) {
+			t.Parallel()
+			assert.Length(t, sign.KeyID{}, 16, "a KeyID must have 16 bytes")
+			assert.Equal(t, sign.KeyIDSize, 16, "KeyIDSize must be 16")
+		})
+
+		t.Run("String", func(t *testing.T) {
+			t.Parallel()
+
+			t.Run("returns the bytes in lowercase hexadecimal", func(t *testing.T) {
+				t.Parallel()
+				k := sign.KeyID{0xab, 0xcd, 14: 0x12, 15: 0x34}
+				assert.Equal(t, k.String(), "abcd0000000000000000000000001234", "String must encode the bytes in order")
+			})
+
+			t.Run("returns a string that decodes to the KeyID", func(t *testing.T) {
+				t.Parallel()
+				prop.RoundTrip(t, func(k sign.KeyID) (string, error) {
+					return k.String(), nil
+				}, func(s string) (sign.KeyID, error) {
+					var k sign.KeyID
+					_, err := hex.Decode(k[:], []byte(s))
+
+					return k, err //nolint:wrapcheck // the decoder's own error is the failure
+				}, "String must encode every byte of the KeyID")
+			})
+		})
 	})
-
-	t.Run("specific bytes hex-encode in order", func(t *testing.T) {
-		t.Parallel()
-		var k sign.KeyID
-		k[0], k[1], k[14], k[15] = 0xab, 0xcd, 0x12, 0x34
-		testkit.Equal(t, k.String(), "abcd0000000000000000000000001234",
-			"specific bytes must hex-encode in order")
-	})
-}
-
-func TestKeyIDSize(t *testing.T) {
-	t.Parallel()
-
-	testkit.Equal(t, sign.KeyIDSize, 16, "KeyIDSize must equal 16")
-	var k sign.KeyID
-	testkit.Equal(t, len(k), sign.KeyIDSize, "len(KeyID) must equal KeyIDSize")
 }

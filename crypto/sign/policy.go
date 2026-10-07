@@ -274,7 +274,8 @@ func NewPolicyTree(root Rule) (Policy, error) {
 // what NewPolicyTree allocates.
 func (p *Policy) Reset(root Rule) error {
 	if err := p.reset(root); err != nil {
-		clear(p.index)
+		// The index holds no reference to a key, and the next reset
+		// clears it, so only the keys need clearing here.
 		clear(p.keys)
 		p.keys, p.rules = p.keys[:0], p.rules[:0]
 
