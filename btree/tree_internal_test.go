@@ -8,27 +8,32 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"math/rand/v2"
 	"reflect"
+	"strconv"
 	"testing"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/expect"
+	"go.dokimi.dev/assert/prop"
+	"go.dokimi.dev/assert/stateful"
 )
 
-// Sizes of the model tests.
+// Sizes of the churn tests.
 const (
-	// operations is the number of random operations that TestTreeModel
-	// applies to each tree.
+	// operations is the number of random operations that churn applies to
+	// each tree.
 	operations = 1_000_000
 
-	// keySpace is the number of keys that the operations draw from. The
-	// model test inserts three quarters of them first, which gives every
-	// tree two levels of internal nodes.
+	// keySpace is the number of keys that the operations choose from. churn
+	// inserts three quarters of them first, which gives every tree two
+	// levels of internal nodes.
 	keySpace = 6_000
 
-	// phase is the number of operations between two switches of the mix
-	// of operations, from 80% inserts to 20% and back. A tree grows to two
-	// levels of internal nodes in one phase and shrinks to one in the
-	// next, so its root splits and merges.
+	// phase is the number of operations between two switches of the mix of
+	// operations, from 80% inserts to 20% and back. A tree grows to two
+	// levels of internal nodes in one phase and shrinks to one in the next,
+	// so its root splits and merges.
 	phase = 50_000
 
 	// cloneEvery is the number of operations between two clones. A clone
@@ -38,10 +43,40 @@ const (
 	// checkEvery is the number of operations between two comparisons of a
 	// tree with its model.
 	checkEvery = 10_000
+
+	// churnSeed seeds the operations of churn, so every run applies the
+	// same operations.
+	churnSeed = 0x6274726565
+)
+
+// Sizes of the machine of writes.
+const (
+	// writeContract is the contract of writeSteps, which TestTreeModel and
+	// FuzzTreeModel check.
+	writeContract = "every tree must keep its invariants and the items of its model under any sequence of writes"
+
+	// writeKeys is the number of keys that the steps of writeSteps choose
+	// from, few enough that a fill or a range covers keys that earlier steps
+	// wrote.
+	writeKeys = 1 << 12
+
+	// writeSpan is the largest count of a fill or a range of writeSteps. A
+	// fill sets 8 keys for each unit of its count, so one fill of the
+	// largest count splits several leaves.
+	writeSpan = 36
 )
 
 // errInvariant is the error that check returns for a broken invariant.
 var errInvariant = errors.New("btree: invariant")
+
+// outcome is what one operation of churn returned, or what its model
+// predicts: the value and the presence of a key, or the number of keys that
+// a deleteRange removed.
+type outcome[V comparable] struct {
+	value   V
+	present bool
+	count   int
+}
 
 // ints is the tree of a Map[int, int], the tree that build returns.
 type ints = tree[int, int, natural[int]]
@@ -54,9 +89,9 @@ type checker[K, V any, O order[K]] struct {
 
 // node checks the subtree of in, or of l when in is nil, and returns its
 // number of items. The keys of the subtree must sort at or after lo and
-// before hi, and its first key must be lo when lo is not nil. A node on
-// the right edge of the tree may have fewer than minItems items or
-// separators, but not none.
+// before hi, and its first key must be lo when lo is not nil. A node on the
+// right edge of the tree may have fewer than minItems items or separators,
+// but not none.
 func (c *checker[K, V, O]) node(in *inner[K, V], l *leaf[K, V], depth int, lo, hi *K, edge bool) (int, error) {
 	if in == nil {
 		if c.leafDepth == -1 {
@@ -139,14 +174,90 @@ func (c *checker[K, V, O]) order(keys []K, lo, hi *K) error {
 	return nil
 }
 
+// mirror is a tree that writeSteps writes to, with a Go map as its model,
+// and the clone and the model of the last clone step. ahead is the step from
+// a key to the next larger key in the order of the tree.
+type mirror[O order[int]] struct {
+	tr     *tree[int, int, O]
+	model  map[int]int
+	clone  tree[int, int, O]
+	cloned map[int]int
+	ahead  int
+}
+
+// set sets k to v in the tree and in the model, and fails the case unless
+// the tree returns the value that the model contained.
+func (m *mirror[O]) set(c *prop.Case, k, v int) {
+	old, ok := m.tr.set(k, v)
+	want, present := m.model[k]
+	assert.Equal(c, ok, present, "set must report whether the model contains the key")
+	assert.Equal(c, old, want, "set must return the value of the model")
+	m.model[k] = v
+}
+
+// update stores v under k through update, and fails the case unless update
+// passes fn the value that the model contained.
+func (m *mirror[O]) update(c *prop.Case, k, v int) {
+	want, present := m.model[k]
+	m.tr.update(k, func(old int, exists bool) int {
+		assert.Equal(c, exists, present, "update must tell fn whether the model contains the key")
+		assert.Equal(c, old, want, "update must pass fn the value of the model")
+
+		return v
+	})
+	m.model[k] = v
+}
+
+// delete removes k, and fails the case unless the tree returns the value
+// that the model contained.
+func (m *mirror[O]) delete(c *prop.Case, k int) {
+	old, ok := m.tr.delete(k)
+	want, present := m.model[k]
+	assert.Equal(c, ok, present, "delete must report whether the model contains the key")
+	assert.Equal(c, old, want, "delete must return the value of the model")
+	delete(m.model, k)
+}
+
+// deleteRange removes the n keys from k on in the order of the tree, and
+// fails the case unless the tree counts the keys that the model contained.
+func (m *mirror[O]) deleteRange(c *prop.Case, k, n int) {
+	removed := m.tr.deleteRange(k, k+m.ahead*n)
+	want := 0
+	for key := k; key != k+m.ahead*n; key += m.ahead {
+		if _, ok := m.model[key]; ok {
+			delete(m.model, key)
+			want++
+		}
+	}
+	assert.Equal(c, removed, want, "deleteRange must count the keys that it removed")
+}
+
+// pop calls remove, which is popMin or popMax of the tree, and removes the
+// key k that it returns from the model. It fails the case unless the item
+// was in the model, and outside(k, rest) is true for the key rest that
+// peek, min or max of the tree, then returns.
+func (m *mirror[O]) pop(c *prop.Case, remove, peek func() (int, int, bool), outside func(k, rest int) bool) {
+	k, v, ok := remove()
+	assert.Equal(c, ok, len(m.model) != 0, "a pop must find a key exactly when the model has one")
+	if !ok {
+		return
+	}
+	want, present := m.model[k]
+	assert.True(c, present, "a pop must return a key of the model")
+	assert.Equal(c, v, want, "a pop must return the value of the model")
+	delete(m.model, k)
+	if rest, _, ok := peek(); ok {
+		assert.True(c, outside(k, rest), "a pop must remove the key at the end of the order")
+	}
+}
+
 // check returns an error when t breaks an invariant of its tree: an empty
-// tree without nodes, keys and separators in the order of t and between
-// the separators above them, each separator the first key of the subtree
-// after it, node fill between minItems and maxItems
-// outside the root and the right edge, correct subtree counts and length,
-// the child array of each level, every leaf at the same depth, zero slots
-// past the used ones, and free nodes that are zeroed and on the free list
-// of their kind.
+// tree without nodes, keys and separators in the order of t and between the
+// separators above them, each separator the first key of the subtree after
+// it, node fill between minItems and maxItems outside the root and the
+// right edge, correct subtree counts and length, the child array of each
+// level, every leaf at the same depth, zero slots past the used ones, and
+// free nodes that are zeroed and on the free list of their kind.
 func check[K, V any, O order[K]](t *tree[K, V, O]) error {
 	for _, l := range t.freeLeaves {
 		if l.n != 0 || l.owner != 0 || !zeroFrom(l.keys[:], 0) || !zeroFrom(l.vals[:], 0) {
@@ -154,12 +265,16 @@ func check[K, V any, O order[K]](t *tree[K, V, O]) error {
 		}
 	}
 	for _, in := range t.freeLeafParents {
-		if in.inners != nil || in.leaves == nil || !zeroFrom(in.leaves[:], 0) || !zeroInner(in) {
+		if in.inners != nil || in.leaves == nil || !zeroFrom(in.leaves[:], 0) ||
+			in.n != 0 || in.count != 0 || in.owner != 0 || !zeroFrom(in.keys[:], 0) {
+
 			return fmt.Errorf("%w: a free parent of leaves that is not zeroed", errInvariant)
 		}
 	}
 	for _, in := range t.freeInnerParents {
-		if in.leaves != nil || in.inners == nil || !zeroFrom(in.inners[:], 0) || !zeroInner(in) {
+		if in.leaves != nil || in.inners == nil || !zeroFrom(in.inners[:], 0) ||
+			in.n != 0 || in.count != 0 || in.owner != 0 || !zeroFrom(in.keys[:], 0) {
+
 			return fmt.Errorf("%w: a free parent of internal nodes that is not zeroed", errInvariant)
 		}
 	}
@@ -206,17 +321,6 @@ func zeroFrom[T any](s []T, i int) bool {
 	return true
 }
 
-// zeroInner reports whether in has no separator, count or ID.
-func zeroInner[K, V any](in *inner[K, V]) bool {
-	return in.n == 0 && in.count == 0 && in.owner == 0 && zeroFrom(in.keys[:], 0)
-}
-
-// requireValid fails the test when t breaks an invariant of its tree.
-func requireValid[K, V any, O order[K]](tb testing.TB, t *tree[K, V, O]) {
-	tb.Helper()
-	testkit.NoError(tb, check(t), "the tree must keep its invariants")
-}
-
 // keysOf returns the keys of t in order, or nil when t is empty.
 func keysOf[K, V any, O order[K]](t *tree[K, V, O]) []K {
 	var keys []K
@@ -258,32 +362,34 @@ func sizes[K, V any, O order[K]](t *tree[K, V, O]) (leaves []int, levels [][]int
 	return leaves, levels
 }
 
-// reverse orders ints from largest to smallest.
-func reverse(a, b int) int {
-	return cmp.Compare(b, a)
-}
-
 // churn applies random operations to tr and to a Go map, its model. It
-// fails the test when an operation returns other than the model predicts,
-// when tr differs from its model at an interval of checkEvery operations,
-// or when a clone of tr differs from the model at the time of the clone
-// after the next cloneEvery operations. It also fails unless tr had one
-// level of internal nodes at one of those checks and two at another.
-// churn resets tr at the start of every phase of inserts after the first,
-// so the tree refills from the nodes that it kept. value returns the value
-// that operation op sets.
+// records what each operation returns and what the model predicts, and
+// fails the test when the two records of the operations since the last
+// check differ, at an interval of checkEvery operations. It also fails when
+// a pop removes a key after a key of the tree, when tr differs from its
+// model at a check, or when a clone of tr differs from the model at the
+// time of the clone after the next cloneEvery operations, and unless tr had
+// one level of internal nodes at one check and two at another. churn
+// resets tr at the start of every phase of inserts after the first, so the
+// tree refills from the nodes that it kept. value returns the value that
+// operation op sets.
 func churn[V comparable, O order[int]](t *testing.T, tr *tree[int, V, O], value func(op int) V) {
 	t.Helper()
-	r := testkit.SeededRand(t)
+	r := rand.New(rand.NewPCG(churnSeed, keySpace))
 	model := map[int]V{}
 	for _, k := range r.Perm(keySpace)[:keySpace*3/4] {
 		tr.set(k, value(k))
 		model[k] = value(k)
 	}
 	ahead := direction(tr)
+	before := func(k, rest int) bool { return tr.order.less(k, rest) }
+	after := func(k, rest int) bool { return tr.order.less(rest, k) }
 	heights := map[int]bool{}
 	var clone tree[int, V, O]
 	var cloned map[int]V
+	got := make([]outcome[V], 0, checkEvery)
+	want := make([]outcome[V], 0, checkEvery)
+	from := 0
 	for op := range operations {
 		if op > 0 && op%(2*phase) == 0 {
 			tr.reset()
@@ -294,43 +400,41 @@ func churn[V comparable, O order[int]](t *testing.T, tr *tree[int, V, O], value 
 		if op/phase%2 == 1 {
 			sets = 20
 		}
+		was, present := model[k]
 		switch n := r.IntN(100); {
 		case n < sets:
 			old, ok := tr.set(k, value(op))
-			if want, present := model[k]; ok != present || old != want {
-				t.Fatalf("operation %d: set(%d) returned %v, %t and not %v, %t", op, k, old, ok, want, present)
-			}
+			got = append(got, outcome[V]{value: old, present: ok})
+			want = append(want, outcome[V]{value: was, present: present})
 			model[k] = value(op)
 		case n < sets+6:
 			tr.update(k, func(old V, exists bool) V {
-				if want, present := model[k]; exists != present || old != want {
-					t.Fatalf("operation %d: update(%d) passed %v, %t and not %v, %t", op, k, old, exists, want, present)
-				}
+				got = append(got, outcome[V]{value: old, present: exists})
+
 				return value(op)
 			})
+			want = append(want, outcome[V]{value: was, present: present})
 			model[k] = value(op)
 		case n < 92:
 			old, ok := tr.delete(k)
-			if want, present := model[k]; ok != present || old != want {
-				t.Fatalf("operation %d: delete(%d) returned %v, %t and not %v, %t", op, k, old, ok, want, present)
-			}
+			got = append(got, outcome[V]{value: old, present: ok})
+			want = append(want, outcome[V]{value: was, present: present})
 			delete(model, k)
 		case n < 96:
 			lo, hi := k, k+ahead*r.IntN(9)
-			removed := tr.deleteRange(lo, hi)
+			got = append(got, outcome[V]{count: tr.deleteRange(lo, hi)})
+			removed := 0
 			for key := lo; key != hi; key += ahead {
 				if _, ok := model[key]; ok {
 					delete(model, key)
-					removed--
+					removed++
 				}
 			}
-			if removed != 0 {
-				t.Fatalf("operation %d: deleteRange(%d, %d) miscounted by %d", op, lo, hi, removed)
-			}
+			want = append(want, outcome[V]{count: removed})
 		case n < 98:
-			pop(t, op, model, tr.popMin, tr.min, func(k, rest int) bool { return tr.order.less(k, rest) })
+			got, want = pop(t, got, want, model, tr.popMin, tr.min, before)
 		default:
-			pop(t, op, model, tr.popMax, tr.max, func(k, rest int) bool { return tr.order.less(rest, k) })
+			got, want = pop(t, got, want, model, tr.popMax, tr.max, after)
 		}
 		if op%cloneEvery == 0 {
 			if cloned != nil {
@@ -339,84 +443,41 @@ func churn[V comparable, O order[int]](t *testing.T, tr *tree[int, V, O], value 
 			clone, cloned = tr.clone(), maps.Clone(model)
 		}
 		if op%checkEvery == 0 {
+			predicted := "the operations from " + strconv.Itoa(from) + " on must return what the model predicts"
+			assert.Equal(t, got, want, predicted)
+			got, want, from = got[:0], want[:0], op+1
 			requireModel(t, tr, model)
 			_, levels := sizes(tr)
 			heights[len(levels)] = true
 		}
 	}
+	predicted := "the operations from " + strconv.Itoa(from) + " on must return what the model predicts"
+	assert.Equal(t, got, want, predicted)
 	requireModel(t, tr, model)
-	testkit.True(t, heights[1] && heights[2], "the tree must have had one level of internal nodes and two")
+	expect.True(t, heights[1], "the tree must have had one level of internal nodes")
+	expect.True(t, heights[2], "the tree must have had two levels of internal nodes")
 }
 
-// pop calls remove, which is popMin or popMax of a tree, and removes the
-// key k that it returns from model. It fails the test unless the item was
-// in model, and outside(k, rest) holds for the key rest that peek, min or
-// max of the tree, then returns.
-func pop[V comparable](t *testing.T, op int, model map[int]V,
+// pop calls remove, which is popMin or popMax of a tree, and removes the key
+// k that it returns from model. It appends what remove returned to got and
+// the item of k in model to want, or for an empty tree whether model has an
+// item. It fails the test unless outside(k, rest) is true for the key rest
+// that peek, min or max of the tree, then returns. It returns got and want.
+func pop[V comparable](tb assert.TB, got, want []outcome[V], model map[int]V,
 	remove, peek func() (int, V, bool), outside func(k, rest int) bool,
-) {
-	t.Helper()
+) ([]outcome[V], []outcome[V]) {
+	tb.Helper()
 	k, v, ok := remove()
 	if !ok {
-		if len(model) != 0 {
-			t.Fatalf("operation %d: a pop found no key in a tree of %d", op, len(model))
-		}
-
-		return
+		return append(got, outcome[V]{}), append(want, outcome[V]{present: len(model) != 0})
 	}
-	if want, present := model[k]; !present || v != want {
-		t.Fatalf("operation %d: a pop returned %d, %v, which the tree did not hold", op, k, v)
-	}
+	was, present := model[k]
 	delete(model, k)
-	if rest, _, ok := peek(); ok && !outside(k, rest) {
-		t.Fatalf("operation %d: a pop removed %d, and the tree still holds %d beyond it", op, k, rest)
+	if rest, _, more := peek(); more {
+		assert.True(tb, outside(k, rest), "a pop must remove the key before every key of the tree")
 	}
-}
 
-// replay applies the operations that ops encodes to tr and to a Go map,
-// and fails the test when tr breaks an invariant after an operation or
-// differs from the map at the end.
-func replay[O order[int]](t *testing.T, tr *tree[int, int, O], ops []byte) {
-	t.Helper()
-	model := map[int]int{}
-	ahead := direction(tr)
-	for i := 0; i+2 < len(ops); i += 3 {
-		k := int(ops[i+1])<<8 | int(ops[i+2])
-		n := int(ops[i]) / 7
-		switch ops[i] % 7 {
-		case 0:
-			tr.set(k, i)
-			model[k] = i
-		case 1:
-			tr.delete(k)
-			delete(model, k)
-		case 2:
-			tr.deleteRange(k, k+ahead*n)
-			for key := k; key != k+ahead*n; key += ahead {
-				delete(model, key)
-			}
-		case 3:
-			for j := range 8 * n {
-				tr.set(k+ahead*j, i)
-				model[k+ahead*j] = i
-			}
-		case 4:
-			if k, _, ok := tr.popMin(); ok {
-				delete(model, k)
-			}
-		case 5:
-			if k, _, ok := tr.popMax(); ok {
-				delete(model, k)
-			}
-		default:
-			tr.reset()
-			clear(model)
-		}
-		if err := check(tr); err != nil {
-			t.Fatalf("operation %d: %v", i/3, err)
-		}
-	}
-	requireModel(t, tr, model)
+	return append(got, outcome[V]{value: v, present: true}), append(want, outcome[V]{value: was, present: present})
 }
 
 // direction returns 1 when the order of tr is ascending and -1 when it is
@@ -431,19 +492,131 @@ func direction[V any, O order[int]](tr *tree[int, V, O]) int {
 
 // requireModel fails the test unless tr keeps its invariants and yields
 // exactly the items of model, in its order.
-func requireModel[V comparable, O order[int]](tb testing.TB, tr *tree[int, V, O], model map[int]V) {
+func requireModel[V comparable, O order[int]](tb assert.TB, tr *tree[int, V, O], model map[int]V) {
 	tb.Helper()
-	requireValid(tb, tr)
-	n, match := 0, true
-	var prev int
+	assert.NoError(tb, check(tr), "the tree must keep its invariants")
+	var keys []int
+	items := make(map[int]V, len(model))
 	for k, v := range tr.walk {
-		want, ok := model[k]
-		match = match && ok && v == want && (n == 0 || tr.order.less(prev, k))
-		prev = k
-		n++
+		keys = append(keys, k)
+		items[k] = v
 	}
-	testkit.True(tb, match, "the tree must yield the items of its model in order")
-	testkit.Equal(tb, n, len(model), "the tree must hold as many items as its model")
+	assert.Pairwise(tb, keys, tr.order.less, "the tree must yield its keys in its order")
+	assert.Equal(tb, items, model, "the tree must yield the items of its model")
+}
+
+// writeSteps runs the steps of a machine of writes over the tree of a Map
+// and over the tree of a MapFunc in reverse order, each with a Go map as its
+// model. Every step writes to both trees. A clone step keeps a clone of
+// each tree with a copy of its model, which every later step checks. After
+// each step both trees must keep their invariants and the items of their
+// models.
+func writeSteps(c *prop.Case) {
+	asc := mirror[natural[int]]{tr: &ints{}, model: map[int]int{}, ahead: 1}
+	desc := mirror[custom[int]]{
+		tr:    &tree[int, int, custom[int]]{order: func(a, b int) int { return cmp.Compare(b, a) }},
+		model: map[int]int{},
+		ahead: -1,
+	}
+
+	// value is the value of the latest write, so every write stores a value
+	// of its own.
+	value := 0
+	key := func(c *prop.Case, _ struct{}) any { return c.Draw(prop.Integer(0, writeKeys-1), "key") }
+	span := func(c *prop.Case, _ struct{}) any {
+		return [2]int{c.Draw(prop.Integer(0, writeKeys-1), "key"), c.Draw(prop.Integer(0, writeSpan), "count")}
+	}
+
+	stateful.Steps(c, stateful.Machine[struct{}]{
+		Actions: []stateful.Action[struct{}]{
+			{
+				Name:  "set",
+				Input: key,
+				Run: func(c *prop.Case, _ int, in any) {
+					value++
+					asc.set(c, in.(int), value)
+					desc.set(c, in.(int), value)
+				},
+			},
+			{
+				Name:  "update",
+				Input: key,
+				Run: func(c *prop.Case, _ int, in any) {
+					value++
+					asc.update(c, in.(int), value)
+					desc.update(c, in.(int), value)
+				},
+			},
+			{
+				Name:  "delete",
+				Input: key,
+				Run: func(c *prop.Case, _ int, in any) {
+					asc.delete(c, in.(int))
+					desc.delete(c, in.(int))
+				},
+			},
+			{
+				Name:  "deleteRange",
+				Input: span,
+				Run: func(c *prop.Case, _ int, in any) {
+					s := in.([2]int)
+					asc.deleteRange(c, s[0], s[1])
+					desc.deleteRange(c, s[0], s[1])
+				},
+			},
+			{
+				Name:   "fill",
+				Weight: 2,
+				Input:  span,
+				Run: func(c *prop.Case, _ int, in any) {
+					s := in.([2]int)
+					value++
+					for j := range 8 * s[1] {
+						asc.set(c, s[0]+asc.ahead*j, value)
+						desc.set(c, s[0]+desc.ahead*j, value)
+					}
+				},
+			},
+			{
+				Name: "popMin",
+				Run: func(c *prop.Case, _ int, _ any) {
+					asc.pop(c, asc.tr.popMin, asc.tr.min, func(k, rest int) bool { return k < rest })
+					desc.pop(c, desc.tr.popMin, desc.tr.min, func(k, rest int) bool { return k > rest })
+				},
+			},
+			{
+				Name: "popMax",
+				Run: func(c *prop.Case, _ int, _ any) {
+					asc.pop(c, asc.tr.popMax, asc.tr.max, func(k, rest int) bool { return k > rest })
+					desc.pop(c, desc.tr.popMax, desc.tr.max, func(k, rest int) bool { return k < rest })
+				},
+			},
+			{
+				Name: "reset",
+				Run: func(*prop.Case, int, any) {
+					asc.tr.reset()
+					clear(asc.model)
+					desc.tr.reset()
+					clear(desc.model)
+				},
+			},
+			{
+				Name: "clone",
+				Run: func(*prop.Case, int, any) {
+					asc.clone, asc.cloned = asc.tr.clone(), maps.Clone(asc.model)
+					desc.clone, desc.cloned = desc.tr.clone(), maps.Clone(desc.model)
+				},
+			},
+		},
+		Invariant: func(c *prop.Case, _ struct{}) {
+			requireModel(c, asc.tr, asc.model)
+			requireModel(c, desc.tr, desc.model)
+			if asc.cloned != nil {
+				requireModel(c, &asc.clone, asc.cloned)
+				requireModel(c, &desc.clone, desc.cloned)
+			}
+		},
+	})
 }
 
 // TestTree is in package btree because node IDs and shared nodes are
@@ -459,21 +632,33 @@ func TestTree(t *testing.T) {
 			tr := build(leavesOf(minItems, minItems))
 			before := tr.owner
 			c := tr.clone()
-			testkit.True(t, tr.owner != before && c.owner != before && tr.owner != c.owner,
-				"the tree and its clone must have distinct new IDs")
+			expect.NotEqual(t, tr.owner, before, "the tree must have a new ID")
+			expect.NotEqual(t, c.owner, before, "the clone must have a new ID")
+			expect.NotEqual(t, c.owner, tr.owner, "the tree and its clone must have distinct IDs")
 		})
 
-		t.Run("shares every node and the order, and keeps the free lists with the tree", func(t *testing.T) {
+		t.Run("shares every node with the tree", func(t *testing.T) {
 			t.Parallel()
-			tr := &tree[int, int, custom[int]]{order: reverse}
-			for k := range maxItems + 1 {
-				tr.set(k, -k)
-			}
+			tr := build(leavesOf(minItems, minItems))
+			c := tr.clone()
+			expect.Equal(t, c.root, tr.root, "the clone must share the root", expect.ByIdentity())
+			expect.Equal(t, c.len, tr.len, "the clone must have the length of the tree")
+		})
+
+		t.Run("keeps the order of the tree", func(t *testing.T) {
+			t.Parallel()
+			tr := &tree[int, int, custom[int]]{order: func(a, b int) int { return cmp.Compare(b, a) }}
+			c := tr.clone()
+			assert.True(t, c.order.less(2, 1), "the clone must have the order of the tree")
+		})
+
+		t.Run("leaves the free lists with the tree", func(t *testing.T) {
+			t.Parallel()
+			tr := build(leavesOf(minItems, minItems))
 			tr.releaseLeaf(tr.newLeaf())
 			c := tr.clone()
-			testkit.True(t, c.root == tr.root && c.len == tr.len, "the clone must share the root")
-			testkit.True(t, c.order.less(2, 1), "the clone must have the order of the tree")
-			testkit.True(t, len(tr.freeLeaves) == 1 && len(c.freeLeaves) == 0, "the free list must stay with the tree")
+			expect.Length(t, tr.freeLeaves, 1, "the tree must keep its free leaf")
+			expect.Empty(t, c.freeLeaves, "the clone must start without free nodes")
 		})
 
 		t.Run("makes a write copy each shared node on its path once", func(t *testing.T) {
@@ -482,15 +667,19 @@ func TestTree(t *testing.T) {
 			root, first, second := tr.root, tr.root.leaves[0], tr.root.leaves[1]
 			c := tr.clone()
 			tr.set(1, -1)
-			testkit.True(t, tr.root != root && tr.root.leaves[0] != first, "the first write must copy its path")
-			testkit.True(t, c.root == root && root.leaves[0] == first && first.n == minItems,
-				"the clone must keep the old nodes unchanged")
+			expect.NotEqual(t, tr.root, root, "the first write must copy the root", expect.ByIdentity())
+			expect.NotEqual(t, tr.root.leaves[0], first, "the first write must copy the leaf", expect.ByIdentity())
+			expect.Equal(t, c.root, root, "the clone must keep the old root", expect.ByIdentity())
+			expect.Equal(t, root.leaves[0], first, "the old root must keep the old leaf", expect.ByIdentity())
+			expect.Equal(t, first.n, minItems, "the old leaf must keep its items")
 			copied := tr.root.leaves[0]
 			tr.set(3, -3)
-			testkit.True(t, tr.root.leaves[0] == copied, "the second write must change the copy in place")
-			testkit.True(t, tr.root.leaves[1] == second, "a leaf off the path must stay shared")
-			requireValid(t, tr)
-			requireValid(t, &c)
+			expect.Equal(t, tr.root.leaves[0], copied, "the second write must change the copy in place",
+				expect.ByIdentity())
+			expect.Equal(t, tr.root.leaves[1], second, "the tree must share a leaf off the path with the clone",
+				expect.ByIdentity())
+			expect.NoError(t, check(tr), "the tree must keep its invariants")
+			expect.NoError(t, check(&c), "the clone must keep its invariants")
 		})
 	})
 }
@@ -506,6 +695,7 @@ func TestTreeModel(t *testing.T) {
 	t.Run("the tree of a MapFunc in reverse order matches a Go map through a million random operations",
 		func(t *testing.T) {
 			t.Parallel()
+			reverse := func(a, b int) int { return cmp.Compare(b, a) }
 			churn(t, &tree[int, int, custom[int]]{order: reverse}, func(op int) int { return op })
 		})
 
@@ -513,20 +703,16 @@ func TestTreeModel(t *testing.T) {
 		t.Parallel()
 		churn(t, &tree[int, struct{}, natural[int]]{}, func(int) struct{} { return struct{}{} })
 	})
+
+	t.Run("the trees of a Map and a MapFunc keep their invariants under any sequence of writes",
+		func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, writeContract, writeSteps)
+		})
 }
 
-// FuzzTreeModel applies the operations that its input encodes to the tree
-// of a Map and to the tree of a MapFunc in reverse order. It checks the
-// invariants of each tree after every operation, and its items against a
-// Go map at the end. An operation is 3 bytes: the operation and its count,
-// and a key of 2 bytes.
+// FuzzTreeModel checks the machine of writeSteps on the sequences of writes
+// that a fuzzer finds.
 func FuzzTreeModel(f *testing.F) {
-	f.Add([]byte{
-		255, 0, 0, 255, 1, 80, 255, 2, 160, 255, 3, 240, 240, 0, 100, 1, 0, 50, 0, 0, 51, 4, 0, 0, 5, 0, 0,
-		6, 0, 0, 255, 0, 0,
-	})
-	f.Fuzz(func(t *testing.T, ops []byte) {
-		replay(t, &ints{}, ops)
-		replay(t, &tree[int, int, custom[int]]{order: reverse}, ops)
-	})
+	prop.Fuzz(f, writeContract, writeSteps)
 }

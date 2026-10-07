@@ -7,7 +7,8 @@ import (
 	"slices"
 	"testing"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/expect"
 )
 
 // TestInsert is in package btree because the splits that it pins change
@@ -43,16 +44,16 @@ func TestInsert(t *testing.T) {
 			"splits a full root leaf into halves of splitAt items under a new root": {
 				shape{n: full}, 1, []int{splitAt, splitAt}, [][]int{{1}},
 			},
-			"puts the key into the right half when it lands at index splitAt": {
+			"puts the key into the right half when its index is splitAt": {
 				shape{n: full}, 2*splitAt - 1, []int{splitAt, splitAt}, [][]int{{1}},
 			},
-			"keeps a full root leaf and starts a leaf when the key appends to it": {
+			"starts a leaf beside a full root leaf when the key appends to it": {
 				shape{n: full}, 2 * full, []int{full, 1}, [][]int{{1}},
 			},
 			"splits a full leaf into halves when the key appends to it away from the right edge": {
 				leavesOf(full, lean), 2*full - 1, []int{splitAt, splitAt, lean}, [][]int{{2}},
 			},
-			"keeps a full last leaf and starts a leaf when the key appends to it": {
+			"starts a leaf after a full last leaf when the key appends to it": {
 				leavesOf(lean, full), 2 * (lean + full), []int{lean, full, 1}, [][]int{{2}},
 			},
 			"splits a full internal node below its middle into splitAt and minItems separators": {
@@ -81,16 +82,16 @@ func TestInsert(t *testing.T) {
 				want := append(keysOf(tr), tc.key)
 				slices.Sort(want)
 				_, present := tr.set(tc.key, -tc.key)
-				testkit.False(t, present, "the key must be new")
-				requireValid(t, tr)
+				assert.False(t, present, "the key must be new")
+				assert.NoError(t, check(tr), "the tree must keep its invariants")
 				leaves, levels := sizes(tr)
-				testkit.Equal(t, leaves, tc.leaves, "the insert must split the leaf as documented")
-				testkit.Equal(t, levels, tc.levels, "the insert must split the internal nodes as documented")
-				testkit.Equal(t, keysOf(tr), want, "the tree must hold every key in order")
+				expect.Equal(t, leaves, tc.leaves, "the insert must split the leaf as documented")
+				expect.Equal(t, levels, tc.levels, "the insert must split the internal nodes as documented")
+				expect.Equal(t, keysOf(tr), want, "the tree must contain every key in order")
 			})
 		}
 
-		t.Run("splits a full upper internal node and makes a root above internal nodes", func(t *testing.T) {
+		t.Run("splits a full root above internal nodes under a new root", func(t *testing.T) {
 			t.Parallel()
 			// Every bottom node has splitAt lean leaves, but the one at
 			// index 10, which is full and ends with a full leaf. The root
@@ -100,36 +101,44 @@ func TestInsert(t *testing.T) {
 			tr := build(nodesOf(bottoms...))
 			key := 2*lean*splitAt*10 + 2*lean*maxItems + 1
 			tr.set(key, -key)
-			requireValid(t, tr)
+			assert.NoError(t, check(tr), "the tree must keep its invariants")
 			_, levels := sizes(tr)
-			testkit.Equal(t, levels[:2], [][]int{{1}, {splitAt, minItems}}, "the root must split under a new root")
-			testkit.True(t, tr.root.inners != nil, "the new root must be above internal nodes")
+			expect.Equal(t, levels[:2], [][]int{{1}, {splitAt, minItems}}, "the root must split under a new root")
+			expect.NotNil(t, tr.root.inners, "the new root must be above internal nodes")
 		})
 
-		t.Run("leaves every leaf full and every internal node with maxItems-1 separators when keys arrive in order",
-			func(t *testing.T) {
-				t.Parallel()
-				var tr ints
-				for k := range maxItems * maxItems * 3 {
-					tr.set(k, -k)
-				}
-				requireValid(t, &tr)
-				leaves, levels := sizes(&tr)
-				testkit.Equal(t, leaves, slices.Repeat([]int{maxItems}, maxItems*3), "every leaf must be full")
-				testkit.Equal(t, levels, [][]int{{2}, slices.Repeat([]int{maxItems - 1}, 3)},
-					"an internal node that splits at the right edge must keep maxItems-1 separators")
-			})
+		t.Run("leaves every leaf full when keys arrive in order", func(t *testing.T) {
+			t.Parallel()
+			var tr ints
+			for k := range maxItems * maxItems * 3 {
+				tr.set(k, -k)
+			}
+			assert.NoError(t, check(&tr), "the tree must keep its invariants")
+			leaves, _ := sizes(&tr)
+			assert.Equal(t, leaves, slices.Repeat([]int{maxItems}, maxItems*3), "every leaf must be full")
+		})
+
+		t.Run("leaves maxItems-1 separators in every internal node when keys arrive in order", func(t *testing.T) {
+			t.Parallel()
+			var tr ints
+			for k := range maxItems * maxItems * 3 {
+				tr.set(k, -k)
+			}
+			_, levels := sizes(&tr)
+			assert.Equal(t, levels, [][]int{{2}, slices.Repeat([]int{maxItems - 1}, 3)},
+				"an internal node that splits at the right edge must keep maxItems-1 separators")
+		})
 	})
 
 	t.Run("set", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("counts one write for a new key and for a present key", func(t *testing.T) {
+		t.Run("counts one write per call", func(t *testing.T) {
 			t.Parallel()
 			tr := build(leavesOf(minItems, minItems))
 			tr.set(1, -1)
 			tr.set(0, 1)
-			testkit.Equal(t, tr.writes, uint64(2), "each set must add one to the count")
+			assert.Equal(t, tr.writes, uint64(2), "each set must add one to the count")
 		})
 	})
 
@@ -140,7 +149,7 @@ func TestInsert(t *testing.T) {
 			t.Parallel()
 			tr := build(leavesOf(minItems, minItems))
 			tr.update(0, func(v int, _ bool) int { return v })
-			testkit.Equal(t, tr.writes, uint64(1), "update must add one to the count")
+			assert.Equal(t, tr.writes, uint64(1), "update must add one to the count")
 		})
 
 		t.Run("stores the result with a second descent after fn writes", func(t *testing.T) {
@@ -150,10 +159,21 @@ func TestInsert(t *testing.T) {
 				tr.set(3, -3)
 				return -1
 			})
-			testkit.Equal(t, tr.writes, uint64(3), "update, the set in fn and the second descent must count")
+			assert.NoError(t, check(tr), "the tree must keep its invariants")
+			expect.Equal(t, tr.writes, uint64(3), "update, the set in fn and the second descent must count")
 			v, ok := tr.get(1)
-			testkit.True(t, ok && v == -1, "the second descent must store the result")
-			requireValid(t, tr)
+			assert.True(t, ok, "the second descent must store the key")
+			expect.Equal(t, v, -1, "the second descent must store the result")
+		})
+
+		t.Run("returns the result of fn after fn writes", func(t *testing.T) {
+			t.Parallel()
+			tr := build(leavesOf(minItems, minItems))
+			got := tr.update(1, func(int, bool) int {
+				tr.set(3, -3)
+				return -1
+			})
+			assert.Equal(t, got, -1, "update must return the result of fn")
 		})
 	})
 }

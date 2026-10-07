@@ -7,7 +7,8 @@ import (
 	"slices"
 	"testing"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/expect"
 )
 
 // TestDelete is in package btree because the refills and merges that it
@@ -94,7 +95,7 @@ func TestDelete(t *testing.T) {
 				slices.Concat([]int{merged}, slices.Repeat([]int{lean}, 3*spare-2)),
 				[][]int{{1}, {2 * minItems, minItems}},
 			},
-			"merges an underfull internal node into its left sibling, which becomes the root": {
+			"merges the only two internal nodes into a new root": {
 				nodesOf(leanBottom, leanBottom),
 				2 * lean * spare,
 				slices.Concat(slices.Repeat([]int{lean}, spare), []int{merged}, slices.Repeat([]int{lean}, spare-2)),
@@ -109,12 +110,13 @@ func TestDelete(t *testing.T) {
 					want = nil
 				}
 				v, present := tr.delete(tc.key)
-				testkit.True(t, present && v == -tc.key, "delete must return the value of the key")
-				requireValid(t, tr)
+				assert.True(t, present, "delete must find the key")
+				assert.Equal(t, v, -tc.key, "delete must return the value of the key")
+				assert.NoError(t, check(tr), "the tree must keep its invariants")
 				leaves, levels := sizes(tr)
-				testkit.Equal(t, leaves, tc.leaves, "the delete must refill or merge the leaves as documented")
-				testkit.Equal(t, levels, tc.levels, "the delete must refill or merge the internal nodes as documented")
-				testkit.Equal(t, keysOf(tr), want, "the tree must hold the other keys in order")
+				expect.Equal(t, leaves, tc.leaves, "the delete must refill or merge the leaves as documented")
+				expect.Equal(t, levels, tc.levels, "the delete must refill or merge the internal nodes as documented")
+				expect.Equal(t, keysOf(tr), want, "the tree must contain the other keys in order")
 			})
 		}
 
@@ -129,7 +131,7 @@ func TestDelete(t *testing.T) {
 			"moves the last internal node of the left upper node into an underfull one": {
 				[]int{spare + 1, spare}, [][]int{{1}, {minItems, minItems}},
 			},
-			"merges an underfull upper node into its left sibling, which becomes the root": {
+			"merges the only two upper nodes into a new root": {
 				[]int{spare, spare}, [][]int{{2 * minItems}},
 			},
 		} {
@@ -140,15 +142,15 @@ func TestDelete(t *testing.T) {
 				key := 2 * lean * spare * tc.uppers[0]
 				want := slices.DeleteFunc(keysOf(tr), func(k int) bool { return k == key })
 				tr.delete(key)
-				requireValid(t, tr)
+				assert.NoError(t, check(tr), "the tree must keep its invariants")
 				_, levels := sizes(tr)
-				testkit.Equal(
+				assert.Equal(
 					t,
 					levels[:len(tc.levels)],
 					tc.levels,
 					"the upper levels must refill or merge as documented",
 				)
-				testkit.Equal(t, keysOf(tr), want, "the tree must hold the other keys in order")
+				assert.Equal(t, keysOf(tr), want, "the tree must contain the other keys in order")
 			})
 		}
 
@@ -158,15 +160,15 @@ func TestDelete(t *testing.T) {
 				nodesOf(slices.Repeat([]shape{leanBottom}, spare+1)...)))
 			want := keysOf(tr)[1:]
 			tr.delete(0)
-			requireValid(t, tr)
+			assert.NoError(t, check(tr), "the tree must keep its invariants")
 			_, levels := sizes(tr)
-			testkit.Equal(
+			assert.Equal(
 				t,
 				levels[:2],
 				[][]int{{1}, {minItems, minItems}},
 				"the upper level must refill as documented",
 			)
-			testkit.Equal(t, keysOf(tr), want, "the tree must hold the other keys in order")
+			assert.Equal(t, keysOf(tr), want, "the tree must contain the other keys in order")
 		})
 
 		t.Run("puts the leaf that a merge frees on the free list", func(t *testing.T) {
@@ -174,8 +176,18 @@ func TestDelete(t *testing.T) {
 			tr := build(leavesOf(lean, lean, lean))
 			freed := tr.root.leaves[1]
 			tr.delete(0)
-			testkit.True(t, len(tr.freeLeaves) == 1 && tr.freeLeaves[0] == freed, "the merged leaf must be free")
-			requireValid(t, tr)
+			assert.NoError(t, check(tr), "the tree must keep its invariants")
+			assert.Length(t, tr.freeLeaves, 1, "the merge must free one leaf")
+			assert.Equal(t, tr.freeLeaves[0], freed, "the free leaf must be the merged one", assert.ByIdentity())
+		})
+
+		t.Run("puts a root leaf that the removal empties on the free list", func(t *testing.T) {
+			t.Parallel()
+			tr := build(shape{n: 1})
+			root := tr.leaf
+			tr.delete(0)
+			assert.Length(t, tr.freeLeaves, 1, "the removal must free one leaf")
+			assert.Equal(t, tr.freeLeaves[0], root, "the free leaf must be the empty root leaf", assert.ByIdentity())
 		})
 
 		t.Run("puts the root that a merge frees on the free list", func(t *testing.T) {
@@ -183,8 +195,38 @@ func TestDelete(t *testing.T) {
 			tr := build(leavesOf(lean, lean))
 			root := tr.root
 			tr.delete(0)
-			testkit.True(t, len(tr.freeLeafParents) == 1 && tr.freeLeafParents[0] == root, "the old root must be free")
-			requireValid(t, tr)
+			assert.NoError(t, check(tr), "the tree must keep its invariants")
+			assert.Length(t, tr.freeLeafParents, 1, "the merge must free one parent of leaves")
+			assert.Equal(t, tr.freeLeafParents[0], root, "the free node must be the old root", assert.ByIdentity())
+		})
+
+		t.Run("puts the internal node that a merge frees on the free list", func(t *testing.T) {
+			t.Parallel()
+			tr := build(nodesOf(leanBottom, leanBottom, leanBottom))
+			freed := tr.root.inners[1]
+			tr.delete(0)
+			assert.NoError(t, check(tr), "the tree must keep its invariants")
+			assert.Length(t, tr.freeLeafParents, 1, "the merge must free one parent of leaves")
+			assert.Equal(t, tr.freeLeafParents[0], freed, "the free node must be the merged one", assert.ByIdentity())
+		})
+	})
+
+	t.Run("deleteRange", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("counts one write", func(t *testing.T) {
+			t.Parallel()
+			tr := build(leavesOf(lean, lean))
+			tr.deleteRange(0, 10)
+			assert.Equal(t, tr.writes, uint64(1), "deleteRange must add one to the count")
+		})
+
+		t.Run("copies no node of a clone for a range that is empty", func(t *testing.T) {
+			t.Parallel()
+			tr := build(leavesOf(lean, lean))
+			c := tr.clone()
+			assert.Equal(t, tr.deleteRange(10, 10), 0, "an empty range must remove nothing")
+			assert.Equal(t, tr.root, c.root, "the tree must share its root with the clone", assert.ByIdentity())
 		})
 	})
 
@@ -201,53 +243,89 @@ func TestDelete(t *testing.T) {
 			t.Parallel()
 			tr := build(leavesOf(lean, lean))
 			tr.clear()
-			testkit.Equal(t, tr.writes, uint64(1), "clear must add one to the count")
+			assert.Equal(t, tr.writes, uint64(1), "clear must add one to the count")
 		})
 
-		t.Run("keeps at most maxFree free nodes of each kind and zeroes the slots of the others", func(t *testing.T) {
+		t.Run("keeps at most maxFree free nodes of each kind", func(t *testing.T) {
+			t.Parallel()
+			var tr ints
+			for range maxFree + 1 {
+				tr.freeLeaves = append(tr.freeLeaves, &leaf[int, int]{})
+				tr.freeLeafParents = append(tr.freeLeafParents,
+					&inner[int, int]{leaves: new([maxChildren]*leaf[int, int])})
+				tr.freeInnerParents = append(tr.freeInnerParents,
+					&inner[int, int]{inners: new([maxChildren]*inner[int, int])})
+			}
+			tr.clear()
+			expect.Length(t, tr.freeLeaves, maxFree, "clear must keep maxFree leaves")
+			expect.Length(t, tr.freeLeafParents, maxFree, "clear must keep maxFree parents of leaves")
+			expect.Length(t, tr.freeInnerParents, maxFree, "clear must keep maxFree parents of internal nodes")
+		})
+
+		t.Run("keeps a free list shorter than maxFree whole", func(t *testing.T) {
+			t.Parallel()
+			tr := threeLevels()
+			tr.reset()
+			tr.clear()
+			expect.Length(t, tr.freeLeafParents, 3, "clear must keep the three parents of leaves")
+			expect.Length(t, tr.freeInnerParents, 1, "clear must keep the root")
+			expect.NoError(t, check(tr), "the tree must keep its invariants")
+		})
+
+		t.Run("zeroes the slots of the free leaves that it drops", func(t *testing.T) {
 			t.Parallel()
 			tr := threeLevels()
 			tr.reset()
 			leaves := tr.freeLeaves
-			testkit.Len(t, leaves, 3*spare, "reset must have kept every leaf")
 			tr.clear()
-			testkit.Len(t, tr.freeLeaves, maxFree, "clear must keep maxFree leaves")
-			testkit.True(t, len(tr.freeLeafParents) == 3 && len(tr.freeInnerParents) == 1,
-				"clear must keep a shorter free list whole")
-			for _, l := range leaves[maxFree:] {
-				testkit.True(t, l == nil, "clear must zero the slot of a leaf that it drops")
-			}
-			requireValid(t, tr)
+			assert.Equal(t, leaves[maxFree:], make([]*leaf[int, int], 3*spare-maxFree),
+				"clear must zero the slot of every leaf that it drops")
 		})
 	})
 
 	t.Run("reset", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("counts one write and leaves an empty tree", func(t *testing.T) {
+		t.Run("counts one write", func(t *testing.T) {
 			t.Parallel()
 			tr := threeLevels()
 			tr.reset()
-			testkit.Equal(t, tr.writes, uint64(1), "reset must add one to the count")
-			testkit.True(t, tr.root == nil && tr.leaf == nil && tr.len == 0, "reset must remove every item")
+			expect.Equal(t, tr.writes, uint64(1), "reset must add one to the count")
 			var empty ints
 			empty.reset()
-			testkit.True(t, empty.writes == 1 && len(empty.freeLeaves) == 0, "reset of an empty tree must keep nothing")
+			expect.Equal(t, empty.writes, uint64(1), "reset of an empty tree must add one to the count")
 		})
 
-		t.Run("keeps every node on the free list of its kind, zeroed", func(t *testing.T) {
+		t.Run("leaves an empty tree", func(t *testing.T) {
 			t.Parallel()
 			tr := threeLevels()
 			tr.reset()
-			testkit.Len(t, tr.freeLeaves, 3*spare, "reset must keep every leaf")
-			testkit.Len(t, tr.freeLeafParents, 3, "reset must keep every parent of leaves")
-			testkit.Len(t, tr.freeInnerParents, 1, "reset must keep the root")
-			requireValid(t, tr)
-			root := build(shape{n: 3})
-			leaf := root.leaf
-			root.reset()
-			testkit.True(t, len(root.freeLeaves) == 1 && root.freeLeaves[0] == leaf, "reset must keep a root leaf")
-			requireValid(t, root)
+			expect.Nil(t, tr.root, "reset must remove the root")
+			expect.Nil(t, tr.leaf, "reset must leave no root leaf")
+			expect.Equal(t, tr.len, 0, "reset must remove every item")
+			var empty ints
+			empty.reset()
+			expect.Empty(t, empty.freeLeaves, "reset of an empty tree must keep nothing")
+		})
+
+		t.Run("keeps every zeroed node on the free list of its kind", func(t *testing.T) {
+			t.Parallel()
+			tr := threeLevels()
+			tr.reset()
+			expect.Length(t, tr.freeLeaves, 3*spare, "reset must keep every leaf")
+			expect.Length(t, tr.freeLeafParents, 3, "reset must keep every parent of leaves")
+			expect.Length(t, tr.freeInnerParents, 1, "reset must keep the root")
+			expect.NoError(t, check(tr), "every kept node must be zeroed")
+		})
+
+		t.Run("keeps a root leaf on the free list", func(t *testing.T) {
+			t.Parallel()
+			tr := build(shape{n: 3})
+			leaf := tr.leaf
+			tr.reset()
+			assert.Length(t, tr.freeLeaves, 1, "reset must keep the root leaf")
+			expect.Equal(t, tr.freeLeaves[0], leaf, "the kept leaf must be the root leaf", expect.ByIdentity())
+			expect.NoError(t, check(tr), "the kept leaf must be zeroed")
 		})
 
 		t.Run("keeps only the nodes that the tree wrote after a clone", func(t *testing.T) {
@@ -257,25 +335,36 @@ func TestDelete(t *testing.T) {
 			c := tr.clone()
 			tr.set(1, -1)
 			tr.reset()
-			testkit.True(t, len(tr.freeLeaves) == 1 && len(tr.freeLeafParents) == 1 && len(tr.freeInnerParents) == 1,
-				"reset must keep the three nodes of the path that the write copied")
-			requireValid(t, &c)
-			testkit.Equal(t, keysOf(&c), want, "the clone must keep its items")
+			expect.Length(t, tr.freeLeaves, 1, "reset must keep the leaf that the write copied")
+			expect.Length(t, tr.freeLeafParents, 1, "reset must keep the parent of leaves that the write copied")
+			expect.Length(t, tr.freeInnerParents, 1, "reset must keep the root that the write copied")
+			expect.NoError(t, check(&c), "the clone must keep its invariants")
+			expect.Equal(t, keysOf(&c), want, "the clone must keep its items")
 		})
 
-		t.Run("keeps no node right after a clone", func(t *testing.T) {
-			t.Parallel()
-			for _, s := range []shape{nodesOf(leanBottom, leanBottom, leanBottom), {n: 3}} {
-				tr := build(s)
+		for _, tt := range []struct {
+			name string
+			tree shape
+		}{
+			{
+				name: "keeps no node of a tree of internal nodes right after a clone",
+				tree: nodesOf(leanBottom, leanBottom, leanBottom),
+			},
+			{name: "keeps no root leaf right after a clone", tree: shape{n: 3}},
+		} {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				tr := build(tt.tree)
 				want := keysOf(tr)
 				c := tr.clone()
 				tr.reset()
-				testkit.True(t, len(tr.freeLeaves)+len(tr.freeLeafParents)+len(tr.freeInnerParents) == 0,
-					"every node belongs to the clone too")
-				requireValid(t, &c)
-				testkit.Equal(t, keysOf(&c), want, "the clone must keep its items")
-			}
-		})
+				expect.Empty(t, tr.freeLeaves, "every leaf belongs to the clone too")
+				expect.Empty(t, tr.freeLeafParents, "every parent of leaves belongs to the clone too")
+				expect.Empty(t, tr.freeInnerParents, "every parent of internal nodes belongs to the clone too")
+				expect.NoError(t, check(&c), "the clone must keep its invariants")
+				expect.Equal(t, keysOf(&c), want, "the clone must keep its items")
+			})
+		}
 
 		t.Run("gives the kept nodes to the inserts that follow", func(t *testing.T) {
 			t.Parallel()
@@ -293,30 +382,37 @@ func TestDelete(t *testing.T) {
 			for k := range maxItems*maxChildren + 1 {
 				tr.set(k, -k)
 			}
-			testkit.True(t, tr.root.inners != nil, "the refill must have a root over internal nodes")
+			assert.NotNil(t, tr.root.inners, "the refill must have a root over internal nodes")
+			// fresh counts the nodes of the refill that the reset did not keep.
+			fresh := 0
 			var walk func(in *inner[int, int])
 			walk = func(in *inner[int, int]) {
-				testkit.True(t, kept[in], "every internal node of the refill must be a kept one")
+				if !kept[in] {
+					fresh++
+				}
 				if in.leaves != nil {
 					for _, l := range in.leaves[:in.n+1] {
-						testkit.True(t, kept[l], "every leaf of the refill must be a kept one")
+						if !kept[l] {
+							fresh++
+						}
 					}
-				} else {
-					for _, c := range in.inners[:in.n+1] {
-						walk(c)
-					}
+
+					return
+				}
+				for _, c := range in.inners[:in.n+1] {
+					walk(c)
 				}
 			}
 			walk(tr.root)
-			requireValid(t, tr)
+			expect.Equal(t, fresh, 0, "every node of the refill must be a kept one")
+			expect.NoError(t, check(tr), "the tree must keep its invariants")
 		})
 	})
 
 	for name, write := range map[string]func(tr *ints){
-		"delete":      func(tr *ints) { tr.delete(0) },
-		"deleteRange": func(tr *ints) { tr.deleteRange(0, 10) },
-		"popMin":      func(tr *ints) { tr.popMin() },
-		"popMax":      func(tr *ints) { tr.popMax() },
+		"delete": func(tr *ints) { tr.delete(0) },
+		"popMin": func(tr *ints) { tr.popMin() },
+		"popMax": func(tr *ints) { tr.popMax() },
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -325,7 +421,7 @@ func TestDelete(t *testing.T) {
 				t.Parallel()
 				tr := build(leavesOf(lean, lean))
 				write(tr)
-				testkit.Equal(t, tr.writes, uint64(1), name+" must add one to the count")
+				assert.Equal(t, tr.writes, uint64(1), name+" must add one to the count")
 			})
 		})
 	}

@@ -90,10 +90,10 @@ func (t *tree[K, V, O]) delete(key K) (V, bool) {
 // or ends the loop.
 func (t *tree[K, V, O]) deleteRange(lo, hi K) int {
 	t.writes++
-	removed := 0
 	if !t.order.less(lo, hi) {
-		return removed
+		return 0
 	}
+	removed := 0
 	for t.len > 0 {
 		var c cursor[K, V]
 		depth, l, i, _ := t.writePath(&c.path, lo)
@@ -240,8 +240,9 @@ func (t *tree[K, V, O]) keepAll(in *inner[K, V]) {
 // tree refers to no key that it removed. The separator of the first key of
 // l is in the deepest node of path that does not route to its first child.
 // A removal of that key gives the separator the new first key of l. A leaf
-// that the removal empties is the last leaf of its parent. The refill or
-// merge of that leaf replaces or removes its separator.
+// that the removal empties is the last leaf of its parent, and its
+// separator receives the zero key, which the refill or merge of that leaf
+// then replaces or removes.
 func (t *tree[K, V, O]) remove(path []step[K, V], l *leaf[K, V], i int) {
 	l.remove(i)
 	t.len--
@@ -257,7 +258,8 @@ func (t *tree[K, V, O]) remove(path []step[K, V], l *leaf[K, V], i int) {
 	for _, s := range path {
 		s.n.count--
 	}
-	if i == 0 && l.n != 0 {
+	//dokimi:mutate-skip ror-true: for i other than 0 the separator already contains the first key of l
+	if i == 0 {
 		for k := d; k >= 0; k-- {
 			if s := path[k]; s.i > 0 {
 				s.n.keys[s.i-1] = l.keys[0]

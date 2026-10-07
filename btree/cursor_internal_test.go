@@ -7,7 +7,8 @@ import (
 	"slices"
 	"testing"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/expect"
 )
 
 // TestCursor is in package btree because a cursor and its moves are
@@ -51,24 +52,28 @@ func TestCursor(t *testing.T) {
 		t.Run("reports false for an empty tree", func(t *testing.T) {
 			t.Parallel()
 			var c cursor[int, int]
-			testkit.False(t, (&ints{}).first(&c), "an empty tree has no first key")
+			assert.False(t, (&ints{}).first(&c), "an empty tree has no first key")
 		})
 
 		t.Run("moves to the first key of a root leaf with an empty path", func(t *testing.T) {
 			t.Parallel()
 			tr := build(shape{n: 3})
 			c := cursor[int, int]{depth: 5, i: 2}
-			testkit.True(t, tr.first(&c), "the tree has a first key")
-			testkit.True(t, c.leaf == tr.leaf && c.i == 0 && c.depth == 0, "the cursor must be at index 0 of the root")
+			assert.True(t, tr.first(&c), "the tree has a first key")
+			expect.Equal(t, c.leaf, tr.leaf, "the cursor must be at the root leaf", expect.ByIdentity())
+			expect.Equal(t, c.i, 0, "the cursor must be at index 0")
+			expect.Equal(t, c.depth, 0, "the path must be empty")
 		})
 
 		t.Run("moves to the first key of the leftmost leaf with a path through every level", func(t *testing.T) {
 			t.Parallel()
 			tr := varied()
 			var c cursor[int, int]
-			testkit.True(t, tr.first(&c), "the tree has a first key")
-			testkit.True(t, c.leaf == tr.root.inners[0].leaves[0] && c.i == 0, "the cursor must be at the first key")
-			testkit.Equal(t, c.depth, 2, "the path must hold both internal levels")
+			assert.True(t, tr.first(&c), "the tree has a first key")
+			expect.Equal(t, c.leaf, tr.root.inners[0].leaves[0], "the cursor must be at the leftmost leaf",
+				expect.ByIdentity())
+			expect.Equal(t, c.i, 0, "the cursor must be at the first key")
+			expect.Equal(t, c.depth, 2, "the path must contain both internal levels")
 		})
 	})
 
@@ -78,47 +83,47 @@ func TestCursor(t *testing.T) {
 		t.Run("reports false for an empty tree", func(t *testing.T) {
 			t.Parallel()
 			var c cursor[int, int]
-			testkit.False(t, (&ints{}).last(&c), "an empty tree has no last key")
+			assert.False(t, (&ints{}).last(&c), "an empty tree has no last key")
 		})
 
 		t.Run("moves to the last key of a root leaf with an empty path", func(t *testing.T) {
 			t.Parallel()
 			tr := build(shape{n: 3})
 			c := cursor[int, int]{depth: 5}
-			testkit.True(t, tr.last(&c), "the tree has a last key")
-			testkit.True(
-				t,
-				c.leaf == tr.leaf && c.i == 2 && c.depth == 0,
-				"the cursor must be at the last index of the root",
-			)
+			assert.True(t, tr.last(&c), "the tree has a last key")
+			expect.Equal(t, c.leaf, tr.leaf, "the cursor must be at the root leaf", expect.ByIdentity())
+			expect.Equal(t, c.i, 2, "the cursor must be at the last index")
+			expect.Equal(t, c.depth, 0, "the path must be empty")
 		})
 
 		t.Run("moves to the last key of the rightmost leaf with a path through every level", func(t *testing.T) {
 			t.Parallel()
 			tr := varied()
 			var c cursor[int, int]
-			testkit.True(t, tr.last(&c), "the tree has a last key")
-			testkit.True(t, c.leaf == tr.root.inners[2].leaves[1] && c.i == 1, "the cursor must be at the last key")
-			testkit.Equal(t, c.depth, 2, "the path must hold both internal levels")
+			assert.True(t, tr.last(&c), "the tree has a last key")
+			expect.Equal(t, c.leaf, tr.root.inners[2].leaves[1], "the cursor must be at the rightmost leaf",
+				expect.ByIdentity())
+			expect.Equal(t, c.i, 1, "the cursor must be at the last key")
+			expect.Equal(t, c.depth, 2, "the path must contain both internal levels")
 		})
 	})
 
 	t.Run("nextLeaf", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("visits every leaf once in order and then reports false", func(t *testing.T) {
+		t.Run("visits every leaf once in order", func(t *testing.T) {
 			t.Parallel()
 			tr := varied()
 			var c cursor[int, int]
 			tr.first(&c)
 			counts, firsts := []int{c.leaf.n}, []int{c.leaf.keys[0]}
 			for c.nextLeaf() {
-				testkit.Equal(t, c.i, 0, "the cursor must start each leaf at its first item")
+				assert.Equal(t, c.i, 0, "the cursor must start each leaf at its first item")
 				counts, firsts = append(counts, c.leaf.n), append(firsts, c.leaf.keys[0])
 			}
 			leaves, _ := sizes(tr)
-			testkit.Equal(t, counts, leaves, "the cursor must visit the leaves in order")
-			testkit.True(t, slices.IsSorted(firsts) && len(slices.Compact(firsts)) == len(leaves),
+			assert.Equal(t, counts, leaves, "the cursor must visit the leaves in order")
+			assert.Pairwise(t, firsts, func(earlier, later int) bool { return earlier < later },
 				"the cursor must visit each leaf once")
 		})
 
@@ -127,28 +132,28 @@ func TestCursor(t *testing.T) {
 			tr := build(shape{n: 3})
 			var c cursor[int, int]
 			tr.first(&c)
-			testkit.False(t, c.nextLeaf(), "a root leaf has no next leaf")
+			assert.False(t, c.nextLeaf(), "a root leaf has no next leaf")
 		})
 	})
 
 	t.Run("prevLeaf", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("visits every leaf once in reverse order and then reports false", func(t *testing.T) {
+		t.Run("visits every leaf once in reverse order", func(t *testing.T) {
 			t.Parallel()
 			tr := varied()
 			var c cursor[int, int]
 			tr.last(&c)
 			counts, lasts := []int{c.leaf.n}, []int{c.leaf.keys[c.i]}
 			for c.prevLeaf() {
-				testkit.Equal(t, c.i, c.leaf.n-1, "the cursor must start each leaf at its last item")
+				assert.Equal(t, c.i, c.leaf.n-1, "the cursor must start each leaf at its last item")
 				counts, lasts = append(counts, c.leaf.n), append(lasts, c.leaf.keys[c.i])
 			}
 			slices.Reverse(counts)
 			slices.Reverse(lasts)
 			leaves, _ := sizes(tr)
-			testkit.Equal(t, counts, leaves, "the cursor must visit the leaves in reverse order")
-			testkit.True(t, slices.IsSorted(lasts) && len(slices.Compact(lasts)) == len(leaves),
+			assert.Equal(t, counts, leaves, "the cursor must visit the leaves in reverse order")
+			assert.Pairwise(t, lasts, func(earlier, later int) bool { return earlier < later },
 				"the cursor must visit each leaf once")
 		})
 
@@ -157,7 +162,7 @@ func TestCursor(t *testing.T) {
 			tr := build(shape{n: 3})
 			var c cursor[int, int]
 			tr.last(&c)
-			testkit.False(t, c.prevLeaf(), "a root leaf has no previous leaf")
+			assert.False(t, c.prevLeaf(), "a root leaf has no previous leaf")
 		})
 	})
 
@@ -174,8 +179,8 @@ func TestCursor(t *testing.T) {
 				-1,
 				func(y func(int, int) bool) (int, bool) { return tr.forward(&c, nil, 0, y) },
 			)
-			testkit.Equal(t, keys, firstKeys(tr.len)[1:], "forward must yield every later item in order")
-			testkit.False(t, changed, "the tree did not change")
+			assert.Equal(t, keys, firstKeys(tr.len)[1:], "forward must yield every later item in order")
+			assert.False(t, changed, "the tree did not change")
 		})
 
 		for name, tc := range map[string]struct {
@@ -203,12 +208,12 @@ func TestCursor(t *testing.T) {
 				keys, _, changed := collect(-1, func(y func(int, int) bool) (int, bool) {
 					return tr.forward(&c, tr.root.inners[tc.bottom].leaves[tc.leaf], tc.end, y)
 				})
-				testkit.Equal(t, keys, firstKeys(before+tc.end), "forward must stop at the end position")
-				testkit.False(t, changed, "the tree did not change")
+				assert.Equal(t, keys, firstKeys(before+tc.end), "forward must stop at the end position")
+				assert.False(t, changed, "the tree did not change")
 			})
 		}
 
-		t.Run("stops when yield returns false and returns the key it yielded last", func(t *testing.T) {
+		t.Run("returns the key it yielded last when yield returns false", func(t *testing.T) {
 			t.Parallel()
 			tr := varied()
 			var c cursor[int, int]
@@ -217,12 +222,12 @@ func TestCursor(t *testing.T) {
 				35,
 				func(y func(int, int) bool) (int, bool) { return tr.forward(&c, nil, 0, y) },
 			)
-			testkit.Equal(t, keys, firstKeys(35), "forward must stop at the first false")
-			testkit.Equal(t, last, keys[34], "forward must return the key it yielded last")
-			testkit.False(t, changed, "a stop is not a change")
+			assert.Equal(t, keys, firstKeys(35), "forward must stop at the first false")
+			assert.Equal(t, last, keys[34], "forward must return the key it yielded last")
+			assert.False(t, changed, "a stop is not a change")
 		})
 
-		t.Run("stops after a write and returns the key that it yielded before the write", func(t *testing.T) {
+		t.Run("returns the key that it yielded before a write", func(t *testing.T) {
 			t.Parallel()
 			tr := varied()
 			var c cursor[int, int]
@@ -234,8 +239,8 @@ func TestCursor(t *testing.T) {
 				}
 				return true
 			})
-			testkit.True(t, changed, "forward must report the write")
-			testkit.Equal(t, last, 2*39, "forward must return the key it yielded before the write")
+			assert.True(t, changed, "forward must report the write")
+			assert.Equal(t, last, 2*39, "forward must return the key it yielded before the write")
 		})
 	})
 
@@ -251,22 +256,22 @@ func TestCursor(t *testing.T) {
 			keys, _, changed := collect(-1, func(y func(int, int) bool) (int, bool) { return tr.backward(&c, y) })
 			want := firstKeys(tr.len - 1)
 			slices.Reverse(want)
-			testkit.Equal(t, keys, want, "backward must yield every earlier item in reverse order")
-			testkit.False(t, changed, "the tree did not change")
+			assert.Equal(t, keys, want, "backward must yield every earlier item in reverse order")
+			assert.False(t, changed, "the tree did not change")
 		})
 
-		t.Run("stops when yield returns false and returns the key it yielded last", func(t *testing.T) {
+		t.Run("returns the key it yielded last when yield returns false", func(t *testing.T) {
 			t.Parallel()
 			tr := varied()
 			var c cursor[int, int]
 			tr.last(&c)
 			keys, last, changed := collect(35, func(y func(int, int) bool) (int, bool) { return tr.backward(&c, y) })
-			testkit.Len(t, keys, 35, "backward must stop at the first false")
-			testkit.Equal(t, last, keys[34], "backward must return the key it yielded last")
-			testkit.False(t, changed, "a stop is not a change")
+			assert.Length(t, keys, 35, "backward must stop at the first false")
+			assert.Equal(t, last, keys[34], "backward must return the key it yielded last")
+			assert.False(t, changed, "a stop is not a change")
 		})
 
-		t.Run("stops after a write and returns the key that it yielded before the write", func(t *testing.T) {
+		t.Run("returns the key that it yielded before a write", func(t *testing.T) {
 			t.Parallel()
 			tr := varied()
 			fortieth := 2 * (tr.len - 40)
@@ -279,8 +284,8 @@ func TestCursor(t *testing.T) {
 				}
 				return true
 			})
-			testkit.True(t, changed, "backward must report the write")
-			testkit.Equal(t, last, fortieth, "backward must return the key it yielded before the write")
+			assert.True(t, changed, "backward must report the write")
+			assert.Equal(t, last, fortieth, "backward must return the key it yielded before the write")
 		})
 	})
 }

@@ -6,7 +6,8 @@ package btree
 import (
 	"testing"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/expect"
 )
 
 // shape is the shape of a subtree: a leaf of n items, or an internal node
@@ -87,81 +88,100 @@ func build(s shape) *ints {
 }
 
 // TestNode is in package btree because nodes, free lists and node IDs are
-// unexported.
+// unexported. Equal under ByIdentity checks that a call returns or keeps
+// one particular node, which no comparison by value shows.
 func TestNode(t *testing.T) {
 	t.Parallel()
 
 	t.Run("newLeaf", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("takes a free leaf and gives it the ID of the tree", func(t *testing.T) {
+		t.Run("returns a free leaf with the ID of the tree", func(t *testing.T) {
 			t.Parallel()
 			free := &leaf[int, int]{}
 			tr := ints{owner: 7, freeLeaves: []*leaf[int, int]{free}}
-			testkit.True(t, tr.newLeaf() == free && free.owner == 7, "newLeaf must take the free leaf")
-			testkit.Len(t, tr.freeLeaves, 0, "the free list must give up the leaf")
+			got := tr.newLeaf()
+			expect.Equal(t, got, free, "newLeaf must return the free leaf", expect.ByIdentity())
+			expect.Equal(t, got.owner, uint64(7), "the leaf must have the ID of the tree")
+			expect.Empty(t, tr.freeLeaves, "the free list must give up the leaf")
+		})
+
+		t.Run("zeroes the slot of the free list that the leaf leaves", func(t *testing.T) {
+			t.Parallel()
+			tr := ints{freeLeaves: []*leaf[int, int]{{}, {}}}
+			backing := tr.freeLeaves
+			tr.newLeaf()
+			assert.Nil(t, backing[1], "the free list must not keep the leaf reachable")
 		})
 
 		t.Run("allocates a leaf with the ID of the tree when the free list is empty", func(t *testing.T) {
 			t.Parallel()
 			tr := ints{owner: 7}
 			l := tr.newLeaf()
-			testkit.True(t, l.owner == 7 && l.n == 0, "newLeaf must allocate an empty leaf with the tree's ID")
+			expect.Equal(t, l.owner, uint64(7), "the leaf must have the ID of the tree")
+			expect.Equal(t, l.n, 0, "the leaf must be empty")
 		})
 	})
 
 	t.Run("newLeafParent", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("takes a free parent of leaves and gives it the ID of the tree", func(t *testing.T) {
+		t.Run("returns a free parent of leaves with the ID of the tree", func(t *testing.T) {
 			t.Parallel()
 			free := &inner[int, int]{leaves: new([maxChildren]*leaf[int, int])}
 			tr := ints{owner: 7, freeLeafParents: []*inner[int, int]{free}}
-			testkit.True(t, tr.newLeafParent() == free && free.owner == 7, "newLeafParent must take the free node")
-			testkit.Len(t, tr.freeLeafParents, 0, "the free list must give up the node")
+			got := tr.newLeafParent()
+			expect.Equal(t, got, free, "newLeafParent must return the free node", expect.ByIdentity())
+			expect.Equal(t, got.owner, uint64(7), "the node must have the ID of the tree")
+			expect.Empty(t, tr.freeLeafParents, "the free list must give up the node")
 		})
 
 		t.Run("allocates a node with an array of leaves when its free list is empty", func(t *testing.T) {
 			t.Parallel()
 			tr := ints{owner: 7, freeInnerParents: []*inner[int, int]{{inners: new([maxChildren]*inner[int, int])}}}
 			in := tr.newLeafParent()
-			testkit.True(t, in.owner == 7 && in.leaves != nil && in.inners == nil,
-				"newLeafParent must allocate a parent of leaves")
-			testkit.Len(t, tr.freeInnerParents, 1, "a free parent of internal nodes must remain on its list")
+			expect.Equal(t, in.owner, uint64(7), "the node must have the ID of the tree")
+			expect.NotNil(t, in.leaves, "the node must have an array of leaves")
+			expect.Nil(t, in.inners, "the node must have no array of internal nodes")
+			expect.Length(t, tr.freeInnerParents, 1, "a free parent of internal nodes must remain on its list")
 		})
 	})
 
 	t.Run("newInnerParent", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("takes a free parent of internal nodes and gives it the ID of the tree", func(t *testing.T) {
+		t.Run("returns a free parent of internal nodes with the ID of the tree", func(t *testing.T) {
 			t.Parallel()
 			free := &inner[int, int]{inners: new([maxChildren]*inner[int, int])}
 			tr := ints{owner: 7, freeInnerParents: []*inner[int, int]{free}}
-			testkit.True(t, tr.newInnerParent() == free && free.owner == 7, "newInnerParent must take the free node")
-			testkit.Len(t, tr.freeInnerParents, 0, "the free list must give up the node")
+			got := tr.newInnerParent()
+			expect.Equal(t, got, free, "newInnerParent must return the free node", expect.ByIdentity())
+			expect.Equal(t, got.owner, uint64(7), "the node must have the ID of the tree")
+			expect.Empty(t, tr.freeInnerParents, "the free list must give up the node")
 		})
 
 		t.Run("allocates a node with an array of internal nodes when its free list is empty", func(t *testing.T) {
 			t.Parallel()
 			tr := ints{owner: 7, freeLeafParents: []*inner[int, int]{{leaves: new([maxChildren]*leaf[int, int])}}}
 			in := tr.newInnerParent()
-			testkit.True(t, in.owner == 7 && in.inners != nil && in.leaves == nil,
-				"newInnerParent must allocate a parent of internal nodes")
-			testkit.Len(t, tr.freeLeafParents, 1, "a free parent of leaves must remain on its list")
+			expect.Equal(t, in.owner, uint64(7), "the node must have the ID of the tree")
+			expect.NotNil(t, in.inners, "the node must have an array of internal nodes")
+			expect.Nil(t, in.leaves, "the node must have no array of leaves")
+			expect.Length(t, tr.freeLeafParents, 1, "a free parent of leaves must remain on its list")
 		})
 	})
 
 	t.Run("releaseLeaf", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("zeroes a leaf of the tree and keeps it", func(t *testing.T) {
+		t.Run("keeps a zeroed leaf of the tree on the free list", func(t *testing.T) {
 			t.Parallel()
 			tr := ints{owner: 3}
 			l := &leaf[int, int]{owner: 3, n: 2, keys: [maxItems]int{5, 6}, vals: [maxItems]int{-5, -6}}
 			tr.releaseLeaf(l)
-			testkit.True(t, len(tr.freeLeaves) == 1 && tr.freeLeaves[0] == l, "the leaf must be on the free list")
-			requireValid(t, &tr)
+			assert.Length(t, tr.freeLeaves, 1, "the free list must keep the leaf")
+			expect.Equal(t, tr.freeLeaves[0], l, "the free list must keep that leaf", expect.ByIdentity())
+			expect.NoError(t, check(&tr), "the free leaf must be zeroed")
 		})
 
 		t.Run("keeps at most maxFree leaves", func(t *testing.T) {
@@ -170,8 +190,8 @@ func TestNode(t *testing.T) {
 			for range maxFree + 1 {
 				tr.releaseLeaf(&leaf[int, int]{n: 1, keys: [maxItems]int{7}})
 			}
-			testkit.Len(t, tr.freeLeaves, maxFree, "the free list must stop at maxFree leaves")
-			requireValid(t, &tr)
+			expect.Length(t, tr.freeLeaves, maxFree, "the free list must stop at maxFree leaves")
+			expect.NoError(t, check(&tr), "every free leaf must be zeroed")
 		})
 
 		t.Run("leaves a leaf of another tree as it is", func(t *testing.T) {
@@ -179,15 +199,16 @@ func TestNode(t *testing.T) {
 			tr := ints{owner: 1}
 			l := &leaf[int, int]{owner: 2, n: 1, keys: [maxItems]int{7}}
 			tr.releaseLeaf(l)
-			testkit.Len(t, tr.freeLeaves, 0, "a leaf of another tree may be part of a clone")
-			testkit.True(t, l.n == 1 && l.keys[0] == 7, "a clone's leaf must keep its items")
+			expect.Empty(t, tr.freeLeaves, "a leaf of another tree may be part of a clone")
+			expect.Equal(t, l.n, 1, "a clone's leaf must keep its item count")
+			expect.Equal(t, l.keys[0], 7, "a clone's leaf must keep its key")
 		})
 	})
 
 	t.Run("releaseInner", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("zeroes an internal node of the tree and keeps it on the free list of its kind", func(t *testing.T) {
+		t.Run("keeps a zeroed internal node of the tree on the free list of its kind", func(t *testing.T) {
 			t.Parallel()
 			tr := ints{owner: 3}
 			parent := &inner[int, int]{owner: 3, n: 1, count: 2, keys: [maxItems]int{4}}
@@ -196,11 +217,13 @@ func TestNode(t *testing.T) {
 			upper.inners = &[maxChildren]*inner[int, int]{{}, {}}
 			tr.releaseInner(parent)
 			tr.releaseInner(upper)
-			testkit.True(t, len(tr.freeLeafParents) == 1 && tr.freeLeafParents[0] == parent,
-				"the parent of leaves must be on its free list")
-			testkit.True(t, len(tr.freeInnerParents) == 1 && tr.freeInnerParents[0] == upper,
-				"the parent of internal nodes must be on its free list")
-			requireValid(t, &tr)
+			assert.Length(t, tr.freeLeafParents, 1, "the parent of leaves must be on its free list")
+			assert.Length(t, tr.freeInnerParents, 1, "the parent of internal nodes must be on its free list")
+			expect.Equal(t, tr.freeLeafParents[0], parent, "the list of parents of leaves must keep that node",
+				expect.ByIdentity())
+			expect.Equal(t, tr.freeInnerParents[0], upper, "the list of parents of internal nodes must keep that node",
+				expect.ByIdentity())
+			expect.NoError(t, check(&tr), "the free nodes must be zeroed")
 		})
 
 		t.Run("keeps at most maxFree internal nodes of each kind", func(t *testing.T) {
@@ -208,12 +231,10 @@ func TestNode(t *testing.T) {
 			var tr ints
 			for range maxFree + 1 {
 				tr.releaseInner(&inner[int, int]{leaves: new([maxChildren]*leaf[int, int])})
-			}
-			testkit.Len(t, tr.freeLeafParents, maxFree, "the list of parents of leaves must stop at maxFree")
-			for range maxFree + 1 {
 				tr.releaseInner(&inner[int, int]{inners: new([maxChildren]*inner[int, int])})
 			}
-			testkit.Len(t, tr.freeInnerParents, maxFree, "the list of parents of internal nodes must stop at maxFree")
+			expect.Length(t, tr.freeLeafParents, maxFree, "the list of parents of leaves must stop at maxFree")
+			expect.Length(t, tr.freeInnerParents, maxFree, "the list of parents of internal nodes must stop at maxFree")
 		})
 
 		t.Run("leaves an internal node of another tree as it is", func(t *testing.T) {
@@ -222,8 +243,9 @@ func TestNode(t *testing.T) {
 			in := &inner[int, int]{owner: 2, n: 1, keys: [maxItems]int{4}}
 			in.leaves = &[maxChildren]*leaf[int, int]{{n: 1}, {n: 1}}
 			tr.releaseInner(in)
-			testkit.Len(t, tr.freeLeafParents, 0, "a node of another tree may be part of a clone")
-			testkit.True(t, in.n == 1 && in.leaves[1] != nil, "a clone's node must keep its children")
+			expect.Empty(t, tr.freeLeafParents, "a node of another tree may be part of a clone")
+			expect.Equal(t, in.n, 1, "a clone's node must keep its separator")
+			expect.NotNil(t, in.leaves[1], "a clone's node must keep its children")
 		})
 	})
 
@@ -235,7 +257,8 @@ func TestNode(t *testing.T) {
 			tr := ints{owner: 3}
 			l := &leaf[int, int]{owner: 3}
 			p := l
-			testkit.True(t, tr.mutLeaf(&p) == l && p == l, "a leaf of the tree must not be copied")
+			expect.Equal(t, tr.mutLeaf(&p), l, "mutLeaf must return the leaf itself", expect.ByIdentity())
+			expect.Equal(t, p, l, "mutLeaf must leave the pointer to the leaf as it is", expect.ByIdentity())
 		})
 
 		t.Run("replaces a leaf of another tree with a copy of its items", func(t *testing.T) {
@@ -244,10 +267,12 @@ func TestNode(t *testing.T) {
 			l := &leaf[int, int]{owner: 4, n: 2, keys: [maxItems]int{5, 6}, vals: [maxItems]int{-5, -6}}
 			p := l
 			c := tr.mutLeaf(&p)
-			testkit.True(t, c != l && p == c && c.owner == 3, "the copy must replace the leaf and have the tree's ID")
-			testkit.Equal(t, c.keys, l.keys, "the copy must have the keys")
-			testkit.Equal(t, c.vals, l.vals, "the copy must have the values")
-			testkit.Equal(t, c.n, 2, "the copy must have the item count")
+			expect.NotEqual(t, c, l, "mutLeaf must return a copy", expect.ByIdentity())
+			expect.Equal(t, p, c, "the copy must replace the leaf", expect.ByIdentity())
+			expect.Equal(t, c.owner, uint64(3), "the copy must have the ID of the tree")
+			expect.Equal(t, c.keys, l.keys, "the copy must have the keys")
+			expect.Equal(t, c.vals, l.vals, "the copy must have the values")
+			expect.Equal(t, c.n, 2, "the copy must have the item count")
 		})
 	})
 
@@ -259,7 +284,8 @@ func TestNode(t *testing.T) {
 			tr := ints{owner: 3}
 			in := &inner[int, int]{owner: 3}
 			p := in
-			testkit.True(t, tr.mutInner(&p) == in && p == in, "a node of the tree must not be copied")
+			expect.Equal(t, tr.mutInner(&p), in, "mutInner must return the node itself", expect.ByIdentity())
+			expect.Equal(t, p, in, "mutInner must leave the pointer to the node as it is", expect.ByIdentity())
 		})
 
 		t.Run("replaces a parent of leaves of another tree with a copy", func(t *testing.T) {
@@ -270,9 +296,15 @@ func TestNode(t *testing.T) {
 			in.leaves = &[maxChildren]*leaf[int, int]{a, b}
 			p := in
 			c := tr.mutInner(&p)
-			testkit.True(t, c != in && p == c && c.owner == 3, "the copy must replace the node and have the tree's ID")
-			testkit.True(t, c.n == 1 && c.count == 2 && c.keys[0] == 8, "the copy must have the separator and count")
-			testkit.True(t, c.inners == nil && c.leaves[0] == a && c.leaves[1] == b, "the copy must have the leaves")
+			expect.NotEqual(t, c, in, "mutInner must return a copy", expect.ByIdentity())
+			expect.Equal(t, p, c, "the copy must replace the node", expect.ByIdentity())
+			expect.Equal(t, c.owner, uint64(3), "the copy must have the ID of the tree")
+			expect.Equal(t, c.n, 1, "the copy must have the separator count")
+			expect.Equal(t, c.count, 2, "the copy must have the item count")
+			expect.Equal(t, c.keys, in.keys, "the copy must have the separators")
+			expect.Nil(t, c.inners, "the copy must have no array of internal nodes")
+			expect.Equal(t, c.leaves[0], a, "the copy must share the first leaf", expect.ByIdentity())
+			expect.Equal(t, c.leaves[1], b, "the copy must share the second leaf", expect.ByIdentity())
 		})
 
 		t.Run("replaces a parent of internal nodes of another tree with a copy", func(t *testing.T) {
@@ -283,9 +315,15 @@ func TestNode(t *testing.T) {
 			in.inners = &[maxChildren]*inner[int, int]{a, b}
 			p := in
 			c := tr.mutInner(&p)
-			testkit.True(t, c != in && p == c && c.owner == 3, "the copy must replace the node and have the tree's ID")
-			testkit.True(t, c.n == 1 && c.count == 4 && c.keys[0] == 8, "the copy must have the separator and count")
-			testkit.True(t, c.leaves == nil && c.inners[0] == a && c.inners[1] == b, "the copy must have the nodes")
+			expect.NotEqual(t, c, in, "mutInner must return a copy", expect.ByIdentity())
+			expect.Equal(t, p, c, "the copy must replace the node", expect.ByIdentity())
+			expect.Equal(t, c.owner, uint64(3), "the copy must have the ID of the tree")
+			expect.Equal(t, c.n, 1, "the copy must have the separator count")
+			expect.Equal(t, c.count, 4, "the copy must have the item count")
+			expect.Equal(t, c.keys, in.keys, "the copy must have the separators")
+			expect.Nil(t, c.leaves, "the copy must have no array of leaves")
+			expect.Equal(t, c.inners[0], a, "the copy must share the first node", expect.ByIdentity())
+			expect.Equal(t, c.inners[1], b, "the copy must share the second node", expect.ByIdentity())
 		})
 	})
 }

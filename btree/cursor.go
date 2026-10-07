@@ -269,7 +269,10 @@ func (t *tree[K, V, O]) seekLE(c *cursor[K, V], key K) bool {
 	}
 	c.leaf, c.i = l, i
 
-	return i >= 0 || c.prevLeaf()
+	// Every separator is the first key of the subtree after it, so the
+	// leaf where key would be has a key at or before key unless it is the
+	// first leaf.
+	return i >= 0
 }
 
 // seekLT moves c to the last key before key in the leaf where key is or
