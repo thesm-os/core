@@ -13,8 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/bench"
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert/expect"
 
 	"go.thesmos.sh/core/errs"
 	"go.thesmos.sh/core/net/httpserver"
@@ -40,7 +41,7 @@ func TestProblem(t *testing.T) {
 			{name: "writes 500 for an Integrity error", err: errs.WithClass(errBoom, errs.Integrity), want: 500},
 			{name: "writes 500 for an error without a class", err: errBoom, want: 500},
 			{
-				name: "writes 413 for an error of a body beyond the limit, whatever its class",
+				name: "writes 413 for an error of a body beyond the limit of any class",
 				err:  errs.WithClass(&http.MaxBytesError{Limit: 8}, errs.Invalid),
 				want: 413,
 			},
@@ -48,16 +49,16 @@ func TestProblem(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-
 				rec := httptest.NewRecorder()
 				httpserver.Error(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil), tt.err)
 
-				testkit.Equal(t, rec.Code, tt.want, "the status")
-				testkit.Equal(t, rec.Header().Get("Content-Type"), problemJSON, "the type of the body")
-				testkit.Equal(t, rec.Header().Get("X-Content-Type-Options"), "nosniff", "the sniffing of the body")
-				testkit.Equal(t, rec.Body.String(),
+				expect.Equal(t, rec.Code, tt.want, "Error must write the status of the class")
+				expect.Equal(t, rec.Header().Get("Content-Type"), problemJSON, "the body must be problem details")
+				expect.Equal(t, rec.Header().Get("X-Content-Type-Options"), "nosniff",
+					"a browser must not sniff the body")
+				expect.Equal(t, rec.Body.String(),
 					`{"type":"about:blank","title":"`+http.StatusText(tt.want)+`","status":`+strconv.Itoa(tt.want)+`}`,
-					"the problem details, without the text of the error")
+					"the problem details must contain no text of the error")
 			})
 		}
 
@@ -93,54 +94,79 @@ func TestProblem(t *testing.T) {
 		for _, tt := range delays {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-
 				rec := httptest.NewRecorder()
 				httpserver.Error(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil), tt.err)
-				testkit.Equal(t, rec.Header().Get("Retry-After"), tt.want, "the Retry-After header")
+				assert.Equal(t, rec.Header().Get("Retry-After"), tt.want, "Error must write the delay of the error")
 			})
 		}
 
 		t.Run("removes a Content-Length that the handler set for another body", func(t *testing.T) {
 			t.Parallel()
-
 			rec := httptest.NewRecorder()
 			rec.Header().Set("Content-Length", "1000")
 			httpserver.Error(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil), errBoom)
-			testkit.Equal(t, rec.Header().Get("Content-Length"), "", "the Content-Length")
+			assert.Empty(t, rec.Header().Get("Content-Length"), "Error must remove the length of another body")
 		})
 
 		t.Run("records the first of two errors of a request of a Server", func(t *testing.T) {
 			t.Parallel()
-
 			first, second := errs.WithClass(errBoom, errs.NotFound), errs.WithClass(errBoom, errs.Conflict)
 			f := newFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				httpserver.Error(w, r, first)
 				httpserver.Error(w, r, second)
 			}))
-			testkit.Equal(t, f.send(t, http.MethodGet, "/", http.NoBody, nil).status, http.StatusNotFound, "the status")
-			testkit.NoError(t, f.stop(), "Run must drain")
+			assert.Equal(t, f.send(t, http.MethodGet, "/", http.NoBody, nil).status, http.StatusNotFound,
+				"the response must have the status of the first error")
+			assert.NoError(t, f.stop(), "Run must drain")
 
 			logged, _ := value(t, &f.logs.find(messageRequest)[0], keyError).Any().(error)
-			testkit.ErrorIs(t, logged, first, "the error of the record")
-			testkit.ErrorIsNot(t, logged, second, "the record must contain the first error")
+			expect.ErrorIs(t, logged, first, "the record must contain the first error")
+			expect.ErrorIsNot(t, logged, second, "the record must not contain the second error")
 		})
 
 		t.Run("only records the error when the handler wrote the header", func(t *testing.T) {
 			t.Parallel()
-
 			f := newFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				_, _ = io.WriteString(w, body)
 				httpserver.Error(w, r, errs.WithClass(errBoom, errs.Transient))
 			}))
 			got := f.send(t, http.MethodGet, "/", http.NoBody, nil)
-			testkit.Equal(t, got.status, http.StatusOK, "the status of the response")
-			testkit.Equal(t, got.body, body, "the body of the response")
-			testkit.NoError(t, f.stop(), "Run must drain")
+			expect.Equal(t, got.status, http.StatusOK, "the response must keep the status that the handler wrote")
+			expect.Equal(t, got.body, body, "the response must keep the body that the handler wrote")
+			assert.NoError(t, f.stop(), "Run must drain")
 
 			r := f.logs.find(messageRequest)[0]
-			testkit.Equal(t, r.Level, slog.LevelInfo, "the level of a response of 200")
+			expect.Equal(t, r.Level, slog.LevelInfo, "the record of a response of 200 must have the level Info")
 			logged, _ := value(t, &r, keyError).Any().(error)
-			testkit.ErrorIs(t, logged, errBoom, "the error")
+			expect.ErrorIs(t, logged, errBoom, "the record must contain the error")
+		})
+	})
+}
+
+// TestProblemAllocs checks the allocation contract of Error for a request
+// of another server, whose header values need storage of their own. The
+// allocation test of the chain checks Error for a request of a Server.
+// MaxAllocs counts the allocations of the whole process, so the test does
+// not run in parallel.
+//
+//nolint:paralleltest // see above
+func TestProblemAllocs(t *testing.T) {
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil)
+	w := &discardWriter{header: http.Header{}}
+
+	t.Run("Error", func(t *testing.T) {
+		t.Run("of a NotFound error", func(t *testing.T) {
+			err := errs.WithClass(errBoom, errs.NotFound)
+			expect.MaxAllocs(t, func() { httpserver.Error(w, req, err) }, 1,
+				"Error must allocate the storage of the header values alone")
+			assert.Equal(t, w.status, http.StatusNotFound, "the test must measure a problem response")
+		})
+
+		t.Run("with a Retry-After", func(t *testing.T) {
+			err := errs.WithRetryAfter(errs.WithClass(errBoom, errs.Transient), time.Second)
+			expect.MaxAllocs(t, func() { httpserver.Error(w, req, err) }, 1,
+				"Error must allocate the storage of the header values alone")
+			assert.Equal(t, w.status, http.StatusServiceUnavailable, "the test must measure a problem response")
 		})
 	})
 }
@@ -153,28 +179,30 @@ func BenchmarkProblem(b *testing.B) {
 	w := &discardWriter{header: http.Header{}}
 
 	b.Run("Error", func(b *testing.B) {
-		err := errs.WithClass(errBoom, errs.NotFound)
+		b.Run("of a NotFound error", func(b *testing.B) {
+			err := errs.WithClass(errBoom, errs.NotFound)
 
-		c := bench.Start(b).MaxAllocs(1)
-		defer c.End()
+			c := bench.Start(b).MaxAllocs(1)
+			defer c.End()
 
-		for c.Loop() {
-			httpserver.Error(w, req, err)
-		}
+			for c.Loop() {
+				httpserver.Error(w, req, err)
+			}
 
-		testkit.Equal(b, w.status, http.StatusNotFound, "the benchmark must measure a problem response")
-	})
+			assert.Equal(b, w.status, http.StatusNotFound, "the benchmark must measure a problem response")
+		})
 
-	b.Run("Error with a Retry-After", func(b *testing.B) {
-		err := errs.WithRetryAfter(errs.WithClass(errBoom, errs.Transient), time.Second)
+		b.Run("with a Retry-After", func(b *testing.B) {
+			err := errs.WithRetryAfter(errs.WithClass(errBoom, errs.Transient), time.Second)
 
-		c := bench.Start(b).MaxAllocs(1)
-		defer c.End()
+			c := bench.Start(b).MaxAllocs(1)
+			defer c.End()
 
-		for c.Loop() {
-			httpserver.Error(w, req, err)
-		}
+			for c.Loop() {
+				httpserver.Error(w, req, err)
+			}
 
-		testkit.Equal(b, w.status, http.StatusServiceUnavailable, "the benchmark must measure a problem response")
+			assert.Equal(b, w.status, http.StatusServiceUnavailable, "the benchmark must measure a problem response")
+		})
 	})
 }

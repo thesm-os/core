@@ -239,6 +239,7 @@ func (c *chain) log(e *exchange, r *http.Request, s series, elapsed time.Duratio
 	}
 
 	ctx := r.Context()
+	//dokimi:mutate-skip sbr-delete: LogAttrs drops a record of a level that the handler does not handle, so the check saves the attributes alone
 	if !c.logger.Enabled(ctx, level) {
 		return
 	}

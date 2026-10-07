@@ -254,13 +254,18 @@ func (s *Server) drain(ctx context.Context, served <-chan error) error {
 	}
 
 	err := s.srv.Shutdown(ctx)
-	if err != nil && ctx.Err() != nil {
-		// Shutdown returns once its context ends, and leaves the
-		// connections of the requests in flight open.
-		_ = s.srv.Close() //nolint:errcheck // Shutdown closed the listeners, and Close only closes connections
-		<-served
+	//dokimi:mutate-skip ror-true: Shutdown returns nil after its context ended only when the timer fires as the last connection closes, which no test can order
+	if err != nil {
+		// Shutdown returns once its context ends, and leaves the connections
+		// of the requests in flight open.
+		if ctx.Err() != nil {
+			_ = s.srv.Close() //nolint:errcheck // Shutdown closed the listeners, and Close only closes connections
+			//dokimi:mutate-skip sbr-delete: served has room for the result of serve, which then ends a moment after Run returns
+			<-served
 
-		return fmt.Errorf("%w: the timeout of %s elapsed: %w", ErrShutdown, s.shutdownTimeout, context.DeadlineExceeded)
+			return fmt.Errorf("%w: the timeout of %s elapsed: %w",
+				ErrShutdown, s.shutdownTimeout, context.DeadlineExceeded)
+		}
 	}
 
 	if serveErr := <-served; !errors.Is(serveErr, http.ErrServerClosed) {
@@ -281,6 +286,7 @@ func (s *Server) expire(parent context.Context, d time.Duration) (context.Contex
 	t := s.clock.NewTimer(d)
 
 	go func() {
+		//dokimi:mutate-skip sbr-delete: a timer of the clock that runs no goroutine has no effect after the drain that a test can observe
 		defer t.Stop()
 
 		select {

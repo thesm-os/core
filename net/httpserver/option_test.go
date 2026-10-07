@@ -16,7 +16,8 @@ import (
 	"testing"
 	"time"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/expect"
 
 	"go.thesmos.sh/core/net/httpserver"
 )
@@ -56,20 +57,18 @@ func TestOption(t *testing.T) {
 	t.Run("Options", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("applies the options in order, so a later option overrides an earlier one", func(t *testing.T) {
+		t.Run("lets a later option override an earlier one", func(t *testing.T) {
 			t.Parallel()
-
 			_, err := httpserver.New(http.NotFoundHandler(), httpserver.Options(
 				required, httpserver.WithAddr("localhost"), httpserver.WithAddr(loopback),
 			))
-			testkit.NoError(t, err, "the later address must override the address that New refuses")
+			assert.NoError(t, err, "the later address must override the address that New refuses")
 		})
 
 		t.Run("makes New return ErrConfig for a nil option that it bundles", func(t *testing.T) {
 			t.Parallel()
-
 			_, err := httpserver.New(http.NotFoundHandler(), required, httpserver.Options(nil))
-			testkit.ErrorIs(t, err, httpserver.ErrConfig, "New must refuse the nil option")
+			assert.ErrorIs(t, err, httpserver.ErrConfig, "New must refuse the nil option")
 		})
 	})
 
@@ -78,7 +77,6 @@ func TestOption(t *testing.T) {
 
 		t.Run("serves HTTP/2 over TLS", func(t *testing.T) {
 			t.Parallel()
-
 			cfg, client := tlsPair(t)
 			protos := make(chan int, 1)
 			f := newFixture(t, http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
@@ -88,9 +86,9 @@ func TestOption(t *testing.T) {
 			req, err := http.NewRequestWithContext(
 				t.Context(), http.MethodGet, "https"+strings.TrimPrefix(f.url, "http"), http.NoBody,
 			)
-			testkit.NoError(t, err, "the request of the case must build")
-			testkit.Equal(t, do(t, client, req).status, http.StatusOK, "the status of the request over TLS")
-			testkit.Equal(t, await(t, protos, "the handler must run"), 2, "the major version of the protocol")
+			assert.NoError(t, err, "the request of the case must build")
+			assert.Equal(t, do(t, client, req).status, http.StatusOK, "the request over TLS must succeed")
+			assert.Equal(t, await(t, protos, "the handler must run"), 2, "the request must use HTTP/2")
 		})
 	})
 
@@ -99,19 +97,15 @@ func TestOption(t *testing.T) {
 
 		t.Run("closes a connection whose headers arrive slower", func(t *testing.T) {
 			t.Parallel()
-
-			f := newFixture(
-				t,
-				http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}),
-				httpserver.WithReadHeaderTimeout(limit),
-			)
+			f := newFixture(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}),
+				httpserver.WithReadHeaderTimeout(limit))
 			conn := dial(t, f)
 
 			_, err := io.WriteString(conn, "GET / HTTP/1.1\r\nHost: test\r\n")
-			testkit.NoError(t, err, "the start of the headers must write")
+			assert.NoError(t, err, "the start of the headers must write")
 
 			_, err = conn.Read(make([]byte, 1))
-			testkit.ErrorIs(t, err, io.EOF, "the server must close the connection without a response")
+			assert.ErrorIs(t, err, io.EOF, "the server must close the connection without a response")
 		})
 	})
 
@@ -120,7 +114,6 @@ func TestOption(t *testing.T) {
 
 		t.Run("fails the read of a body that arrives slower", func(t *testing.T) {
 			t.Parallel()
-
 			read := make(chan error, 1)
 			f := newFixture(t, http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 				_, err := io.ReadAll(r.Body)
@@ -129,11 +122,11 @@ func TestOption(t *testing.T) {
 			conn := dial(t, f)
 
 			_, err := io.WriteString(conn, "POST / HTTP/1.1\r\nHost: test\r\nContent-Length: 10\r\n\r\nab")
-			testkit.NoError(t, err, "the request must write")
+			assert.NoError(t, err, "the request must write")
 
 			got := awaitBefore(t, read, refused(conn), "the handler must read the body")
-			ne := testkit.ErrorAs[net.Error](t, got, "the read of the body must fail on the connection")
-			testkit.True(t, ne.Timeout(), "the read of the body must time out")
+			ne := assert.ErrorAs[net.Error](t, got, "the read of the body must fail on the connection")
+			assert.True(t, ne.Timeout(), "the read of the body must time out")
 		})
 	})
 
@@ -142,7 +135,6 @@ func TestOption(t *testing.T) {
 
 		t.Run("fails the write of a response that the client does not read", func(t *testing.T) {
 			t.Parallel()
-
 			wrote := make(chan error, 1)
 			chunk := make([]byte, 64<<10)
 			f := newFixture(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -157,11 +149,11 @@ func TestOption(t *testing.T) {
 			conn := dial(t, f)
 
 			_, err := io.WriteString(conn, "GET / HTTP/1.1\r\nHost: test\r\n\r\n")
-			testkit.NoError(t, err, "the request must write")
+			assert.NoError(t, err, "the request must write")
 
 			got := awaitBefore(t, wrote, refused(conn), "the handler must write the response")
-			ne := testkit.ErrorAs[net.Error](t, got, "the write of the response must fail on the connection")
-			testkit.True(t, ne.Timeout(), "the write of the response must time out")
+			ne := assert.ErrorAs[net.Error](t, got, "the write of the response must fail on the connection")
+			assert.True(t, ne.Timeout(), "the write of the response must time out")
 		})
 	})
 
@@ -170,26 +162,22 @@ func TestOption(t *testing.T) {
 
 		t.Run("closes a keep-alive connection that idles longer", func(t *testing.T) {
 			t.Parallel()
-
-			f := newFixture(
-				t,
-				http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}),
-				httpserver.WithIdleTimeout(limit),
-			)
+			f := newFixture(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}),
+				httpserver.WithIdleTimeout(limit))
 			conn := dial(t, f)
 
 			_, err := io.WriteString(conn, "GET / HTTP/1.1\r\nHost: test\r\n\r\n")
-			testkit.NoError(t, err, "the request must write")
+			assert.NoError(t, err, "the request must write")
 
 			r := bufio.NewReader(conn)
 			resp, err := http.ReadResponse(r, nil)
-			testkit.NoError(t, err, "the response must read")
+			assert.NoError(t, err, "the response must read")
 			_, err = io.Copy(io.Discard, resp.Body)
-			testkit.NoError(t, err, "the body must read")
-			testkit.NoError(t, resp.Body.Close(), "the body must close")
+			assert.NoError(t, err, "the body must read")
+			assert.NoError(t, resp.Body.Close(), "the body must close")
 
 			_, err = r.ReadByte()
-			testkit.ErrorIs(t, err, io.EOF, "the server must close the idle connection")
+			assert.ErrorIs(t, err, io.EOF, "the server must close the idle connection")
 		})
 	})
 
@@ -222,11 +210,10 @@ func TestOption(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-
 				f := newFixture(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}), tt.opts...)
 				large := http.Header{"X-Large": {strings.Repeat("a", tt.header)}}
 				got := f.send(t, http.MethodGet, "/", http.NoBody, large)
-				testkit.Equal(t, got.status, tt.want, "the status")
+				assert.Equal(t, got.status, tt.want, "the server must apply the header limit")
 			})
 		}
 	})
@@ -280,14 +267,14 @@ func TestOption(t *testing.T) {
 				want: http.StatusRequestEntityTooLarge,
 			},
 			{
-				name:   "turns the limit off for a declared body and a negative value",
+				name:   "admits a declared body beyond 4 MiB for a negative limit",
 				opts:   off,
 				size:   4<<20 + 1,
 				want:   http.StatusOK,
 				served: true,
 			},
 			{
-				name:    "turns the limit off for a chunked body and a negative value",
+				name:    "admits a chunked body beyond 4 MiB for a negative limit",
 				opts:    off,
 				size:    4<<20 + 1,
 				want:    http.StatusOK,
@@ -298,7 +285,6 @@ func TestOption(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-
 				var served atomic.Bool
 
 				f := newFixture(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -315,43 +301,38 @@ func TestOption(t *testing.T) {
 					payload = io.MultiReader(payload)
 				}
 
-				testkit.Equal(t, f.send(t, http.MethodPost, "/", payload, nil).status, tt.want, "the status")
-				testkit.Equal(t, served.Load(), tt.served, "whether the handler ran")
+				expect.Equal(t, f.send(t, http.MethodPost, "/", payload, nil).status, tt.want,
+					"the server must apply the body limit")
+				expect.Equal(t, served.Load(), tt.served, "the handler must run for a body that the limit admits")
 			})
 		}
 
 		t.Run("bounds the chunked body that a middleware reads", func(t *testing.T) {
 			t.Parallel()
-
-			f := newFixture(
-				t,
-				http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}),
+			f := newFixture(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}),
 				httpserver.WithMaxBodyBytes(8),
-				httpserver.WithMiddleware(
-					func(next http.Handler) http.Handler {
-						return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-							if _, err := io.ReadAll(r.Body); err != nil {
-								httpserver.Error(w, r, err)
+				httpserver.WithMiddleware(func(next http.Handler) http.Handler {
+					return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+						if _, err := io.ReadAll(r.Body); err != nil {
+							httpserver.Error(w, r, err)
 
-								return
-							}
+							return
+						}
 
-							next.ServeHTTP(w, r)
-						})
-					}),
-			)
+						next.ServeHTTP(w, r)
+					})
+				}))
 
 			got := f.send(t, http.MethodPost, "/", io.MultiReader(strings.NewReader(strings.Repeat("a", 9))), nil)
-			testkit.Equal(t, got.status, http.StatusRequestEntityTooLarge, "the status")
+			assert.Equal(t, got.status, http.StatusRequestEntityTooLarge, "the middleware must read the bounded body")
 		})
 	})
 
 	t.Run("WithMaxInFlight", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("responds with 503 and Retry-After of 1 s beyond the bound", func(t *testing.T) {
+		t.Run("responds with 503 to a request beyond the bound", func(t *testing.T) {
 			t.Parallel()
-
 			entered, gate := make(chan struct{}), make(chan struct{})
 			release := sync.OnceFunc(func() { close(gate) })
 			defer release()
@@ -372,14 +353,42 @@ func TestOption(t *testing.T) {
 			awaitBefore(t, entered, sent, "the handler must receive the first request")
 
 			got := f.send(t, http.MethodGet, "/", http.NoBody, nil)
-			testkit.Equal(t, got.status, http.StatusServiceUnavailable, "the status beyond the bound")
-			testkit.Equal(t, got.header.Get("Retry-After"), "1", "the delay of the refusal")
-			testkit.Equal(t, got.header.Get("Content-Type"), "application/problem+json", "the type of the refusal")
+			expect.Equal(t, got.status, http.StatusServiceUnavailable,
+				"the server must refuse a request beyond the bound")
+			expect.Equal(t, got.header.Get("Retry-After"), "1", "the refusal must ask for a delay of 1 s")
+			expect.Equal(t, got.header.Get("Content-Type"), problemJSON, "the refusal must be problem details")
 
 			release()
-			testkit.NoError(t, await(t, sent, "the first request must end"), "the request within the bound must finish")
-			testkit.Equal(t, f.send(t, http.MethodGet, "/", http.NoBody, nil).status, http.StatusOK,
-				"the server must admit a request after the one in flight finished")
+			assert.NoError(t, await(t, sent, "the first request must end"), "the request within the bound must finish")
+		})
+
+		t.Run("frees the slot of a request that it refused", func(t *testing.T) {
+			t.Parallel()
+			entered, gate := make(chan struct{}), make(chan struct{})
+			release := sync.OnceFunc(func() { close(gate) })
+			defer release()
+
+			var first sync.Once
+
+			f := newFixture(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				first.Do(func() {
+					close(entered)
+					<-gate
+				})
+
+				_, _ = io.WriteString(w, body)
+			}), httpserver.WithMaxInFlight(1))
+
+			sent := make(chan error, 1)
+			go func() { sent <- request(t, f.client, f.url) }()
+			awaitBefore(t, entered, sent, "the handler must receive the first request")
+			assert.Equal(t, f.send(t, http.MethodGet, "/", http.NoBody, nil).status, http.StatusServiceUnavailable,
+				"the server must refuse a request beyond the bound")
+
+			release()
+			assert.NoError(t, await(t, sent, "the first request must end"), "the request within the bound must finish")
+			assert.Equal(t, f.send(t, http.MethodGet, "/", http.NoBody, nil).status, http.StatusOK,
+				"the server must admit a request after the refusal")
 		})
 	})
 
@@ -388,15 +397,11 @@ func TestOption(t *testing.T) {
 
 		t.Run("admits a cross-origin request of a browser from a trusted origin", func(t *testing.T) {
 			t.Parallel()
-
-			f := newFixture(
-				t,
-				http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}),
-				httpserver.WithTrustedOrigins(trusted),
-			)
+			f := newFixture(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}),
+				httpserver.WithTrustedOrigins(trusted))
 			got := f.send(t, http.MethodPost, "/", http.NoBody,
 				http.Header{headerFetchSite: {crossSite}, headerOrigin: {trusted}})
-			testkit.Equal(t, got.status, http.StatusOK, "the status")
+			assert.Equal(t, got.status, http.StatusOK, "the protection must admit a trusted origin")
 		})
 	})
 
@@ -405,7 +410,6 @@ func TestOption(t *testing.T) {
 
 		t.Run("runs the first middleware outermost", func(t *testing.T) {
 			t.Parallel()
-
 			named := func(name string) func(http.Handler) http.Handler {
 				return func(next http.Handler) http.Handler {
 					return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -415,13 +419,11 @@ func TestOption(t *testing.T) {
 				}
 			}
 
-			f := newFixture(
-				t,
-				http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}),
-				httpserver.WithMiddleware(named("first"), named("second")),
-			)
+			f := newFixture(t, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}),
+				httpserver.WithMiddleware(named("first"), named("second")))
 			got := f.send(t, http.MethodGet, "/", http.NoBody, nil)
-			testkit.Equal(t, got.header.Values(headerOrder), []string{"first", "second"}, "the order of the middleware")
+			assert.Equal(t, got.header.Values(headerOrder), []string{"first", "second"},
+				"the first middleware must run before the second")
 		})
 	})
 }
@@ -434,10 +436,10 @@ func dial(t *testing.T, f *fixture) net.Conn {
 	var d net.Dialer
 
 	conn, err := d.DialContext(t.Context(), tcp, strings.TrimPrefix(f.url, "http://"))
-	testkit.NoError(t, err, "the connection must dial")
+	assert.NoError(t, err, "the connection must dial")
 	t.Cleanup(func() { _ = conn.Close() })
 
-	testkit.NoError(t, conn.SetReadDeadline(time.Now().Add(patience)), "the read deadline must set")
+	assert.NoError(t, conn.SetReadDeadline(time.Now().Add(patience)), "the read deadline must set")
 
 	return conn
 }

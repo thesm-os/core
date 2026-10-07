@@ -106,6 +106,7 @@ func Error(w http.ResponseWriter, r *http.Request, err error) {
 		// The first error of the request is the one that its response
 		// reports.
 		e.mu.Lock()
+		//dokimi:mutate-skip lcr-left: the chain reads err after it marks the request done, and no test can order a later Error between the two
 		if e.err == nil && !e.done {
 			e.err = err
 		}
