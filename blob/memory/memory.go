@@ -50,6 +50,27 @@ type object struct {
 	info blob.Info
 }
 
+// reader is the [io.ReadCloser] that [Store.Get] returns: a [bytes.Reader]
+// over a stored body, with the reader's WriterTo, Seeker and ReaderAt.
+// The body belongs to the store, so Close releases nothing.
+//
+// # Concurrency
+//
+// Not safe for concurrent use, as a [bytes.Reader] is not. Readers of one
+// body are independent.
+//
+// # Allocation contract
+//
+// Zero alloc. Get allocates the reader itself.
+type reader struct {
+	bytes.Reader
+}
+
+// Close returns nil. A read after Close reads the body as before.
+func (*reader) Close() error {
+	return nil
+}
+
 // Store is an in-process [blob.Store] behind one mutex.
 //
 // Put reads the whole body before it takes the lock, so the map contains
@@ -76,8 +97,9 @@ type object struct {
 //
 // # Allocation contract
 //
-//   - Put allocates the buffered body, and map nodes as the map grows.
-//   - Get allocates one reader wrapper and does not copy the body.
+//   - Put allocates the buffered body, the digits of the version, and map
+//     nodes as the map grows.
+//   - Get allocates one reader and does not copy the body.
 //   - ReadRange, Stat and Delete allocate nothing on their happy paths.
 //   - List allocates the page snapshot.
 type Store struct {
@@ -122,8 +144,10 @@ func New(c clock.Clock) *Store {
 //
 // # Allocation contract
 //
-// One buffer for the body and one Info. An error path does not allocate
-// more.
+// Two allocations for a body of at most 512 bytes under a present key:
+// the buffer of the body and the digits of the version. io.ReadAll grows
+// the buffer for a longer body, a version below 100 has constant digits,
+// and a new key can grow the map. An error path does not allocate more.
 func (s *Store) Put(ctx context.Context, key string, r io.Reader, opts blob.PutOptions) (blob.Info, error) {
 	if err := ctx.Err(); err != nil {
 		return blob.Info{}, err
@@ -139,18 +163,18 @@ func (s *Store) Put(ctx context.Context, key string, r io.Reader, opts blob.PutO
 
 	data, err := io.ReadAll(r)
 	if err != nil {
-		return blob.Info{}, err //nolint:wrapcheck // the reader's own failure is the whole story
+		return blob.Info{}, err //nolint:wrapcheck // the error of r is the error of the call
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// An absent key returns the zero object, whose zero version differs
+	// from every IfMatch that is not zero.
 	cur, exists := s.m.Get(key)
 
-	if m := opts.Write.IfMatch; !m.IsZero() {
-		if !exists || cur.info.Version != m {
-			return blob.Info{}, version.ErrMismatch
-		}
+	if m := opts.Write.IfMatch; !m.IsZero() && cur.info.Version != m {
+		return blob.Info{}, version.ErrMismatch
 	}
 
 	if nm := opts.Write.IfNoneMatch; !nm.IsZero() {
@@ -203,7 +227,10 @@ func (s *Store) Get(ctx context.Context, key string) (io.ReadCloser, blob.Info, 
 		return nil, blob.Info{}, errs.WithClass(errAbsent, errs.NotFound)
 	}
 
-	return io.NopCloser(bytes.NewReader(obj.data)), obj.info, nil
+	r := new(reader)
+	r.Reset(obj.data)
+
+	return r, obj.info, nil
 }
 
 // ReadRange copies len(dst) bytes of the stored body, starting at off,
@@ -324,12 +351,10 @@ func (s *Store) Delete(ctx context.Context, key string, ifMatch version.Version)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	cur, exists := s.m.Get(key)
-
-	if m := ifMatch; !m.IsZero() {
-		if !exists || cur.info.Version != m {
-			return version.ErrMismatch
-		}
+	// An absent key returns the zero object, whose zero version differs
+	// from every ifMatch that is not zero.
+	if cur, _ := s.m.Get(key); !ifMatch.IsZero() && cur.info.Version != ifMatch {
+		return version.ErrMismatch
 	}
 
 	s.m.Delete(key)
@@ -353,7 +378,7 @@ func (s *Store) Delete(ctx context.Context, key string, ifMatch version.Version)
 //
 // # Allocation contract
 //
-// One copy of the page per call.
+// Two allocations per call: the copy of the page and its cursor.
 func (s *Store) List(ctx context.Context, prefix string, p page.Page) (page.Cursor[blob.Info], error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -364,11 +389,9 @@ func (s *Store) List(ctx context.Context, prefix string, p page.Page) (page.Curs
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// A continuation token exists only when this page was truncated,
-	// that is when a matching key follows its last object. An
-	// untruncated page — even an exactly-full one — is the last, and
-	// emitting a token for it would cost every walker one spurious
-	// empty round trip.
+	// A page has a token only when a key with the prefix follows its last
+	// object. The last page of a walk has no token, also when it is full,
+	// so a walk ends without a call that returns an empty page.
 	infos := make([]blob.Info, 0, min(p.Limit, s.m.Len()))
 	next := ""
 	for k, obj := range s.m.Ascend(max(prefix, p.Token)) {
