@@ -173,7 +173,8 @@ func (l *Loader[K, V]) Load(ctx context.Context, key K) (V, error) {
 // across several concurrent batches. Keys the batch function did not
 // resolve are absent from the returned map rather than an error: the
 // return is a map, so absence is representable, where [Loader.Load]
-// has no such option.
+// has no such option. For no keys, LoadAll returns an empty map, not
+// nil, without calling the batch function.
 //
 // Unlike Load, this serves exactly one caller, so the batch function
 // receives a context derived from ctx: it carries the values and the
@@ -318,6 +319,7 @@ func (l *Loader[K, V]) arm() *batch[K, V] {
 	t := l.clock.NewTimer(l.wait)
 
 	go func() {
+		//dokimi:mutate-skip sbr-delete: a timer left armed delivers into a channel that nothing reads
 		defer t.Stop()
 
 		select {
@@ -334,9 +336,11 @@ func (l *Loader[K, V]) arm() *batch[K, V] {
 // dispatch runs b's batch under ctx and delivers the outcome to its
 // callers.
 func (l *Loader[K, V]) dispatch(ctx context.Context, b *batch[K, V]) {
+	//dokimi:mutate-skip sbr-delete: every caller leaves after the delivery, and the last to leave cancels
 	defer b.cancel()
 
 	l.mu.Lock()
+	//dokimi:mutate-skip ror-true: l.batch differs from b only when a batch fills and a key arms the next before this lock
 	if l.batch == b {
 		// The window elapsed rather than the batch filling up.
 		l.batch = nil
