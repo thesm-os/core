@@ -14,97 +14,76 @@ import (
 	"go.thesmos.sh/core/rand"
 )
 
-// budgetBuckets is how finely the budget window is divided.
-//
-// A single counter reset at the window boundary would let a caller
-// that has just crossed one spend the whole budget twice over. Twelve
-// buckets bound that error to a twelfth of the window while keeping
-// the whole window in one cache line's worth of counters.
+// budgetBuckets is the number of buckets of the budget window. A single
+// counter that resets at the end of the window lets a caller spend the
+// budget twice across the reset. Twelve buckets bound that error to a
+// twelfth of the window.
 const budgetBuckets = 12
 
-// RetryConfig configures a [Retrier], and none of its fields has a
-// default, because a wrong retry policy shows only under load, when
-// nobody is reading the code.
+// RetryConfig configures a [Retrier]. No field has a default, because a
+// wrong retry policy shows only under load.
 type RetryConfig struct {
-	// Clock times the backoff. Under a virtual clock the intervals
-	// are exact, so a retry test costs no wall-clock time.
+	// Clock times the backoff. A test passes a fake clock, so a retry costs
+	// no wall-clock time.
 	Clock clock.Clock
 
-	// Rand draws the jitter, and [Retrier] serialises the draw, so a
+	// Rand supplies the jitter. [Retrier] calls it under its lock, so a
 	// source that is not safe for concurrent use works too.
 	Rand rand.Rand
 
-	// Attempts is the total number of calls, not the number of
-	// retries. Must be > 0; one means never retry.
+	// Attempts is the total number of calls, not the number of retries. It
+	// must be positive, and 1 means no retry.
 	Attempts int
 
-	// Base is the ceiling of the first backoff interval, doubling with
-	// each retry. Must be > 0.
+	// Base is the ceiling of the first backoff, which doubles with each
+	// retry. It must be positive.
 	Base time.Duration
 
-	// Max caps that ceiling. Must be >= Base.
+	// Max caps the ceiling of the backoff. It must be at least Base.
 	Max time.Duration
 
-	// MaxRetryAfter is the longest delay that Do waits for when
+	// MaxRetryAfter is the longest delay that [Do] waits for when
 	// [errs.RetryAfter] reports one for a failure. Do returns a failure
-	// whose delay is longer instead of waiting. Must be >= 0. Zero makes
-	// Do return every failure with a delay.
+	// whose delay is longer instead of waiting. It must not be negative, and
+	// zero makes Do return every failure with a delay.
 	MaxRetryAfter time.Duration
 
-	// Budget is the fraction of calls that may become retries, across
-	// every caller sharing this Retrier, measured over BudgetWindow.
-	// Must be >= 0.
+	// Budget is the fraction of calls that may become retries, across every
+	// caller of the Retrier, over BudgetWindow. It must not be negative.
 	//
-	// This is the protection: a failure affecting one call in a
-	// thousand retries freely, one affecting everything retries almost
-	// not at all. It is also unusable on its own below one call per
-	// window, which is what MinRetries is for.
+	// A failure of one call in a thousand retries freely, and a failure of
+	// every call retries almost never. Below one call per window the
+	// fraction allows no retry, and MinRetries sets the floor.
 	Budget float64
 
-	// MinRetries is the floor beneath that fraction: this many retries
-	// are affordable within the window whatever the ratio allows. Must
-	// be >= 0.
+	// MinRetries is the number of retries that the window allows whatever
+	// the fraction allows. It must not be negative.
 	//
-	// Without it a Retrier refuses the first retry it is ever asked
-	// for at any Budget below 1.0 — one call cannot pay for one retry
-	// at a fraction — so a caller behind thin traffic would never
-	// retry at all, and the budget would protect a dependency that was
-	// never at risk.
-	//
-	// Below the floor the attempt count is the only bound, which is
-	// the right answer while the aggregate is too small to threaten
-	// anything. Above it the ratio takes over.
-	//
-	// Both this and Budget at zero disables retrying entirely.
+	// Without it, a Retrier at a Budget below 1 refuses the first retry that
+	// it is asked for, because one call cannot afford one retry at a
+	// fraction, and a caller of thin traffic never retries. Below the floor
+	// the attempt count alone bounds the retries, and above it the fraction
+	// applies. A Budget and a MinRetries of zero turn retries off.
 	MinRetries int
 
-	// BudgetWindow is how far back the budget looks. Must be > 0 when
-	// either Budget or MinRetries is.
-	//
-	// Long enough to span a dependency's recovery, short enough that
-	// yesterday's traffic does not pay for today's retries.
+	// BudgetWindow is the time over which the budget counts calls and
+	// retries. It must be positive when Budget or MinRetries is. A window
+	// spans the recovery of a dependency, and is short enough that old
+	// traffic does not fund new retries.
 	BudgetWindow time.Duration
 }
 
-// Retrier retries a call, bounded by both an attempt count and a
-// budget.
+// Retrier retries a call, bounded by an attempt count and a budget.
 //
-// An attempt limit bounds one call and does nothing about the
-// aggregate. A dependency that starts failing for everyone turns every
-// in-flight call into Attempts calls, so the moment it is least able
-// to serve traffic is the moment it receives several times as much,
-// and the retries are what keep it down. The budget caps retries as a
-// fraction of the overall call rate. A failure that affects one call in
-// a thousand retries freely, and a failure that affects every call
-// retries almost never.
+// An attempt count bounds one call, not the load of every caller. When a
+// dependency fails for every caller, each call in flight becomes Attempts
+// calls, so the dependency receives several times its load when it is
+// least able to serve it. The budget caps the retries at a fraction of the
+// calls: over the window, the allowance is max(MinRetries, Budget×calls).
 //
-// The allowance over the window is max(MinRetries, Budget×calls): a
-// floor while the traffic is too thin for a ratio to mean anything,
-// and the ratio once it is not.
-//
-// That is why this is a type rather than a free function. A budget is
-// state shared across calls, and a per-call value would bound nothing.
-// One Retrier per dependency, shared by every caller of it.
+// A budget is state that the calls share, so Retrier is a type and not a
+// function. A process keeps one Retrier per dependency, and every caller of
+// the dependency shares it.
 //
 // # Concurrency
 //
@@ -123,25 +102,25 @@ type Retrier struct {
 	budget        float64
 	minRetries    int
 
-	// bucket is BudgetWindow/budgetBuckets: the resolution at which
-	// old traffic ages out.
+	// bucket is BudgetWindow/budgetBuckets: the resolution at which old
+	// traffic leaves the window.
 	bucket time.Duration
 	cur    int
 
 	calls   [budgetBuckets]int
 	retries [budgetBuckets]int
 
-	// mu guards the ring above and serialises the jitter draw, so that
-	// a Rand which is not safe for concurrent use still is here.
+	// mu guards the ring and serialises the calls of rand, so that a Rand
+	// that is not safe for concurrent use works.
 	mu sync.Mutex
 }
 
-// NewRetrier returns a Retrier over cfg.
+// NewRetrier returns a Retrier of cfg.
 //
-// Returns [ErrConfig] when Clock or Rand is nil, Attempts is not
-// positive, Base is not positive, Max is below Base, MaxRetryAfter,
-// Budget or MinRetries is negative, or BudgetWindow is not positive
-// while Budget or MinRetries is positive.
+// Error modes: a nil Clock or Rand, an Attempts or a Base that is not
+// positive, a Max below Base, a negative MaxRetryAfter, Budget or
+// MinRetries, and a BudgetWindow that is not positive while Budget or
+// MinRetries is positive return [ErrConfig], classified Invalid.
 func NewRetrier(cfg RetryConfig) (*Retrier, error) {
 	if cfg.Clock == nil ||
 		cfg.Rand == nil ||
@@ -171,37 +150,34 @@ func NewRetrier(cfg RetryConfig) (*Retrier, error) {
 	}, nil
 }
 
-// Do calls fn until it succeeds, ctx ends, the attempts are exhausted,
-// or the budget is spent.
+// Do calls fn until it succeeds, ctx ends, the attempts run out, or the
+// budget refuses a retry.
 //
-// It stops early on any error [errs.Classify] does not report as
-// [errs.Transient]: retrying an error the producer has called the
-// caller's own fault cannot succeed, and spends budget that a call
-// which might succeed then cannot have.
+// Do stops at an error that [errs.Classify] does not report as
+// [errs.Transient]. A retry of an error that its producer attributes to the
+// caller cannot succeed, and spends budget that a call that can succeed
+// then lacks.
 //
-// Do never retries a call whose context ended, because the caller
-// stopped asking and the dependency did not refuse. Do returns that
-// attempt's own error.
+// Do does not retry a call whose ctx ended, because the caller stopped
+// asking and the dependency did not refuse. It returns the error of that
+// attempt.
 //
-// When the budget refuses a retry, the returned error wraps both
-// [ErrBudget] and the failure that prompted it, so a caller sees why
-// it stopped and what it stopped on.
+// When the budget refuses a retry, the error wraps [ErrBudget] and the
+// failure before it, so the caller sees why Do stopped and on what.
 //
 // # Delays
 //
-// When [errs.RetryAfter] reports a delay for a failure, Do waits at
-// least that long before the next attempt: the longer of the delay and
-// its own backoff. Do returns a failure whose delay exceeds
-// MaxRetryAfter at once, and errs.RetryAfter still reports the delay
-// of the returned error, so the caller can schedule the attempt itself.
+// When [errs.RetryAfter] reports a delay for a failure, Do waits the longer
+// of the delay and its backoff before the next attempt. Do returns a failure
+// whose delay exceeds MaxRetryAfter at once, and errs.RetryAfter reports the
+// delay of the returned error, so the caller can schedule the attempt.
 //
 // # Idempotency
 //
-// A failure that [errs.Classify] reports as [errs.Transient] does not
-// mean that fn had no effect. A timeout can arrive after the dependency
-// applied a write, and Do then calls fn again. fn must be safe to
-// repeat, for example by sending the same idempotency key on every
-// attempt.
+// A failure that [errs.Classify] reports as [errs.Transient] does not mean
+// that fn had no effect. A timeout can arrive after the dependency applied a
+// write, and Do then calls fn again. fn must be safe to repeat, for example
+// with the same idempotency key in every attempt.
 //
 // # Composing with a breaker
 //
@@ -211,10 +187,14 @@ func NewRetrier(cfg RetryConfig) (*Retrier, error) {
 //	    return resilience.Call(ctx, breaker, "inventory", fetch)
 //	})
 //
-// so the breaker observes each attempt and [ErrOpen] — classified
-// [errs.Transient] — is what the retry backs off against. Inverted,
-// one logical call contributes Attempts failures to the circuit and
-// opens it after a single bad request.
+// The breaker then counts each attempt, and the retry backs off against
+// [ErrOpen], which classifies as [errs.Transient]. Inverted, one call adds
+// Attempts failures to the circuit, which then opens after one bad request.
+//
+// # Allocation contract
+//
+// Zero alloc for a call whose first attempt succeeds, apart from what fn
+// allocates.
 func Do[T any](
 	ctx context.Context, r *Retrier,
 	fn func(context.Context) (T, error),
@@ -239,6 +219,7 @@ func Do[T any](
 		}
 
 		v, err = fn(ctx)
+		//dokimi:mutate-skip sbr-delete,ror-false: errs.Retryable reports false for nil, so the check below returns a success too
 		if err == nil {
 			return v, nil
 		}
@@ -256,18 +237,16 @@ func Do[T any](
 	return v, err
 }
 
-// Backoff returns the delay before retry n: zero for n below one, then
-// a full-jitter draw from the interval [0, base<<(n-1)), capped at
-// limit.
+// Backoff returns the delay before retry attempt: zero for an attempt below
+// 1, and otherwise a draw of r from [0, min(base<<(attempt-1), limit)).
 //
-// Full jitter rather than a fixed fraction of the interval, because
-// synchronised retry across a fleet is the failure backoff exists to
-// prevent, and unjittered exponential backoff preserves it exactly. A
-// draw of zero is a legitimate outcome, not a bug.
+// The jitter covers the whole interval, because the retries of a fleet that
+// fail together and retry together are the failure that a backoff prevents,
+// and an exponential backoff without jitter keeps them together. A draw of
+// zero is a valid delay.
 //
-// A free function because it is a pure computation over four values,
-// with no lifetime to manage. [Retrier] draws through its own lock;
-// callers of this share r at their own discretion.
+// Backoff is a function of its four values. [Retrier] calls it under its
+// lock, and another caller shares r as the contract of r allows.
 //
 // # Allocation contract
 //
@@ -277,12 +256,11 @@ func Backoff(r rand.Rand, attempt int, base, limit time.Duration) time.Duration 
 		return 0
 	}
 
-	// Clamped once here rather than again at the end, so d is never
-	// above the cap at any point in the loop.
+	// d starts at limit or below, so no step of the loop exceeds limit.
 	d := min(base, limit)
 	for range attempt - 1 {
-		// Doubling from here would pass the cap, and for a large
-		// attempt count would overflow before it got there.
+		// A doubling beyond limit/2 passes the cap, and for a large attempt
+		// count it would overflow.
 		if d > limit/2 {
 			d = limit
 
@@ -294,7 +272,7 @@ func Backoff(r rand.Rand, attempt int, base, limit time.Duration) time.Duration 
 	return time.Duration(rand.Float64(r) * float64(d))
 }
 
-// backoff draws the delay before the given attempt under r's lock.
+// backoff computes the delay before attempt under the lock of r.
 func (r *Retrier) backoff(attempt int) time.Duration {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -302,7 +280,7 @@ func (r *Retrier) backoff(attempt int) time.Duration {
 	return Backoff(r.rand, attempt, r.base, r.max)
 }
 
-// observe counts one logical call against the budget window.
+// observe counts one call in the budget window.
 func (r *Retrier) observe() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -311,8 +289,8 @@ func (r *Retrier) observe() {
 	r.calls[r.cur]++
 }
 
-// spend claims one retry from the budget, reporting whether the window
-// could pay for it.
+// spend takes one retry from the budget, and reports whether the window
+// allows it.
 func (r *Retrier) spend() bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -333,8 +311,8 @@ func (r *Retrier) spend() bool {
 	return true
 }
 
-// roll ages the ring forward to the current bucket, clearing the ones
-// it passes. Must be called with r.mu held.
+// roll moves the ring forward to the current bucket, and clears the buckets
+// that it passes. The caller locks r.mu.
 func (r *Retrier) roll() {
 	steps := int(r.clock.Time().Sub(r.start) / r.bucket)
 	if steps < 1 {
@@ -343,8 +321,8 @@ func (r *Retrier) roll() {
 
 	r.start = r.start.Add(time.Duration(steps) * r.bucket)
 
-	// Beyond a full lap every bucket is stale, so there is nothing to
-	// gain from going round more than once.
+	// After a full lap every bucket is stale, so roll goes round at most
+	// once.
 	for range min(steps, budgetBuckets) {
 		r.cur = (r.cur + 1) % budgetBuckets
 		r.calls[r.cur] = 0

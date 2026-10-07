@@ -220,6 +220,7 @@ func (l *Limiter) WaitN(ctx context.Context, n int64) error {
 	}
 
 	t := l.clock.NewTimer(wait)
+	//dokimi:mutate-skip sbr-delete: a timer that runs no goroutine has no effect after WaitN returns that a test can observe
 	defer t.Stop()
 
 	select {

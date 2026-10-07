@@ -349,6 +349,7 @@ func (b *Breaker) abandon(target string, probe uint64) {
 	// admit created the circuit before the call, and the Breaker does not
 	// remove it.
 	m := b.circuits[target]
+	//dokimi:mutate-skip lcr-right: release only clears probing, so a release without an outstanding probe changes nothing
 	if c := m.Data(); c.probing && c.probe == probe {
 		// A probe is outstanding only in HalfOpen, where release has an
 		// edge, so Fire cannot reject it.
@@ -459,6 +460,7 @@ func run[T any](
 	}()
 
 	v, err := fn(ctx)
+	//dokimi:mutate-skip sbr-delete: the outcome that run records ends the probe, so the abandon that the deferred call then adds changes nothing
 	returned = true
 
 	if err != nil && ctx.Err() != nil {

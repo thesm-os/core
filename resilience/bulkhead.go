@@ -11,63 +11,62 @@ import (
 	"go.thesmos.sh/core/clock"
 )
 
-// BulkheadConfig configures a [Bulkhead]. Only Limit is required;
-// Queue and Wait have meaningful zero values.
+// BulkheadConfig configures a [Bulkhead]. Limit is required. The zero
+// values of Queue and Wait mean no queue, and no bound on a wait beyond
+// the caller's context.
 type BulkheadConfig struct {
-	// Clock bounds a queued caller's wait. Under a virtual clock the
-	// timeout is exact, which is what makes a saturated bulkhead
-	// testable without sleeping.
+	// Clock bounds the wait of a queued caller. A test passes a fake clock,
+	// which times the bound exactly without a sleep.
 	Clock clock.Clock
 
-	// Limit is the number of calls allowed to be in flight at once.
-	// Must be > 0.
+	// Limit is the number of calls in flight at once. It must be positive.
 	Limit int
 
-	// Queue is how many further callers may wait for a permit. Zero
-	// means none: a caller arriving at the limit is rejected at once.
+	// Queue is the number of callers that wait for a permit beyond the
+	// Limit. Zero means no queue, so a caller at the limit receives
+	// [ErrFull] at once.
 	//
-	// A queue trades latency for throughput, and only pays when the
-	// saturation is a burst rather than a sustained overload. Queueing
-	// in front of a dependency that is simply too slow adds waiting to
-	// the failure rather than replacing it, which is why Wait exists.
+	// A queue trades latency for throughput. It helps against a burst. In
+	// front of a dependency that is too slow for its load, it adds a wait to
+	// every failure, which Wait bounds.
 	Queue int
 
-	// Wait is how long a queued caller waits before giving up. Zero
-	// means bounded only by the caller's context.
+	// Wait bounds the wait of a queued caller. Zero means that the caller's
+	// context alone bounds it.
 	Wait time.Duration
 }
 
-// Bulkhead bounds how many calls may be in flight at once, so one slow
-// dependency cannot consume every goroutine in the process.
-//
-// The name is the ship's: a hull is divided into compartments so that
-// a breach floods one rather than sinking the vessel. One Bulkhead per
-// dependency; a shared one is a single compartment again.
+// Bulkhead bounds the calls in flight to one dependency, so that a slow
+// dependency cannot occupy every goroutine of the process. A process keeps
+// one Bulkhead per dependency, because a shared one bounds the dependencies
+// together.
 //
 // # Concurrency
 //
 // Safe for concurrent use.
+//
+// # Allocation contract
+//
+// [Bulkhead.Acquire] allocates the release of a permit that it grants, and
+// nothing for a rejection.
 type Bulkhead struct {
 	clock clock.Clock
 
-	// permits holds one token per free slot rather than per held slot,
-	// so acquiring is a receive and the limit is enforced by the
-	// channel's capacity rather than by a counter this package would
-	// have to keep correct.
+	// permits contains one token per free slot, so Acquire takes a slot with
+	// a receive, and the capacity of the channel is the Limit.
 	permits chan struct{}
 
-	// queue holds one token per waiting caller. Its capacity is the
-	// admission control: a caller that cannot claim a slot is rejected
-	// without ever blocking.
+	// queue contains one token per waiting caller. Its capacity is the
+	// Queue, so a caller that finds it full receives ErrFull without a wait.
 	queue chan struct{}
 
 	wait time.Duration
 }
 
-// NewBulkhead returns a Bulkhead over cfg.
+// NewBulkhead returns a Bulkhead of cfg with every permit free.
 //
-// Returns [ErrConfig] when Clock is nil, Limit is not positive, or
-// Queue or Wait is negative.
+// Error modes: a nil Clock, a Limit that is not positive, and a negative
+// Queue or Wait return [ErrConfig], classified Invalid.
 func NewBulkhead(cfg BulkheadConfig) (*Bulkhead, error) {
 	if cfg.Clock == nil || cfg.Limit <= 0 || cfg.Queue < 0 || cfg.Wait < 0 {
 		return nil, ErrConfig
@@ -86,10 +85,9 @@ func NewBulkhead(cfg BulkheadConfig) (*Bulkhead, error) {
 	}, nil
 }
 
-// Acquire claims a permit, returning the function that gives it back.
-//
-// The release is one-shot: calling it again is a no-op rather than a
-// permit the caller never held. Callers should defer it immediately.
+// Acquire takes a permit, and returns the function that gives it back. The
+// function gives the permit back once, so a second call changes nothing. A
+// caller defers it at once:
 //
 //	release, err := b.Acquire(ctx)
 //	if err != nil {
@@ -97,24 +95,25 @@ func NewBulkhead(cfg BulkheadConfig) (*Bulkhead, error) {
 //	}
 //	defer release()
 //
-// Returns [ErrFull] when the limit and the queue are both full,
-// [ErrWaitTimeout] when a queued caller waited its full allowance, and
-// ctx.Err() when the caller's context ended first.
+// A caller at the limit waits in the queue for a free permit.
 //
-// Those three are kept distinct because they describe different
-// outages. A cancellation storm on the client side would otherwise be
-// indistinguishable from a saturated dependency in any metric derived
-// from them, and the two call for opposite responses.
+// Error modes, none of which takes a permit:
+//
+//   - [ErrFull] when the limit and the queue are full.
+//   - [ErrWaitTimeout] when a queued caller waited for the Wait of the
+//     configuration.
+//   - The error of ctx when ctx ends first.
+//
+// The three errors differ, because they describe different outages. A storm
+// of cancellations of the callers is not a saturated dependency, and the two
+// call for opposite responses.
 //
 // # Allocation contract
 //
-// Two allocations on the admitted path — the release closure and its
-// one-shot guard — and none on a rejection. That is the price of
-// handing back a release the caller can defer, and it is negligible
-// beside the remote call it is admitting.
+// Two allocations for a granted permit, the release and its one-shot guard,
+// and none for a rejection.
 func (b *Bulkhead) Acquire(ctx context.Context) (func(), error) {
-	// The uncontended path, and the only one that touches neither the
-	// queue nor the clock.
+	// A free permit touches neither the queue nor the clock.
 	select {
 	case <-b.permits:
 		return b.grant(), nil
@@ -138,6 +137,7 @@ func (b *Bulkhead) Acquire(ctx context.Context) (func(), error) {
 	}
 
 	t := b.clock.NewTimer(b.wait)
+	//dokimi:mutate-skip sbr-delete: a timer that runs no goroutine has no effect after Acquire returns that a test can observe
 	defer t.Stop()
 
 	select {
@@ -150,7 +150,8 @@ func (b *Bulkhead) Acquire(ctx context.Context) (func(), error) {
 	}
 }
 
-// grant returns the one-shot release for a permit just taken.
+// grant returns the release of a permit that the caller took. The release
+// gives the permit back on its first call alone.
 func (b *Bulkhead) grant() func() {
 	var released atomic.Bool
 
@@ -161,20 +162,16 @@ func (b *Bulkhead) grant() func() {
 	}
 }
 
-// InFlight reports how many permits are held, for emission as a gauge.
-//
-// A point-in-time observation, and racy by nature.
+// InFlight returns the number of permits that callers have taken, for a
+// gauge. The value is a snapshot, which concurrent calls change.
 func (b *Bulkhead) InFlight() int {
 	return cap(b.permits) - len(b.permits)
 }
 
-// Queued reports how many callers are waiting for a permit, for
-// emission as a gauge.
-//
-// A point-in-time observation, and racy by nature. Sustained depth
-// here is the signal that the limit is too low or the dependency too
-// slow; it is the number worth alerting on, because it rises before
-// [ErrFull] appears.
+// Queued returns the number of callers that wait for a permit, for a gauge.
+// The value is a snapshot, which concurrent calls change. A queue that is
+// deep over time shows a limit that is too low or a dependency that is too
+// slow. It grows before [ErrFull] appears, so it is the value to alert on.
 func (b *Bulkhead) Queued() int {
 	return len(b.queue)
 }
