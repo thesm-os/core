@@ -304,6 +304,11 @@ func New(name string, opts ...Option) (*Client, error) {
 // response as it is. Each redirect goes to a host that WithHosts admits, and
 // none goes from https to http.
 //
+// Do closes the body of req on every path, as http.Client.Do does. The
+// transport closes the body of a request that an attempt sends. Do closes
+// the body of a request that it blocks or whose every attempt the breaker
+// refuses, and the body of an attempt whose function of WithPrepare fails.
+//
 // Do logs a call that fails at slog.LevelWarn, unless the context of req
 // ended.
 //
@@ -430,15 +435,16 @@ func (c *Client) AppendFetch(dst []byte, req *http.Request) ([]byte, error) {
 //
 // AppendFetchBody allocates as AppendFetch does, and 2 objects of the client
 // for each attempt: the first fence of its body, and its GetBody. Each body
-// that GetBody hands out allocates its fence. net/http allocates 4 objects
-// more for a request with a body than for one without: a copy of the
-// request and a tracker of its body, the text of its Content-Length header,
-// and a buffer of the length of the body, at most 32 KiB, through which it
-// copies a body that it does not know to be in memory. A body of 100 bytes
-// or more costs 1 object more, the digits of its length. On a connection
-// that the transport reuses, a POST of a body of 12 bytes into a dst with
-// room for the response allocates 60 objects with Go 1.27.1. An empty body
-// allocates as AppendFetch does.
+// that GetBody hands out allocates its fence. Over HTTP/1.1, net/http
+// allocates 4 objects more for a request with a body than for one without:
+// a copy of the request and a tracker of its body, the text of its
+// Content-Length header, and a buffer of the length of the body, at most 32
+// KiB, through which it copies a body that it does not know to be in memory.
+// A body of 100 bytes or more costs 1 object more, the digits of its length.
+// On a connection that the transport reuses, a POST of a body of 12 bytes
+// into a dst with room for the response allocates 60 objects with Go 1.27.1.
+// Over HTTP/2, net/http reads the body through a buffer from its pool. An
+// empty body allocates as AppendFetch does.
 func (c *Client) AppendFetchBody(dst []byte, req *http.Request, body []byte) ([]byte, error) {
 	if req.Body != nil && req.Body != http.NoBody {
 		_ = req.Body.Close()
@@ -644,6 +650,16 @@ func attempts[T any](k *call, read func(*http.Response, error) (T, error)) (T, e
 	c, req := k.c, k.req
 	ctx := req.Context()
 
+	// The transport closes the body of each request that an attempt sends,
+	// as http.Client.Do closes it on every path. The call closes the body
+	// itself when the client blocks the request, or when the breaker refuses
+	// every attempt.
+	defer func() {
+		if !k.sent && req.Body != nil {
+			_ = req.Body.Close()
+		}
+	}()
+
 	var zero T
 
 	if err := c.admit(req.URL); err != nil {
@@ -767,6 +783,13 @@ func (c *Client) send(
 
 	if c.prepare != nil {
 		if err := c.prepare(r); err != nil {
+			// The transport closes the body of every request that it
+			// receives, so the client closes the body of a request that it
+			// does not send.
+			if r.Body != nil {
+				_ = r.Body.Close()
+			}
+
 			err = fmt.Errorf("httpclient: %s: prepare the request: %w", c.name, err)
 			span.End(err)
 

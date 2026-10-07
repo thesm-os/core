@@ -854,6 +854,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   documentation states. They checked the context of `resp.Request`, which
   `http.Client` also ends at its timeout, so the error was unclassified,
   and a breaker and a retrier did not count it.
+- `httpclient.Client.Do`, `Fetch` and `AppendFetch` close the body of a
+  request on every path, as `http.Client.Do` does. They left the body open
+  for a request that the client blocks with `httpclient.ErrBlocked` or
+  whose every attempt the breaker refuses with `resilience.ErrOpen`. They
+  also left open the body of an attempt whose function of `WithPrepare`
+  fails.
 - `btree.Map`, `MapFunc` and `Set` refer to no key that `Delete` or
   `DeleteRange` removed. A removal of the first key of a leaf gives the
   separator of that key the new first key of the leaf. The separator kept

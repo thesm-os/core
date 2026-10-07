@@ -116,8 +116,8 @@
 //     Transfer-Encoding header, and the TransferEncoding of the response.
 //   - AppendFetchBody of a POST of a body of 12 bytes into a buffer with
 //     room: 60 objects. The client allocates the first fence of the body of
-//     the attempt and its GetBody, and net/http allocates 4 objects for a
-//     request with a body.
+//     the attempt and its GetBody, and net/http allocates 4 objects over
+//     HTTP/1.1 for a request with a body.
 //
 // The tracer, the propagator, and the functions of WithPrepare and
 // WithClassify allocate on their own.

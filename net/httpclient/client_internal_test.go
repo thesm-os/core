@@ -357,6 +357,102 @@ func TestClientInternal(t *testing.T) {
 			expect.Nil(t, resp, "Do must return no response once the context ended")
 			expect.True(t, b.closed.Load(), "Do must close the body of the response that it does not return")
 		})
+
+		t.Run("closes the body of a request that it blocks", func(t *testing.T) {
+			t.Parallel()
+			c, err := New(dependency, required)
+			assert.NoError(t, err, "New must accept the options")
+
+			b := &tracked{r: strings.NewReader(payload)}
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://blocked.test/", b)
+			assert.NoError(t, err, "the request must build")
+
+			_, err = c.Do(req) //nolint:bodyclose // Do returns no response with the error
+			assert.ErrorIs(t, err, ErrBlocked, "Do must block a host that WithHosts does not admit")
+			assert.True(t, b.closed.Load(), "Do must close the body of a request that it blocks")
+		})
+
+		t.Run("closes the body of a request whose every attempt the breaker refuses", func(t *testing.T) {
+			t.Parallel()
+			breaker, err := resilience.NewBreaker(resilience.BreakerConfig{
+				Clock:            fake.New(origin),
+				TripOn:           []errs.Class{errs.Transient},
+				FailureThreshold: 1,
+				SuccessThreshold: 1,
+				OpenFor:          time.Hour,
+			})
+			assert.NoError(t, err, "the breaker must build")
+
+			c, err := New(dependency, required, WithBreaker(breaker))
+			assert.NoError(t, err, "New must accept the options")
+
+			var sent atomic.Int32
+			c.http.Transport = roundTrip(func(*http.Request) (*http.Response, error) {
+				sent.Add(1)
+
+				return nil, errRefused
+			})
+
+			// The first call fails at the transport, which opens the circuit.
+			first, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://example.test/", http.NoBody)
+			assert.NoError(t, err, "the request must build")
+			_, err = c.Do(first) //nolint:bodyclose // Do returns no response with the error
+			assert.HasError(t, err, "the first call must fail")
+
+			b := &tracked{r: strings.NewReader(payload)}
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://example.test/", b)
+			assert.NoError(t, err, "the request must build")
+
+			_, err = c.Do(req) //nolint:bodyclose // Do returns no response with the error
+			assert.ErrorIs(t, err, resilience.ErrOpen, "the open circuit must refuse the second call")
+			assert.Equal(t, sent.Load(), int32(1), "the transport must receive the first call alone")
+			assert.True(t, b.closed.Load(), "Do must close the body of a request that no attempt sends")
+		})
+
+		t.Run("closes the body of a request whose function of WithPrepare fails", func(t *testing.T) {
+			t.Parallel()
+			c, err := New(dependency, required, WithPrepare(func(*http.Request) error { return errRefused }))
+			assert.NoError(t, err, "New must accept the options")
+
+			b := &tracked{r: strings.NewReader(payload)}
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://example.test/", b)
+			assert.NoError(t, err, "the request must build")
+
+			_, err = c.Do(req) //nolint:bodyclose // Do returns no response with the error
+			assert.ErrorIs(t, err, errRefused, "Do must return the error of WithPrepare")
+			assert.True(t, b.closed.Load(), "Do must close the body of a request that it does not send")
+		})
+
+		t.Run("returns the error of WithPrepare for a request whose Body is nil", func(t *testing.T) {
+			t.Parallel()
+			c, err := New(dependency, required, WithPrepare(func(*http.Request) error { return errRefused }))
+			assert.NoError(t, err, "New must accept the options")
+
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://example.test/", nil)
+			assert.NoError(t, err, "the request must build")
+
+			_, err = c.Do(req) //nolint:bodyclose // Do returns no response with the error
+			assert.ErrorIs(t, err, errRefused, "Do must return the error of WithPrepare")
+		})
+
+		t.Run("leaves the body of a request that an attempt sends to the transport", func(t *testing.T) {
+			t.Parallel()
+			c, err := New(dependency, required)
+			assert.NoError(t, err, "New must accept the options")
+
+			c.http.Transport = roundTrip(func(r *http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: http.StatusNoContent, Body: http.NoBody, Request: r}, nil
+			})
+
+			b := &tracked{r: strings.NewReader(payload)}
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://example.test/", b)
+			assert.NoError(t, err, "the request must build")
+
+			resp, err := c.Do(req)
+			assert.NoError(t, err, "Do must return the response")
+			assert.NoError(t, resp.Body.Close(), "the body must close")
+			assert.False(t, b.closed.Load(), "Do must leave the close of a sent body to the transport")
+		})
 	})
 
 	t.Run("AppendFetch", func(t *testing.T) {
