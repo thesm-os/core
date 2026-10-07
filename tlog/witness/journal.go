@@ -206,19 +206,15 @@ func appendName(dst []byte, seq uint64, encoded []byte) []byte {
 
 // parseName returns the sequence number of the name of an object, and
 // reports whether name is such a name: seqText decimal digits, a hyphen,
-// and 64 lowercase hexadecimal digits.
+// and 64 lowercase hexadecimal digits. ParseUint refuses a sequence number
+// of other characters than decimal digits.
 func parseName(name string) (uint64, bool) {
 	if len(name) != nameText || name[seqText] != '-' {
 		return 0, false
 	}
 
-	for i := range len(name) {
-		c := name[i]
-		if i < seqText && (c < '0' || c > '9') {
-			return 0, false
-		}
-
-		if i > seqText && (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+	for i := seqText + 1; i < len(name); i++ {
+		if c := name[i]; (c < '0' || c > '9') && (c < 'a' || c > 'f') {
 			return 0, false
 		}
 	}

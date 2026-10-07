@@ -78,8 +78,12 @@ func parseRetiredKey(key string) (originHash, uint64, bool) {
 		return originHash{}, 0, false
 	}
 
+	// Text of another character than a lowercase hexadecimal digit does not
+	// encode back to itself, whatever Decode decoded of it.
 	var h originHash
-	if _, err := hex.Decode(h[:], []byte(name[:hashText])); err != nil || hex.EncodeToString(h[:]) != name[:hashText] {
+
+	_, _ = hex.Decode(h[:], []byte(name[:hashText]))
+	if hex.EncodeToString(h[:]) != name[:hashText] {
 		return originHash{}, 0, false
 	}
 

@@ -9,8 +9,8 @@ import (
 	stded25519 "crypto/ed25519"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
 	"encoding/hex"
-	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -18,13 +18,13 @@ import (
 	"net/http/httptest"
 	"runtime"
 	"strconv"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/bench"
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert/expect"
 
 	"go.thesmos.sh/core/clock"
 	"go.thesmos.sh/core/clock/fake"
@@ -55,6 +55,37 @@ const (
 // pipeHost is the host of the witness that the clients of the benchmarks
 // call over a pipe.
 const pipeHost = "witness.test"
+
+// collidingNames are two names whose keys of type 0x04 over the Ed25519
+// key of witnessName have one key ID, 0x741f352e.
+var collidingNames = [2]note.Name{"example.com/w61272", "example.com/w143085"}
+
+// The allocation contracts of a Client of one Ed25519 cosignature key, over
+// a pipe to a witness that writes one reply to every request.
+const (
+	// newClientAllocs is the allocation contract of NewClient: the Client,
+	// its Verifiers and the URL of add-checkpoint, the URL of the check of
+	// each prefix, and the 2 objects of the Verifier of the key.
+	newClientAllocs = 7
+
+	// clientAddCheckpointAllocs is the allocation contract of
+	// AddCheckpoint: the copy of the body and its reader, the 5 objects of
+	// the request that net/http builds, and 59 of httpclient's AppendFetch
+	// for a POST.
+	clientAddCheckpointAllocs = 66
+
+	// clientCheckpointAllocs is the allocation contract of Checkpoint: the
+	// text of the URL, the 3 objects of the request that net/http builds,
+	// and 55 of httpclient's AppendFetch.
+	clientCheckpointAllocs = 59
+
+	// pipeWarmup is the number of calls that a benchmark over the pipe
+	// makes before it measures. They fill the runtime's per-processor
+	// caches of the sudogs on which the goroutines of the pipe block. The
+	// caches start empty, and the first 200 calls at 4 CPUs allocate about
+	// 235 sudogs, one more allocation per call in their rounded mean.
+	pipeWarmup = 1000
+)
 
 // clockTime is the time of the fake clocks of the tests.
 var clockTime = time.Date(2026, time.October, 5, 12, 0, 0, 0, time.UTC)
@@ -107,15 +138,15 @@ func TestClient(t *testing.T) {
 			t.Parallel()
 			w := newFakeWitness(t, nil)
 			_, err := witness.NewClient(clientConfig(t, w, ed25519Cosigner(t, witnessName).Key()))
-			testkit.NoError(t, err, "NewClient must accept the configuration")
+			assert.NoError(t, err, "NewClient must accept the configuration")
 		})
 
 		t.Run("returns ErrConfig for a nil configuration", func(t *testing.T) {
 			t.Parallel()
 			c, err := witness.NewClient(nil)
-			testkit.ErrorIs(t, err, witness.ErrConfig, "NewClient must refuse a nil configuration")
-			testkit.Equal(t, errs.Classify(err), errs.Invalid, "the error must classify as Invalid")
-			testkit.True(t, c == nil, "NewClient must return a nil Client with an error")
+			assert.ErrorIs(t, err, witness.ErrConfig, "NewClient must refuse a nil configuration")
+			assert.Equal(t, errs.Classify(err), errs.Invalid, "the error must classify as Invalid")
+			assert.Nil(t, c, "NewClient must return a nil Client with an error")
 		})
 
 		key := ed25519Cosigner(t, witnessName).Key()
@@ -188,18 +219,43 @@ func TestClient(t *testing.T) {
 				cfg := clientConfig(t, newFakeWitness(t, nil), key)
 				tt.edit(cfg)
 				c, err := witness.NewClient(cfg)
-				testkit.ErrorIs(t, err, witness.ErrConfig, "NewClient must refuse the configuration")
-				testkit.Equal(t, errs.Classify(err), errs.Invalid, "the error must classify as Invalid")
-				testkit.True(t, c == nil, "NewClient must return a nil Client with an error")
+				assert.ErrorIs(t, err, witness.ErrConfig, "NewClient must refuse the configuration")
+				assert.Equal(t, errs.Classify(err), errs.Invalid, "the error must classify as Invalid")
+				assert.Nil(t, c, "NewClient must return a nil Client with an error")
 			})
 		}
+
+		t.Run("returns a Client of two keys of other names with one key ID", func(t *testing.T) {
+			t.Parallel()
+			first, second := key, key
+			first.Name, second.Name = collidingNames[0], collidingNames[1]
+			assert.Equal(t, first.ID(), second.ID(), "the keys must share their key ID")
+
+			_, err := witness.NewClient(clientConfig(t, newFakeWitness(t, nil), first, second))
+			assert.NoError(t, err, "NewClient must accept keys of other names")
+		})
+
+		t.Run("returns a Client of two keys of one name with two key IDs", func(t *testing.T) {
+			t.Parallel()
+			pq := mldsaCosigner(t, witnessName, nil).Key()
+			_, err := witness.NewClient(clientConfig(t, newFakeWitness(t, nil), key, pq))
+			assert.NoError(t, err, "NewClient must accept two keys of one name")
+		})
+
+		t.Run("returns a Client of a prefix of the https scheme", func(t *testing.T) {
+			t.Parallel()
+			cfg := clientConfig(t, newFakeWitness(t, nil), key)
+			cfg.Submission = "https://witness.example/submit"
+			_, err := witness.NewClient(cfg)
+			assert.NoError(t, err, "NewClient must accept an https prefix")
+		})
 
 		t.Run("returns the error of the Resolver for a key that it does not resolve", func(t *testing.T) {
 			t.Parallel()
 			cfg := clientConfig(t, newFakeWitness(t, nil), key)
 			cfg.Resolver = note.Resolver{}
 			_, err := witness.NewClient(cfg)
-			testkit.ErrorIs(t, err, note.ErrUnknownType, "NewClient must return the error of the Resolver")
+			assert.ErrorIs(t, err, note.ErrUnknownType, "NewClient must return the error of the Resolver")
 		})
 	})
 
@@ -220,13 +276,13 @@ func TestClient(t *testing.T) {
 			w := newFakeWitness(t, func([]byte) (int, []byte) { return http.StatusOK, cosignLines(t, text, ed) })
 			c := newClient(t, w, ed.Key())
 			_, err := c.AddCheckpoint(t.Context(), msg, 3, proof, nil)
-			testkit.NoError(t, err, "AddCheckpoint must succeed")
-			testkit.Equal(t, w.method.Load().(string), http.MethodPost, "AddCheckpoint must POST")
-			testkit.Equal(t, w.path.Load().(string), submissionPath+"/add-checkpoint",
+			assert.NoError(t, err, "AddCheckpoint must succeed")
+			assert.Equal(t, w.method.Load().(string), http.MethodPost, "AddCheckpoint must POST")
+			assert.Equal(t, w.path.Load().(string), submissionPath+"/add-checkpoint",
 				"AddCheckpoint must call add-checkpoint")
 			want := "old 3\n" + base64.StdEncoding.EncodeToString(proof[0].Bytes()) + "\n" +
 				base64.StdEncoding.EncodeToString(proof[1].Bytes()) + "\n\n" + string(msg)
-			testkit.Equal(t, string(w.body.Load().([]byte)), want, "AddCheckpoint must send the body of the protocol")
+			assert.Equal(t, string(w.body.Load().([]byte)), want, "AddCheckpoint must send the body of the protocol")
 		})
 
 		t.Run("appends the line of each key in the order of the configuration", func(t *testing.T) {
@@ -234,12 +290,12 @@ func TestClient(t *testing.T) {
 			w := newFakeWitness(t, func([]byte) (int, []byte) { return http.StatusOK, cosignLines(t, text, pq, ed) })
 			c := newClient(t, w, ed.Key(), pq.Key())
 			got, err := c.AddCheckpoint(t.Context(), msg, 0, nil, []byte("prefix:"))
-			testkit.NoError(t, err, "AddCheckpoint must succeed")
-			testkit.True(t, strings.HasPrefix(string(got), "prefix:"), "AddCheckpoint must keep dst")
+			assert.NoError(t, err, "AddCheckpoint must succeed")
+			assert.HasPrefix(t, string(got), "prefix:", "AddCheckpoint must keep dst")
 			lines := mustParse(t, append(append(append([]byte(nil), text...), '\n'), got[len("prefix:"):]...))
-			testkit.Len(t, lines.Signatures, 2, "AddCheckpoint must append one line per key")
-			testkit.Equal(t, lines.Signatures[0].ID, ed.Key().ID(), "the line of the first key must come first")
-			testkit.Equal(t, lines.Signatures[1].ID, pq.Key().ID(), "the line of the second key must come second")
+			assert.Length(t, lines.Signatures, 2, "AddCheckpoint must append one line per key")
+			assert.Equal(t, lines.Signatures[0].ID, ed.Key().ID(), "the line of the first key must come first")
+			assert.Equal(t, lines.Signatures[1].ID, pq.Key().ID(), "the line of the second key must come second")
 		})
 
 		t.Run("keeps the body of a request intact after it returns", func(t *testing.T) {
@@ -257,24 +313,23 @@ func TestClient(t *testing.T) {
 
 					return nil
 				}))
-			testkit.NoError(t, err, "httpclient.New must accept the options")
+			assert.NoError(t, err, "httpclient.New must accept the options")
 
 			cfg := clientConfig(t, w, ed.Key())
 			cfg.HTTP = h
 			c, err := witness.NewClient(cfg)
-			testkit.NoError(t, err, "NewClient must accept the configuration")
+			assert.NoError(t, err, "NewClient must accept the configuration")
 
 			_, err = c.AddCheckpoint(t.Context(), msg, 3, proof, nil)
-			testkit.NoError(t, err, "the first call must succeed")
+			assert.NoError(t, err, "the first call must succeed")
 			_, err = c.AddCheckpoint(t.Context(), msg, 4, proof, nil)
-			testkit.NoError(t, err, "the second call must succeed")
+			assert.NoError(t, err, "the second call must succeed")
 
 			rc, err := replays[0]()
-			testkit.NoError(t, err, "GetBody must return the body")
+			assert.NoError(t, err, "GetBody must return the body")
 			got, err := io.ReadAll(rc)
-			testkit.NoError(t, err, "the body must read")
-			testkit.True(t, strings.HasPrefix(string(got), "old 3\n"),
-				"the second call must leave the first body intact")
+			assert.NoError(t, err, "the body must read")
+			assert.HasPrefix(t, string(got), "old 3\n", "the second call must leave the first body intact")
 		})
 
 		t.Run("ignores the lines of other keys", func(t *testing.T) {
@@ -285,8 +340,8 @@ func TestClient(t *testing.T) {
 			})
 			c := newClient(t, w, ed.Key())
 			got, err := c.AddCheckpoint(t.Context(), msg, 0, nil, nil)
-			testkit.NoError(t, err, "AddCheckpoint must ignore a line of another key")
-			testkit.Equal(t, string(got), string(cosignLines(t, text, ed)),
+			assert.NoError(t, err, "AddCheckpoint must ignore a line of another key")
+			assert.Equal(t, string(got), string(cosignLines(t, text, ed)),
 				"AddCheckpoint must append the line of the key")
 		})
 
@@ -313,9 +368,10 @@ func TestClient(t *testing.T) {
 				},
 			},
 			{
-				name: "returns ErrCosignature for a line whose timestamp is 0",
+				name: "returns ErrCosignature for a line whose timestamp is 0 beside a valid line of every other key",
 				reply: func([]byte) (int, []byte) {
-					return http.StatusOK, cosignLines(t, text, mldsaCosigner(t, witnessName, nil))
+					return http.StatusOK, append(cosignLines(t, text, ed),
+						cosignLines(t, text, mldsaCosigner(t, witnessName, nil))...)
 				},
 			},
 			{
@@ -336,50 +392,77 @@ func TestClient(t *testing.T) {
 				t.Parallel()
 				c := newClient(t, newFakeWitness(t, tt.reply), ed.Key(), pq.Key())
 				got, err := c.AddCheckpoint(t.Context(), msg, 0, nil, []byte("prefix:"))
-				testkit.ErrorIs(t, err, witness.ErrCosignature, "AddCheckpoint must refuse the response")
-				testkit.Equal(t, errs.Classify(err), errs.Integrity, "the error must classify as Integrity")
-				testkit.Equal(t, string(got), "prefix:", "AddCheckpoint must return dst unchanged")
+				assert.ErrorIs(t, err, witness.ErrCosignature, "AddCheckpoint must refuse the response")
+				assert.Equal(t, errs.Classify(err), errs.Integrity, "the error must classify as Integrity")
+				assert.Equal(t, string(got), "prefix:", "AddCheckpoint must return dst unchanged")
 			})
 		}
+
+		t.Run("ignores a line of another name with the key ID of a key", func(t *testing.T) {
+			t.Parallel()
+			sig := note.Signature{Name: "example.com/other", ID: ed.Key().ID(), Value: make([]byte, 72)}
+			other, _ := sig.AppendText(nil)
+			w := newFakeWitness(t, func([]byte) (int, []byte) {
+				return http.StatusOK, append(other, cosignLines(t, text, ed)...)
+			})
+			got, err := newClient(t, w, ed.Key()).AddCheckpoint(t.Context(), msg, 0, nil, nil)
+			assert.NoError(t, err, "AddCheckpoint must ignore the line of another name")
+			assert.Equal(t, string(got), string(cosignLines(t, text, ed)),
+				"AddCheckpoint must append the line of the key")
+		})
+
+		t.Run("returns an ErrCosignature that names a response that is not a list of signature lines",
+			func(t *testing.T) {
+				t.Parallel()
+				w := newFakeWitness(t, func([]byte) (int, []byte) {
+					return http.StatusOK, []byte("not a signature line\n")
+				})
+				_, err := newClient(t, w, ed.Key()).AddCheckpoint(t.Context(), msg, 0, nil, nil)
+				assert.ErrorIs(t, err, witness.ErrCosignature, "AddCheckpoint must refuse the response")
+				assert.Contains(t, err.Error(), "not a list of signature lines", "the error must name the response")
+			})
+
+		t.Run("returns ErrInconsistent for a 422 whose body is a size", func(t *testing.T) {
+			t.Parallel()
+			w := newFakeWitness(t, func([]byte) (int, []byte) { return http.StatusUnprocessableEntity, []byte("5\n") })
+			_, err := newClient(t, w, ed.Key()).AddCheckpoint(t.Context(), msg, 0, nil, nil)
+			assert.ErrorIs(t, err, witness.ErrInconsistent, "AddCheckpoint must return ErrInconsistent for a 422")
+		})
 
 		t.Run("returns a SizeError with the size of a 409", func(t *testing.T) {
 			t.Parallel()
 			w := newFakeWitness(t, func([]byte) (int, []byte) { return http.StatusConflict, []byte("20852163\n") })
 			_, err := newClient(t, w, ed.Key()).AddCheckpoint(t.Context(), msg, 0, nil, nil)
-			se, ok := errors.AsType[*witness.SizeError](err)
-			testkit.True(t, ok, "AddCheckpoint must return a SizeError for a 409")
-			testkit.Equal(t, se.Size, uint64(20852163), "the SizeError must contain the size of the body")
-			testkit.Equal(t, errs.Classify(err), errs.Conflict, "the error must classify as Conflict")
+			se := assert.ErrorAs[*witness.SizeError](t, err, "AddCheckpoint must return a SizeError for a 409")
+			assert.Equal(t, se.Size, uint64(20852163), "the SizeError must contain the size of the body")
+			assert.Equal(t, errs.Classify(err), errs.Conflict, "the error must classify as Conflict")
 		})
 
 		t.Run("returns the StatusError of a 409 without a size", func(t *testing.T) {
 			t.Parallel()
 			w := newFakeWitness(t, func([]byte) (int, []byte) { return http.StatusConflict, []byte("conflict") })
 			_, err := newClient(t, w, ed.Key()).AddCheckpoint(t.Context(), msg, 0, nil, nil)
-			se, ok := errors.AsType[*httpclient.StatusError](err)
-			testkit.True(t, ok, "AddCheckpoint must return the StatusError")
-			testkit.Equal(t, se.Status, http.StatusConflict, "the StatusError must have the status 409")
+			se := assert.ErrorAs[*httpclient.StatusError](t, err, "AddCheckpoint must return the StatusError")
+			assert.Equal(t, se.Status, http.StatusConflict, "the StatusError must have the status 409")
 		})
 
 		t.Run("returns ErrInconsistent with the StatusError of a 422", func(t *testing.T) {
 			t.Parallel()
 			w := newFakeWitness(t, func([]byte) (int, []byte) { return http.StatusUnprocessableEntity, nil })
 			_, err := newClient(t, w, ed.Key()).AddCheckpoint(t.Context(), msg, 0, nil, nil)
-			testkit.ErrorIs(t, err, witness.ErrInconsistent, "AddCheckpoint must return ErrInconsistent for a 422")
-			testkit.Equal(t, errs.Classify(err), errs.Integrity, "the error must classify as Integrity")
-			se, ok := errors.AsType[*httpclient.StatusError](err)
-			testkit.True(t, ok, "the error must wrap the StatusError")
-			testkit.Equal(t, se.Status, http.StatusUnprocessableEntity, "the StatusError must have the status 422")
+			assert.ErrorIs(t, err, witness.ErrInconsistent, "AddCheckpoint must return ErrInconsistent for a 422")
+			assert.Equal(t, errs.Classify(err), errs.Integrity, "the error must classify as Integrity")
+			se := assert.ErrorAs[*httpclient.StatusError](t, err, "the error must wrap the StatusError")
+			assert.Equal(t, se.Status, http.StatusUnprocessableEntity, "the StatusError must have the status 422")
 		})
 
 		t.Run("returns the StatusError of a 403", func(t *testing.T) {
 			t.Parallel()
 			w := newFakeWitness(t, func([]byte) (int, []byte) { return http.StatusForbidden, nil })
 			_, err := newClient(t, w, ed.Key()).AddCheckpoint(t.Context(), msg, 0, nil, nil)
-			se, ok := errors.AsType[*httpclient.StatusError](err)
-			testkit.True(t, ok, "AddCheckpoint must return the StatusError")
-			testkit.Equal(t, se.Status, http.StatusForbidden, "the StatusError must have the status 403")
-			testkit.Equal(t, errs.Classify(err), errs.Denied, "the error must classify as Denied")
+			se := assert.ErrorAs[*httpclient.StatusError](t, err, "AddCheckpoint must return the StatusError")
+			assert.Equal(t, se.Status, http.StatusForbidden, "the StatusError must have the status 403")
+			assert.Equal(t, errs.Classify(err), errs.Denied, "the error must classify as Denied")
 		})
 
 		t.Run("returns the error of a call to a witness whose server closed", func(t *testing.T) {
@@ -388,8 +471,8 @@ func TestClient(t *testing.T) {
 			c := newClient(t, w, ed.Key())
 			w.server.Close()
 			got, err := c.AddCheckpoint(t.Context(), msg, 0, nil, []byte("prefix:"))
-			testkit.Error(t, err, "AddCheckpoint must fail without a witness")
-			testkit.Equal(t, string(got), "prefix:", "AddCheckpoint must return dst unchanged")
+			assert.HasError(t, err, "AddCheckpoint must fail without a witness")
+			assert.Equal(t, string(got), "prefix:", "AddCheckpoint must return dst unchanged")
 		})
 
 		t.Run("sends a proof of 63 hashes", func(t *testing.T) {
@@ -402,32 +485,32 @@ func TestClient(t *testing.T) {
 			}
 
 			_, err := newClient(t, w, ed.Key()).AddCheckpoint(t.Context(), msg, 3, long, nil)
-			testkit.NoError(t, err, "AddCheckpoint must send a proof of 63 hashes")
-			testkit.Equal(t, w.requests.Load(), int64(1), "AddCheckpoint must send the request")
+			assert.NoError(t, err, "AddCheckpoint must send a proof of 63 hashes")
+			assert.Equal(t, w.requests.Load(), int64(1), "AddCheckpoint must send the request")
 		})
 
 		t.Run("returns ErrRequest for a proof of 64 hashes before a request", func(t *testing.T) {
 			t.Parallel()
 			w := newFakeWitness(t, nil)
 			_, err := newClient(t, w, ed.Key()).AddCheckpoint(t.Context(), msg, 0, make([]crypto.Digest, 64), nil)
-			testkit.ErrorIs(t, err, witness.ErrRequest, "AddCheckpoint must refuse a proof of 64 hashes")
-			testkit.Equal(t, w.requests.Load(), int64(0), "AddCheckpoint must not send the request")
+			assert.ErrorIs(t, err, witness.ErrRequest, "AddCheckpoint must refuse a proof of 64 hashes")
+			assert.Equal(t, w.requests.Load(), int64(0), "AddCheckpoint must not send the request")
 		})
 
 		t.Run("returns ErrRequest for a msg that is not a signed note before a request", func(t *testing.T) {
 			t.Parallel()
 			w := newFakeWitness(t, nil)
 			_, err := newClient(t, w, ed.Key()).AddCheckpoint(t.Context(), []byte("not a note"), 0, nil, nil)
-			testkit.ErrorIs(t, err, witness.ErrRequest, "AddCheckpoint must refuse a msg that is not a note")
-			testkit.ErrorIs(t, err, note.ErrNote, "the error must wrap the error of the note")
-			testkit.Equal(t, w.requests.Load(), int64(0), "AddCheckpoint must not send the request")
+			assert.ErrorIs(t, err, witness.ErrRequest, "AddCheckpoint must refuse a msg that is not a note")
+			assert.ErrorIs(t, err, note.ErrNote, "the error must wrap the error of the note")
+			assert.Equal(t, w.requests.Load(), int64(0), "AddCheckpoint must not send the request")
 		})
 
 		t.Run("returns the error of a request that net/http does not build", func(t *testing.T) {
 			t.Parallel()
 			var none context.Context
 			_, err := newClient(t, newFakeWitness(t, nil), ed.Key()).AddCheckpoint(none, msg, 0, nil, nil)
-			testkit.Error(t, err, "AddCheckpoint must refuse a nil context")
+			assert.HasError(t, err, "AddCheckpoint must refuse a nil context")
 		})
 	})
 
@@ -443,11 +526,11 @@ func TestClient(t *testing.T) {
 			w := newFakeWitness(t, func([]byte) (int, []byte) { return http.StatusOK, []byte(served) })
 			got, ok, err := newClient(t, w, ed25519Cosigner(t, witnessName).Key()).Checkpoint(t.Context(), logName,
 				[]byte("prefix:"))
-			testkit.NoError(t, err, "Checkpoint must succeed")
-			testkit.True(t, ok, "Checkpoint must report the served checkpoint")
-			testkit.Equal(t, string(got), "prefix:"+served, "Checkpoint must append the body")
-			testkit.Equal(t, w.method.Load().(string), http.MethodGet, "Checkpoint must GET")
-			testkit.Equal(t, w.path.Load().(string), monitoringPath+"/"+hash+"/checkpoint",
+			assert.NoError(t, err, "Checkpoint must succeed")
+			assert.True(t, ok, "Checkpoint must report the served checkpoint")
+			assert.Equal(t, string(got), "prefix:"+served, "Checkpoint must append the body")
+			assert.Equal(t, w.method.Load().(string), http.MethodGet, "Checkpoint must GET")
+			assert.Equal(t, w.path.Load().(string), monitoringPath+"/"+hash+"/checkpoint",
 				"Checkpoint must request the route of the origin hash")
 		})
 
@@ -456,9 +539,9 @@ func TestClient(t *testing.T) {
 			w := newFakeWitness(t, func([]byte) (int, []byte) { return http.StatusNotFound, nil })
 			got, ok, err := newClient(t, w, ed25519Cosigner(t, witnessName).Key()).Checkpoint(t.Context(), logName,
 				[]byte("prefix:"))
-			testkit.NoError(t, err, "Checkpoint must not fail for a 404")
-			testkit.False(t, ok, "Checkpoint must report false for a 404")
-			testkit.Equal(t, string(got), "prefix:", "Checkpoint must return dst unchanged")
+			assert.NoError(t, err, "Checkpoint must not fail for a 404")
+			assert.False(t, ok, "Checkpoint must report false for a 404")
+			assert.Equal(t, string(got), "prefix:", "Checkpoint must return dst unchanged")
 		})
 
 		t.Run("returns the StatusError of a 503", func(t *testing.T) {
@@ -466,20 +549,19 @@ func TestClient(t *testing.T) {
 			w := newFakeWitness(t, func([]byte) (int, []byte) { return http.StatusServiceUnavailable, nil })
 			got, ok, err := newClient(t, w, ed25519Cosigner(t, witnessName).Key()).Checkpoint(t.Context(), logName,
 				[]byte("prefix:"))
-			se, isStatus := errors.AsType[*httpclient.StatusError](err)
-			testkit.True(t, isStatus, "Checkpoint must return the StatusError")
-			testkit.Equal(t, se.Status, http.StatusServiceUnavailable, "the StatusError must have the status 503")
-			testkit.False(t, ok, "Checkpoint must report false with an error")
-			testkit.Equal(t, string(got), "prefix:", "Checkpoint must return dst unchanged")
+			se := assert.ErrorAs[*httpclient.StatusError](t, err, "Checkpoint must return the StatusError")
+			assert.Equal(t, se.Status, http.StatusServiceUnavailable, "the StatusError must have the status 503")
+			assert.False(t, ok, "Checkpoint must report false with an error")
+			assert.Equal(t, string(got), "prefix:", "Checkpoint must return dst unchanged")
 		})
 
 		t.Run("returns ErrRequest for an origin that is not Valid", func(t *testing.T) {
 			t.Parallel()
 			w := newFakeWitness(t, nil)
 			_, ok, err := newClient(t, w, ed25519Cosigner(t, witnessName).Key()).Checkpoint(t.Context(), "", nil)
-			testkit.ErrorIs(t, err, witness.ErrRequest, "Checkpoint must refuse an empty origin")
-			testkit.False(t, ok, "Checkpoint must report false with an error")
-			testkit.Equal(t, w.requests.Load(), int64(0), "Checkpoint must not send the request")
+			assert.ErrorIs(t, err, witness.ErrRequest, "Checkpoint must refuse an empty origin")
+			assert.False(t, ok, "Checkpoint must report false with an error")
+			assert.Equal(t, w.requests.Load(), int64(0), "Checkpoint must not send the request")
 		})
 
 		t.Run("returns the error of a request that net/http does not build", func(t *testing.T) {
@@ -487,8 +569,71 @@ func TestClient(t *testing.T) {
 			var none context.Context
 			_, _, err := newClient(t, newFakeWitness(t, nil), ed25519Cosigner(t, witnessName).Key()).Checkpoint(none,
 				logName, nil)
-			testkit.Error(t, err, "Checkpoint must refuse a nil context")
+			assert.HasError(t, err, "Checkpoint must refuse a nil context")
 		})
+	})
+}
+
+// TestClientAllocs checks the allocation contracts of the methods of Client
+// that BenchmarkClient states. MaxAllocs counts the allocations of the
+// whole process, so the test does not run in parallel.
+//
+//nolint:paralleltest // see above
+func TestClientAllocs(t *testing.T) {
+	ed := ed25519Cosigner(t, witnessName)
+	msg := logNote(t, logName, 5)
+	lines := cosignLines(t, noteText(t, msg), ed)
+
+	t.Run("NewClient", func(t *testing.T) {
+		cfg := pipedConfig(t, nil, ed.Key())
+
+		var (
+			got *witness.Client
+			err error
+		)
+
+		expect.MaxAllocs(t, func() { got, err = witness.NewClient(cfg) }, newClientAllocs,
+			"NewClient must allocate the objects of its contract alone")
+		assert.NoError(t, err, "the test must measure a Client")
+		assert.NotNil(t, got, "the test must measure a Client")
+	})
+
+	t.Run("AddCheckpoint", func(t *testing.T) {
+		client, err := witness.NewClient(pipedConfig(t, lines, ed.Key()))
+		assert.NoError(t, err, "NewClient must accept the configuration")
+
+		// The first call dials the pipe, which the later calls reuse.
+		dst := make([]byte, 0, 1024)
+		_, err = client.AddCheckpoint(t.Context(), msg, 0, nil, dst[:0])
+		assert.NoError(t, err, "AddCheckpoint must verify the lines")
+
+		var got []byte
+		expect.MaxAllocs(t, func() { got, err = client.AddCheckpoint(t.Context(), msg, 0, nil, dst[:0]) },
+			clientAddCheckpointAllocs, "AddCheckpoint must allocate the objects of its contract alone")
+		assert.NoError(t, err, "the test must measure verified lines")
+		assert.Equal(t, string(got), string(lines), "the test must measure the lines of the witness")
+	})
+
+	t.Run("Checkpoint", func(t *testing.T) {
+		served := append(append([]byte(nil), msg...), lines...)
+		client, err := witness.NewClient(pipedConfig(t, served, ed.Key()))
+		assert.NoError(t, err, "NewClient must accept the configuration")
+
+		// The first call dials the pipe, which the later calls reuse.
+		dst := make([]byte, 0, 1024)
+		_, _, err = client.Checkpoint(t.Context(), logName, dst[:0])
+		assert.NoError(t, err, "Checkpoint must read the served checkpoint")
+
+		var (
+			got []byte
+			ok  bool
+		)
+
+		expect.MaxAllocs(t, func() { got, ok, err = client.Checkpoint(t.Context(), logName, dst[:0]) },
+			clientCheckpointAllocs, "Checkpoint must allocate the objects of its contract alone")
+		assert.NoError(t, err, "the test must measure a served checkpoint")
+		assert.True(t, ok, "the test must measure a served checkpoint")
+		assert.Equal(t, string(got), string(served), "the test must measure what the witness serves")
 	})
 }
 
@@ -500,10 +645,7 @@ func BenchmarkClient(b *testing.B) {
 	b.Run("NewClient", func(b *testing.B) {
 		cfg := pipedConfig(b, nil, ed.Key())
 
-		// The Client, its Verifiers and the URL of add-checkpoint, the URL of
-		// the check of each prefix, and the 2 objects of the Verifier of an
-		// Ed25519 cosignature key.
-		c := bench.Start(b).MaxAllocs(7)
+		c := bench.Start(b).MaxAllocs(newClientAllocs)
 		defer c.End()
 
 		var (
@@ -515,23 +657,20 @@ func BenchmarkClient(b *testing.B) {
 			got, err = witness.NewClient(cfg)
 		}
 
-		testkit.NoError(b, err, "the benchmark must measure a Client")
-		testkit.True(b, got != nil, "the benchmark must measure a Client")
+		assert.NoError(b, err, "the benchmark must measure a Client")
+		assert.NotNil(b, got, "the benchmark must measure a Client")
 	})
 
 	b.Run("AddCheckpoint", func(b *testing.B) {
-		reply := append([]byte("HTTP/1.1 200 OK\r\nContent-Length: "+strconv.Itoa(len(lines))+"\r\n\r\n"), lines...)
-		client, err := witness.NewClient(pipedConfig(b, reply, ed.Key()))
-		testkit.NoError(b, err, "NewClient must accept the configuration")
+		client, err := witness.NewClient(pipedConfig(b, lines, ed.Key()))
+		assert.NoError(b, err, "NewClient must accept the configuration")
 
 		// The first call dials the pipe, which the later calls reuse.
 		dst := make([]byte, 0, 1024)
 		_, err = client.AddCheckpoint(b.Context(), msg, 0, nil, dst[:0])
-		testkit.NoError(b, err, "AddCheckpoint must verify the lines")
+		assert.NoError(b, err, "AddCheckpoint must verify the lines")
 
-		// The copy of the body and its reader, the 5 objects of the request
-		// that net/http builds, and 59 of AppendFetch for a POST.
-		c := bench.Start(b).MaxAllocs(66)
+		c := bench.Start(b).Warmup(pipeWarmup).MaxAllocs(clientAddCheckpointAllocs)
 		defer c.End()
 
 		var got []byte
@@ -539,24 +678,21 @@ func BenchmarkClient(b *testing.B) {
 			got, err = client.AddCheckpoint(b.Context(), msg, 0, nil, dst[:0])
 		}
 
-		testkit.NoError(b, err, "the benchmark must measure verified lines")
-		testkit.Equal(b, string(got), string(lines), "the benchmark must measure the lines of the witness")
+		assert.NoError(b, err, "the benchmark must measure verified lines")
+		assert.Equal(b, string(got), string(lines), "the benchmark must measure the lines of the witness")
 	})
 
 	b.Run("Checkpoint", func(b *testing.B) {
 		served := append(append([]byte(nil), msg...), lines...)
-		reply := append([]byte("HTTP/1.1 200 OK\r\nContent-Length: "+strconv.Itoa(len(served))+"\r\n\r\n"), served...)
-		client, err := witness.NewClient(pipedConfig(b, reply, ed.Key()))
-		testkit.NoError(b, err, "NewClient must accept the configuration")
+		client, err := witness.NewClient(pipedConfig(b, served, ed.Key()))
+		assert.NoError(b, err, "NewClient must accept the configuration")
 
 		// The first call dials the pipe, which the later calls reuse.
 		dst := make([]byte, 0, 1024)
 		_, _, err = client.Checkpoint(b.Context(), logName, dst[:0])
-		testkit.NoError(b, err, "Checkpoint must read the served checkpoint")
+		assert.NoError(b, err, "Checkpoint must read the served checkpoint")
 
-		// The text of the URL, the 3 objects of the request that net/http
-		// builds, and 55 of AppendFetch.
-		c := bench.Start(b).MaxAllocs(59)
+		c := bench.Start(b).Warmup(pipeWarmup).MaxAllocs(clientCheckpointAllocs)
 		defer c.End()
 
 		var (
@@ -568,9 +704,9 @@ func BenchmarkClient(b *testing.B) {
 			got, ok, err = client.Checkpoint(b.Context(), logName, dst[:0])
 		}
 
-		testkit.NoError(b, err, "the benchmark must measure a served checkpoint")
-		testkit.True(b, ok, "the benchmark must measure a served checkpoint")
-		testkit.Equal(b, string(got), string(served), "the benchmark must measure what the witness serves")
+		assert.NoError(b, err, "the benchmark must measure a served checkpoint")
+		assert.True(b, ok, "the benchmark must measure a served checkpoint")
+		assert.Equal(b, string(got), string(served), "the benchmark must measure what the witness serves")
 	})
 }
 
@@ -614,7 +750,7 @@ func clientConfig(tb testing.TB, w *fakeWitness, keys ...note.Key) *witness.Clie
 	tb.Helper()
 
 	h, err := httpclient.New("witness", required, httpclient.WithTimeout(10*time.Second))
-	testkit.NoError(tb, err, "httpclient.New must accept the options")
+	assert.NoError(tb, err, "httpclient.New must accept the options")
 
 	return &witness.ClientConfig{
 		HTTP:       h,
@@ -627,11 +763,13 @@ func clientConfig(tb testing.TB, w *fakeWitness, keys ...note.Key) *witness.Clie
 
 // pipedConfig returns the configuration of a Client with keys of a witness
 // at pipeHost. Its HTTP client dials, through httpclient.WithDialContext, a
-// pipe to respond, which writes reply to every request, so its calls run
-// through net/http's Client and Transport and connect to no network. The
-// cleanup of tb closes the pipes.
-func pipedConfig(tb testing.TB, reply []byte, keys ...note.Key) *witness.ClientConfig {
+// pipe to respond, which writes a 200 with body to every request, so its
+// calls run through net/http's Client and Transport and connect to no
+// network. The cleanup of tb closes the pipes.
+func pipedConfig(tb testing.TB, body []byte, keys ...note.Key) *witness.ClientConfig {
 	tb.Helper()
+
+	reply := append([]byte("HTTP/1.1 200 OK\r\nContent-Length: "+strconv.Itoa(len(body))+"\r\n\r\n"), body...)
 
 	h, err := httpclient.New("witness", required, httpclient.WithHosts(pipeHost),
 		httpclient.WithTimeout(10*time.Second),
@@ -643,7 +781,7 @@ func pipedConfig(tb testing.TB, reply []byte, keys ...note.Key) *witness.ClientC
 
 			return conn, nil
 		}))
-	testkit.NoError(tb, err, "httpclient.New must accept the options")
+	assert.NoError(tb, err, "httpclient.New must accept the options")
 
 	return &witness.ClientConfig{
 		HTTP:       h,
@@ -724,7 +862,7 @@ func newClient(tb testing.TB, w *fakeWitness, keys ...note.Key) *witness.Client 
 	tb.Helper()
 
 	c, err := witness.NewClient(clientConfig(tb, w, keys...))
-	testkit.NoError(tb, err, "NewClient must accept the configuration")
+	assert.NoError(tb, err, "NewClient must accept the configuration")
 
 	return c
 }
@@ -746,7 +884,7 @@ func ed25519Signer(tb testing.TB, label string) *ed25519.Signer {
 	seed := sha256.Sum256([]byte(label))
 
 	s, err := ed25519.New(stded25519.NewKeyFromSeed(seed[:]))
-	testkit.NoError(tb, err, "the seed must give a key")
+	assert.NoError(tb, err, "the seed must give a key")
 
 	return s
 }
@@ -758,7 +896,7 @@ func ed25519Cosigner(tb testing.TB, name note.Name) *checkpoint.CosignatureV1Sig
 
 	s, err := checkpoint.NewCosignatureV1Signer(name, checkpoint.TypeEd25519Cosignature,
 		ed25519Signer(tb, string(name)), fake.New(clockTime), time.Second)
-	testkit.NoError(tb, err, "NewCosignatureV1Signer must accept the Ed25519 signer")
+	assert.NoError(tb, err, "NewCosignatureV1Signer must accept the Ed25519 signer")
 
 	return s
 }
@@ -772,7 +910,7 @@ func mldsaCosigner(tb testing.TB, name note.Name, utc *fake.Clock) *checkpoint.S
 	seed := sha256.Sum256([]byte(name))
 
 	inner, err := mldsa.New(mldsa.MLDSA44, seed[:], "")
-	testkit.NoError(tb, err, "the seed must give a key")
+	assert.NoError(tb, err, "the seed must give a key")
 
 	// A nil *fake.Clock in a clock.UTCSource would not be a nil source.
 	var src clock.UTCSource
@@ -781,7 +919,7 @@ func mldsaCosigner(tb testing.TB, name note.Name, utc *fake.Clock) *checkpoint.S
 	}
 
 	s, err := checkpoint.NewSubtreeV1Signer(name, checkpoint.TypeMLDSA44Cosignature, inner, src, time.Second)
-	testkit.NoError(tb, err, "NewSubtreeV1Signer must accept the ML-DSA-44 signer")
+	assert.NoError(tb, err, "NewSubtreeV1Signer must accept the ML-DSA-44 signer")
 
 	return s
 }
@@ -796,16 +934,16 @@ func logNote(tb testing.TB, name note.Name, size uint64) []byte {
 	body := checkpoint.Body{Origin: checkpoint.Origin(name), Size: size, Root: root}
 
 	text, err := body.MarshalText()
-	testkit.NoError(tb, err, "MarshalText must write the body")
+	assert.NoError(tb, err, "MarshalText must write the body")
 
 	s, err := note.NewTextSigner(name, note.TypeEd25519, ed25519Signer(tb, string(name)))
-	testkit.NoError(tb, err, "NewTextSigner must accept the key")
+	assert.NoError(tb, err, "NewTextSigner must accept the key")
 
 	n, err := note.Sign(tb.Context(), text, s)
-	testkit.NoError(tb, err, "Sign must sign the text")
+	assert.NoError(tb, err, "Sign must sign the text")
 
 	msg, err := n.MarshalText()
-	testkit.NoError(tb, err, "MarshalText must write the note")
+	assert.NoError(tb, err, "MarshalText must write the note")
 
 	return msg
 }
@@ -815,7 +953,7 @@ func noteText(tb testing.TB, msg []byte) []byte {
 	tb.Helper()
 
 	text, err := note.TextOf(msg)
-	testkit.NoError(tb, err, "TextOf must accept the note")
+	assert.NoError(tb, err, "TextOf must accept the note")
 
 	return text
 }
@@ -826,7 +964,7 @@ func mustParse(tb testing.TB, msg []byte) *note.Note {
 	tb.Helper()
 
 	n, err := note.Parse(msg)
-	testkit.NoError(tb, err, "note.Parse must accept the note")
+	assert.NoError(tb, err, "note.Parse must accept the note")
 
 	return &n
 }
@@ -837,21 +975,22 @@ func cosignLines(tb testing.TB, text []byte, cosigners ...note.Signer) []byte {
 	tb.Helper()
 
 	n, err := note.Sign(tb.Context(), text, cosigners...)
-	testkit.NoError(tb, err, "Sign must cosign the text")
+	assert.NoError(tb, err, "Sign must cosign the text")
 
 	var lines []byte
 	for _, s := range n.Signatures {
 		lines, err = s.AppendText(lines)
-		testkit.NoError(tb, err, "AppendText must write the line")
+		assert.NoError(tb, err, "AppendText must write the line")
 	}
 
 	return lines
 }
 
-// garbageLine returns a signature line of k whose value is 72 zero bytes,
-// a timestamp and a signature that no key made.
+// garbageLine returns a signature line of k whose value is the timestamp of
+// clockTime and 64 zero bytes, a signature that no key made.
 func garbageLine(k note.Key) []byte {
-	line, _ := note.Signature{Name: k.Name, ID: k.ID(), Value: make([]byte, 72)}.AppendText(nil)
+	value := binary.BigEndian.AppendUint64(nil, uint64(clockTime.Unix()))
+	line, _ := note.Signature{Name: k.Name, ID: k.ID(), Value: append(value, make([]byte, 64)...)}.AppendText(nil)
 
 	return line
 }

@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
 
 	"go.thesmos.sh/core/blob/memory"
 	"go.thesmos.sh/core/clock/fake"
@@ -36,6 +36,10 @@ const (
 
 // internalTime is the time of the fake clocks of the internal tests.
 var internalTime = time.Date(2026, time.October, 5, 12, 0, 0, 0, time.UTC)
+
+// collidingNames are two names whose keys of type 0x04 over the Ed25519
+// key of internalWitness have one key ID, 0x741f352e.
+var collidingNames = [2]note.Name{"example.com/w61272", "example.com/w143085"}
 
 // internalLog is a log of the internal tests: an Ed25519 key over SHA-256
 // trees of 64 leaves.
@@ -88,10 +92,51 @@ func TestServerInternal(t *testing.T) {
 				cfg := f.config()
 				cfg.MaxOrigins = tt.give
 				s, err := NewServer(bounded(t), cfg)
-				testkit.NoError(t, err, "NewServer must accept the configuration")
-				testkit.Equal(t, s.snapshotLimit, tt.want, "NewServer must bound the snapshots")
+				assert.NoError(t, err, "NewServer must accept the configuration")
+				assert.Equal(t, s.snapshotLimit, tt.want, "NewServer must bound the snapshots")
 			})
 		}
+
+		// cosigner returns the Ed25519 cosigner named name over the key of
+		// the SHA-256 of label.
+		cosigner := func(tb testing.TB, f *internalFixture, name note.Name, label string) checkpoint.Cosigner {
+			tb.Helper()
+
+			seed := sha256.Sum256([]byte(label))
+
+			k, err := ed25519.New(stded25519.NewKeyFromSeed(seed[:]))
+			assert.NoError(tb, err, "the seed must give a key")
+
+			c, err := checkpoint.NewCosignatureV1Signer(name, checkpoint.TypeEd25519Cosignature, k, f.clock,
+				time.Second)
+			assert.NoError(tb, err, "NewCosignatureV1Signer must accept the key")
+
+			return c
+		}
+
+		t.Run("returns a Server of two cosigners of other names with one key ID", func(t *testing.T) {
+			t.Parallel()
+			f := newInternalFixture(t)
+			cfg := f.config()
+			cfg.Cosigners = []checkpoint.Cosigner{
+				cosigner(t, f, collidingNames[0], internalWitness), cosigner(t, f, collidingNames[1], internalWitness),
+			}
+			assert.Equal(t, cfg.Cosigners[0].Key().ID(), cfg.Cosigners[1].Key().ID(),
+				"the cosigners must share a key ID")
+
+			_, err := NewServer(bounded(t), cfg)
+			assert.NoError(t, err, "NewServer must accept cosigners of other names")
+		})
+
+		t.Run("returns a Server of two cosigners of one name with two key IDs", func(t *testing.T) {
+			t.Parallel()
+			f := newInternalFixture(t)
+			cfg := f.config()
+			cfg.Cosigners = append(cfg.Cosigners, cosigner(t, f, internalWitness, "another key"))
+
+			_, err := NewServer(bounded(t), cfg)
+			assert.NoError(t, err, "NewServer must accept cosigners of one name")
+		})
 	})
 }
 
@@ -103,10 +148,10 @@ func newInternalLog(tb testing.TB, origin string) *internalLog {
 	seed := sha256.Sum256([]byte(origin))
 
 	k, err := ed25519.New(stded25519.NewKeyFromSeed(seed[:]))
-	testkit.NoError(tb, err, "the seed must give a key")
+	assert.NoError(tb, err, "the seed must give a key")
 
 	s, err := note.NewTextSigner(note.Name(origin), note.TypeEd25519, k)
-	testkit.NoError(tb, err, "NewTextSigner must accept the key")
+	assert.NoError(tb, err, "NewTextSigner must accept the key")
 
 	h := coresha256.New()
 	l := &internalLog{
@@ -130,13 +175,13 @@ func (l *internalLog) note(tb testing.TB, size uint64) []byte {
 	body := checkpoint.Body{Origin: l.origin, Size: size, Root: tlog.Root(l.log.Hasher, l.leaves[:size])}
 
 	text, err := body.MarshalText()
-	testkit.NoError(tb, err, "MarshalText must write the body")
+	assert.NoError(tb, err, "MarshalText must write the body")
 
 	n, err := note.Sign(tb.Context(), text, l.signer)
-	testkit.NoError(tb, err, "Sign must sign the text")
+	assert.NoError(tb, err, "Sign must sign the text")
 
 	msg, err := n.MarshalText()
-	testkit.NoError(tb, err, "MarshalText must write the note")
+	assert.NoError(tb, err, "MarshalText must write the note")
 
 	return msg
 }
@@ -153,7 +198,7 @@ func (l *internalLog) update(tb testing.TB, oldSize, size uint64, prefix []byte)
 
 	if oldSize > 0 && oldSize < size {
 		proof, err := tlog.ConsistencyProof(l.log.Hasher, l.leaves[:size], oldSize, nil)
-		testkit.NoError(tb, err, "ConsistencyProof must prove the old size")
+		assert.NoError(tb, err, "ConsistencyProof must prove the old size")
 
 		u.Proof = proof
 	}
@@ -171,9 +216,9 @@ func (l *internalLog) advance(tb testing.TB, s *Server, oldSize, size uint64, pr
 
 	lines, failures, err := s.Advance(bounded(tb), l.note(tb, size), []Update{l.update(tb, oldSize, size, prefix)},
 		nil)
-	testkit.NoError(tb, err, "Advance must commit the update")
-	testkit.Len(tb, failures, 0, "Advance must return no failure")
-	testkit.NotEqual(tb, len(lines), 0, "Advance must return the cosignature lines")
+	assert.NoError(tb, err, "Advance must commit the update")
+	assert.Empty(tb, failures, "Advance must return no failure")
+	assert.NotEmpty(tb, lines, "Advance must return the cosignature lines")
 
 	// The lock waits for the commit to unlock the lmu, which it does when
 	// the write of its lines ends.
@@ -199,15 +244,15 @@ func newInternalFixture(tb testing.TB, logs ...*internalLog) *internalFixture {
 		SuccessThreshold: 1,
 		OpenFor:          time.Minute,
 	})
-	testkit.NoError(tb, err, "NewBreaker must accept the configuration")
+	assert.NoError(tb, err, "NewBreaker must accept the configuration")
 
 	seed := sha256.Sum256([]byte(internalWitness))
 
 	k, err := ed25519.New(stded25519.NewKeyFromSeed(seed[:]))
-	testkit.NoError(tb, err, "the seed must give a key")
+	assert.NoError(tb, err, "the seed must give a key")
 
 	cs, err := checkpoint.NewCosignatureV1Signer(internalWitness, checkpoint.TypeEd25519Cosignature, k, c, time.Second)
-	testkit.NoError(tb, err, "NewCosignatureV1Signer must accept the key")
+	assert.NoError(tb, err, "NewCosignatureV1Signer must accept the key")
 
 	f := &internalFixture{
 		store:    memory.New(c),
@@ -268,7 +313,7 @@ func (f *internalFixture) server(tb testing.TB) *Server {
 	tb.Helper()
 
 	s, err := NewServer(bounded(tb), f.config())
-	testkit.NoError(tb, err, "NewServer must accept the configuration")
+	assert.NoError(tb, err, "NewServer must accept the configuration")
 
 	return s
 }

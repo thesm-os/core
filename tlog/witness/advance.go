@@ -147,18 +147,14 @@ func (s *Server) Advance(ctx context.Context, msg []byte, updates []Update, dst 
 //
 // Returns an error that wraps [ErrRequest] for a call that fails one.
 func (p *pending) fill(msg []byte, updates []Update) error {
-	size, proofs := len(msg), 0
-
 	for _, u := range updates {
 		if !u.Body.Valid() {
 			return fmt.Errorf("%w: the body of %q is not valid", ErrRequest, u.Body.Origin)
 		}
-
-		size, proofs = size+len(u.Prefix), proofs+len(u.Proof)
 	}
 
-	p.buf = slices.Grow(p.buf[:0], size)
-	p.proofs = slices.Grow(p.proofs[:0], proofs)
+	// A later append that grows p.buf leaves msg and the earlier prefixes
+	// in the memory that they refer to.
 	p.buf = append(p.buf, msg...)
 	p.msg = p.buf[:len(msg)]
 
@@ -279,7 +275,7 @@ func (s *Server) prepare(p *pending) error {
 		}
 	}
 
-	p.entries = p.entries[:0]
+	// The reset of p before its return to the pool emptied p.entries.
 	for i := range p.updates {
 		u := &p.updates[i]
 		p.entries = append(p.entries, entry{Origin: u.origin, Prefix: u.prefix, Root: u.root, Size: u.size})

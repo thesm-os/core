@@ -10,8 +10,9 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/bench"
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert/expect"
 
 	"go.thesmos.sh/core/crypto"
 	"go.thesmos.sh/core/errs"
@@ -19,6 +20,21 @@ import (
 	"go.thesmos.sh/core/tlog/checkpoint"
 	"go.thesmos.sh/core/tlog/witness"
 )
+
+// advanceCeilings are the allocation contracts of a commit of Advance.
+// Each commit allocates 9 objects of the package: 4 for each of its two
+// contexts with a deadline, and the string of the keys of its record.
+// blob/memory allocates 6: a copy of each of the three objects of the
+// commit, and the text of each version. A second cosigner adds the 7
+// objects of task.Each and the closure of the cosigners.
+var advanceCeilings = []struct {
+	name  string
+	extra []note.Name
+	want  uint64
+}{
+	{name: "of one cosigner", want: 15},
+	{name: "of two cosigners", extra: []note.Name{"example.com/second"}, want: 23},
+}
 
 // counted is a note.Verifier that counts its verifications.
 type counted struct {
@@ -41,12 +57,12 @@ func TestAdvance(t *testing.T) {
 
 			text := append([]byte(nil), noteText(t, l.notes[5])...)
 			n := mustParse(t, append(append(text, '\n'), advance(t, s, l, l.update(t, 0, 5))...))
-			testkit.Len(t, n.Signatures, 1, "Advance must return one line per cosigner")
-			testkit.True(t, f.cosigners[0].Verify(n.Text, n.Signatures[0].Value), "the line must verify")
+			assert.Length(t, n.Signatures, 1, "Advance must return one line per cosigner")
+			assert.True(t, f.cosigners[0].Verify(n.Text, n.Signatures[0].Value), "the line must verify")
 
 			ts, err := checkpoint.Timestamp(n.Signatures[0].Value)
-			testkit.NoError(t, err, "the line must have a timestamp")
-			testkit.Equal(t, ts, clockTime, "the line must have the time of the commit")
+			assert.NoError(t, err, "the line must have a timestamp")
+			assert.Equal(t, ts, clockTime, "the line must have the time of the commit")
 		})
 
 		t.Run("appends the lines to dst", func(t *testing.T) {
@@ -55,8 +71,8 @@ func TestAdvance(t *testing.T) {
 			s := newServer(t, newFixture(t, l).config())
 
 			got, _, err := s.Advance(bounded(t), l.notes[5], []witness.Update{l.update(t, 0, 5)}, []byte("prefix:"))
-			testkit.NoError(t, err, "Advance must commit the update")
-			testkit.Equal(t, string(got[:len("prefix:")]), "prefix:", "Advance must keep dst")
+			assert.NoError(t, err, "Advance must commit the update")
+			assert.Equal(t, string(got[:len("prefix:")]), "prefix:", "Advance must keep dst")
 		})
 
 		t.Run("returns a SizeError with the committed size after a restart", func(t *testing.T) {
@@ -70,12 +86,11 @@ func TestAdvance(t *testing.T) {
 
 			again := newServer(t, f.config())
 			_, failures, err := again.Advance(bounded(t), l.notes[9], []witness.Update{l.update(t, 5, 9)}, nil)
-			testkit.NoError(t, err, "Advance must check the update")
-			testkit.Len(t, failures, 1, "Advance must return the failure of the update")
+			assert.NoError(t, err, "Advance must check the update")
+			assert.Length(t, failures, 1, "Advance must return the failure of the update")
 
-			se, ok := errors.AsType[*witness.SizeError](failures[0].Err)
-			testkit.True(t, ok, "the failure must be a SizeError")
-			testkit.Equal(t, se.Size, uint64(8), "the SizeError must contain the committed size")
+			se := assert.ErrorAs[*witness.SizeError](t, failures[0].Err, "the failure must be a SizeError")
+			assert.Equal(t, se.Size, uint64(8), "the SizeError must contain the committed size")
 		})
 
 		t.Run("commits a checkpoint of an equal size and root again", func(t *testing.T) {
@@ -84,7 +99,7 @@ func TestAdvance(t *testing.T) {
 			s := newServer(t, newFixture(t, l).config())
 
 			advance(t, s, l, l.update(t, 0, 5))
-			testkit.NotEqual(t, len(advance(t, s, l, l.update(t, 5, 5))), 0, "Advance must cosign the equal checkpoint")
+			assert.NotEmpty(t, advance(t, s, l, l.update(t, 5, 5)), "Advance must cosign the equal checkpoint")
 		})
 
 		t.Run("returns ErrInconsistent for another root at an equal size", func(t *testing.T) {
@@ -99,9 +114,9 @@ func TestAdvance(t *testing.T) {
 			msg := signBody(t, u.Body, l.signer)
 
 			_, failures, err := s.Advance(bounded(t), msg, []witness.Update{u}, nil)
-			testkit.NoError(t, err, "Advance must check the update")
-			testkit.Len(t, failures, 1, "Advance must return the failure")
-			testkit.ErrorIs(t, failures[0].Err, witness.ErrInconsistent, "the failure must be ErrInconsistent")
+			assert.NoError(t, err, "Advance must check the update")
+			assert.Length(t, failures, 1, "Advance must return the failure")
+			assert.ErrorIs(t, failures[0].Err, witness.ErrInconsistent, "the failure must be ErrInconsistent")
 		})
 
 		t.Run("returns a Failure of each update that fails and commits none", func(t *testing.T) {
@@ -111,13 +126,13 @@ func TestAdvance(t *testing.T) {
 			msg := signBody(t, a.body(5), a.signer, b.signer)
 
 			_, failures, err := s.Advance(bounded(t), msg, []witness.Update{a.update(t, 0, 5), b.update(t, 3, 5)}, nil)
-			testkit.NoError(t, err, "Advance must check the updates")
-			testkit.Len(t, failures, 1, "Advance must return the failure of the second update")
-			testkit.Equal(t, failures[0].Index, 1, "the failure must name the second update")
+			assert.NoError(t, err, "Advance must check the updates")
+			assert.Length(t, failures, 1, "Advance must return the failure of the second update")
+			assert.Equal(t, failures[0].Index, 1, "the failure must name the second update")
 
 			_, failures, err = s.Advance(bounded(t), a.notes[6], []witness.Update{a.update(t, 5, 6)}, nil)
-			testkit.NoError(t, err, "Advance must check the update")
-			testkit.Len(t, failures, 1, "the first update must not have committed")
+			assert.NoError(t, err, "Advance must check the update")
+			assert.Length(t, failures, 1, "the first update must not have committed")
 		})
 
 		t.Run("commits 1,000 updates under one note and verifies its line once", func(t *testing.T) {
@@ -140,10 +155,10 @@ func TestAdvance(t *testing.T) {
 
 			s := newServer(t, cfg)
 			lines, failures, err := s.Advance(bounded(t), batch.notes[5], updates, nil)
-			testkit.NoError(t, err, "Advance must commit the updates")
-			testkit.Len(t, failures, 0, "Advance must return no failure")
-			testkit.NotEqual(t, len(lines), 0, "Advance must return the lines")
-			testkit.Equal(t, verified.Load(), int64(1), "Advance must verify the line of the note once")
+			assert.NoError(t, err, "Advance must commit the updates")
+			assert.Empty(t, failures, "Advance must return no failure")
+			assert.NotEmpty(t, lines, "Advance must return the lines")
+			assert.Equal(t, verified.Load(), int64(1), "Advance must verify the line of the note once")
 		})
 
 		t.Run("commits none of 1,000 updates when one fails", func(t *testing.T) {
@@ -164,13 +179,13 @@ func TestAdvance(t *testing.T) {
 
 			s := newServer(t, cfg)
 			_, failures, err := s.Advance(bounded(t), batch.notes[5], updates, nil)
-			testkit.NoError(t, err, "Advance must check the updates")
-			testkit.Len(t, failures, 1, "Advance must return the failure of the last update")
+			assert.NoError(t, err, "Advance must check the updates")
+			assert.Length(t, failures, 1, "Advance must return the failure of the last update")
 
 			updates[999].OldSize = 0
 			_, failures, err = s.Advance(bounded(t), batch.notes[5], updates, nil)
-			testkit.NoError(t, err, "Advance must commit the updates")
-			testkit.Len(t, failures, 0, "the first call must have committed none of the updates")
+			assert.NoError(t, err, "Advance must commit the updates")
+			assert.Empty(t, failures, "the first call must have committed none of the updates")
 		})
 
 		t.Run("returns ErrRequest for a note of 65 lines without a verification", func(t *testing.T) {
@@ -190,8 +205,8 @@ func TestAdvance(t *testing.T) {
 
 			msg := signBody(t, l.body(5), signers...)
 			_, _, err := s.Advance(bounded(t), msg, []witness.Update{l.update(t, 0, 5)}, nil)
-			testkit.ErrorIs(t, err, witness.ErrRequest, "Advance must refuse a note of 65 lines")
-			testkit.Equal(t, verified.Load(), int64(0), "Advance must verify no line")
+			assert.ErrorIs(t, err, witness.ErrRequest, "Advance must refuse a note of 65 lines")
+			assert.Equal(t, verified.Load(), int64(0), "Advance must verify no line")
 		})
 
 		t.Run("commits a note of 64 signature lines", func(t *testing.T) {
@@ -208,9 +223,9 @@ func TestAdvance(t *testing.T) {
 			}
 
 			lines, failures, err := s.Advance(bounded(t), msg, []witness.Update{l.update(t, 0, 5)}, nil)
-			testkit.NoError(t, err, "Advance must accept a note of 64 lines")
-			testkit.Len(t, failures, 0, "Advance must return no failure")
-			testkit.NotEqual(t, len(lines), 0, "Advance must cosign the note")
+			assert.NoError(t, err, "Advance must accept a note of 64 lines")
+			assert.Empty(t, failures, "Advance must return no failure")
+			assert.NotEmpty(t, lines, "Advance must cosign the note")
 		})
 
 		t.Run(
@@ -225,11 +240,11 @@ func TestAdvance(t *testing.T) {
 				msg := signBody(t, u.Body, l.signer)
 
 				_, _, err := s.Advance(bounded(t), msg, []witness.Update{u}, nil)
-				testkit.ErrorIs(t, err, witness.ErrRequest, "Advance must refuse the root")
+				assert.ErrorIs(t, err, witness.ErrRequest, "Advance must refuse the root")
 
 				_, failures, err := s.Advance(bounded(t), l.notes[5], []witness.Update{l.update(t, 0, 5)}, nil)
-				testkit.NoError(t, err, "Advance must commit the update")
-				testkit.Len(t, failures, 0, "the first call must have committed nothing")
+				assert.NoError(t, err, "Advance must commit the update")
+				assert.Empty(t, failures, "the first call must have committed nothing")
 			},
 		)
 
@@ -245,12 +260,12 @@ func TestAdvance(t *testing.T) {
 			msg := signBody(t, body, l.signer)
 
 			_, _, err := s.Advance(bounded(t), msg, []witness.Update{l.update(t, 0, 5)}, nil)
-			testkit.ErrorIs(t, err, witness.ErrRequest, "Advance must refuse the note")
-			testkit.ErrorIs(t, err, checkpoint.ErrBody, "the error must wrap the error of the cosigner")
+			assert.ErrorIs(t, err, witness.ErrRequest, "Advance must refuse the note")
+			assert.ErrorIs(t, err, checkpoint.ErrBody, "the error must wrap the error of the cosigner")
 
 			_, failures, err := s.Advance(bounded(t), l.notes[5], []witness.Update{l.update(t, 0, 5)}, nil)
-			testkit.NoError(t, err, "Advance must commit the update")
-			testkit.Len(t, failures, 0, "the first call must have committed nothing")
+			assert.NoError(t, err, "Advance must commit the update")
+			assert.Empty(t, failures, "the first call must have committed nothing")
 		})
 
 		l := newTestLog(t, logName)
@@ -267,16 +282,27 @@ func TestAdvance(t *testing.T) {
 			},
 			{
 				name: "returns ErrRequest for 4,097 updates", wantErr: witness.ErrRequest, class: errs.Invalid,
-				give: func(testing.TB) ([]byte, []witness.Update) { return l.notes[5], make([]witness.Update, 4097) },
+				give: func(testing.TB) ([]byte, []witness.Update) {
+					updates := make([]witness.Update, 4097)
+					for i := range updates {
+						updates[i].Body = l.body(5)
+						updates[i].Body.Origin = checkpoint.Origin("example.com/" + strconv.Itoa(i))
+					}
+
+					return l.notes[5], updates
+				},
 			},
 			{
-				name:    "returns ErrRequest for two updates of one origin",
+				name:    "returns ErrRequest for two updates of one origin around another",
 				wantErr: witness.ErrRequest,
 				class:   errs.Invalid,
 				give: func(tb testing.TB) ([]byte, []witness.Update) {
 					tb.Helper()
 
-					return l.notes[5], []witness.Update{l.update(tb, 0, 5), l.update(tb, 0, 5)}
+					other := witness.Update{Body: l.body(5)}
+					other.Body.Origin = "example.com/other"
+
+					return l.notes[5], []witness.Update{l.update(tb, 0, 5), other, l.update(tb, 0, 5)}
 				},
 			},
 			{
@@ -285,6 +311,19 @@ func TestAdvance(t *testing.T) {
 				class:   errs.Invalid,
 				give: func(testing.TB) ([]byte, []witness.Update) {
 					return l.notes[5], []witness.Update{{Body: checkpoint.Body{Origin: l.origin, Size: 5}}}
+				},
+			},
+			{
+				name:    "returns ErrRequest for a body with an extension that is not a line",
+				wantErr: witness.ErrRequest,
+				class:   errs.Invalid,
+				give: func(tb testing.TB) ([]byte, []witness.Update) {
+					tb.Helper()
+
+					u := l.update(tb, 0, 5)
+					u.Body.Extensions = []checkpoint.Extension{"two\nlines"}
+
+					return l.notes[5], []witness.Update{u}
 				},
 			},
 			{
@@ -361,10 +400,10 @@ func TestAdvance(t *testing.T) {
 				s := newServer(t, newFixture(t, l).config())
 				msg, updates := tt.give(t)
 				got, failures, err := s.Advance(bounded(t), msg, updates, []byte("prefix:"))
-				testkit.ErrorIs(t, err, tt.wantErr, "Advance must refuse the call")
-				testkit.Equal(t, errs.Classify(err), tt.class, "the error must classify as "+tt.class.String())
-				testkit.Len(t, failures, 0, "Advance must return no failure with an error")
-				testkit.Equal(t, string(got), "prefix:", "Advance must return dst unchanged")
+				assert.ErrorIs(t, err, tt.wantErr, "Advance must refuse the call")
+				assert.Equal(t, errs.Classify(err), tt.class, "the error must classify as "+tt.class.String())
+				assert.Empty(t, failures, "Advance must return no failure with an error")
+				assert.Equal(t, string(got), "prefix:", "Advance must return dst unchanged")
 			})
 		}
 
@@ -376,7 +415,7 @@ func TestAdvance(t *testing.T) {
 				t,
 				f.config(),
 			).Advance(bounded(t), l.notes[5], []witness.Update{l.update(t, 0, 5)}, nil)
-			testkit.ErrorIs(t, err, witness.ErrConfig, "Advance must refuse the Log")
+			assert.ErrorIs(t, err, witness.ErrConfig, "Advance must refuse the Log")
 		})
 
 		t.Run("returns the error of the Resolver for a key of a log that it does not resolve", func(t *testing.T) {
@@ -384,7 +423,7 @@ func TestAdvance(t *testing.T) {
 			cfg := newFixture(t, l).config()
 			cfg.Resolver = note.Resolver{}
 			_, _, err := newServer(t, cfg).Advance(bounded(t), l.notes[5], []witness.Update{l.update(t, 0, 5)}, nil)
-			testkit.ErrorIs(t, err, note.ErrUnknownType, "Advance must return the error of the Resolver")
+			assert.ErrorIs(t, err, note.ErrUnknownType, "Advance must return the error of the Resolver")
 		})
 
 		t.Run("returns the cause of ctx when ctx ends before the result", func(t *testing.T) {
@@ -404,7 +443,22 @@ func TestAdvance(t *testing.T) {
 
 			_, _, err := s.Advance(ctx, l.notes[5], []witness.Update{l.update(t, 0, 5)}, nil)
 			close(release)
-			testkit.ErrorIs(t, err, cause, "Advance must return the cause of ctx")
+			assert.ErrorIs(t, err, cause, "Advance must return the cause of ctx")
+		})
+
+		// The two calls run through one pooled call, whose verification of
+		// the first note must not decide about the second.
+		t.Run("returns ErrSignature for a forged line of the key that verified the call before it", func(t *testing.T) {
+			t.Parallel()
+			s := newServer(t, newFixture(t, l).config())
+			advance(t, s, l, l.update(t, 0, 5))
+
+			text, err := note.TextOf(l.notes[6])
+			assert.NoError(t, err, "TextOf must accept the note")
+			forged := append(append(append([]byte(nil), text...), '\n'), garbageLine(l.signer.Key())...)
+
+			_, _, err = s.Advance(bounded(t), forged, []witness.Update{l.update(t, 5, 6)}, nil)
+			assert.ErrorIs(t, err, witness.ErrSignature, "Advance must verify the line of the second call")
 		})
 
 		t.Run("copies msg and the updates before it returns", func(t *testing.T) {
@@ -415,55 +469,51 @@ func TestAdvance(t *testing.T) {
 			u.Prefix = []byte("a prefix")
 
 			_, _, err := s.Advance(bounded(t), msg, []witness.Update{u}, nil)
-			testkit.NoError(t, err, "Advance must commit the update")
+			assert.NoError(t, err, "Advance must commit the update")
 			clear(msg)
 			clear(u.Prefix)
 
 			_, failures, err := s.Advance(bounded(t), l.notes[6], []witness.Update{l.update(t, 5, 6)}, nil)
-			testkit.NoError(t, err, "Advance must commit the next update")
-			testkit.Len(t, failures, 0, "the committed state must not depend on the memory of the caller")
+			assert.NoError(t, err, "Advance must commit the next update")
+			assert.Empty(t, failures, "the committed state must not depend on the memory of the caller")
 		})
+	})
+}
+
+// TestAdvanceAllocs checks the allocation contract of Advance that
+// BenchmarkAdvance states, in the ordinary build that CI and the
+// confirmation of a mutation run test. MaxAllocs counts the allocations of
+// the whole process, so the test does not run in parallel.
+//
+//nolint:paralleltest // see above
+func TestAdvanceAllocs(t *testing.T) {
+	t.Run("Advance", func(t *testing.T) {
+		for _, tt := range advanceCeilings {
+			t.Run(tt.name, func(t *testing.T) {
+				s, l := committedServer(t, tt.extra)
+				updates := []witness.Update{l.update(t, 5, 5)}
+				dst := make([]byte, 0, 1024)
+
+				var (
+					lines []byte
+					err   error
+				)
+
+				expect.MaxAllocs(t, func() { lines, _, err = s.Advance(t.Context(), l.notes[5], updates, dst[:0]) },
+					tt.want, "a commit must allocate the objects of its contract alone")
+				assert.NoError(t, err, "the test must measure a commit")
+				assert.NotEmpty(t, lines, "the test must measure a cosigned commit")
+			})
+		}
 	})
 }
 
 func BenchmarkAdvance(b *testing.B) {
 	b.Run("Advance", func(b *testing.B) {
-		// Each commit allocates 9 objects of the package: 4 for each of its
-		// two contexts with a deadline, and the string of the keys of its
-		// record. blob/memory allocates 6: a copy of each of the three
-		// objects of the commit, and the text of each version. A second
-		// cosigner adds the 7 objects of task.Each and the closure of the
-		// cosigners.
-		tests := []struct {
-			name  string
-			extra []note.Name
-			want  uint64
-		}{
-			{name: "of one cosigner", want: 15},
-			{name: "of two cosigners", extra: []note.Name{"example.com/second"}, want: 23},
-		}
-		for _, tt := range tests {
+		for _, tt := range advanceCeilings {
 			b.Run(tt.name, func(b *testing.B) {
-				l := newTestLog(b, logName)
-				f := newFixture(b, l)
-
-				for _, name := range tt.extra {
-					f.cosigners = append(f.cosigners, ed25519Cosigner(b, name))
-				}
-
-				s := newServer(b, f.config())
-
-				// A checkpoint of the committed size and root commits again, so
-				// each iteration commits a record. blob/memory formats a
-				// version below 100 without an allocation, so 40 commits move
-				// the versions past it first.
-				advance(b, s, l, l.update(b, 0, 5))
-
+				s, l := committedServer(b, tt.extra)
 				updates := []witness.Update{l.update(b, 5, 5)}
-				for range 40 {
-					advance(b, s, l, updates...)
-				}
-
 				dst := make([]byte, 0, 1024)
 
 				c := bench.Start(b).MaxAllocs(tt.want)
@@ -478,11 +528,37 @@ func BenchmarkAdvance(b *testing.B) {
 					lines, _, err = s.Advance(b.Context(), l.notes[5], updates, dst[:0])
 				}
 
-				testkit.NoError(b, err, "the benchmark must measure a commit")
-				testkit.NotEqual(b, len(lines), 0, "the benchmark must measure a cosigned commit")
+				assert.NoError(b, err, "the benchmark must measure a commit")
+				assert.NotEmpty(b, lines, "the benchmark must measure a cosigned commit")
 			})
 		}
 	})
+}
+
+// committedServer returns a Server of a log that committed the size 5, and
+// the log. The Server has a cosigner of each name of extra beside the
+// cosigner of the fixture. A checkpoint of the committed size and root
+// commits again, so each later call of the update from 5 to 5 commits a
+// record. blob/memory formats a version below 100 without an allocation, so
+// committedServer commits 40 records first, past it.
+func committedServer(tb testing.TB, extra []note.Name) (*witness.Server, *testLog) {
+	tb.Helper()
+
+	l := newTestLog(tb, logName)
+	f := newFixture(tb, l)
+
+	for _, name := range extra {
+		f.cosigners = append(f.cosigners, ed25519Cosigner(tb, name))
+	}
+
+	s := newServer(tb, f.config())
+	advance(tb, s, l, l.update(tb, 0, 5))
+
+	for range 40 {
+		advance(tb, s, l, l.update(tb, 5, 5))
+	}
+
+	return s, l
 }
 
 // countingResolver returns the Resolver of the tests, whose Verifiers of

@@ -4,14 +4,13 @@
 package witness_test
 
 import (
-	"errors"
 	"fmt"
 	"math"
-	"strings"
 	"testing"
 
+	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/bench"
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert/expect"
 
 	"go.thesmos.sh/core/errs"
 	"go.thesmos.sh/core/tlog/witness"
@@ -29,9 +28,9 @@ func TestProtocol(t *testing.T) {
 			t.Run("returns the committed size after the prefix of the package", func(t *testing.T) {
 				t.Parallel()
 				err := &witness.SizeError{Size: math.MaxUint64}
-				testkit.Equal(t, err.Error(), "witness: the witness committed the size 18446744073709551615 last",
+				assert.Equal(t, err.Error(), "witness: the witness committed the size 18446744073709551615 last",
 					"Error must contain the committed size")
-				testkit.True(t, strings.HasPrefix(err.Error(), errorPrefix), "Error must start with the prefix")
+				assert.HasPrefix(t, err.Error(), errorPrefix, "Error must start with the prefix")
 			})
 		})
 
@@ -40,18 +39,40 @@ func TestProtocol(t *testing.T) {
 
 			t.Run("returns Conflict", func(t *testing.T) {
 				t.Parallel()
-				testkit.Equal(t, (&witness.SizeError{Size: 5}).Class(), errs.Conflict,
+				assert.Equal(t, (&witness.SizeError{Size: 5}).Class(), errs.Conflict,
 					"a SizeError must classify as Conflict")
 			})
 
 			t.Run("returns Conflict through a wrap", func(t *testing.T) {
 				t.Parallel()
 				err := fmt.Errorf("context: %w", &witness.SizeError{Size: 5})
-				testkit.Equal(t, errs.Classify(err), errs.Conflict, "a wrapped SizeError must classify as Conflict")
-				got, ok := errors.AsType[*witness.SizeError](err)
-				testkit.True(t, ok, "errors.AsType must find the SizeError")
-				testkit.Equal(t, got.Size, uint64(5), "the SizeError must keep its size")
+				assert.Equal(t, errs.Classify(err), errs.Conflict, "a wrapped SizeError must classify as Conflict")
+				got := assert.ErrorAs[*witness.SizeError](t, err, "errors.AsType must find the SizeError")
+				assert.Equal(t, got.Size, uint64(5), "the SizeError must keep its size")
 			})
+		})
+	})
+}
+
+// TestProtocolAllocs checks the allocation contracts of the methods of
+// SizeError that BenchmarkProtocol states. MaxAllocs counts the
+// allocations of the whole process, so the test does not run in parallel.
+//
+//nolint:paralleltest // see above
+func TestProtocolAllocs(t *testing.T) {
+	t.Run("SizeError", func(t *testing.T) {
+		err := &witness.SizeError{Size: 20852014}
+
+		t.Run("Error", func(t *testing.T) {
+			var got string
+			expect.MaxAllocs(t, func() { got = err.Error() }, 1, "Error must allocate its text alone")
+			assert.HasSuffix(t, got, " 20852014 last", "the test must measure the text")
+		})
+
+		t.Run("Class", func(t *testing.T) {
+			var got errs.Class
+			expect.MaxAllocs(t, func() { got = err.Class() }, 0, "Class must not allocate")
+			assert.Equal(t, got, errs.Conflict, "the test must measure the class")
 		})
 	})
 }
@@ -69,7 +90,7 @@ func BenchmarkProtocol(b *testing.B) {
 				got = err.Error()
 			}
 
-			testkit.True(b, strings.HasSuffix(got, " 20852014 last"), "the benchmark must measure the text")
+			assert.HasSuffix(b, got, " 20852014 last", "the benchmark must measure the text")
 		})
 
 		b.Run("Class", func(b *testing.B) {
@@ -81,7 +102,7 @@ func BenchmarkProtocol(b *testing.B) {
 				got = err.Class()
 			}
 
-			testkit.Equal(b, got, errs.Conflict, "the benchmark must measure the class")
+			assert.Equal(b, got, errs.Conflict, "the benchmark must measure the class")
 		})
 	})
 }

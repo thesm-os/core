@@ -13,8 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/bench"
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert/expect"
 
 	"go.thesmos.sh/core/clock/fake"
 	"go.thesmos.sh/core/crypto"
@@ -40,6 +41,14 @@ const (
 // treeLeaves is the number of leaves of the tree of each test log.
 const treeLeaves = 64
 
+// newServerAllocs is the allocation contract of NewServer over an empty
+// store and the reporter of telemetry/noop: 6 objects of the Server, its
+// maps, its slices, the target of a circuit and the method value of its
+// commit; 2 of its pool of calls; the 12 attribute sets that its
+// instruments bind; 5 of its cache; 3 of its state; and the error of
+// blob/memory for the missing head.
+const newServerAllocs = 29
+
 // testLog is a log of the tests: an Ed25519 key over SHA-256 trees, the
 // leaves of its tree, and the note of each size of the tree.
 type testLog struct {
@@ -62,7 +71,7 @@ func newTestLog(tb testing.TB, origin string) *testLog {
 	tb.Helper()
 
 	s, err := note.NewTextSigner(note.Name(origin), note.TypeEd25519, ed25519Signer(tb, origin))
-	testkit.NoError(tb, err, "NewTextSigner must accept the key")
+	assert.NoError(tb, err, "NewTextSigner must accept the key")
 
 	h := coresha256.New()
 	l := &testLog{
@@ -102,7 +111,7 @@ func (l *testLog) update(tb testing.TB, oldSize, size uint64) witness.Update {
 	}
 
 	proof, err := tlog.ConsistencyProof(l.log.Hasher, l.leaves[:size], oldSize, nil)
-	testkit.NoError(tb, err, "ConsistencyProof must prove the old size")
+	assert.NoError(tb, err, "ConsistencyProof must prove the old size")
 
 	u.Proof = proof
 
@@ -115,13 +124,13 @@ func signBody(tb testing.TB, body checkpoint.Body, signers ...note.Signer) []byt
 	tb.Helper()
 
 	text, err := body.MarshalText()
-	testkit.NoError(tb, err, "MarshalText must write the body")
+	assert.NoError(tb, err, "MarshalText must write the body")
 
 	n, err := note.Sign(tb.Context(), text, signers...)
-	testkit.NoError(tb, err, "Sign must sign the text")
+	assert.NoError(tb, err, "Sign must sign the text")
 
 	msg, err := n.MarshalText()
-	testkit.NoError(tb, err, "MarshalText must write the note")
+	assert.NoError(tb, err, "MarshalText must write the note")
 
 	return msg
 }
@@ -200,7 +209,7 @@ func newFixture(tb testing.TB, logs ...*testLog) *fixture {
 		SuccessThreshold: 1,
 		OpenFor:          time.Minute,
 	})
-	testkit.NoError(tb, err, "NewBreaker must accept the configuration")
+	assert.NoError(tb, err, "NewBreaker must accept the configuration")
 
 	f := &fixture{
 		store:     newStore(c),
@@ -254,7 +263,7 @@ func newServer(tb testing.TB, cfg *witness.ServerConfig) *witness.Server {
 	tb.Helper()
 
 	s, err := witness.NewServer(bounded(tb), cfg)
-	testkit.NoError(tb, err, "NewServer must accept the configuration")
+	assert.NoError(tb, err, "NewServer must accept the configuration")
 
 	return s
 }
@@ -266,9 +275,9 @@ func advance(tb testing.TB, s *witness.Server, l *testLog, updates ...witness.Up
 	tb.Helper()
 
 	lines, failures, err := s.Advance(bounded(tb), l.notes[updates[len(updates)-1].Body.Size], updates, nil)
-	testkit.NoError(tb, err, "Advance must commit the updates")
-	testkit.Len(tb, failures, 0, "Advance must return no failure")
-	testkit.NotEqual(tb, len(lines), 0, "Advance must return the cosignature lines")
+	assert.NoError(tb, err, "Advance must commit the updates")
+	assert.Empty(tb, failures, "Advance must return no failure")
+	assert.NotEmpty(tb, lines, "Advance must return the cosignature lines")
 
 	return lines
 }
@@ -302,8 +311,8 @@ func TestServer(t *testing.T) {
 		t.Run("returns ErrConfig for a nil configuration", func(t *testing.T) {
 			t.Parallel()
 			s, err := witness.NewServer(bounded(t), nil)
-			testkit.ErrorIs(t, err, witness.ErrConfig, "NewServer must refuse a nil configuration")
-			testkit.True(t, s == nil, "NewServer must return a nil Server with an error")
+			assert.ErrorIs(t, err, witness.ErrConfig, "NewServer must refuse a nil configuration")
+			assert.Nil(t, s, "NewServer must return a nil Server with an error")
 		})
 
 		cosigner := ed25519Cosigner(t, witnessName)
@@ -368,9 +377,9 @@ func TestServer(t *testing.T) {
 				tt.edit(cfg)
 
 				s, err := witness.NewServer(bounded(t), cfg)
-				testkit.ErrorIs(t, err, witness.ErrConfig, "NewServer must refuse the configuration")
-				testkit.Equal(t, errs.Classify(err), errs.Invalid, "the error must classify as Invalid")
-				testkit.True(t, s == nil, "NewServer must return a nil Server with an error")
+				assert.ErrorIs(t, err, witness.ErrConfig, "NewServer must refuse the configuration")
+				assert.Equal(t, errs.Classify(err), errs.Invalid, "the error must classify as Invalid")
+				assert.Nil(t, s, "NewServer must return a nil Server with an error")
 			})
 		}
 
@@ -383,16 +392,32 @@ func TestServer(t *testing.T) {
 	})
 }
 
+// TestServerAllocs checks the allocation contract of NewServer that
+// BenchmarkServer states. MaxAllocs counts the allocations of the whole
+// process, so the test does not run in parallel.
+//
+//nolint:paralleltest // see above
+func TestServerAllocs(t *testing.T) {
+	t.Run("NewServer", func(t *testing.T) {
+		cfg := newFixture(t).config()
+
+		var (
+			s   *witness.Server
+			err error
+		)
+
+		expect.MaxAllocs(t, func() { s, err = witness.NewServer(t.Context(), cfg) }, newServerAllocs,
+			"NewServer must allocate the objects of its contract alone")
+		assert.NoError(t, err, "the test must measure a Server")
+		assert.NotNil(t, s, "the test must measure a Server")
+	})
+}
+
 func BenchmarkServer(b *testing.B) {
 	b.Run("NewServer", func(b *testing.B) {
 		cfg := newFixture(b).config()
 
-		// Over an empty store and the reporter of telemetry/noop: 6 objects
-		// of the Server, its maps, its slices, the target of a circuit and
-		// the method value of its commit; 2 of its pool of calls; the 12
-		// attribute sets that its instruments bind; 5 of its cache; 3 of its
-		// state; and the error of blob/memory for the missing head.
-		c := bench.Start(b).MaxAllocs(29)
+		c := bench.Start(b).MaxAllocs(newServerAllocs)
 		defer c.End()
 
 		var (
@@ -404,7 +429,7 @@ func BenchmarkServer(b *testing.B) {
 			s, err = witness.NewServer(b.Context(), cfg)
 		}
 
-		testkit.NoError(b, err, "the benchmark must measure a Server")
-		testkit.True(b, s != nil, "the benchmark must measure a Server")
+		assert.NoError(b, err, "the benchmark must measure a Server")
+		assert.NotNil(b, s, "the benchmark must measure a Server")
 	})
 }

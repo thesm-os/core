@@ -17,7 +17,9 @@ import (
 
 // position locates an update of the journal: a record or a group, the
 // index of a call in it, and the index of the update in the call. The
-// zero position locates no update.
+// zero position locates no update. Its Seq is 0, below the Seq of every
+// record and every group, which start at 1, so a comparison of Seqs moves
+// a zero served position to any update.
 type position struct {
 	// key is the key of the record or the group, and empty for the zero
 	// position.
@@ -183,10 +185,11 @@ func (st *state) apply(rec *record, key string, size uint64) {
 // then adds the prefixes that snap retired to the set of st. Either way
 // the set has every retired origin before the origins leave st.
 //
-// A state before the record of snap moves its head to that record, so that
-// the records after it apply. take drops the names of the chain before the
-// record of the base of snap, which garbage collection after snap no
-// longer needs.
+// A state before the record of snap moves its Seq, its time and its end to
+// that record, and adds the record to its chain, so that the records after
+// it apply. take drops the names of the chain before the record of the
+// base of snap, which garbage collection after snap no longer needs. The
+// caller sets the head of st to the head of the store that names snap.
 //
 // Returns an error that wraps [ErrJournal], and leaves st unchanged, for a
 // snapshot whose record or objects are not names of the journal, whose
@@ -253,11 +256,12 @@ func (st *state) take(snap *snapshot, name string, size int64, retired *btree.Se
 			o.snapshot = true
 		}
 
-		if !ok || o.latest.seq <= seq {
+		// A new origin has the zero latest position.
+		if o.latest.seq <= seq {
 			o.root, o.size, o.time, o.latest = so.Root, so.Size, so.Time, p
 		}
 
-		if p.group && (o.served.key == "" || o.served.seq <= seq) {
+		if p.group && o.served.seq <= seq {
 			o.served = p
 		}
 
@@ -270,13 +274,10 @@ func (st *state) take(snap *snapshot, name string, size int64, retired *btree.Se
 	}
 
 	if seq > st.seq {
-		record := strings.Clone(snap.Record)
-		st.chain.Set(seq, record)
-		st.head.Record = record
+		st.chain.Set(seq, strings.Clone(snap.Record))
 		st.seq, st.time, st.end = seq, maxTime, snap.End
 	}
 
-	st.head.Snapshot = name
 	st.snap = installed{name: name, objects: objects, seq: seq, end: snap.End, size: size}
 
 	return nil

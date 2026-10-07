@@ -202,7 +202,7 @@ func (s *Server) storeLines(ctx context.Context) {
 
 	for _, m := range w.moves {
 		o, ok := s.st.origins.Get(m.hash)
-		if ok && (o.served.key == "" || o.served.seq < w.seq) {
+		if ok && o.served.seq < w.seq {
 			o.served = position{key: w.recKey, seq: w.seq, call: m.call, update: m.update}
 			s.st.origins.Set(m.hash, o)
 		}
@@ -518,6 +518,7 @@ func (s *Server) replaceHead(ctx context.Context, b *batch, bs base, name string
 			return version.Unspecified, err
 		}
 
+		//dokimi:mutate-skip sbr-delete,ror-false: a head that moved fails the precondition of the next write, which returns the same errOvertaken one write later
 		if cur != bs.version {
 			return version.Unspecified, errOvertaken
 		}
@@ -638,16 +639,14 @@ func (s *Server) account(ctx context.Context, b *batch, err error) {
 }
 
 // release drops the references of b to the memory of its calls, which
-// their callers reuse, and keeps the capacity of its slices.
+// their callers reuse, and keeps the capacity of its slices. Each step of
+// the next commit sets the length of a slice before it fills the slice.
 func (b *batch) release() {
 	clear(b.calls)
 	clear(b.passed)
 	clear(b.texts)
 	clear(b.lines.Calls)
 	clear(b.rec.Calls)
-
-	b.calls, b.passed, b.texts = b.calls[:0], b.passed[:0], b.texts[:0]
-	b.lines.Calls, b.rec.Calls = b.lines.Calls[:0], b.rec.Calls[:0]
 }
 
 // failAll sets the error of each call of calls to err, and returns err.

@@ -154,7 +154,7 @@ func (s *Server) repairRecord(ctx context.Context, key string) error {
 			h := hashOrigin(e.Origin)
 
 			o, ok := s.st.origins.Get(h)
-			if ok && (o.served.key == "" || o.served.seq < rec.Seq) {
+			if ok && o.served.seq < rec.Seq {
 				o.served = position{key: key, seq: rec.Seq, call: i, update: j}
 				s.st.origins.Set(h, o)
 			}

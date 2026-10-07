@@ -4,10 +4,9 @@
 package witness_test
 
 import (
-	"strings"
 	"testing"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
 
 	"go.thesmos.sh/core/errs"
 	"go.thesmos.sh/core/tlog/witness"
@@ -40,22 +39,21 @@ func TestErrors(t *testing.T) {
 
 			t.Run("classifies as "+tt.class.String(), func(t *testing.T) {
 				t.Parallel()
-				testkit.Equal(t, errs.Classify(tt.err), tt.class, tt.name+" must classify as "+tt.class.String())
+				assert.Equal(t, errs.Classify(tt.err), tt.class, tt.name+" must classify as "+tt.class.String())
 			})
 
 			t.Run("starts its text with the name of the package", func(t *testing.T) {
 				t.Parallel()
-				testkit.True(t, strings.HasPrefix(tt.err.Error(), errorPrefix),
-					tt.name+" must start with "+errorPrefix)
+				assert.HasPrefix(t, tt.err.Error(), errorPrefix, tt.name+" must start with "+errorPrefix)
 			})
 
 			t.Run("has a text that no other sentinel has", func(t *testing.T) {
 				t.Parallel()
 				for _, other := range sentinels {
 					if other.name != tt.name {
-						testkit.NotEqual(t, tt.err.Error(), other.err.Error(),
+						assert.NotEqual(t, tt.err.Error(), other.err.Error(),
 							tt.name+" and "+other.name+" must have distinct texts")
-						testkit.ErrorIsNot(t, tt.err, other.err, tt.name+" must not match "+other.name)
+						assert.ErrorIsNot(t, tt.err, other.err, tt.name+" must not match "+other.name)
 					}
 				}
 			})

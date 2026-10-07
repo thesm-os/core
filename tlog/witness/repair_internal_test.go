@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
 
 	"go.thesmos.sh/core/errs"
 )
@@ -15,8 +15,60 @@ import (
 func TestRepairInternal(t *testing.T) {
 	t.Parallel()
 
+	l := newInternalLog(t, "example.com/a")
+
+	// unlined returns a server over a store with hooks, and the key of the
+	// record of a commit of l that the store refused the lines of.
+	unlined := func(tb testing.TB) (*Server, string) {
+		tb.Helper()
+
+		f := newInternalFixture(tb, l)
+		st := &faulty{Store: f.store}
+		cfg := f.config()
+		cfg.State = st
+		s := newInternalServer(tb, cfg)
+
+		st.refuse(linesPrefix)
+		l.advance(tb, s, 0, 5, nil)
+		st.refuse("")
+
+		s.mu.RLock()
+		defer s.mu.RUnlock()
+
+		return s, recordPrefix + s.st.head.Record
+	}
+
+	t.Run("repair", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("leaves no repair of a record whose lines it stored", func(t *testing.T) {
+			t.Parallel()
+			s, key := unlined(t)
+			assert.NoError(t, s.repair(bounded(t), key), "repair must store the lines")
+
+			s.rmu.Lock()
+			_, ok := s.repairs[key]
+			s.rmu.Unlock()
+
+			assert.False(t, ok, "a repair that succeeded must leave the server")
+		})
+	})
+
 	t.Run("repairRecord", func(t *testing.T) {
 		t.Parallel()
+
+		t.Run("adds no origin that left the state before the repair", func(t *testing.T) {
+			t.Parallel()
+			s, key := unlined(t)
+			h := hashOrigin(l.origin)
+
+			s.mu.Lock()
+			s.st.origins.Delete(h)
+			s.mu.Unlock()
+
+			assert.NoError(t, s.repairRecord(bounded(t), key), "repairRecord must store the lines")
+			assert.False(t, s.st.origins.Has(h), "the repair must not add the origin again")
+		})
 
 		t.Run("returns the error of the store for a record that it does not read", func(t *testing.T) {
 			t.Parallel()
@@ -24,7 +76,7 @@ func TestRepairInternal(t *testing.T) {
 			missing := recordPrefix + string(appendName(nil, 1, []byte("a missing record")))
 
 			err := s.repairRecord(bounded(t), missing)
-			testkit.Equal(t, errs.Classify(err), errs.NotFound, "repairRecord must return the error of the store")
+			assert.Equal(t, errs.Classify(err), errs.NotFound, "repairRecord must return the error of the store")
 		})
 
 		t.Run("returns ErrJournal for a record whose note is not a signed note", func(t *testing.T) {
@@ -33,12 +85,12 @@ func TestRepairInternal(t *testing.T) {
 			name := putRecord(t, f.store, &record{Seq: 1, Time: 1, Calls: []call{{Note: []byte("not a note")}}})
 
 			err := f.server(t).repairRecord(bounded(t), recordPrefix+name)
-			testkit.ErrorIs(t, err, ErrJournal, "repairRecord must refuse the record")
+			assert.ErrorIs(t, err, ErrJournal, "repairRecord must refuse the record")
 		})
 
 		t.Run("moves the served position of an origin to the later of two calls of the record", func(t *testing.T) {
 			t.Parallel()
-			l, other := newInternalLog(t, "example.com/a"), newInternalLog(t, "example.com/b")
+			other := newInternalLog(t, "example.com/b")
 			f := newInternalFixture(t, l, other)
 			st := &faulty{Store: f.store}
 			g := &gated{Cosigner: f.signer, started: make(chan struct{}), release: make(chan struct{})}
@@ -72,13 +124,13 @@ func TestRepairInternal(t *testing.T) {
 			key := recordPrefix + s.st.head.Record
 			s.mu.RUnlock()
 
-			testkit.NoError(t, s.repairRecord(bounded(t), key), "repairRecord must store the lines")
+			assert.NoError(t, s.repairRecord(bounded(t), key), "repairRecord must store the lines")
 
 			s.mu.RLock()
 			o, _ := s.st.origins.Get(hashOrigin(l.origin))
 			s.mu.RUnlock()
 
-			testkit.Equal(t, o.served.call, 1, "the repair must serve the later call of the record")
+			assert.Equal(t, o.served.call, 1, "the repair must serve the later call of the record")
 		})
 	})
 }

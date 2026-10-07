@@ -11,7 +11,9 @@ import (
 	"testing"
 	"time"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/bench"
+	"go.dokimi.dev/assert/expect"
 
 	"go.thesmos.sh/core/tlog/checkpoint"
 )
@@ -31,6 +33,22 @@ type gated struct {
 
 func TestQueueInternal(t *testing.T) {
 	t.Parallel()
+
+	t.Run("reset", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("drops the updates and the entries of the call before", func(t *testing.T) {
+			t.Parallel()
+			p := &pending{
+				updates: []update{{origin: "example.com/a", size: 5}},
+				entries: []entry{{Origin: "example.com/a", Size: 5}},
+			}
+
+			p.reset()
+			expect.Equal(t, p.updates[:1], []update{{}}, "reset must drop the updates")
+			expect.Equal(t, p.entries[:1], []entry{{}}, "reset must drop the entries")
+		})
+	})
 
 	t.Run("enqueue", func(t *testing.T) {
 		t.Parallel()
@@ -70,7 +88,7 @@ func TestQueueInternal(t *testing.T) {
 			seq := s.st.seq
 			s.mu.RUnlock()
 
-			testkit.Equal(t, seq, uint64(2), "the waiting calls must commit in one record")
+			assert.Equal(t, seq, uint64(2), "the waiting calls must commit in one record")
 		})
 	})
 
@@ -89,9 +107,10 @@ func TestQueueInternal(t *testing.T) {
 			cancel(cause)
 
 			owned, err := s.wait(ctx, p)
-			testkit.ErrorIs(t, err, cause, "wait must return the cause of ctx")
-			testkit.True(t, owned, "the call must remain the caller's")
-			testkit.Len(t, s.queue, 0, "the call must leave the queue")
+			assert.ErrorIs(t, err, cause, "wait must return the cause of ctx")
+			expect.True(t, owned, "the call must remain the caller's")
+			expect.Empty(t, s.queue, "the call must leave the queue")
+			expect.True(t, s.qmu.TryLock(), "wait must unlock the queue")
 		})
 
 		t.Run("abandons a call that a commit took", func(t *testing.T) {
@@ -103,9 +122,9 @@ func TestQueueInternal(t *testing.T) {
 			cancel(cause)
 
 			owned, err := s.wait(ctx, p)
-			testkit.ErrorIs(t, err, cause, "wait must return the cause of ctx")
-			testkit.False(t, owned, "the call must pass to the commit")
-			testkit.True(t, p.abandoned, "the call must be abandoned")
+			assert.ErrorIs(t, err, cause, "wait must return the cause of ctx")
+			assert.False(t, owned, "the call must pass to the commit")
+			assert.True(t, p.abandoned, "the call must be abandoned")
 		})
 
 		t.Run("returns the result that a commit delivered after the end of ctx", func(t *testing.T) {
@@ -131,8 +150,10 @@ func TestQueueInternal(t *testing.T) {
 			s.qmu.Unlock()
 			waitAll(t, &wg, "wait must return")
 
-			testkit.NoError(t, err, "wait must return the delivered result")
-			testkit.True(t, owned, "the call must remain the caller's")
+			assert.NoError(t, err, "wait must return the delivered result")
+			expect.True(t, owned, "the call must remain the caller's")
+			expect.Empty(t, p.done, "wait must receive the delivered result")
+			expect.True(t, s.qmu.TryLock(), "wait must unlock the queue")
 		})
 
 		t.Run("returns the result of a commit", func(t *testing.T) {
@@ -142,8 +163,8 @@ func TestQueueInternal(t *testing.T) {
 			p.done <- struct{}{}
 
 			owned, err := s.wait(bounded(t), p)
-			testkit.NoError(t, err, "wait must return the result")
-			testkit.True(t, owned, "the call must remain the caller's")
+			assert.NoError(t, err, "wait must return the result")
+			assert.True(t, owned, "the call must remain the caller's")
 		})
 	})
 
@@ -189,14 +210,23 @@ func TestQueueInternal(t *testing.T) {
 				s.queue = append(s.queue, queued...)
 
 				got := s.take(nil)
-				testkit.Len(t, got, tt.want, "take must take the calls within the bounds")
-				testkit.Len(t, s.queue, len(queued)-tt.want, "take must leave the other calls")
+				assert.Length(t, got, tt.want, "take must take the calls within the bounds")
+				assert.Length(t, s.queue, len(queued)-tt.want, "take must leave the other calls")
 
 				for i, p := range queued {
-					testkit.Equal(t, p.taken, i < tt.want, "take must mark the calls that it takes")
+					assert.Equal(t, p.taken, i < tt.want, "take must mark the calls that it takes")
 				}
 			})
 		}
+
+		t.Run("drops the references of the queue to the calls that it takes", func(t *testing.T) {
+			t.Parallel()
+			s := newInternalFixture(t).server(t)
+			s.queue = append(s.queue, calls([]int{10, 10}, []int{1, 1})...)
+
+			s.take(nil)
+			assert.Equal(t, s.queue[:cap(s.queue)], make([]*pending, cap(s.queue)), "take must drop the calls")
+		})
 	})
 
 	t.Run("deliver", func(t *testing.T) {
@@ -208,8 +238,8 @@ func TestQueueInternal(t *testing.T) {
 			p := &pending{done: make(chan struct{}, 1), taken: true, abandoned: true, lines: []byte("lines")}
 
 			s.deliver([]*pending{p})
-			testkit.False(t, p.taken, "deliver must reset the call")
-			testkit.Len(t, p.done, 0, "deliver must send no result")
+			assert.False(t, p.taken, "deliver must reset the call")
+			assert.Empty(t, p.done, "deliver must send no result")
 		})
 
 		t.Run("sends the result of a call to its caller", func(t *testing.T) {
@@ -218,10 +248,49 @@ func TestQueueInternal(t *testing.T) {
 			p := &pending{done: make(chan struct{}, 1), taken: true}
 
 			s.deliver([]*pending{p})
-			testkit.True(t, p.delivered, "deliver must mark the call")
-			testkit.Len(t, p.done, 1, "deliver must send the result")
+			assert.True(t, p.delivered, "deliver must mark the call")
+			assert.Length(t, p.done, 1, "deliver must send the result")
 		})
 	})
+}
+
+// TestQueueInternalAllocs checks the allocation contract of deliver that
+// BenchmarkQueueInternal states. MaxAllocs counts the allocations of the
+// whole process, so the test does not run in parallel.
+//
+//nolint:paralleltest // see above
+func TestQueueInternalAllocs(t *testing.T) {
+	t.Run("deliver", func(t *testing.T) {
+		t.Run("of an abandoned call", func(t *testing.T) {
+			s := newInternalFixture(t).server(t)
+			expect.MaxAllocs(t, func() { deliverAbandoned(s) }, 0,
+				"deliver must return an abandoned call to the pool, from which the next call takes it")
+		})
+	})
+}
+
+func BenchmarkQueueInternal(b *testing.B) {
+	b.Run("deliver", func(b *testing.B) {
+		b.Run("of an abandoned call", func(b *testing.B) {
+			s := newInternalFixture(b).server(b)
+
+			c := bench.Start(b).MaxAllocs(0)
+			defer c.End()
+
+			for c.Loop() {
+				deliverAbandoned(s)
+			}
+		})
+	})
+}
+
+// deliverAbandoned takes a call from the pool of s, marks it taken and
+// abandoned, as a commit finds the call of a caller whose context ended,
+// and delivers it.
+func deliverAbandoned(s *Server) {
+	p := s.pendings.Get()
+	p.taken, p.abandoned = true, true
+	s.deliver([]*pending{p})
 }
 
 // AppendSignAt closes g.started and waits for g.release on the first

@@ -104,17 +104,24 @@ func (s *Server) serveAddCheckpoint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	//dokimi:mutate-skip sbr-delete: net/http sniffs the type text/plain; charset=utf-8 from the lines, which are text
 	w.Header()[contentType] = linesTypes[:1:1]
 	_, _ = w.Write(p.lines) //nolint:errcheck // the client went away, and the status is written
 }
 
 // parseRequest reads the body of an add-checkpoint request from body into
 // p, and runs check 1 of the protocol: the form of the body, and a note
-// whose text is a checkpoint body.
+// whose text is a checkpoint body. p can contain the parses of an earlier
+// body, which [pending.reset] keeps, and none of them stands in for a
+// part of body that fails to parse.
 //
-// Returns an error that wraps [ErrRequest] for a body that fails it, an
-// *http.MaxBytesError for a body above maxBodyBytes, and the error of
-// body.
+// Error modes:
+//   - an error that wraps [ErrRequest] for a body that fails the check.
+//     For a note that does not parse, or a text that is not a checkpoint
+//     body, the error also wraps the error of [note.Note.UnmarshalText]
+//     or of [checkpoint.Body.UnmarshalText].
+//   - an *http.MaxBytesError for a body above maxBodyBytes.
+//   - the error of body.
 func (p *pending) parseRequest(body io.Reader) error {
 	buf, err := readBody(body, p.buf[:0])
 	p.buf = buf

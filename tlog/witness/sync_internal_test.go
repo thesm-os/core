@@ -6,17 +6,46 @@ package witness
 import (
 	"context"
 	"errors"
+	"math"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/expect"
 
 	"go.thesmos.sh/core/blob"
 	"go.thesmos.sh/core/errs"
+	"go.thesmos.sh/core/telemetry"
 	"go.thesmos.sh/core/tlog/checkpoint"
 )
+
+// lastGauge is a telemetry.Gauge that keeps the bits of the last value
+// that Set recorded, which a case reads with math.Float64frombits.
+type lastGauge struct {
+	bits atomic.Uint64
+}
+
+var _ telemetry.Gauge = (*lastGauge)(nil)
+
+// Set keeps value.
+func (g *lastGauge) Set(_ context.Context, value float64) {
+	g.bits.Store(math.Float64bits(value))
+}
+
+// Add keeps the kept value plus delta.
+func (g *lastGauge) Add(_ context.Context, delta float64) {
+	g.bits.Store(math.Float64bits(math.Float64frombits(g.bits.Load()) + delta))
+}
+
+// With returns g.
+func (g *lastGauge) With([]telemetry.Attr) telemetry.Gauge {
+	return g
+}
+
+// Release does nothing.
+func (*lastGauge) Release() {}
 
 func TestSyncInternal(t *testing.T) {
 	t.Parallel()
@@ -75,6 +104,27 @@ func TestSyncInternal(t *testing.T) {
 					name := string(appendName(nil, 1, data))
 					putObject(tb, st, recordPrefix+name, data)
 					putHead(tb, st, head{Record: name})
+				},
+			},
+			{
+				name: "returns ErrJournal for a record with a byte after its encoding",
+				give: func(tb testing.TB, st blob.Store) {
+					tb.Helper()
+					data, _ := (&record{Seq: 1, Time: 1}).MarshalBinary()
+					data = append(data, 0)
+					name := string(appendName(nil, 1, data))
+					putObject(tb, st, recordPrefix+name, data)
+					putHead(tb, st, head{Record: name})
+				},
+			},
+			{
+				name: "returns ErrJournal for a predecessor whose name has another Seq",
+				give: func(tb testing.TB, st blob.Store) {
+					tb.Helper()
+					data, _ := (&record{Seq: 1, Time: 1}).MarshalBinary()
+					other := string(appendName(nil, 7, data))
+					putObject(tb, st, recordPrefix+other, data)
+					putHead(tb, st, head{Record: putRecord(tb, st, &record{Seq: 2, Time: 1, Prev: other})})
 				},
 			},
 			{
@@ -139,6 +189,18 @@ func TestSyncInternal(t *testing.T) {
 				},
 			},
 			{
+				name: "returns ErrJournal for a snapshot with a byte after its encoding",
+				give: func(tb testing.TB, st blob.Store) {
+					tb.Helper()
+					first := putRecord(tb, st, &record{Seq: 1, Time: 1})
+					data, _ := (&snapshot{Record: first}).MarshalBinary()
+					data = append(data, 0)
+					name := string(appendName(nil, 1, data))
+					putObject(tb, st, snapshotPrefix+name, data)
+					putHead(tb, st, head{Record: first, Snapshot: name})
+				},
+			},
+			{
 				name: "returns ErrJournal for a snapshot whose objects are not records or groups",
 				give: func(tb testing.TB, st blob.Store) {
 					tb.Helper()
@@ -155,8 +217,8 @@ func TestSyncInternal(t *testing.T) {
 				tt.give(t, f.store)
 
 				_, err := NewServer(bounded(t), f.config())
-				testkit.ErrorIs(t, err, ErrJournal, "NewServer must refuse the journal")
-				testkit.Equal(t, errs.Classify(err), errs.Integrity, "the error must classify as Integrity")
+				assert.ErrorIs(t, err, ErrJournal, "NewServer must refuse the journal")
+				assert.Equal(t, errs.Classify(err), errs.Integrity, "the error must classify as Integrity")
 			})
 		}
 
@@ -168,8 +230,8 @@ func TestSyncInternal(t *testing.T) {
 			cfg.State = st
 
 			_, err := NewServer(bounded(t), cfg)
-			testkit.Error(t, err, "NewServer must fail")
-			testkit.ErrorIsNot(t, err, ErrJournal, "the error must be the error of the store")
+			assert.HasError(t, err, "NewServer must fail")
+			assert.ErrorIsNot(t, err, ErrJournal, "the error must be the error of the store")
 		})
 
 		t.Run("returns the cause of ctx when ctx ends", func(t *testing.T) {
@@ -179,7 +241,7 @@ func TestSyncInternal(t *testing.T) {
 			cancel(cause)
 
 			_, err := NewServer(ctx, newInternalFixture(t, l).config())
-			testkit.ErrorIs(t, err, cause, "NewServer must return the cause of ctx")
+			assert.ErrorIs(t, err, cause, "NewServer must return the cause of ctx")
 		})
 
 		t.Run("starts the walk again when a record of the chain is missing once", func(t *testing.T) {
@@ -200,8 +262,175 @@ func TestSyncInternal(t *testing.T) {
 			cfg.State = st
 
 			s, err := NewServer(bounded(t), cfg)
-			testkit.NoError(t, err, "NewServer must walk again")
-			testkit.Equal(t, s.st.seq, uint64(1), "NewServer must read the record")
+			assert.NoError(t, err, "NewServer must walk again")
+			assert.Equal(t, s.st.seq, uint64(1), "NewServer must read the record")
+		})
+
+		t.Run("returns the error of the store for a record that does not read once", func(t *testing.T) {
+			t.Parallel()
+			f := newInternalFixture(t, l)
+			l.advance(t, f.server(t), 0, 5, nil)
+
+			var failed atomic.Bool
+
+			errRead := errors.New("the read of the record failed")
+			st := &faulty{Store: f.store, get: func(key string) error {
+				if strings.HasPrefix(key, recordPrefix) && failed.CompareAndSwap(false, true) {
+					return errRead
+				}
+
+				return nil
+			}}
+			cfg := f.config()
+			cfg.State = st
+
+			_, err := NewServer(bounded(t), cfg)
+			assert.ErrorIs(t, err, errRead, "NewServer must return the error of the read")
+		})
+
+		// counting returns a fixture, a server over a store that counts the
+		// reads of records into reads, and the store.
+		counting := func(tb testing.TB, reads *atomic.Int64) (*internalFixture, *Server) {
+			tb.Helper()
+
+			f := newInternalFixture(tb, l)
+			st := &faulty{Store: f.store, get: func(key string) error {
+				if strings.HasPrefix(key, recordPrefix) {
+					reads.Add(1)
+				}
+
+				return nil
+			}}
+			cfg := f.config()
+			cfg.State = st
+
+			return f, newInternalServer(tb, cfg)
+		}
+
+		t.Run("reports a record that the state applied before the head moved as its own", func(t *testing.T) {
+			t.Parallel()
+			f := newInternalFixture(t, l)
+			s := f.server(t)
+			l.advance(t, s, 0, 5, nil)
+			own := s.st.head.Record
+			l.advance(t, f.server(t), 5, 6, nil)
+
+			got, err := s.sync(bounded(t), own)
+			assert.NoError(t, err, "sync must catch up to the head")
+			assert.True(t, got, "sync must report the record that the state applied")
+		})
+
+		t.Run("reports a record in the middle of the walk as its own", func(t *testing.T) {
+			t.Parallel()
+			f := newInternalFixture(t, l)
+			behind := f.server(t)
+			s := f.server(t)
+
+			names := make([]string, 0, 3)
+			for size := uint64(1); size <= 3; size++ {
+				l.advance(t, s, size-1, size, nil)
+				names = append(names, s.st.head.Record)
+			}
+
+			got, err := behind.sync(bounded(t), names[1])
+			assert.NoError(t, err, "sync must catch up to the head")
+			assert.True(t, got, "sync must find the record before the last record that it read")
+		})
+
+		t.Run("reports a record after the record of a new snapshot as its own", func(t *testing.T) {
+			t.Parallel()
+			f := newInternalFixture(t, l)
+			behind := f.server(t)
+			s := f.server(t)
+
+			names := make([]string, 0, 5)
+			for size := uint64(1); size <= 5; size++ {
+				l.advance(t, s, size-1, size, nil)
+				names = append(names, s.st.head.Record)
+
+				if size == 3 {
+					assert.NoError(t, s.snapshot(bounded(t)), "the snapshot must install")
+				}
+			}
+
+			got, err := behind.sync(bounded(t), names[3])
+			assert.NoError(t, err, "sync must catch up to the head")
+			assert.True(t, got, "sync must find the record after the record of the snapshot")
+		})
+
+		t.Run("reads only the records after the record of a new snapshot in a refresh", func(t *testing.T) {
+			t.Parallel()
+
+			var reads atomic.Int64
+
+			f, behind := counting(t, &reads)
+			s := f.server(t)
+			for size := uint64(1); size <= 4; size++ {
+				l.advance(t, s, size-1, size, nil)
+
+				if size == 3 {
+					assert.NoError(t, s.snapshot(bounded(t)), "the snapshot must install")
+				}
+			}
+
+			reads.Store(0)
+			_, err := behind.sync(bounded(t), "")
+			assert.NoError(t, err, "sync must catch up to the head")
+			assert.Equal(t, reads.Load(), int64(1), "the refresh must read the one record after the snapshot")
+		})
+
+		t.Run("reads no record at or before the record of the state", func(t *testing.T) {
+			t.Parallel()
+
+			var reads atomic.Int64
+
+			f, s := counting(t, &reads)
+			l.advance(t, s, 0, 1, nil)
+			first := s.st.head.Record
+			l.advance(t, s, 1, 2, nil)
+			l.advance(t, f.server(t), 2, 3, nil)
+
+			reads.Store(0)
+			got, err := s.sync(bounded(t), first)
+			assert.NoError(t, err, "sync must catch up to the head")
+			expect.True(t, got, "sync must report the record that the state applied")
+			expect.Equal(t, reads.Load(), int64(1), "sync must read the one record after the state")
+		})
+
+		t.Run("walks no retired objects for a snapshot whose base the state took", func(t *testing.T) {
+			t.Parallel()
+			f := newInternalFixture(t, l)
+			st := &faulty{Store: f.store}
+			cfg := f.config()
+			cfg.State = st
+			s := newInternalServer(t, cfg)
+			l.advance(t, s, 0, 5, nil)
+			assert.NoError(t, s.snapshot(bounded(t)), "the first snapshot must install")
+
+			writer := f.server(t)
+			l.advance(t, writer, 5, 6, nil)
+			assert.NoError(t, writer.snapshot(bounded(t)), "the second snapshot must install")
+
+			walks := st.walks(retiredPrefix)
+			_, err := s.sync(bounded(t), "")
+			assert.NoError(t, err, "sync must catch up to the head")
+			assert.Equal(t, st.walks(retiredPrefix), walks, "sync must walk no retired objects")
+		})
+
+		t.Run("sets the gauge of the origins to the origins of the state after a catch-up", func(t *testing.T) {
+			t.Parallel()
+			b := newInternalLog(t, "example.com/b")
+			f := newInternalFixture(t, l, b)
+			writer := f.server(t)
+			l.advance(t, writer, 0, 5, nil)
+			s := f.server(t)
+			g := &lastGauge{}
+			s.metrics.origins = g
+			b.advance(t, writer, 0, 5, nil)
+
+			_, err := s.sync(bounded(t), "")
+			assert.NoError(t, err, "sync must catch up to the head")
+			assert.Equal(t, math.Float64frombits(g.bits.Load()), float64(2), "the gauge must report both origins")
 		})
 
 		t.Run("ignores the records off the chain", func(t *testing.T) {
@@ -214,8 +443,8 @@ func TestSyncInternal(t *testing.T) {
 
 			again := f.server(t)
 			o, ok := again.st.origins.Get(hashOrigin(l.origin))
-			testkit.True(t, ok, "NewServer must read the origin")
-			testkit.Equal(t, o.size, uint64(6), "NewServer must read the chain")
+			assert.True(t, ok, "NewServer must read the origin")
+			assert.Equal(t, o.size, uint64(6), "NewServer must read the chain")
 		})
 
 		t.Run("rebuilds the state from a snapshot and the records after it", func(t *testing.T) {
@@ -225,9 +454,9 @@ func TestSyncInternal(t *testing.T) {
 			s := f.server(t)
 			l.advance(t, s, 0, 5, nil)
 			b.advance(t, s, 0, 5, nil)
-			testkit.NoError(t, s.snapshot(bounded(t)), "the first snapshot must install")
+			assert.NoError(t, s.snapshot(bounded(t)), "the first snapshot must install")
 			b.advance(t, s, 5, 6, nil)
-			testkit.NoError(t, s.snapshot(bounded(t)), "the second snapshot must install")
+			assert.NoError(t, s.snapshot(bounded(t)), "the second snapshot must install")
 			b.advance(t, s, 6, 7, nil)
 
 			again := f.server(t)
@@ -236,12 +465,12 @@ func TestSyncInternal(t *testing.T) {
 				size   uint64
 			}{{l.origin, 5}, {b.origin, 7}} {
 				o, ok := again.st.origins.Get(hashOrigin(want.origin))
-				testkit.True(t, ok, "NewServer must read "+string(want.origin))
-				testkit.Equal(t, o.size, want.size, "NewServer must read the size of "+string(want.origin))
+				assert.True(t, ok, "NewServer must read "+string(want.origin))
+				assert.Equal(t, o.size, want.size, "NewServer must read the size of "+string(want.origin))
 			}
 
 			o, _ := again.st.origins.Get(hashOrigin(l.origin))
-			testkit.True(t, o.served.group, "NewServer must serve the group of the idle origin")
+			assert.True(t, o.served.group, "NewServer must serve the group of the idle origin")
 		})
 
 		t.Run("walks the retired objects for a snapshot whose base it did not take", func(t *testing.T) {
@@ -253,14 +482,14 @@ func TestSyncInternal(t *testing.T) {
 			f.refuse(l.origin)
 			f.clock.Advance(2 * time.Hour)
 			b.advance(t, s, 0, 5, nil)
-			testkit.NoError(t, s.snapshot(bounded(t)), "the retiring snapshot must install")
+			assert.NoError(t, s.snapshot(bounded(t)), "the retiring snapshot must install")
 			b.advance(t, s, 5, 6, nil)
-			testkit.NoError(t, s.snapshot(bounded(t)), "the next snapshot must install")
+			assert.NoError(t, s.snapshot(bounded(t)), "the next snapshot must install")
 
 			again := f.server(t)
 			h := hashOrigin(l.origin)
-			testkit.False(t, again.st.origins.Has(h), "the state must not contain the retired origin")
-			testkit.True(t, again.st.retired.Len() == 1, "the state must know the retired origin")
+			assert.False(t, again.st.origins.Has(h), "the state must not contain the retired origin")
+			assert.Equal(t, again.st.retired.Len(), 1, "the state must know the retired origin")
 		})
 
 		t.Run("reports a record below the record of the snapshot as its own", func(t *testing.T) {
@@ -275,11 +504,11 @@ func TestSyncInternal(t *testing.T) {
 				names = append(names, s.st.head.Record)
 			}
 
-			testkit.NoError(t, s.snapshot(bounded(t)), "the snapshot must install")
+			assert.NoError(t, s.snapshot(bounded(t)), "the snapshot must install")
 
 			own, err := behind.sync(bounded(t), names[1])
-			testkit.NoError(t, err, "sync must catch up to the head")
-			testkit.True(t, own, "sync must find the record on the chain")
+			assert.NoError(t, err, "sync must catch up to the head")
+			assert.True(t, own, "sync must find the record on the chain")
 
 			other := f.server(t)
 			other.mu.Lock()
@@ -287,8 +516,8 @@ func TestSyncInternal(t *testing.T) {
 			other.mu.Unlock()
 
 			own, err = other.sync(bounded(t), string(appendName(nil, 2, []byte("another record"))))
-			testkit.NoError(t, err, "sync must catch up to the head")
-			testkit.False(t, own, "sync must not find another record of the Seq")
+			assert.NoError(t, err, "sync must catch up to the head")
+			assert.False(t, own, "sync must not find another record of the Seq")
 		})
 
 		t.Run("reports the record of the snapshot as its own", func(t *testing.T) {
@@ -301,11 +530,11 @@ func TestSyncInternal(t *testing.T) {
 				l.advance(t, s, size-1, size, nil)
 			}
 
-			testkit.NoError(t, s.snapshot(bounded(t)), "the snapshot must install")
+			assert.NoError(t, s.snapshot(bounded(t)), "the snapshot must install")
 
 			own, err := behind.sync(bounded(t), s.st.head.Record)
-			testkit.NoError(t, err, "sync must catch up to the head")
-			testkit.True(t, own, "sync must find the record of the snapshot on the chain")
+			assert.NoError(t, err, "sync must catch up to the head")
+			assert.True(t, own, "sync must find the record of the snapshot on the chain")
 		})
 
 		t.Run("reports the head's record of a state that reflects the head as its own", func(t *testing.T) {
@@ -318,8 +547,8 @@ func TestSyncInternal(t *testing.T) {
 			s.mu.RUnlock()
 
 			own, err := s.sync(bounded(t), name)
-			testkit.NoError(t, err, "sync must read the head")
-			testkit.True(t, own, "sync must find the record on the chain of the state")
+			assert.NoError(t, err, "sync must read the head")
+			assert.True(t, own, "sync must find the record on the chain of the state")
 		})
 
 		t.Run("records the time of a sync of a state that reflects the head", func(t *testing.T) {
@@ -329,8 +558,8 @@ func TestSyncInternal(t *testing.T) {
 			f.clock.Advance(time.Minute)
 
 			_, err := s.sync(bounded(t), "")
-			testkit.NoError(t, err, "sync must read the head")
-			testkit.Equal(t, s.st.synced, f.clock.Time(), "sync must record the time of the reading")
+			assert.NoError(t, err, "sync must read the head")
+			assert.Equal(t, s.st.synced, f.clock.Time(), "sync must record the time of the reading")
 		})
 
 		t.Run("catches up to a head whose snapshot changed and whose record did not", func(t *testing.T) {
@@ -340,14 +569,14 @@ func TestSyncInternal(t *testing.T) {
 			l.advance(t, s, 0, 5, nil)
 
 			// Another process installs a snapshot at the record of the head.
-			testkit.NoError(t, f.server(t).snapshot(bounded(t)), "the other process must install")
+			assert.NoError(t, f.server(t).snapshot(bounded(t)), "the other process must install")
 
 			_, err := s.sync(bounded(t), "")
-			testkit.NoError(t, err, "sync must catch up to the head")
+			assert.NoError(t, err, "sync must catch up to the head")
 
 			h, _, err := readHead(t.Context(), f.store)
-			testkit.NoError(t, err, "the head must read")
-			testkit.Equal(t, s.st.snap.name, h.Snapshot, "the state must take the snapshot of the head")
+			assert.NoError(t, err, "the head must read")
+			assert.Equal(t, s.st.snap.name, h.Snapshot, "the state must take the snapshot of the head")
 		})
 
 		t.Run("walks twice from one version of the head before it returns the error of a snapshot that it cannot take",
@@ -374,8 +603,8 @@ func TestSyncInternal(t *testing.T) {
 				cfg.State = st
 
 				_, err := NewServer(bounded(t), cfg)
-				testkit.ErrorIs(t, err, ErrJournal, "NewServer must refuse the snapshot")
-				testkit.Equal(t, reads.Load(), int64(2), "NewServer must walk twice from one version of the head")
+				assert.ErrorIs(t, err, ErrJournal, "NewServer must refuse the snapshot")
+				assert.Equal(t, reads.Load(), int64(2), "NewServer must walk twice from one version of the head")
 			})
 
 		t.Run("reports false for a record whose successor is missing", func(t *testing.T) {
@@ -390,12 +619,13 @@ func TestSyncInternal(t *testing.T) {
 				names = append(names, s.st.head.Record)
 			}
 
-			testkit.NoError(t, s.snapshot(bounded(t)), "the snapshot must install")
-			testkit.NoError(t, f.store.Delete(t.Context(), recordPrefix+names[2], ""), "the record must delete")
+			assert.NoError(t, s.snapshot(bounded(t)), "the snapshot must install")
+			assert.NoError(t, f.store.Delete(t.Context(), recordPrefix+names[2], ""), "the record must delete")
 
 			own, err := behind.sync(bounded(t), names[1])
-			testkit.NoError(t, err, "sync must catch up to the head")
-			testkit.False(t, own, "sync must not know the record")
+			assert.NoError(t, err, "sync must catch up to the head")
+			expect.False(t, own, "sync must not know the record")
+			expect.Equal(t, behind.st.snap.name, s.st.snap.name, "sync must take the snapshot")
 		})
 
 		t.Run("returns the error of the store for the retired origins of a snapshot whose base it did not take",
@@ -405,9 +635,9 @@ func TestSyncInternal(t *testing.T) {
 				f := newInternalFixture(t, l, b)
 				s := f.server(t)
 				l.advance(t, s, 0, 5, nil)
-				testkit.NoError(t, s.snapshot(bounded(t)), "the first snapshot must install")
+				assert.NoError(t, s.snapshot(bounded(t)), "the first snapshot must install")
 				l.advance(t, s, 5, 6, nil)
-				testkit.NoError(t, s.snapshot(bounded(t)), "the second snapshot must install")
+				assert.NoError(t, s.snapshot(bounded(t)), "the second snapshot must install")
 
 				st := &faulty{Store: f.store, list: func(prefix string) error {
 					if prefix == retiredPrefix {
@@ -420,8 +650,8 @@ func TestSyncInternal(t *testing.T) {
 				cfg.State = st
 
 				_, err := NewServer(bounded(t), cfg)
-				testkit.Error(t, err, "NewServer must fail")
-				testkit.ErrorIsNot(t, err, ErrJournal, "the error must be the error of the store")
+				assert.HasError(t, err, "NewServer must fail")
+				assert.ErrorIsNot(t, err, ErrJournal, "the error must be the error of the store")
 			})
 
 		t.Run("returns the error of the store for a record below the record of the snapshot", func(t *testing.T) {
@@ -439,7 +669,7 @@ func TestSyncInternal(t *testing.T) {
 				names = append(names, s.st.head.Record)
 			}
 
-			testkit.NoError(t, s.snapshot(bounded(t)), "the snapshot must install")
+			assert.NoError(t, s.snapshot(bounded(t)), "the snapshot must install")
 			st.get = func(key string) error {
 				if key == recordPrefix+names[2] {
 					return errors.New("the read failed")
@@ -449,7 +679,7 @@ func TestSyncInternal(t *testing.T) {
 			}
 
 			_, err := behind.sync(bounded(t), names[1])
-			testkit.Error(t, err, "sync must fail")
+			assert.HasError(t, err, "sync must fail")
 		})
 
 		t.Run("applies no walk to a state that changed during it", func(t *testing.T) {
@@ -467,7 +697,7 @@ func TestSyncInternal(t *testing.T) {
 			st.get = func(key string) error {
 				if strings.HasPrefix(key, recordPrefix) && once.CompareAndSwap(false, true) {
 					_, err := s.sync(bounded(t), "")
-					testkit.NoError(t, err, "the inner sync must catch up to the head")
+					assert.NoError(t, err, "the inner sync must catch up to the head")
 				}
 
 				return nil
@@ -475,8 +705,26 @@ func TestSyncInternal(t *testing.T) {
 			st.mu.Unlock()
 
 			_, err := s.sync(bounded(t), "")
-			testkit.NoError(t, err, "sync must catch up to the head")
-			testkit.Equal(t, s.st.seq, uint64(1), "the state must contain the record once")
+			assert.NoError(t, err, "sync must catch up to the head")
+			assert.Equal(t, s.st.seq, uint64(1), "the state must contain the record once")
+		})
+	})
+
+	t.Run("applyPlan", func(t *testing.T) {
+		t.Parallel()
+
+		l := newInternalLog(t, "example.com/a")
+
+		t.Run("applies no plan to a state that changed after the walk", func(t *testing.T) {
+			t.Parallel()
+			s := newInternalFixture(t, l).server(t)
+			l.advance(t, s, 0, 5, nil)
+			before := s.st.version
+
+			applied, err := s.applyPlan(bounded(t), &plan{}, head{}, "a later version", "a version before the state")
+			assert.NoError(t, err, "applyPlan must apply nothing without an error")
+			expect.False(t, applied, "applyPlan must apply nothing")
+			expect.Equal(t, s.st.version, before, "the state must keep its version")
 		})
 	})
 
@@ -497,7 +745,18 @@ func TestSyncInternal(t *testing.T) {
 			// The state reflects the record ours of Seq 2, and the head names
 			// theirs, another record of Seq 2, and a snapshot at it.
 			_, err := s.walk(bounded(t), head{Record: theirs, Snapshot: snap}, base{record: ours, seq: 2}, "")
-			testkit.ErrorIs(t, err, ErrJournal, "walk must refuse a chain without the record of the state")
+			assert.ErrorIs(t, err, ErrJournal, "walk must refuse a chain without the record of the state")
+		})
+	})
+
+	t.Run("readSnapshot", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns an error of class NotFound for a snapshot that is missing", func(t *testing.T) {
+			t.Parallel()
+			s := newInternalFixture(t).server(t)
+			_, _, err := s.readSnapshot(bounded(t), string(appendName(nil, 1, []byte("a snapshot"))))
+			assert.Equal(t, errs.Classify(err), errs.NotFound, "readSnapshot must return the error of the store")
 		})
 	})
 }
@@ -507,7 +766,7 @@ func putObject(tb testing.TB, st blob.Store, key string, data []byte) {
 	tb.Helper()
 
 	_, err := blob.PutBytes(tb.Context(), st, key, data, blob.PutOptions{})
-	testkit.NoError(tb, err, "Put must store "+key)
+	assert.NoError(tb, err, "Put must store "+key)
 }
 
 // putHead stores h as the head of st.
@@ -523,7 +782,7 @@ func putRecord(tb testing.TB, st blob.Store, rec *record) string {
 	tb.Helper()
 
 	data, err := rec.MarshalBinary()
-	testkit.NoError(tb, err, "the record must encode")
+	assert.NoError(tb, err, "the record must encode")
 
 	name := string(appendName(nil, rec.Seq, data))
 	putObject(tb, st, recordPrefix+name, data)
@@ -536,7 +795,7 @@ func putSnapshot(tb testing.TB, st blob.Store, snap *snapshot) string {
 	tb.Helper()
 
 	data, err := snap.MarshalBinary()
-	testkit.NoError(tb, err, "the snapshot must encode")
+	assert.NoError(tb, err, "the snapshot must encode")
 
 	seq, _ := parseName(snap.Record)
 	name := string(appendName(nil, seq, data))

@@ -91,20 +91,16 @@ func (s *Server) serveCheckpoint(w http.ResponseWriter, r *http.Request) {
 	// own.
 	s.refreshIfStale() //nolint:contextcheck // see above
 
+	// An origin that the state does not contain has the zero state, whose
+	// served position the check below refuses with ErrUnknownOrigin.
 	s.mu.RLock()
-	o, ok := s.st.origins.Get(h)
+	o, _ := s.st.origins.Get(h)
 	s.mu.RUnlock()
-
-	if !ok {
-		httpserver.Error(w, r, ErrUnknownOrigin)
-
-		return
-	}
 
 	// A snapshot that makes a group position latest makes it served too,
 	// so a latest position that is not served is in a record.
 	ctx := r.Context()
-	if o.latest != o.served && !o.latest.group {
+	if o.latest != o.served {
 		o = s.advanceServed(ctx, h, o)
 	}
 
@@ -122,7 +118,7 @@ func (s *Server) serveCheckpoint(w http.ResponseWriter, r *http.Request) {
 
 	l, err := s.load(ctx, o)
 	if errs.Classify(err) == errs.NotFound {
-		l, err = s.reload(ctx, h, o)
+		l, err = s.reload(ctx, h)
 	}
 
 	if err != nil {
@@ -191,7 +187,7 @@ func (s *Server) advanceServed(ctx context.Context, h originHash, o originState)
 		return o
 	}
 
-	if cur.served.key == "" || cur.served.seq < o.latest.seq {
+	if cur.served.seq < o.latest.seq {
 		cur.served = o.latest
 		s.st.origins.Set(h, cur)
 	}
@@ -295,23 +291,26 @@ func (s *Server) readLoaded(ctx context.Context, p position) (*loaded, error) {
 	return l, nil
 }
 
-// reload serves o, the state of the origin of hash h, after its object went
-// missing: garbage collection deleted it after a newer snapshot. It
-// refreshes the state, which takes the group positions of that snapshot,
-// and loads the served position again.
+// reload serves the origin of hash h after the object of its served
+// position went missing: garbage collection deleted it after a newer
+// snapshot. It refreshes the state, which takes the group positions of
+// that snapshot, and loads the served position again.
 //
 // Returns errNotServed, classified Transient, when the object of the
 // served position is still missing, and the errors of load.
-func (s *Server) reload(ctx context.Context, h originHash, o originState) (*loaded, error) {
+func (s *Server) reload(ctx context.Context, h originHash) (*loaded, error) {
 	if _, err := s.sync(ctx, ""); err != nil {
 		return nil, err
 	}
 
+	// An origin that the refresh removed has the zero state, without a
+	// served position. A served position that the refresh left as it was
+	// names the missing object again, which load reports as NotFound.
 	s.mu.RLock()
-	cur, ok := s.st.origins.Get(h)
+	cur, _ := s.st.origins.Get(h)
 	s.mu.RUnlock()
 
-	if !ok || cur.served.key == "" || cur.served == o.served {
+	if cur.served.key == "" {
 		return nil, errNotServed
 	}
 

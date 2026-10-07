@@ -7,7 +7,7 @@ import (
 	"crypto/sha256"
 	"testing"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
 
 	"go.thesmos.sh/core/crypto"
 	"go.thesmos.sh/core/tlog/checkpoint"
@@ -26,7 +26,7 @@ func TestConsistency(t *testing.T) {
 		t.Run("commits a tree of size 0 with the root of the empty tree", func(t *testing.T) {
 			t.Parallel()
 			s := newServer(t, newFixture(t, l).config())
-			testkit.NotEqual(t, len(advance(t, s, l, l.update(t, 0, 0))), 0, "Advance must cosign the empty tree")
+			assert.NotEmpty(t, advance(t, s, l, l.update(t, 0, 0)), "Advance must cosign the empty tree")
 		})
 
 		tests := []struct {
@@ -80,9 +80,9 @@ func TestConsistency(t *testing.T) {
 
 				u := tt.give(t)
 				_, failures, err := s.Advance(bounded(t), signBody(t, u.Body, l.signer), []witness.Update{u}, nil)
-				testkit.NoError(t, err, "Advance must check the update")
-				testkit.Len(t, failures, 1, "Advance must return the failure")
-				testkit.ErrorIs(t, failures[0].Err, witness.ErrInconsistent, "the failure must be ErrInconsistent")
+				assert.NoError(t, err, "Advance must check the update")
+				assert.Length(t, failures, 1, "Advance must return the failure")
+				assert.ErrorIs(t, failures[0].Err, witness.ErrInconsistent, "the failure must be ErrInconsistent")
 			})
 		}
 	})

@@ -12,7 +12,7 @@ import (
 	"sync"
 	"testing"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
 
 	"go.thesmos.sh/core/errs"
 	"go.thesmos.sh/core/telemetry"
@@ -69,8 +69,8 @@ func TestTelemetry(t *testing.T) {
 			m, s, _ := metered(t, l)
 			advance(t, s, l, l.update(t, 0, 5))
 
-			testkit.Len(t, m.get(durationName), 1, "the commit must record its duration")
-			testkit.Equal(t, m.get(callsName), []float64{1}, "the commit must record its calls")
+			assert.Length(t, m.get(durationName), 1, "the commit must record its duration")
+			assert.Equal(t, m.get(callsName), []float64{1}, "the commit must record its calls")
 		})
 
 		t.Run("records the class of the error of a failed commit", func(t *testing.T) {
@@ -79,8 +79,8 @@ func TestTelemetry(t *testing.T) {
 			f.clock.SetUTCError(0, false)
 
 			_, _, err := s.Advance(bounded(t), l.notes[5], []witness.Update{l.update(t, 0, 5)}, nil)
-			testkit.ErrorIs(t, err, checkpoint.ErrClock, "the commit must fail")
-			testkit.Len(t, m.get(durationName+" error.type=Transient"), 1, "the commit must record its class")
+			assert.ErrorIs(t, err, checkpoint.ErrClock, "the commit must fail")
+			assert.Length(t, m.get(durationName+" error.type=Transient"), 1, "the commit must record its class")
 		})
 
 		t.Run("records the error of every class of errs under the name of its class", func(t *testing.T) {
@@ -93,8 +93,8 @@ func TestTelemetry(t *testing.T) {
 				}})
 
 				_, _, err := s.Advance(bounded(t), l.notes[5], []witness.Update{l.update(t, 0, 5)}, nil)
-				testkit.Error(t, err, "the commit must fail")
-				testkit.Len(t, m.get(durationName+" error.type="+c.String()), 1, "the commit must record "+c.String())
+				assert.HasError(t, err, "the commit must fail")
+				assert.Length(t, m.get(durationName+" error.type="+c.String()), 1, "the commit must record "+c.String())
 			}
 		})
 
@@ -117,8 +117,8 @@ func TestTelemetry(t *testing.T) {
 				}})
 
 				_, _, err := s.Advance(bounded(t), l.notes[5], []witness.Update{l.update(t, 0, 5)}, nil)
-				testkit.Error(t, err, "the commit must fail")
-				testkit.Len(t, m.get(durationName+" error.type=Unspecified"), 1, "the commit must record Unspecified")
+				assert.HasError(t, err, "the commit must fail")
+				assert.Length(t, m.get(durationName+" error.type=Unspecified"), 1, "the commit must record Unspecified")
 			})
 		}
 
@@ -134,10 +134,10 @@ func TestTelemetry(t *testing.T) {
 				cfg.Reporter = m
 
 				_, _, err := newServer(t, cfg).Advance(bounded(t), l.notes[5], []witness.Update{l.update(t, 0, 5)}, nil)
-				testkit.Error(t, err, "the signature must fail")
-				testkit.Equal(t, m.get(updatesName+" outcome=uncosigned"), []float64{1},
+				assert.HasError(t, err, "the signature must fail")
+				assert.Equal(t, m.get(updatesName+" outcome=uncosigned"), []float64{1},
 					"the meter must count the update")
-				testkit.Len(t, m.get(updatesName+" outcome=committed"), 0, "the meter must count no committed update")
+				assert.Empty(t, m.get(updatesName+" outcome=committed"), "the meter must count no committed update")
 			})
 
 		t.Run("counts the updates of each outcome", func(t *testing.T) {
@@ -146,14 +146,14 @@ func TestTelemetry(t *testing.T) {
 			advance(t, s, l, l.update(t, 0, 5))
 
 			_, _, err := s.Advance(bounded(t), l.notes[6], []witness.Update{l.update(t, 0, 6)}, nil)
-			testkit.NoError(t, err, "the conflict must be a failure")
+			assert.NoError(t, err, "the conflict must be a failure")
 
 			proof := l.update(t, 5, 9).Proof
 			proof[0] = l.leaves[0]
 			u := l.update(t, 5, 9)
 			u.Proof = proof
 			_, _, err = s.Advance(bounded(t), l.notes[9], []witness.Update{u}, nil)
-			testkit.NoError(t, err, "the inconsistency must be a failure")
+			assert.NoError(t, err, "the inconsistency must be a failure")
 
 			c := &flaky{Cosigner: f.cosigners[0]}
 			c.fail.Store(true)
@@ -161,13 +161,13 @@ func TestTelemetry(t *testing.T) {
 			cfg := f.config()
 			cfg.Reporter = m
 			_, _, err = newServer(t, cfg).Advance(bounded(t), l.notes[6], []witness.Update{l.update(t, 5, 6)}, nil)
-			testkit.Error(t, err, "the signature must fail")
+			assert.HasError(t, err, "the signature must fail")
 
 			for _, want := range []string{"committed", "conflict", "inconsistent", "uncosigned"} {
-				testkit.Equal(t, m.get(updatesName+" outcome="+want), []float64{1}, "the meter must count one "+want)
+				assert.Equal(t, m.get(updatesName+" outcome="+want), []float64{1}, "the meter must count one "+want)
 			}
 
-			testkit.Len(t, f.logger.messages(slog.LevelError), 1, "the server must log the inconsistent checkpoint")
+			assert.Length(t, f.logger.messages(slog.LevelError), 1, "the server must log the inconsistent checkpoint")
 		})
 
 		t.Run("reports the number of origins after a commit", func(t *testing.T) {
@@ -178,7 +178,7 @@ func TestTelemetry(t *testing.T) {
 			advance(t, s, other, other.update(t, 0, 5))
 
 			got := m.get(originsName)
-			testkit.Equal(t, got[len(got)-1], float64(2), "the gauge must report both origins")
+			assert.Equal(t, got[len(got)-1], float64(2), "the gauge must report both origins")
 		})
 	})
 }

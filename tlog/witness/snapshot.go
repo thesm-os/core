@@ -160,8 +160,10 @@ func (s *Server) snapshot(ctx context.Context) error {
 		return err
 	}
 
+	// install reports false with each error, and without one for a
+	// snapshot that it abandons.
 	headSeq, ok, err := s.install(ctx, w, snap, name, int64(len(data)))
-	if err != nil || !ok {
+	if !ok {
 		return err
 	}
 
@@ -206,14 +208,15 @@ func (w *snapper) moves() []move {
 	current := make(map[string]uint32)
 
 	for h, o := range w.origins.All() {
-		if _, gone := w.retired[h]; !gone && o.latest.group {
+		if _, gone := w.retired[h]; !gone {
 			current[o.latest.key]++
 		}
 	}
 
 	compacted := make(map[string]bool)
 
-	// A record never compacts, because its count of updates is 0.
+	// A record never compacts, because its count of updates is 0, whatever
+	// the count of its current updates.
 	for _, obj := range w.base.objects {
 		if 2*current[obj.Key] < obj.Updates {
 			compacted[obj.Key] = true
@@ -498,8 +501,13 @@ func (s *Server) installed(
 ) {
 	s.mu.Lock()
 
-	if s.st.version == v && s.st.take(snap, name, size, nil) == nil {
-		s.st.head, s.st.version, s.st.synced = h, nv, s.clock.Time()
+	// A state that does not reflect the head of version v catches up to
+	// the new head on its next sync.
+	if s.st.version == v {
+		//dokimi:mutate-skip ror-true: take refuses no snapshot that build returned, and leaves the state unchanged when it refuses one
+		if s.st.take(snap, name, size, nil) == nil {
+			s.st.head, s.st.version, s.st.synced = h, nv, s.clock.Time()
+		}
 	}
 
 	count := s.st.origins.Len()

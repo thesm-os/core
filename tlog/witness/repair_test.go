@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
 
 	"go.thesmos.sh/core/errs"
 	"go.thesmos.sh/core/tlog/checkpoint"
@@ -39,7 +39,7 @@ func TestRepair(t *testing.T) {
 
 			advance(tb, s, l, l.update(tb, 0, 5))
 			settle(tb, s, l)
-			testkit.Equal(tb, refused.Load(), int64(1), "the store must refuse the lines")
+			assert.Equal(tb, refused.Load(), int64(1), "the store must refuse the lines")
 			f.store.reset()
 
 			return f, s
@@ -52,10 +52,10 @@ func TestRepair(t *testing.T) {
 				f.clock.Advance(time.Minute)
 
 				rec := get(t, s, l.origin)
-				testkit.Equal(t, rec.Code, http.StatusOK, "the route must serve the repaired record")
+				assert.Equal(t, rec.Code, http.StatusOK, "the route must serve the repaired record")
 
 				lines := rec.Body.Bytes()[len(l.notes[5]):]
-				testkit.Equal(t, lineTime(t, l, 5, lines), clockTime, "the repair must sign at the time of the record")
+				assert.Equal(t, lineTime(t, l, 5, lines), clockTime, "the repair must sign at the time of the record")
 			})
 
 		t.Run("repairs at the time of the record after a later commit of the origin", func(t *testing.T) {
@@ -67,8 +67,8 @@ func TestRepair(t *testing.T) {
 			advance(t, s, l, l.update(t, 5, 6))
 
 			rec := get(t, stale, l.origin)
-			testkit.Equal(t, rec.Code, http.StatusOK, "the route must serve the repaired record")
-			testkit.Equal(t, lineTime(t, l, 5, rec.Body.Bytes()[len(l.notes[5]):]), clockTime,
+			assert.Equal(t, rec.Code, http.StatusOK, "the route must serve the repaired record")
+			assert.Equal(t, lineTime(t, l, 5, rec.Body.Bytes()[len(l.notes[5]):]), clockTime,
 				"the repair must sign at the time of the record")
 		})
 
@@ -98,7 +98,7 @@ func TestRepair(t *testing.T) {
 
 			advance(t, s, l, l.update(t, 0, 5))
 			settle(t, s, l)
-			testkit.Equal(t, refused.Load(), int64(1), "the store must refuse the lines")
+			assert.Equal(t, refused.Load(), int64(1), "the store must refuse the lines")
 			f.store.reset()
 			f.clock.Advance(time.Minute)
 
@@ -111,7 +111,7 @@ func TestRepair(t *testing.T) {
 			f.store.intercept(hook{op: opPut, prefix: "lines/", before: pause})
 			slow.Store(true)
 
-			testkit.Equal(t, get(t, s, l.origin).Code, http.StatusOK, "the route must serve the repaired record")
+			assert.Equal(t, get(t, s, l.origin).Code, http.StatusOK, "the route must serve the repaired record")
 		})
 
 		t.Run("starts one repair for concurrent GETs of one record", func(t *testing.T) {
@@ -138,7 +138,7 @@ func TestRepair(t *testing.T) {
 
 			advance(t, s, l, l.update(t, 0, 5))
 			settle(t, s, l)
-			testkit.Equal(t, refused.Load(), int64(1), "the store must refuse the lines")
+			assert.Equal(t, refused.Load(), int64(1), "the store must refuse the lines")
 			f.store.reset()
 			f.clock.Advance(time.Minute)
 
@@ -163,10 +163,10 @@ func TestRepair(t *testing.T) {
 			close(release)
 			waitAll(t, &wg, "every GET must return")
 
-			testkit.Equal(t, signed.Load(), int64(2), "the GETs must start one repair")
+			assert.Equal(t, signed.Load(), int64(2), "the GETs must start one repair")
 
 			for _, code := range codes {
-				testkit.Equal(t, code, http.StatusOK, "every GET must serve the repaired record")
+				assert.Equal(t, code, http.StatusOK, "every GET must serve the repaired record")
 			}
 		})
 
@@ -175,8 +175,8 @@ func TestRepair(t *testing.T) {
 			f, s := unlined(t)
 			f.clock.Advance(5 * time.Second)
 
-			testkit.Equal(t, get(t, s, l.origin).Code, http.StatusNotFound, "the route must not repair the record")
-			testkit.Len(t, keys(t, f.store, "lines/"), 0, "the route must store no lines")
+			assert.Equal(t, get(t, s, l.origin).Code, http.StatusNotFound, "the route must not repair the record")
+			assert.Empty(t, keys(t, f.store, "lines/"), "the route must store no lines")
 		})
 
 		t.Run("starts no repair of a record at the repair age while its commit signs", func(t *testing.T) {
@@ -224,18 +224,18 @@ func TestRepair(t *testing.T) {
 			// its lines.
 			f.clock.Advance(testTimeout + testSignTimeout + time.Second + 2*testMaxError)
 
-			testkit.Equal(t, get(t, s, l.origin).Code, http.StatusNotFound, "the route must not repair the record")
-			testkit.Equal(t, signed.Load(), int64(1), "the route must start no repair")
+			assert.Equal(t, get(t, s, l.origin).Code, http.StatusNotFound, "the route must not repair the record")
+			assert.Equal(t, signed.Load(), int64(1), "the route must start no repair")
 
 			open()
 			waitAll(t, &wg, "the commit must return")
-			testkit.NoError(t, err, "the commit must succeed")
+			assert.NoError(t, err, "the commit must succeed")
 			settle(t, s, l)
-			testkit.Len(t, keys(t, f.store, "lines/"), 1, "the commit must store its lines")
+			assert.Length(t, keys(t, f.store, "lines/"), 1, "the commit must store its lines")
 
 			rec := get(t, s, l.origin)
-			testkit.Equal(t, rec.Code, http.StatusOK, "the route must serve the record of the commit")
-			testkit.Equal(t, rec.Body.String(), string(l.notes[5])+string(lines),
+			assert.Equal(t, rec.Code, http.StatusOK, "the route must serve the record of the commit")
+			assert.Equal(t, rec.Body.String(), string(l.notes[5])+string(lines),
 				"the route must serve the lines of the commit")
 		})
 
@@ -245,8 +245,8 @@ func TestRepair(t *testing.T) {
 			f.clock.Advance(time.Minute)
 			f.clock.SetUTCError(0, false)
 
-			testkit.Equal(t, get(t, s, l.origin).Code, http.StatusNotFound, "the route must not repair the record")
-			testkit.Len(t, keys(t, f.store, "lines/"), 0, "the route must store no lines")
+			assert.Equal(t, get(t, s, l.origin).Code, http.StatusNotFound, "the route must not repair the record")
+			assert.Empty(t, keys(t, f.store, "lines/"), "the route must store no lines")
 		})
 
 		t.Run("serves the served position when the circuit refuses the repair", func(t *testing.T) {
@@ -258,8 +258,8 @@ func TestRepair(t *testing.T) {
 				f.breaker.Record(target(f.cosigners[0]), true)
 			}
 
-			testkit.Equal(t, get(t, s, l.origin).Code, http.StatusNotFound, "the route must not serve the record")
-			testkit.Len(t, keys(t, f.store, "lines/"), 0, "the route must store no lines")
+			assert.Equal(t, get(t, s, l.origin).Code, http.StatusNotFound, "the route must not serve the record")
+			assert.Empty(t, keys(t, f.store, "lines/"), "the route must store no lines")
 		})
 
 		t.Run("starts no second repair of a record whose repair failed", func(t *testing.T) {
@@ -279,14 +279,14 @@ func TestRepair(t *testing.T) {
 
 			advance(t, s, l, l.update(t, 0, 5))
 			settle(t, s, l)
-			testkit.Equal(t, refused.Load(), int64(1), "the store must refuse the lines")
+			assert.Equal(t, refused.Load(), int64(1), "the store must refuse the lines")
 			f.clock.Advance(time.Minute)
 
 			for range 3 {
-				testkit.Equal(t, get(t, s, l.origin).Code, http.StatusNotFound, "the route must not serve the record")
+				assert.Equal(t, get(t, s, l.origin).Code, http.StatusNotFound, "the route must not serve the record")
 			}
 
-			testkit.Equal(t, signed.Load(), int64(2), "the GETs must start one repair")
+			assert.Equal(t, signed.Load(), int64(2), "the GETs must start one repair")
 		})
 
 		t.Run("serves the lines that another process stored first", func(t *testing.T) {
@@ -296,7 +296,7 @@ func TestRepair(t *testing.T) {
 			f.clock.Advance(time.Minute)
 
 			first := get(t, other, l.origin)
-			testkit.Equal(t, first.Code, http.StatusOK, "the other process must repair the record")
+			assert.Equal(t, first.Code, http.StatusOK, "the other process must repair the record")
 
 			var hidden atomic.Bool
 
@@ -310,8 +310,8 @@ func TestRepair(t *testing.T) {
 			}})
 
 			rec := get(t, s, l.origin)
-			testkit.Equal(t, rec.Code, http.StatusOK, "the route must serve the stored lines")
-			testkit.Equal(
+			assert.Equal(t, rec.Code, http.StatusOK, "the route must serve the stored lines")
+			assert.Equal(
 				t,
 				rec.Body.String(),
 				first.Body.String(),
@@ -361,7 +361,7 @@ func TestRepair(t *testing.T) {
 			}
 
 			settle(t, s, l)
-			testkit.Equal(t, refused.Load(), int64(1), "the store must refuse the lines")
+			assert.Equal(t, refused.Load(), int64(1), "the store must refuse the lines")
 			f.store.reset()
 			f.clock.Advance(time.Minute)
 
@@ -372,7 +372,7 @@ func TestRepair(t *testing.T) {
 			path := monitoringPath + "/" + originHashText(l.origin) + "/checkpoint"
 			s.Checkpoint().ServeHTTP(rec, httptest.NewRequestWithContext(ctx, http.MethodGet, path, nil))
 			close(release)
-			testkit.Equal(t, rec.Code, http.StatusNotFound, "the route must serve the served position")
+			assert.Equal(t, rec.Code, http.StatusNotFound, "the route must serve the served position")
 		})
 	})
 }

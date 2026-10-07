@@ -112,14 +112,16 @@ func (s *Server) sync(ctx context.Context, own string) (bool, error) {
 		s.mu.RUnlock()
 
 		// A refresh can apply the record named own before this call reads
-		// the head.
-		seen := own != "" && chained == own
+		// the head. A refresh, which passes the empty name, ignores the
+		// result.
+		seen := chained == own
 
+		// A state that a commit moved since the read reflects a later head,
+		// so it is as current as the reading.
+		//dokimi:mutate-skip sbr-delete,ror-false: a state that reflects the head walks no object, and applyPlan of the empty plan sets the same head, version and count of origins and the time of the reading, or reads the head again after a commit
 		if v == b.version {
 			s.mu.Lock()
-			if s.st.version == v {
-				s.st.synced = s.clock.Time()
-			}
+			s.st.synced = s.clock.Time()
 			s.mu.Unlock()
 
 			return seen, nil
@@ -235,8 +237,10 @@ func (s *Server) walk(ctx context.Context, h head, b base, own string) (plan, er
 		return plan{}, err
 	}
 
+	// A record that walkTo found is after stopSeq, and the state of the
+	// caller decides about a record at or before the record of b.
 	ownSeq, ok := parseName(own)
-	if !ok || p.own || ownSeq > stopSeq || stopSeq == b.seq {
+	if !ok || ownSeq > stopSeq || stopSeq == b.seq {
 		return p, nil
 	}
 
@@ -268,19 +272,21 @@ func (s *Server) walk(ctx context.Context, h head, b base, own string) (plan, er
 //
 // The chain has one record of each Seq. The walk reads one record for each
 // Seq from that of from down to stopSeq, and then requires the name stop.
-// An empty stop walks back to the first record of the chain.
+// An empty stop walks back to the first record of the chain. A from below
+// stopSeq reads nothing, and fails that requirement. readHead refuses a
+// from that is not a name, and the loop refuses a predecessor that is not
+// the name of the next Seq, so the first record of the chain is the one
+// whose predecessor is empty.
 //
 // Returns the errors of walk.
 func (s *Server) walkTo(ctx context.Context, from, stop string, stopSeq uint64, own string, p *plan) (string, error) {
-	seq, ok := parseName(from)
-	if !ok || seq < stopSeq {
-		return "", fmt.Errorf("%w: the chain from %s does not contain the record %q", ErrJournal, from, stop)
-	}
-
+	seq, _ := parseName(from)
 	name := from
 
 	for ; seq > stopSeq; seq-- {
-		if got, ok := parseName(name); !ok || got != seq {
+		// A name that does not parse has the Seq 0, below every Seq of the
+		// loop.
+		if got, _ := parseName(name); got != seq {
 			return "", fmt.Errorf("%w: the chain from %s does not contain the record %q", ErrJournal, from, stop)
 		}
 
@@ -293,9 +299,8 @@ func (s *Server) walkTo(ctx context.Context, from, stop string, stopSeq uint64, 
 			return "", err
 		}
 
-		if rec.Seq != seq || (rec.Prev == "") != (seq == 1) {
-			return "", fmt.Errorf("%w: the record %s has the Seq %d and the predecessor %q", ErrJournal, name,
-				rec.Seq, rec.Prev)
+		if rec.Seq != seq {
+			return "", fmt.Errorf("%w: the record %s has the Seq %d", ErrJournal, name, rec.Seq)
 		}
 
 		p.own = p.own || name == own

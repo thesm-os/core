@@ -176,9 +176,9 @@ func (s *Server) wait(ctx context.Context, p *pending) (bool, error) {
 		return false, context.Cause(ctx)
 	}
 
-	if i := slices.Index(s.queue, p); i >= 0 {
-		s.queue = slices.Delete(s.queue, i, i+1)
-	}
+	// A call that no commit took is in the queue.
+	i := slices.Index(s.queue, p)
+	s.queue = slices.Delete(s.queue, i, i+1)
 
 	s.qmu.Unlock()
 

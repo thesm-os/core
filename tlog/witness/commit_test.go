@@ -14,7 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/history"
 
 	"go.thesmos.sh/core/clock"
 	"go.thesmos.sh/core/clock/fake"
@@ -34,6 +35,10 @@ const maxHeadWrites = 16
 // patience bounds each wait of a case: a call into a Server, a value that
 // a hook sends, and the goroutines that a case starts.
 const patience = 5 * time.Second
+
+// opAdvance is the operation that the history of the rounds of two Servers
+// records for a call of Advance.
+const opAdvance = "advance"
 
 // flaky is a cosigner whose signatures fail while fail is set, and that
 // runs before, when it is not nil, before each signature.
@@ -62,9 +67,9 @@ func TestCommit(t *testing.T) {
 			f.clock.SetUTCError(time.Second, true)
 
 			_, _, err := s.Advance(bounded(t), l.notes[5], []witness.Update{l.update(t, 0, 5)}, nil)
-			testkit.ErrorIs(t, err, checkpoint.ErrClock, "Advance must refuse the reading")
-			testkit.Equal(t, errs.Classify(err), errs.Transient, "the error must classify as Transient")
-			testkit.Len(t, keys(t, f.store, "records/"), 0, "the commit must create no record")
+			assert.ErrorIs(t, err, checkpoint.ErrClock, "Advance must refuse the reading")
+			assert.Equal(t, errs.Classify(err), errs.Transient, "the error must classify as Transient")
+			assert.Empty(t, keys(t, f.store, "records/"), "the commit must create no record")
 		})
 
 		t.Run("returns ErrClock for a reading that is not synchronised", func(t *testing.T) {
@@ -74,7 +79,7 @@ func TestCommit(t *testing.T) {
 			f.clock.SetUTCError(0, false)
 
 			_, _, err := s.Advance(bounded(t), l.notes[5], []witness.Update{l.update(t, 0, 5)}, nil)
-			testkit.ErrorIs(t, err, checkpoint.ErrClock, "Advance must refuse the reading")
+			assert.ErrorIs(t, err, checkpoint.ErrClock, "Advance must refuse the reading")
 		})
 
 		t.Run("returns ErrClock for a UTC source whose reading fails", func(t *testing.T) {
@@ -83,7 +88,7 @@ func TestCommit(t *testing.T) {
 			cfg.UTC = brokenUTC{}
 
 			_, _, err := newServer(t, cfg).Advance(bounded(t), l.notes[5], []witness.Update{l.update(t, 0, 5)}, nil)
-			testkit.ErrorIs(t, err, checkpoint.ErrClock, "Advance must refuse the reading")
+			assert.ErrorIs(t, err, checkpoint.ErrClock, "Advance must refuse the reading")
 		})
 
 		t.Run("returns ErrClock for a reading at the Unix epoch", func(t *testing.T) {
@@ -92,7 +97,7 @@ func TestCommit(t *testing.T) {
 			cfg.UTC = fake.New(time.Unix(0, 0))
 
 			_, _, err := newServer(t, cfg).Advance(bounded(t), l.notes[5], []witness.Update{l.update(t, 0, 5)}, nil)
-			testkit.ErrorIs(t, err, checkpoint.ErrClock, "Advance must refuse the reading")
+			assert.ErrorIs(t, err, checkpoint.ErrClock, "Advance must refuse the reading")
 		})
 
 		t.Run("returns ErrClock for a head ahead of the reading by more than twice MaxError", func(t *testing.T) {
@@ -106,8 +111,8 @@ func TestCommit(t *testing.T) {
 				t,
 				f.config(),
 			).Advance(bounded(t), l.notes[6], []witness.Update{l.update(t, 5, 6)}, nil)
-			testkit.ErrorIs(t, err, checkpoint.ErrClock, "Advance must refuse the head's time")
-			testkit.Len(t, keys(t, f.store, "records/"), 1, "the commit must create no record")
+			assert.ErrorIs(t, err, checkpoint.ErrClock, "Advance must refuse the head's time")
+			assert.Length(t, keys(t, f.store, "records/"), 1, "the commit must create no record")
 		})
 
 		t.Run("commits after a head ahead of the reading by exactly twice MaxError", func(t *testing.T) {
@@ -119,7 +124,7 @@ func TestCommit(t *testing.T) {
 
 			cfg := f.config()
 			cfg.MaxError = time.Second
-			testkit.NotEqual(t, len(advance(t, newServer(t, cfg), l, l.update(t, 5, 6))), 0,
+			assert.NotEmpty(t, advance(t, newServer(t, cfg), l, l.update(t, 5, 6)),
 				"Advance must commit after the head")
 		})
 
@@ -137,7 +142,7 @@ func TestCommit(t *testing.T) {
 				early.UTC = fake.New(clockTime.Add(time.Second - 500*time.Microsecond))
 				second := advance(t, newServer(t, early), l, l.update(t, 5, 6))
 
-				testkit.Equal(t, lineTime(t, l, 6, second), lineTime(t, l, 5, first),
+				assert.Equal(t, lineTime(t, l, 6, second), lineTime(t, l, 5, first),
 					"the later commit must take the time of the head")
 			})
 
@@ -161,14 +166,14 @@ func TestCommit(t *testing.T) {
 				lines := advance(t, s, l, l.update(t, size-1, size))
 				text := append([]byte(nil), noteText(t, l.notes[size])...)
 				n := mustParse(t, append(append(text, '\n'), lines...))
-				testkit.Len(t, n.Signatures, 2, "Advance must return a line of each cosigner")
+				assert.Length(t, n.Signatures, 2, "Advance must return a line of each cosigner")
 
 				for _, sig := range n.Signatures {
 					ts, err := checkpoint.Timestamp(sig.Value)
-					testkit.NoError(t, err, "the line must have a timestamp")
-					testkit.False(t, ts.IsZero(), "no line may have the timestamp 0")
-					testkit.False(t, ts.Before(last), "the times must never decrease")
-					testkit.Equal(t, ts, lineTime(t, l, size, lines), "every line must have the time of the commit")
+					assert.NoError(t, err, "the line must have a timestamp")
+					assert.False(t, ts.IsZero(), "no line may have the timestamp 0")
+					assert.False(t, ts.Before(last), "the times must never decrease")
+					assert.Equal(t, ts, lineTime(t, l, size, lines), "every line must have the time of the commit")
 				}
 
 				last = lineTime(t, l, size, lines)
@@ -189,9 +194,9 @@ func TestCommit(t *testing.T) {
 
 			records := len(keys(t, f.store, "records/"))
 			_, _, err := s.Advance(bounded(t), l.notes[3], []witness.Update{l.update(t, 2, 3)}, nil)
-			testkit.ErrorIs(t, err, resilience.ErrOpen, "Advance must refuse the commit")
-			testkit.Equal(t, errs.Classify(err), errs.Transient, "the error must classify as Transient")
-			testkit.Len(t, keys(t, f.store, "records/"), records, "the commit must create no record")
+			assert.ErrorIs(t, err, resilience.ErrOpen, "Advance must refuse the commit")
+			assert.Equal(t, errs.Classify(err), errs.Transient, "the error must classify as Transient")
+			assert.Length(t, keys(t, f.store, "records/"), records, "the commit must create no record")
 		})
 
 		t.Run("admits one commit after the open interval whose signatures close the circuit", func(t *testing.T) {
@@ -209,8 +214,8 @@ func TestCommit(t *testing.T) {
 			c.fail.Store(false)
 			f.clock.Advance(time.Minute)
 
-			testkit.NotEqual(t, len(advance(t, s, l, l.update(t, 2, 3))), 0, "the probe must commit")
-			testkit.Equal(
+			assert.NotEmpty(t, advance(t, s, l, l.update(t, 2, 3)), "the probe must commit")
+			assert.Equal(
 				t,
 				f.breaker.State(target(f.cosigners[0])),
 				resilience.Closed,
@@ -232,7 +237,7 @@ func TestCommit(t *testing.T) {
 
 			f.clock.Advance(time.Minute)
 			resend(t, s, l, 3)
-			testkit.Equal(
+			assert.Equal(
 				t,
 				f.breaker.State(target(f.cosigners[0])),
 				resilience.Open,
@@ -255,10 +260,10 @@ func TestCommit(t *testing.T) {
 
 			for size := uint64(1); size <= 2; size++ {
 				_, _, err := s.Advance(bounded(t), l.notes[size], []witness.Update{l.update(t, size-1, size)}, nil)
-				testkit.ErrorIs(t, err, context.DeadlineExceeded, "the signature must end at SignTimeout")
+				assert.ErrorIs(t, err, context.DeadlineExceeded, "the signature must end at SignTimeout")
 			}
 
-			testkit.Equal(t, f.breaker.State(target(f.cosigners[0])), resilience.Open, "the circuit must count both")
+			assert.Equal(t, f.breaker.State(target(f.cosigners[0])), resilience.Open, "the circuit must count both")
 		})
 
 		t.Run("fails a commit whose store is too slow without a failure of a circuit", func(t *testing.T) {
@@ -275,10 +280,10 @@ func TestCommit(t *testing.T) {
 
 			for range 3 {
 				_, _, err := s.Advance(bounded(t), l.notes[5], []witness.Update{l.update(t, 0, 5)}, nil)
-				testkit.ErrorIs(t, err, context.DeadlineExceeded, "the commit must end at its deadline")
+				assert.ErrorIs(t, err, context.DeadlineExceeded, "the commit must end at its deadline")
 			}
 
-			testkit.Equal(
+			assert.Equal(
 				t,
 				f.breaker.State(target(f.cosigners[0])),
 				resilience.Closed,
@@ -310,9 +315,9 @@ func TestCommit(t *testing.T) {
 				return nil
 			}})
 
-			testkit.NotEqual(t, len(advance(t, s, l, l.update(t, 0, 5))), 0, "the commit must return its lines")
+			assert.NotEmpty(t, advance(t, s, l, l.update(t, 0, 5)), "the commit must return its lines")
 			settle(t, s, l)
-			testkit.Len(t, keys(t, f.store, "lines/"), 1, "the commit must store its lines")
+			assert.Length(t, keys(t, f.store, "lines/"), 1, "the commit must store its lines")
 		})
 
 		t.Run("returns ErrContention when the head moves 16 times", func(t *testing.T) {
@@ -324,8 +329,8 @@ func TestCommit(t *testing.T) {
 			}})
 
 			_, _, err := s.Advance(bounded(t), l.notes[5], []witness.Update{l.update(t, 0, 5)}, nil)
-			testkit.ErrorIs(t, err, witness.ErrContention, "Advance must give up")
-			testkit.Equal(t, errs.Classify(err), errs.Transient, "the error must classify as Transient")
+			assert.ErrorIs(t, err, witness.ErrContention, "Advance must give up")
+			assert.Equal(t, errs.Classify(err), errs.Transient, "the error must classify as Transient")
 		})
 
 		t.Run("writes the head again without a second record after an unknown outcome that did not apply",
@@ -352,8 +357,8 @@ func TestCommit(t *testing.T) {
 					return nil
 				}})
 
-				testkit.NotEqual(t, len(advance(t, s, l, l.update(t, 0, 5))), 0, "the commit must commit")
-				testkit.Equal(t, records.Load(), int64(1), "the commit must create one record")
+				assert.NotEmpty(t, advance(t, s, l, l.update(t, 0, 5)), "the commit must commit")
+				assert.Equal(t, records.Load(), int64(1), "the commit must create one record")
 			})
 
 		t.Run("returns ErrUnknownOrigin for the second of two new origins of a call beyond MaxOrigins",
@@ -374,10 +379,10 @@ func TestCommit(t *testing.T) {
 				}
 
 				_, failures, err := newServer(t, cfg).Advance(bounded(t), batch.notes[5], updates, nil)
-				testkit.NoError(t, err, "Advance must check the updates")
-				testkit.Len(t, failures, 1, "Advance must refuse one update")
-				testkit.Equal(t, failures[0].Index, 1, "the failure must name the second update")
-				testkit.ErrorIs(t, failures[0].Err, witness.ErrUnknownOrigin, "the failure must be ErrUnknownOrigin")
+				assert.NoError(t, err, "Advance must check the updates")
+				assert.Length(t, failures, 1, "Advance must refuse one update")
+				assert.Equal(t, failures[0].Index, 1, "the failure must name the second update")
+				assert.ErrorIs(t, failures[0].Err, witness.ErrUnknownOrigin, "the failure must be ErrUnknownOrigin")
 			})
 
 		t.Run("returns the cause of ctx to a caller whose context ends while the commit completes", func(t *testing.T) {
@@ -418,10 +423,10 @@ func TestCommit(t *testing.T) {
 			waitAll(t, &wg, "the caller must return")
 			close(release)
 
-			testkit.ErrorIs(t, errA, cause, "the caller must receive the cause of its context")
+			assert.ErrorIs(t, errA, cause, "the caller must receive the cause of its context")
 			settle(t, s, a)
-			testkit.Equal(t, get(t, s, a.origin).Code, 200, "the commit must complete")
-			testkit.NotEqual(t, len(advance(t, s, b, b.update(t, 0, 5))), 0, "the next call must commit")
+			assert.Equal(t, get(t, s, a.origin).Code, 200, "the commit must complete")
+			assert.NotEmpty(t, advance(t, s, b, b.update(t, 0, 5)), "the next call must commit")
 		})
 
 		t.Run("commits one of two inconsistent checkpoints of two Servers that read one head", func(t *testing.T) {
@@ -471,16 +476,21 @@ func TestCommit(t *testing.T) {
 				}
 			}
 
-			testkit.Equal(t, cosigned, 1, "exactly one of the two checkpoints must be cosigned")
+			assert.Equal(t, cosigned, 1, "exactly one of the two checkpoints must be cosigned")
 		})
 
+		// Each round starts the two Servers at once on a new origin with two
+		// roots of one size, and the history of the rounds must linearize
+		// against one log per origin, which cosigns at most one root of a
+		// size.
 		t.Run("cosigns at most one of two inconsistent checkpoints of two Servers in each of 1,000 rounds",
 			func(t *testing.T) {
 				t.Parallel()
 				f := newFixture(t)
 				cfg := f.config()
 				cfg.MaxOrigins = 1000
-				a, b := newServer(t, cfg), newServer(t, cfg)
+				servers := []*witness.Server{newServer(t, cfg), newServer(t, cfg)}
+				h := history.New()
 
 				for i := range 1000 {
 					origin := checkpoint.Origin("example.com/round/" + strconv.Itoa(i))
@@ -493,25 +503,35 @@ func TestCommit(t *testing.T) {
 						{Origin: origin, Size: 5, Root: crypto.NewDigest256(sha256.Sum256([]byte("x" + origin)))},
 						{Origin: origin, Size: 5, Root: crypto.NewDigest256(sha256.Sum256([]byte("y" + origin)))},
 					}
+					msgs := [][]byte{signBody(t, bodies[0], l.signer), signBody(t, bodies[1], l.signer)}
 
-					var (
-						wg    sync.WaitGroup
-						lines [2][]byte
-					)
+					outcomes := history.Concurrently(len(servers), patience, func(client int) (any, error) {
+						call := h.Invoke(client, opAdvance, []any{bodies[client].Root}, string(origin))
+						lines, _, err := servers[client].Advance(bounded(t), msgs[client],
+							[]witness.Update{{Body: bodies[client]}}, nil)
+						call.OK(err == nil && len(lines) > 0)
 
-					for j, s := range []*witness.Server{a, b} {
-						msg := signBody(t, bodies[j], l.signer)
-						wg.Go(func() {
-							lines[j], _, _ = s.Advance(bounded(t), msg, []witness.Update{{Body: bodies[j]}}, nil)
-						})
-					}
-
-					waitAll(t, &wg, "both Servers must return")
-
-					if len(lines[0]) > 0 && len(lines[1]) > 0 {
-						t.Fatalf("round %d cosigned two inconsistent checkpoints", i)
+						return client, nil
+					})
+					for _, o := range outcomes {
+						assert.True(t, o.Finished, "both Servers must return")
 					}
 				}
+
+				history.Linearizable(t, h, history.Spec[crypto.Digest]{
+					Initial: func() crypto.Digest { return crypto.Digest{} },
+					Next: func(cosigned crypto.Digest, op history.Operation) []crypto.Digest {
+						root, _ := op.Args[0].(crypto.Digest)
+						if !op.Known || op.Output == false {
+							return []crypto.Digest{cosigned}
+						}
+						if !cosigned.IsZero() && cosigned != root {
+							return nil
+						}
+
+						return []crypto.Digest{root}
+					},
+				}, "the two Servers must cosign at most one root of the size 5 of each origin")
 			})
 
 		t.Run("creates one record for the same calls of two Servers from one head in one second", func(t *testing.T) {
@@ -555,8 +575,8 @@ func TestCommit(t *testing.T) {
 			wg.Go(func() { lb = advance(t, b, l, l.update(t, 0, 5)) })
 			waitAll(t, &wg, "both Servers must return")
 
-			testkit.Len(t, keys(t, f.store, "records/"), 1, "the two commits must create one record")
-			testkit.Equal(t, string(lb), string(la), "both Servers must sign the same lines with Ed25519")
+			assert.Length(t, keys(t, f.store, "records/"), 1, "the two commits must create one record")
+			assert.Equal(t, string(lb), string(la), "both Servers must sign the same lines with Ed25519")
 		})
 
 		t.Run("never cosigns inconsistent checkpoints when the writes fail from any write on", func(t *testing.T) {
@@ -606,7 +626,7 @@ func TestCommit(t *testing.T) {
 					}
 				}
 
-				testkit.True(t, main == 0 || forked == 0, "the run with writes failing after "+strconv.Itoa(k)+
+				assert.Equal(t, min(main, forked), 0, "the run with writes failing after "+strconv.Itoa(k)+
 					" must not cosign both trees")
 			}
 		})
@@ -648,7 +668,7 @@ func TestCommit(t *testing.T) {
 				s := newServer(t, f.config())
 				advance(t, s, l, l.update(t, 0, 5))
 				settle(t, s, l)
-				testkit.Len(t, keys(t, f.store, "lines/"), 1, "the first commit must store its lines")
+				assert.Length(t, keys(t, f.store, "lines/"), 1, "the first commit must store its lines")
 
 				var once atomic.Bool
 
@@ -675,12 +695,12 @@ func TestCommit(t *testing.T) {
 				f.store.intercept(h)
 				_, _, _ = s.Advance(bounded(t), l.notes[6], []witness.Update{l.update(t, 5, 6)}, nil)
 				settle(t, s, l)
-				testkit.True(t, once.Load(), "the store must return an unknown outcome for the write")
+				assert.True(t, once.Load(), "the store must return an unknown outcome for the write")
 				f.store.reset()
 
 				again := newServer(t, f.config())
 				_, err := sendLike(t, again, l, 7)
-				testkit.NoError(t, err, "a new Server must commit the next checkpoint")
+				assert.NoError(t, err, "a new Server must commit the next checkpoint")
 			})
 		}
 	})
@@ -768,7 +788,7 @@ func resend(tb testing.TB, s *witness.Server, l *testLog, size uint64) {
 		_, _, err = s.Advance(bounded(tb), l.notes[size], []witness.Update{l.update(tb, se.Size, size)}, nil)
 	}
 
-	testkit.Error(tb, err, "the commit must fail at its signature")
+	assert.HasError(tb, err, "the commit must fail at its signature")
 }
 
 // target returns the target of the circuit of cosigner c: its key name,
@@ -788,7 +808,7 @@ func lineTime(tb testing.TB, l *testLog, size uint64, lines []byte) time.Time {
 	n := mustParse(tb, append(append(text, '\n'), lines...))
 
 	ts, err := checkpoint.Timestamp(n.Signatures[0].Value)
-	testkit.NoError(tb, err, "the line must have a timestamp")
+	assert.NoError(tb, err, "the line must have a timestamp")
 
 	return ts
 }
@@ -866,6 +886,6 @@ func settle(tb testing.TB, s *witness.Server, l *testLog) {
 	tb.Helper()
 
 	_, failures, err := s.Advance(bounded(tb), l.notes[2], []witness.Update{l.update(tb, 1, 2)}, nil)
-	testkit.NoError(tb, err, "the call that settles the writes must return")
-	testkit.Len(tb, failures, 1, "the commit must fail the call that settles the writes")
+	assert.NoError(tb, err, "the call that settles the writes must return")
+	assert.Length(tb, failures, 1, "the commit must fail the call that settles the writes")
 }

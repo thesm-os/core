@@ -6,7 +6,7 @@ package witness
 import (
 	"testing"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
 
 	"go.thesmos.sh/core/errs"
 )
@@ -42,10 +42,10 @@ func TestCollectInternal(t *testing.T) {
 			orphan := recordPrefix + string(appendName(nil, 3, []byte("an orphan")))
 			putObject(t, f.store, orphan, []byte("an orphan"))
 
-			testkit.NoError(t, s.snapshot(bounded(t)), "the snapshot must install")
+			assert.NoError(t, s.snapshot(bounded(t)), "the snapshot must install")
 
 			_, err := f.store.Stat(t.Context(), orphan)
-			testkit.Equal(t, errs.Classify(err), errs.NotFound, "the snapshot must delete the record off the chain")
+			assert.Equal(t, errs.Classify(err), errs.NotFound, "the snapshot must delete the record off the chain")
 		})
 
 		t.Run("deletes another snapshot of the Seq of the new one", func(t *testing.T) {
@@ -54,10 +54,10 @@ func TestCollectInternal(t *testing.T) {
 			other := snapshotPrefix + string(appendName(nil, 3, []byte("another snapshot")))
 			putObject(t, f.store, other, []byte("another snapshot"))
 
-			testkit.NoError(t, s.snapshot(bounded(t)), "the snapshot must install")
+			assert.NoError(t, s.snapshot(bounded(t)), "the snapshot must install")
 
 			_, err := f.store.Stat(t.Context(), other)
-			testkit.Equal(t, errs.Classify(err), errs.NotFound, "the snapshot must delete the other snapshot")
+			assert.Equal(t, errs.Classify(err), errs.NotFound, "the snapshot must delete the other snapshot")
 		})
 
 		t.Run("keeps a group of the Seq of the new snapshot that no snapshot refers to", func(t *testing.T) {
@@ -69,10 +69,10 @@ func TestCollectInternal(t *testing.T) {
 			group := groupPrefix + string(appendName(nil, 3, []byte("a group")))
 			putObject(t, f.store, group, []byte("a group"))
 
-			testkit.NoError(t, s.snapshot(bounded(t)), "the snapshot must install")
+			assert.NoError(t, s.snapshot(bounded(t)), "the snapshot must install")
 
 			_, err := f.store.Stat(t.Context(), group)
-			testkit.NoError(t, err, "the snapshot must keep the group")
+			assert.NoError(t, err, "the snapshot must keep the group")
 		})
 
 		t.Run("keeps the record of the base when no position refers to it", func(t *testing.T) {
@@ -87,13 +87,79 @@ func TestCollectInternal(t *testing.T) {
 			// The base of the writer is at the record of Seq 2, and neither the
 			// base nor the snapshot refers to that record.
 			w := &snapper{base: installed{seq: 2}, seq: 3}
-			testkit.NoError(t, s.collect(bounded(t), w, &snapshot{}, "", 3), "collect must walk the store")
+			assert.NoError(t, s.collect(bounded(t), w, &snapshot{}, "", 3), "collect must walk the store")
 
 			_, err := f.store.Stat(t.Context(), recordPrefix+second)
-			testkit.NoError(t, err, "collect must keep the record of the base")
+			assert.NoError(t, err, "collect must keep the record of the base")
 
 			_, err = f.store.Stat(t.Context(), recordPrefix+first)
-			testkit.Equal(t, errs.Classify(err), errs.NotFound, "collect must delete a record below the base")
+			assert.Equal(t, errs.Classify(err), errs.NotFound, "collect must delete a record below the base")
+		})
+
+		// Each case collects with a base at the record of Seq 2, after the
+		// three records of a on the chain.
+		below := recordPrefix + string(appendName(nil, 1, []byte("a record below the base")))
+		later := recordPrefix + string(appendName(nil, 5, []byte("a record of a later head")))
+		tests := []struct {
+			name    string
+			key     string
+			base    []object
+			objects []object
+			headSeq uint64
+		}{
+			{
+				name: "keeps a record below the base that the base refers to", key: below,
+				base: []object{{Key: below}}, headSeq: 3,
+			},
+			{
+				name: "keeps a record below the base that the snapshot refers to", key: below,
+				objects: []object{{Key: below}}, headSeq: 3,
+			},
+			{name: "keeps a key under records/ that is not a name", key: recordPrefix + "a key", headSeq: 3},
+			{name: "keeps a record whose Seq the state has no name for", key: later, headSeq: 9},
+			{
+				name: "keeps a record above the Seq of the head whose Seq the state has no name for", key: later,
+				headSeq: 3,
+			},
+			{
+				name:    "keeps a record off the chain above the Seq of the head",
+				key:     recordPrefix + string(appendName(nil, 3, []byte("a record of another process"))),
+				headSeq: 2,
+			},
+			{
+				name:    "keeps a snapshot above the Seq of the new one",
+				key:     snapshotPrefix + string(appendName(nil, 4, []byte("a later snapshot"))),
+				headSeq: 3,
+			},
+			{name: "keeps a key under snapshots/ that is not a name", key: snapshotPrefix + "a key", headSeq: 3},
+			{name: "keeps a key under groups/ that is not a name", key: groupPrefix + "a key", headSeq: 3},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				f, s := three(t)
+				putObject(t, f.store, tt.key, []byte("an object"))
+
+				w := &snapper{base: installed{seq: 2, objects: tt.base}, seq: 3}
+				assert.NoError(t, s.collect(bounded(t), w, &snapshot{Objects: tt.objects}, "", tt.headSeq),
+					"collect must walk the store")
+
+				_, err := f.store.Stat(t.Context(), tt.key)
+				assert.NoError(t, err, "collect must keep the object")
+			})
+		}
+
+		t.Run("deletes a group below the Seq of the new snapshot", func(t *testing.T) {
+			t.Parallel()
+			f, s := three(t)
+			group := groupPrefix + string(appendName(nil, 2, []byte("a group")))
+			putObject(t, f.store, group, []byte("a group"))
+
+			w := &snapper{base: installed{seq: 2}, seq: 3}
+			assert.NoError(t, s.collect(bounded(t), w, &snapshot{}, "", 3), "collect must walk the store")
+
+			_, err := f.store.Stat(t.Context(), group)
+			assert.Equal(t, errs.Classify(err), errs.NotFound, "collect must delete the group")
 		})
 	})
 }

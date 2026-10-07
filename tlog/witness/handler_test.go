@@ -5,6 +5,7 @@ package witness_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"errors"
 	"io"
@@ -15,8 +16,9 @@ import (
 	"testing"
 	"time"
 
+	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/bench"
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert/expect"
 
 	"go.thesmos.sh/core/crypto"
 	"go.thesmos.sh/core/errs"
@@ -31,6 +33,11 @@ const (
 	sizeType  = "text/x.tlog.size"
 	linesType = "text/plain; charset=utf-8"
 )
+
+// addCheckpointAllocs is the allocation contract of a request to the
+// handler of add-checkpoint that commits a record: the 15 objects of the
+// commit, as Advance allocates them, and nothing of the handler.
+const addCheckpointAllocs = 15
 
 // failingReader is a request body whose reads fail.
 type failingReader struct{}
@@ -74,6 +81,49 @@ func (w *discard) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// addCheckpointCall is a request to the handler of add-checkpoint, with the
+// reader of its body and a writer that discards its response.
+type addCheckpointCall struct {
+	h    http.Handler
+	r    *bytes.Reader
+	body []byte
+	req  *http.Request
+	w    *discard
+}
+
+// newAddCheckpointCall returns a request to the handler of add-checkpoint
+// of a Server that committed the size 5 of a log, whose body is a
+// checkpoint of the committed size and root. Such a checkpoint commits
+// again, so each request commits a record. blob/memory formats a version
+// below 100 without an allocation, so newAddCheckpointCall commits 40
+// records first, past it.
+func newAddCheckpointCall(tb testing.TB) *addCheckpointCall {
+	tb.Helper()
+
+	l := newTestLog(tb, logName)
+	s := newServer(tb, newFixture(tb, l).config())
+	post(tb, s, requestBody(0, nil, l.notes[5]))
+
+	body := requestBody(5, nil, l.notes[5])
+	for range 40 {
+		assert.Equal(tb, post(tb, s, body).Code, http.StatusOK, "the handler must cosign the checkpoint")
+	}
+
+	r := bytes.NewReader(body)
+	req := httptest.NewRequestWithContext(tb.Context(), http.MethodPost, submissionPath+"/add-checkpoint", nil)
+	req.Body = io.NopCloser(r)
+
+	return &addCheckpointCall{h: s.AddCheckpoint(), r: r, body: body, req: req, w: &discard{header: make(http.Header)}}
+}
+
+// serve serves the request of c again: it rewinds the body and resets the
+// response first.
+func (c *addCheckpointCall) serve() {
+	c.r.Reset(c.body)
+	c.w.code, c.w.n = 0, 0
+	c.h.ServeHTTP(c.w, c.req)
+}
+
 func TestHandler(t *testing.T) {
 	t.Parallel()
 
@@ -86,23 +136,45 @@ func TestHandler(t *testing.T) {
 			t.Parallel()
 			f := newFixture(t, l)
 			rec := post(t, newServer(t, f.config()), requestBody(0, nil, l.notes[5]))
-			testkit.Equal(t, rec.Code, http.StatusOK, "the handler must cosign the checkpoint")
-			testkit.Equal(t, rec.Header().Get("Content-Type"), linesType, "the lines must be text")
+			assert.Equal(t, rec.Code, http.StatusOK, "the handler must cosign the checkpoint")
+			assert.Equal(t, rec.Header().Get("Content-Type"), linesType, "the lines must be text")
 
 			text := append([]byte(nil), noteText(t, l.notes[5])...)
 			n := mustParse(t, append(append(text, '\n'), rec.Body.Bytes()...))
-			testkit.True(t, f.cosigners[0].Verify(n.Text, n.Signatures[0].Value), "the line must verify")
+			assert.True(t, f.cosigners[0].Verify(n.Text, n.Signatures[0].Value), "the line must verify")
 		})
 
 		t.Run("responds with 200 for a request with a proof", func(t *testing.T) {
 			t.Parallel()
 			s := newServer(t, newFixture(t, l).config())
-			testkit.Equal(t, post(t, s, requestBody(0, nil, l.notes[5])).Code, http.StatusOK,
+			assert.Equal(t, post(t, s, requestBody(0, nil, l.notes[5])).Code, http.StatusOK,
 				"the handler must cosign the first checkpoint")
 
 			u := l.update(t, 5, 9)
-			testkit.Equal(t, post(t, s, requestBody(5, u.Proof, l.notes[9])).Code, http.StatusOK,
+			assert.Equal(t, post(t, s, requestBody(5, u.Proof, l.notes[9])).Code, http.StatusOK,
 				"the handler must cosign the consistent checkpoint")
+		})
+
+		t.Run("responds with 500 for a request whose context ends before its commit", func(t *testing.T) {
+			t.Parallel()
+			f := newFixture(t, l)
+			s := newServer(t, f.config())
+			release := make(chan struct{})
+			f.store.intercept(hook{op: opPut, prefix: "records/", before: func(context.Context, string) error {
+				<-release
+
+				return nil
+			}})
+
+			ctx, cancel := context.WithCancel(t.Context())
+			cancel()
+
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequestWithContext(ctx, http.MethodPost, "/add-checkpoint",
+				bytes.NewReader(requestBody(0, nil, l.notes[5])))
+			s.AddCheckpoint().ServeHTTP(rec, req)
+			close(release)
+			assert.Equal(t, rec.Code, http.StatusInternalServerError, "the handler must report the end of the context")
 		})
 
 		t.Run("responds with 409, the committed size and its content type", func(t *testing.T) {
@@ -111,9 +183,9 @@ func TestHandler(t *testing.T) {
 			post(t, s, requestBody(0, nil, l.notes[5]))
 
 			rec := post(t, s, requestBody(0, nil, l.notes[6]))
-			testkit.Equal(t, rec.Code, http.StatusConflict, "the handler must refuse the old size")
-			testkit.Equal(t, rec.Header().Get("Content-Type"), sizeType, "the body must be a size")
-			testkit.Equal(t, rec.Body.String(), "5\n", "the body must contain the committed size")
+			assert.Equal(t, rec.Code, http.StatusConflict, "the handler must refuse the old size")
+			assert.Equal(t, rec.Header().Get("Content-Type"), sizeType, "the body must be a size")
+			assert.Equal(t, rec.Body.String(), "5\n", "the body must contain the committed size")
 		})
 
 		t.Run("responds with 422 for a proof that does not verify", func(t *testing.T) {
@@ -123,7 +195,7 @@ func TestHandler(t *testing.T) {
 
 			proof := l.update(t, 5, 9).Proof
 			proof[0] = l.leaves[0]
-			testkit.Equal(t, post(t, s, requestBody(5, proof, l.notes[9])).Code, http.StatusUnprocessableEntity,
+			assert.Equal(t, post(t, s, requestBody(5, proof, l.notes[9])).Code, http.StatusUnprocessableEntity,
 				"the handler must refuse the proof")
 		})
 
@@ -136,9 +208,9 @@ func TestHandler(t *testing.T) {
 			s := newServer(t, cfg)
 			post(t, s, requestBody(0, nil, l.notes[5]))
 
-			testkit.Equal(t, post(t, s, requestBody(0, nil, other.notes[5])).Code, http.StatusNotFound,
+			assert.Equal(t, post(t, s, requestBody(0, nil, other.notes[5])).Code, http.StatusNotFound,
 				"the handler must refuse a new origin beyond MaxOrigins")
-			testkit.Len(t, f.logger.messages(slog.LevelWarn), 1, "the server must log the origin")
+			assert.Length(t, f.logger.messages(slog.LevelWarn), 1, "the server must log the origin")
 		})
 
 		tests := []struct {
@@ -160,10 +232,10 @@ func TestHandler(t *testing.T) {
 					tb.Helper()
 
 					n, err := note.Sign(tb.Context(), []byte("a text\n"), l.signer)
-					testkit.NoError(tb, err, "Sign must sign the text")
+					assert.NoError(tb, err, "Sign must sign the text")
 
 					msg, err := n.MarshalText()
-					testkit.NoError(tb, err, "MarshalText must write the note")
+					assert.NoError(tb, err, "MarshalText must write the note")
 
 					return requestBody(0, nil, msg)
 				},
@@ -233,7 +305,7 @@ func TestHandler(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
 				rec := post(t, newServer(t, newFixture(t, l).config()), tt.give(t))
-				testkit.Equal(t, rec.Code, tt.want, "the handler must respond with "+strconv.Itoa(tt.want))
+				assert.Equal(t, rec.Code, tt.want, "the handler must respond with "+strconv.Itoa(tt.want))
 			})
 		}
 
@@ -247,9 +319,9 @@ func TestHandler(t *testing.T) {
 			}
 			s := newServer(t, f.config())
 
-			testkit.Equal(t, post(t, s, requestBody(0, nil, l.notes[5])).Code, http.StatusForbidden,
+			assert.Equal(t, post(t, s, requestBody(0, nil, l.notes[5])).Code, http.StatusForbidden,
 				"the handler must require both keys of the set")
-			testkit.Equal(t, post(t, s, requestBody(0, nil, signBody(t, l.body(5), l.signer, pq.signer))).Code,
+			assert.Equal(t, post(t, s, requestBody(0, nil, signBody(t, l.body(5), l.signer, pq.signer))).Code,
 				http.StatusOK, "the handler must accept both keys of the set")
 		})
 
@@ -260,7 +332,7 @@ func TestHandler(t *testing.T) {
 
 			body := l.body(5)
 			body.Extensions = []checkpoint.Extension{"an extension line"}
-			testkit.Equal(t, post(t, newServer(t, f.config()), requestBody(0, nil, signBody(t, body, l.signer))).Code,
+			assert.Equal(t, post(t, newServer(t, f.config()), requestBody(0, nil, signBody(t, body, l.signer))).Code,
 				http.StatusBadRequest, "the handler must refuse the note")
 		})
 
@@ -270,7 +342,7 @@ func TestHandler(t *testing.T) {
 			s := newServer(t, f.config())
 			f.clock.SetUTCError(time.Second, true)
 
-			testkit.Equal(t, post(t, s, requestBody(0, nil, l.notes[5])).Code, http.StatusServiceUnavailable,
+			assert.Equal(t, post(t, s, requestBody(0, nil, l.notes[5])).Code, http.StatusServiceUnavailable,
 				"the handler must report the clock")
 		})
 
@@ -279,7 +351,7 @@ func TestHandler(t *testing.T) {
 			rec := httptest.NewRecorder()
 			req := httptest.NewRequestWithContext(bounded(t), http.MethodPost, "/add-checkpoint", failingReader{})
 			newServer(t, newFixture(t, l).config()).AddCheckpoint().ServeHTTP(rec, req)
-			testkit.Equal(t, rec.Code, http.StatusInternalServerError, "the handler must report the read")
+			assert.Equal(t, rec.Code, http.StatusInternalServerError, "the handler must report the read")
 		})
 
 		t.Run("returns to the client the error of each status", func(t *testing.T) {
@@ -289,29 +361,27 @@ func TestHandler(t *testing.T) {
 			c := newWitnessClient(t, serve(t, s), f.cosigners[0].Key())
 
 			_, err := c.AddCheckpoint(bounded(t), l.notes[5], 0, nil, nil)
-			testkit.NoError(t, err, "the client must receive the lines")
+			assert.NoError(t, err, "the client must receive the lines")
 
 			_, err = c.AddCheckpoint(bounded(t), l.notes[6], 0, nil, nil)
-			se, ok := errors.AsType[*witness.SizeError](err)
-			testkit.True(t, ok, "the client must receive a SizeError for a 409")
-			testkit.Equal(t, se.Size, uint64(5), "the SizeError must contain the committed size")
+			se := assert.ErrorAs[*witness.SizeError](t, err, "the client must receive a SizeError for a 409")
+			assert.Equal(t, se.Size, uint64(5), "the SizeError must contain the committed size")
 
 			proof := l.update(t, 5, 9).Proof
 			proof[0] = l.leaves[0]
 			_, err = c.AddCheckpoint(bounded(t), l.notes[9], 5, proof, nil)
-			testkit.ErrorIs(t, err, witness.ErrInconsistent, "the client must receive ErrInconsistent for a 422")
+			assert.ErrorIs(t, err, witness.ErrInconsistent, "the client must receive ErrInconsistent for a 422")
 
 			other := newTestLog(t, "example.com/other")
 			_, err = c.AddCheckpoint(bounded(t), other.notes[5], 0, nil, nil)
-			testkit.Equal(t, errs.Classify(err), errs.NotFound, "the client must receive NotFound for a 404")
+			assert.Equal(t, errs.Classify(err), errs.NotFound, "the client must receive NotFound for a 404")
 
 			_, err = c.AddCheckpoint(bounded(t), signBody(t, l.body(6), other.signer), 5, l.update(t, 5, 6).Proof, nil)
-			testkit.Equal(t, errs.Classify(err), errs.Denied, "the client must receive Denied for a 403")
+			assert.Equal(t, errs.Classify(err), errs.Denied, "the client must receive Denied for a 403")
 
 			_, err = c.AddCheckpoint(bounded(t), l.notes[5], 6, nil, nil)
-			status, ok := errors.AsType[*httpclient.StatusError](err)
-			testkit.True(t, ok, "the client must receive a StatusError for a 400")
-			testkit.Equal(t, status.Status, http.StatusBadRequest, "the status must be 400")
+			status := assert.ErrorAs[*httpclient.StatusError](t, err, "the client must receive a StatusError for a 400")
+			assert.Equal(t, status.Status, http.StatusBadRequest, "the status must be 400")
 		})
 
 		t.Run("returns to the client a cosignature of Ed25519 and of ML-DSA-44 that tlog/checkpoint verifies",
@@ -323,56 +393,48 @@ func TestHandler(t *testing.T) {
 				c := newWitnessClient(t, serve(t, s), f.cosigners[0].Key(), f.cosigners[1].Key())
 
 				lines, err := c.AddCheckpoint(bounded(t), l.notes[5], 0, nil, nil)
-				testkit.NoError(t, err, "the client must verify both lines")
+				assert.NoError(t, err, "the client must verify both lines")
 
 				text := append([]byte(nil), noteText(t, l.notes[5])...)
 				n := mustParse(t, append(append(text, '\n'), lines...))
-				testkit.Len(t, n.Signatures, 2, "the response must contain a line of each cosigner")
+				assert.Length(t, n.Signatures, 2, "the response must contain a line of each cosigner")
 
 				for i, cs := range f.cosigners {
 					v, err := resolver().Verifier(cs.Key())
-					testkit.NoError(t, err, "the resolver must resolve the key")
-					testkit.True(t, v.Verify(n.Text, n.Signatures[i].Value), "the line must verify")
+					assert.NoError(t, err, "the resolver must resolve the key")
+					assert.True(t, v.Verify(n.Text, n.Signatures[i].Value), "the line must verify")
 				}
 			})
 	})
 }
 
+// TestHandlerAllocs checks the allocation contract of the handler of
+// add-checkpoint that BenchmarkHandler states. MaxAllocs counts the
+// allocations of the whole process, so the test does not run in parallel.
+//
+//nolint:paralleltest // see above
+func TestHandlerAllocs(t *testing.T) {
+	t.Run("AddCheckpoint", func(t *testing.T) {
+		c := newAddCheckpointCall(t)
+		expect.MaxAllocs(t, c.serve, addCheckpointAllocs, "the handler must allocate the objects of the commit alone")
+		assert.Equal(t, c.w.code, http.StatusOK, "the test must measure a cosigned checkpoint")
+		assert.NotEqual(t, c.w.n, 0, "the test must measure a response with lines")
+	})
+}
+
 func BenchmarkHandler(b *testing.B) {
 	b.Run("AddCheckpoint", func(b *testing.B) {
-		l := newTestLog(b, logName)
-		s := newServer(b, newFixture(b, l).config())
-		h := s.AddCheckpoint()
+		call := newAddCheckpointCall(b)
 
-		// A checkpoint of the committed size and root commits again, so each
-		// request commits a record. blob/memory formats a version below 100
-		// without an allocation, so 40 commits move the versions past it
-		// first.
-		post(b, s, requestBody(0, nil, l.notes[5]))
-
-		body := requestBody(5, nil, l.notes[5])
-		for range 40 {
-			testkit.Equal(b, post(b, s, body).Code, http.StatusOK, "the handler must cosign the checkpoint")
-		}
-
-		r := bytes.NewReader(body)
-		req := httptest.NewRequestWithContext(b.Context(), http.MethodPost, submissionPath+"/add-checkpoint", nil)
-		req.Body = io.NopCloser(r)
-		w := &discard{header: make(http.Header)}
-
-		// The handler allocates the 15 objects of the commit, as Advance
-		// does, and nothing of its own.
-		c := bench.Start(b).MaxAllocs(15)
+		c := bench.Start(b).MaxAllocs(addCheckpointAllocs)
 		defer c.End()
 
 		for c.Loop() {
-			r.Reset(body)
-			w.code, w.n = 0, 0
-			h.ServeHTTP(w, req)
+			call.serve()
 		}
 
-		testkit.Equal(b, w.code, http.StatusOK, "the benchmark must measure a cosigned checkpoint")
-		testkit.NotEqual(b, w.n, 0, "the benchmark must measure a response with lines")
+		assert.Equal(b, call.w.code, http.StatusOK, "the benchmark must measure a cosigned checkpoint")
+		assert.NotEqual(b, call.w.n, 0, "the benchmark must measure a response with lines")
 	})
 }
 
@@ -419,7 +481,7 @@ func newWitnessClient(tb testing.TB, ts *httptest.Server, keys ...note.Key) *wit
 	tb.Helper()
 
 	h, err := httpclient.New("witness", required, httpclient.WithTimeout(patience))
-	testkit.NoError(tb, err, "httpclient.New must accept the options")
+	assert.NoError(tb, err, "httpclient.New must accept the options")
 
 	c, err := witness.NewClient(&witness.ClientConfig{
 		HTTP:       h,
@@ -428,7 +490,7 @@ func newWitnessClient(tb testing.TB, ts *httptest.Server, keys ...note.Key) *wit
 		Monitoring: ts.URL + monitoringPath,
 		Keys:       keys,
 	})
-	testkit.NoError(tb, err, "NewClient must accept the configuration")
+	assert.NoError(tb, err, "NewClient must accept the configuration")
 
 	return c
 }

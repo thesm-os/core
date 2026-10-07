@@ -4,6 +4,7 @@
 package witness
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -13,11 +14,51 @@ import (
 	"testing"
 	"time"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/expect"
 
 	"go.thesmos.sh/core/blob"
+	"go.thesmos.sh/core/clock"
+	"go.thesmos.sh/core/telemetry"
+	"go.thesmos.sh/core/tlog/checkpoint"
 	"go.thesmos.sh/core/version"
 )
+
+// brokenUTC is a clock.UTCSource whose ReadUTC fails with err. It returns
+// reading with the error, a reading that the contract of clock.UTCSource
+// leaves undefined, so a caller must not use it.
+type brokenUTC struct {
+	reading clock.UTCReading
+	err     error
+}
+
+// sumCounter is a telemetry.Counter that keeps the sum of its values.
+type sumCounter struct {
+	sum atomic.Int64
+}
+
+var (
+	_ clock.UTCSource   = brokenUTC{}
+	_ telemetry.Counter = (*sumCounter)(nil)
+)
+
+// ReadUTC returns the reading and the error of u.
+func (u brokenUTC) ReadUTC() (clock.UTCReading, error) {
+	return u.reading, u.err
+}
+
+// Add adds value to the sum of c.
+func (c *sumCounter) Add(_ context.Context, value int64) {
+	c.sum.Add(value)
+}
+
+// With returns c.
+func (c *sumCounter) With([]telemetry.Attr) telemetry.Counter {
+	return c
+}
+
+// Release does nothing.
+func (*sumCounter) Release() {}
 
 func TestCommitInternal(t *testing.T) {
 	t.Parallel()
@@ -66,8 +107,8 @@ func TestCommitInternal(t *testing.T) {
 			committing := s.committing
 			s.qmu.Unlock()
 
-			testkit.Equal(t, reads.Load(), int64(0), "commit must read no head")
-			testkit.False(t, committing, "commit must record that no commit runs")
+			assert.Equal(t, reads.Load(), int64(0), "commit must read no head")
+			assert.False(t, committing, "commit must record that no commit runs")
 		})
 	})
 
@@ -106,11 +147,10 @@ func TestCommitInternal(t *testing.T) {
 			close(g.release)
 			waitAll(t, &wg, "every call must return")
 
-			testkit.Len(t, stale, 1, "the third call must fail against the first two")
+			assert.Length(t, stale, 1, "the third call must fail against the first two")
 
-			se, ok := errors.AsType[*SizeError](stale[0].Err)
-			testkit.True(t, ok, "the failure must be a SizeError")
-			testkit.Equal(t, se.Size, uint64(6), "the SizeError must contain the size of the second call")
+			se := assert.ErrorAs[*SizeError](t, stale[0].Err, "the failure must be a SizeError")
+			assert.Equal(t, se.Size, uint64(6), "the SizeError must contain the size of the second call")
 		})
 
 		t.Run("counts the new origins of the earlier calls of the commit against MaxOrigins", func(t *testing.T) {
@@ -148,8 +188,70 @@ func TestCommitInternal(t *testing.T) {
 			close(g.release)
 			waitAll(t, &wg, "every call must return")
 
-			testkit.Len(t, failures, 1, "the call of c must fail")
-			testkit.ErrorIs(t, failures[0].Err, ErrUnknownOrigin, "the failure must be ErrUnknownOrigin")
+			assert.Length(t, failures, 1, "the call of c must fail")
+			assert.ErrorIs(t, failures[0].Err, ErrUnknownOrigin, "the failure must be ErrUnknownOrigin")
+		})
+
+		t.Run("accepts an update of an origin of a state at MaxOrigins", func(t *testing.T) {
+			t.Parallel()
+			f := newInternalFixture(t, l)
+			cfg := f.config()
+			cfg.MaxOrigins = 1
+			s := newInternalServer(t, cfg)
+			l.advance(t, s, 0, 5, nil)
+
+			l.advance(t, s, 5, 6, nil)
+		})
+	})
+
+	t.Run("check", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("checks an origin that came back after its retirement against the state", func(t *testing.T) {
+			t.Parallel()
+			other := newInternalLog(t, "example.com/b")
+			f := newInternalFixture(t, l, other)
+			s := f.server(t)
+			l.advance(t, s, 0, 5, nil)
+			f.refuse(l.origin)
+			f.clock.Advance(2 * time.Hour)
+			other.advance(t, s, 0, 5, nil)
+			assert.NoError(t, s.snapshot(bounded(t)), "the retiring snapshot must install")
+			assert.False(t, s.st.origins.Has(hashOrigin(l.origin)), "the snapshot must retire the origin")
+
+			f.mu.Lock()
+			f.accepted[l.origin] = l.log
+			f.mu.Unlock()
+
+			l.advance(t, s, 5, 6, nil)
+			l.advance(t, s, 6, 7, nil)
+		})
+	})
+
+	t.Run("admit", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the error of a UTC source that fails", func(t *testing.T) {
+			t.Parallel()
+			errUTC := errors.New("the source failed")
+			cfg := newInternalFixture(t, l).config()
+			cfg.UTC = brokenUTC{reading: clock.UTCReading{Time: internalTime, Synced: true}, err: errUTC}
+			s := newInternalServer(t, cfg)
+
+			_, _, err := s.Advance(bounded(t), l.note(t, 5), []Update{l.update(t, 0, 5, nil)}, nil)
+			expect.ErrorIs(t, err, errUTC, "Advance must return the error of the source")
+			expect.ErrorIs(t, err, checkpoint.ErrClock, "the error must wrap ErrClock")
+		})
+
+		t.Run("returns an error that states the Synced of an unsynchronised reading", func(t *testing.T) {
+			t.Parallel()
+			f := newInternalFixture(t, l)
+			f.clock.SetUTCError(0, false)
+			s := f.server(t)
+
+			_, _, err := s.Advance(bounded(t), l.note(t, 5), []Update{l.update(t, 0, 5, nil)}, nil)
+			assert.ErrorIs(t, err, checkpoint.ErrClock, "Advance must refuse the reading")
+			assert.Contains(t, err.Error(), "Synced false", "the error must state the Synced of the reading")
 		})
 	})
 
@@ -175,12 +277,39 @@ func TestCommitInternal(t *testing.T) {
 			}
 
 			l.advance(t, s, 0, 5, nil)
-			testkit.NoError(t, refresh, "the refresh must catch up to the head")
+			assert.NoError(t, refresh, "the refresh must catch up to the head")
 
 			o, _ := s.st.origins.Get(hashOrigin(l.origin))
-			testkit.Equal(t, o.size, uint64(5), "the state must contain the commit")
-			testkit.Equal(t, s.st.seq, uint64(1), "the state must contain one record")
-			testkit.True(t, o.served == o.latest, "the commit must move the served position")
+			assert.Equal(t, o.size, uint64(5), "the state must contain the commit")
+			assert.Equal(t, s.st.seq, uint64(1), "the state must contain one record")
+			assert.Equal(t, o.served, o.latest, "the commit must move the served position")
+		})
+
+		t.Run("leaves a state that does not reflect the head of the base of the commit", func(t *testing.T) {
+			t.Parallel()
+			_, _, s := faultyServer(t)
+			l.advance(t, s, 0, 5, nil)
+			seq, v := s.st.seq, s.st.version
+
+			b := &batch{rec: record{Seq: 2, Time: 1, Prev: s.st.head.Record}}
+			name := string(appendName(nil, 2, []byte("a record")))
+			s.applyCommit(bounded(t), b, base{version: "a version before the state"}, recordPrefix+name, 10,
+				"a later version")
+
+			expect.Equal(t, s.st.seq, seq, "the state must keep its record")
+			expect.Equal(t, s.st.version, v, "the state must keep its version")
+		})
+	})
+
+	t.Run("commitCalls", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("drops the references of the batch to its calls after a commit", func(t *testing.T) {
+			t.Parallel()
+			_, _, s := faultyServer(t)
+			l.advance(t, s, 0, 5, nil)
+
+			assert.Equal(t, s.batch.calls, make([]*pending, len(s.batch.calls)), "the batch must drop its calls")
 		})
 	})
 
@@ -219,10 +348,10 @@ func TestCommitInternal(t *testing.T) {
 			}
 
 			lines, _, err := s.Advance(bounded(t), l.note(t, 5), []Update{l.update(t, 0, 5, nil)}, nil)
-			testkit.NoError(t, err, "Advance must return before the write of the lines")
-			testkit.NotEqual(t, len(lines), 0, "Advance must return the lines")
-			testkit.Len(t, listKeys(t, st.Store, linesPrefix), 0, "the commit must not have stored its lines")
-			testkit.Equal(t, getRoute(t, s, l.origin).Code, http.StatusNotFound,
+			assert.NoError(t, err, "Advance must return before the write of the lines")
+			assert.NotEmpty(t, lines, "Advance must return the lines")
+			assert.Empty(t, listKeys(t, st.Store, linesPrefix), "the commit must not have stored its lines")
+			assert.Equal(t, getRoute(t, s, l.origin).Code, http.StatusNotFound,
 				"the route must not serve the commit before its lines")
 
 			open()
@@ -233,7 +362,7 @@ func TestCommitInternal(t *testing.T) {
 			s.mu.RUnlock()
 			s.lmu.Unlock()
 
-			testkit.True(t, o.served == o.latest, "the write of the lines must move the served position")
+			assert.Equal(t, o.served, o.latest, "the write of the lines must move the served position")
 		})
 
 		t.Run("logs a write of lines that fails and moves no served position", func(t *testing.T) {
@@ -247,8 +376,8 @@ func TestCommitInternal(t *testing.T) {
 			o, _ := s.st.origins.Get(hashOrigin(l.origin))
 			s.mu.RUnlock()
 
-			testkit.True(t, h.has("witness: a commit did not store its lines"), "the commit must log the write")
-			testkit.Equal(t, o.served.key, "", "the commit must move no served position")
+			assert.Contains(t, h.kept(), "witness: a commit did not store its lines", "the commit must log the write")
+			assert.Equal(t, o.served.key, "", "the commit must move no served position")
 		})
 
 		t.Run("moves the served positions over the lines that a repair stored first", func(t *testing.T) {
@@ -273,8 +402,9 @@ func TestCommitInternal(t *testing.T) {
 			o, _ := s.st.origins.Get(hashOrigin(l.origin))
 			s.mu.RUnlock()
 
-			testkit.True(t, o.served == o.latest, "the commit must move the served position")
-			testkit.False(t, h.has("witness: a commit did not store its lines"), "the commit must log no failure")
+			assert.Equal(t, o.served, o.latest, "the commit must move the served position")
+			assert.NotContains(t, h.kept(), "witness: a commit did not store its lines",
+				"the commit must log no failure")
 		})
 
 		t.Run("writes the lines of one commit at a time", func(t *testing.T) {
@@ -304,7 +434,7 @@ func TestCommitInternal(t *testing.T) {
 			}
 
 			_, _, err := s.Advance(bounded(t), l.note(t, 5), []Update{l.update(t, 0, 5, nil)}, nil)
-			testkit.NoError(t, err, "the first commit must return before its lines")
+			assert.NoError(t, err, "the first commit must return before its lines")
 
 			var (
 				returned atomic.Bool
@@ -325,13 +455,13 @@ func TestCommitInternal(t *testing.T) {
 				time.Sleep(time.Millisecond)
 			}
 
-			testkit.False(t, returned.Load(), "the second call must wait for the lines of the first commit")
-			testkit.Equal(t, started.Load(), int64(1), "the second commit must not write its lines yet")
+			assert.False(t, returned.Load(), "the second call must wait for the lines of the first commit")
+			assert.Equal(t, started.Load(), int64(1), "the second commit must not write its lines yet")
 
 			open()
 			waitAll(t, &wg, "the second call must return")
 
-			testkit.Equal(t, started.Load(), int64(2), "the second commit must write its lines after the first")
+			assert.Equal(t, started.Load(), int64(2), "the second commit must write its lines after the first")
 		})
 
 		t.Run("writes nothing for a commit whose calls fail", func(t *testing.T) {
@@ -348,14 +478,14 @@ func TestCommitInternal(t *testing.T) {
 			}
 
 			_, failures, err := s.Advance(bounded(t), l.note(t, 6), []Update{l.update(t, 0, 6, nil)}, nil)
-			testkit.NoError(t, err, "Advance must check the update")
-			testkit.Len(t, failures, 1, "Advance must return the conflict")
+			assert.NoError(t, err, "Advance must check the update")
+			assert.Length(t, failures, 1, "Advance must return the conflict")
 
 			s.lmu.Lock()
 			n := puts.Load()
 			s.lmu.Unlock()
 
-			testkit.Equal(t, n, int64(0), "the commit must write nothing")
+			assert.Equal(t, n, int64(0), "the commit must write nothing")
 		})
 
 		t.Run("moves the served position of an origin to the later of two calls of the record", func(t *testing.T) {
@@ -386,19 +516,118 @@ func TestCommitInternal(t *testing.T) {
 			waitAll(t, &wg, "every call must return")
 
 			rec := getRoute(t, s, l.origin)
-			testkit.Equal(t, rec.Code, http.StatusOK, "the route must serve the origin")
-			testkit.True(t, strings.HasPrefix(rec.Body.String(), string(l.note(t, 6))),
+			assert.Equal(t, rec.Code, http.StatusOK, "the route must serve the origin")
+			assert.HasPrefix(t, rec.Body.String(), string(l.note(t, 6)),
 				"the route must serve the later call of the record")
+		})
+
+		t.Run("adds no origin that left the state during the write of its lines", func(t *testing.T) {
+			t.Parallel()
+			_, st, s := faultyServer(t)
+			h := hashOrigin(l.origin)
+
+			st.put = func(key string) error {
+				if strings.HasPrefix(key, linesPrefix) {
+					s.mu.Lock()
+					s.st.origins.Delete(h)
+					s.mu.Unlock()
+				}
+
+				return nil
+			}
+
+			l.advance(t, s, 0, 5, nil)
+			assert.False(t, s.st.origins.Has(h), "the write of the lines must not add the origin again")
+		})
+	})
+
+	t.Run("release", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("drops the references of the batch to the memory of its calls", func(t *testing.T) {
+			t.Parallel()
+			p := &pending{}
+			b := batch{
+				calls:  []*pending{p},
+				passed: []*pending{p},
+				texts:  [][]byte{[]byte("a text")},
+				lines:  lines{Calls: [][]byte{[]byte("a line")}},
+				rec:    record{Calls: []call{{Note: []byte("a note")}}},
+			}
+
+			b.release()
+
+			expect.Equal(t, b.calls, []*pending{nil}, "release must drop the calls")
+			expect.Equal(t, b.passed, []*pending{nil}, "release must drop the passed calls")
+			expect.Equal(t, b.texts, [][]byte{nil}, "release must drop the texts")
+			expect.Equal(t, b.lines.Calls, [][]byte{nil}, "release must drop the lines")
+			expect.Equal(t, b.rec.Calls, []call{{}}, "release must drop the calls of the record")
+		})
+	})
+
+	t.Run("snapshotIfDue", func(t *testing.T) {
+		t.Parallel()
+
+		// idle returns a server without a running commit over a store in
+		// which another server committed the first update of l, and a
+		// function that commits the next update of l there and makes the
+		// state of the idle server catch up and make a snapshot due.
+		idle := func(tb testing.TB) (*internalFixture, *Server, func(size uint64)) {
+			tb.Helper()
+
+			f := newInternalFixture(tb, l)
+			writer := f.server(tb)
+			l.advance(tb, writer, 0, 5, nil)
+			s := f.server(tb)
+
+			next := func(size uint64) {
+				l.advance(tb, writer, size-1, size, nil)
+				_, err := s.sync(bounded(tb), "")
+				assert.NoError(tb, err, "the idle server must catch up")
+
+				s.mu.Lock()
+				s.st.end = s.st.snap.end + snapshotBytes
+				s.mu.Unlock()
+			}
+
+			s.mu.Lock()
+			s.st.end = snapshotBytes
+			s.mu.Unlock()
+
+			return f, s, next
+		}
+
+		t.Run("writes no snapshot while another snapshot of the server runs", func(t *testing.T) {
+			t.Parallel()
+			f, s, _ := idle(t)
+			s.snapshotting.Store(true)
+
+			s.snapshotIfDue()
+			assert.Empty(t, listKeys(t, f.store, snapshotPrefix), "snapshotIfDue must write no snapshot")
+		})
+
+		t.Run("writes the snapshot that is due after the snapshot before it", func(t *testing.T) {
+			t.Parallel()
+			_, s, next := idle(t)
+
+			s.snapshotIfDue()
+			first := s.st.snap.name
+			assert.NotEqual(t, first, "", "the first snapshot must install")
+
+			next(6)
+			s.snapshotIfDue()
+			assert.NotEqual(t, s.st.snap.name, first, "the second snapshot must install")
 		})
 	})
 
 	t.Run("run", func(t *testing.T) {
 		t.Parallel()
 
+		errRead := errors.New("the read of the head failed")
 		failHead := func(st *faulty) {
 			st.get = func(key string) error {
 				if key == headKey {
-					return errors.New("the read of the head failed")
+					return errRead
 				}
 
 				return nil
@@ -412,8 +641,39 @@ func TestCommitInternal(t *testing.T) {
 			failHead(st)
 
 			_, failures, err := s.Advance(bounded(t), l.note(t, 6), []Update{l.update(t, 0, 6, nil)}, nil)
-			testkit.Error(t, err, "Advance must fail")
-			testkit.Len(t, failures, 0, "Advance must return no failure with an error")
+			assert.ErrorIs(t, err, errRead, "Advance must return the error of the read")
+			assert.Empty(t, failures, "Advance must return no failure with an error")
+		})
+
+		// readHead returns the zero version for a head that it does not
+		// read, which is the version of the base of a fresh server.
+		t.Run("fails the calls of a first commit of failed calls whose head does not read", func(t *testing.T) {
+			t.Parallel()
+			_, st, s := faultyServer(t)
+			failHead(st)
+
+			_, failures, err := s.Advance(bounded(t), l.note(t, 5), []Update{l.update(t, 3, 5, nil)}, nil)
+			assert.ErrorIs(t, err, errRead, "Advance must return the error of the read")
+			assert.Empty(t, failures, "Advance must return no failure with an error")
+		})
+
+		t.Run("fails the passed calls with the error of a replacement of the head that fails", func(t *testing.T) {
+			t.Parallel()
+			_, st, s := faultyServer(t)
+
+			var once atomic.Bool
+
+			errWrite := errors.New("the write of the head failed")
+			st.put = func(key string) error {
+				if key == headKey && once.CompareAndSwap(false, true) {
+					return errWrite
+				}
+
+				return nil
+			}
+
+			_, _, err := s.Advance(bounded(t), l.note(t, 5), []Update{l.update(t, 0, 5, nil)}, nil)
+			assert.ErrorIs(t, err, errWrite, "Advance must return the error of the write")
 		})
 
 		t.Run("fails the calls of a commit of failed calls whose catch-up fails", func(t *testing.T) {
@@ -422,17 +682,97 @@ func TestCommitInternal(t *testing.T) {
 			cfg := f.config()
 			cfg.State = st
 			l.advance(t, newInternalServer(t, cfg), 0, 5, nil)
+
+			errRecord := errors.New("the read of the record failed")
 			st.get = func(key string) error {
 				if strings.HasPrefix(key, recordPrefix) {
-					return errors.New("the read of the record failed")
+					return errRecord
 				}
 
 				return nil
 			}
 
 			_, _, err := s.Advance(bounded(t), l.note(t, 6), []Update{l.update(t, 3, 6, nil)}, nil)
-			testkit.Error(t, err, "Advance must fail")
+			assert.ErrorIs(t, err, errRecord, "Advance must return the error of the catch-up")
 		})
+
+		t.Run("counts no conflict of a call whose commit fails", func(t *testing.T) {
+			t.Parallel()
+			_, st, s := faultyServer(t)
+			conflicts := &sumCounter{}
+			s.metrics.conflict = conflicts
+			failHead(st)
+
+			_, _, err := s.Advance(bounded(t), l.note(t, 5), []Update{l.update(t, 3, 5, nil)}, nil)
+			assert.ErrorIs(t, err, errRead, "Advance must return the error of the read")
+
+			s.lmu.Lock()
+			n := conflicts.sum.Load()
+			s.lmu.Unlock()
+
+			assert.Equal(t, n, int64(0), "the commit must count no conflict")
+		})
+
+		// overtaking returns a server over a store with hooks, whose first
+		// write of the head lets writer, another server over the same
+		// store, commit an update of other first, and then fails with
+		// failure, or writes the head for a nil failure. The error of the
+		// commit of writer is in its pointer once the call through the
+		// server returns.
+		overtaking := func(tb testing.TB, failure error) (*internalFixture, *Server, *error) {
+			tb.Helper()
+
+			other := newInternalLog(tb, "example.com/b")
+			f := newInternalFixture(tb, l, other)
+			st := &faulty{Store: f.store}
+			cfg := f.config()
+			cfg.State = st
+			s := newInternalServer(tb, cfg)
+			writer := f.server(tb)
+
+			var (
+				once     atomic.Bool
+				otherErr error
+			)
+
+			st.put = func(key string) error {
+				if key != headKey || !once.CompareAndSwap(false, true) {
+					return nil
+				}
+
+				_, _, otherErr = writer.Advance(bounded(tb), other.note(tb, 5), []Update{other.update(tb, 0, 5, nil)},
+					nil)
+
+				return failure
+			}
+
+			return f, s, &otherErr
+		}
+
+		t.Run("records each passed call once after another process replaced the head first", func(t *testing.T) {
+			t.Parallel()
+			f, s, otherErr := overtaking(t, nil)
+			l.advance(t, s, 0, 5, nil)
+			assert.NoError(t, *otherErr, "the other process must commit")
+
+			h, _, err := readHead(t.Context(), f.store)
+			assert.NoError(t, err, "the head must read")
+			rec, _, err := s.readRecord(bounded(t), h.Record)
+			assert.NoError(t, err, "the record of the head must read")
+			assert.Length(t, rec.Calls, 1, "the record must contain the call once")
+		})
+
+		t.Run("commits the call after an unknown outcome of a replacement that another process came before",
+			func(t *testing.T) {
+				t.Parallel()
+				f, s, otherErr := overtaking(t, version.ErrOutcomeUnknown)
+				l.advance(t, s, 0, 5, nil)
+				assert.NoError(t, *otherErr, "the other process must commit")
+
+				o, ok := f.server(t).st.origins.Get(hashOrigin(l.origin))
+				assert.True(t, ok, "the chain of the head must contain the call")
+				assert.Equal(t, o.size, uint64(5), "the chain must contain the update of the call")
+			})
 
 		t.Run("fails the passed calls when the catch-up after a failed replacement fails", func(t *testing.T) {
 			t.Parallel()
@@ -447,8 +787,7 @@ func TestCommitInternal(t *testing.T) {
 			failHead(st)
 
 			_, _, err := s.Advance(bounded(t), l.note(t, 5), []Update{l.update(t, 0, 5, nil)}, nil)
-			testkit.Error(t, err, "Advance must fail")
-			testkit.ErrorIsNot(t, err, ErrContention, "the error must be the error of the store")
+			assert.ErrorIs(t, err, errRead, "Advance must return the error of the read")
 		})
 
 		t.Run("fails the passed calls when the head after an unknown outcome does not read", func(t *testing.T) {
@@ -464,8 +803,7 @@ func TestCommitInternal(t *testing.T) {
 			failHead(st)
 
 			_, _, err := s.Advance(bounded(t), l.note(t, 5), []Update{l.update(t, 0, 5, nil)}, nil)
-			testkit.Error(t, err, "Advance must fail")
-			testkit.ErrorIsNot(t, err, version.ErrOutcomeUnknown, "the error must be the error of the read")
+			assert.ErrorIs(t, err, errRead, "Advance must return the error of the read")
 		})
 	})
 }

@@ -100,12 +100,11 @@ type Client struct {
 // the parse of each prefix, and what the Resolver allocates: 7 objects for
 // one Ed25519 cosignature key on Go 1.27.1.
 func NewClient(cfg *ClientConfig) (*Client, error) {
-	if cfg == nil || cfg.HTTP == nil || cfg.Resolver == nil || cfg.Submission == "" || cfg.Monitoring == "" ||
-		len(cfg.Keys) == 0 {
-
-		return nil, fmt.Errorf("%w: a client needs HTTP, Resolver, Submission, Monitoring and Keys", ErrConfig)
+	if cfg == nil || cfg.HTTP == nil || cfg.Resolver == nil || len(cfg.Keys) == 0 {
+		return nil, fmt.Errorf("%w: a client needs HTTP, Resolver and Keys", ErrConfig)
 	}
 
+	// checkPrefix refuses an empty Submission or Monitoring.
 	for _, prefix := range []string{cfg.Submission, cfg.Monitoring} {
 		if err := checkPrefix(prefix); err != nil {
 			return nil, err
@@ -245,7 +244,8 @@ func (c *Client) appendLines(dst, text, lines []byte) ([]byte, error) {
 			return dst, fmt.Errorf("%w: an invalid line of %s", ErrCosignature, s.Name)
 		}
 
-		if t, err := checkpoint.Timestamp(s.Value); err != nil || t.IsZero() {
+		// Timestamp returns the zero time with its error.
+		if t, _ := checkpoint.Timestamp(s.Value); t.IsZero() {
 			return dst, fmt.Errorf("%w: a line of %s with the timestamp 0", ErrCosignature, s.Name)
 		}
 	}

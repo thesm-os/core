@@ -15,13 +15,39 @@ import (
 	"testing"
 	"time"
 
+	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/bench"
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert/expect"
 
 	"go.thesmos.sh/core/crypto/sign/ed25519"
 	"go.thesmos.sh/core/resilience"
 	"go.thesmos.sh/core/tlog/checkpoint"
 )
+
+// cosignCeilings are the allocation contracts of cosign. Each call creates
+// the context of the signatures of a commit, as finish does: 4 objects. One
+// cosigner signs one text on the calling goroutine. Each task.Each costs 5
+// objects on Go 1.27.1, and 3 more as the first under its parent context: 8
+// over the texts of one cosigner, 8 over two cosigners, and 21 over two
+// cosigners and the texts of each.
+var cosignCeilings = []struct {
+	name      string
+	texts     [][]byte
+	cosigners int
+	want      uint64
+}{
+	{name: "of one text", texts: [][]byte{[]byte("a\n")}, cosigners: 1, want: 4},
+	{name: "of two texts", texts: [][]byte{[]byte("a\n"), []byte("b\n")}, cosigners: 1, want: 12},
+	{name: "of one text by two cosigners", texts: [][]byte{[]byte("a\n")}, cosigners: 2, want: 12},
+	{name: "of two texts by two cosigners", texts: [][]byte{[]byte("a\n"), []byte("b\n")}, cosigners: 2, want: 25},
+}
+
+// cosignWarmup is the number of calls that BenchmarkCosignInternal makes
+// before it measures. They start the threads of the scheduler and fill its
+// caches of goroutine descriptors and sudogs. The first 200 calls of two
+// texts by two cosigners at 4 CPUs allocate about 140 such objects of the
+// runtime, one more allocation per call in their rounded mean.
+const cosignWarmup = 1000
 
 // picky is a gated cosigner whose signature of a text that contains refused
 // fails while failing is set.
@@ -138,16 +164,16 @@ func TestCosignInternal(t *testing.T) {
 				waitAll(t, &wg, "every call must return")
 
 				for _, err := range errs {
-					testkit.Error(t, err, "every call of the commit must fail")
+					assert.HasError(t, err, "every call of the commit must fail")
 				}
 
-				testkit.Len(t, listKeys(t, f.store, linesPrefix), 1, "the commit must store no lines")
+				assert.Length(t, listKeys(t, f.store, linesPrefix), 1, "the commit must store no lines")
 
 				p.failing.Store(false)
 				f.clock.Advance(time.Minute)
 
 				for _, l := range []*internalLog{a, b} {
-					testkit.Equal(
+					assert.Equal(
 						t,
 						getRoute(t, s, l.origin).Code,
 						http.StatusOK,
@@ -170,16 +196,16 @@ func TestCosignInternal(t *testing.T) {
 
 			for size := uint64(1); size <= 2; size++ {
 				_, _, err := s.Advance(bounded(t), a.note(t, size), []Update{a.update(t, size-1, size, nil)}, nil)
-				testkit.Error(t, err, "the commit must fail at the failing cosigner")
+				assert.HasError(t, err, "the commit must fail at the failing cosigner")
 			}
 
-			testkit.Equal(
+			assert.Equal(
 				t,
 				f.breaker.State(s.targets[0]),
 				resilience.Open,
 				"the failing cosigner must open its circuit",
 			)
-			testkit.Equal(
+			assert.Equal(
 				t,
 				f.breaker.State(s.targets[1]),
 				resilience.Closed,
@@ -209,10 +235,10 @@ func TestCosignInternal(t *testing.T) {
 			s, c := overlapped(t, 2, true)
 
 			var g signing
-			testkit.NoError(t, s.cosign(bounded(t), texts[:2], internalTime, &g), "the signatures must run at once")
+			assert.NoError(t, s.cosign(bounded(t), texts[:2], internalTime, &g), "the signatures must run at once")
 
 			for i, text := range texts[:2] {
-				testkit.True(t, c.Verify(text, g.values[0][i]), "the value of each text must verify")
+				assert.True(t, c.Verify(text, g.values[0][i]), "the value of each text must verify")
 			}
 		})
 
@@ -229,12 +255,37 @@ func TestCosignInternal(t *testing.T) {
 				s, c := overlapped(t, tt.signers, false)
 
 				var g signing
-				testkit.NoError(t, s.cosign(bounded(t), texts, internalTime, &g), "the cosigner must sign every text")
-				testkit.True(t, c.most <= tt.signers, "the cosigner must sign at most signers texts at once")
+				assert.NoError(t, s.cosign(bounded(t), texts, internalTime, &g), "the cosigner must sign every text")
+				assert.InRange(t, c.most, 1, float64(tt.signers),
+					"the cosigner must sign at most signers texts at once")
 
 				for i, text := range texts {
-					testkit.True(t, c.Verify(text, g.values[0][i]), "the value of each text must verify")
+					assert.True(t, c.Verify(text, g.values[0][i]), "the value of each text must verify")
 				}
+			})
+		}
+	})
+}
+
+// TestCosignInternalAllocs checks the allocation contracts of cosign that
+// BenchmarkCosignInternal states. MaxAllocs counts the allocations of the
+// whole process, so the test does not run in parallel.
+//
+//nolint:paralleltest // see above
+func TestCosignInternalAllocs(t *testing.T) {
+	t.Run("cosign", func(t *testing.T) {
+		for _, tt := range cosignCeilings {
+			t.Run(tt.name, func(t *testing.T) {
+				s, g := cosignServer(t, tt.texts, tt.cosigners)
+
+				var err error
+				expect.MaxAllocs(t, func() {
+					sctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+					err = s.cosign(sctx, tt.texts, internalTime, g)
+
+					cancel()
+				}, tt.want, "cosign must allocate the objects of its contract alone")
+				assert.NoError(t, err, "the test must measure signatures")
 			})
 		}
 	})
@@ -242,55 +293,46 @@ func TestCosignInternal(t *testing.T) {
 
 func BenchmarkCosignInternal(b *testing.B) {
 	b.Run("cosign", func(b *testing.B) {
-		// Each iteration creates the context of the signatures of a commit,
-		// as finish does: 4 objects. One cosigner signs one text on the
-		// calling goroutine. Each task.Each costs 5 objects on Go 1.27.1,
-		// and 3 more as the first under its parent context: 8 over the texts
-		// of one cosigner, 8 over two cosigners, and 21 over two cosigners
-		// and the texts of each.
-		tests := []struct {
-			name      string
-			texts     [][]byte
-			cosigners int
-			want      uint64
-		}{
-			{name: "of one text", texts: [][]byte{[]byte("a\n")}, cosigners: 1, want: 4},
-			{name: "of two texts", texts: [][]byte{[]byte("a\n"), []byte("b\n")}, cosigners: 1, want: 12},
-			{name: "of one text by two cosigners", texts: [][]byte{[]byte("a\n")}, cosigners: 2, want: 12},
-			{
-				name: "of two texts by two cosigners", texts: [][]byte{[]byte("a\n"), []byte("b\n")}, cosigners: 2,
-				want: 25,
-			},
-		}
-		for _, tt := range tests {
+		for _, tt := range cosignCeilings {
 			b.Run(tt.name, func(b *testing.B) {
-				f := newInternalFixture(b)
+				s, g := cosignServer(b, tt.texts, tt.cosigners)
 
-				cfg := f.config()
-				if tt.cosigners == 2 {
-					cfg.Cosigners = []checkpoint.Cosigner{f.signer, secondCosigner(b, f)}
-				}
-
-				s := newInternalServer(b, cfg)
-
-				var g signing
-				testkit.NoError(b, s.cosign(b.Context(), tt.texts, internalTime, &g), "the first cosign must sign")
-
-				c := bench.Start(b).MaxAllocs(tt.want)
+				c := bench.Start(b).Warmup(cosignWarmup).MaxAllocs(tt.want)
 				defer c.End()
 
 				var err error
 				for c.Loop() {
 					sctx, cancel := context.WithTimeout(b.Context(), time.Minute)
-					err = s.cosign(sctx, tt.texts, internalTime, &g)
+					err = s.cosign(sctx, tt.texts, internalTime, g)
 
 					cancel()
 				}
 
-				testkit.NoError(b, err, "the benchmark must measure signatures")
+				assert.NoError(b, err, "the benchmark must measure signatures")
 			})
 		}
 	})
+}
+
+// cosignServer returns a Server of one cosigner, or of two for cosigners of
+// 2, and the signing into which it cosigned texts once, so that the
+// signing has room for their values.
+func cosignServer(tb testing.TB, texts [][]byte, cosigners int) (*Server, *signing) {
+	tb.Helper()
+
+	f := newInternalFixture(tb)
+
+	cfg := f.config()
+	if cosigners == 2 {
+		cfg.Cosigners = []checkpoint.Cosigner{f.signer, secondCosigner(tb, f)}
+	}
+
+	s := newInternalServer(tb, cfg)
+
+	g := &signing{}
+	assert.NoError(tb, s.cosign(tb.Context(), texts, internalTime, g), "the first cosign must sign")
+
+	return s, g
 }
 
 // secondCosigner returns an Ed25519 cosigner of the name
@@ -302,11 +344,11 @@ func secondCosigner(tb testing.TB, f *internalFixture) checkpoint.Cosigner {
 	seed := sha256.Sum256([]byte("example.com/second"))
 
 	k, err := ed25519.New(stded25519.NewKeyFromSeed(seed[:]))
-	testkit.NoError(tb, err, "the seed must give a key")
+	assert.NoError(tb, err, "the seed must give a key")
 
 	c, err := checkpoint.NewCosignatureV1Signer("example.com/second", checkpoint.TypeEd25519Cosignature, k,
 		f.clock, time.Second)
-	testkit.NoError(tb, err, "NewCosignatureV1Signer must accept the key")
+	assert.NoError(tb, err, "NewCosignatureV1Signer must accept the key")
 
 	return c
 }

@@ -10,8 +10,9 @@ import (
 	"strings"
 	"testing"
 
+	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/bench"
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert/expect"
 
 	"go.thesmos.sh/core/crypto"
 	"go.thesmos.sh/core/errs"
@@ -40,27 +41,27 @@ func TestProtocolInternal(t *testing.T) {
 			t.Run("sets the old size, the proof and the note of the example of tlog-witness", func(t *testing.T) {
 				t.Parallel()
 				var r request
-				testkit.NoError(t, r.parse([]byte(exampleRequest)), "parse must accept the example")
-				testkit.Equal(t, r.oldSize, uint64(20852014), "parse must read the old size")
-				testkit.Equal(t, r.proof, []crypto.Digest{digest(t, exampleProof1), digest(t, exampleProof2)},
+				assert.NoError(t, r.parse([]byte(exampleRequest)), "parse must accept the example")
+				assert.Equal(t, r.oldSize, uint64(20852014), "parse must read the old size")
+				assert.Equal(t, r.proof, []crypto.Digest{digest(t, exampleProof1), digest(t, exampleProof2)},
 					"parse must read both proof lines")
-				testkit.Equal(t, string(r.note), exampleNote, "parse must leave the note after the blank line")
+				assert.Equal(t, string(r.note), exampleNote, "parse must leave the note after the blank line")
 			})
 
 			t.Run("sets an old size of 0 and no proof", func(t *testing.T) {
 				t.Parallel()
 				var r request
-				testkit.NoError(t, r.parse([]byte("old 0\n\n"+exampleNote)), "parse must accept the old size 0")
-				testkit.Equal(t, r.oldSize, uint64(0), "parse must read the old size 0")
-				testkit.Len(t, r.proof, 0, "parse must read no proof")
+				assert.NoError(t, r.parse([]byte("old 0\n\n"+exampleNote)), "parse must accept the old size 0")
+				assert.Equal(t, r.oldSize, uint64(0), "parse must read the old size 0")
+				assert.Empty(t, r.proof, "parse must read no proof")
 			})
 
 			t.Run("sets 63 proof lines", func(t *testing.T) {
 				t.Parallel()
 				var r request
 				body := "old 1\n" + strings.Repeat(exampleProof1+"\n", maxProof) + "\n" + exampleNote
-				testkit.NoError(t, r.parse([]byte(body)), "parse must accept 63 proof lines")
-				testkit.Len(t, r.proof, maxProof, "parse must read 63 proof lines")
+				assert.NoError(t, r.parse([]byte(body)), "parse must accept 63 proof lines")
+				assert.Length(t, r.proof, maxProof, "parse must read 63 proof lines")
 			})
 
 			t.Run("sets proof hashes of 48 and 64 bytes", func(t *testing.T) {
@@ -69,23 +70,23 @@ func TestProtocolInternal(t *testing.T) {
 				h48, h64 := randomHash(t, 48), randomHash(t, 64)
 				body := "old 1\n" + base64.StdEncoding.EncodeToString(h48.Bytes()) + "\n" +
 					base64.StdEncoding.EncodeToString(h64.Bytes()) + "\n\n" + exampleNote
-				testkit.NoError(t, r.parse([]byte(body)), "parse must accept hashes of 48 and 64 bytes")
-				testkit.Equal(t, r.proof, []crypto.Digest{h48, h64}, "parse must read both hashes")
+				assert.NoError(t, r.parse([]byte(body)), "parse must accept hashes of 48 and 64 bytes")
+				assert.Equal(t, r.proof, []crypto.Digest{h48, h64}, "parse must read both hashes")
 			})
 
 			t.Run("reuses the capacity of the proof", func(t *testing.T) {
 				t.Parallel()
 				r := request{proof: make([]crypto.Digest, 0, 2)}
 				first := &r.proof[:1][0]
-				testkit.NoError(t, r.parse([]byte(exampleRequest)), "parse must accept the example")
-				testkit.True(t, &r.proof[0] == first, "parse must append into the proof of r")
+				assert.NoError(t, r.parse([]byte(exampleRequest)), "parse must accept the example")
+				assert.Equal(t, &r.proof[0], first, "parse must append into the proof of r", assert.ByIdentity())
 			})
 
 			t.Run("leaves the note unparsed", func(t *testing.T) {
 				t.Parallel()
 				var r request
-				testkit.NoError(t, r.parse([]byte("old 5\n\nnot a note")), "parse must not parse the note")
-				testkit.Equal(t, string(r.note), "not a note", "parse must return the bytes after the blank line")
+				assert.NoError(t, r.parse([]byte("old 5\n\nnot a note")), "parse must not parse the note")
+				assert.Equal(t, string(r.note), "not a note", "parse must return the bytes after the blank line")
 			})
 
 			tests := []struct {
@@ -94,6 +95,10 @@ func TestProtocolInternal(t *testing.T) {
 			}{
 				{name: "returns ErrRequest for a body without a newline", give: "old 5"},
 				{name: "returns ErrRequest for a first line without the old prefix", give: "size 5\n\n" + exampleNote},
+				{
+					name: "returns ErrRequest for a first line of a size without the old prefix",
+					give: "5\n\n" + exampleNote,
+				},
 				{name: "returns ErrRequest for an old size with a leading zero", give: "old 05\n\n" + exampleNote},
 				{name: "returns ErrRequest for an empty old size", give: "old \n\n" + exampleNote},
 				{name: "returns ErrRequest for an old size that is not a decimal", give: "old 5a\n\n" + exampleNote},
@@ -117,6 +122,10 @@ func TestProtocolInternal(t *testing.T) {
 					give: "old 1\n\r" + exampleProof1 + "\n\n" + exampleNote,
 				},
 				{
+					name: "returns ErrRequest for a proof line with a character after its padding",
+					give: "old 1\n" + exampleProof1 + "A\n\n" + exampleNote,
+				},
+				{
 					name: "returns ErrRequest for a proof line of 20 bytes",
 					give: "old 1\n" + base64.StdEncoding.EncodeToString(make([]byte, 20)) + "\n\n" + exampleNote,
 				},
@@ -134,11 +143,19 @@ func TestProtocolInternal(t *testing.T) {
 					t.Parallel()
 					r := request{oldSize: 7}
 					err := r.parse([]byte(tt.give))
-					testkit.ErrorIs(t, err, ErrRequest, "parse must refuse the body")
-					testkit.Equal(t, errs.Classify(err), errs.Invalid, "the error must classify as Invalid")
-					testkit.Equal(t, r.oldSize, uint64(7), "parse must leave r unchanged")
+					assert.ErrorIs(t, err, ErrRequest, "parse must refuse the body")
+					assert.Equal(t, errs.Classify(err), errs.Invalid, "the error must classify as Invalid")
+					assert.Equal(t, r.oldSize, uint64(7), "parse must leave r unchanged")
 				})
 			}
+
+			t.Run("returns an ErrRequest that names a body without a newline", func(t *testing.T) {
+				t.Parallel()
+				var r request
+				err := r.parse([]byte("old 5"))
+				assert.ErrorIs(t, err, ErrRequest, "parse must refuse the body")
+				assert.Contains(t, err.Error(), "without an old size line", "the error must name the body")
+			})
 		})
 	})
 
@@ -149,16 +166,16 @@ func TestProtocolInternal(t *testing.T) {
 			t.Parallel()
 			proof := []crypto.Digest{digest(t, exampleProof1), digest(t, exampleProof2)}
 			got := appendRequest([]byte("prefix:"), 20852014, proof, []byte(exampleNote))
-			testkit.Equal(t, string(got), "prefix:"+exampleRequest, "appendRequest must write the example")
+			assert.Equal(t, string(got), "prefix:"+exampleRequest, "appendRequest must write the example")
 		})
 
 		t.Run("appends a body that parse reads back", func(t *testing.T) {
 			t.Parallel()
 			proof := []crypto.Digest{randomHash(t, 32), randomHash(t, 64)}
 			var r request
-			testkit.NoError(t, r.parse(appendRequest(nil, 0, proof, []byte(exampleNote))), "parse must read the body")
-			testkit.Equal(t, r.proof, proof, "the proof must round-trip")
-			testkit.Equal(t, string(r.note), exampleNote, "the note must round-trip")
+			assert.NoError(t, r.parse(appendRequest(nil, 0, proof, []byte(exampleNote))), "parse must read the body")
+			assert.Equal(t, r.proof, proof, "the proof must round-trip")
+			assert.Equal(t, string(r.note), exampleNote, "the note must round-trip")
 		})
 	})
 
@@ -167,13 +184,13 @@ func TestProtocolInternal(t *testing.T) {
 
 		t.Run("appends the decimal and a newline", func(t *testing.T) {
 			t.Parallel()
-			testkit.Equal(t, string(appendSize([]byte("a:"), 20852163)), "a:20852163\n",
+			assert.Equal(t, string(appendSize([]byte("a:"), 20852163)), "a:20852163\n",
 				"appendSize must write the size and a newline")
 		})
 
 		t.Run("appends maxSizeBody bytes for the largest size", func(t *testing.T) {
 			t.Parallel()
-			testkit.Equal(t, len(appendSize(nil, math.MaxUint64)), maxSizeBody,
+			assert.Equal(t, len(appendSize(nil, math.MaxUint64)), maxSizeBody,
 				"the body of a 409 must fit an array of maxSizeBody bytes")
 		})
 	})
@@ -186,7 +203,7 @@ func TestProtocolInternal(t *testing.T) {
 
 			t.Run("returns a text of maxSizeError bytes for the largest size", func(t *testing.T) {
 				t.Parallel()
-				testkit.Equal(t, len((&SizeError{Size: math.MaxUint64}).Error()), maxSizeError,
+				assert.Equal(t, len((&SizeError{Size: math.MaxUint64}).Error()), maxSizeError,
 					"the text of a SizeError must fit an array of maxSizeError bytes")
 			})
 		})
@@ -198,8 +215,8 @@ func TestProtocolInternal(t *testing.T) {
 		t.Run("returns the size of a body that appendSize writes", func(t *testing.T) {
 			t.Parallel()
 			size, ok := parseSizeBody(appendSize(nil, 18446744073709551615))
-			testkit.True(t, ok, "parseSizeBody must accept the body")
-			testkit.Equal(t, size, uint64(18446744073709551615), "parseSizeBody must read the size")
+			assert.True(t, ok, "parseSizeBody must accept the body")
+			assert.Equal(t, size, uint64(18446744073709551615), "parseSizeBody must read the size")
 		})
 
 		tests := []struct {
@@ -215,9 +232,39 @@ func TestProtocolInternal(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
 				_, ok := parseSizeBody([]byte(tt.give))
-				testkit.False(t, ok, "parseSizeBody must refuse the body")
+				assert.False(t, ok, "parseSizeBody must refuse the body")
 			})
 		}
+	})
+}
+
+// TestProtocolInternalAllocs checks the allocation contracts of the parse
+// and the write of a request that BenchmarkProtocolInternal states.
+// MaxAllocs counts the allocations of the whole process, so the test does
+// not run in parallel.
+//
+//nolint:paralleltest // see above
+func TestProtocolInternalAllocs(t *testing.T) {
+	t.Run("request", func(t *testing.T) {
+		t.Run("parse", func(t *testing.T) {
+			body := []byte(exampleRequest)
+			r := request{proof: make([]crypto.Digest, 0, maxProof)}
+
+			var err error
+			expect.MaxAllocs(t, func() { err = r.parse(body) }, 0, "parse must not allocate into a request with room")
+			assert.NoError(t, err, "the test must measure a body that parse accepts")
+		})
+	})
+
+	t.Run("appendRequest", func(t *testing.T) {
+		proof := []crypto.Digest{digest(t, exampleProof1), digest(t, exampleProof2)}
+		note := []byte(exampleNote)
+		buf := make([]byte, 0, len(exampleRequest))
+
+		var got []byte
+		expect.MaxAllocs(t, func() { got = appendRequest(buf[:0], 20852014, proof, note) }, 0,
+			"appendRequest must not allocate into a buffer with room")
+		assert.Equal(t, string(got), exampleRequest, "the test must measure the example")
 	})
 }
 
@@ -235,7 +282,7 @@ func BenchmarkProtocolInternal(b *testing.B) {
 				err = r.parse(body)
 			}
 
-			testkit.NoError(b, err, "the benchmark must measure a body that parse accepts")
+			assert.NoError(b, err, "the benchmark must measure a body that parse accepts")
 		})
 	})
 
@@ -252,7 +299,7 @@ func BenchmarkProtocolInternal(b *testing.B) {
 			got = appendRequest(buf[:0], 20852014, proof, note)
 		}
 
-		testkit.Equal(b, string(got), exampleRequest, "the benchmark must measure the example")
+		assert.Equal(b, string(got), exampleRequest, "the benchmark must measure the example")
 	})
 }
 
@@ -262,7 +309,7 @@ func digest(tb testing.TB, line string) crypto.Digest {
 	tb.Helper()
 
 	h, ok := parseHash([]byte(line))
-	testkit.True(tb, ok, "parseHash must accept "+line)
+	assert.True(tb, ok, "parseHash must accept "+line)
 
 	return h
 }
@@ -275,7 +322,7 @@ func randomHash(tb testing.TB, size int) crypto.Digest {
 	_, _ = rand.Read(raw)
 
 	h, err := crypto.DigestFromBytes(raw)
-	testkit.NoError(tb, err, "DigestFromBytes must accept the size")
+	assert.NoError(tb, err, "DigestFromBytes must accept the size")
 
 	return h
 }

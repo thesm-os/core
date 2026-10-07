@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
 
 	"go.thesmos.sh/core/errs"
 )
@@ -25,13 +25,13 @@ func TestJournalInternal(t *testing.T) {
 		t.Run("appends the sequence number in 20 digits, a hyphen and the hash of the encoding", func(t *testing.T) {
 			t.Parallel()
 			got := string(appendName([]byte("records/"), 42, []byte("abc")))
-			testkit.Equal(t, got, "records/00000000000000000042-"+sha256OfAbc, "appendName must write the name")
+			assert.Equal(t, got, "records/00000000000000000042-"+sha256OfAbc, "appendName must write the name")
 		})
 
 		t.Run("appends the largest sequence number in 20 digits", func(t *testing.T) {
 			t.Parallel()
 			got := string(appendName(nil, 18446744073709551615, []byte("abc")))
-			testkit.Equal(t, got, "18446744073709551615-"+sha256OfAbc, "appendName must write the name")
+			assert.Equal(t, got, "18446744073709551615-"+sha256OfAbc, "appendName must write the name")
 		})
 	})
 
@@ -41,8 +41,8 @@ func TestJournalInternal(t *testing.T) {
 		t.Run("returns the sequence number of a name", func(t *testing.T) {
 			t.Parallel()
 			seq, ok := parseName("00000000000000000042-" + sha256OfAbc)
-			testkit.True(t, ok, "parseName must accept the name")
-			testkit.Equal(t, seq, uint64(42), "parseName must read the sequence number")
+			assert.True(t, ok, "parseName must accept the name")
+			assert.Equal(t, seq, uint64(42), "parseName must read the sequence number")
 		})
 
 		valid := "00000000000000000042-" + sha256OfAbc
@@ -56,6 +56,11 @@ func TestJournalInternal(t *testing.T) {
 			{name: "reports false for a sequence number that is not decimal", give: "a" + valid[1:]},
 			{name: "reports false for a hash of upper case", give: valid[:21] + strings.ToUpper(valid[21:])},
 			{name: "reports false for a hash that is not hexadecimal", give: valid[:len(valid)-1] + "g"},
+			{name: "reports false for a hash with a character below the digits", give: valid[:len(valid)-1] + "/"},
+			{
+				name: "reports false for a hash with a character between the digits and the letters",
+				give: valid[:len(valid)-1] + ":",
+			},
 			{
 				name: "reports false for a sequence number above the largest uint64",
 				give: "99999999999999999999-" + sha256OfAbc,
@@ -65,7 +70,7 @@ func TestJournalInternal(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
 				_, ok := parseName(tt.give)
-				testkit.False(t, ok, "parseName must refuse "+tt.give)
+				assert.False(t, ok, "parseName must refuse "+tt.give)
 			})
 		}
 	})
@@ -75,7 +80,7 @@ func TestJournalInternal(t *testing.T) {
 
 		t.Run("returns nil for the encoding of the name", func(t *testing.T) {
 			t.Parallel()
-			testkit.NoError(t, checkName("00000000000000000042-"+sha256OfAbc, []byte("abc")),
+			assert.NoError(t, checkName("00000000000000000042-"+sha256OfAbc, []byte("abc")),
 				"checkName must accept the encoding")
 		})
 
@@ -85,13 +90,14 @@ func TestJournalInternal(t *testing.T) {
 		}{
 			{name: "returns ErrJournal for another encoding", give: "00000000000000000042-" + sha256OfAbc},
 			{name: "returns ErrJournal for a name of another length", give: "42-" + sha256OfAbc},
+			{name: "returns ErrJournal for a name shorter than a sequence number", give: "42"},
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
 				err := checkName(tt.give, []byte("abd"))
-				testkit.ErrorIs(t, err, ErrJournal, "checkName must refuse the encoding")
-				testkit.Equal(t, errs.Classify(err), errs.Integrity, "the error must classify as Integrity")
+				assert.ErrorIs(t, err, ErrJournal, "checkName must refuse the encoding")
+				assert.Equal(t, errs.Classify(err), errs.Integrity, "the error must classify as Integrity")
 			})
 		}
 	})
