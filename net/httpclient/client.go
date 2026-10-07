@@ -4,6 +4,7 @@
 package httpclient
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -17,6 +18,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"go.thesmos.sh/core/clock"
@@ -91,6 +93,13 @@ const (
 
 // clientSpan is the options of every span of the client.
 var clientSpan = []telemetry.SpanOption{telemetry.WithSpanKind(telemetry.SpanKindClient)}
+
+// errFenced is the error of a Read of a fence after its Close, and of the
+// GetBody of an attempt of [Client.AppendFetchBody] after the attempt ended.
+// An attempt closes its fences only once its own result is set, so no method
+// of the package returns the error. Classifies as Invalid: a read of a body
+// after its Close fails the same way every time.
+var errFenced = errs.WithClass(errors.New("httpclient: the attempt of the request body has ended"), errs.Invalid)
 
 // series identifies an attribute set of http.client.request.duration.
 type series struct {
@@ -392,7 +401,59 @@ func (c *Client) Fetch(req *http.Request) ([]byte, error) {
 // response. A body without room in dst grows dst. A refused response
 // allocates its StatusError and the 1 KiB buffer of its body as well.
 func (c *Client) AppendFetch(dst []byte, req *http.Request) ([]byte, error) {
-	b, err := attempts(&call{c: c, req: req}, func(resp *http.Response, err error) ([]byte, error) {
+	return c.appendFetch(&call{c: c, req: req}, dst)
+}
+
+// AppendFetchBody sends req with body as its request body, as
+// [Client.AppendFetch] sends req, and appends to dst the body of a response
+// that succeeded. req has no body of its own: its Body is nil or
+// http.NoBody.
+//
+// The caller may reuse the memory of body when the call returns. Each
+// attempt sends body through fences of its own and closes them before it
+// returns, because net/http can read a request body after its round trip
+// has returned. Each fence reads body under a lock. After its Close, a Read
+// returns an error and does not read body. The GetBody of the request of
+// each attempt hands out a new fence over body, so net/http sends body
+// again where it rewinds a request: on another connection after a failure
+// that the server did not process, and after a 307 or a 308. A GetBody
+// after the end of its attempt hands out no fence and returns an error.
+//
+// An empty body sends the request without a body and without a fence.
+//
+// Error modes: those of [Client.Fetch], and [ErrRequestBody], classified
+// Invalid, before any attempt, for a req with a body of its own, which
+// AppendFetchBody closes. With an error, AppendFetchBody returns dst
+// unchanged.
+//
+// # Allocation contract
+//
+// AppendFetchBody allocates as AppendFetch does, and 2 objects of the client
+// for each attempt: the first fence of its body, and its GetBody. Each body
+// that GetBody hands out allocates its fence. net/http allocates 4 objects
+// more for a request with a body than for one without: a copy of the
+// request and a tracker of its body, the text of its Content-Length header,
+// and a buffer of the length of the body, at most 32 KiB, through which it
+// copies a body that it does not know to be in memory. A body of 100 bytes
+// or more costs 1 object more, the digits of its length. On a connection
+// that the transport reuses, a POST of a body of 12 bytes into a dst with
+// room for the response allocates 60 objects with Go 1.27.1. An empty body
+// allocates as AppendFetch does.
+func (c *Client) AppendFetchBody(dst []byte, req *http.Request, body []byte) ([]byte, error) {
+	if req.Body != nil && req.Body != http.NoBody {
+		_ = req.Body.Close()
+
+		return dst, fmt.Errorf("%w: %s", ErrRequestBody, c.name)
+	}
+
+	return c.appendFetch(&call{c: c, req: req, body: body}, dst)
+}
+
+// appendFetch sends the request of k under the guards of its client, and
+// appends to dst the body of a response that succeeded, as
+// [Client.AppendFetch] describes.
+func (c *Client) appendFetch(k *call, dst []byte) ([]byte, error) {
+	b, err := attempts(k, func(resp *http.Response, err error) ([]byte, error) {
 		if resp == nil {
 			return nil, err
 		}
@@ -414,7 +475,7 @@ func (c *Client) AppendFetch(dst []byte, req *http.Request) ([]byte, error) {
 		// appendBody consumes the body to its end or fails, so the body
 		// closes without a drain. The transport reuses the connection of a
 		// body that it read to its end, and closes any other.
-		b, err := c.appendBody(req.Context(), dst, resp)
+		b, err := c.appendBody(k.req.Context(), dst, resp)
 		_ = resp.Body.Close()
 
 		return b, err
@@ -426,14 +487,148 @@ func (c *Client) AppendFetch(dst []byte, req *http.Request) ([]byte, error) {
 	return b, nil
 }
 
-// call is one call of [Client.Do], [Client.Fetch] or [Client.AppendFetch]:
-// its request, the host and the port of its URL, and the response of the
-// attempt before the current one, which the next attempt discards.
+// fence is a request body of one attempt of [Client.AppendFetchBody]: the
+// body of its request, or a body that the GetBody of the request handed
+// out. It reads the body bytes of the call through a reader of its own.
+//
+// net/http can read a request body after it closed it, and after its round
+// trip returned: the write loop of an HTTP/1 connection reads between two
+// writes while the round trip closes the body of an attempt that failed,
+// and an HTTP/2 stream closes the body in a goroutine of its own while its
+// writer can still read. A fence fails every such Read without reading the
+// body:
+//
+//   - Read reads under mu, and returns errFenced after Close.
+//   - Close takes mu, so it returns once no Read runs, and every later Read
+//     returns errFenced without a read of the body.
+//
+// The attempt closes every fence that it handed out before it returns, and
+// no fence serves two requests, so a late Read of a request whose attempt
+// has ended does not read the body.
+//
+// # Concurrency
+//
+// Safe for concurrent use.
+//
+// # Allocation contract
+//
+// Read and Close allocate nothing.
+type fence struct {
+	// prev is the fence that the attempt handed out before this one through
+	// GetBody, and nil for the first of them. The attempt closes them along
+	// this list.
+	prev *fence
+
+	// r reads the body of the call.
+	r bytes.Reader
+
+	// mu orders every Read before the end of Close, which closed records.
+	mu     sync.Mutex
+	closed bool
+}
+
+// Read reads from the body of the call into p. After Close it returns
+// errFenced and does not read the body.
+func (f *fence) Read(p []byte) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if f.closed {
+		return 0, errFenced
+	}
+
+	return f.r.Read(p) //nolint:wrapcheck // the reader's own io.EOF ends the read of the transport
+}
+
+// Close ends the reads of f. It returns once no Read of f runs, and every
+// later Read returns errFenced. It returns nil, also on a later call.
+func (f *fence) Close() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.closed = true
+
+	return nil
+}
+
+// attemptBody is the request body of one attempt of
+// [Client.AppendFetchBody]. Its embedded fence is the Body of the request of
+// the attempt. replay is the GetBody of the request, and hands out the other
+// fences to net/http. end closes every fence before the attempt returns.
+//
+// # Concurrency
+//
+// Safe for concurrent use. mu guards the fences that replay hands out, on
+// whatever goroutine net/http calls GetBody.
+//
+// # Allocation contract
+//
+// An attemptBody is one allocation, its first fence included. replay
+// allocates the fence that it hands out.
+type attemptBody struct {
+	// last is the fence that replay handed out last, which links to the
+	// earlier ones through prev, and nil before the first replay.
+	last *fence
+
+	// body is the body bytes of the call, from which every fence reads.
+	body []byte
+
+	// fence is the first fence of the attempt.
+	fence
+
+	// mu guards last and ended.
+	mu    sync.Mutex
+	ended bool
+}
+
+// replay is the GetBody of the request of the attempt. It hands out a new
+// fence over the body bytes, which end closes. After end it hands out no
+// fence and returns errFenced, so a GetBody after the end of the attempt
+// does not read the body.
+func (a *attemptBody) replay() (io.ReadCloser, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	if a.ended {
+		return nil, errFenced
+	}
+
+	f := &fence{prev: a.last}
+	f.r.Reset(a.body)
+	a.last = f
+
+	return f, nil
+}
+
+// end closes the first fence of the attempt and every fence that replay
+// handed out, and makes every later replay return errFenced.
+func (a *attemptBody) end() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	a.ended = true
+	_ = a.Close()
+
+	for f := a.last; f != nil; f = f.prev {
+		_ = f.Close()
+	}
+}
+
+// call is one call of [Client.Do], [Client.Fetch], [Client.AppendFetch] or
+// [Client.AppendFetchBody]: its request, the host and the port of its URL,
+// the response of the attempt before the current one, which the next
+// attempt discards, and the body bytes of AppendFetchBody.
 type call struct {
 	c    *Client
 	req  *http.Request
 	prev *http.Response
 	host string
+
+	// body is the body bytes of a call of AppendFetchBody, which each
+	// attempt sends through an attemptBody of its own, and nil for any other
+	// call.
+	body []byte
+
 	port int
 
 	// sent reports that an attempt sent the request, so the next attempt
@@ -476,7 +671,18 @@ func attempts[T any](k *call, read func(*http.Response, error) (T, error)) (T, e
 		}
 
 		body := req.Body
-		if k.sent && req.GetBody != nil {
+
+		var getBody func() (io.ReadCloser, error)
+
+		if len(k.body) > 0 {
+			// The attempt sends the body bytes of AppendFetchBody through
+			// fences of its own, and closes them once read has returned.
+			a := &attemptBody{body: k.body}
+			a.r.Reset(k.body)
+			body, getBody = a, a.replay
+
+			defer a.end()
+		} else if k.sent && req.GetBody != nil {
 			replayed, err := req.GetBody()
 			if err != nil {
 				return read(nil, fmt.Errorf("httpclient: %s: replay the body: %w", c.name, err))
@@ -489,7 +695,7 @@ func attempts[T any](k *call, read func(*http.Response, error) (T, error)) (T, e
 
 		// read takes over the body: AppendFetch's read closes it, and Do
 		// returns it to its caller or discards it at the next attempt.
-		return read(c.send(ctx, k, body)) //nolint:bodyclose // see above
+		return read(c.send(ctx, k, body, getBody)) //nolint:bodyclose // see above
 	}
 
 	guarded := attempt
@@ -535,15 +741,23 @@ func attempts[T any](k *call, read func(*http.Response, error) (T, error)) (T, e
 // its trace into a copy of the headers of the request, calls the function
 // of WithPrepare, sends the copy, and classifies the response. It records
 // the duration of the attempt and ends the span with the error of the
-// attempt.
+// attempt. With a getBody, the body bytes of AppendFetchBody, the copy
+// declares their length and has getBody as its GetBody.
 //
 // http.Client.Do closes the body of a response that it returns with an
 // error, so send returns no response with an error of the transport.
-func (c *Client) send(ctx context.Context, k *call, body io.ReadCloser) (*http.Response, error) {
+func (c *Client) send(
+	ctx context.Context, k *call, body io.ReadCloser, getBody func() (io.ReadCloser, error),
+) (*http.Response, error) {
 	ctx, span := c.tracer.Start(ctx, telemetry.SpanName(semconv.Method(k.req.Method)), clientSpan...)
 
 	r := k.req.WithContext(ctx)
 	r.Body = body
+	if getBody != nil {
+		r.ContentLength = int64(len(k.body))
+		r.GetBody = getBody
+	}
+
 	r.Header = k.req.Header.Clone()
 	if r.Header == nil {
 		r.Header = http.Header{}

@@ -24,6 +24,7 @@ func TestHttpclientSentinelErrors(t *testing.T) {
 	all := []errEntry{
 		{"ErrBlocked", httpclient.ErrBlocked},
 		{"ErrConfig", httpclient.ErrConfig},
+		{"ErrRequestBody", httpclient.ErrRequestBody},
 		{"ErrTooLarge", httpclient.ErrTooLarge},
 	}
 

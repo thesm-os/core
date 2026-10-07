@@ -46,6 +46,9 @@ const (
 	// which the result keeps before the body.
 	prefix = "items:"
 
+	// requestBody is the body that the cases of AppendFetchBody send.
+	requestBody = "a checkpoint"
+
 	// patience bounds every wait of a case for a value of a handler or of a
 	// call, above any correct wait, so a case fails where a defect would
 	// leave it waiting.
@@ -541,6 +544,28 @@ func TestClient(t *testing.T) {
 			assert.NoError(t, resp.Body.Close(), "the body must close")
 			assert.Equal(t, await(t, received, "the server must receive the request"), "application/json",
 				"the server must receive the header of the caller")
+		})
+
+		t.Run("sends the body of the caller's request with its length", func(t *testing.T) {
+			t.Parallel()
+			lengths := make(chan int64, 1)
+			srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				_, _ = io.Copy(io.Discard, r.Body)
+				lengths <- r.ContentLength
+			}))
+			t.Cleanup(srv.Close)
+
+			c, err := httpclient.New(dependency, required, loopback)
+			assert.NoError(t, err, "New must accept the options")
+
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, srv.URL, strings.NewReader(body))
+			assert.NoError(t, err, "the request must build")
+
+			resp, err := c.Do(req)
+			assert.NoError(t, err, "Do must return the response")
+			assert.NoError(t, resp.Body.Close(), "the body must close")
+			assert.Equal(t, await(t, lengths, "the server must receive the request"), int64(len(body)),
+				"the request must declare the length of the body of the caller")
 		})
 
 		t.Run("injects the trace of the span of the attempt", func(t *testing.T) {
@@ -1223,6 +1248,193 @@ func TestClient(t *testing.T) {
 			expect.Equal(t, hits.Load(), int32(2), "the client must send two attempts")
 		})
 	})
+
+	t.Run("AppendFetchBody", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("appends the body of a response that succeeded to the bytes of dst", func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, body)
+			}))
+			t.Cleanup(srv.Close)
+
+			c, err := httpclient.New(dependency, required, loopback)
+			assert.NoError(t, err, "New must accept the options")
+
+			got, err := appendFetchBody(t, c, []byte(prefix), http.MethodPost, srv.URL, []byte(requestBody))
+			assert.NoError(t, err, "AppendFetchBody must read the body of the response")
+			assert.Equal(t, string(got), prefix+body, "AppendFetchBody must keep the bytes of dst before the body")
+		})
+
+		t.Run("sends body with its length as the body of the request", func(t *testing.T) {
+			t.Parallel()
+			received := make(chan string, 1)
+			lengths := make(chan int64, 1)
+			srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				b, _ := io.ReadAll(r.Body)
+				received <- string(b)
+				lengths <- r.ContentLength
+			}))
+			t.Cleanup(srv.Close)
+
+			c, err := httpclient.New(dependency, required, loopback)
+			assert.NoError(t, err, "New must accept the options")
+
+			_, err = appendFetchBody(t, c, nil, http.MethodPost, srv.URL, []byte(requestBody))
+			assert.NoError(t, err, "AppendFetchBody must send the request")
+			expect.Equal(t, await(t, received, "the server must receive the body"), requestBody,
+				"the server must receive body")
+			expect.Equal(t, await(t, lengths, "the server must receive the length"), int64(len(requestBody)),
+				"the request must declare the length of body")
+		})
+
+		redirects := []struct {
+			name   string
+			status int
+		}{
+			{name: "sends body again after a 307", status: http.StatusTemporaryRedirect},
+			{name: "sends body again after a 308", status: http.StatusPermanentRedirect},
+		}
+		for _, tt := range redirects {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				received := make(chan string, 1)
+				mux := http.NewServeMux()
+				mux.HandleFunc("/first", func(w http.ResponseWriter, r *http.Request) {
+					http.Redirect(w, r, "/second", tt.status)
+				})
+				mux.HandleFunc("/second", func(_ http.ResponseWriter, r *http.Request) {
+					b, _ := io.ReadAll(r.Body)
+					received <- string(b)
+				})
+				srv := httptest.NewServer(mux)
+				t.Cleanup(srv.Close)
+
+				c, err := httpclient.New(dependency, required, loopback)
+				assert.NoError(t, err, "New must accept the options")
+
+				_, err = appendFetchBody(t, c, nil, http.MethodPost, srv.URL+"/first", []byte(requestBody))
+				assert.NoError(t, err, "AppendFetchBody must follow the redirect")
+				assert.Equal(t, await(t, received, "the target of the redirect must receive the request"), requestBody,
+					"the target of the redirect must receive body")
+			})
+		}
+
+		t.Run("sends body on each attempt of a retry", func(t *testing.T) {
+			t.Parallel()
+			received := make(chan string, attempts)
+			var hits atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				b, _ := io.ReadAll(r.Body)
+				received <- string(b)
+				if hits.Add(1) == 1 {
+					w.WriteHeader(http.StatusServiceUnavailable)
+				}
+			}))
+			t.Cleanup(srv.Close)
+
+			retry := retrier(t, fake.New(origin))
+			c, err := httpclient.New(dependency, required, loopback, httpclient.WithRetrier(retry))
+			assert.NoError(t, err, "New must accept the options")
+
+			_, err = appendFetchBody(t, c, nil, http.MethodPut, srv.URL, []byte(requestBody))
+			assert.NoError(t, err, "AppendFetchBody must return the body of the retry")
+			expect.Equal(t, await(t, received, "the first attempt must arrive"), requestBody,
+				"the first attempt must send body")
+			expect.Equal(t, await(t, received, "the second attempt must arrive"), requestBody,
+				"the second attempt must send body")
+		})
+
+		t.Run("sends body over HTTP/2", func(t *testing.T) {
+			t.Parallel()
+			protocols := make(chan int, 1)
+			received := make(chan string, 1)
+			srv := httptest.NewUnstartedServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				b, _ := io.ReadAll(r.Body)
+				protocols <- r.ProtoMajor
+				received <- string(b)
+			}))
+			srv.EnableHTTP2 = true
+			srv.StartTLS()
+			t.Cleanup(srv.Close)
+
+			transport, ok := srv.Client().Transport.(*http.Transport)
+			assert.True(t, ok, "the client of httptest must have an http.Transport")
+
+			c, err := httpclient.New(dependency, required, loopback, httpclient.WithTLS(transport.TLSClientConfig))
+			assert.NoError(t, err, "New must accept the options")
+
+			_, err = appendFetchBody(t, c, nil, http.MethodPost, srv.URL, []byte(requestBody))
+			assert.NoError(t, err, "AppendFetchBody must send the request")
+			assert.Equal(t, await(t, protocols, "the server must receive the request"), 2,
+				"the request must arrive over HTTP/2")
+			assert.Equal(t, await(t, received, "the server must receive the body"), requestBody,
+				"the server must receive body over HTTP/2")
+		})
+
+		t.Run("sends body for a request whose Body is http.NoBody", func(t *testing.T) {
+			t.Parallel()
+			received := make(chan string, 1)
+			srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				b, _ := io.ReadAll(r.Body)
+				received <- string(b)
+			}))
+			t.Cleanup(srv.Close)
+
+			c, err := httpclient.New(dependency, required, loopback)
+			assert.NoError(t, err, "New must accept the options")
+
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, srv.URL, http.NoBody)
+			assert.NoError(t, err, "the request must build")
+
+			_, err = c.AppendFetchBody(nil, req, []byte(requestBody))
+			assert.NoError(t, err, "AppendFetchBody must send a request whose Body is http.NoBody")
+			assert.Equal(t, await(t, received, "the server must receive the body"), requestBody,
+				"the server must receive body")
+		})
+
+		t.Run("sends a request without a body for an empty body", func(t *testing.T) {
+			t.Parallel()
+			received := make(chan string, 1)
+			lengths := make(chan int64, 1)
+			srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				b, _ := io.ReadAll(r.Body)
+				received <- string(b)
+				lengths <- r.ContentLength
+			}))
+			t.Cleanup(srv.Close)
+
+			c, err := httpclient.New(dependency, required, loopback)
+			assert.NoError(t, err, "New must accept the options")
+
+			_, err = appendFetchBody(t, c, nil, http.MethodPost, srv.URL, nil)
+			assert.NoError(t, err, "AppendFetchBody must send the request")
+			expect.Empty(t, await(t, received, "the server must receive the body"), "the request must have no body")
+			expect.Equal(t, await(t, lengths, "the server must receive the length"), int64(0),
+				"the request must declare a length of 0")
+		})
+
+		t.Run("returns ErrRequestBody for a request with a body of its own", func(t *testing.T) {
+			t.Parallel()
+			var hits atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hits.Add(1) }))
+			t.Cleanup(srv.Close)
+
+			c, err := httpclient.New(dependency, required, loopback)
+			assert.NoError(t, err, "New must accept the options")
+
+			own := strings.NewReader(requestBody)
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, srv.URL, own)
+			assert.NoError(t, err, "the request must build")
+
+			got, err := c.AppendFetchBody([]byte(prefix), req, []byte(requestBody))
+			expect.ErrorIs(t, err, httpclient.ErrRequestBody, "AppendFetchBody must refuse the request")
+			expect.Equal(t, errs.Classify(err), errs.Invalid, "ErrRequestBody must classify as Invalid")
+			expect.Equal(t, string(got), prefix, "AppendFetchBody must return dst unchanged")
+			expect.Equal(t, hits.Load(), int32(0), "the server must receive no request")
+		})
+	})
 }
 
 // get sends a GET of url with c.Do, and returns the status and the body of
@@ -1267,6 +1479,18 @@ func appendFetch(t *testing.T, c *httpclient.Client, dst []byte, method, url str
 	assert.NoError(t, err, "the request of the case must build")
 
 	return c.AppendFetch(dst, req)
+}
+
+// appendFetchBody sends a request of method to url without a body of its
+// own through c.AppendFetchBody with dst and sent, and returns what
+// AppendFetchBody returns.
+func appendFetchBody(t *testing.T, c *httpclient.Client, dst []byte, method, url string, sent []byte) ([]byte, error) {
+	t.Helper()
+
+	req, err := http.NewRequestWithContext(t.Context(), method, url, nil)
+	assert.NoError(t, err, "the request of the case must build")
+
+	return c.AppendFetchBody(dst, req, sent)
 }
 
 // port returns the port of the URL of a test server, and fails t when the

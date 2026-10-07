@@ -8,8 +8,11 @@
 // [New] builds a [Client] of a dependency's name and options. [Client.Do]
 // sends a request as http.Client.Do does. [Client.Fetch] returns the body of
 // a response that succeeded, and [Client.AppendFetch] appends it to a buffer
-// of the caller. Each Client has a transport of its own, never net/http's
-// DefaultTransport, with a limit on every phase of an attempt.
+// of the caller. [Client.AppendFetchBody] also sends the bytes of a buffer of
+// the caller as the request body, and reads none of them once it returns, so
+// the caller can reuse the buffer, such as a pooled one. Each Client has a
+// transport of its own, never net/http's DefaultTransport, with a limit on
+// every phase of an attempt.
 //
 // # Dependencies
 //
@@ -111,6 +114,10 @@
 //   - AppendFetch of a chunked response into a buffer with room: 57
 //     objects. net/http allocates the key and the value of its
 //     Transfer-Encoding header, and the TransferEncoding of the response.
+//   - AppendFetchBody of a POST of a body of 12 bytes into a buffer with
+//     room: 60 objects. The client allocates the first fence of the body of
+//     the attempt and its GetBody, and net/http allocates 4 objects for a
+//     request with a body.
 //
 // The tracer, the propagator, and the functions of WithPrepare and
 // WithClassify allocate on their own.
@@ -122,6 +129,8 @@
 //
 //   - [ErrConfig], Invalid: New refuses the configuration.
 //   - [ErrBlocked], Denied: the client does not send the request.
+//   - [ErrRequestBody], Invalid: a request with a body of its own, which
+//     AppendFetchBody does not send.
 //   - [ErrTooLarge], Invalid: a body beyond the limit of Fetch and
 //     AppendFetch.
 //   - *[StatusError], by status: a response that the default
@@ -129,9 +138,9 @@
 //
 // # Dependency position
 //
-// Imports context, crypto/tls, errors, fmt, io, log/slog, math, net,
-// net/http, net/netip, net/url, slices, strconv, strings, syscall and time
-// from the standard library, and go.thesmos.sh/core/clock,
+// Imports bytes, context, crypto/tls, errors, fmt, io, log/slog, math, net,
+// net/http, net/netip, net/url, slices, strconv, strings, sync, syscall and
+// time from the standard library, and go.thesmos.sh/core/clock,
 // go.thesmos.sh/core/errs, go.thesmos.sh/core/net/internal/semconv,
 // go.thesmos.sh/core/resilience and go.thesmos.sh/core/telemetry from this
 // module.

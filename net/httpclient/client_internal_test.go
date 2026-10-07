@@ -20,6 +20,7 @@ import (
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/bench"
 	"go.dokimi.dev/assert/expect"
+	"go.dokimi.dev/assert/history"
 
 	"go.thesmos.sh/core/clock/fake"
 	"go.thesmos.sh/core/coretest/telemetrytest"
@@ -50,6 +51,25 @@ const (
 	// first 200 calls of Do at 4 CPUs allocate about 165 sudogs, one more
 	// allocation per call in their rounded mean.
 	pipeWarmup = 1000
+
+	// appendFetchBodyAllocs is the ceiling of AppendFetchBody of a POST of
+	// requestBody into a buffer with room: the 54 objects of AppendFetch, the
+	// attemptBody of the attempt and its GetBody, and 4 objects of net/http
+	// for a request with a body. net/http copies the request and wraps its
+	// body to rewind it, formats the value of its Content-Length header, and
+	// copies a body that it does not know to be in memory through a buffer.
+	appendFetchBodyAllocs = 60
+
+	// patience bounds every wait of an internal case for its clients, above
+	// any correct wait, so a case fails where a defect would leave it
+	// waiting.
+	patience = 5 * time.Second
+)
+
+// The operations of the history of a fence.
+const (
+	opRead  = "Read"
+	opClose = "Close"
 )
 
 // origin is the time of the fake clocks of the internal cases.
@@ -63,6 +83,10 @@ var (
 	// endOfHeader ends the header of a request.
 	endOfHeader = []byte("\r\n\r\n")
 
+	// contentLength starts the field of the length of the body of a
+	// request.
+	contentLength = []byte("\r\nContent-Length: ")
+
 	// declared is a response that declares the length of its body.
 	declared = []byte("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n" + payload)
 
@@ -71,6 +95,10 @@ var (
 
 	// chunked is a response of unknown length, with its body in one chunk.
 	chunked = []byte("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\n" + payload + "\r\n0\r\n\r\n")
+
+	// requestBody is the body of the requests of the cases of
+	// AppendFetchBody.
+	requestBody = []byte("a checkpoint")
 )
 
 // required bundles the four options of the dependencies that New requires,
@@ -191,6 +219,20 @@ type doConfig struct {
 	name string
 	opts []Option
 	want uint64
+}
+
+// fenced is the state of a fence in the spec of its history: the offset of
+// the next Read in the body, and whether Close has taken effect.
+type fenced struct {
+	offset int
+	closed bool
+}
+
+// read is the output of a Read of a fence in its history: the bytes that it
+// returned, as text, and its error.
+type read struct {
+	err  error
+	text string
 }
 
 func TestClientInternal(t *testing.T) {
@@ -381,6 +423,251 @@ func TestClientInternal(t *testing.T) {
 		})
 	})
 
+	t.Run("AppendFetchBody", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("closes the fence of the attempt before it returns", func(t *testing.T) {
+			t.Parallel()
+			sent := make(chan io.ReadCloser, 1)
+			postBody(t, func(r *http.Request) (*http.Response, error) {
+				sent <- r.Body
+
+				return &http.Response{
+					StatusCode:    http.StatusOK,
+					ContentLength: int64(len(payload)),
+					Body:          io.NopCloser(strings.NewReader(payload)),
+					Request:       r,
+				}, nil
+			})
+
+			n, err := (<-sent).Read(make([]byte, len(requestBody)))
+			expect.ErrorIs(t, err, errFenced, "a Read after the call must return errFenced")
+			expect.Equal(t, n, 0, "a Read after the call must read no byte of the body")
+		})
+
+		t.Run("closes every fence that GetBody handed out before it returns", func(t *testing.T) {
+			t.Parallel()
+			sent := make(chan io.ReadCloser, 2)
+			postBody(t, func(r *http.Request) (*http.Response, error) {
+				for range 2 {
+					replayed, err := r.GetBody()
+					assert.NoError(t, err, "GetBody must hand out a body during the attempt")
+					sent <- replayed
+				}
+
+				return &http.Response{
+					StatusCode:    http.StatusOK,
+					ContentLength: int64(len(payload)),
+					Body:          io.NopCloser(strings.NewReader(payload)),
+					Request:       r,
+				}, nil
+			})
+			close(sent)
+
+			for replayed := range sent {
+				n, err := replayed.Read(make([]byte, len(requestBody)))
+				expect.ErrorIs(t, err, errFenced, "a Read of a replayed body after the call must return errFenced")
+				expect.Equal(t, n, 0, "a Read of a replayed body after the call must read no byte of the body")
+			}
+		})
+
+		t.Run("hands out a body from GetBody that reads the body from its start", func(t *testing.T) {
+			t.Parallel()
+			replays := make(chan []byte, 1)
+			postBody(t, func(r *http.Request) (*http.Response, error) {
+				// The transport has read part of the body when it rewinds it.
+				_, err := r.Body.Read(make([]byte, 4))
+				assert.NoError(t, err, "the body of the attempt must read")
+
+				replayed, err := r.GetBody()
+				assert.NoError(t, err, "GetBody must hand out a body during the attempt")
+
+				b, err := io.ReadAll(replayed)
+				assert.NoError(t, err, "the body of GetBody must read to its end")
+				replays <- b
+
+				return &http.Response{
+					StatusCode:    http.StatusOK,
+					ContentLength: int64(len(payload)),
+					Body:          io.NopCloser(strings.NewReader(payload)),
+					Request:       r,
+				}, nil
+			})
+
+			assert.Equal(t, <-replays, requestBody, "the body of GetBody must read every byte of the body")
+		})
+
+		t.Run("returns errFenced from GetBody after the attempt has ended", func(t *testing.T) {
+			t.Parallel()
+			getBodies := make(chan func() (io.ReadCloser, error), 1)
+			postBody(t, func(r *http.Request) (*http.Response, error) {
+				getBodies <- r.GetBody
+
+				return &http.Response{
+					StatusCode:    http.StatusOK,
+					ContentLength: int64(len(payload)),
+					Body:          io.NopCloser(strings.NewReader(payload)),
+					Request:       r,
+				}, nil
+			})
+
+			replayed, err := (<-getBodies)()
+			expect.ErrorIs(t, err, errFenced, "a GetBody after the call must return errFenced")
+			expect.Nil(t, replayed, "a GetBody after the call must hand out no body")
+		})
+
+		t.Run("sends no fence for an empty body", func(t *testing.T) {
+			t.Parallel()
+			c, err := New(dependency, required)
+			assert.NoError(t, err, "New must accept the options")
+
+			sent := make(chan *http.Request, 1)
+			c.http.Transport = roundTrip(func(r *http.Request) (*http.Response, error) {
+				sent <- r
+
+				return &http.Response{
+					StatusCode:    http.StatusOK,
+					ContentLength: int64(len(payload)),
+					Body:          io.NopCloser(strings.NewReader(payload)),
+					Request:       r,
+				}, nil
+			})
+
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://example.test/", nil)
+			assert.NoError(t, err, "the request must build")
+
+			_, err = c.AppendFetchBody(nil, req, nil)
+			assert.NoError(t, err, "AppendFetchBody must return the body of the response")
+
+			r := <-sent
+			expect.Nil(t, r.Body, "the request of an empty body must have no body")
+			expect.Nil(t, r.GetBody, "the request of an empty body must have no GetBody")
+		})
+
+		t.Run("closes the body of a request that it refuses", func(t *testing.T) {
+			t.Parallel()
+			c, err := New(dependency, required)
+			assert.NoError(t, err, "New must accept the options")
+
+			b := &tracked{r: strings.NewReader(payload)}
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://example.test/", b)
+			assert.NoError(t, err, "the request must build")
+
+			_, err = c.AppendFetchBody(nil, req, requestBody)
+			assert.ErrorIs(t, err, ErrRequestBody, "AppendFetchBody must refuse a request with a body of its own")
+			assert.True(t, b.closed.Load(), "AppendFetchBody must close the body of the request that it refuses")
+		})
+	})
+
+	t.Run("fence", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("Read", func(t *testing.T) {
+			t.Parallel()
+
+			t.Run("returns the bytes of the body before Close", func(t *testing.T) {
+				t.Parallel()
+				f := &fence{}
+				f.r.Reset(requestBody)
+
+				got, err := io.ReadAll(f)
+				assert.NoError(t, err, "the fence must read to the end of the body")
+				assert.Equal(t, got, requestBody, "Read must return the bytes of the body")
+			})
+
+			t.Run("returns errFenced after Close", func(t *testing.T) {
+				t.Parallel()
+				f := &fence{}
+				f.r.Reset(requestBody)
+
+				var (
+					n   int
+					err error
+				)
+				assert.FailsAfterClose(t, f.Close, func() error {
+					n, err = f.Read(make([]byte, len(requestBody)))
+
+					return err
+				}, errFenced, "a Read after Close must return errFenced")
+				expect.Equal(t, errs.Classify(err), errs.Invalid, "errFenced must classify as Invalid")
+				expect.Equal(t, n, 0, "a Read after Close must read no byte of the body")
+			})
+		})
+
+		t.Run("Close", func(t *testing.T) {
+			t.Parallel()
+
+			// Client 0 closes the fence while the other clients read it in
+			// steps of 8 bytes. The history must linearize against a body
+			// that every Read continues until Close takes effect, and that
+			// no Read reads after it.
+			t.Run("ends every Read that follows it", func(t *testing.T) {
+				t.Parallel()
+				body := bytes.Repeat([]byte("ab"), 64)
+				f := &fence{}
+				f.r.Reset(body)
+
+				h := history.New()
+				outcomes := history.Concurrently(4, patience, func(client int) (any, error) {
+					if client == 0 {
+						call := h.Invoke(client, opClose, nil)
+						call.OK(f.Close())
+
+						return client, nil
+					}
+
+					for range 8 {
+						p := make([]byte, 8)
+						call := h.Invoke(client, opRead, nil)
+						n, err := f.Read(p)
+						call.OK(read{text: string(p[:n]), err: err})
+					}
+
+					return client, nil
+				})
+				for _, o := range outcomes {
+					assert.True(t, o.Finished, "every client must finish")
+				}
+
+				history.Linearizable(t, h, history.Spec[fenced]{
+					Initial: func() fenced { return fenced{} },
+					Next: func(s fenced, op history.Operation) []fenced {
+						if op.Name == opClose {
+							if !op.Returned(nil) {
+								return nil
+							}
+
+							return []fenced{{offset: s.offset, closed: true}}
+						}
+
+						if s.closed {
+							if !op.Returned(read{err: errFenced}) {
+								return nil
+							}
+
+							return []fenced{s}
+						}
+
+						if s.offset == len(body) {
+							if !op.Returned(read{err: io.EOF}) {
+								return nil
+							}
+
+							return []fenced{s}
+						}
+
+						end := min(s.offset+8, len(body))
+						if !op.Returned(read{text: string(body[s.offset:end])}) {
+							return nil
+						}
+
+						return []fenced{{offset: end}}
+					},
+				}, "a Read must continue the body until Close takes effect and read nothing after it")
+			})
+		})
+	})
+
 	t.Run("statusError", func(t *testing.T) {
 		t.Parallel()
 
@@ -405,6 +692,9 @@ func TestClientInternal(t *testing.T) {
 //nolint:paralleltest // see above
 func TestClientAllocs(t *testing.T) {
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://example.test/", http.NoBody)
+	assert.NoError(t, err, "the request must build")
+
+	post, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "http://example.test/", nil)
 	assert.NoError(t, err, "the request must build")
 
 	t.Run("Do", func(t *testing.T) {
@@ -472,6 +762,22 @@ func TestClientAllocs(t *testing.T) {
 		}
 	})
 
+	t.Run("AppendFetchBody", func(t *testing.T) {
+		t.Run("of a body of 12 bytes into a buffer with room", func(t *testing.T) {
+			client := piped(t, declared)
+			buf := make([]byte, 0, 1024)
+
+			var (
+				got       []byte
+				errAppend error
+			)
+			expect.MaxAllocs(t, func() { got, errAppend = client.AppendFetchBody(buf, post, requestBody) },
+				appendFetchBodyAllocs, "AppendFetchBody must allocate as its documentation states")
+			assert.NoError(t, errAppend, "the test must measure a call that succeeded")
+			assert.Equal(t, string(got), payload, "the test must measure a body that the client read")
+		})
+	})
+
 	t.Run("statusError", func(t *testing.T) {
 		t.Run("of a refused response without Retry-After", func(t *testing.T) {
 			c, err := New(dependency, required)
@@ -495,20 +801,26 @@ func BenchmarkClient(b *testing.B) {
 	req, err := http.NewRequestWithContext(b.Context(), http.MethodGet, "http://example.test/", http.NoBody)
 	assert.NoError(b, err, "the request must build")
 
+	post, err := http.NewRequestWithContext(b.Context(), http.MethodPost, "http://example.test/", nil)
+	assert.NoError(b, err, "the request must build")
+
 	b.Run("Do", func(b *testing.B) {
 		for _, tt := range dos(b) {
 			b.Run(tt.name, func(b *testing.B) {
 				client := piped(b, declared, tt.opts...)
 
-				var status int
+				var (
+					status int
+					errDo  error
+				)
 
 				c := bench.Start(b).Warmup(pipeWarmup).MaxAllocs(tt.want)
 				defer c.End()
 
 				for c.Loop() {
-					resp, errDo := client.Do(req)
-					if errDo != nil {
-						b.Fatalf("Do: %v", errDo)
+					var resp *http.Response
+					if resp, errDo = client.Do(req); errDo != nil {
+						break
 					}
 
 					// A body read to its end returns the connection for the
@@ -518,6 +830,7 @@ func BenchmarkClient(b *testing.B) {
 					_ = resp.Body.Close()
 				}
 
+				assert.NoError(b, errDo, "the benchmark must measure calls that succeeded")
 				assert.Equal(b, status, http.StatusOK, "the benchmark must measure a response that succeeded")
 			})
 		}
@@ -571,6 +884,28 @@ func BenchmarkClient(b *testing.B) {
 				assert.Equal(b, string(got), payload, "the benchmark must measure a body that the client read")
 			})
 		}
+	})
+
+	b.Run("AppendFetchBody", func(b *testing.B) {
+		b.Run("of a body of 12 bytes into a buffer with room", func(b *testing.B) {
+			client := piped(b, declared)
+			buf := make([]byte, 0, 1024)
+
+			var (
+				got       []byte
+				errAppend error
+			)
+
+			c := bench.Start(b).Warmup(pipeWarmup).MaxAllocs(appendFetchBodyAllocs)
+			defer c.End()
+
+			for c.Loop() {
+				got, errAppend = client.AppendFetchBody(buf, post, requestBody)
+			}
+
+			assert.NoError(b, errAppend, "the benchmark must measure a call that succeeded")
+			assert.Equal(b, string(got), payload, "the benchmark must measure a body that the client read")
+		})
 	})
 
 	b.Run("statusError", func(b *testing.B) {
@@ -628,6 +963,24 @@ func dos(tb testing.TB) []doConfig {
 	}
 }
 
+// postBody sends a POST of requestBody through AppendFetchBody of a client
+// whose transport is rt, and fails tb unless the call returns the body of
+// the response of rt, which is payload.
+func postBody(tb testing.TB, rt roundTrip) {
+	tb.Helper()
+
+	c, err := New(dependency, required)
+	assert.NoError(tb, err, "New must accept the options")
+	c.http.Transport = rt
+
+	req, err := http.NewRequestWithContext(tb.Context(), http.MethodPost, "http://example.test/", nil)
+	assert.NoError(tb, err, "the request must build")
+
+	got, err := c.AppendFetchBody(nil, req, requestBody)
+	assert.NoError(tb, err, "AppendFetchBody must return the body of the response")
+	assert.Equal(tb, string(got), payload, "AppendFetchBody must return the body of the response")
+}
+
 // piped returns a Client with the options of the internal cases and opts,
 // which dials, through WithDialContext, a pipe to respond, which writes
 // reply to every request. Its calls run through net/http's Client and
@@ -650,27 +1003,66 @@ func piped(tb testing.TB, reply []byte, opts ...Option) *Client {
 	return client
 }
 
-// respond writes reply to conn for every request that it reads from conn,
-// until conn closes. The requests of the benchmark have no body, so each
-// ends with its header, and fits one read of the buffer. respond does not
-// allocate per request. It yields before each reply, so the transport
-// reports the request written before it reads the response, as over a
-// network.
+// respond writes reply to conn after each request that it reads from conn,
+// until conn closes or a request fills its buffer of 4 KiB. It reads the
+// header of a request and the body of the length of its Content-Length, and
+// allocates nothing per request. It yields before each reply, so the
+// transport reports the request written before it reads the response, as
+// over a network.
 func respond(conn net.Conn, reply []byte) {
-	buf := make([]byte, 4096)
+	buf := make([]byte, 0, 4096)
 
 	for {
-		n, err := conn.Read(buf)
-		if err != nil {
-			return
-		}
+		if size := requestSize(buf); size > 0 && len(buf) >= size {
+			buf = buf[:copy(buf, buf[size:])]
 
-		if bytes.Contains(buf[:n], endOfHeader) {
 			runtime.Gosched()
 
 			if _, err := conn.Write(reply); err != nil {
 				return
 			}
+
+			continue
 		}
+
+		if len(buf) == cap(buf) {
+			return
+		}
+
+		n, err := conn.Read(buf[len(buf):cap(buf)])
+		if err != nil {
+			return
+		}
+
+		buf = buf[:len(buf)+n]
 	}
+}
+
+// requestSize returns the length of the request at the start of buf: its
+// header, and the body of the length of its Content-Length. It returns 0
+// while buf contains no end of a header.
+func requestSize(buf []byte) int {
+	end := bytes.Index(buf, endOfHeader)
+	if end < 0 {
+		return 0
+	}
+
+	size := end + len(endOfHeader)
+
+	i := bytes.Index(buf[:end], contentLength)
+	if i < 0 {
+		return size
+	}
+
+	n := 0
+
+	for _, c := range buf[i+len(contentLength) : end] {
+		if c < '0' || c > '9' {
+			break
+		}
+
+		n = 10*n + int(c-'0')
+	}
+
+	return size + n
 }

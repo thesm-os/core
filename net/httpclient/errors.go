@@ -33,6 +33,12 @@ var (
 	// call by policy, and the dependency took no part in it.
 	ErrBlocked = errs.WithClass(errors.New("httpclient: blocked"), errs.Denied)
 
+	// ErrRequestBody is returned by [Client.AppendFetchBody] for a request
+	// whose Body is neither nil nor http.NoBody, because AppendFetchBody
+	// sends its body argument as the body of the request. Classifies as
+	// Invalid: the same request fails the same way every time.
+	ErrRequestBody = errs.WithClass(errors.New("httpclient: the request has a body of its own"), errs.Invalid)
+
 	// ErrTooLarge is returned by [Client.Fetch] and [Client.AppendFetch] for
 	// a response body beyond the limit of [WithMaxResponseBytes]. Classifies
 	// as Invalid: the same call returns the same body, so a caller raises the

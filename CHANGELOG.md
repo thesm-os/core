@@ -559,6 +559,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every marked rule of a tree with a marker. A tree without a marker
   keeps the children of its root as its parties. `AsParty` and a `Check`
   with an exclusion allocate nothing. See RFC-0055 and ADR-0046.
+- `httpclient.Client.AppendFetchBody` and `httpclient.ErrRequestBody`.
+  `AppendFetchBody` sends the bytes of a buffer of the caller as the body
+  of a request, and reads none of them once it returns, so a caller can
+  reuse a pooled buffer. net/http can read a request body after its round
+  trip returns, so each attempt sends the bytes through fences of its own
+  and closes them before it returns. The `GetBody` of each attempt hands
+  out a new fence, so net/http still resends a request that the server
+  did not process, and follows a 307 or a 308. A POST of a body of 12
+  bytes allocates 60 objects on a connection that the transport reuses.
+  `ErrRequestBody`, classified `errs.Invalid`, refuses a request with a
+  body of its own.
 
 ### Changed
 
