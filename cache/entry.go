@@ -94,12 +94,6 @@ func (e *entry[K, V]) pin() bool {
 	}
 }
 
-// pinned reports whether e has at least one pin, whether or not it has
-// left the cache.
-func (e *entry[K, V]) pinned() bool {
-	return e.state.Load()&^removed != 0
-}
-
 // unpin removes a pin from e, which has one, and reports whether e has
 // left the cache and has no pin left, so that the caller passes it to the
 // callback. Exactly one of leave, evict and unpin reports an entry.

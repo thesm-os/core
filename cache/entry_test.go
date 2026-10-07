@@ -7,7 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/expect"
 
 	"go.thesmos.sh/core/cache"
 	"go.thesmos.sh/core/clock/fake"
@@ -29,10 +30,9 @@ func TestEntry(t *testing.T) {
 			setAll(c, "a")
 			c.Get("a")
 			setAll(c, names("k", 10)...)
-
 			_, ok := c.Get("a")
-			testkit.True(t, ok, "the hit must move the entry to the main queue")
-			testkit.Equal(t, r.got(), []string{"k0"}, "the next entry without a hit must leave in its place")
+			expect.True(t, ok, "the hit must move the entry to the main queue")
+			expect.Equal(t, r.got(), []string{"k0"}, "the next entry without a hit must leave in its place")
 		})
 
 		t.Run("keeps an entry that a Pin hit through the next eviction", func(t *testing.T) {
@@ -42,10 +42,9 @@ func TestEntry(t *testing.T) {
 			p, _ := c.Pin("a")
 			p.Unpin()
 			setAll(c, names("k", 10)...)
-
 			_, ok := c.Get("a")
-			testkit.True(t, ok, "a Pin must count as a hit")
-			testkit.Equal(t, r.got(), []string{"k0"}, "the next entry without a hit must leave in its place")
+			expect.True(t, ok, "a Pin must count as a hit")
+			expect.Equal(t, r.got(), []string{"k0"}, "the next entry without a hit must leave in its place")
 		})
 
 		t.Run("leaves an entry without hits to the next eviction", func(t *testing.T) {
@@ -53,8 +52,7 @@ func TestEntry(t *testing.T) {
 			c, _, r := newCache(t, 10, nil)
 			setAll(c, "a")
 			setAll(c, names("k", 10)...)
-
-			testkit.Equal(t, r.got(), []string{"a"}, "the oldest entry without a hit must leave")
+			assert.Equal(t, r.got(), []string{"a"}, "the oldest entry without a hit must leave")
 		})
 	})
 
@@ -67,10 +65,9 @@ func TestEntry(t *testing.T) {
 			c.Set("a", 1, origin.Add(time.Second))
 			c.Get("a")
 			setAll(c, names("k", 9)...)
-
 			clk.Advance(time.Second)
 			setAll(c, "last")
-			testkit.Equal(t, r.got(), []string{"a"}, "an expired entry must leave whatever its hits")
+			assert.Equal(t, r.got(), []string{"a"}, "an expired entry must leave whatever its hits")
 		})
 	})
 
@@ -83,11 +80,10 @@ func TestEntry(t *testing.T) {
 			setAll(c, "a")
 			p, _ := c.Pin("a")
 			defer p.Unpin()
-
 			setAll(c, names("k", 30)...)
 			_, ok := c.Get("a")
-			testkit.True(t, ok, "a pinned entry must stay in the cache")
-			testkit.Equal(t, len(r.got()), 21, "the entries without pins must leave instead")
+			expect.True(t, ok, "a pinned entry must remain in the cache")
+			expect.Length(t, r.got(), 21, "the entries without pins must leave instead")
 		})
 
 		t.Run("passes a pinned entry that left to Evicted at its last Unpin", func(t *testing.T) {
@@ -96,15 +92,12 @@ func TestEntry(t *testing.T) {
 			setAll(c, "a")
 			first, _ := c.Pin("a")
 			second, _ := c.Pin("a")
-
 			c.Delete("a")
-			testkit.Equal(t, r.got(), []string(nil), "a pinned entry must not reach Evicted at its removal")
-
+			assert.Empty(t, r.got(), "a pinned entry must not reach Evicted at its removal")
 			first.Unpin()
-			testkit.Equal(t, r.got(), []string(nil), "an entry with a pin left must not reach Evicted")
-
+			assert.Empty(t, r.got(), "an entry with a pin left must not reach Evicted")
 			second.Unpin()
-			testkit.Equal(t, r.got(), []string{"a"}, "the last Unpin must pass the entry to Evicted")
+			assert.Equal(t, r.got(), []string{"a"}, "the last Unpin must pass the entry to Evicted")
 		})
 	})
 
@@ -113,21 +106,19 @@ func TestEntry(t *testing.T) {
 
 		t.Run("passes more than eight evicted entries to Evicted in the order of eviction", func(t *testing.T) {
 			t.Parallel()
-			c, _, r := newCache(t, 20, valueCost)
+			c, _, r := newCache(t, 20, func(v int) int64 { return int64(v) })
 			keys := names("k", 20)
 			setAll(c, keys...)
-
 			c.Set("big", 20, time.Time{})
-			testkit.Equal(t, r.got(), keys, "the twenty evicted entries must reach Evicted in order")
+			assert.Equal(t, r.got(), keys, "the twenty evicted entries must reach Evicted in order")
 		})
 
 		t.Run("evicts without an Evicted", func(t *testing.T) {
 			t.Parallel()
 			c, err := cache.New(cache.Config[string, int]{Clock: fake.New(origin), Capacity: 1})
-			testkit.NoError(t, err, "New must accept the configuration")
-
+			assert.NoError(t, err, "New must accept the configuration")
 			setAll(c, "a", "b")
-			testkit.Equal(t, c.Len(), 1, "a Cache without Evicted must still evict")
+			assert.Equal(t, c.Len(), 1, "a Cache without Evicted must still evict")
 		})
 	})
 }

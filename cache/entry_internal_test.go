@@ -6,7 +6,8 @@ package cache
 import (
 	"testing"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/expect"
 )
 
 // TestEntryState is in package cache because entry is unexported. It
@@ -22,18 +23,37 @@ func TestEntryState(t *testing.T) {
 			t.Parallel()
 			e := &entry[string, int]{}
 			e.leave()
-			testkit.False(t, e.pin(), "a pin must fail after the removal")
-			testkit.False(t, e.pinned(), "a failed pin must not count")
+			expect.False(t, e.pin(), "a pin must fail after the removal")
+			expect.Equal(t, e.state.Load(), int64(removed), "a failed pin must not count")
 		})
 
 		t.Run("counts each pin", func(t *testing.T) {
 			t.Parallel()
 			e := &entry[string, int]{}
-			first := e.pin()
-			second := e.pin()
-			testkit.True(t, first && second, "two pins must succeed")
-			testkit.False(t, e.unpin(), "the first unpin must leave a pin")
-			testkit.True(t, e.pinned(), "one pin must remain")
+			assert.True(t, e.pin(), "the first pin must succeed")
+			assert.True(t, e.pin(), "the second pin must succeed")
+			assert.Equal(t, e.state.Load(), int64(2), "the state must count both pins")
+		})
+	})
+
+	t.Run("unpin", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("reports false while a pin remains", func(t *testing.T) {
+			t.Parallel()
+			e := &entry[string, int]{}
+			e.pin()
+			e.pin()
+			expect.False(t, e.unpin(), "the first unpin must leave a pin")
+			expect.Equal(t, e.state.Load(), int64(1), "one pin must remain")
+		})
+
+		t.Run("reports true at the last unpin of an entry that left", func(t *testing.T) {
+			t.Parallel()
+			e := &entry[string, int]{}
+			e.pin()
+			e.leave()
+			assert.True(t, e.unpin(), "the last unpin must report the callback")
 		})
 	})
 
@@ -44,33 +64,45 @@ func TestEntryState(t *testing.T) {
 			t.Parallel()
 			e := &entry[string, int]{}
 			e.pin()
-			testkit.False(t, e.evict(), "the evictor must not remove a pinned entry")
-			testkit.True(t, e.pin(), "a failed eviction must not mark the entry as removed")
+			expect.False(t, e.evict(), "the evictor must not remove a pinned entry")
+			expect.True(t, e.pin(), "a failed eviction must not mark the entry as removed")
 		})
 
-		t.Run("reports true for an entry without pins and blocks later pins", func(t *testing.T) {
+		t.Run("reports true for an entry without pins", func(t *testing.T) {
 			t.Parallel()
 			e := &entry[string, int]{}
-			testkit.True(t, e.evict(), "the evictor must remove an entry without pins")
-			testkit.False(t, e.pin(), "no pin may follow the eviction")
+			assert.True(t, e.evict(), "the evictor must remove an entry without pins")
+		})
+
+		t.Run("refuses every pin after the eviction", func(t *testing.T) {
+			t.Parallel()
+			e := &entry[string, int]{}
+			e.evict()
+			assert.False(t, e.pin(), "no pin may follow the eviction")
 		})
 	})
 
 	t.Run("leave", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("reports false for a pinned entry and leaves the callback to its last unpin", func(t *testing.T) {
+		t.Run("reports false for a pinned entry", func(t *testing.T) {
 			t.Parallel()
 			e := &entry[string, int]{}
 			e.pin()
-			testkit.False(t, e.leave(), "the remover must not call back a pinned entry")
-			testkit.True(t, e.unpin(), "the last unpin must report the callback")
+			assert.False(t, e.leave(), "the remover must not call back a pinned entry")
 		})
 
 		t.Run("reports true for an entry without pins", func(t *testing.T) {
 			t.Parallel()
 			e := &entry[string, int]{}
-			testkit.True(t, e.leave(), "the remover must call back an entry without pins")
+			assert.True(t, e.leave(), "the remover must call back an entry without pins")
+		})
+
+		t.Run("reports false for an entry that left before", func(t *testing.T) {
+			t.Parallel()
+			e := &entry[string, int]{}
+			e.leave()
+			assert.False(t, e.leave(), "leave must report an entry once")
 		})
 	})
 }

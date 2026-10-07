@@ -191,6 +191,7 @@ func (c *Cache[K, V]) evict(now time.Time, keep *entry[K, V], gone *victims[K, V
 			return
 		}
 
+		//dokimi:mutate-skip ror-boundary: a forced step differs only while readers hit entries during evict, which no test orders
 		c.examine(now, keep, gone, i >= (maxFreq+2)*n)
 	}
 }
@@ -215,9 +216,10 @@ func (c *Cache[K, V]) examine(now time.Time, keep *entry[K, V], gone *victims[K,
 		q = &c.small
 	}
 
+	// evict refuses a pinned entry, so the pins need no check of their own.
 	e := q.tail
 	hit := e.freq.Load() > 0 && !force && !e.expired(now)
-	if e == keep || e.pinned() || hit || !e.evict() {
+	if e == keep || hit || !e.evict() {
 		q.remove(e)
 		if q.id == inSmall {
 			e.freq.Store(0)

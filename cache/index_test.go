@@ -4,9 +4,10 @@
 package cache_test
 
 import (
+	"fmt"
 	"testing"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
 )
 
 // TestIndex checks the hash index of a Cache through Get, Set and Delete:
@@ -23,14 +24,15 @@ func TestIndex(t *testing.T) {
 			keys := names("k", 10_000)
 			c, _, _ := newCache(t, int64(len(keys)), nil)
 			setAll(c, keys...)
+			assert.Total(t, func(k string) error {
+				if _, ok := c.Get(k); !ok {
+					return fmt.Errorf("key %s: Get missed", k)
+				}
 
-			for _, k := range keys {
-				_, ok := c.Get(k)
-				testkit.True(t, ok, "Get must find "+k)
-			}
-
+				return nil
+			}, keys, "Get must find every stored key")
 			_, ok := c.Get("absent")
-			testkit.False(t, ok, "Get must miss a key that no Set stored")
+			assert.False(t, ok, "Get must miss a key that no Set stored")
 		})
 
 		t.Run("passes the tombs of deleted keys", func(t *testing.T) {
@@ -38,17 +40,17 @@ func TestIndex(t *testing.T) {
 			keys := names("k", 100)
 			c, _, _ := newCache(t, int64(len(keys)), nil)
 			setAll(c, keys...)
-
 			for i, k := range keys {
 				if i%2 == 0 {
 					c.Delete(k)
 				}
 			}
-
+			got, want := make([]bool, 0, len(keys)), make([]bool, 0, len(keys))
 			for i, k := range keys {
 				_, ok := c.Get(k)
-				testkit.Equal(t, ok, i%2 == 1, "Get must find exactly the keys that were not deleted: "+k)
+				got, want = append(got, ok), append(want, i%2 == 1)
 			}
+			assert.Equal(t, got, want, "Get must find exactly the keys that were not deleted")
 		})
 	})
 
@@ -59,7 +61,6 @@ func TestIndex(t *testing.T) {
 			t.Parallel()
 			keys := names("k", 1_000)
 			c, _, _ := newCache(t, int64(len(keys)), nil)
-
 			for range 10 {
 				setAll(c, keys...)
 				for _, k := range keys {
@@ -67,12 +68,14 @@ func TestIndex(t *testing.T) {
 				}
 			}
 			setAll(c, keys...)
+			assert.Equal(t, c.Len(), len(keys), "the cache must contain every key once")
+			assert.Total(t, func(k string) error {
+				if _, ok := c.Get(k); !ok {
+					return fmt.Errorf("key %s: Get missed", k)
+				}
 
-			testkit.Equal(t, c.Len(), len(keys), "the cache must hold every key once")
-			for _, k := range keys {
-				_, ok := c.Get(k)
-				testkit.True(t, ok, "Get must find "+k)
-			}
+				return nil
+			}, keys, "Get must find every stored key")
 		})
 	})
 }

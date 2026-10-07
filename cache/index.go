@@ -62,8 +62,13 @@ func (ix *index[K, V]) find(k K, h uint64, tomb *entry[K, V]) *entry[K, V] {
 			return nil
 		}
 
-		if e != tomb && e.hash == h && e.key == k {
-			return e
+		// The comparison of the hashes spares a comparison of the keys for
+		// the entries of other keys.
+		//dokimi:mutate-skip ror-true: an entry of another hash has another key, which the comparison below refuses
+		if e.hash == h {
+			if e != tomb && e.key == k {
+				return e
+			}
 		}
 
 		i = (i + 1) & ix.mask
@@ -105,22 +110,21 @@ func (ix *index[K, V]) insert(e, tomb *entry[K, V]) {
 
 // remove replaces e in its slot with tomb. The index contains e, and the
 // caller has locked the mutex. The probe of e's hash passes no nil slot
-// before the slot of e, because no slot returns to nil, so remove stops at
-// the first slot that contains e or nil. The slot remains used, so the
-// probes of other keys still pass it.
+// before the slot of e, because no slot returns to nil, so remove finds e
+// within len(slots) slots. The slot remains used, so the probes of other
+// keys still pass it.
 func (ix *index[K, V]) remove(e, tomb *entry[K, V]) {
 	i := e.hash & ix.mask
 	for range len(ix.slots) {
-		if s := ix.slots[i].Load(); s == e || s == nil {
-			break
+		if ix.slots[i].Load() == e {
+			ix.slots[i].Store(tomb)
+			ix.live--
+
+			return
 		}
 
+		//dokimi:mutate-skip aor: a walk of len(slots) steps in either direction visits every slot, so it finds e
 		i = (i + 1) & ix.mask
-	}
-
-	if ix.slots[i].Load() == e {
-		ix.slots[i].Store(tomb)
-		ix.live--
 	}
 }
 

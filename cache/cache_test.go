@@ -4,7 +4,7 @@
 package cache_test
 
 import (
-	"math/rand/v2"
+	"context"
 	"slices"
 	"strconv"
 	"sync"
@@ -12,30 +12,53 @@ import (
 	"testing"
 	"time"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/bench"
+	"go.dokimi.dev/assert/expect"
+	"go.dokimi.dev/assert/history"
+	"go.dokimi.dev/assert/prop"
+	"go.dokimi.dev/assert/stateful"
 
 	"go.thesmos.sh/core/cache"
 	"go.thesmos.sh/core/clock/fake"
 	"go.thesmos.sh/core/errs"
 )
 
-const (
-	// benchRuns is the number of calls over which a benchmark averages the
-	// allocations that it checks.
-	benchRuns = 100
+// benchCapacity is the capacity of the caches of the allocation checks
+// and the benchmarks.
+const benchCapacity = 1_000
 
-	// benchCapacity is the capacity of the caches of the benchmarks.
-	benchCapacity = 1_000
+// The shape of the concurrent workload of a Cache of ints.
+const (
+	// clients is the number of clients of a concurrent section.
+	clients = 4
+
+	// workloadKeys is the number of keys that the calls choose from, twice
+	// the capacity, so the cache evicts.
+	workloadKeys = 16
+
+	// workloadCapacity is the capacity of the cache of the workload.
+	workloadCapacity = 8
+
+	// absent is the value that a call records for a miss. Every value
+	// that the workload stores is at least 0.
+	absent = -1
+)
+
+// The operations of the concurrent history of a Cache.
+const (
+	opSet    = "set"
+	opGet    = "get"
+	opPin    = "pin"
+	opDelete = "delete"
 )
 
 // origin is the time of the fake clock of every case.
 var origin = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
-// Sinks keep the results of the benchmarks alive.
-var (
-	sinkValue int
-	sinkOK    bool
-)
+// keyValues is the state of the spec of a Cache of the workload: the value
+// of each key, and absent for a key without an entry.
+type keyValues [workloadKeys]int
 
 // recorder records the keys of the entries that a Cache passes to
 // Evicted, in the order of the calls. It is safe for concurrent use, so a
@@ -61,41 +84,24 @@ func (r *recorder) got() []string {
 	return slices.Clone(r.keys)
 }
 
-// newCache returns an empty Cache of capacity over a fake clock at origin,
-// whose Evicted records into the returned recorder, and whose Cost is cost.
-// It fails tb when New refuses the configuration.
-func newCache(
-	tb testing.TB, capacity int64, cost func(int) int64,
-) (*cache.Cache[string, int], *fake.Clock, *recorder) {
-	tb.Helper()
+// countingClock is a fake clock that counts the calls of Time, and calls
+// onTime, when it is set, before each call returns.
+type countingClock struct {
+	*fake.Clock
 
-	r := &recorder{}
-	clk := fake.New(origin)
-
-	c, err := cache.New(cache.Config[string, int]{Clock: clk, Capacity: capacity, Cost: cost, Evicted: r.evicted})
-	testkit.NoError(tb, err, "New must accept the configuration")
-
-	return c, clk, r
+	onTime func()
+	reads  atomic.Int64
 }
 
-// valueCost is a Cost that costs each value its own amount.
-func valueCost(v int) int64 { return int64(v) }
-
-// setAll stores 1 under each key, in order, without an expiry time.
-func setAll(c *cache.Cache[string, int], keys ...string) {
-	for _, k := range keys {
-		c.Set(k, 1, time.Time{})
-	}
-}
-
-// names returns the keys prefix0 to prefix<n-1>.
-func names(prefix string, n int) []string {
-	keys := make([]string, n)
-	for i := range keys {
-		keys[i] = prefix + strconv.Itoa(i)
+// Time counts the call, calls onTime, and returns the time of the fake
+// clock.
+func (c *countingClock) Time() time.Time {
+	c.reads.Add(1)
+	if c.onTime != nil {
+		c.onTime()
 	}
 
-	return keys
+	return c.Clock.Time()
 }
 
 func TestCache(t *testing.T) {
@@ -122,20 +128,19 @@ func TestCache(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
 				c, err := cache.New(tt.give)
-				testkit.ErrorIs(t, err, cache.ErrConfig, "New must refuse the configuration")
-				testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrConfig must classify as Invalid")
-				testkit.True(t, c == nil, "a refused configuration must return no Cache")
+				assert.ErrorIs(t, err, cache.ErrConfig, "New must refuse the configuration")
+				assert.Equal(t, errs.Classify(err), errs.Invalid, "ErrConfig must classify as Invalid")
+				assert.Nil(t, c, "a refused configuration must return no Cache")
 			})
 		}
 
 		t.Run("returns an empty Cache for a Capacity of 1", func(t *testing.T) {
 			t.Parallel()
 			c, _, _ := newCache(t, 1, nil)
-			testkit.Equal(t, c.Len(), 0, "a new Cache must hold no entry")
-			testkit.Equal(t, c.Cost(), int64(0), "a new Cache must cost nothing")
-
+			expect.Equal(t, c.Len(), 0, "a new Cache must contain no entry")
+			expect.Equal(t, c.Cost(), int64(0), "a new Cache must cost nothing")
 			_, ok := c.Get("k")
-			testkit.False(t, ok, "a new Cache must miss every key")
+			expect.False(t, ok, "a new Cache must miss every key")
 		})
 	})
 
@@ -146,66 +151,121 @@ func TestCache(t *testing.T) {
 			t.Parallel()
 			c, _, _ := newCache(t, 10, nil)
 			c.Set("k", 7, time.Time{})
-
 			v, ok := c.Get("k")
-			testkit.True(t, ok, "Get must find the stored key")
-			testkit.Equal(t, v, 7, "Get must return the stored value")
+			assert.True(t, ok, "Get must find the stored key")
+			assert.Equal(t, v, 7, "Get must return the stored value")
 		})
 
 		t.Run("reports false for a key that Set never stored", func(t *testing.T) {
 			t.Parallel()
 			c, _, _ := newCache(t, 10, nil)
 			c.Set("k", 7, time.Time{})
-
 			v, ok := c.Get("other")
-			testkit.False(t, ok, "Get must miss a key that was never stored")
-			testkit.Equal(t, v, 0, "a miss must return the zero value")
+			expect.False(t, ok, "Get must miss a key that was never stored")
+			expect.Equal(t, v, 0, "a miss must return the zero value")
 		})
 
 		t.Run("returns the value one nanosecond before its expiry time", func(t *testing.T) {
 			t.Parallel()
 			c, clk, _ := newCache(t, 10, nil)
 			c.Set("k", 7, origin.Add(time.Second))
-
 			clk.Advance(time.Second - time.Nanosecond)
 			v, ok := c.Get("k")
-			testkit.True(t, ok, "an entry before its expiry time must be a hit")
-			testkit.Equal(t, v, 7, "Get must return the stored value")
+			assert.True(t, ok, "an entry before its expiry time must be a hit")
+			assert.Equal(t, v, 7, "Get must return the stored value")
 		})
 
 		t.Run("reports false at the expiry time", func(t *testing.T) {
 			t.Parallel()
 			c, clk, _ := newCache(t, 10, nil)
 			c.Set("k", 7, origin.Add(time.Second))
-
 			clk.Advance(time.Second)
 			_, ok := c.Get("k")
-			testkit.False(t, ok, "an entry at its expiry time must be a miss")
-		})
-
-		t.Run("removes an expired entry and passes it to Evicted", func(t *testing.T) {
-			t.Parallel()
-			c, clk, r := newCache(t, 10, nil)
-			c.Set("k", 7, origin.Add(time.Second))
-			c.Set("other", 1, time.Time{})
-
-			clk.Advance(time.Second)
-			c.Get("k")
-			testkit.Equal(t, r.got(), []string{"k"}, "the expired entry must reach Evicted once")
-			testkit.Equal(t, c.Len(), 1, "the expired entry must leave the cache")
-
-			c.Get("k")
-			testkit.Equal(t, r.got(), []string{"k"}, "a second Get must not pass the entry to Evicted again")
+			assert.False(t, ok, "an entry at its expiry time must be a miss")
 		})
 
 		t.Run("returns the value of an entry without an expiry time at any time", func(t *testing.T) {
 			t.Parallel()
 			c, clk, _ := newCache(t, 10, nil)
 			c.Set("k", 7, time.Time{})
-
 			clk.Advance(1000 * time.Hour)
 			_, ok := c.Get("k")
-			testkit.True(t, ok, "the zero expiry time must never expire")
+			assert.True(t, ok, "the zero expiry time must never expire")
+		})
+
+		t.Run("reads no clock for an entry without an expiry time", func(t *testing.T) {
+			t.Parallel()
+			clk := &countingClock{Clock: fake.New(origin)}
+			c, err := cache.New(cache.Config[string, int]{Clock: clk, Capacity: 10})
+			assert.NoError(t, err, "New must accept the configuration")
+			c.Set("k", 7, time.Time{})
+			reads := clk.reads.Load()
+			_, ok := c.Get("k")
+			assert.True(t, ok, "the test must measure a hit")
+			assert.Equal(t, clk.reads.Load(), reads, "Get must not read the clock")
+		})
+
+		t.Run("removes an expired entry", func(t *testing.T) {
+			t.Parallel()
+			c, clk, _ := newCache(t, 10, nil)
+			c.Set("k", 7, origin.Add(time.Second))
+			c.Set("other", 1, time.Time{})
+			clk.Advance(time.Second)
+			c.Get("k")
+			assert.Equal(t, c.Len(), 1, "the expired entry must leave the cache")
+		})
+
+		t.Run("passes an expired entry to Evicted once", func(t *testing.T) {
+			t.Parallel()
+			c, clk, r := newCache(t, 10, nil)
+			c.Set("k", 7, origin.Add(time.Second))
+			clk.Advance(time.Second)
+			c.Get("k")
+			c.Get("k")
+			assert.Equal(t, r.got(), []string{"k"}, "the expired entry must reach Evicted once")
+		})
+
+		t.Run("passes a pinned expired entry to Evicted once at its Unpin", func(t *testing.T) {
+			t.Parallel()
+			c, clk, r := newCache(t, 10, nil)
+			c.Set("k", 7, origin.Add(time.Second))
+			p, _ := c.Pin("k")
+			clk.Advance(time.Second)
+			c.Get("k")
+			assert.Empty(t, r.got(), "a pinned entry must wait for its Unpin")
+			p.Unpin()
+			assert.Equal(t, r.got(), []string{"k"}, "the Unpin must pass the entry to Evicted once")
+		})
+
+		t.Run("counts an expired entry once when a Delete removes it during the Get", func(t *testing.T) {
+			t.Parallel()
+			clk := &countingClock{Clock: fake.New(origin)}
+			r := &recorder{}
+			c, err := cache.New(cache.Config[string, int]{Clock: clk, Capacity: 10, Evicted: r.evicted})
+			assert.NoError(t, err, "New must accept the configuration")
+			c.Set("k", 7, origin.Add(time.Second))
+			clk.Advance(time.Second)
+			clk.onTime = func() {
+				clk.onTime = nil
+				c.Delete("k")
+			}
+			_, ok := c.Get("k")
+			expect.False(t, ok, "Get must miss the expired entry")
+			expect.Equal(t, c.Len(), 0, "the cache must count the entry once")
+			expect.Equal(t, r.got(), []string{"k"}, "the entry must reach Evicted once")
+		})
+
+		t.Run("unlocks the cache after it removes an expired entry", func(t *testing.T) {
+			t.Parallel()
+			c, clk, _ := newCache(t, 10, nil)
+			c.Set("k", 7, origin.Add(time.Second))
+			clk.Advance(time.Second)
+			c.Get("k")
+			assert.CompletesWithin(t, time.Second, func(context.Context) error {
+				c.Set("k", 8, time.Time{})
+
+				return nil
+			}, "a Set after the removal must not wait for the lock")
 		})
 	})
 
@@ -216,32 +276,37 @@ func TestCache(t *testing.T) {
 			t.Parallel()
 			c, _, _ := newCache(t, 10, nil)
 			c.Set("k", 7, time.Time{})
-
 			p, ok := c.Pin("k")
-			testkit.True(t, ok, "Pin must find the stored key")
-			testkit.Equal(t, p.Value(), 7, "the Pinned must hold the stored value")
+			assert.True(t, ok, "Pin must find the stored key")
+			assert.Equal(t, p.Value(), 7, "the Pinned must contain the stored value")
 			p.Unpin()
 		})
 
 		t.Run("reports false for a key that Set never stored", func(t *testing.T) {
 			t.Parallel()
 			c, _, _ := newCache(t, 10, nil)
-
 			p, ok := c.Pin("k")
-			testkit.False(t, ok, "Pin must miss a key that was never stored")
-			testkit.Equal(t, p.Value(), 0, "a miss must return the zero Pinned")
+			expect.False(t, ok, "Pin must miss a key that was never stored")
+			expect.Equal(t, p, cache.Pinned[string, int]{}, "a miss must return the zero Pinned")
 		})
 
-		t.Run("reports false for an expired entry and removes it", func(t *testing.T) {
+		t.Run("reports false for an expired entry", func(t *testing.T) {
+			t.Parallel()
+			c, clk, _ := newCache(t, 10, nil)
+			c.Set("k", 7, origin.Add(time.Second))
+			clk.Advance(time.Second)
+			_, ok := c.Pin("k")
+			assert.False(t, ok, "Pin must miss an expired entry")
+		})
+
+		t.Run("removes an expired entry", func(t *testing.T) {
 			t.Parallel()
 			c, clk, r := newCache(t, 10, nil)
 			c.Set("k", 7, origin.Add(time.Second))
-
 			clk.Advance(time.Second)
-			_, ok := c.Pin("k")
-			testkit.False(t, ok, "Pin must miss an expired entry")
-			testkit.Equal(t, r.got(), []string{"k"}, "the expired entry must reach Evicted")
-			testkit.Equal(t, c.Len(), 0, "the expired entry must leave the cache")
+			c.Pin("k")
+			expect.Equal(t, c.Len(), 0, "the expired entry must leave the cache")
+			expect.Equal(t, r.got(), []string{"k"}, "the expired entry must reach Evicted")
 		})
 
 		t.Run("reports false for an entry that a Delete removed", func(t *testing.T) {
@@ -249,9 +314,8 @@ func TestCache(t *testing.T) {
 			c, _, _ := newCache(t, 10, nil)
 			c.Set("k", 7, time.Time{})
 			c.Delete("k")
-
 			_, ok := c.Pin("k")
-			testkit.False(t, ok, "Pin must miss a deleted entry")
+			assert.False(t, ok, "Pin must miss a deleted entry")
 		})
 	})
 
@@ -260,66 +324,67 @@ func TestCache(t *testing.T) {
 
 		t.Run("replaces the value of a key", func(t *testing.T) {
 			t.Parallel()
+			c, _, _ := newCache(t, 10, nil)
+			c.Set("k", 1, time.Time{})
+			c.Set("k", 2, time.Time{})
+			v, _ := c.Get("k")
+			expect.Equal(t, v, 2, "Get must return the second value")
+			expect.Equal(t, c.Len(), 1, "a replaced key must have one entry")
+		})
+
+		t.Run("passes the replaced entry to Evicted", func(t *testing.T) {
+			t.Parallel()
 			c, _, r := newCache(t, 10, nil)
 			c.Set("k", 1, time.Time{})
 			c.Set("k", 2, time.Time{})
-
-			v, _ := c.Get("k")
-			testkit.Equal(t, v, 2, "Get must return the second value")
-			testkit.Equal(t, c.Len(), 1, "a replaced key must hold one entry")
-			testkit.Equal(t, r.got(), []string{"k"}, "the replaced value must reach Evicted")
+			assert.Equal(t, r.got(), []string{"k"}, "the replaced value must reach Evicted")
 		})
 
 		t.Run("evicts the oldest entries without hits until the cost fits the capacity", func(t *testing.T) {
 			t.Parallel()
 			c, _, r := newCache(t, 3, nil)
 			setAll(c, "a", "b", "c", "d", "e")
-
-			testkit.Equal(t, c.Len(), 3, "the cache must hold Capacity entries of cost 1")
-			testkit.Equal(t, c.Cost(), int64(3), "the cost must fit the capacity")
-			testkit.Equal(t, r.got(), []string{"a", "b"}, "the oldest entries must leave first")
+			expect.Equal(t, c.Len(), 3, "the cache must keep Capacity entries of cost 1")
+			expect.Equal(t, c.Cost(), int64(3), "the cost must fit the capacity")
+			expect.Equal(t, r.got(), []string{"a", "b"}, "the oldest entries must leave first")
 		})
 
 		t.Run("bounds the sum of the costs that Cost returns", func(t *testing.T) {
 			t.Parallel()
-			c, _, r := newCache(t, 10, valueCost)
+			c, _, r := newCache(t, 10, func(v int) int64 { return int64(v) })
 			c.Set("a", 4, time.Time{})
 			c.Set("b", 4, time.Time{})
 			c.Set("c", 4, time.Time{})
-
-			testkit.Equal(t, c.Cost(), int64(8), "the cache must evict until the costs fit 10")
-			testkit.Equal(t, r.got(), []string{"a"}, "one entry of cost 4 must leave")
+			expect.Equal(t, c.Cost(), int64(8), "the cache must evict until the costs fit 10")
+			expect.Equal(t, r.got(), []string{"a"}, "one entry of cost 4 must leave")
 		})
 
 		t.Run("counts a negative cost as zero", func(t *testing.T) {
 			t.Parallel()
-			c, _, _ := newCache(t, 10, valueCost)
+			c, _, _ := newCache(t, 10, func(v int) int64 { return int64(v) })
 			c.Set("k", -5, time.Time{})
-
-			testkit.Equal(t, c.Cost(), int64(0), "a negative cost must count as 0")
-			testkit.Equal(t, c.Len(), 1, "an entry of negative cost must be stored")
+			expect.Equal(t, c.Cost(), int64(0), "a negative cost must count as 0")
+			expect.Equal(t, c.Len(), 1, "an entry of negative cost must be stored")
 		})
 
 		t.Run("stores a value whose cost equals the capacity", func(t *testing.T) {
 			t.Parallel()
-			c, _, _ := newCache(t, 10, valueCost)
+			c, _, _ := newCache(t, 10, func(v int) int64 { return int64(v) })
 			c.Set("k", 10, time.Time{})
-
 			_, ok := c.Get("k")
-			testkit.True(t, ok, "a value of the capacity's cost must fit")
+			assert.True(t, ok, "a value of the capacity's cost must fit")
 		})
 
 		t.Run("passes a value whose cost exceeds the capacity to Evicted", func(t *testing.T) {
 			t.Parallel()
-			c, _, r := newCache(t, 10, valueCost)
+			c, _, r := newCache(t, 10, func(v int) int64 { return int64(v) })
 			c.Set("small", 1, time.Time{})
 			c.Set("k", 1, time.Time{})
 			c.Set("k", 11, time.Time{})
-
 			_, ok := c.Get("k")
-			testkit.False(t, ok, "a value above the capacity must not be stored")
-			testkit.Equal(t, r.got(), []string{"k", "k"}, "the replaced value and the refused value must reach Evicted")
-			testkit.Equal(t, c.Cost(), int64(1), "the refused value must evict nothing else")
+			expect.False(t, ok, "a value above the capacity must not be stored")
+			expect.Equal(t, r.got(), []string{"k", "k"}, "the replaced value and the refused value must reach Evicted")
+			expect.Equal(t, c.Cost(), int64(1), "the refused value must evict nothing else")
 		})
 
 		t.Run("keeps its entry past the capacity while pinned entries fill the cache", func(t *testing.T) {
@@ -327,96 +392,107 @@ func TestCache(t *testing.T) {
 			c, _, r := newCache(t, 2, nil)
 			setAll(c, "a", "b")
 			a, _ := c.Pin("a")
+			defer a.Unpin()
 			b, _ := c.Pin("b")
-
+			defer b.Unpin()
 			c.Set("c", 1, time.Time{})
-			testkit.Equal(t, c.Len(), 3, "a Set into a pinned cache must keep its entry")
-			testkit.Equal(t, r.got(), []string(nil), "no pinned entry may leave")
+			expect.Equal(t, c.Len(), 3, "a Set into a pinned cache must keep its entry")
+			expect.Empty(t, r.got(), "no pinned entry may leave")
+		})
 
+		t.Run("evicts down to the capacity once the pins are gone", func(t *testing.T) {
+			t.Parallel()
+			c, _, _ := newCache(t, 2, nil)
+			setAll(c, "a", "b")
+			a, _ := c.Pin("a")
+			b, _ := c.Pin("b")
+			c.Set("c", 1, time.Time{})
 			a.Unpin()
 			b.Unpin()
 			c.Set("d", 1, time.Time{})
-			testkit.Equal(t, c.Len(), 2, "the next Set must evict down to the capacity")
+			assert.Equal(t, c.Len(), 2, "the next Set must evict down to the capacity")
 		})
 
 		t.Run("stores an entry whose expiry time has passed as a miss", func(t *testing.T) {
 			t.Parallel()
 			c, _, _ := newCache(t, 10, nil)
 			c.Set("k", 7, origin.Add(-time.Second))
-
 			_, ok := c.Get("k")
-			testkit.False(t, ok, "an entry stored after its expiry time must be a miss")
+			assert.False(t, ok, "an entry stored after its expiry time must be a miss")
 		})
 
 		t.Run("passes the replaced entry to Evicted before the entries that it evicts", func(t *testing.T) {
 			t.Parallel()
-			c, _, r := newCache(t, 3, valueCost)
+			c, _, r := newCache(t, 3, func(v int) int64 { return int64(v) })
 			c.Set("a", 1, time.Time{})
 			c.Set("b", 1, time.Time{})
 			c.Set("c", 1, time.Time{})
 			c.Set("c", 2, time.Time{})
-
-			testkit.Equal(t, r.got(), []string{"c", "a"}, "the replaced value must reach Evicted first")
+			assert.Equal(t, r.got(), []string{"c", "a"}, "the replaced value must reach Evicted first")
 		})
 
 		t.Run("calls Evicted after it releases its lock", func(t *testing.T) {
 			t.Parallel()
 			var c *cache.Cache[string, int]
-
-			deleted := make(chan bool, 1)
+			var deleted atomic.Bool
 			c, err := cache.New(cache.Config[string, int]{
 				Clock:    fake.New(origin),
 				Capacity: 1,
-				Evicted:  func(string, int) { deleted <- c.Delete("other") },
+				Evicted:  func(string, int) { deleted.Store(!c.Delete("other")) },
 			})
-			testkit.NoError(t, err, "New must accept the configuration")
-
-			done := make(chan struct{})
-			go func() {
+			assert.NoError(t, err, "New must accept the configuration")
+			assert.CompletesWithin(t, time.Second, func(context.Context) error {
 				setAll(c, "a", "b")
-				close(done)
-			}()
 
-			select {
-			case <-done:
-			case <-time.After(time.Second):
-				t.Fatal("Evicted ran under the lock, and its Delete never returned")
-			}
-			testkit.False(t, <-deleted, "the Delete inside Evicted must run")
+				return nil
+			}, "a Delete inside Evicted must not wait for the lock of the Set")
+			assert.True(t, deleted.Load(), "the Delete inside Evicted must run")
 		})
 	})
 
 	t.Run("Delete", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("removes the entry and reports true", func(t *testing.T) {
+		t.Run("reports true for a key that the cache contains", func(t *testing.T) {
+			t.Parallel()
+			c, _, _ := newCache(t, 10, nil)
+			c.Set("k", 7, time.Time{})
+			assert.True(t, c.Delete("k"), "Delete must report the removed entry")
+		})
+
+		t.Run("removes the entry", func(t *testing.T) {
 			t.Parallel()
 			c, _, r := newCache(t, 10, nil)
 			c.Set("k", 7, time.Time{})
-
-			testkit.True(t, c.Delete("k"), "Delete must report the removed entry")
+			c.Delete("k")
 			_, ok := c.Get("k")
-			testkit.False(t, ok, "a deleted key must miss")
-			testkit.Equal(t, r.got(), []string{"k"}, "the deleted entry must reach Evicted")
-			testkit.Equal(t, c.Len(), 0, "the deleted entry must leave the cache")
+			expect.False(t, ok, "a deleted key must miss")
+			expect.Equal(t, c.Len(), 0, "the deleted entry must leave the cache")
+			expect.Equal(t, r.got(), []string{"k"}, "the deleted entry must reach Evicted")
 		})
 
-		t.Run("reports false for a key that the cache does not hold", func(t *testing.T) {
+		t.Run("reports false for a key that the cache does not contain", func(t *testing.T) {
 			t.Parallel()
 			c, _, r := newCache(t, 10, nil)
-
-			testkit.False(t, c.Delete("k"), "Delete of an absent key must report false")
-			testkit.Equal(t, r.got(), []string(nil), "Delete of an absent key must not call Evicted")
+			expect.False(t, c.Delete("k"), "Delete of an absent key must report false")
+			expect.Empty(t, r.got(), "Delete of an absent key must not call Evicted")
 		})
 
 		t.Run("reports true for an expired entry", func(t *testing.T) {
 			t.Parallel()
 			c, clk, r := newCache(t, 10, nil)
 			c.Set("k", 7, origin.Add(time.Second))
-
 			clk.Advance(2 * time.Second)
-			testkit.True(t, c.Delete("k"), "an expired entry that no Get removed must count as held")
-			testkit.Equal(t, r.got(), []string{"k"}, "the deleted entry must reach Evicted")
+			expect.True(t, c.Delete("k"), "an expired entry that no Get removed must count as present")
+			expect.Equal(t, r.got(), []string{"k"}, "the deleted entry must reach Evicted")
+		})
+
+		t.Run("calls no Evicted when the Config sets none", func(t *testing.T) {
+			t.Parallel()
+			c, err := cache.New(cache.Config[string, int]{Clock: fake.New(origin), Capacity: 10})
+			assert.NoError(t, err, "New must accept the configuration")
+			c.Set("k", 7, time.Time{})
+			assert.NotPanics(t, func() { c.Delete("k") }, "Delete must skip a nil Evicted")
 		})
 	})
 
@@ -425,11 +501,10 @@ func TestCache(t *testing.T) {
 
 		t.Run("returns the number of entries", func(t *testing.T) {
 			t.Parallel()
-			c, _, _ := newCache(t, 10, valueCost)
+			c, _, _ := newCache(t, 10, func(v int) int64 { return int64(v) })
 			c.Set("a", 3, time.Time{})
 			c.Set("b", 4, time.Time{})
-
-			testkit.Equal(t, c.Len(), 2, "Len must count the entries, not their costs")
+			assert.Equal(t, c.Len(), 2, "Len must count the entries, not their costs")
 		})
 
 		t.Run("excludes a pinned entry that left", func(t *testing.T) {
@@ -438,9 +513,8 @@ func TestCache(t *testing.T) {
 			c.Set("k", 7, time.Time{})
 			p, _ := c.Pin("k")
 			defer p.Unpin()
-
 			c.Delete("k")
-			testkit.Equal(t, c.Len(), 0, "an entry that left must not count while pinned")
+			assert.Equal(t, c.Len(), 0, "an entry that left must not count while pinned")
 		})
 	})
 
@@ -449,169 +523,404 @@ func TestCache(t *testing.T) {
 
 		t.Run("returns the sum of the costs of the entries", func(t *testing.T) {
 			t.Parallel()
-			c, _, _ := newCache(t, 10, valueCost)
+			c, _, _ := newCache(t, 10, func(v int) int64 { return int64(v) })
 			c.Set("a", 3, time.Time{})
 			c.Set("b", 4, time.Time{})
-
-			testkit.Equal(t, c.Cost(), int64(7), "Cost must sum the costs")
-
+			assert.Equal(t, c.Cost(), int64(7), "Cost must sum the costs")
 			c.Delete("a")
-			testkit.Equal(t, c.Cost(), int64(4), "Cost must drop by the cost of a removed entry")
+			assert.Equal(t, c.Cost(), int64(4), "Cost must drop by the cost of a removed entry")
 		})
 	})
 
-	t.Run("passes every value that Set stored to Evicted once, or keeps it", func(t *testing.T) {
+	t.Run("orders concurrent calls as one sequence of calls", func(t *testing.T) {
 		t.Parallel()
-		const (
-			goroutines = 8
-			operations = 2_000
-		)
-
-		var (
-			sets    atomic.Int64
-			evicted atomic.Int64
-		)
-		c, err := cache.New(cache.Config[int, int]{
-			Clock:    fake.New(origin),
-			Capacity: 16,
-			Evicted:  func(int, int) { evicted.Add(1) },
-		})
-		testkit.NoError(t, err, "New must accept the configuration")
-
-		var wg sync.WaitGroup
-		for g := range goroutines {
-			wg.Go(func() {
-				r := rand.New(rand.NewPCG(uint64(g), 1))
-				for range operations {
-					k := r.IntN(64)
-					switch r.IntN(4) {
-					case 0:
-						c.Set(k, k, time.Time{})
-						sets.Add(1)
-					case 1:
-						c.Delete(k)
-					case 2:
-						if p, ok := c.Pin(k); ok {
-							p.Unpin()
+		prop.ForAll(t, "concurrent calls must linearize against the last Set of each key", func(pc *prop.Case) {
+			c, err := cache.New(cache.Config[int, int]{Clock: fake.New(origin), Capacity: workloadCapacity})
+			assert.NoError(pc, err, "New must accept the configuration")
+			var sets atomic.Int64
+			stateful.Steps(pc, stateful.Machine[keyValues]{
+				Spec: history.Spec[keyValues]{
+					Initial: func() keyValues {
+						var state keyValues
+						for k := range state {
+							state[k] = absent
 						}
-					default:
-						c.Get(k)
-					}
-				}
-			})
-		}
-		wg.Wait()
 
-		testkit.Equal(t, evicted.Load()+int64(c.Len()), sets.Load(),
-			"each stored value must be in the cache or have reached Evicted once")
-		testkit.True(t, c.Cost() <= 16, "without pins the cost must fit the capacity")
+						return state
+					},
+					Next: stepCache,
+				},
+				Actions: cacheActions(c, &sets),
+			}, stateful.Clients(clients-1))
+		})
+	})
+
+	t.Run("passes each value that leaves the cache to Evicted once", func(t *testing.T) {
+		t.Parallel()
+		prop.ForAll(t, "each stored value must be in the cache or have reached Evicted once", func(pc *prop.Case) {
+			var evicted, sets atomic.Int64
+			c, err := cache.New(cache.Config[int, int]{
+				Clock:    fake.New(origin),
+				Capacity: workloadCapacity,
+				Evicted:  func(int, int) { evicted.Add(1) },
+			})
+			assert.NoError(pc, err, "New must accept the configuration")
+			stateful.Steps(pc, stateful.Machine[keyValues]{
+				Actions: cacheActions(c, &sets),
+				Settle: func(pc *prop.Case, _ keyValues) {
+					assert.Equal(pc, evicted.Load()+int64(c.Len()), sets.Load(),
+						"each stored value must be in the cache or have reached Evicted once")
+					assert.InRange(pc, c.Cost(), 0, workloadCapacity, "without pins the cost must fit the capacity")
+				},
+			}, stateful.Clients(clients-1))
+		})
 	})
 }
 
+// TestCacheAllocs checks the allocation contract of the methods of a
+// Cache of benchCapacity keys. MaxAllocs counts the allocations of the
+// whole process, so the test does not run in parallel.
+//
+//nolint:paralleltest // see above
+func TestCacheAllocs(t *testing.T) {
+	keys := names("k", 2*benchCapacity)
+
+	t.Run("Get", func(t *testing.T) {
+		c := benchCache(t, keys[:benchCapacity])
+		c.Set("expiring", 1, origin.Add(time.Hour))
+		var hit, miss, expiring bool
+		expect.MaxAllocs(t, func() { _, hit = c.Get("k500") }, 0, "a Get of a hit must not allocate")
+		expect.MaxAllocs(t, func() { _, miss = c.Get("absent") }, 0, "a Get of a miss must not allocate")
+		expect.MaxAllocs(t, func() { _, expiring = c.Get("expiring") }, 0,
+			"a Get of a hit with an expiry time must not allocate")
+		expect.True(t, hit, "the test must measure a hit")
+		expect.False(t, miss, "the test must measure a miss")
+		expect.True(t, expiring, "the test must measure a hit with an expiry time")
+	})
+
+	t.Run("Pin", func(t *testing.T) {
+		c := benchCache(t, keys[:benchCapacity])
+		var ok bool
+		expect.MaxAllocs(t, func() {
+			var p cache.Pinned[string, int]
+			p, ok = c.Pin("k500")
+			p.Unpin()
+		}, 0, "a Pin and its Unpin must not allocate")
+		assert.True(t, ok, "the test must measure a hit")
+	})
+
+	t.Run("Set", func(t *testing.T) {
+		full := benchCache(t, keys[:benchCapacity])
+		expect.MaxAllocs(t, func() { full.Set("k500", 1, time.Time{}) }, 1,
+			"a Set that replaces an entry must allocate the entry")
+		assert.Equal(t, full.Len(), benchCapacity, "the test must measure Sets that replace")
+
+		evicting := benchCache(t, keys)
+		i := 0
+		expect.MaxAllocs(t, func() {
+			evicting.Set(keys[i%len(keys)], i, time.Time{})
+			i++
+		}, 1, "a Set of a new key that evicts an entry must allocate the entry")
+		assert.Equal(t, evicting.Len(), benchCapacity, "the test must measure Sets that evict")
+	})
+
+	t.Run("Delete", func(t *testing.T) {
+		c := benchCache(t, keys[:benchCapacity])
+		var absentDeleted, presentDeleted bool
+		expect.MaxAllocs(t, func() { absentDeleted = c.Delete("absent") }, 0,
+			"a Delete of an absent key must not allocate")
+		expect.MaxAllocsWithSetup(t, func() string {
+			c.Set("d", 1, time.Time{})
+
+			return "d"
+		}, func(k string) { presentDeleted = c.Delete(k) }, 0, "a Delete of a present key must not allocate")
+		expect.False(t, absentDeleted, "the test must measure an absent key")
+		expect.True(t, presentDeleted, "the test must measure a present key")
+	})
+
+	t.Run("Len", func(t *testing.T) {
+		c := benchCache(t, keys[:benchCapacity])
+		var n int
+		expect.MaxAllocs(t, func() { n = c.Len() }, 0, "Len must not allocate")
+		assert.Equal(t, n, benchCapacity, "the test must measure a full cache")
+	})
+
+	t.Run("Cost", func(t *testing.T) {
+		c := benchCache(t, keys[:benchCapacity])
+		var cost int64
+		expect.MaxAllocs(t, func() { cost = c.Cost() }, 0, "Cost must not allocate")
+		assert.Equal(t, cost, int64(benchCapacity), "the test must measure a full cache")
+	})
+}
+
+// BenchmarkCache reports the cost of the methods of a Cache of
+// benchCapacity keys, and fails when a method allocates more than the
+// allocation contract allows.
 func BenchmarkCache(b *testing.B) {
 	keys := names("k", 2*benchCapacity)
 
-	b.Run("Get of a hit", func(b *testing.B) {
-		c := benchCache(b, keys[:benchCapacity])
+	b.Run("Get", func(b *testing.B) {
+		b.Run("of a hit", func(b *testing.B) {
+			c := benchCache(b, keys[:benchCapacity])
+			var ok bool
 
-		cacheAllocs(b, 0, func() { sinkValue, sinkOK = c.Get("k500") })
-		testkit.True(b, sinkOK, "the benchmark must measure a hit")
-	})
+			bc := bench.Start(b).MaxAllocs(0)
+			defer bc.End()
 
-	b.Run("Get of a miss", func(b *testing.B) {
-		c := benchCache(b, keys[:benchCapacity])
+			for bc.Loop() {
+				_, ok = c.Get("k500")
+			}
 
-		cacheAllocs(b, 0, func() { sinkValue, sinkOK = c.Get("absent") })
-		testkit.False(b, sinkOK, "the benchmark must measure a miss")
-	})
-
-	b.Run("Get of a hit with an expiry time", func(b *testing.B) {
-		c := benchCache(b, nil)
-		c.Set("k", 1, origin.Add(time.Hour))
-
-		cacheAllocs(b, 0, func() { sinkValue, sinkOK = c.Get("k") })
-		testkit.True(b, sinkOK, "the benchmark must measure a hit")
-	})
-
-	b.Run("Pin and Unpin", func(b *testing.B) {
-		c := benchCache(b, keys[:benchCapacity])
-
-		cacheAllocs(b, 0, func() {
-			p, ok := c.Pin("k500")
-			sinkOK = ok
-			p.Unpin()
+			assert.True(b, ok, "the benchmark must measure a hit")
 		})
-		testkit.True(b, sinkOK, "the benchmark must measure a hit")
+
+		b.Run("of a miss", func(b *testing.B) {
+			c := benchCache(b, keys[:benchCapacity])
+			ok := true
+
+			bc := bench.Start(b).MaxAllocs(0)
+			defer bc.End()
+
+			for bc.Loop() {
+				_, ok = c.Get("absent")
+			}
+
+			assert.False(b, ok, "the benchmark must measure a miss")
+		})
+
+		b.Run("of a hit with an expiry time", func(b *testing.B) {
+			c := benchCache(b, nil)
+			c.Set("k", 1, origin.Add(time.Hour))
+			var ok bool
+
+			bc := bench.Start(b).MaxAllocs(0)
+			defer bc.End()
+
+			for bc.Loop() {
+				_, ok = c.Get("k")
+			}
+
+			assert.True(b, ok, "the benchmark must measure a hit")
+		})
+
+		b.Run("of a hit by goroutines in parallel", func(b *testing.B) {
+			c := benchCache(b, keys[:benchCapacity])
+			var hits atomic.Int64
+
+			bc := bench.Start(b).MaxAllocs(0)
+			defer bc.End()
+
+			bc.RunParallel(func(pb *bench.PB) {
+				i, n := 0, int64(0)
+				for pb.Next() {
+					if _, ok := c.Get(keys[i%benchCapacity]); ok {
+						n++
+					}
+					i++
+				}
+				hits.Add(n)
+			})
+
+			assert.NotEqual(b, hits.Load(), int64(0), "the benchmark must measure hits")
+		})
 	})
 
-	b.Run("Set of a key that replaces its entry", func(b *testing.B) {
-		c := benchCache(b, keys[:benchCapacity])
+	b.Run("Pin", func(b *testing.B) {
+		b.Run("of a hit followed by its Unpin", func(b *testing.B) {
+			c := benchCache(b, keys[:benchCapacity])
+			var ok bool
 
-		cacheAllocs(b, 1, func() { c.Set("k500", 1, time.Time{}) })
+			bc := bench.Start(b).MaxAllocs(0)
+			defer bc.End()
+
+			for bc.Loop() {
+				var p cache.Pinned[string, int]
+				p, ok = c.Pin("k500")
+				p.Unpin()
+			}
+
+			assert.True(b, ok, "the benchmark must measure a hit")
+		})
 	})
 
-	b.Run("Set of a new key that evicts an entry", func(b *testing.B) {
-		c := benchCache(b, keys)
+	b.Run("Set", func(b *testing.B) {
+		b.Run("of a key that replaces its entry", func(b *testing.B) {
+			c := benchCache(b, keys[:benchCapacity])
 
-		i := 0
-		set := func() {
-			c.Set(keys[i%len(keys)], i, time.Time{})
-			i++
-		}
-		for range 10 * len(keys) {
-			set()
-		}
+			bc := bench.Start(b).MaxAllocs(1)
+			defer bc.End()
 
-		cacheAllocs(b, 1, set)
-	})
+			for bc.Loop() {
+				c.Set("k500", 1, time.Time{})
+			}
 
-	b.Run("Delete of an absent key", func(b *testing.B) {
-		c := benchCache(b, keys[:benchCapacity])
+			assert.Equal(b, c.Len(), benchCapacity, "the benchmark must measure a full cache")
+		})
 
-		cacheAllocs(b, 0, func() { sinkOK = c.Delete("absent") })
-		testkit.False(b, sinkOK, "the benchmark must measure an absent key")
-	})
-
-	b.Run("Get of a hit by goroutines in parallel", func(b *testing.B) {
-		c := benchCache(b, keys[:benchCapacity])
-
-		b.ReportAllocs()
-		b.RunParallel(func(pb *testing.PB) {
+		b.Run("of a new key that evicts an entry", func(b *testing.B) {
+			c := benchCache(b, keys)
 			i := 0
-			for pb.Next() {
-				c.Get(keys[i%len(keys)])
+
+			bc := bench.Start(b).MaxAllocs(1)
+			defer bc.End()
+
+			for bc.Loop() {
+				c.Set(keys[i%len(keys)], i, time.Time{})
 				i++
 			}
+
+			assert.Equal(b, c.Len(), benchCapacity, "the benchmark must measure Sets that evict")
+		})
+	})
+
+	b.Run("Delete", func(b *testing.B) {
+		b.Run("of an absent key", func(b *testing.B) {
+			c := benchCache(b, keys[:benchCapacity])
+			deleted := true
+
+			bc := bench.Start(b).MaxAllocs(0)
+			defer bc.End()
+
+			for bc.Loop() {
+				deleted = c.Delete("absent")
+			}
+
+			assert.False(b, deleted, "the benchmark must measure an absent key")
 		})
 	})
 }
 
-// benchCache returns a Cache of benchCapacity without Cost and without
-// Evicted, so that a benchmark measures the cache alone, after a Set of 1
-// under each key of keys in order.
-func benchCache(b *testing.B, keys []string) *cache.Cache[string, int] {
-	b.Helper()
+// newCache returns an empty Cache of capacity over a fake clock at origin,
+// whose Evicted records into the returned recorder, and whose Cost is cost.
+// It fails tb when New refuses the configuration.
+func newCache(
+	tb testing.TB, capacity int64, cost func(int) int64,
+) (*cache.Cache[string, int], *fake.Clock, *recorder) {
+	tb.Helper()
+	r := &recorder{}
+	clk := fake.New(origin)
+	c, err := cache.New(cache.Config[string, int]{Clock: clk, Capacity: capacity, Cost: cost, Evicted: r.evicted})
+	assert.NoError(tb, err, "New must accept the configuration")
 
+	return c, clk, r
+}
+
+// benchCache returns a Cache of benchCapacity without Cost and without
+// Evicted, so that a measurement covers the cache alone, after a Set of 1
+// under each key of keys in order. A Set of 10 times as many keys first
+// puts the cache in the steady state of its eviction.
+func benchCache(tb testing.TB, keys []string) *cache.Cache[string, int] {
+	tb.Helper()
 	c, err := cache.New(cache.Config[string, int]{Clock: fake.New(origin), Capacity: benchCapacity})
-	testkit.NoError(b, err, "New must accept the configuration")
-	setAll(c, keys...)
+	assert.NoError(tb, err, "New must accept the configuration")
+	for range 10 {
+		setAll(c, keys...)
+	}
 
 	return c
 }
 
-// cacheAllocs fails b when call does not allocate want times per call,
-// averaged over benchRuns calls, and then reports the time and the
-// allocations of call per iteration. The check runs in the benchmark, so
-// it applies to the build that the benchmark measures.
-func cacheAllocs(b *testing.B, want float64, call func()) {
-	b.Helper()
+// setAll stores 1 under each key, in order, without an expiry time.
+func setAll(c *cache.Cache[string, int], keys ...string) {
+	for _, k := range keys {
+		c.Set(k, 1, time.Time{})
+	}
+}
 
-	if allocs := testing.AllocsPerRun(benchRuns, call); allocs != want {
-		b.Fatalf("allocates %v times per call, want %v", allocs, want)
+// names returns the keys prefix0 to prefix<n-1>.
+func names(prefix string, n int) []string {
+	keys := make([]string, n)
+	for i := range keys {
+		keys[i] = prefix + strconv.Itoa(i)
 	}
 
-	b.ReportAllocs()
-	for b.Loop() {
-		call()
+	return keys
+}
+
+// cacheActions returns the actions of a machine over c, each on a key
+// below workloadKeys: a Set of a value that no Set before it stored, a
+// Get, a Pin with its Unpin, and a Delete. Each records its call in the
+// history of its case, with the key as its first argument and a miss as
+// absent, and sets counts the Sets.
+func cacheActions(c *cache.Cache[int, int], sets *atomic.Int64) []stateful.Action[keyValues] {
+	written := 0
+	key := func(pc *prop.Case, _ keyValues) any { return pc.Draw(prop.Integer(0, workloadKeys-1), "key") }
+
+	return []stateful.Action[keyValues]{
+		{
+			Name: opSet,
+			Input: func(pc *prop.Case, _ keyValues) any {
+				written++
+
+				return [2]int{pc.Draw(prop.Integer(0, workloadKeys-1), "key"), written}
+			},
+			Run: func(pc *prop.Case, client int, in any) {
+				kv := in.([2]int)
+				call := pc.History().Invoke(client, opSet, []any{kv[0], kv[1]})
+				c.Set(kv[0], kv[1], time.Time{})
+				call.OK(nil)
+				sets.Add(1)
+			},
+		},
+		{
+			Name:  opGet,
+			Input: key,
+			Run: func(pc *prop.Case, client int, in any) {
+				call := pc.History().Invoke(client, opGet, []any{in})
+				v, ok := c.Get(in.(int))
+				if !ok {
+					v = absent
+				}
+				call.OK(v)
+			},
+		},
+		{
+			Name:  opPin,
+			Input: key,
+			Run: func(pc *prop.Case, client int, in any) {
+				call := pc.History().Invoke(client, opPin, []any{in})
+				p, ok := c.Pin(in.(int))
+				v := p.Value()
+				if !ok {
+					v = absent
+				}
+				p.Unpin()
+				call.OK(v)
+			},
+		},
+		{
+			Name:  opDelete,
+			Input: key,
+			Run: func(pc *prop.Case, client int, in any) {
+				call := pc.History().Invoke(client, opDelete, []any{in})
+				call.OK(c.Delete(in.(int)))
+			},
+		},
 	}
+}
+
+// stepCache returns the state of a Cache of the workload after op. The
+// state of a key is its value, and absent for a key without an entry. An
+// eviction removes an entry without a call, so a miss and a Delete that
+// reports false are allowed in every state.
+func stepCache(state keyValues, op history.Operation) []keyValues {
+	k := op.Args[0].(int)
+	if op.Name == opSet {
+		state[k] = op.Args[1].(int)
+
+		return []keyValues{state}
+	}
+	if op.Name == opDelete {
+		if op.Known && op.Output == true && state[k] == absent {
+			return nil
+		}
+		state[k] = absent
+
+		return []keyValues{state}
+	}
+	if op.Returned(absent) || op.Returned(state[k]) {
+		return []keyValues{state}
+	}
+
+	return nil
 }

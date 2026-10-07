@@ -172,9 +172,9 @@ func (c *Cache[K, V]) Get(k K) (V, bool) {
 // The cache does not evict a pinned entry, and the entry counts toward the
 // capacity, until [Pinned.Unpin]. A Set or Delete of k still removes the
 // entry from the cache, so a later Get misses, and the caller of Pin keeps
-// using the value: Evicted receives the entry at its last Unpin. A Pin that finds an expired entry removes it, as Get does, and
-// reports false. A Pin that races with the removal of the entry reports
-// false.
+// using the value. Evicted receives the entry at its last Unpin. A Pin
+// that finds an expired entry removes it, as Get does, and reports false.
+// A Pin that races with the removal of the entry reports false.
 //
 // # Allocation contract
 //
@@ -231,7 +231,6 @@ func (c *Cache[K, V]) Set(k K, v V, expires time.Time) {
 	}
 
 	if cost > c.capacity {
-		e.leave()
 		gone.add(e)
 	} else {
 		c.attach(e)
@@ -306,6 +305,10 @@ func (c *Cache[K, V]) Cost() int64 {
 // writer already did, releases the lock, passes the entry to Evicted when
 // it has no pin, and returns nil. find reads the clock only for an entry
 // with an expiry time.
+//
+// A writer that removed the entry first marks it as having left too, and
+// leave reports an entry once, so exactly one of the two passes the entry
+// to Evicted.
 func (c *Cache[K, V]) find(k K) *entry[K, V] {
 	h := maphash.Comparable(c.seed, k)
 
@@ -316,14 +319,13 @@ func (c *Cache[K, V]) find(k K) *entry[K, V] {
 
 	c.mu.Lock()
 
-	present := c.index.Load().find(k, h, c.tomb) == e
-	if present {
+	if c.index.Load().find(k, h, c.tomb) == e {
 		c.detach(e)
 	}
 
 	c.mu.Unlock()
 
-	if present && e.leave() {
+	if e.leave() {
 		c.notify(e)
 	}
 
