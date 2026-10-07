@@ -731,10 +731,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   signatures encode.
 - Core's production code imports `go.thesmos.sh/kanon` and
   `go.thesmos.sh/kanon/wire` at the pseudo-version of kanon's commit
-  098def3, and its tests import kanon's conformance suite and
+  55eb987, and its tests import kanon's conformance suite and
   `go.dokimi.dev/assert`. The generated files declare version 2 of the
   generator. CI checks that the generated files are current and that a
   pull request keeps every recorded field number. See ADR-0035.
+- The hand-written tests assert with `go.dokimi.dev/assert` instead of
+  testkit, apart from those of `clock/fake`, `clock/hlc` and
+  `clock/kernel`. A test checks each allocation ceiling of a hot path in
+  `go test`, as its benchmark does. The generated conformance suites and
+  sentinel tests use testkit.
 - **Breaking:** `telemetry.Counter`, `telemetry.Gauge` and
   `telemetry.Histogram` declare `Release`, which ends a bound instrument
   that `With` returned. A released instrument records nothing, and an
@@ -828,6 +833,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the removed key, so a caller that reused the memory of a `[]byte` key
   of a `MapFunc` changed the separator, and the map no longer found the
   keys of the leaves before it.
+- **Breaking:** `ulid.Format` writes the 48-bit timestamp into the low 48
+  bits of the ten characters of the timestamp, as the ULID specification
+  and `github.com/oklog/ulid/v2` do, and `ulid.ParseULID` reads it from
+  there. `Format` shifted the timestamp two bits up, so the text of an ID
+  with a timestamp other than 0 differed from the text of other
+  implementations, and `ParseULID` read the example of the specification
+  as a quarter of its timestamp. Text that an earlier `Format` wrote
+  parses to another ID.
+- An eviction of a `cache.Cache` resets the hits of each entry that it
+  moves from the small queue to the main queue, and takes one hit from
+  each entry that it keeps in the main queue. It changed only the hits of
+  an entry that counted as a hit, so a pinned entry that an eviction kept
+  under force or after its expiry kept every hit.
+- `rand.Shuffle` does nothing for an n of 1 or less, as its documentation
+  states. For an n of `math.MinInt`, n-1 overflowed, and `Shuffle` called
+  swap with indices outside [0, n).
+- `arena.RebaseSlicesTo` grows `dst` once, before it copies the first
+  entry, so each entry that it returns refers to the returned slice, and a
+  call allocates at most once, as the package documentation states. An
+  entry copied before a later growth referred to the array that the
+  growth left behind.
+- `telemetry.HeaderCarrier.Keys` and `telemetry.MapCarrier.Keys`
+  allocate their slice once, as their allocation contracts state.
+  `HeaderCarrier.Keys` grew its slice as it appended, so the keys of
+  three headers cost three allocations.
 
 ## [0.6.1] - 2026-08-05
 
@@ -1246,6 +1276,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `docs/rfc/0011-arena.md` documenting the arena seam
   rationale.
 
-[Unreleased]: https://github.com/thesmos-ai/core/compare/v0.6.1...HEAD
-[0.6.1]: https://github.com/thesmos-ai/core/releases/tag/v0.6.1
-[0.5.0]: https://github.com/thesmos-ai/core/releases/tag/v0.5.0
+[Unreleased]: https://github.com/thesm-os/core/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/thesm-os/core/releases/tag/v0.6.1
+[0.5.0]: https://github.com/thesm-os/core/releases/tag/v0.5.0
