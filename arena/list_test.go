@@ -557,7 +557,7 @@ func BenchmarkList(b *testing.B) {
 			}
 		}
 
-		assert.True(b, sum > 0, "the benchmark must measure reads of every element")
+		assert.InRange(b, sum, 1, 1<<63, "the benchmark must measure reads of every element")
 	})
 
 	b.Run("Ptr", func(b *testing.B) {
@@ -572,7 +572,7 @@ func BenchmarkList(b *testing.B) {
 			}
 		}
 
-		assert.True(b, sum > 0, "the benchmark must measure reads of every element")
+		assert.InRange(b, sum, 1, 1<<63, "the benchmark must measure reads of every element")
 	})
 
 	b.Run("All", func(b *testing.B) {
@@ -587,7 +587,7 @@ func BenchmarkList(b *testing.B) {
 			}
 		}
 
-		assert.True(b, sum > 0, "the benchmark must measure reads of every element")
+		assert.InRange(b, sum, 1, 1<<63, "the benchmark must measure reads of every element")
 	})
 
 	b.Run("Chunks", func(b *testing.B) {
@@ -604,7 +604,7 @@ func BenchmarkList(b *testing.B) {
 			}
 		}
 
-		assert.True(b, sum > 0, "the benchmark must measure reads of every element")
+		assert.InRange(b, sum, 1, 1<<63, "the benchmark must measure reads of every element")
 	})
 
 	b.Run("Truncate", func(b *testing.B) {

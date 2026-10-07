@@ -188,9 +188,7 @@ func TestSlabs(t *testing.T) {
 			for i := range kept {
 				kept[i] = s.Alloc(arena.MinClass)
 			}
-			for _, b := range kept[:4] {
-				assert.NoError(t, s.Free(b), "Free must take the slice back")
-			}
+			assert.Total(t, s.Free, kept[:4], "Free must take the slice back")
 			assert.NoDuplicates(t, func() ([][]byte, error) {
 				got := make([][]byte, 0, 6)
 				got = append(got, kept[4])
