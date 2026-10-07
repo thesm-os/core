@@ -4,315 +4,377 @@
 package w3c_test
 
 import (
+	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/bench"
+	"go.dokimi.dev/assert/expect"
+	"go.dokimi.dev/assert/prop"
 
 	"go.thesmos.sh/core/telemetry"
 	"go.thesmos.sh/core/telemetry/w3c"
 )
 
+// The fixture values of the cases.
 const (
-	sampledParent   = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
-	unsampledParent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-00"
+	// prefix is the version, the trace-id and the parent-id of a
+	// traceparent of traceID and spanID, without the flags.
+	prefix = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-"
+
+	// sampledParent and unsampledParent are the traceparents of traceID and
+	// spanID with the sampled flag set and clear.
+	sampledParent   = prefix + "01"
+	unsampledParent = prefix + "00"
 
 	traceID = telemetry.TraceID("4bf92f3577b34da6a3ce929d0e0e4736")
 	spanID  = telemetry.SpanID("00f067aa0ba902b7")
+
+	// state is a tracestate of two vendors.
+	state = "vendor1=opaque,vendor2=also-opaque"
 )
 
-func TestExtract(t *testing.T) {
+// errNotExtracted is returned by the inverse of the round trip for a
+// carrier from which Extract reads no span context.
+var errNotExtracted = errors.New("the carrier contains no span context")
+
+// The generators of the properties.
+var (
+	// traceIDs generates trace IDs of the W3C form: 32 lowercase hex
+	// digits, not all of them zero.
+	traceIDs = prop.StringMatching(`[0-9a-f]{32}`).Filter(func(s string) bool { return strings.Trim(s, "0") != "" })
+
+	// spanIDs generates span IDs of the W3C form: 16 lowercase hex digits,
+	// not all of them zero.
+	spanIDs = prop.StringMatching(`[0-9a-f]{16}`).Filter(func(s string) bool { return strings.Trim(s, "0") != "" })
+
+	// contexts generates the span contexts that Trace Context propagates:
+	// an identity of the W3C form, the sampled flag and any tracestate.
+	contexts = prop.Composite(func(c *prop.Case) telemetry.SpanContext {
+		return telemetry.SpanContext{
+			TraceID:    telemetry.TraceID(c.Draw(traceIDs, "trace ID")),
+			SpanID:     telemetry.SpanID(c.Draw(spanIDs, "span ID")),
+			Sampled:    c.Draw(prop.Boolean(), "sampled"),
+			TraceState: c.Draw(prop.String(), "trace state"),
+		}
+	})
+)
+
+func TestPropagator(t *testing.T) {
 	t.Parallel()
 
-	t.Run("a sampled traceparent", func(t *testing.T) {
+	t.Run("Inject", func(t *testing.T) {
 		t.Parallel()
-		sc, ok := w3c.Propagator{}.Extract(t.Context(),
-			telemetry.MapCarrier{"traceparent": sampledParent})
 
-		testkit.True(t, ok, "a well-formed traceparent must extract")
-		testkit.Equal(t, sc.TraceID, traceID, "TraceID must come from the trace-id field")
-		testkit.Equal(t, sc.SpanID, spanID, "SpanID must come from the parent-id field")
-		testkit.True(t, sc.Sampled, "the sampled flag must be read from the flags byte")
+		tests := []struct {
+			want telemetry.MapCarrier
+			name string
+			give telemetry.SpanContext
+		}{
+			{
+				name: "writes the traceparent of a sampled context",
+				give: telemetry.SpanContext{TraceID: traceID, SpanID: spanID, Sampled: true},
+				want: telemetry.MapCarrier{w3c.TraceParentHeader: sampledParent},
+			},
+			{
+				name: "writes the flags 00 for a context that is not sampled",
+				give: telemetry.SpanContext{TraceID: traceID, SpanID: spanID},
+				want: telemetry.MapCarrier{w3c.TraceParentHeader: unsampledParent},
+			},
+			{
+				name: "writes the tracestate of the context",
+				give: telemetry.SpanContext{TraceID: traceID, SpanID: spanID, TraceState: state},
+				want: telemetry.MapCarrier{w3c.TraceParentHeader: unsampledParent, w3c.TraceStateHeader: state},
+			},
+			{
+				name: "writes no ParentID",
+				give: telemetry.SpanContext{TraceID: traceID, SpanID: spanID, ParentID: "ffffffffffffffff"},
+				want: telemetry.MapCarrier{w3c.TraceParentHeader: unsampledParent},
+			},
+			{
+				name: "writes no Kind",
+				give: telemetry.SpanContext{TraceID: traceID, SpanID: spanID, Kind: telemetry.SpanKindClient},
+				want: telemetry.MapCarrier{w3c.TraceParentHeader: unsampledParent},
+			},
+			{
+				name: "writes nothing for the zero context",
+				want: telemetry.MapCarrier{},
+			},
+			{
+				name: "writes nothing for a short trace id",
+				give: telemetry.SpanContext{TraceID: "4bf92f3577b34da6", SpanID: spanID},
+				want: telemetry.MapCarrier{},
+			},
+			{
+				name: "writes nothing for a trace id outside hex",
+				give: telemetry.SpanContext{TraceID: "ZZf92f3577b34da6a3ce929d0e0e4736", SpanID: spanID},
+				want: telemetry.MapCarrier{},
+			},
+			{
+				name: "writes nothing for an all-zero trace id",
+				give: telemetry.SpanContext{TraceID: "00000000000000000000000000000000", SpanID: spanID},
+				want: telemetry.MapCarrier{},
+			},
+			{
+				name: "writes nothing for a context without a span id",
+				give: telemetry.SpanContext{TraceID: traceID},
+				want: telemetry.MapCarrier{},
+			},
+			{
+				name: "writes nothing for a short span id",
+				give: telemetry.SpanContext{TraceID: traceID, SpanID: "00f067aa"},
+				want: telemetry.MapCarrier{},
+			},
+			{
+				name: "writes nothing for a span id outside hex",
+				give: telemetry.SpanContext{TraceID: traceID, SpanID: "ZZf067aa0ba902b7"},
+				want: telemetry.MapCarrier{},
+			},
+			{
+				name: "writes nothing for an all-zero span id",
+				give: telemetry.SpanContext{TraceID: traceID, SpanID: "0000000000000000"},
+				want: telemetry.MapCarrier{},
+			},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				c := telemetry.MapCarrier{}
+				w3c.Propagator{}.Inject(t.Context(), tt.give, c)
+				assert.Equal(t, c, tt.want, "Inject must write the headers of the context")
+			})
+		}
 	})
 
-	t.Run("an unsampled traceparent", func(t *testing.T) {
+	t.Run("Extract", func(t *testing.T) {
 		t.Parallel()
-		sc, ok := w3c.Propagator{}.Extract(t.Context(),
-			telemetry.MapCarrier{"traceparent": unsampledParent})
 
-		testkit.True(t, ok, "a well-formed traceparent must extract")
-		testkit.False(t, sc.Sampled, "an unset flags bit must not report sampled")
-	})
-
-	t.Run("tracestate is carried verbatim", func(t *testing.T) {
-		t.Parallel()
-		const state = "vendor1=opaque,vendor2=also-opaque"
-		sc, ok := w3c.Propagator{}.Extract(t.Context(), telemetry.MapCarrier{
-			"traceparent": sampledParent,
-			"tracestate":  state,
-		})
-
-		testkit.True(t, ok, "extraction must succeed")
-		testkit.Equal(t, sc.TraceState, state, "tracestate must be preserved exactly")
-	})
-
-	t.Run("tracestate without traceparent is ignored", func(t *testing.T) {
-		t.Parallel()
-		// tracestate alone carries no trace identity, so there is
-		// nothing to continue.
-		_, ok := w3c.Propagator{}.Extract(t.Context(),
-			telemetry.MapCarrier{"tracestate": "vendor=value"})
-		testkit.False(t, ok, "tracestate alone must not produce a span context")
-	})
-
-	// A malformed traceparent is treated as absent, not as an error:
-	// the specification requires the receiver to start a new trace
-	// rather than reject the request.
-	malformed := []struct {
-		name  string
-		value string
-	}{
-		{"empty", ""},
-		{"too few fields", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7"},
-		{"too many fields", sampledParent + "-extra"},
-		{"short trace id", "00-4bf92f3577b34da6a3ce929-00f067aa0ba902b7-01"},
-		{"short span id", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa-01"},
-		{"non-hex trace id", "00-ZZf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"},
-		{"non-hex span id", "00-4bf92f3577b34da6a3ce929d0e0e4736-ZZf067aa0ba902b7-01"},
-		{"non-hex flags", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-ZZ"},
-		{"uppercase trace id", "00-4BF92F3577B34DA6A3CE929D0E0E4736-00f067aa0ba902b7-01"},
-		{"all-zero trace id", "00-00000000000000000000000000000000-00f067aa0ba902b7-01"},
-		{"all-zero span id", "00-4bf92f3577b34da6a3ce929d0e0e4736-0000000000000000-01"},
-		{"version ff is forbidden", "ff-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"},
-		{"non-hex version", "zz-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"},
-		{"short version", "0-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"},
-		// Correct length, wrong separators — these reach the
-		// delimiter check rather than being caught by the length
-		// test, which is the only way that branch is exercised.
-		{"underscore after version", "00_4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"},
-		{"underscore after trace id", "00-4bf92f3577b34da6a3ce929d0e0e4736_00f067aa0ba902b7-01"},
-		{"underscore after span id", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7_01"},
-		// A later version may append fields, but they must be
-		// hyphen-separated; junk appended directly is malformed at
-		// any version.
-		{
-			"later version with unseparated trailing data",
-			"cc-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01junk",
-		},
-	}
-	for _, tc := range malformed {
-		t.Run("rejects "+tc.name, func(t *testing.T) {
+		t.Run("returns the span context of a traceparent", func(t *testing.T) {
 			t.Parallel()
-			_, ok := w3c.Propagator{}.Extract(t.Context(),
-				telemetry.MapCarrier{"traceparent": tc.value})
-			testkit.False(t, ok, "a malformed traceparent must be treated as absent")
+			sc, ok := w3c.Propagator{}.Extract(t.Context(), telemetry.MapCarrier{w3c.TraceParentHeader: sampledParent})
+			assert.True(t, ok, "Extract must read a traceparent of the grammar")
+			assert.Equal(t, sc, telemetry.SpanContext{TraceID: traceID, SpanID: spanID, Sampled: true},
+				"Extract must return the fields of the traceparent")
 		})
-	}
 
-	// The sampled bit is bit 0 of the flags byte, so the whole byte
-	// must be decoded rather than compared against "01". Values with
-	// other bits set, and with hex letters, both occur in practice.
-	flags := []struct {
-		flags   string
-		sampled bool
-	}{
-		{"03", true},
-		{"09", true},
-		{"0f", true},
-		{"ff", true},
-		{"02", false},
-		{"0a", false},
-		{"fe", false},
-	}
-	for _, tc := range flags {
-		t.Run("reads the sampled bit from flags "+tc.flags, func(t *testing.T) {
+		t.Run("reads the sampled flag from bit 0 of the flags byte", func(t *testing.T) {
+			t.Parallel()
+			for flags := range 256 {
+				header := fmt.Sprintf("%s%02x", prefix, flags)
+				sc, ok := w3c.Propagator{}.Extract(t.Context(), telemetry.MapCarrier{w3c.TraceParentHeader: header})
+				expect.True(t, ok, "Extract must read the traceparent "+header)
+				expect.Equal(t, sc.Sampled, flags&1 == 1, "Extract must read bit 0 of the flags of "+header)
+			}
+		})
+
+		t.Run("returns the tracestate of a valid traceparent", func(t *testing.T) {
 			t.Parallel()
 			sc, ok := w3c.Propagator{}.Extract(t.Context(), telemetry.MapCarrier{
-				"traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-" + tc.flags,
+				w3c.TraceParentHeader: sampledParent,
+				w3c.TraceStateHeader:  state,
 			})
-
-			testkit.True(t, ok, "a well-formed traceparent must extract")
-			testkit.Equal(t, sc.Sampled, tc.sampled, "only bit 0 of the flags byte is sampled")
-		})
-	}
-
-	t.Run("a future version with extra fields is accepted", func(t *testing.T) {
-		t.Parallel()
-		// Forward compatibility: the specification requires a version
-		// higher than the one understood to be parsed for the fields
-		// that are understood, not rejected.
-		sc, ok := w3c.Propagator{}.Extract(t.Context(), telemetry.MapCarrier{
-			"traceparent": "cc-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01-future",
+			assert.True(t, ok, "Extract must read a traceparent of the grammar")
+			assert.Equal(t, sc.TraceState, state, "Extract must return the tracestate unchanged")
 		})
 
-		testkit.True(t, ok, "a higher version must still yield the fields we understand")
-		testkit.Equal(t, sc.TraceID, traceID, "TraceID must still be read")
-		testkit.True(t, sc.Sampled, "the flags byte must still be read")
-	})
-}
-
-func TestInject(t *testing.T) {
-	t.Parallel()
-
-	t.Run("writes a well-formed traceparent", func(t *testing.T) {
-		t.Parallel()
-		c := telemetry.MapCarrier{}
-		w3c.Propagator{}.Inject(t.Context(), telemetry.SpanContext{
-			TraceID: traceID,
-			SpanID:  spanID,
-			Sampled: true,
-		}, c)
-
-		testkit.Equal(t, c["traceparent"], sampledParent, "traceparent must match the grammar")
-	})
-
-	t.Run("an unsampled context sets the flags byte to zero", func(t *testing.T) {
-		t.Parallel()
-		c := telemetry.MapCarrier{}
-		w3c.Propagator{}.Inject(t.Context(), telemetry.SpanContext{
-			TraceID: traceID,
-			SpanID:  spanID,
-		}, c)
-
-		testkit.Equal(t, c["traceparent"], unsampledParent, "an unsampled trace must write 00")
-	})
-
-	t.Run("tracestate is written when present", func(t *testing.T) {
-		t.Parallel()
-		c := telemetry.MapCarrier{}
-		w3c.Propagator{}.Inject(t.Context(), telemetry.SpanContext{
-			TraceID:    traceID,
-			SpanID:     spanID,
-			TraceState: "vendor=opaque",
-		}, c)
-
-		testkit.Equal(t, c["tracestate"], "vendor=opaque", "tracestate must be written verbatim")
-	})
-
-	t.Run("an empty tracestate writes no header", func(t *testing.T) {
-		t.Parallel()
-		// An empty tracestate header is not the same as none, and
-		// writing one would add a field the caller never had.
-		c := telemetry.MapCarrier{}
-		w3c.Propagator{}.Inject(t.Context(), telemetry.SpanContext{
-			TraceID: traceID,
-			SpanID:  spanID,
-		}, c)
-
-		_, present := c["tracestate"]
-		testkit.False(t, present, "an empty tracestate must not be written")
-	})
-
-	invalid := []struct {
-		name string
-		sc   telemetry.SpanContext
-	}{
-		{"zero context", telemetry.SpanContext{}},
-		{"missing span id", telemetry.SpanContext{TraceID: traceID}},
-		{"missing trace id", telemetry.SpanContext{SpanID: spanID}},
-		{"short trace id", telemetry.SpanContext{TraceID: "abcd", SpanID: spanID}},
-		{"non-hex trace id", telemetry.SpanContext{
-			TraceID: "ZZf92f3577b34da6a3ce929d0e0e4736", SpanID: spanID,
-		}},
-	}
-	for _, tc := range invalid {
-		t.Run("writes nothing for a "+tc.name, func(t *testing.T) {
+		t.Run("reports false for a tracestate without a traceparent", func(t *testing.T) {
 			t.Parallel()
-			// TraceID and SpanID are opaque in the seam, so a context
-			// from a non-W3C tracer may not be representable. Writing
-			// a malformed header would be worse than writing none:
-			// the receiver would reject or restart the trace either
-			// way, and a malformed one also corrupts the carrier.
-			c := telemetry.MapCarrier{}
-			w3c.Propagator{}.Inject(t.Context(), tc.sc, c)
-			testkit.Equal(t, len(c), 0, "an unrepresentable context must write no headers")
+			_, ok := w3c.Propagator{}.Extract(t.Context(), telemetry.MapCarrier{w3c.TraceStateHeader: state})
+			assert.False(t, ok, "a tracestate alone must not produce a span context")
 		})
-	}
-}
 
-func TestRoundTrip(t *testing.T) {
-	t.Parallel()
+		t.Run("returns the fields of version 00 of a later version", func(t *testing.T) {
+			t.Parallel()
+			sc, ok := w3c.Propagator{}.Extract(t.Context(), telemetry.MapCarrier{
+				w3c.TraceParentHeader: "cc-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01-future",
+			})
+			assert.True(t, ok, "Extract must read a later version that appends a field")
+			assert.Equal(t, sc, telemetry.SpanContext{TraceID: traceID, SpanID: spanID, Sampled: true},
+				"Extract must return the fields of version 00")
+		})
 
-	for _, sampled := range []bool{true, false} {
-		name := "unsampled"
-		if sampled {
-			name = "sampled"
+		t.Run("returns the context that Inject writes", func(t *testing.T) {
+			t.Parallel()
+			prop.RoundTrip(t, func(sc telemetry.SpanContext) (telemetry.MapCarrier, error) {
+				c := telemetry.MapCarrier{}
+				w3c.Propagator{}.Inject(t.Context(), sc, c)
+
+				return c, nil
+			}, func(c telemetry.MapCarrier) (telemetry.SpanContext, error) {
+				sc, ok := w3c.Propagator{}.Extract(t.Context(), c)
+				if !ok {
+					return sc, errNotExtracted
+				}
+
+				return sc, nil
+			}, "Extract must return every field that Inject writes", prop.Using(contexts))
+		})
+
+		malformed := []struct {
+			name string
+			give string
+		}{
+			{name: "reports false for an empty traceparent"},
+			{
+				name: "reports false for a traceparent without flags",
+				give: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7",
+			},
+			{name: "reports false for version 00 with a field after the flags", give: sampledParent + "-extra"},
+			{name: "reports false for a short trace id", give: "00-4bf92f3577b34da6a3ce929-00f067aa0ba902b7-01"},
+			{name: "reports false for a short span id", give: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa-01"},
+			{
+				name: "reports false for a trace id outside hex",
+				give: "00-ZZf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+			},
+			{
+				name: "reports false for a trace id with a byte below 0",
+				give: "00-4bf92f3577b34da6a3ce929d0e0e47.6-00f067aa0ba902b7-01",
+			},
+			{
+				name: "reports false for a trace id in upper case",
+				give: "00-4BF92F3577B34DA6A3CE929D0E0E4736-00f067aa0ba902b7-01",
+			},
+			{
+				name: "reports false for an all-zero trace id",
+				give: "00-00000000000000000000000000000000-00f067aa0ba902b7-01",
+			},
+			{
+				name: "reports false for a span id outside hex",
+				give: "00-4bf92f3577b34da6a3ce929d0e0e4736-ZZf067aa0ba902b7-01",
+			},
+			{
+				name: "reports false for an all-zero span id",
+				give: "00-4bf92f3577b34da6a3ce929d0e0e4736-0000000000000000-01",
+			},
+			{name: "reports false for flags outside hex", give: prefix + "ZZ"},
+			{name: "reports false for version ff", give: "ff-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"},
+			{
+				name: "reports false for a version outside hex",
+				give: "zz-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+			},
+			{name: "reports false for a short version", give: "0-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"},
+			{
+				name: "reports false for an underscore after the version",
+				give: "00_4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+			},
+			{
+				name: "reports false for an underscore after the trace id",
+				give: "00-4bf92f3577b34da6a3ce929d0e0e4736_00f067aa0ba902b7-01",
+			},
+			{
+				name: "reports false for an underscore after the span id",
+				give: "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7_01",
+			},
+			{
+				name: "reports false for a later version with data after the flags without a hyphen",
+				give: "cc-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01junk",
+			},
 		}
-		t.Run(name, func(t *testing.T) {
+		for _, tt := range malformed {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				_, ok := w3c.Propagator{}.Extract(t.Context(), telemetry.MapCarrier{w3c.TraceParentHeader: tt.give})
+				assert.False(t, ok, "Extract must treat a malformed traceparent as absent")
+			})
+		}
+	})
+
+	t.Run("Fields", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the headers that Inject writes", func(t *testing.T) {
 			t.Parallel()
-			want := telemetry.SpanContext{
-				TraceID:    traceID,
-				SpanID:     spanID,
-				Sampled:    sampled,
-				TraceState: "vendor=opaque",
-			}
-
-			c := telemetry.MapCarrier{}
-			w3c.Propagator{}.Inject(t.Context(), want, c)
-			got, ok := w3c.Propagator{}.Extract(t.Context(), c)
-
-			testkit.True(t, ok, "injected headers must extract")
-			testkit.Equal(t, got, want, "the round trip must preserve every propagated field")
+			assert.Equal(t, w3c.Propagator{}.Fields(), []string{w3c.TraceParentHeader, w3c.TraceStateHeader},
+				"Fields must name every header that Inject writes")
 		})
-	}
 
-	t.Run("ParentID and Kind do not survive, by design", func(t *testing.T) {
-		t.Parallel()
-		// W3C carries neither. The extracted context describes the
-		// remote parent, so its own ParentID and Kind are the
-		// receiver's to decide.
+		t.Run("returns a slice that a later call does not share", func(t *testing.T) {
+			t.Parallel()
+			first := w3c.Propagator{}.Fields()
+			first[0] = state
+			assert.Equal(t, w3c.Propagator{}.Fields()[0], w3c.TraceParentHeader,
+				"a change of one result must not reach a later call")
+		})
+	})
+}
+
+// TestPropagatorAllocs checks the allocation contract of each method.
+// MaxAllocs counts the allocations of the whole process, so the test does
+// not run in parallel.
+//
+//nolint:paralleltest // see above
+func TestPropagatorAllocs(t *testing.T) {
+	ctx := t.Context()
+
+	t.Run("Inject", func(t *testing.T) {
+		sc := telemetry.SpanContext{TraceID: traceID, SpanID: spanID, Sampled: true}
 		c := telemetry.MapCarrier{}
-		w3c.Propagator{}.Inject(t.Context(), telemetry.SpanContext{
-			TraceID:  traceID,
-			SpanID:   spanID,
-			ParentID: telemetry.SpanID("ffffffffffffffff"),
-			Kind:     telemetry.SpanKindClient,
-		}, c)
+		expect.MaxAllocs(t, func() { w3c.Propagator{}.Inject(ctx, sc, c) }, 1,
+			"Inject must allocate the traceparent value alone")
+		assert.Equal(t, c[w3c.TraceParentHeader], sampledParent, "the test must measure a written traceparent")
+	})
 
-		got, ok := w3c.Propagator{}.Extract(t.Context(), c)
-		testkit.True(t, ok, "extraction must succeed")
-		testkit.Equal(t, got.ParentID, telemetry.SpanID(""), "ParentID is not propagated")
-		testkit.Equal(t, got.Kind, telemetry.SpanKindUnspecified, "Kind is not propagated")
+	t.Run("Extract", func(t *testing.T) {
+		c := telemetry.MapCarrier{w3c.TraceParentHeader: sampledParent}
+
+		var got telemetry.SpanContext
+		expect.MaxAllocs(t, func() { got, _ = w3c.Propagator{}.Extract(ctx, c) }, 0, "Extract must not allocate")
+		assert.Equal(t, got.TraceID, traceID, "the test must measure an extracted context")
+	})
+
+	t.Run("Fields", func(t *testing.T) {
+		var got []string
+		expect.MaxAllocs(t, func() { got = w3c.Propagator{}.Fields() }, 1, "Fields must allocate its slice alone")
+		assert.Length(t, got, 2, "the test must measure the two headers")
 	})
 }
 
-func TestFields(t *testing.T) {
-	t.Parallel()
+// BenchmarkPropagator reports the cost of each method, and fails above the
+// allocations that their contracts state.
+func BenchmarkPropagator(b *testing.B) {
+	ctx := b.Context()
 
-	fields := w3c.Propagator{}.Fields()
-	testkit.Equal(t, fields, []string{"traceparent", "tracestate"},
-		"Fields must name every header Inject writes, so middleware can clear them")
+	b.Run("Inject", func(b *testing.B) {
+		sc := telemetry.SpanContext{TraceID: traceID, SpanID: spanID, Sampled: true}
+		c := telemetry.MapCarrier{}
 
-	t.Run("the returned slice is not shared", func(t *testing.T) {
-		t.Parallel()
-		// Middleware iterates and may sort or truncate; a shared
-		// backing array would corrupt every later caller.
-		first := w3c.Propagator{}.Fields()
-		first[0] = "mutated"
-		testkit.Equal(t, w3c.Propagator{}.Fields()[0], "traceparent",
-			"mutating the result must not affect later calls")
+		bc := bench.Start(b).MaxAllocs(1)
+		defer bc.End()
+
+		for bc.Loop() {
+			w3c.Propagator{}.Inject(ctx, sc, c)
+		}
+
+		assert.Equal(b, c[w3c.TraceParentHeader], sampledParent, "the benchmark must measure a written traceparent")
 	})
-}
 
-func BenchmarkExtract(b *testing.B) {
-	c := telemetry.MapCarrier{"traceparent": sampledParent}
-	p := w3c.Propagator{}
-	b.ReportAllocs()
+	b.Run("Extract", func(b *testing.B) {
+		c := telemetry.MapCarrier{w3c.TraceParentHeader: sampledParent}
 
-	var sink telemetry.SpanContext
-	for b.Loop() {
-		sink, _ = p.Extract(b.Context(), c)
-	}
-	testkit.NotEqual(b, sink.TraceID, telemetry.TraceID(""), "Extract must produce a context")
-}
+		var got telemetry.SpanContext
 
-func BenchmarkInject(b *testing.B) {
-	sc := telemetry.SpanContext{TraceID: traceID, SpanID: spanID, Sampled: true}
-	c := telemetry.MapCarrier{}
-	p := w3c.Propagator{}
-	b.ReportAllocs()
+		bc := bench.Start(b).MaxAllocs(0)
+		defer bc.End()
 
-	for b.Loop() {
-		p.Inject(b.Context(), sc, c)
-	}
-	testkit.NotEqual(b, c["traceparent"], "", "Inject must write a header")
+		for bc.Loop() {
+			got, _ = w3c.Propagator{}.Extract(ctx, c)
+		}
+
+		assert.Equal(b, got.TraceID, traceID, "the benchmark must measure an extracted context")
+	})
+
+	b.Run("Fields", func(b *testing.B) {
+		var got []string
+
+		bc := bench.Start(b).MaxAllocs(1)
+		defer bc.End()
+
+		for bc.Loop() {
+			got = w3c.Propagator{}.Fields()
+		}
+
+		assert.Length(b, got, 2, "the benchmark must measure the two headers")
+	})
 }
