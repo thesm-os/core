@@ -258,10 +258,11 @@ func TestBounded(t *testing.T) {
 			p, _ := bounded(t, 1)
 			_, err := p.Get(t.Context())
 			assert.NoError(t, err, "the first Get must succeed")
-			ctx, cancel := context.WithCancel(t.Context())
-			cancel()
-			_, err = p.Get(ctx)
-			assert.ErrorIs(t, err, context.Canceled, "the second Get must wait and end with ctx")
+			assert.HonoursCancellation(t, func(ctx context.Context) error {
+				_, err := p.Get(ctx)
+
+				return err
+			}, "the second Get must wait and end with ctx")
 			assert.CompletesWithin(t, time.Second, func(context.Context) error {
 				assert.Equal(t, p.Created(), 1, "Created must count one construction")
 
