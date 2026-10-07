@@ -309,23 +309,13 @@ func (g *gated) AppendSignAt(ctx context.Context, dst, text []byte, t time.Time)
 func waitQueue(tb testing.TB, s *Server, n int) {
 	tb.Helper()
 
-	deadline := time.Now().Add(patience)
-
-	for {
+	assert.Eventually(tb, patience, time.Millisecond, func(attempt assert.TB) {
 		s.qmu.Lock()
 		got := len(s.queue)
 		s.qmu.Unlock()
 
-		if got == n {
-			return
-		}
-
-		if time.Now().After(deadline) {
-			tb.Fatalf("%d calls wait, not %d", got, n)
-		}
-
-		time.Sleep(time.Millisecond)
-	}
+		assert.Equal(attempt, got, n, "the queue must contain n calls")
+	}, "n calls must wait in the queue")
 }
 
 // bounded returns a context of tb that ends after patience. A call into a

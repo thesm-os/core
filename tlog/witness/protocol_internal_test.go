@@ -71,7 +71,7 @@ func TestProtocolInternal(t *testing.T) {
 
 		t.Run("appends maxSizeBody bytes for the largest size", func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, len(appendSize(nil, math.MaxUint64)), maxSizeBody,
+			assert.Length(t, appendSize(nil, math.MaxUint64), maxSizeBody,
 				"the body of a 409 must fit an array of maxSizeBody bytes")
 		})
 	})

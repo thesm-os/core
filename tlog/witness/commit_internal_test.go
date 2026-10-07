@@ -239,8 +239,9 @@ func TestCommitInternal(t *testing.T) {
 			s := newInternalServer(t, cfg)
 
 			_, _, err := s.Advance(bounded(t), l.note(t, 5), []Update{l.update(t, 0, 5, nil)}, nil)
-			expect.ErrorIs(t, err, errUTC, "Advance must return the error of the source")
-			expect.ErrorIs(t, err, checkpoint.ErrClock, "the error must wrap ErrClock")
+			expect.That(t, err).
+				ErrorIs(errUTC, "Advance must return the error of the source").
+				ErrorIs(checkpoint.ErrClock, "the error must wrap ErrClock")
 		})
 
 		t.Run("returns an error that states the Synced of an unsynchronised reading", func(t *testing.T) {
@@ -446,14 +447,8 @@ func TestCommitInternal(t *testing.T) {
 				returned.Store(true)
 			})
 
-			deadline := time.Now().Add(5 * time.Second)
-			for heads.Load() < 2 {
-				if time.Now().After(deadline) {
-					t.Fatal("the second commit must replace the head")
-				}
-
-				time.Sleep(time.Millisecond)
-			}
+			assert.EventuallyTrue(t, patience, func() bool { return heads.Load() >= 2 },
+				"the second commit must replace the head")
 
 			assert.False(t, returned.Load(), "the second call must wait for the lines of the first commit")
 			assert.Equal(t, started.Load(), int64(1), "the second commit must not write its lines yet")

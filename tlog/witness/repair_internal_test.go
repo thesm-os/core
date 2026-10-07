@@ -47,10 +47,9 @@ func TestRepairInternal(t *testing.T) {
 			assert.NoError(t, s.repair(bounded(t), key), "repair must store the lines")
 
 			s.rmu.Lock()
-			_, ok := s.repairs[key]
-			s.rmu.Unlock()
+			defer s.rmu.Unlock()
 
-			assert.False(t, ok, "a repair that succeeded must leave the server")
+			assert.NotContains(t, s.repairs, key, "a repair that succeeded must leave the server")
 		})
 	})
 

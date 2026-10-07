@@ -260,8 +260,9 @@ func TestAdvance(t *testing.T) {
 			msg := signBody(t, body, l.signer)
 
 			_, _, err := s.Advance(bounded(t), msg, []witness.Update{l.update(t, 0, 5)}, nil)
-			assert.ErrorIs(t, err, witness.ErrRequest, "Advance must refuse the note")
-			assert.ErrorIs(t, err, checkpoint.ErrBody, "the error must wrap the error of the cosigner")
+			assert.That(t, err).
+				ErrorIs(witness.ErrRequest, "Advance must refuse the note").
+				ErrorIs(checkpoint.ErrBody, "the error must wrap the error of the cosigner")
 
 			_, failures, err := s.Advance(bounded(t), l.notes[5], []witness.Update{l.update(t, 0, 5)}, nil)
 			assert.NoError(t, err, "Advance must commit the update")

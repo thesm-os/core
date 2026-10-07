@@ -226,15 +226,9 @@ func TestRoute(t *testing.T) {
 				f.clock.Advance(2 * time.Minute)
 
 				want := string(l.notes[7]) + string(newer)
-				deadline := time.Now().Add(patience)
-
-				for get(t, s, l.origin).Body.String() != want {
-					if time.Now().After(deadline) {
-						t.Fatal("the route must serve the newer update after the refresh")
-					}
-
-					time.Sleep(time.Millisecond)
-				}
+				assert.Eventually(t, patience, time.Millisecond, func(tb assert.TB) {
+					assert.Equal(tb, get(t, s, l.origin).Body.String(), want, "the route must serve the newer update")
+				}, "the route must serve the newer update after the refresh")
 			})
 	})
 }

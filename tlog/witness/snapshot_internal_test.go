@@ -120,13 +120,14 @@ func TestSnapshotInternal(t *testing.T) {
 			a.advance(t, s, 0, 5, nil)
 			assert.NoError(t, s.snapshot(bounded(t)), "snapshot must install")
 
-			h, _, err := readHead(t.Context(), f.store)
-			assert.NoError(t, err, "the head must read")
-			assert.NoError(t, s.snapshot(bounded(t)), "a second snapshot must do nothing")
+			var err error
+			assert.Pure(t, func() head {
+				h, _, readErr := readHead(t.Context(), f.store)
+				assert.NoError(t, readErr, "the head must read")
 
-			again, _, err := readHead(t.Context(), f.store)
-			assert.NoError(t, err, "the head must read")
-			assert.Equal(t, again, h, "the head must not change")
+				return h
+			}, func() { err = s.snapshot(bounded(t)) }, "the head must not change")
+			assert.NoError(t, err, "a second snapshot must do nothing")
 		})
 
 		t.Run("moves the update of an idle origin into a group that the route serves", func(t *testing.T) {
@@ -432,13 +433,14 @@ func TestSnapshotInternal(t *testing.T) {
 			other := f.server(t)
 			assert.NoError(t, other.snapshot(bounded(t)), "the other process must install")
 
-			_, v, err := readHead(t.Context(), f.store)
-			assert.NoError(t, err, "the head must read")
-			assert.NoError(t, s.snapshot(bounded(t)), "the snapshot must be abandoned without an error")
+			var err error
+			assert.Pure(t, func() version.Version {
+				_, v, readErr := readHead(t.Context(), f.store)
+				assert.NoError(t, readErr, "the head must read")
 
-			_, again, err := readHead(t.Context(), f.store)
-			assert.NoError(t, err, "the head must read")
-			assert.Equal(t, again, v, "the snapshot must not write the head")
+				return v
+			}, func() { err = s.snapshot(bounded(t)) }, "the snapshot must not write the head")
+			assert.NoError(t, err, "the snapshot must be abandoned without an error")
 		})
 
 		t.Run("retires an origin that Logs refuses after Retention", func(t *testing.T) {
@@ -1217,22 +1219,11 @@ func TestSnapshotInternal(t *testing.T) {
 				a.advance(t, s, size-1, size, make([]byte, 14<<20))
 			}
 
-			deadline := time.Now().Add(10 * time.Second)
-
-			for {
+			assert.Eventually(t, 10*time.Second, time.Millisecond, func(attempt assert.TB) {
 				h, _, err := readHead(t.Context(), f.store)
-				assert.NoError(t, err, "the head must read")
-
-				if h.Snapshot != "" {
-					break
-				}
-
-				if time.Now().After(deadline) {
-					t.Fatal("the commit must write a snapshot")
-				}
-
-				time.Sleep(time.Millisecond)
-			}
+				assert.NoError(attempt, err, "the head must read")
+				assert.NotEmpty(attempt, h.Snapshot, "the head must name a snapshot")
+			}, "the commit must write a snapshot")
 		})
 	})
 }

@@ -218,27 +218,39 @@ func TestProtocol(t *testing.T) {
 		t.Run("appends a body from which ParseRequest returns the old size, the proof and the message",
 			func(t *testing.T) {
 				t.Parallel()
-				prop.ForAll(t, "ParseRequest must return what AppendRequest wrote", func(c *prop.Case) {
-					oldSize := c.Draw(prop.Integer[uint64](0, math.MaxUint64), "old size")
-					proof := make([]crypto.Digest, c.Draw(prop.Integer(0, 63), "proof length"))
 
-					for i := range proof {
+				// request is the old size, the proof and the message of a body.
+				type request struct {
+					oldSize uint64
+					proof   []crypto.Digest
+					msg     []byte
+				}
+
+				requests := prop.Composite(func(c *prop.Case) request {
+					r := request{
+						oldSize: c.Draw(prop.Integer[uint64](0, math.MaxUint64), "old size"),
+						proof:   make([]crypto.Digest, c.Draw(prop.Integer(0, 63), "proof length")),
+					}
+
+					for i := range r.proof {
 						size := c.Draw(prop.SampledFrom(32, 48, 64), "hash size")
 						raw := c.Draw(prop.Bytes(prop.MinSize(size), prop.MaxSize(size)), "hash")
 						h, err := crypto.DigestFromBytes(raw)
 						assert.NoError(c, err, "DigestFromBytes must accept the size")
-						proof[i] = h
+						r.proof[i] = h
 					}
 
-					msg := c.Draw(prop.Bytes(), "message")
+					r.msg = c.Draw(prop.Bytes(), "message")
 
-					body := witness.AppendRequest(nil, oldSize, proof, msg)
-					gotSize, gotProof, rest, err := witness.ParseRequest(body, nil)
-					assert.NoError(c, err, "ParseRequest must accept the body")
-					assert.Equal(c, gotSize, oldSize, "ParseRequest must return the old size")
-					assert.Equal(c, gotProof, proof, "ParseRequest must return the proof", assert.EquateEmpty())
-					assert.Equal(c, rest, msg, "ParseRequest must return the message", assert.EquateEmpty())
+					return r
 				})
+				prop.RoundTrip(t, func(r request) ([]byte, error) {
+					return witness.AppendRequest(nil, r.oldSize, r.proof, r.msg), nil
+				}, func(body []byte) (request, error) {
+					oldSize, proof, msg, err := witness.ParseRequest(body, nil)
+
+					return request{oldSize: oldSize, proof: proof, msg: msg}, err
+				}, "ParseRequest must return what AppendRequest wrote", prop.Using(requests), assert.EquateEmpty())
 			})
 	})
 }

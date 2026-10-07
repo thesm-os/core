@@ -6,10 +6,12 @@ package witness
 import (
 	"encoding/binary"
 	"errors"
+	"math"
 	"strings"
 	"testing"
 
 	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/prop"
 
 	"go.thesmos.sh/core/blob"
 	"go.thesmos.sh/core/crypto"
@@ -37,21 +39,43 @@ func TestRetiredInternal(t *testing.T) {
 		t.Run("returns the prefix, the hash, a hyphen and the size in 20 digits", func(t *testing.T) {
 			t.Parallel()
 			key := retiredKey(h, 42)
-			assert.HasPrefix(t, key, retiredPrefix, "the key must start with the prefix")
-			assert.HasSuffix(t, key, "-00000000000000000042", "the key must end with the size")
-			assert.Length(t, key, len(retiredPrefix)+retiredText, "the key must have the length of a key")
+			assert.That(t, key).
+				HasPrefix(retiredPrefix, "the key must start with the prefix").
+				HasSuffix("-00000000000000000042", "the key must end with the size").
+				Length(len(retiredPrefix)+retiredText, "the key must have the length of a key")
 		})
 	})
 
 	t.Run("parseRetiredKey", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("returns the hash and the size of a key", func(t *testing.T) {
+		t.Run("returns the hash and the size of every key that retiredKey returns", func(t *testing.T) {
 			t.Parallel()
-			got, size, ok := parseRetiredKey(retiredKey(h, 42))
-			assert.True(t, ok, "parseRetiredKey must accept the key")
-			assert.Equal(t, got, h, "parseRetiredKey must read the hash")
-			assert.Equal(t, size, uint64(42), "parseRetiredKey must read the size")
+
+			// retired is the hash and the size that a key of a retired object
+			// names.
+			type retired struct {
+				hash originHash
+				size uint64
+			}
+
+			keys := prop.Composite(func(c *prop.Case) retired {
+				var r retired
+				copy(r.hash[:], c.Draw(prop.Bytes(prop.MinSize(len(r.hash)), prop.MaxSize(len(r.hash))), "hash"))
+				r.size = c.Draw(prop.Integer[uint64](0, math.MaxUint64), "size")
+
+				return r
+			})
+			prop.RoundTrip(t, func(r retired) (string, error) { return retiredKey(r.hash, r.size), nil },
+				func(key string) (retired, error) {
+					hash, size, ok := parseRetiredKey(key)
+					if !ok {
+						return retired{}, errors.New("parseRetiredKey refused the key")
+					}
+
+					return retired{hash: hash, size: size}, nil
+				}, "parseRetiredKey must return the hash and the size of the key", prop.Using(keys),
+				prop.Example(retired{hash: h, size: 42}))
 		})
 
 		valid := retiredKey(h, 42)
@@ -265,8 +289,9 @@ func TestRetiredInternal(t *testing.T) {
 			}
 
 			_, err := s.lookupRetired(bounded(t), h, origin)
-			assert.HasError(t, err, "lookupRetired must fail")
-			assert.ErrorIsNot(t, err, ErrJournal, "the error must be the error of the store")
+			assert.That(t, err).
+				HasError("lookupRetired must fail").
+				ErrorIsNot(ErrJournal, "the error must be the error of the store")
 		})
 
 		t.Run("fails every call of a commit when the walk of a retired origin fails", func(t *testing.T) {

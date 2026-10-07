@@ -419,8 +419,9 @@ func TestClient(t *testing.T) {
 			t.Parallel()
 			w := newFakeWitness(t, nil)
 			_, err := newClient(t, w, ed.Key()).AddCheckpoint(t.Context(), []byte("not a note"), 0, nil, nil)
-			assert.ErrorIs(t, err, witness.ErrRequest, "AddCheckpoint must refuse a msg that is not a note")
-			assert.ErrorIs(t, err, note.ErrNote, "the error must wrap the error of the note")
+			assert.That(t, err).
+				ErrorIs(witness.ErrRequest, "AddCheckpoint must refuse a msg that is not a note").
+				ErrorIs(note.ErrNote, "the error must wrap the error of the note")
 			assert.Equal(t, w.requests.Load(), int64(0), "AddCheckpoint must not send the request")
 		})
 

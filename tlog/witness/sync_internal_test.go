@@ -230,8 +230,9 @@ func TestSyncInternal(t *testing.T) {
 			cfg.State = st
 
 			_, err := NewServer(bounded(t), cfg)
-			assert.HasError(t, err, "NewServer must fail")
-			assert.ErrorIsNot(t, err, ErrJournal, "the error must be the error of the store")
+			assert.That(t, err).
+				HasError("NewServer must fail").
+				ErrorIsNot(ErrJournal, "the error must be the error of the store")
 		})
 
 		t.Run("returns the cause of ctx when ctx ends", func(t *testing.T) {
@@ -411,10 +412,10 @@ func TestSyncInternal(t *testing.T) {
 			l.advance(t, writer, 5, 6, nil)
 			assert.NoError(t, writer.snapshot(bounded(t)), "the second snapshot must install")
 
-			walks := st.walks(retiredPrefix)
-			_, err := s.sync(bounded(t), "")
+			var err error
+			assert.Pure(t, func() int { return st.walks(retiredPrefix) }, func() { _, err = s.sync(bounded(t), "") },
+				"sync must walk no retired objects")
 			assert.NoError(t, err, "sync must catch up to the head")
-			assert.Equal(t, st.walks(retiredPrefix), walks, "sync must walk no retired objects")
 		})
 
 		t.Run("sets the gauge of the origins to the origins of the state after a catch-up", func(t *testing.T) {
@@ -650,8 +651,9 @@ func TestSyncInternal(t *testing.T) {
 				cfg.State = st
 
 				_, err := NewServer(bounded(t), cfg)
-				assert.HasError(t, err, "NewServer must fail")
-				assert.ErrorIsNot(t, err, ErrJournal, "the error must be the error of the store")
+				assert.That(t, err).
+					HasError("NewServer must fail").
+					ErrorIsNot(ErrJournal, "the error must be the error of the store")
 			})
 
 		t.Run("returns the error of the store for a record below the record of the snapshot", func(t *testing.T) {
