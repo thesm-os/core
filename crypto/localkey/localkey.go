@@ -339,20 +339,14 @@ type key struct {
 	destroyedAt time.Time
 }
 
-// cipherFor returns the wrapping cipher over rootKey, or an error for a
-// root key that is not [RootKeySize] bytes.
+// cipherFor returns the wrapping cipher over rootKey, or
+// [crypto.ErrKeySize] for a root key that is not [RootKeySize] bytes.
+// aesgcm accepts a 16-byte key as well, so the length is checked here
+// first.
 func cipherFor(rootKey []byte) (crypto.AEAD, error) {
-	// aesgcm validates first and returns the error for every length that
-	// AES rejects. The check below then rejects the one length that AES
-	// accepts and this package does not.
-	a, err := aesgcm.NewRandomNonce(rootKey)
-	if err != nil {
-		return nil, err
-	}
-
 	if len(rootKey) != RootKeySize {
 		return nil, crypto.ErrKeySize
 	}
 
-	return a, nil
+	return aesgcm.NewRandomNonce(rootKey)
 }
