@@ -8,10 +8,6 @@ import (
 	"math/bits"
 )
 
-// zeros is the room that Close appends before it moves the content of an
-// element whose length needs the long form: at most four octets.
-var zeros [maxLengthOctets]byte
-
 // Builder appends DER elements to a byte slice. Add appends an element
 // whose content the caller has, and Open and Close bracket a constructed
 // element whose content the calls in between append. Close writes the
@@ -34,23 +30,29 @@ type Builder struct {
 	b []byte
 }
 
-// NewBuilder returns a Builder that appends to dst.
+// NewBuilder returns a Builder that appends elements after the octets of
+// dst, into the spare capacity of dst first. A nil dst starts an empty
+// encoding.
 func NewBuilder(dst []byte) Builder {
 	return Builder{b: dst}
 }
 
-// Bytes returns the slice that the Builder appended to.
+// Bytes returns the octets of dst followed by every element appended
+// since. The slice shares its array with the Builder, so a later call can
+// change it.
 func (b *Builder) Bytes() []byte {
 	return b.b
 }
 
-// Add appends the element of tag and content.
+// Add appends the element of tag and content: tag, the DER length of
+// content, and content.
 func (b *Builder) Add(tag Tag, content []byte) {
 	b.b = appendLength(append(b.b, byte(tag)), len(content))
 	b.b = append(b.b, content...)
 }
 
-// AddElement appends element, a whole DER element, as it is.
+// AddElement appends element, a whole DER element that the caller
+// encoded, as it is. AddElement does not check element.
 func (b *Builder) AddElement(element []byte) {
 	b.b = append(b.b, element...)
 }
@@ -74,7 +76,8 @@ func (b *Builder) AddUint64(v uint64) {
 	b.Add(TagInteger, octets[i:])
 }
 
-// AddBoolean appends a BOOLEAN of v.
+// AddBoolean appends a BOOLEAN of v. DER allows the content 0xff for TRUE
+// and 0x00 for FALSE alone.
 func (b *Builder) AddBoolean(v bool) {
 	content := byte(falseOctet)
 	if v {
@@ -93,56 +96,37 @@ func (b *Builder) Open(tag Tag) int {
 	return len(b.b) - 1
 }
 
-// Close writes the length of the element whose placeholder is at at, the
-// octets appended since Open. A length of 128 or more takes the long form:
-// Close inserts its octets after the placeholder and moves the content
-// after them.
+// Close writes the length of the element whose placeholder is at at: the
+// number of octets appended since Open. A length below 128 replaces the
+// placeholder. A length of 128 or more takes the long form, so Close
+// appends room for the octets that the long form adds, moves the content
+// after them, and writes the length from the placeholder on.
 func (b *Builder) Close(at int) {
+	// The long form of an int takes at most one octet and eight more.
+	var octets [1 + 8]byte
+
 	n := len(b.b) - at - 1
-	if n < longForm {
-		b.b[at] = octet(n)
-
-		return
-	}
-
-	octets := lengthOctets(n)
-	b.b = append(b.b, zeros[:octets]...)
-	copy(b.b[at+1+octets:], b.b[at+1:at+1+n])
-
-	b.b[at] = longForm | octet(octets)
-	for i := octets; i > 0; i-- {
-		b.b[at+i] = octet(n)
-		n >>= 8
-	}
+	length := appendLength(octets[:0], n)
+	b.b = append(b.b, length[1:]...)
+	copy(b.b[at+len(length):], b.b[at+1:at+1+n])
+	copy(b.b[at:], length)
 }
 
-// appendLength appends the DER length of n: one octet below 128, and the
-// long form otherwise.
+// appendLength appends the DER length of n, which is not negative: one
+// octet below 128, and otherwise the long form, the octet 0x80 plus the
+// number of octets of n in base 256, then those octets in big-endian
+// order.
 func appendLength(dst []byte, n int) []byte {
 	if n < longForm {
-		return append(dst, octet(n))
+		return append(dst, byte(n)) //nolint:gosec // G115: n is below 128 and not negative
 	}
 
-	octets := lengthOctets(n)
+	octets := (bits.Len64(uint64(n)) + 7) / 8 //nolint:gosec // G115: n is a length, so it is not negative
 
-	dst = append(dst, longForm|octet(octets))
+	dst = append(dst, longForm|byte(octets)) //nolint:gosec // G115: a length takes at most eight octets
 	for i := range octets {
-		dst = append(dst, octet(n>>(8*(octets-1-i))))
+		dst = append(dst, byte(n>>(8*(octets-1-i)))) //nolint:gosec // G115: the conversion keeps the low eight bits
 	}
 
 	return dst
-}
-
-// lengthOctets returns the number of octets of n in base 256, for a length
-// of 128 or more: 1 to 4.
-func lengthOctets(n int) int {
-	//nolint:gosec // G115: n is a length, so it is not negative
-	return (bits.Len64(uint64(n)) + 7) / 8
-}
-
-// octet returns the low eight bits of n: a length below 128, a count of
-// length octets, or one octet of a long-form length.
-func octet(n int) byte {
-	//nolint:gosec // G115: the conversion keeps the low eight bits by design
-	return byte(n)
 }

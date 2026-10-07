@@ -133,11 +133,11 @@ func head(b []byte) (tag Tag, header, n int, ok bool) {
 	return tag, len(b) - len(rest), n, true
 }
 
-// take splits the first n octets off s, and reports false when s has
-// fewer than n octets.
+// take splits the first n octets off s. It returns no slices, and reports
+// false, when s has fewer than n octets.
 func take(s []byte, n int) (first, rest []byte, ok bool) {
 	if len(s) < n {
-		return nil, s, false
+		return nil, nil, false
 	}
 
 	return s[:n], s[n:], true

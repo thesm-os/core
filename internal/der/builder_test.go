@@ -4,13 +4,21 @@
 package der_test
 
 import (
+	"errors"
 	"math"
 	"testing"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/bench"
+	"go.dokimi.dev/assert/expect"
+	"go.dokimi.dev/assert/prop"
 
 	"go.thesmos.sh/core/internal/der"
 )
+
+// errRefused is the error of the inverse of a round trip whose Reader or
+// value decoder reported false.
+var errRefused = errors.New("the decoder reported false")
 
 func TestBuilder(t *testing.T) {
 	t.Parallel()
@@ -37,15 +45,15 @@ func TestBuilder(t *testing.T) {
 				header: []byte{0x04, 0x82, 0x01, 0x00},
 			},
 			{
-				name: "appends a length of 65,536 in the long form of three octets", length: 65_536,
+				name: "appends a length of 64 KiB in the long form of three octets", length: 1 << 16,
 				header: []byte{0x04, 0x83, 0x01, 0x00, 0x00},
 			},
 			{
-				name: "appends the two octets of a length of 4,660 in big-endian order", length: 4_660,
+				name: "appends the two octets of a length of 0x1234 in big-endian order", length: 0x1234,
 				header: []byte{0x04, 0x82, 0x12, 0x34},
 			},
 			{
-				name: "appends the three octets of a length of 74,565 in big-endian order", length: 74_565,
+				name: "appends the three octets of a length of 0x12345 in big-endian order", length: 0x12345,
 				header: []byte{0x04, 0x83, 0x01, 0x23, 0x45},
 			},
 		}
@@ -56,8 +64,8 @@ func TestBuilder(t *testing.T) {
 				b.Add(der.TagOctetString, make([]byte, tt.length))
 
 				got := b.Bytes()
-				testkit.Equal(t, got[:len(tt.header)], tt.header, "Add must append the tag and the DER length")
-				testkit.Len(t, got, len(tt.header)+tt.length, "Add must append the content")
+				assert.Length(t, got, len(tt.header)+tt.length, "Add must append the header and the content")
+				assert.Equal(t, got[:len(tt.header)], tt.header, "Add must append the tag and the DER length")
 			})
 		}
 
@@ -65,7 +73,7 @@ func TestBuilder(t *testing.T) {
 			t.Parallel()
 			b := der.NewBuilder([]byte{0xee})
 			b.Add(der.TagNull, nil)
-			testkit.Equal(t, b.Bytes(), []byte{0xee, 0x05, 0x00}, "Add must keep the octets before it")
+			assert.Equal(t, b.Bytes(), []byte{0xee, 0x05, 0x00}, "Add must keep the octets before it")
 		})
 	})
 
@@ -76,7 +84,7 @@ func TestBuilder(t *testing.T) {
 			t.Parallel()
 			b := der.NewBuilder(nil)
 			b.AddElement([]byte{0x05, 0x00})
-			testkit.Equal(t, b.Bytes(), []byte{0x05, 0x00}, "AddElement must copy the element")
+			assert.Equal(t, b.Bytes(), []byte{0x05, 0x00}, "AddElement must copy the element")
 		})
 	})
 
@@ -103,14 +111,29 @@ func TestBuilder(t *testing.T) {
 				t.Parallel()
 				b := der.NewBuilder(nil)
 				b.AddUint64(tt.give)
-				testkit.Equal(t, b.Bytes(), tt.want, "AddUint64 must append the DER INTEGER")
-
-				r := der.NewReader(b.Bytes())
-				content, _ := r.Read(der.TagInteger)
-				got, ok := der.Uint64(content)
-				testkit.True(t, ok && got == tt.give, "Uint64 must read the value back")
+				assert.Equal(t, b.Bytes(), tt.want, "AddUint64 must append the DER INTEGER")
 			})
 		}
+
+		t.Run("appends an INTEGER that Uint64 reads back", func(t *testing.T) {
+			t.Parallel()
+			prop.RoundTrip(t, func(v uint64) ([]byte, error) {
+				b := der.NewBuilder(nil)
+				b.AddUint64(v)
+
+				return b.Bytes(), nil
+			}, func(element []byte) (uint64, error) {
+				r := der.NewReader(element)
+				content, isInteger := r.Read(der.TagInteger)
+				v, fits := der.Uint64(content)
+				if !isInteger || !fits {
+					return 0, errRefused
+				}
+
+				return v, nil
+			}, "Uint64 must read back the INTEGER that AddUint64 appends",
+				prop.Using(prop.Integer[uint64](0, math.MaxUint64)))
+		})
 	})
 
 	t.Run("AddBoolean", func(t *testing.T) {
@@ -120,14 +143,14 @@ func TestBuilder(t *testing.T) {
 			t.Parallel()
 			b := der.NewBuilder(nil)
 			b.AddBoolean(true)
-			testkit.Equal(t, b.Bytes(), []byte{0x01, 0x01, 0xff}, "AddBoolean must append 0xff for true")
+			assert.Equal(t, b.Bytes(), []byte{0x01, 0x01, 0xff}, "AddBoolean must append 0xff for true")
 		})
 
 		t.Run("appends FALSE as 0x00", func(t *testing.T) {
 			t.Parallel()
 			b := der.NewBuilder(nil)
 			b.AddBoolean(false)
-			testkit.Equal(t, b.Bytes(), []byte{0x01, 0x01, 0x00}, "AddBoolean must append 0x00 for false")
+			assert.Equal(t, b.Bytes(), []byte{0x01, 0x01, 0x00}, "AddBoolean must append 0x00 for false")
 		})
 	})
 
@@ -148,15 +171,15 @@ func TestBuilder(t *testing.T) {
 				header: []byte{0x30, 0x82, 0x01, 0x00},
 			},
 			{
-				name: "inserts three long-form octets for a length of 65,536", content: 65_536,
+				name: "inserts three long-form octets for a length of 64 KiB", content: 1 << 16,
 				header: []byte{0x30, 0x83, 0x01, 0x00, 0x00},
 			},
 			{
-				name: "inserts the two octets of a length of 4,660 in big-endian order", content: 4_660,
+				name: "inserts the two octets of a length of 0x1234 in big-endian order", content: 0x1234,
 				header: []byte{0x30, 0x82, 0x12, 0x34},
 			},
 			{
-				name: "inserts the three octets of a length of 74,565 in big-endian order", content: 74_565,
+				name: "inserts the three octets of a length of 0x12345 in big-endian order", content: 0x12345,
 				header: []byte{0x30, 0x83, 0x01, 0x23, 0x45},
 			},
 		}
@@ -174,12 +197,32 @@ func TestBuilder(t *testing.T) {
 				b.Close(at)
 
 				got := b.Bytes()
-				testkit.Equal(t, got[:len(tt.header)], tt.header, "Close must write the DER length")
-				testkit.Equal(t, got[len(tt.header):], content, "Close must keep the content after the length")
+				assert.Length(t, got, len(tt.header)+tt.content, "Close must keep the header and the content")
+				expect.Equal(t, got[:len(tt.header)], tt.header, "Close must write the DER length")
+				expect.Equal(t, got[len(tt.header):], content, "Close must keep the content after the length")
 			})
 		}
 
-		t.Run("closes nested elements", func(t *testing.T) {
+		t.Run("writes the length that Add writes for the same content", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "Open and Close must bracket the element that Add appends", func(c *prop.Case) {
+				content := make([]byte, c.Draw(prop.Integer(0, 1<<17), "length"))
+				for i := range content {
+					content[i] = byte(i)
+				}
+
+				opened := der.NewBuilder(nil)
+				at := opened.Open(der.TagSequence)
+				opened.AddElement(content)
+				opened.Close(at)
+
+				added := der.NewBuilder(nil)
+				added.Add(der.TagSequence, content)
+				assert.Equal(c, opened.Bytes(), added.Bytes(), "Close must write the length that Add writes")
+			})
+		})
+
+		t.Run("writes the lengths of nested elements", func(t *testing.T) {
 			t.Parallel()
 			b := der.NewBuilder(nil)
 			outer := b.Open(der.TagSequence)
@@ -189,25 +232,159 @@ func TestBuilder(t *testing.T) {
 			b.Add(der.TagNull, nil)
 			b.Close(outer)
 
-			testkit.Equal(t, b.Bytes(), []byte{0x30, 0x07, 0x31, 0x03, 0x01, 0x01, 0xff, 0x05, 0x00},
+			assert.Equal(t, b.Bytes(), []byte{0x30, 0x07, 0x31, 0x03, 0x01, 0x01, 0xff, 0x05, 0x00},
 				"nested elements must close with their own lengths")
 		})
 	})
 }
 
-func BenchmarkBuilder(b *testing.B) {
+// TestBuilderAllocs checks the allocation contract of each method that
+// appends, into a slice with room. The content of 200 octets takes a
+// long-form length of one octet, and the largest uint64 takes an INTEGER
+// of 11 octets. MaxAllocs counts the allocations of the whole process, so
+// the test does not run in parallel.
+//
+//nolint:paralleltest // see above
+func TestBuilderAllocs(t *testing.T) {
 	dst := make([]byte, 0, 512)
 	content := make([]byte, 200)
 
-	b.Run("Open and Close of a long-form length", func(b *testing.B) {
-		derAllocs(b, func() {
+	t.Run("Add", func(t *testing.T) {
+		var got []byte
+		expect.MaxAllocs(t, func() {
+			builder := der.NewBuilder(dst[:0])
+			builder.Add(der.TagOctetString, content)
+			got = builder.Bytes()
+		}, 0, "Add into a slice with room must not allocate")
+		assert.Length(t, got, 3+200, "the test must measure the whole element")
+	})
+
+	t.Run("AddElement", func(t *testing.T) {
+		var got []byte
+		expect.MaxAllocs(t, func() {
+			builder := der.NewBuilder(dst[:0])
+			builder.AddElement(content)
+			got = builder.Bytes()
+		}, 0, "AddElement into a slice with room must not allocate")
+		assert.Length(t, got, 200, "the test must measure the whole element")
+	})
+
+	t.Run("AddUint64", func(t *testing.T) {
+		var got []byte
+		expect.MaxAllocs(t, func() {
+			builder := der.NewBuilder(dst[:0])
+			builder.AddUint64(math.MaxUint64)
+			got = builder.Bytes()
+		}, 0, "AddUint64 into a slice with room must not allocate")
+		assert.Length(t, got, 11, "the test must measure the whole element")
+	})
+
+	t.Run("AddBoolean", func(t *testing.T) {
+		var got []byte
+		expect.MaxAllocs(t, func() {
+			builder := der.NewBuilder(dst[:0])
+			builder.AddBoolean(true)
+			got = builder.Bytes()
+		}, 0, "AddBoolean into a slice with room must not allocate")
+		assert.Length(t, got, 3, "the test must measure the whole element")
+	})
+
+	t.Run("Close", func(t *testing.T) {
+		var got []byte
+		expect.MaxAllocs(t, func() {
 			builder := der.NewBuilder(dst[:0])
 			at := builder.Open(der.TagSequence)
 			builder.AddElement(content)
 			builder.AddUint64(math.MaxUint64)
 			builder.Close(at)
-			sinkBytes = builder.Bytes()
-		})
-		testkit.Len(b, sinkBytes, 3+200+11, "the benchmark must measure the whole element")
+			got = builder.Bytes()
+		}, 0, "a long-form Close into a slice with room must not allocate")
+		assert.Length(t, got, 3+200+11, "the test must measure the whole element")
+	})
+}
+
+// BenchmarkBuilder reports the cost of each method that appends, into a
+// slice with room, and fails when one allocates. The content of 200 octets
+// takes a long-form length of one octet.
+func BenchmarkBuilder(b *testing.B) {
+	dst := make([]byte, 0, 512)
+	content := make([]byte, 200)
+
+	b.Run("Add", func(b *testing.B) {
+		var got []byte
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			builder := der.NewBuilder(dst[:0])
+			builder.Add(der.TagOctetString, content)
+			got = builder.Bytes()
+		}
+
+		assert.Length(b, got, 3+200, "the benchmark must measure the whole element")
+	})
+
+	b.Run("AddElement", func(b *testing.B) {
+		var got []byte
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			builder := der.NewBuilder(dst[:0])
+			builder.AddElement(content)
+			got = builder.Bytes()
+		}
+
+		assert.Length(b, got, 200, "the benchmark must measure the whole element")
+	})
+
+	b.Run("AddUint64", func(b *testing.B) {
+		var got []byte
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			builder := der.NewBuilder(dst[:0])
+			builder.AddUint64(math.MaxUint64)
+			got = builder.Bytes()
+		}
+
+		assert.Length(b, got, 11, "the benchmark must measure the whole element")
+	})
+
+	b.Run("AddBoolean", func(b *testing.B) {
+		var got []byte
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			builder := der.NewBuilder(dst[:0])
+			builder.AddBoolean(true)
+			got = builder.Bytes()
+		}
+
+		assert.Length(b, got, 3, "the benchmark must measure the whole element")
+	})
+
+	b.Run("Close", func(b *testing.B) {
+		var got []byte
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			builder := der.NewBuilder(dst[:0])
+			at := builder.Open(der.TagSequence)
+			builder.AddElement(content)
+			builder.AddUint64(math.MaxUint64)
+			builder.Close(at)
+			got = builder.Bytes()
+		}
+
+		assert.Length(b, got, 3+200+11, "the benchmark must measure the whole element")
 	})
 }

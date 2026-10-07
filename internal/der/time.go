@@ -33,6 +33,7 @@ func GeneralizedTime(content []byte) (time.Time, bool) {
 	}
 
 	digits, ok := number(content[:wholeSeconds])
+	//dokimi:mutate-skip sbr-delete: number returns 0 for a non-digit, and the month 0 of that value fails the range check
 	if !ok {
 		return time.Time{}, false
 	}
@@ -45,17 +46,18 @@ func GeneralizedTime(content []byte) (time.Time, bool) {
 	year, month, day := digits/1e10, digits/1e8%100, digits/1e6%100
 	hour, minute, second := digits/1e4%100, digits/1e2%100, digits%100
 
-	// time.Date normalizes a field out of range, such as the 30th of
-	// February to the 2nd of March, so a field that differs afterwards
-	// names a date or time that does not exist.
-	t := time.Date(year, time.Month(month), day, hour, minute, second, nanos, time.UTC)
-	same := t.Year() == year && int(t.Month()) == month && t.Day() == day &&
-		t.Hour() == hour && t.Minute() == minute && t.Second() == second
-	if !same {
+	// The day before the first of the next month is the last day of the
+	// month, which time.Date returns for the day 0.
+	last := time.Date(year, time.Month(month)+1, 0, 0, 0, 0, 0, time.UTC).Day()
+	if month < 1 || month > 12 || day < 1 || day > last {
 		return time.Time{}, false
 	}
 
-	return t, true
+	if hour > 23 || minute > 59 || second > 59 {
+		return time.Time{}, false
+	}
+
+	return time.Date(year, time.Month(month), day, hour, minute, second, nanos, time.UTC), true
 }
 
 // number returns the value of digits, decimal digits only. It reports false
