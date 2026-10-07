@@ -5,12 +5,14 @@ package blob_test
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"testing"
 	"time"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/bench"
+	"go.dokimi.dev/assert/expect"
+	"go.dokimi.dev/assert/prop"
 
 	"go.thesmos.sh/core/blob"
 	"go.thesmos.sh/core/blob/memory"
@@ -18,10 +20,38 @@ import (
 	"go.thesmos.sh/core/version"
 )
 
+// Character classes of the elements of the generated keys. An element
+// starts and ends with a character of keyEdge, so it is never "." or "..".
+const (
+	// keyEdge contains ASCII and non-ASCII letters, digits, underscores and
+	// hyphens.
+	keyEdge = "[a-zA-Z0-9äéïñöü" + "пример" + "_-]"
+
+	// keyInner adds spaces and dots to keyEdge.
+	keyInner = "[a-zA-Z0-9äéïñöü" + "пример" + " _.-]"
+)
+
+// origin is the time at which the fake clock of every memory store of the
+// tests starts.
+var origin = time.Unix(0, 0).UTC()
+
+// Generators of the properties over keys and content types.
+var (
+	// keys generates keys that every backend stores: one to five elements
+	// of ASCII and non-ASCII letters, digits, spaces, dots, underscores and
+	// hyphens, none of them "." or "..".
+	keys = prop.StringMatching(keyInner + `{0,20}` + keyEdge + `(/` + keyEdge + keyInner + `{0,20}){0,4}`)
+
+	// printable generates content types of printable ASCII characters
+	// within MaxContentTypeLen bytes.
+	printable = prop.String(prop.Alphabet(printableASCII()), prop.MaxSize(blob.MaxContentTypeLen))
+)
+
 // decorated wraps a store and returns it from Unwrap, as a tracing
 // decorator does.
 type decorated struct{ blob.Store }
 
+// Unwrap returns the wrapped store.
 func (d decorated) Unwrap() blob.Store { return d.Store }
 
 // storeOnly embeds a store as the Store interface and has no Unwrap, so
@@ -36,6 +66,8 @@ type selfRanging struct {
 	inner blob.RangeReader
 }
 
+// ReadRange delegates to the wrapped RangeReader.
+//
 //nolint:wrapcheck // the test double passes the error through
 func (s selfRanging) ReadRange(
 	ctx context.Context, key string, off int64, dst []byte, ifMatch version.Version,
@@ -43,69 +75,53 @@ func (s selfRanging) ReadRange(
 	return s.inner.ReadRange(ctx, key, off, dst, ifMatch)
 }
 
-// newMemory returns an empty memory store over a fake clock.
-func newMemory() *memory.Store {
-	return memory.New(fake.New(time.Unix(0, 0).UTC()))
-}
-
 func TestAsRangeReader(t *testing.T) {
 	t.Parallel()
 
-	t.Run("finds a RangeReader on the store itself", func(t *testing.T) {
+	t.Run("returns the store itself when it has ranged reads", func(t *testing.T) {
 		t.Parallel()
-		s := newMemory()
+		s := memory.New(fake.New(origin))
 		rr, ok := blob.AsRangeReader(s)
-		testkit.True(t, ok, "a store with ranged reads must be found")
-		testkit.True(t, rr == blob.RangeReader(s), "the store itself must be returned")
+		assert.True(t, ok, "a store with ranged reads must be found")
+		assert.Equal(t, rr, blob.RangeReader(s), "the store itself must be returned", assert.ByIdentity())
 	})
 
-	t.Run("finds a RangeReader through two decorators", func(t *testing.T) {
+	t.Run("returns a RangeReader behind two decorators", func(t *testing.T) {
 		t.Parallel()
-		s := newMemory()
+		s := memory.New(fake.New(origin))
 		rr, ok := blob.AsRangeReader(decorated{decorated{s}})
-		testkit.True(t, ok, "a RangeReader behind decorators must be found")
-		testkit.True(t, rr == blob.RangeReader(s), "the wrapped store must be returned")
+		assert.True(t, ok, "a RangeReader behind decorators must be found")
+		assert.Equal(t, rr, blob.RangeReader(s), "the wrapped store must be returned", assert.ByIdentity())
 	})
 
-	t.Run("finds a decorator that implements RangeReader before the store it wraps", func(t *testing.T) {
+	t.Run("returns a decorator that has ranged reads before the store it wraps", func(t *testing.T) {
 		t.Parallel()
-		s := newMemory()
+		s := memory.New(fake.New(origin))
 		outer := selfRanging{decorated: decorated{s}, inner: s}
 		rr, ok := blob.AsRangeReader(outer)
-		testkit.True(t, ok, "the decorator must be found")
-		testkit.True(t, rr == blob.RangeReader(outer), "the outermost RangeReader must be returned")
+		assert.True(t, ok, "the decorator must be found")
+		assert.Equal(t, rr, blob.RangeReader(outer), "the outermost RangeReader must be returned", assert.ByIdentity())
 	})
 
-	t.Run("reports false for a decorator without Unwrap", func(t *testing.T) {
-		t.Parallel()
-		_, ok := blob.AsRangeReader(storeOnly{newMemory()})
-		testkit.False(t, ok, "a decorator without Unwrap must hide the capability")
-	})
-
-	t.Run("reports false when the chain ends without a RangeReader", func(t *testing.T) {
-		t.Parallel()
-		_, ok := blob.AsRangeReader(decorated{storeOnly{newMemory()}})
-		testkit.False(t, ok, "a chain without a RangeReader must not report one")
-	})
-
-	t.Run("reports false for a nil store and a decorator of nil", func(t *testing.T) {
-		t.Parallel()
-		_, ok := blob.AsRangeReader(nil)
-		testkit.False(t, ok, "a nil store must not report a RangeReader")
-
-		_, ok = blob.AsRangeReader(decorated{})
-		testkit.False(t, ok, "a decorator that wraps nothing must not report a RangeReader")
-	})
-}
-
-// BenchmarkAsRangeReader reports the cost and the allocations of
-// AsRangeReader through two decorators.
-func BenchmarkAsRangeReader(b *testing.B) {
-	var s blob.Store = decorated{decorated{newMemory()}}
-	b.ReportAllocs()
-
-	for b.Loop() {
-		_, _ = blob.AsRangeReader(s)
+	tests := []struct {
+		name string
+		give blob.Store
+	}{
+		{name: "reports false for a decorator without Unwrap", give: storeOnly{memory.New(fake.New(origin))}},
+		{
+			name: "reports false for a chain that ends without a RangeReader",
+			give: decorated{storeOnly{memory.New(fake.New(origin))}},
+		},
+		{name: "reports false for a nil store", give: nil},
+		{name: "reports false for a decorator of nil", give: decorated{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			rr, ok := blob.AsRangeReader(tt.give)
+			assert.False(t, ok, "a chain without a RangeReader must not report one")
+			assert.Nil(t, rr, "no RangeReader may be returned")
+		})
 	}
 }
 
@@ -114,116 +130,172 @@ func TestValidKey(t *testing.T) {
 
 	t.Run("reports true for a key that every backend stores", func(t *testing.T) {
 		t.Parallel()
-
-		for _, key := range []string{
-			"k",
-			"a/b",
-			"a/b/c",
-			"photos/2026/holiday.jpg",
-			"a name with spaces",
-			"ünïcode/пример",
-			strings.Repeat("a", blob.MaxKeyElemLen),
-			maxLengthKey(),
-		} {
-			testkit.True(t, blob.ValidKey(key),
-				fmt.Sprintf("%q must be a valid key", key))
-		}
+		prop.True(t, blob.ValidKey, "every key of slash-separated elements within the bounds must be valid",
+			prop.Using(keys), prop.Example("k"), prop.Example("a/b/c"), prop.Example("photos/2026/holiday.jpg"),
+			prop.Example("a name with spaces"), prop.Example("ünïcode/пример"))
 	})
 
-	t.Run("reports false for a key outside io/fs.ValidPath or the bounds", func(t *testing.T) {
+	t.Run("reports true for a key of MaxKeyLen bytes", func(t *testing.T) {
 		t.Parallel()
+		assert.True(t, blob.ValidKey(maxLengthKey()), "a key at the bound must be valid")
+	})
 
-		// Each of these means something different on a filesystem
-		// than it does in an object store, which is why the rule is
-		// the standard library's rather than each backend's.
-		cases := map[string]string{
-			"empty":                        "",
-			"the root":                     ".",
-			"rooted":                       "/k",
-			"trailing slash":               "k/",
-			"leading slash element":        "//k",
-			"empty element":                "a//b",
-			"dot element":                  "a/./b",
-			"dot-dot element":              "a/../b",
-			"escaping the root":            "../k",
-			"a bare dot-dot":               "..",
-			"one byte over the key length": maxLengthKey() + "a",
-			"one byte over the element length": strings.Repeat("a", blob.MaxKeyElemLen+1) +
-				"/b",
-			"a long element late in the key": "a/" +
-				strings.Repeat("b", blob.MaxKeyElemLen+1),
-		}
-		for name, key := range cases {
-			testkit.False(t, blob.ValidKey(key), name+" must not be a valid key")
-		}
+	t.Run("reports true for an element of MaxKeyElemLen bytes", func(t *testing.T) {
+		t.Parallel()
+		assert.True(t, blob.ValidKey(strings.Repeat("a", blob.MaxKeyElemLen)), "an element at the bound must be valid")
+	})
+
+	t.Run("reports false for a key that io/fs.ValidPath refuses", func(t *testing.T) {
+		t.Parallel()
+		// Each of these means something different on a filesystem than in
+		// an object store, which is why the rule is the standard library's
+		// rather than each backend's.
+		prop.False(t, blob.ValidKey, "a key outside io/fs.ValidPath must be invalid",
+			prop.Using(prop.SampledFrom("", ".", "/k", "k/", "//k", "a//b", "a/./b", "a/../b", "../k", "..")))
+	})
+
+	t.Run("reports false for a key over MaxKeyLen bytes", func(t *testing.T) {
+		t.Parallel()
+		prop.False(t, blob.ValidKey, "a key over MaxKeyLen bytes must be invalid",
+			prop.Using(prop.StringMatching(`([a-z]{200}/){5}[a-z]{20,100}`)))
+		assert.False(t, blob.ValidKey(maxLengthKey()+"a"), "a key one byte over the bound must be invalid")
+	})
+
+	t.Run("reports false for an element over MaxKeyElemLen bytes", func(t *testing.T) {
+		t.Parallel()
+		prop.False(t, blob.ValidKey, "an element over MaxKeyElemLen bytes must make the key invalid",
+			prop.Using(prop.StringMatching(`([a-z]{1,10}/){0,3}[a-z]{256,300}(/[a-z]{1,10}){0,3}`)),
+			prop.Example(strings.Repeat("a", blob.MaxKeyElemLen+1)+"/b"),
+			prop.Example("a/"+strings.Repeat("b", blob.MaxKeyElemLen+1)))
 	})
 
 	t.Run("uses the S3 key length and the filesystem component length as bounds", func(t *testing.T) {
 		t.Parallel()
-
-		testkit.Equal(t, blob.MaxKeyLen, 1024,
-			"the key bound is the S3-family key length")
-		testkit.Equal(t, blob.MaxKeyElemLen, 255,
-			"the element bound is the common filesystem component length")
+		expect.Equal(t, blob.MaxKeyLen, 1024, "the key bound is the S3-family key length")
+		expect.Equal(t, blob.MaxKeyElemLen, 255, "the element bound is the common filesystem component length")
 	})
 }
 
 func TestValidContentType(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name string
-		give string
-		want bool
-	}{
-		{name: "reports true for the empty content type", give: "", want: true},
-		{name: "reports true for a media type with a parameter", give: "text/plain; charset=utf-8", want: true},
-		{name: "reports true for a space and a tilde", give: " ~", want: true},
-		{
-			name: "reports true for MaxContentTypeLen bytes",
-			give: strings.Repeat("a", blob.MaxContentTypeLen),
-			want: true,
-		},
-		{
-			name: "reports false for one byte over MaxContentTypeLen",
-			give: strings.Repeat("a", blob.MaxContentTypeLen+1),
-			want: false,
-		},
-		{name: "reports false for a byte below a space", give: "text/plain\x1f", want: false},
-		{name: "reports false for a horizontal tab", give: "text/plain;\tcharset=utf-8", want: false},
-		{name: "reports false for a line break", give: "text/plain\r\n", want: false},
-		{name: "reports false for the delete byte", give: "text/plain\x7f", want: false},
-		{name: "reports false for a byte outside ASCII", give: "text/pl\xc3\xa4in", want: false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			testkit.Equal(t, blob.ValidContentType(tt.give), tt.want,
-				fmt.Sprintf("ValidContentType(%q) must report %v", tt.give, tt.want))
-		})
-	}
+	t.Run("reports true for printable ASCII within MaxContentTypeLen bytes", func(t *testing.T) {
+		t.Parallel()
+		prop.True(t, blob.ValidContentType, "printable ASCII within the bound must be a valid content type",
+			prop.Using(printable), prop.Example(""), prop.Example("text/plain; charset=utf-8"), prop.Example(" ~"),
+			prop.Example(strings.Repeat("a", blob.MaxContentTypeLen)))
+	})
+
+	t.Run("reports false for a content type over MaxContentTypeLen bytes", func(t *testing.T) {
+		t.Parallel()
+		prop.False(t, blob.ValidContentType, "a content type over the bound must be invalid",
+			prop.Using(prop.String(prop.Alphabet(printableASCII()), prop.MinSize(blob.MaxContentTypeLen+1),
+				prop.MaxSize(2*blob.MaxContentTypeLen))),
+			prop.Example(strings.Repeat("a", blob.MaxContentTypeLen+1)))
+	})
+
+	t.Run("reports false for a byte outside printable ASCII", func(t *testing.T) {
+		t.Parallel()
+		prop.ForAll(t, "a byte below a space or above a tilde must make the content type invalid",
+			func(c *prop.Case) {
+				head := c.Draw(prop.String(prop.Alphabet(printableASCII()), prop.MaxSize(20)), "head")
+				bad := c.Draw(prop.OneOf(prop.Integer[byte](0, ' '-1), prop.Integer[byte]('~'+1, 255)), "byte")
+				tail := c.Draw(prop.String(prop.Alphabet(printableASCII()), prop.MaxSize(20)), "tail")
+				assert.False(c, blob.ValidContentType(head+string([]byte{bad})+tail),
+					"a byte outside printable ASCII must be refused")
+			})
+	})
 
 	t.Run("uses 255 bytes as the bound", func(t *testing.T) {
 		t.Parallel()
-		testkit.Equal(t, blob.MaxContentTypeLen, 255,
-			"the bound fits every type and subtype pair of RFC 6838")
+		assert.Equal(t, blob.MaxContentTypeLen, 255, "the bound fits every type and subtype pair of RFC 6838")
 	})
 }
 
-// BenchmarkValidContentType reports the cost and the allocations of
-// ValidContentType for a content type of MaxContentTypeLen bytes.
-func BenchmarkValidContentType(b *testing.B) {
-	contentType := strings.Repeat("a", blob.MaxContentTypeLen)
-	b.ReportAllocs()
+// TestBlobAllocs checks the allocation contracts of ValidKey,
+// ValidContentType and AsRangeReader. MaxAllocs counts the allocations of
+// the whole process, so the test does not run in parallel.
+//
+//nolint:paralleltest // see above
+func TestBlobAllocs(t *testing.T) {
+	t.Run("ValidKey", func(t *testing.T) {
+		key := maxLengthKey()
 
-	for b.Loop() {
-		_ = blob.ValidContentType(contentType)
-	}
+		var got bool
+		expect.MaxAllocs(t, func() { got = blob.ValidKey(key) }, 0, "ValidKey must not allocate")
+		assert.True(t, got, "the test must measure a valid key")
+	})
+
+	t.Run("ValidContentType", func(t *testing.T) {
+		contentType := strings.Repeat("a", blob.MaxContentTypeLen)
+
+		var got bool
+		expect.MaxAllocs(t, func() { got = blob.ValidContentType(contentType) }, 0,
+			"ValidContentType must not allocate")
+		assert.True(t, got, "the test must measure a valid content type")
+	})
+
+	t.Run("AsRangeReader", func(t *testing.T) {
+		var s blob.Store = decorated{decorated{memory.New(fake.New(origin))}}
+
+		var got bool
+		expect.MaxAllocs(t, func() { _, got = blob.AsRangeReader(s) }, 0, "AsRangeReader must not allocate")
+		assert.True(t, got, "the test must measure a RangeReader behind decorators")
+	})
 }
 
-// maxLengthKey builds a key of exactly [blob.MaxKeyLen] bytes whose
-// every element is within [blob.MaxKeyElemLen], so the two bounds
-// can be probed one at a time.
+// BenchmarkBlob reports the cost of ValidKey, ValidContentType and
+// AsRangeReader, and fails when one of them allocates.
+func BenchmarkBlob(b *testing.B) {
+	b.Run("ValidKey", func(b *testing.B) {
+		key := maxLengthKey()
+
+		var got bool
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			got = blob.ValidKey(key)
+		}
+
+		assert.True(b, got, "the benchmark must measure a valid key")
+	})
+
+	b.Run("ValidContentType", func(b *testing.B) {
+		contentType := strings.Repeat("a", blob.MaxContentTypeLen)
+
+		var got bool
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			got = blob.ValidContentType(contentType)
+		}
+
+		assert.True(b, got, "the benchmark must measure a valid content type")
+	})
+
+	b.Run("AsRangeReader", func(b *testing.B) {
+		var s blob.Store = decorated{decorated{memory.New(fake.New(origin))}}
+
+		var got bool
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			_, got = blob.AsRangeReader(s)
+		}
+
+		assert.True(b, got, "the benchmark must measure a RangeReader behind decorators")
+	})
+}
+
+// maxLengthKey builds a key of exactly [blob.MaxKeyLen] bytes whose every
+// element is within [blob.MaxKeyElemLen], so the two bounds can be probed
+// one at a time.
 func maxLengthKey() string {
 	const elems = 5
 
@@ -231,4 +303,15 @@ func maxLengthKey() string {
 	key := strings.Join([]string{elem, elem, elem, elem, elem}, "/")
 
 	return key + strings.Repeat("a", blob.MaxKeyLen-len(key))
+}
+
+// printableASCII returns every character from a space to a tilde, the
+// characters of a valid content type.
+func printableASCII() string {
+	var b strings.Builder
+	for c := byte(' '); c <= '~'; c++ {
+		b.WriteByte(c)
+	}
+
+	return b.String()
 }

@@ -350,18 +350,18 @@ type RangeReader interface {
 //
 // Zero alloc.
 func AsRangeReader(s Store) (RangeReader, bool) {
-	for s != nil {
+	// A nil s matches neither assertion, so the loop ends at a nil store
+	// as it ends at a store without Unwrap.
+	for {
 		if rr, ok := s.(RangeReader); ok {
 			return rr, true
 		}
 
 		u, ok := s.(interface{ Unwrap() Store })
 		if !ok {
-			break
+			return nil, false
 		}
 
 		s = u.Unwrap()
 	}
-
-	return nil, false
 }

@@ -74,6 +74,7 @@ func GetBytes(ctx context.Context, s Store, key string, limit int64) ([]byte, In
 	// truncated. Reading limit+1 up front would overflow on a limit
 	// of math.MaxInt64 and silently return nothing.
 	var over int
+	//dokimi:mutate-skip ror-true: a read error returns whatever the probe reads, and io.Reader leaves a read after an error undefined
 	if readErr == nil {
 		var probe [1]byte
 		over, _ = rc.Read(probe[:])
