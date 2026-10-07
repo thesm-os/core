@@ -4,227 +4,338 @@
 package tag_test
 
 import (
-	"runtime"
 	"slices"
 	"testing"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/bench"
+	"go.dokimi.dev/assert/expect"
+	"go.dokimi.dev/assert/prop"
 
 	"go.thesmos.sh/core/tag"
 )
 
-const sampleRegion = "eu-west-1"
+// The fixture values of the cases of Tags.
+const (
+	// absent is a key that no generated Tags contains.
+	absent = "zone"
 
-func sample() tag.Tags {
-	return tag.Tags{
-		{Key: "region", Value: sampleRegion},
-		{Key: "service", Value: "ledger"},
-		{Key: "tier", Value: "prod"},
-	}
+	// duplicate labels a case whose Tags contain the key of the case more
+	// than once.
+	duplicate = "a key that the Tags contain twice"
+)
+
+// keys are the keys of the generated Tags. Three keys make a key that the
+// Tags contain twice common.
+var keys = []string{"region", "service", "tier"}
+
+// measured is the Tags of the allocation tests and the benchmarks, with one
+// Tag of each key.
+var measured = tag.Tags{
+	{Key: "region", Value: "eu-west-1"},
+	{Key: "service", Value: "ledger"},
+	{Key: "tier", Value: "prod"},
 }
 
-func TestTagsFind(t *testing.T) {
-	t.Parallel()
-
-	ts := sample()
-
-	t.Run("returns existing tag", func(t *testing.T) {
-		t.Parallel()
-		got, ok := ts.Find("service")
-		testkit.True(t, ok, "Find(service) must return ok=true")
-		testkit.Equal(t, got, tag.Tag{Key: "service", Value: "ledger"},
-			"Find must return the matched tag")
+// The generators of the properties of Tags.
+var (
+	// tagOf generates a Tag of a key of keys and of any value.
+	tagOf = prop.Composite(func(c *prop.Case) tag.Tag {
+		return tag.Tag{Key: c.Draw(prop.SampledFrom(keys...), "key"), Value: c.Draw(prop.String(), "value")}
 	})
 
-	t.Run("returns zero on missing key", func(t *testing.T) {
-		t.Parallel()
-		got, ok := ts.Find("missing")
-		testkit.False(t, ok, "Find(missing) must return ok=false")
-		testkit.Equal(t, got, tag.Tag{}, "Find(missing) must return the zero tag")
-	})
+	// tags generates Tags of tagOf, the empty Tags included.
+	tags = prop.List(tagOf).Map(func(ts []tag.Tag) tag.Tags { return ts })
 
-	t.Run("first match wins on duplicate key", func(t *testing.T) {
-		t.Parallel()
-		dup := tag.Tags{
-			{Key: "k", Value: "first"},
-			{Key: "k", Value: "second"},
+	// filled generates Tags of tagOf with at least one Tag.
+	filled = prop.List(tagOf, prop.MinSize(1)).Map(func(ts []tag.Tag) tag.Tags { return ts })
+
+	// lookups generates Tags and a key that they contain, contain twice or
+	// lack.
+	lookups = prop.Composite(func(c *prop.Case) lookup {
+		return lookup{
+			tags: c.Draw(tags, "tags"),
+			key:  c.Draw(prop.OneOf(prop.SampledFrom(keys...), prop.Just(absent)), "key"),
 		}
-		got, _ := dup.Find("k")
-		testkit.Equal(t, got.Value, "first", "Find on duplicates must return the first match")
 	})
+)
 
-	t.Run("empty Tags returns !ok", func(t *testing.T) {
-		t.Parallel()
-		_, ok := tag.Tags(nil).Find("k")
-		testkit.False(t, ok, "Find on nil Tags must return ok=false")
-	})
+// lookup is a key and the Tags in which a case looks it up.
+type lookup struct {
+	key  string
+	tags tag.Tags
 }
 
-func TestTagsHas(t *testing.T) {
+func TestTags(t *testing.T) {
 	t.Parallel()
 
-	ts := sample()
-
-	testkit.True(t, ts.Has("region"), "Has(region) must return true")
-	testkit.False(t, ts.Has("missing"), "Has(missing) must return false")
-}
-
-func TestTagsGet(t *testing.T) {
-	t.Parallel()
-
-	ts := sample()
-
-	testkit.Equal(t, ts.Get("region"), sampleRegion, "Get(region) must match")
-	testkit.Equal(t, ts.Get("missing"), "", "Get(missing) must return empty string")
-}
-
-func TestTagsWith(t *testing.T) {
-	t.Parallel()
-
-	t.Run("appends new key without mutating original", func(t *testing.T) {
+	t.Run("Find", func(t *testing.T) {
 		t.Parallel()
-		ts := sample()
-		out := ts.With(tag.Tag{Key: "new", Value: "v"})
-		testkit.Equal(t, len(out), 4, "With must append a new entry")
-		got, _ := out.Find("new")
-		testkit.Equal(t, got.Value, "v", "With(new) must add the tag with value v")
-		testkit.False(t, ts.Has("new"), "With must not mutate the original Tags")
-	})
 
-	t.Run("replaces existing key without mutating original", func(t *testing.T) {
-		t.Parallel()
-		ts := sample()
-		out := ts.With(tag.Tag{Key: "region", Value: "us-east-1"})
-		testkit.Equal(t, len(out), len(ts), "With on existing key must not change length")
-		testkit.Equal(t, out.Get("region"), "us-east-1", "With must replace the value")
-		testkit.Equal(t, ts.Get("region"), sampleRegion, "With must not mutate the original")
-	})
-}
+		t.Run("returns the first Tag of a key that the Tags contain", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "Find must return the first Tag of a key that the Tags contain", func(c *prop.Case) {
+				ts := c.Draw(filled, "tags")
+				key := ts[c.Draw(prop.Integer(0, len(ts)-1), "index")].Key
+				first := slices.IndexFunc(ts, func(tg tag.Tag) bool { return tg.Key == key })
+				if slices.ContainsFunc(ts[first+1:], func(tg tag.Tag) bool { return tg.Key == key }) {
+					c.Classify(duplicate)
+				}
 
-func TestTagsWithout(t *testing.T) {
-	t.Parallel()
-
-	t.Run("removes matching key without mutating original", func(t *testing.T) {
-		t.Parallel()
-		ts := sample()
-		out := ts.Without("service")
-		testkit.False(t, out.Has("service"), "Without must remove the matching key")
-		testkit.True(t, ts.Has("service"), "Without must not mutate the original")
-		testkit.Equal(t, len(out), len(ts)-1, "Without must shrink the length by 1")
-	})
-
-	t.Run("missing key returns slice of equal length", func(t *testing.T) {
-		t.Parallel()
-		ts := sample()
-		out := ts.Without("missing")
-		testkit.Equal(t, len(out), len(ts), "Without(missing) must not change length")
-		testkit.True(t, slices.Equal(out, ts),
-			"Without(missing) must return a slice equal to the original")
-	})
-
-	t.Run("removes every duplicate of the key", func(t *testing.T) {
-		t.Parallel()
-		dup := tag.Tags{
-			{Key: "k", Value: "1"},
-			{Key: "k", Value: "2"},
-			{Key: "other", Value: "x"},
-		}
-		out := dup.Without("k")
-		testkit.Equal(t, len(out), 1, "Without must remove every duplicate")
-		testkit.Equal(t, out[0].Key, "other", "remaining tag must be the non-matched one")
-	})
-}
-
-// TestTagsZeroAlloc cannot run in parallel —
-// testing.AllocsPerRun panics if any other test is running.
-//
-//nolint:paralleltest // see comment above
-func TestTagsZeroAlloc(t *testing.T) {
-	ts := sample()
-
-	cases := []struct {
-		fn   func()
-		name string
-	}{
-		{func() { _, _ = ts.Find("service") }, "Find/hit"},
-		{func() { _, _ = ts.Find("missing") }, "Find/miss"},
-		{func() { _ = ts.Has("service") }, "Has/hit"},
-		{func() { _ = ts.Has("missing") }, "Has/miss"},
-		{func() { _ = ts.Get("service") }, "Get/hit"},
-		{func() { _ = ts.Get("missing") }, "Get/miss"},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			testkit.Equal(t, testing.AllocsPerRun(100, tc.fn),
-				float64(0), tc.name+" must be zero-alloc")
+				got, ok := ts.Find(key)
+				assert.True(c, ok, "Find must report a key that the Tags contain")
+				assert.Equal(c, got, ts[first], "Find must return the first Tag of the key")
+			}, prop.Require(duplicate, 0.1))
 		})
-	}
-}
 
-func BenchmarkFind(b *testing.B) {
-	ts := sample()
-	b.Run("hit", func(b *testing.B) {
-		b.ReportAllocs()
-		var sinkTag tag.Tag
-		var sinkOK bool
-		for b.Loop() {
-			sinkTag, sinkOK = ts.Find("service")
-		}
-		runtime.KeepAlive(sinkTag)
-		runtime.KeepAlive(sinkOK)
+		t.Run("reports false for a key that the Tags lack", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "Find must report false for a key that the Tags lack", func(c *prop.Case) {
+				got, ok := c.Draw(tags, "tags").Find(absent)
+				assert.False(c, ok, "Find must report false for a key that the Tags lack")
+				assert.Equal(c, got, tag.Tag{}, "Find must return the zero Tag for a key that the Tags lack")
+			})
+		})
+
+		t.Run("reports false for nil Tags", func(t *testing.T) {
+			t.Parallel()
+			_, ok := tag.Tags(nil).Find(keys[0])
+			assert.False(t, ok, "Find must report false for nil Tags")
+		})
 	})
-	b.Run("miss", func(b *testing.B) {
-		b.ReportAllocs()
-		var sinkTag tag.Tag
-		var sinkOK bool
-		for b.Loop() {
-			sinkTag, sinkOK = ts.Find("missing")
-		}
-		runtime.KeepAlive(sinkTag)
-		runtime.KeepAlive(sinkOK)
+
+	t.Run("Has", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("reports whether a Tag of the key is present", func(t *testing.T) {
+			t.Parallel()
+			prop.Equal(t, func(in lookup) bool { return in.tags.Has(in.key) }, func(in lookup) bool {
+				return slices.ContainsFunc(in.tags, func(tg tag.Tag) bool { return tg.Key == in.key })
+			}, "Has must report whether a Tag of the key is present", prop.Using(lookups))
+		})
+	})
+
+	t.Run("Get", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the value of the Tag that Find returns", func(t *testing.T) {
+			t.Parallel()
+			prop.Equal(t, func(in lookup) string { return in.tags.Get(in.key) }, func(in lookup) string {
+				found, _ := in.tags.Find(in.key)
+
+				return found.Value
+			}, "Get must return the value of the Tag that Find returns", prop.Using(lookups))
+		})
+	})
+
+	t.Run("With", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("replaces the first Tag of a key that the Tags contain", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "With must replace the first Tag of a key that the Tags contain", func(c *prop.Case) {
+				ts := c.Draw(filled, "tags")
+				key := ts[c.Draw(prop.Integer(0, len(ts)-1), "index")].Key
+				tg := tag.Tag{Key: key, Value: c.Draw(prop.String(), "value")}
+
+				want := slices.Clone(ts)
+				want[slices.IndexFunc(ts, func(old tag.Tag) bool { return old.Key == key })] = tg
+				assert.Equal(c, ts.With(tg), want, "With must replace the first Tag of the key")
+			})
+		})
+
+		t.Run("appends a Tag of a key that the Tags lack", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "With must append a Tag of a key that the Tags lack", func(c *prop.Case) {
+				ts := c.Draw(tags, "tags")
+				tg := tag.Tag{Key: absent, Value: c.Draw(prop.String(), "value")}
+				assert.Equal(c, ts.With(tg), append(slices.Clone(ts), tg), "With must append the Tag")
+			})
+		})
+
+		t.Run("leaves the receiver unchanged", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "With must not change the receiver", func(c *prop.Case) {
+				in := c.Draw(lookups, "lookup")
+				tg := tag.Tag{Key: in.key, Value: c.Draw(prop.String(), "value")}
+				assert.Pure(c, func() tag.Tags { return slices.Clone(in.tags) }, func() { _ = in.tags.With(tg) },
+					"With must not change the receiver")
+			})
+		})
+	})
+
+	t.Run("Without", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("removes every Tag of the key", func(t *testing.T) {
+			t.Parallel()
+			prop.Equal(t, func(in lookup) tag.Tags { return in.tags.Without(in.key) }, func(in lookup) tag.Tags {
+				return slices.DeleteFunc(slices.Clone(in.tags), func(tg tag.Tag) bool { return tg.Key == in.key })
+			}, "Without must remove the Tags of the key alone", prop.Using(lookups))
+		})
+
+		t.Run("leaves the receiver unchanged", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "Without must not change the receiver", func(c *prop.Case) {
+				in := c.Draw(lookups, "lookup")
+				assert.Pure(c, func() tag.Tags { return slices.Clone(in.tags) }, func() { _ = in.tags.Without(in.key) },
+					"Without must not change the receiver")
+			})
+		})
 	})
 }
 
-func BenchmarkHas(b *testing.B) {
-	ts := sample()
-	b.ReportAllocs()
-	var sink bool
-	for b.Loop() {
-		sink = ts.Has("service")
-	}
-	runtime.KeepAlive(sink)
-}
+// TestTagsAllocs checks the allocation contract of each method. MaxAllocs
+// counts the allocations of the whole process, so the test does not run in
+// parallel.
+//
+//nolint:paralleltest // see above
+func TestTagsAllocs(t *testing.T) {
+	t.Run("Find", func(t *testing.T) {
+		t.Run("of a key that the Tags contain", func(t *testing.T) {
+			var got bool
+			expect.MaxAllocs(t, func() { _, got = measured.Find(measured[2].Key) }, 0, "Find must not allocate")
+			assert.True(t, got, "the test must measure a key that the Tags contain")
+		})
 
-func BenchmarkGet(b *testing.B) {
-	ts := sample()
-	b.ReportAllocs()
-	var sink string
-	for b.Loop() {
-		sink = ts.Get("service")
-	}
-	runtime.KeepAlive(sink)
-}
-
-func BenchmarkWith(b *testing.B) {
-	ts := sample()
-	b.Run("replace", func(b *testing.B) {
-		b.ReportAllocs()
-		for b.Loop() {
-			_ = ts.With(tag.Tag{Key: "service", Value: "new"})
-		}
+		t.Run("of a key that the Tags lack", func(t *testing.T) {
+			var got bool
+			expect.MaxAllocs(t, func() { _, got = measured.Find(absent) }, 0, "Find must not allocate")
+			assert.False(t, got, "the test must measure a key that the Tags lack")
+		})
 	})
-	b.Run("append", func(b *testing.B) {
-		b.ReportAllocs()
-		for b.Loop() {
-			_ = ts.With(tag.Tag{Key: "fresh", Value: "added"})
-		}
+
+	t.Run("Has", func(t *testing.T) {
+		var got bool
+		expect.MaxAllocs(t, func() { got = measured.Has(measured[2].Key) }, 0, "Has must not allocate")
+		assert.True(t, got, "the test must measure a key that the Tags contain")
+	})
+
+	t.Run("Get", func(t *testing.T) {
+		var got string
+		expect.MaxAllocs(t, func() { got = measured.Get(measured[2].Key) }, 0, "Get must not allocate")
+		assert.Equal(t, got, measured[2].Value, "the test must measure a key that the Tags contain")
+	})
+
+	t.Run("With", func(t *testing.T) {
+		t.Run("of a key that the Tags contain", func(t *testing.T) {
+			var got tag.Tags
+			expect.MaxAllocs(t, func() { got = measured.With(tag.Tag{Key: measured[1].Key}) }, 1,
+				"With must allocate the new Tags alone")
+			assert.Length(t, got, len(measured), "the test must measure a replacement")
+		})
+
+		t.Run("of a key that the Tags lack", func(t *testing.T) {
+			var got tag.Tags
+			expect.MaxAllocs(t, func() { got = measured.With(tag.Tag{Key: absent}) }, 1,
+				"With must allocate the new Tags alone")
+			assert.Length(t, got, len(measured)+1, "the test must measure an append")
+		})
+	})
+
+	t.Run("Without", func(t *testing.T) {
+		var got tag.Tags
+		expect.MaxAllocs(t, func() { got = measured.Without(measured[1].Key) }, 1,
+			"Without must allocate the new Tags alone")
+		assert.Length(t, got, len(measured)-1, "the test must measure a removal")
 	})
 }
 
-func BenchmarkWithout(b *testing.B) {
-	ts := sample()
-	b.ReportAllocs()
-	for b.Loop() {
-		_ = ts.Without("service")
-	}
+// BenchmarkTags reports the cost of each method, and fails above the
+// allocations that their contracts state.
+func BenchmarkTags(b *testing.B) {
+	b.Run("Find", func(b *testing.B) {
+		b.Run("of a key that the Tags contain", func(b *testing.B) {
+			var got bool
+
+			c := bench.Start(b).MaxAllocs(0)
+			defer c.End()
+
+			for c.Loop() {
+				_, got = measured.Find(measured[2].Key)
+			}
+
+			assert.True(b, got, "the benchmark must measure a key that the Tags contain")
+		})
+
+		b.Run("of a key that the Tags lack", func(b *testing.B) {
+			var got bool
+
+			c := bench.Start(b).MaxAllocs(0)
+			defer c.End()
+
+			for c.Loop() {
+				_, got = measured.Find(absent)
+			}
+
+			assert.False(b, got, "the benchmark must measure a key that the Tags lack")
+		})
+	})
+
+	b.Run("Has", func(b *testing.B) {
+		var got bool
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			got = measured.Has(measured[2].Key)
+		}
+
+		assert.True(b, got, "the benchmark must measure a key that the Tags contain")
+	})
+
+	b.Run("Get", func(b *testing.B) {
+		var got string
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			got = measured.Get(measured[2].Key)
+		}
+
+		assert.Equal(b, got, measured[2].Value, "the benchmark must measure a key that the Tags contain")
+	})
+
+	b.Run("With", func(b *testing.B) {
+		b.Run("of a key that the Tags contain", func(b *testing.B) {
+			var got tag.Tags
+
+			c := bench.Start(b).MaxAllocs(1)
+			defer c.End()
+
+			for c.Loop() {
+				got = measured.With(tag.Tag{Key: measured[1].Key})
+			}
+
+			assert.Length(b, got, len(measured), "the benchmark must measure a replacement")
+		})
+
+		b.Run("of a key that the Tags lack", func(b *testing.B) {
+			var got tag.Tags
+
+			c := bench.Start(b).MaxAllocs(1)
+			defer c.End()
+
+			for c.Loop() {
+				got = measured.With(tag.Tag{Key: absent})
+			}
+
+			assert.Length(b, got, len(measured)+1, "the benchmark must measure an append")
+		})
+	})
+
+	b.Run("Without", func(b *testing.B) {
+		var got tag.Tags
+
+		c := bench.Start(b).MaxAllocs(1)
+		defer c.End()
+
+		for c.Loop() {
+			got = measured.Without(measured[1].Key)
+		}
+
+		assert.Length(b, got, len(measured)-1, "the benchmark must measure a removal")
+	})
 }
