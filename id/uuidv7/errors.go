@@ -22,7 +22,8 @@ var (
 	// ErrInvalidFormat reports a text of 36 bytes without a hyphen at byte
 	// 8, 13, 18 or 23.
 	ErrInvalidFormat = errs.WithClass(
-		errors.New("uuidv7: invalid format, hyphens at wrong positions"), errs.Invalid)
+		errors.New("uuidv7: invalid format, hyphens at wrong positions"), errs.Invalid,
+	)
 
 	// ErrInvalidChar reports a text with a byte other than a hexadecimal
 	// digit in one of its groups.

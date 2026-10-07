@@ -296,7 +296,8 @@ func runs() map[string]run {
 				) (int, blob.Info, error) {
 					return s.ReadRange(ctx, key, max(off, 0), dst, ifMatch)
 				}
-			}),
+			},
+		),
 		"ReadRange with ifMatch reads only the version it names": breaking(func(s *memory.Store, h *hooked) {
 			h.readRange = func(
 				ctx context.Context, key string, off int64, dst []byte, _ version.Version,
@@ -403,7 +404,8 @@ func runs() map[string]run {
 			}
 		}),
 		"an open reader of a removed version fails only with ErrMismatch": purgingStore(
-			errors.New("blobtest: version purged")),
+			errors.New("blobtest: version purged"),
+		),
 		"an open reader returns only bytes of the version its Info named": breaking(func(s *memory.Store, h *hooked) {
 			h.get = func(ctx context.Context, key string) (io.ReadCloser, blob.Info, error) {
 				info, err := s.Stat(ctx, key)

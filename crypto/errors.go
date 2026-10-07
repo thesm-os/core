@@ -68,7 +68,8 @@ var (
 	// Classifies as Invalid: the caller opened the envelope with the
 	// wrong AEAD.
 	ErrAlgorithmMismatch = errs.WithClass(
-		errors.New("crypto: envelope algorithm does not match the AEAD"), errs.Invalid)
+		errors.New("crypto: envelope algorithm does not match the AEAD"), errs.Invalid,
+	)
 
 	// ErrAlgorithmSize is returned when an algorithm name will not fit
 	// the envelope's single length byte. Classifies as Integrity, the

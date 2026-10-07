@@ -31,5 +31,6 @@ var (
 	// indices 0..7), since the 50-bit timestamp slot's top 2
 	// bits are required to be zero.
 	ErrInvalidTimestamp = errs.WithClass(
-		errors.New("ulid: timestamp overflow, first char must be 0-7"), errs.Invalid)
+		errors.New("ulid: timestamp overflow, first char must be 0-7"), errs.Invalid,
+	)
 )

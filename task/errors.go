@@ -28,7 +28,8 @@ var (
 	// and the number of items, before it calls the caller's function.
 	// It classifies as Invalid.
 	ErrQuorumSize = errs.WithClass(
-		errors.New("task: quorum must be between 1 and the number of items"), errs.Invalid)
+		errors.New("task: quorum must be between 1 and the number of items"), errs.Invalid,
+	)
 
 	// ErrNoQuorum is returned by [Quorum], joined with the failures
 	// that decided it, when fewer than k calls can still succeed. It
