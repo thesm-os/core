@@ -215,11 +215,10 @@ func TestKeeper(t *testing.T) {
 			t.Parallel()
 			parent := newParent(t)
 			k, wrapped := mustGenerate(t, parent, randcrypto.New(), keyIDA)
-			sealed, err := k.Wrap(t.Context(), dek)
-			assert.NoError(t, err, "Wrap must succeed")
-			got, err := mustNew(t, parent, keyIDA, wrapped).Unwrap(t.Context(), sealed)
-			assert.NoError(t, err, "a Keeper from New must unwrap the DEK")
-			assert.Equal(t, got, dek, "Unwrap must return the DEK")
+			reader := mustNew(t, parent, keyIDA, wrapped)
+			assert.RoundTrip(t, func(d []byte) ([]byte, error) { return k.Wrap(t.Context(), d) },
+				func(sealed []byte) ([]byte, error) { return reader.Unwrap(t.Context(), sealed) },
+				dek, "a Keeper from New must unwrap the DEK that the Keeper of Generate wrapped")
 		})
 
 		t.Run("zeroes the record that it wrapped", func(t *testing.T) {
@@ -410,8 +409,9 @@ func TestKeeper(t *testing.T) {
 		t.Run("returns the error of the parent for another key ID", func(t *testing.T) {
 			t.Parallel()
 			_, err := kek.NewAAD(t.Context(), parent, randcrypto.New(), keyIDB, wrappedAAD)
-			assert.HasError(t, err, "the parent must refuse the record under another key ID")
-			assert.ErrorIsNot(t, err, kek.ErrKeyIDMismatch, "the refusal must come from the parent")
+			assert.That(t, err).
+				HasError("the parent must refuse the record under another key ID").
+				ErrorIsNot(kek.ErrKeyIDMismatch, "the refusal must come from the parent")
 		})
 
 		t.Run("returns ErrKeyID for an empty key ID", func(t *testing.T) {
@@ -457,9 +457,11 @@ func TestKeeper(t *testing.T) {
 		t.Run("returns ErrClosed after Close", func(t *testing.T) {
 			t.Parallel()
 			k, _ := mustGenerate(t, newParent(t), randcrypto.New(), keyIDA)
-			assert.NoError(t, k.Close(), "Close must succeed")
-			_, err := k.Wrap(t.Context(), dek)
-			assert.ErrorIs(t, err, kek.ErrClosed, "Wrap after Close must return ErrClosed")
+			assert.FailsAfterClose(t, k.Close, func() error {
+				_, err := k.Wrap(t.Context(), dek)
+
+				return err
+			}, kek.ErrClosed, "Wrap after Close must return ErrClosed")
 		})
 
 		t.Run("returns an error of class Invalid after Close", func(t *testing.T) {
@@ -503,9 +505,11 @@ func TestKeeper(t *testing.T) {
 			k, _ := mustGenerate(t, newParent(t), randcrypto.New(), keyIDA)
 			sealed, err := k.Wrap(t.Context(), dek)
 			assert.NoError(t, err, "Wrap must succeed")
-			assert.NoError(t, k.Close(), "Close must succeed")
-			_, err = k.Unwrap(t.Context(), sealed)
-			assert.ErrorIs(t, err, kek.ErrClosed, "Unwrap after Close must return ErrClosed")
+			assert.FailsAfterClose(t, k.Close, func() error {
+				_, err := k.Unwrap(t.Context(), sealed)
+
+				return err
+			}, kek.ErrClosed, "Unwrap after Close must return ErrClosed")
 		})
 	})
 
@@ -605,11 +609,10 @@ func TestFIPSOnlyMode(t *testing.T) {
 		t.Parallel()
 		parent := newParent(t)
 		k, wrapped := mustGenerate(t, parent, randcrypto.New(), keyIDA)
-		sealed, err := k.Wrap(t.Context(), dek)
-		assert.NoError(t, err, "Wrap must succeed in FIPS 140-only mode")
-		got, err := mustNew(t, parent, keyIDA, wrapped).Unwrap(t.Context(), sealed)
-		assert.NoError(t, err, "Unwrap must succeed in FIPS 140-only mode")
-		assert.Equal(t, got, dek, "Unwrap must return the DEK")
+		reader := mustNew(t, parent, keyIDA, wrapped)
+		assert.RoundTrip(t, func(d []byte) ([]byte, error) { return k.Wrap(t.Context(), d) },
+			func(sealed []byte) ([]byte, error) { return reader.Unwrap(t.Context(), sealed) },
+			dek, "Unwrap must return the DEK in FIPS 140-only mode")
 	})
 }
 
