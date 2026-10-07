@@ -108,17 +108,15 @@ func (m *MAC) Sign(data []byte) crypto.Digest {
 // Verify reports whether expected is HMAC-SHA-256(key, data).
 //
 // The comparison is performed in constant time over the active
-// byte prefix; size mismatch short-circuits to false. Size is
-// public information determined by the algorithm, so the early
-// return is not a timing hazard.
+// byte prefix. An expected of another length returns false, because
+// [subtle.ConstantTimeCompare] returns 0 at once for slices of two
+// lengths. Size is public information determined by the algorithm,
+// so the early return is not a timing hazard.
 //
 // # Allocation contract
 //
 // Zero-allocation steady state, same as [MAC.Sign].
 func (m *MAC) Verify(data, expected []byte) bool {
-	if len(expected) != crypto.DigestSize256 {
-		return false
-	}
 	e := m.pool.Get()
 	e.h.Reset()
 	// hash.Hash.Write never returns a non-nil error per the
