@@ -6,7 +6,9 @@ package uuidv7_test
 import (
 	"testing"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/bench"
+	"go.dokimi.dev/assert/expect"
 
 	"go.thesmos.sh/core/id"
 	"go.thesmos.sh/core/id/uuidv7"
@@ -19,81 +21,116 @@ var uuidv4Bytes = [id.Size128]byte{
 	0x80, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde,
 }
 
-// The benchmarks write each result to a sink, so that the compiler keeps
-// every call that they measure.
-var (
-	sinkMillis uint64
-	sinkValid  bool
-)
-
-func TestTimestampMillis(t *testing.T) {
+func TestLayout(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name string
-		give id.ID
-		want uint64
-	}{
-		{name: "returns the milliseconds of a UUIDv7", give: exampleID, want: exampleMillis},
-		{
-			name: "returns the first 48 bits of a UUID of another version",
-			give: id.New128(uuidv4Bytes),
-			want: 0x123456789abc,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			testkit.Equal(t, uuidv7.TimestampMillis(tt.give), tt.want,
-				"TimestampMillis must return the first 48 bits")
-		})
-	}
-
-	t.Run("returns 0 for an ID that is not 128 bits", func(t *testing.T) {
+	t.Run("TimestampMillis", func(t *testing.T) {
 		t.Parallel()
-		for name, u := range notUUIDs() {
-			testkit.Equal(t, uuidv7.TimestampMillis(u), uint64(0), "TimestampMillis must return 0 for "+name)
+
+		tests := []struct {
+			name string
+			give id.ID
+			want uint64
+		}{
+			{name: "returns the milliseconds of a UUIDv7", give: exampleID, want: exampleMillis},
+			{
+				name: "returns the first 48 bits of a UUID of another version",
+				give: id.New128(uuidv4Bytes),
+				want: 0x123456789abc,
+			},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				assert.Equal(t, uuidv7.TimestampMillis(tt.give), tt.want,
+					"TimestampMillis must return the first 48 bits")
+			})
+		}
+
+		for _, tt := range notUUIDs {
+			t.Run("returns 0 for "+tt.name, func(t *testing.T) {
+				t.Parallel()
+				assert.Equal(t, uuidv7.TimestampMillis(tt.id), uint64(0), "TimestampMillis must return 0")
+			})
+		}
+	})
+
+	t.Run("Valid", func(t *testing.T) {
+		t.Parallel()
+
+		otherVariant := exampleBytes
+		otherVariant[8] = 0xc0
+
+		tests := []struct {
+			name string
+			give id.ID
+			want bool
+		}{
+			{name: "reports true for a UUIDv7", give: exampleID, want: true},
+			{name: "reports false for a UUIDv4", give: id.New128(uuidv4Bytes), want: false},
+			{name: "reports false for version 7 with another variant", give: id.New128(otherVariant), want: false},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				assert.Equal(t, uuidv7.Valid(tt.give), tt.want, "Valid must check the version and the variant")
+			})
+		}
+
+		for _, tt := range notUUIDs {
+			t.Run("reports false for "+tt.name, func(t *testing.T) {
+				t.Parallel()
+				assert.False(t, uuidv7.Valid(tt.id), "Valid must report false for an ID that is not 128 bits")
+			})
 		}
 	})
 }
 
-func TestValid(t *testing.T) {
-	t.Parallel()
+// TestLayoutAllocs checks the allocation contracts of TimestampMillis and
+// Valid. MaxAllocs counts the allocations of the whole process, so the
+// test does not run in parallel.
+//
+//nolint:paralleltest // see above
+func TestLayoutAllocs(t *testing.T) {
+	t.Run("TimestampMillis", func(t *testing.T) {
+		var ms uint64
+		expect.MaxAllocs(t, func() { ms = uuidv7.TimestampMillis(exampleID) }, 0, "TimestampMillis must not allocate")
+		assert.Equal(t, ms, uint64(exampleMillis), "the test must measure the milliseconds of the UUIDv7")
+	})
 
-	otherVariant := exampleBytes
-	otherVariant[8] = 0xc0
-
-	tests := []struct {
-		name string
-		give id.ID
-		want bool
-	}{
-		{name: "reports true for a UUIDv7", give: exampleID, want: true},
-		{name: "reports false for a UUIDv4", give: id.New128(uuidv4Bytes), want: false},
-		{name: "reports false for version 7 with another variant", give: id.New128(otherVariant), want: false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			testkit.Equal(t, uuidv7.Valid(tt.give), tt.want, "Valid must check the version and the variant")
-		})
-	}
-
-	t.Run("reports false for an ID that is not 128 bits", func(t *testing.T) {
-		t.Parallel()
-		for name, u := range notUUIDs() {
-			testkit.False(t, uuidv7.Valid(u), "Valid must report false for "+name)
-		}
+	t.Run("Valid", func(t *testing.T) {
+		var valid bool
+		expect.MaxAllocs(t, func() { valid = uuidv7.Valid(exampleID) }, 0, "Valid must not allocate")
+		assert.True(t, valid, "the test must measure a UUIDv7")
 	})
 }
 
-// BenchmarkTimestampMillis reports the cost of TimestampMillis, and fails
-// when it allocates.
-func BenchmarkTimestampMillis(b *testing.B) {
-	benchZeroAlloc(b, func() { sinkMillis = uuidv7.TimestampMillis(exampleID) })
-}
+// BenchmarkLayout reports the cost of TimestampMillis and Valid, and fails
+// when one allocates.
+func BenchmarkLayout(b *testing.B) {
+	b.Run("TimestampMillis", func(b *testing.B) {
+		var ms uint64
 
-// BenchmarkValid reports the cost of Valid, and fails when it allocates.
-func BenchmarkValid(b *testing.B) {
-	benchZeroAlloc(b, func() { sinkValid = uuidv7.Valid(exampleID) })
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			ms = uuidv7.TimestampMillis(exampleID)
+		}
+
+		assert.Equal(b, ms, uint64(exampleMillis), "the benchmark must measure the milliseconds of the UUIDv7")
+	})
+
+	b.Run("Valid", func(b *testing.B) {
+		var valid bool
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			valid = uuidv7.Valid(exampleID)
+		}
+
+		assert.True(b, valid, "the benchmark must measure a UUIDv7")
+	})
 }

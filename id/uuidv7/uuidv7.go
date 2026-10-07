@@ -43,7 +43,8 @@ const (
 // one is the fraction 0 of the next millisecond. Above 4,096 IDs per
 // millisecond, the milliseconds of the IDs move ahead of the clock by one
 // millisecond per 4,096 IDs. Generate uses the clock's stamp again as
-// soon as it exceeds the last stamp.
+// soon as it exceeds the last stamp. A new Generator counts the stamp 0
+// as its last, so its first ID has a stamp of at least 1.
 //
 // The stamps of different Generators are independent. Their IDs sort by
 // time to the fraction of a millisecond, and two IDs with the same stamp

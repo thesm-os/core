@@ -4,12 +4,17 @@
 package uuidv7_test
 
 import (
-	"sync"
+	"encoding/binary"
+	"math"
 	"testing"
 	"time"
 
-	"go.thesmos.sh/testkit"
-	"go.thesmos.sh/testkit/bench"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/bench"
+	"go.dokimi.dev/assert/expect"
+	"go.dokimi.dev/assert/history"
+	"go.dokimi.dev/assert/prop"
+	testkitbench "go.thesmos.sh/testkit/bench"
 
 	"go.thesmos.sh/core/clock/fake"
 	"go.thesmos.sh/core/clock/hlc"
@@ -40,17 +45,14 @@ const (
 	// time before it moves ahead of the clock.
 	fractions = 4096
 
-	// goroutines is the number of goroutines that call Generate at once in
-	// the concurrent case.
-	goroutines = 8
+	// callers is the number of callers that call Generate at once in the
+	// concurrent case, and idsPerCaller the number of IDs of each.
+	callers      = 8
+	idsPerCaller = 1000
 
-	// idsPerGoroutine is the number of IDs that each goroutine of the
-	// concurrent case generates.
-	idsPerGoroutine = 1000
-
-	// benchRuns is the number of calls over which a benchmark averages the
-	// allocations that it checks.
-	benchRuns = 100
+	// opGenerate is the operation that the history of the concurrent case
+	// records for a call of Generate.
+	opGenerate = "generate"
 )
 
 // exampleTime is the clock time of the example of RFC 9562 for its
@@ -70,161 +72,225 @@ var exampleBytes = [id.Size128]byte{
 // exampleID is the UUIDv7 whose bytes are exampleBytes.
 var exampleID = id.New128(exampleBytes)
 
-// newUUIDv7 returns a Generator over a fake clock at exampleTime and a
-// seeded source, so that two Generators return the same stream of IDs.
-func newUUIDv7() id.Generator {
-	return uuidv7.New(fake.New(exampleTime), seeded.New(rand.Seed(1)))
+// notUUIDs are IDs that are not 128 bits.
+var notUUIDs = []struct {
+	name string
+	id   id.ID
+}{
+	{name: "the zero ID", id: id.Zero},
+	{name: "a 160-bit ID", id: id.New160([id.Size160]byte{1})},
+	{name: "a 256-bit ID", id: id.New256([id.Size256]byte{1})},
 }
 
-// newProductionUUIDv7 returns a Generator over the clock and the source
-// that production callers pass.
-func newProductionUUIDv7() id.Generator {
-	return uuidv7.New(hlc.New(0), crypto.New())
-}
-
-// notUUIDs returns IDs that are not 128 bits, each named by its size.
-func notUUIDs() map[string]id.ID {
-	return map[string]id.ID{
-		"the zero ID":  id.Zero,
-		"a 160-bit ID": id.New160([id.Size160]byte{1}),
-		"a 256-bit ID": id.New256([id.Size256]byte{1}),
-	}
-}
-
-// increasing reports whether later is greater than earlier in byte order.
-func increasing(earlier, later id.ID) bool {
-	return earlier.Compare(later) < 0
-}
-
-// benchZeroAlloc reports the cost of call, and fails when call allocates.
-func benchZeroAlloc(b *testing.B, call func()) {
-	b.Helper()
-
-	if allocs := testing.AllocsPerRun(benchRuns, call); allocs != 0 {
-		b.Fatalf("allocates %v times per call, want 0", allocs)
-	}
-
-	b.ReportAllocs()
-	for b.Loop() {
-		call()
-	}
-}
-
+// TestUUIDv7GeneratorContract runs the contract suite of id.Generator over
+// a fake clock and a seeded source.
 func TestUUIDv7GeneratorContract(t *testing.T) {
 	t.Parallel()
-	idtest.AssertGeneratorContract(t, newUUIDv7,
+	idtest.AssertGeneratorContract(t,
+		func() id.Generator { return uuidv7.New(fake.New(exampleTime), seeded.New(rand.Seed(1))) },
 		append(idtest.GeneratorContractAssertions(),
 			idtest.GeneratorSizeAssertion(id.Size128),
 		)...,
 	)
 }
 
+// TestUUIDv7GeneratorModel runs the model test of id.Generator.
 func TestUUIDv7GeneratorModel(t *testing.T) {
 	t.Parallel()
-	idtest.GeneratorModelTest(t, newUUIDv7)
+	idtest.GeneratorModelTest(t,
+		func() id.Generator { return uuidv7.New(fake.New(exampleTime), seeded.New(rand.Seed(1))) })
 }
 
+// FuzzUUIDv7GeneratorModel runs the model test of id.Generator on the
+// inputs that a fuzzer finds.
 func FuzzUUIDv7GeneratorModel(f *testing.F) {
-	idtest.GeneratorModelFuzz(f, newUUIDv7)
+	idtest.GeneratorModelFuzz(f,
+		func() id.Generator { return uuidv7.New(fake.New(exampleTime), seeded.New(rand.Seed(1))) })
 }
 
-// BenchmarkUUIDv7Generator reports the cost of Generate over the clock and
-// the source that production callers pass, and fails when Generate
-// allocates.
+func TestUUIDv7(t *testing.T) {
+	t.Parallel()
+
+	ascending := func(earlier, later id.ID) bool { return earlier.Compare(later) < 0 }
+
+	t.Run("Generator", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("Generate", func(t *testing.T) {
+			t.Parallel()
+
+			t.Run("returns the UUIDv7 of the example of RFC 9562", func(t *testing.T) {
+				t.Parallel()
+				g := uuidv7.New(fake.New(exampleTime), constant.New(randomBits))
+				assert.Equal(t, g.Generate(), exampleID,
+					"Generate must write the milliseconds, the fraction and the high 62 random bits")
+			})
+
+			// A clock in the first millisecond of the epoch can have the
+			// stamp 0, which a new Generator counts as its last.
+			t.Run("returns the stamp of a clock after the first millisecond in its first call", func(t *testing.T) {
+				t.Parallel()
+				nanos := prop.Integer[int64](int64(time.Millisecond), math.MaxInt64)
+				prop.ForAll(t, "Generate must encode the stamp of the clock", func(c *prop.Case) {
+					ns := c.Draw(nanos, "nanoseconds")
+
+					u := uuidv7.New(fake.New(time.Unix(0, ns)), constant.New(randomBits)).Generate()
+					fraction := binary.BigEndian.Uint16(u.Bytes()[6:8]) & 0x0FFF
+					assert.Equal(c, uuidv7.TimestampMillis(u), uint64(ns/1_000_000),
+						"the milliseconds must be the clock's")
+					assert.Equal(c, uint64(fraction), uint64(ns%1_000_000)*fractions/1_000_000,
+						"the fraction must be the clock's in 4096 steps")
+				})
+			})
+
+			t.Run("returns the stamp 1 for a clock at the Unix epoch", func(t *testing.T) {
+				t.Parallel()
+				u := uuidv7.New(fake.New(time.Unix(0, 0)), constant.New(randomBits)).Generate()
+				assert.Equal(t, u.Bytes()[6:8], []byte{0x70, 0x01}, "the first ID must have the fraction 1")
+			})
+
+			t.Run("returns the high 62 bits of the Uint64 of the source after the variant", func(t *testing.T) {
+				t.Parallel()
+				prop.ForAll(t, "Generate must write the high 62 bits of the source", func(c *prop.Case) {
+					v := c.Draw(prop.Integer[uint64](0, math.MaxUint64), "random")
+
+					u := uuidv7.New(fake.New(exampleTime), constant.New(v)).Generate()
+					assert.Equal(c, binary.BigEndian.Uint64(u.Bytes()[8:16]), 1<<63|v>>2,
+						"bytes 8 to 15 must be variant 10 and the high 62 bits")
+				})
+			})
+
+			t.Run("returns increasing IDs while the clock repeats its time", func(t *testing.T) {
+				t.Parallel()
+				g := uuidv7.New(fake.New(exampleTime), constant.New(randomBits))
+				ids := make([]id.ID, fractions)
+				for i := range ids {
+					ids[i] = g.Generate()
+				}
+				assert.Pairwise(t, ids, ascending, "each ID must be greater than the one before")
+			})
+
+			t.Run("returns the next millisecond after 4096 IDs at one clock time", func(t *testing.T) {
+				t.Parallel()
+				g := uuidv7.New(fake.New(time.UnixMilli(exampleMillis)), constant.New(randomBits))
+				var last id.ID
+				for range fractions {
+					last = g.Generate()
+				}
+				assert.Equal(t, uuidv7.TimestampMillis(last), uint64(exampleMillis),
+					"the first 4096 IDs must have the milliseconds of the clock")
+				next := g.Generate()
+				expect.Equal(t, uuidv7.TimestampMillis(next), uint64(exampleMillis+1),
+					"the ID after them must have the next millisecond")
+				expect.Equal(t, next.Bytes()[6:8], []byte{0x70, 0x00}, "the ID after them must have the fraction 0")
+			})
+
+			t.Run("returns a greater ID after the clock moves backwards", func(t *testing.T) {
+				t.Parallel()
+				clk := fake.New(exampleTime)
+				g := uuidv7.New(clk, constant.New(randomBits))
+				before := g.Generate()
+				clk.Set(exampleTime.Add(-time.Second))
+				assert.Equal(t, before.Compare(g.Generate()), -1,
+					"an ID after the clock moved backwards must be greater than the one before")
+			})
+
+			t.Run("returns the milliseconds of the clock once the clock passes the last ID", func(t *testing.T) {
+				t.Parallel()
+				clk := fake.New(exampleTime)
+				g := uuidv7.New(clk, constant.New(randomBits))
+				_ = g.Generate()
+				clk.Set(exampleTime.Add(-time.Second))
+				_ = g.Generate()
+				clk.Set(exampleTime.Add(time.Millisecond))
+				assert.Equal(t, uuidv7.TimestampMillis(g.Generate()), uint64(exampleMillis+1),
+					"Generate must use the time of the clock once it exceeds the last stamp")
+			})
+
+			t.Run("returns the milliseconds 0 for a wall time before the Unix epoch", func(t *testing.T) {
+				t.Parallel()
+				g := uuidv7.New(fake.New(time.Unix(-1, 0)), constant.New(randomBits))
+				assert.Equal(t, uuidv7.TimestampMillis(g.Generate()), uint64(0),
+					"a wall time before the epoch must give the milliseconds 0")
+			})
+
+			// The history of the calls must linearize against a spec whose
+			// state is the last ID, so an ID exceeds the ID of every call that
+			// returned before its call started, on any caller.
+			t.Run("returns increasing IDs to concurrent callers", func(t *testing.T) {
+				t.Parallel()
+				g := uuidv7.New(fake.New(exampleTime), constant.New(randomBits))
+				h := history.New()
+				outcomes := history.Concurrently(callers, 10*time.Second, func(client int) (any, error) {
+					for range idsPerCaller {
+						call := h.Invoke(client, opGenerate, nil)
+						call.OK(g.Generate())
+					}
+
+					return client, nil
+				})
+				for _, o := range outcomes {
+					assert.True(t, o.Finished, "every caller must finish")
+				}
+
+				history.Linearizable(t, h, history.Spec[id.ID]{
+					Initial: func() id.ID { return id.ID{} },
+					Next: func(last id.ID, op history.Operation) []id.ID {
+						got, _ := op.Output.(id.ID)
+						if !op.Known || got.Compare(last) <= 0 {
+							return nil
+						}
+
+						return []id.ID{got}
+					},
+				}, "each ID must exceed the ID of every call that returned before its call started")
+			})
+		})
+	})
+}
+
+// TestUUIDv7Allocs checks the allocation contract of Generate over a fake
+// clock and a constant source. MaxAllocs counts the allocations of the
+// whole process, so the test does not run in parallel.
+//
+//nolint:paralleltest // see above
+func TestUUIDv7Allocs(t *testing.T) {
+	g := uuidv7.New(fake.New(exampleTime), constant.New(randomBits))
+
+	t.Run("Generator", func(t *testing.T) {
+		t.Run("Generate", func(t *testing.T) {
+			var got id.ID
+			expect.MaxAllocs(t, func() { got = g.Generate() }, 0, "Generate must not allocate")
+			assert.True(t, uuidv7.Valid(got), "the test must measure a UUIDv7")
+		})
+	})
+}
+
+// BenchmarkUUIDv7Generator runs the benchmarks of the contract suite of
+// id.Generator over the clock and the source that production callers
+// pass.
 func BenchmarkUUIDv7Generator(b *testing.B) {
-	idtest.BenchmarkGeneratorContract(b, newProductionUUIDv7,
-		idtest.GeneratorBenchOnGenerate(bench.PureAllocsWithin[id.Generator, id.ID](0)),
+	idtest.BenchmarkGeneratorContract(b, func() id.Generator { return uuidv7.New(hlc.New(0), crypto.New()) },
+		idtest.GeneratorBenchOnGenerate(testkitbench.PureAllocsWithin[id.Generator, id.ID](0)),
 	)
 }
 
-func TestGenerator(t *testing.T) {
-	t.Parallel()
+// BenchmarkUUIDv7 reports the cost of Generate over the clock and the
+// source that production callers pass, and fails when it allocates.
+func BenchmarkUUIDv7(b *testing.B) {
+	b.Run("Generator", func(b *testing.B) {
+		b.Run("Generate", func(b *testing.B) {
+			g := uuidv7.New(hlc.New(0), crypto.New())
+			var got id.ID
 
-	t.Run("Generate returns the UUIDv7 of the clock time and the random bits", func(t *testing.T) {
-		t.Parallel()
-		g := uuidv7.New(fake.New(exampleTime), constant.New(randomBits))
-		testkit.Equal(t, g.Generate(), exampleID,
-			"Generate must write the milliseconds, the fraction and the high 62 random bits")
-	})
+			c := bench.Start(b).MaxAllocs(0)
+			defer c.End()
 
-	t.Run("Generate returns increasing IDs while the clock repeats its time", func(t *testing.T) {
-		t.Parallel()
-		g := uuidv7.New(fake.New(exampleTime), constant.New(randomBits))
-		ids := make([]id.ID, fractions)
-		for i := range ids {
-			ids[i] = g.Generate()
-		}
-		testkit.Sequence(t, ids, increasing, "each ID must be greater than the one before")
-	})
-
-	t.Run("Generate moves to the next millisecond after 4096 IDs at one clock time", func(t *testing.T) {
-		t.Parallel()
-		g := uuidv7.New(fake.New(time.UnixMilli(exampleMillis)), constant.New(randomBits))
-		var last id.ID
-		for range fractions {
-			last = g.Generate()
-		}
-		testkit.Equal(t, uuidv7.TimestampMillis(last), exampleMillis,
-			"the first 4096 IDs must have the clock's milliseconds")
-		next := g.Generate()
-		testkit.Equal(t, uuidv7.TimestampMillis(next), exampleMillis+1,
-			"the ID after them must have the next millisecond")
-		testkit.Equal(t, next.Bytes()[6:8], []byte{0x70, 0x00},
-			"the ID after them must have the fraction 0")
-	})
-
-	t.Run("Generate returns a greater ID after the clock moves backwards", func(t *testing.T) {
-		t.Parallel()
-		clk := fake.New(exampleTime)
-		g := uuidv7.New(clk, constant.New(randomBits))
-		before := g.Generate()
-		clk.Set(exampleTime.Add(-time.Second))
-		testkit.True(t, increasing(before, g.Generate()),
-			"an ID after the clock moved backwards must be greater than the one before")
-	})
-
-	t.Run("Generate returns the clock's milliseconds once the clock passes the last ID", func(t *testing.T) {
-		t.Parallel()
-		clk := fake.New(exampleTime)
-		g := uuidv7.New(clk, constant.New(randomBits))
-		_ = g.Generate()
-		clk.Set(exampleTime.Add(-time.Second))
-		_ = g.Generate()
-		clk.Set(exampleTime.Add(time.Millisecond))
-		testkit.Equal(t, uuidv7.TimestampMillis(g.Generate()), exampleMillis+1,
-			"Generate must use the clock's time once it exceeds the last stamp")
-	})
-
-	t.Run("Generate counts a wall time before the Unix epoch as the epoch", func(t *testing.T) {
-		t.Parallel()
-		g := uuidv7.New(fake.New(time.Unix(-1, 0)), constant.New(randomBits))
-		testkit.Equal(t, uuidv7.TimestampMillis(g.Generate()), uint64(0),
-			"a wall time before the epoch must give the milliseconds 0")
-	})
-
-	t.Run("Generate returns distinct IDs that increase for each concurrent caller", func(t *testing.T) {
-		t.Parallel()
-		g := uuidv7.New(fake.New(exampleTime), constant.New(randomBits))
-		streams := make([][]id.ID, goroutines)
-		var wg sync.WaitGroup
-		for i := range streams {
-			wg.Go(func() {
-				stream := make([]id.ID, idsPerGoroutine)
-				for j := range stream {
-					stream[j] = g.Generate()
-				}
-				streams[i] = stream
-			})
-		}
-		wg.Wait()
-
-		seen := make(map[id.ID]struct{}, goroutines*idsPerGoroutine)
-		for _, stream := range streams {
-			testkit.Sequence(t, stream, increasing, "the IDs of one caller must increase")
-			for _, u := range stream {
-				seen[u] = struct{}{}
+			for c.Loop() {
+				got = g.Generate()
 			}
-		}
-		testkit.Equal(t, len(seen), goroutines*idsPerGoroutine, "every ID must be distinct")
+
+			assert.True(b, uuidv7.Valid(got), "the benchmark must measure a UUIDv7")
+		})
 	})
 }
