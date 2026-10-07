@@ -199,10 +199,9 @@ func TestCache(t *testing.T) {
 			c, err := cache.New(cache.Config[string, int]{Clock: clk, Capacity: 10})
 			assert.NoError(t, err, "New must accept the configuration")
 			c.Set("k", 7, time.Time{})
-			reads := clk.reads.Load()
-			_, ok := c.Get("k")
+			var ok bool
+			assert.Pure(t, clk.reads.Load, func() { _, ok = c.Get("k") }, "Get must not read the clock")
 			assert.True(t, ok, "the test must measure a hit")
-			assert.Equal(t, clk.reads.Load(), reads, "Get must not read the clock")
 		})
 
 		t.Run("removes an expired entry", func(t *testing.T) {
