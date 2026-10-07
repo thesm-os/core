@@ -13,9 +13,11 @@ import (
 	"crypto/rsa"
 	"crypto/sha256"
 	"crypto/sha512"
+	"slices"
 	"testing"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/expect"
 
 	"go.thesmos.sh/core/internal/der"
 )
@@ -36,44 +38,40 @@ func TestSignature(t *testing.T) {
 			name string
 			give algorithmIdentifier
 			want digest
-			ok   bool
 		}{
-			{
-				name: "returns SHA-256 for id-sha256",
-				give: algorithmIdentifier{oid: oidSHA256},
-				want: digestSHA256,
-				ok:   true,
-			},
-			{
-				name: "returns SHA-384 for id-sha384",
-				give: algorithmIdentifier{oid: oidSHA384},
-				want: digestSHA384,
-				ok:   true,
-			},
-			{
-				name: "returns SHA-512 for id-sha512",
-				give: algorithmIdentifier{oid: oidSHA512},
-				want: digestSHA512,
-				ok:   true,
-			},
+			{name: "returns SHA-256 for id-sha256", give: algorithmIdentifier{oid: oidSHA256}, want: digestSHA256},
+			{name: "returns SHA-384 for id-sha384", give: algorithmIdentifier{oid: oidSHA384}, want: digestSHA384},
+			{name: "returns SHA-512 for id-sha512", give: algorithmIdentifier{oid: oidSHA512}, want: digestSHA512},
 			{
 				name: "returns SHA-256 for id-sha256 with NULL parameters",
 				give: algorithmIdentifier{oid: oidSHA256, params: nullElement},
 				want: digestSHA256,
-				ok:   true,
 			},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				got, ok := digestOf(tt.give)
+				assert.True(t, ok, "digestOf must know the algorithm")
+				assert.Equal(t, got, tt.want, "digestOf must return the digest of the OID")
+			})
+		}
+
+		refused := []struct {
+			name string
+			give algorithmIdentifier
+		}{
 			{
 				name: "reports false for parameters other than NULL",
 				give: algorithmIdentifier{oid: oidSHA256, params: el(der.TagSequence)},
 			},
 			{name: "reports false for another algorithm", give: algorithmIdentifier{oid: oidUnknown}},
 		}
-		for _, tt := range tests {
+		for _, tt := range refused {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-				got, ok := digestOf(tt.give)
-				testkit.Equal(t, got, tt.want, "digestOf must return the digest of the OID")
-				testkit.Equal(t, ok, tt.ok, "digestOf must report whether it knows the algorithm")
+				_, ok := digestOf(tt.give)
+				assert.False(t, ok, "digestOf must refuse the algorithm")
 			})
 		}
 	})
@@ -95,7 +93,7 @@ func TestSignature(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
 				var buf [sha512.Size]byte
-				testkit.Equal(t, tt.give.sum(signedMessage, &buf), tt.want, "sum must return the digest of m")
+				assert.Equal(t, tt.give.sum(signedMessage, &buf), tt.want, "sum must return the digest of m")
 			})
 		}
 	})
@@ -115,7 +113,7 @@ func TestSignature(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-				testkit.Equal(t, tt.give.size(), tt.want, "size must return the size of the digest")
+				assert.Equal(t, tt.give.size(), tt.want, "size must return the size of the digest")
 			})
 		}
 	})
@@ -135,7 +133,7 @@ func TestSignature(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-				testkit.Equal(t, tt.give.std(), tt.want, "std must return the hash of the standard library")
+				assert.Equal(t, tt.give.std(), tt.want, "std must return the hash of the standard library")
 			})
 		}
 	})
@@ -143,25 +141,89 @@ func TestSignature(t *testing.T) {
 	t.Run("signatureOf", func(t *testing.T) {
 		t.Parallel()
 
-		tests := []struct {
+		accepted := []struct {
 			name   string
 			oid    []byte
 			params []byte
 			d      digest
 			want   scheme
-			ok     bool
 		}{
 			{
 				name: "returns PKCS #1 v1.5 for rsaEncryption",
 				oid:  oidRSAEncryption,
 				d:    digestSHA384,
 				want: schemePKCS1v15,
-				ok:   true,
 			},
 			{
-				name: "returns PKCS #1 v1.5 for rsaEncryption with NULL parameters",
-				oid:  oidRSAEncryption, params: nullElement, d: digestSHA256, want: schemePKCS1v15, ok: true,
+				name:   "returns PKCS #1 v1.5 for rsaEncryption with NULL parameters",
+				oid:    oidRSAEncryption,
+				params: nullElement,
+				d:      digestSHA256,
+				want:   schemePKCS1v15,
 			},
+			{
+				name:   "returns PKCS #1 v1.5 for sha256WithRSAEncryption with SHA-256",
+				oid:    oidSHA256WithRSA,
+				params: nullElement,
+				d:      digestSHA256,
+				want:   schemePKCS1v15,
+			},
+			{
+				name: "returns PKCS #1 v1.5 for sha384WithRSAEncryption with SHA-384",
+				oid:  oidSHA384WithRSA,
+				d:    digestSHA384,
+				want: schemePKCS1v15,
+			},
+			{
+				name: "returns PKCS #1 v1.5 for sha512WithRSAEncryption with SHA-512",
+				oid:  oidSHA512WithRSA,
+				d:    digestSHA512,
+				want: schemePKCS1v15,
+			},
+			{
+				name: "returns ECDSA for ecdsa-with-SHA256 with SHA-256",
+				oid:  oidECDSAWithSHA256,
+				d:    digestSHA256,
+				want: schemeECDSA,
+			},
+			{
+				name: "returns ECDSA for ecdsa-with-SHA384 with SHA-384",
+				oid:  oidECDSAWithSHA384,
+				d:    digestSHA384,
+				want: schemeECDSA,
+			},
+			{
+				name: "returns ECDSA for ecdsa-with-SHA512 with SHA-512",
+				oid:  oidECDSAWithSHA512,
+				d:    digestSHA512,
+				want: schemeECDSA,
+			},
+			{
+				name: "returns Ed25519 for id-Ed25519 with SHA-512",
+				oid:  oidEd25519,
+				d:    digestSHA512,
+				want: schemeEd25519,
+			},
+			{name: "returns ML-DSA for id-ml-dsa-44 with SHA-256", oid: oidMLDSA44, d: digestSHA256, want: schemeMLDSA},
+			{name: "returns ML-DSA for id-ml-dsa-44 with SHA-512", oid: oidMLDSA44, d: digestSHA512, want: schemeMLDSA},
+			{name: "returns ML-DSA for id-ml-dsa-65 with SHA-384", oid: oidMLDSA65, d: digestSHA384, want: schemeMLDSA},
+			{name: "returns ML-DSA for id-ml-dsa-87 with SHA-512", oid: oidMLDSA87, d: digestSHA512, want: schemeMLDSA},
+		}
+		for _, tt := range accepted {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				got, ok := signatureOf(algorithmIdentifier{oid: tt.oid, params: tt.params}, tt.d)
+				assert.True(t, ok, "signatureOf must verify the algorithm")
+				assert.Equal(t, got.scheme, tt.want, "signatureOf must return the scheme of the OID")
+			})
+		}
+
+		refused := []struct {
+			name   string
+			oid    []byte
+			params []byte
+			d      digest
+		}{
 			{
 				name:   "reports false for rsaEncryption with other parameters",
 				oid:    oidRSAEncryption,
@@ -169,15 +231,7 @@ func TestSignature(t *testing.T) {
 				d:      digestSHA256,
 			},
 			{
-				name:   "returns PKCS #1 v1.5 for sha256WithRSAEncryption and SHA-256",
-				oid:    oidSHA256WithRSA,
-				params: nullElement,
-				d:      digestSHA256,
-				want:   schemePKCS1v15,
-				ok:     true,
-			},
-			{
-				name:   "reports false for sha256WithRSAEncryption and SHA-384",
+				name:   "reports false for sha256WithRSAEncryption with SHA-384",
 				oid:    oidSHA256WithRSA,
 				params: nullElement,
 				d:      digestSHA384,
@@ -188,60 +242,42 @@ func TestSignature(t *testing.T) {
 				params: el(der.TagSequence),
 				d:      digestSHA256,
 			},
+			{name: "reports false for sha384WithRSAEncryption with SHA-256", oid: oidSHA384WithRSA, d: digestSHA256},
 			{
-				name: "returns PKCS #1 v1.5 for sha384WithRSAEncryption and SHA-384",
-				oid:  oidSHA384WithRSA,
-				d:    digestSHA384,
-				want: schemePKCS1v15,
-				ok:   true,
+				name:   "reports false for sha384WithRSAEncryption with other parameters",
+				oid:    oidSHA384WithRSA,
+				params: el(der.TagSequence),
+				d:      digestSHA384,
 			},
-			{name: "reports false for sha384WithRSAEncryption and SHA-256", oid: oidSHA384WithRSA, d: digestSHA256},
+			{name: "reports false for sha512WithRSAEncryption with SHA-256", oid: oidSHA512WithRSA, d: digestSHA256},
 			{
-				name: "returns PKCS #1 v1.5 for sha512WithRSAEncryption and SHA-512",
-				oid:  oidSHA512WithRSA,
-				d:    digestSHA512,
-				want: schemePKCS1v15,
-				ok:   true,
+				name:   "reports false for sha512WithRSAEncryption with other parameters",
+				oid:    oidSHA512WithRSA,
+				params: el(der.TagSequence),
+				d:      digestSHA512,
 			},
-			{name: "reports false for sha512WithRSAEncryption and SHA-256", oid: oidSHA512WithRSA, d: digestSHA256},
-			{
-				name: "returns ECDSA for ecdsa-with-SHA256 and SHA-256",
-				oid:  oidECDSAWithSHA256,
-				d:    digestSHA256,
-				want: schemeECDSA,
-				ok:   true,
-			},
-			{name: "reports false for ecdsa-with-SHA256 and SHA-384", oid: oidECDSAWithSHA256, d: digestSHA384},
+			{name: "reports false for ecdsa-with-SHA256 with SHA-384", oid: oidECDSAWithSHA256, d: digestSHA384},
 			{
 				name:   "reports false for ecdsa-with-SHA256 with NULL parameters",
 				oid:    oidECDSAWithSHA256,
 				params: nullElement,
 				d:      digestSHA256,
 			},
+			{name: "reports false for ecdsa-with-SHA384 with SHA-512", oid: oidECDSAWithSHA384, d: digestSHA512},
 			{
-				name: "returns ECDSA for ecdsa-with-SHA384 and SHA-384",
-				oid:  oidECDSAWithSHA384,
-				d:    digestSHA384,
-				want: schemeECDSA,
-				ok:   true,
+				name:   "reports false for ecdsa-with-SHA384 with NULL parameters",
+				oid:    oidECDSAWithSHA384,
+				params: nullElement,
+				d:      digestSHA384,
 			},
-			{name: "reports false for ecdsa-with-SHA384 and SHA-512", oid: oidECDSAWithSHA384, d: digestSHA512},
+			{name: "reports false for ecdsa-with-SHA512 with SHA-384", oid: oidECDSAWithSHA512, d: digestSHA384},
 			{
-				name: "returns ECDSA for ecdsa-with-SHA512 and SHA-512",
-				oid:  oidECDSAWithSHA512,
-				d:    digestSHA512,
-				want: schemeECDSA,
-				ok:   true,
+				name:   "reports false for ecdsa-with-SHA512 with NULL parameters",
+				oid:    oidECDSAWithSHA512,
+				params: nullElement,
+				d:      digestSHA512,
 			},
-			{name: "reports false for ecdsa-with-SHA512 and SHA-384", oid: oidECDSAWithSHA512, d: digestSHA384},
-			{
-				name: "returns Ed25519 for id-Ed25519 and SHA-512",
-				oid:  oidEd25519,
-				d:    digestSHA512,
-				want: schemeEd25519,
-				ok:   true,
-			},
-			{name: "reports false for id-Ed25519 and SHA-256", oid: oidEd25519, d: digestSHA256},
+			{name: "reports false for id-Ed25519 with SHA-256", oid: oidEd25519, d: digestSHA256},
 			{
 				name:   "reports false for id-Ed25519 with NULL parameters",
 				oid:    oidEd25519,
@@ -249,58 +285,39 @@ func TestSignature(t *testing.T) {
 				d:      digestSHA512,
 			},
 			{
-				name: "returns ML-DSA for id-ml-dsa-44 and SHA-256",
-				oid:  oidMLDSA44,
-				d:    digestSHA256,
-				want: schemeMLDSA,
-				ok:   true,
-			},
-			{
-				name: "returns ML-DSA for id-ml-dsa-44 and SHA-512",
-				oid:  oidMLDSA44,
-				d:    digestSHA512,
-				want: schemeMLDSA,
-				ok:   true,
-			},
-			{
 				name:   "reports false for id-ml-dsa-44 with NULL parameters",
 				oid:    oidMLDSA44,
 				params: nullElement,
 				d:      digestSHA256,
 			},
+			{name: "reports false for id-ml-dsa-65 with SHA-256", oid: oidMLDSA65, d: digestSHA256},
 			{
-				name: "returns ML-DSA for id-ml-dsa-65 and SHA-384",
-				oid:  oidMLDSA65,
-				d:    digestSHA384,
-				want: schemeMLDSA,
-				ok:   true,
+				name:   "reports false for id-ml-dsa-65 with NULL parameters",
+				oid:    oidMLDSA65,
+				params: nullElement,
+				d:      digestSHA384,
 			},
-			{name: "reports false for id-ml-dsa-65 and SHA-256", oid: oidMLDSA65, d: digestSHA256},
+			{name: "reports false for id-ml-dsa-87 with SHA-384", oid: oidMLDSA87, d: digestSHA384},
 			{
-				name: "returns ML-DSA for id-ml-dsa-87 and SHA-512",
-				oid:  oidMLDSA87,
-				d:    digestSHA512,
-				want: schemeMLDSA,
-				ok:   true,
+				name:   "reports false for id-ml-dsa-87 with NULL parameters",
+				oid:    oidMLDSA87,
+				params: nullElement,
+				d:      digestSHA512,
 			},
-			{name: "reports false for id-ml-dsa-87 and SHA-384", oid: oidMLDSA87, d: digestSHA384},
 			{name: "reports false for another algorithm", oid: oidUnknown, d: digestSHA256},
 		}
-		for _, tt := range tests {
+		for _, tt := range refused {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-				got, ok := signatureOf(algorithmIdentifier{oid: tt.oid, params: tt.params}, tt.d)
-				testkit.Equal(t, ok, tt.ok, "signatureOf must report whether it verifies the algorithm")
-				if tt.ok {
-					testkit.Equal(t, got.scheme, tt.want, "signatureOf must return the scheme of the OID")
-				}
+				_, ok := signatureOf(algorithmIdentifier{oid: tt.oid, params: tt.params}, tt.d)
+				assert.False(t, ok, "signatureOf must refuse the algorithm")
 			})
 		}
 
 		t.Run("returns the hash of the digest for a scheme over a digest", func(t *testing.T) {
 			t.Parallel()
 			got, _ := signatureOf(algorithmIdentifier{oid: oidRSAEncryption}, digestSHA512)
-			testkit.Equal(t, got.hash, digestSHA512, "a PKCS #1 v1.5 signature must sign with the digest")
+			assert.Equal(t, got.hash, digestSHA512, "a PKCS #1 v1.5 signature must sign with the digest")
 		})
 
 		params := []struct {
@@ -316,7 +333,7 @@ func TestSignature(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
 				got, _ := signatureOf(algorithmIdentifier{oid: tt.oid}, digestSHA512)
-				testkit.True(t, got.mldsa == tt.want, "signatureOf must return the parameter set of the OID")
+				assert.Equal(t, got.mldsa, tt.want, "signatureOf must return the parameter set of the OID")
 			})
 		}
 	})
@@ -324,137 +341,175 @@ func TestSignature(t *testing.T) {
 	t.Run("pssOf", func(t *testing.T) {
 		t.Parallel()
 
-		hash := explicit(0, algorithm(oidSHA256))
-		mgf := explicit(1, algorithm(oidMGF1, algorithm(oidSHA256)))
+		sha256Algorithm := el(der.TagSequence, el(der.TagOID, oidSHA256))
+		hash := el(der.ContextConstructed(0), sha256Algorithm)
+		mgf := el(der.ContextConstructed(1), el(der.TagSequence, el(der.TagOID, oidMGF1), sha256Algorithm))
+		salt32 := el(der.ContextConstructed(2), integer(32))
+
 		accepted := []struct {
 			name   string
-			params []byte
+			fields [][]byte
 			want   int
 		}{
+			{name: "returns the salt length that the parameters state", fields: [][]byte{hash, mgf, salt32}, want: 32},
 			{
-				name:   "returns the salt length that the parameters state",
-				params: pss(hash, mgf, explicit(2, integer(32))),
-				want:   32,
-			},
-			{
-				name:   "returns a salt length of 20 when the parameters omit it",
-				params: pss(hash, mgf),
+				name:   "returns a salt length of 20 for parameters that omit it",
+				fields: [][]byte{hash, mgf},
 				want:   defaultSaltLength,
 			},
 			{
 				name:   "returns the largest salt length",
-				params: pss(hash, mgf, explicit(2, integer(64))),
+				fields: [][]byte{hash, mgf, el(der.ContextConstructed(2), integer(64))},
 				want:   maxSaltLength,
 			},
 			{
 				name:   "returns the salt length of parameters with the trailer field 1",
-				params: pss(hash, mgf, explicit(2, integer(32)), explicit(3, integer(1))),
+				fields: [][]byte{hash, mgf, salt32, el(der.ContextConstructed(3), integer(1))},
 				want:   32,
 			},
 			{
-				name:   "returns the salt length of a hash with NULL parameters",
-				params: pss(explicit(0, algorithm(oidSHA256, nullElement)), mgf, explicit(2, integer(32))),
-				want:   32,
+				name: "returns the salt length of a hash with NULL parameters",
+				fields: [][]byte{
+					el(der.ContextConstructed(0), el(der.TagSequence, el(der.TagOID, oidSHA256), nullElement)),
+					mgf, salt32,
+				},
+				want: 32,
 			},
 		}
 		for _, tt := range accepted {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-				got, ok := pssOf(tt.params, digestSHA256)
-				testkit.True(t, ok, "pssOf must accept the parameters")
-				testkit.Equal(t, got.scheme, schemePSS, "pssOf must return RSASSA-PSS")
-				testkit.Equal(t, got.hash, digestSHA256, "pssOf must return the hash of the parameters")
-				testkit.Equal(t, got.salt, tt.want, "pssOf must return the salt length")
+				got, ok := pssOf(el(der.TagSequence, tt.fields...), digestSHA256)
+				assert.True(t, ok, "pssOf must accept the parameters")
+				expect.Equal(t, got.scheme, schemePSS, "pssOf must return RSASSA-PSS")
+				expect.Equal(t, got.hash, digestSHA256, "pssOf must return the hash of the parameters")
+				expect.Equal(t, got.salt, tt.want, "pssOf must return the salt length")
 			})
 		}
 
-		refused := []struct {
+		refusedParams := []struct {
 			name   string
 			params []byte
 		}{
 			{name: "reports false for absent parameters", params: nil},
 			{name: "reports false for NULL parameters", params: nullElement},
-			{name: "reports false for an element after the parameters", params: cat(pss(hash, mgf), el(der.TagNull))},
-			{name: "reports false for parameters without a hash", params: pss(mgf)},
+			{
+				name:   "reports false for an element after the parameters",
+				params: slices.Concat(el(der.TagSequence, hash, mgf), el(der.TagNull)),
+			},
+		}
+		for _, tt := range refusedParams {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				_, ok := pssOf(tt.params, digestSHA256)
+				assert.False(t, ok, "pssOf must refuse the parameters")
+			})
+		}
+
+		refused := []struct {
+			name   string
+			fields [][]byte
+		}{
+			{name: "reports false for parameters without a hash", fields: [][]byte{mgf}},
 			{
 				name:   "reports false for a hash that is not DER",
-				params: pss(cat([]byte{byte(der.ContextConstructed(0))}, notDER), mgf),
+				fields: [][]byte{slices.Concat([]byte{byte(der.ContextConstructed(0))}, notDER), mgf},
 			},
 			{
 				name:   "reports false for a hash that is not an AlgorithmIdentifier",
-				params: pss(explicit(0, el(der.TagNull)), mgf),
+				fields: [][]byte{el(der.ContextConstructed(0), el(der.TagNull)), mgf},
 			},
 			{
 				name:   "reports false for an element after the hash",
-				params: pss(explicit(0, cat(algorithm(oidSHA256), el(der.TagNull))), mgf),
+				fields: [][]byte{el(der.ContextConstructed(0), sha256Algorithm, el(der.TagNull)), mgf},
 			},
 			{
 				name:   "reports false for a hash that this package does not compute",
-				params: pss(explicit(0, algorithm(oidUnknown)), mgf),
+				fields: [][]byte{el(der.ContextConstructed(0), el(der.TagSequence, el(der.TagOID, oidUnknown))), mgf},
 			},
 			{
 				name:   "reports false for a hash other than the digest",
-				params: pss(explicit(0, algorithm(oidSHA384)), mgf),
+				fields: [][]byte{el(der.ContextConstructed(0), el(der.TagSequence, el(der.TagOID, oidSHA384))), mgf},
 			},
-			{name: "reports false for parameters without a mask generation", params: pss(hash)},
+			{name: "reports false for parameters without a mask generation", fields: [][]byte{hash}},
 			{
-				name:   "reports false for a mask generation other than MGF1",
-				params: pss(hash, explicit(1, algorithm(oidUnknown, algorithm(oidSHA256)))),
-			},
-			{
-				name:   "reports false for an MGF1 of another hash",
-				params: pss(hash, explicit(1, algorithm(oidMGF1, algorithm(oidSHA384)))),
-			},
-			{name: "reports false for an MGF1 without parameters", params: pss(hash, explicit(1, algorithm(oidMGF1)))},
-			{
-				name:   "reports false for an MGF1 whose parameters are not a SEQUENCE",
-				params: pss(hash, explicit(1, algorithm(oidMGF1, nullElement))),
+				name: "reports false for a mask generation other than MGF1",
+				fields: [][]byte{
+					hash,
+					el(der.ContextConstructed(1), el(der.TagSequence, el(der.TagOID, oidUnknown), sha256Algorithm)),
+				},
 			},
 			{
-				name:   "reports false for an MGF1 of a hash that this package does not compute",
-				params: pss(hash, explicit(1, algorithm(oidMGF1, algorithm(oidUnknown)))),
+				name: "reports false for an MGF1 of another hash",
+				fields: [][]byte{hash, el(der.ContextConstructed(1), el(der.TagSequence, el(der.TagOID, oidMGF1),
+					el(der.TagSequence, el(der.TagOID, oidSHA384))))},
 			},
 			{
-				name:   "reports false for an MGF1 of a hash without an OID",
-				params: pss(hash, explicit(1, algorithm(oidMGF1, el(der.TagSequence, el(der.TagNull))))),
+				name:   "reports false for an MGF1 without parameters",
+				fields: [][]byte{hash, el(der.ContextConstructed(1), el(der.TagSequence, el(der.TagOID, oidMGF1)))},
 			},
-			{name: "reports false for a salt length above 64", params: pss(hash, mgf, explicit(2, integer(65)))},
+			{
+				name: "reports false for an MGF1 whose parameters are not a SEQUENCE",
+				fields: [][]byte{
+					hash,
+					el(der.ContextConstructed(1), el(der.TagSequence, el(der.TagOID, oidMGF1), nullElement)),
+				},
+			},
+			{
+				name: "reports false for an MGF1 of a hash that this package does not compute",
+				fields: [][]byte{hash, el(der.ContextConstructed(1), el(der.TagSequence, el(der.TagOID, oidMGF1),
+					el(der.TagSequence, el(der.TagOID, oidUnknown))))},
+			},
+			{
+				name: "reports false for an MGF1 of a hash without an OID",
+				fields: [][]byte{hash, el(der.ContextConstructed(1), el(der.TagSequence, el(der.TagOID, oidMGF1),
+					el(der.TagSequence, el(der.TagNull))))},
+			},
+			{
+				name:   "reports false for a salt length above 64",
+				fields: [][]byte{hash, mgf, el(der.ContextConstructed(2), integer(65))},
+			},
 			{
 				name:   "reports false for a salt length that is not DER",
-				params: pss(hash, mgf, cat([]byte{byte(der.ContextConstructed(2))}, notDER)),
+				fields: [][]byte{hash, mgf, slices.Concat([]byte{byte(der.ContextConstructed(2))}, notDER)},
 			},
 			{
 				name:   "reports false for a salt length that is not an INTEGER",
-				params: pss(hash, mgf, explicit(2, el(der.TagOctetString, []byte{32}))),
+				fields: [][]byte{hash, mgf, el(der.ContextConstructed(2), el(der.TagOctetString, []byte{32}))},
 			},
 			{
 				name:   "reports false for an element after the salt length",
-				params: pss(hash, mgf, explicit(2, cat(integer(32), el(der.TagNull)))),
+				fields: [][]byte{hash, mgf, el(der.ContextConstructed(2), integer(32), el(der.TagNull))},
 			},
 			{
 				name:   "reports false for a negative salt length",
-				params: pss(hash, mgf, explicit(2, el(der.TagInteger, []byte{0xff}))),
+				fields: [][]byte{hash, mgf, el(der.ContextConstructed(2), el(der.TagInteger, []byte{0xff}))},
 			},
 			{
 				name:   "reports false for a trailer field other than 1",
-				params: pss(hash, mgf, explicit(2, integer(32)), explicit(3, integer(2))),
+				fields: [][]byte{hash, mgf, salt32, el(der.ContextConstructed(3), integer(2))},
 			},
 			{
 				name:   "reports false for an element after the trailer field",
-				params: pss(hash, mgf, explicit(3, integer(1)), el(der.TagNull)),
+				fields: [][]byte{hash, mgf, el(der.ContextConstructed(3), integer(1)), el(der.TagNull)},
 			},
 		}
 		for _, tt := range refused {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-				_, ok := pssOf(tt.params, digestSHA256)
-				testkit.False(t, ok, "pssOf must refuse the parameters")
+				_, ok := pssOf(el(der.TagSequence, tt.fields...), digestSHA256)
+				assert.False(t, ok, "pssOf must refuse the parameters")
 			})
 		}
+	})
 
-		t.Run("reports false for an MGF1 whose parameters have an element after them", func(t *testing.T) {
+	t.Run("mgfHash", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("reports false for parameters with an element after them", func(t *testing.T) {
 			t.Parallel()
-			testkit.False(t, mgfHash(cat(algorithm(oidSHA256), el(der.TagNull)), digestSHA256),
+			params := slices.Concat(el(der.TagSequence, el(der.TagOID, oidSHA256)), el(der.TagNull))
+			assert.False(t, mgfHash(params, digestSHA256),
 				"mgfHash must refuse an element after the AlgorithmIdentifier")
 		})
 	})
@@ -463,24 +518,24 @@ func TestSignature(t *testing.T) {
 		t.Parallel()
 
 		_, edKey, err := ed25519.GenerateKey(rand.Reader)
-		testkit.NoError(t, err, "ed25519.GenerateKey must succeed")
+		assert.NoError(t, err, "ed25519.GenerateKey must succeed")
 		ecKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-		testkit.NoError(t, err, "ecdsa.GenerateKey must succeed")
+		assert.NoError(t, err, "ecdsa.GenerateKey must succeed")
 		mlKey, err := mldsa.GenerateKey(mldsa.MLDSA44())
-		testkit.NoError(t, err, "mldsa.GenerateKey must succeed")
+		assert.NoError(t, err, "mldsa.GenerateKey must succeed")
 		rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
-		testkit.NoError(t, err, "rsa.GenerateKey must succeed")
+		assert.NoError(t, err, "rsa.GenerateKey must succeed")
 
 		s256, s384 := sha256.Sum256(signedMessage), sha512.Sum384(signedMessage)
 		edSig := ed25519.Sign(edKey, signedMessage)
 		ecSig, err := ecdsa.SignASN1(rand.Reader, ecKey, s256[:])
-		testkit.NoError(t, err, "ecdsa.SignASN1 must succeed")
+		assert.NoError(t, err, "ecdsa.SignASN1 must succeed")
 		mlSig, err := mlKey.Sign(nil, signedMessage, &mldsa.Options{})
-		testkit.NoError(t, err, "mldsa Sign must succeed")
+		assert.NoError(t, err, "the ML-DSA signature must succeed")
 		pkcsSig, err := rsa.SignPKCS1v15(nil, rsaKey, stdcrypto.SHA384, s384[:])
-		testkit.NoError(t, err, "rsa.SignPKCS1v15 must succeed")
+		assert.NoError(t, err, "rsa.SignPKCS1v15 must succeed")
 		pssSig, err := rsa.SignPSS(rand.Reader, rsaKey, stdcrypto.SHA256, s256[:], &rsa.PSSOptions{SaltLength: 32})
-		testkit.NoError(t, err, "rsa.SignPSS must succeed")
+		assert.NoError(t, err, "rsa.SignPSS must succeed")
 
 		ed := signatureAlgorithm{scheme: schemeEd25519}
 		ml := signatureAlgorithm{scheme: schemeMLDSA, mldsa: mldsa.MLDSA44()}
@@ -503,7 +558,7 @@ func TestSignature(t *testing.T) {
 				value: mutated(edSig),
 			},
 			{
-				name:  "reports false for an Ed25519 algorithm and another key type",
+				name:  "reports false for an Ed25519 algorithm with another key type",
 				alg:   ed,
 				key:   ecKey.Public(),
 				value: edSig,
@@ -522,7 +577,7 @@ func TestSignature(t *testing.T) {
 				value: mlSig,
 			},
 			{
-				name:  "reports false for an ML-DSA algorithm and another key type",
+				name:  "reports false for an ML-DSA algorithm with another key type",
 				alg:   ml,
 				key:   edKey.Public(),
 				value: mlSig,
@@ -535,7 +590,7 @@ func TestSignature(t *testing.T) {
 				value: mutated(ecSig),
 			},
 			{
-				name:  "reports false for an ECDSA algorithm and another key type",
+				name:  "reports false for an ECDSA algorithm with another key type",
 				alg:   ec,
 				key:   rsaKey.Public(),
 				value: ecSig,
@@ -554,7 +609,7 @@ func TestSignature(t *testing.T) {
 				value: mutated(pkcsSig),
 			},
 			{
-				name:  "reports false for a PKCS #1 v1.5 algorithm and another key type",
+				name:  "reports false for a PKCS #1 v1.5 algorithm with another key type",
 				alg:   pkcs,
 				key:   ecKey.Public(),
 				value: pkcsSig,
@@ -579,7 +634,7 @@ func TestSignature(t *testing.T) {
 				value: mutated(pssSig),
 			},
 			{
-				name:  "reports false for an RSASSA-PSS algorithm and another key type",
+				name:  "reports false for an RSASSA-PSS algorithm with another key type",
 				alg:   ps,
 				key:   edKey.Public(),
 				value: pssSig,
@@ -588,27 +643,11 @@ func TestSignature(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-				testkit.Equal(t, tt.alg.verify(tt.key, signedMessage, tt.value), tt.want,
+				assert.Equal(t, tt.alg.verify(tt.key, signedMessage, tt.value), tt.want,
 					"verify must report whether the signature verifies")
 			})
 		}
 	})
-}
-
-// pss returns the DER of RSASSA-PSS-params of the elements fields.
-func pss(fields ...[]byte) []byte {
-	return el(der.TagSequence, fields...)
-}
-
-// explicit returns the DER of the [n] EXPLICIT element of e.
-func explicit(n uint8, e []byte) []byte {
-	return el(der.ContextConstructed(n), e)
-}
-
-// algorithm returns the DER of an AlgorithmIdentifier of the OID with the
-// content oid and the parameter elements params.
-func algorithm(oid []byte, params ...[]byte) []byte {
-	return el(der.TagSequence, el(der.TagOID, oid), cat(params...))
 }
 
 // integer returns the DER of the INTEGER v.
@@ -621,7 +660,7 @@ func integer(v uint64) []byte {
 
 // mutated returns a copy of b with its last octet flipped.
 func mutated(b []byte) []byte {
-	c := append([]byte(nil), b...)
+	c := slices.Clone(b)
 	c[len(c)-1] ^= 0x01
 
 	return c

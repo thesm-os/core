@@ -51,6 +51,7 @@ func parseAttributes(attrs []byte) (attributes, bool) {
 	r := der.NewReader(attrs)
 	for !r.Empty() {
 		attr, ok := r.Read(der.TagSequence)
+		//dokimi:mutate-skip sbr-delete: the nil content of a failed Read fails the read of its type
 		if !ok {
 			return attributes{}, false
 		}
@@ -58,6 +59,7 @@ func parseAttributes(attrs []byte) (attributes, bool) {
 		ar := der.NewReader(attr)
 
 		typ, ok := ar.Read(der.TagOID)
+		//dokimi:mutate-skip lcr-right: a failed Read returns nil, which der.ObjectIdentifier refuses
 		if !ok || !der.ObjectIdentifier(typ) {
 			return attributes{}, false
 		}
@@ -136,10 +138,12 @@ func parseSigningCertificate(values []byte, v2 bool) (hash digest, certHash, iss
 	r := der.NewReader(sc)
 
 	certs, ok := r.Read(der.TagSequence)
+	//dokimi:mutate-skip sbr-delete: a failed Read leaves r unchanged, which the check of the policies refuses, and the nil certs of an empty r have no first identifier
 	if !ok {
 		return 0, nil, nil, false
 	}
 
+	//dokimi:mutate-skip lcr-right: a malformed element stays in r, which the check that r is empty refuses
 	if _, _, ok = r.Optional(der.TagSequence); !ok || !r.Empty() {
 		return 0, nil, nil, false
 	}
@@ -147,6 +151,7 @@ func parseSigningCertificate(values []byte, v2 bool) (hash digest, certHash, iss
 	cr := der.NewReader(certs)
 
 	first, ok := cr.Read(der.TagSequence)
+	//dokimi:mutate-skip sbr-delete: the nil content of a failed Read has no certHash
 	if !ok {
 		return 0, nil, nil, false
 	}
@@ -165,6 +170,7 @@ func parseSigningCertificate(values []byte, v2 bool) (hash digest, certHash, iss
 		return 0, nil, nil, false
 	}
 
+	//dokimi:mutate-skip lcr-right: a malformed element stays in fr, which the check that fr is empty refuses
 	if issuerSerial, _, ok = fr.Optional(der.TagSequence); !ok || !fr.Empty() {
 		return 0, nil, nil, false
 	}
@@ -178,6 +184,7 @@ func parseSigningCertificate(values []byte, v2 bool) (hash digest, certHash, iss
 // the zero digest and a size of 0, which leaves the certHash unchecked.
 func essHash(r *der.Reader) (digest, int, bool) {
 	alg, present, ok := r.Optional(der.TagSequence)
+	//dokimi:mutate-skip sbr-delete: a malformed element stays in r, which the read of the certHash after it refuses
 	if !ok {
 		return 0, 0, false
 	}
@@ -207,17 +214,25 @@ func parseIssuerSerial(is []byte) (issuer, serial []byte, ok bool) {
 	r := der.NewReader(is)
 
 	names, ok := r.Read(der.TagSequence)
+	//dokimi:mutate-skip sbr-delete: the nil names of a failed Read have no directoryName
 	if !ok {
 		return nil, nil, false
 	}
 
-	if serial, ok = r.Read(der.TagInteger); !ok || !der.Integer(serial) || !r.Empty() {
+	serial, ok = r.Read(der.TagInteger)
+	//dokimi:mutate-skip lcr-right: a failed Read returns nil, which der.Integer refuses
+	if !ok || !der.Integer(serial) {
+		return nil, nil, false
+	}
+
+	if !r.Empty() {
 		return nil, nil, false
 	}
 
 	nr := der.NewReader(names)
 
 	explicit, ok := nr.Read(der.ContextConstructed(directoryName))
+	//dokimi:mutate-skip lcr-right: a failed Read leaves nr unchanged, and the nil content of an empty nr has no Name
 	if !ok || !nr.Empty() {
 		return nil, nil, false
 	}

@@ -9,16 +9,20 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/asn1"
+	"encoding/binary"
 	"errors"
 	"flag"
+	"math"
 	"os"
 	"os/exec"
-	"strconv"
-	"sync/atomic"
 	"testing"
 	"time"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/bench"
+	"go.dokimi.dev/assert/expect"
+	"go.dokimi.dev/assert/history"
+	"go.dokimi.dev/assert/prop"
 
 	"go.thesmos.sh/core/clock/fake"
 	"go.thesmos.sh/core/coretest/tsptest"
@@ -28,26 +32,26 @@ import (
 	"go.thesmos.sh/core/internal/der"
 )
 
-// benchRuns is the number of calls over which a benchmark averages the
-// allocations that it checks.
-const benchRuns = 100
-
 // nonce is the nonce of the requests of the cases.
 const nonce = 0x0123456789abcdef
 
-// childTimeout bounds the child process of TestFIPSOnlyMode, which the
-// parent's context ends too.
+// childTimeout bounds the child process of TestVerifierFIPSOnlyMode, which
+// the parent's context ends too.
 const childTimeout = 60 * time.Second
+
+// verifyContract is the contract of the property that verifiesToken
+// returns, which TestVerifier and FuzzVerifier check.
+const verifyContract = "Verify must return an Info that refers to the token"
+
+// verifiers is the number of goroutines of the case that verifies at once,
+// and verifications the number of tokens that each verifies.
+const (
+	verifiers     = 8
+	verifications = 20
+)
 
 // origin is the time of the fake clock of every case.
 var origin = time.Date(2026, 10, 2, 12, 0, 0, 0, time.UTC)
-
-// Sinks keep the results of the benchmarks alive.
-var (
-	sinkInfo  tsp.Info
-	sinkBytes []byte
-	errSink   error
-)
 
 // policyID is the policy of the authorities of the cases, and otherID a
 // policy that no authority uses.
@@ -73,6 +77,31 @@ var (
 // 128, which DER forbids.
 var malformedElement = []byte{0x30, 0x81, 0x01, 0x00}
 
+// zeroSigningCertificate is the DER of a SigningCertificate whose one
+// ESSCertID has a certHash of 20 zero octets, which names no certificate.
+var zeroSigningCertificate = element(der.TagSequence, element(der.TagSequence,
+	element(der.TagSequence, element(der.TagOctetString, make([]byte, 20)))))
+
+// verifyCeilings are the allocation ceilings of Verify for a token of a
+// known certificate of each key. Ed25519 and ML-DSA allocate nothing. The
+// ceilings of ECDSA and RSA are the allocations of crypto/ecdsa and
+// crypto/rsa in Go 1.27.1, which convert the public key and allocate their
+// big numbers on each verification. A memory profile attributes no
+// allocation of those paths to this package.
+var verifyCeilings = []struct {
+	name   string
+	key    tsptest.Key
+	digest tsptest.Digest
+	allocs uint64
+}{
+	{name: "an Ed25519 token", key: tsptest.KeyEd25519, digest: tsptest.DigestSHA512, allocs: 0},
+	{name: "an ML-DSA-65 token", key: tsptest.KeyMLDSA65, digest: tsptest.DigestSHA512, allocs: 0},
+	{name: "an ECDSA P-256 token", key: tsptest.KeyECDSAP256, digest: tsptest.DigestSHA256, allocs: 9},
+	{name: "an ECDSA P-384 token", key: tsptest.KeyECDSAP384, digest: tsptest.DigestSHA384, allocs: 17},
+	{name: "an RSA PKCS #1 v1.5 token", key: tsptest.KeyRSAPKCS1, digest: tsptest.DigestSHA256, allocs: 9},
+	{name: "an RSA PSS token", key: tsptest.KeyRSAPSS, digest: tsptest.DigestSHA256, allocs: 13},
+}
+
 func TestVerifier(t *testing.T) {
 	t.Parallel()
 
@@ -94,14 +123,6 @@ func TestVerifier(t *testing.T) {
 				give: tsp.VerifierConfig{Roots: roots, Policies: []tsp.Policy{{Accuracy: time.Second}}},
 			},
 			{
-				name: "returns ErrConfig for a Policy of zero Accuracy",
-				give: tsp.VerifierConfig{Roots: roots, Policies: []tsp.Policy{{ID: policyID}}},
-			},
-			{
-				name: "returns ErrConfig for a Policy of negative Accuracy",
-				give: tsp.VerifierConfig{Roots: roots, Policies: []tsp.Policy{{ID: policyID, Accuracy: -time.Second}}},
-			},
-			{
 				name: "returns ErrConfig for two Policies of one ID",
 				give: tsp.VerifierConfig{Roots: roots, Policies: []tsp.Policy{
 					{ID: policyID, Accuracy: time.Second},
@@ -114,17 +135,32 @@ func TestVerifier(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
 				_, err := tsp.NewVerifier(tt.give)
-				testkit.ErrorIs(t, err, tsp.ErrConfig, "NewVerifier must refuse the configuration")
-				testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrConfig must classify as Invalid")
+				expect.ErrorIs(t, err, tsp.ErrConfig, "NewVerifier must refuse the configuration")
+				expect.Equal(t, errs.Classify(err), errs.Invalid, "ErrConfig must classify as Invalid")
 			})
 		}
 
-		t.Run("returns a Verifier for one Policy of an accuracy of 1 ns", func(t *testing.T) {
+		t.Run("returns ErrConfig for a Policy whose Accuracy is not positive", func(t *testing.T) {
 			t.Parallel()
-			_, err := tsp.NewVerifier(tsp.VerifierConfig{
-				Roots: roots, Policies: []tsp.Policy{{ID: policyID, Accuracy: time.Nanosecond}},
-			})
-			testkit.NoError(t, err, "a positive accuracy must be valid")
+			prop.ErrorIs(t, func(d time.Duration) error {
+				policies := []tsp.Policy{{ID: policyID, Accuracy: d}}
+				_, err := tsp.NewVerifier(tsp.VerifierConfig{Roots: roots, Policies: policies})
+
+				return err
+			}, tsp.ErrConfig, "an accuracy that is not positive must be refused",
+				prop.Using(prop.Integer[time.Duration](math.MinInt64, 0)),
+				prop.Example(time.Duration(0)), prop.Example(-time.Second))
+		})
+
+		t.Run("returns a Verifier for a Policy whose Accuracy is positive", func(t *testing.T) {
+			t.Parallel()
+			prop.NoError(t, func(d time.Duration) error {
+				policies := []tsp.Policy{{ID: policyID, Accuracy: d}}
+				_, err := tsp.NewVerifier(tsp.VerifierConfig{Roots: roots, Policies: policies})
+
+				return err
+			}, "a positive accuracy must be accepted",
+				prop.Using(prop.Integer[time.Duration](1, math.MaxInt64)), prop.Example(time.Nanosecond))
 		})
 	})
 
@@ -153,16 +189,54 @@ func TestVerifier(t *testing.T) {
 			t.Run("returns the TSTInfo of a token signed with "+k.name, func(t *testing.T) {
 				t.Parallel()
 				a := newAuthority(t, tsptest.Config{Key: k.key, Digest: k.digest})
-				v := newVerifier(t, a, nil)
 
-				info, err := v.Verify(stamp(t, a), tsp.SHA256, imprint)
-				testkit.NoError(t, err, "Verify must accept the token")
-				testkit.True(t, info.Time.Time.Equal(origin), "Info.Time must be genTime")
-				testkit.Equal(t, info.Time.MaxError, time.Second, "a token without accuracy must take the policy's")
-				testkit.True(t, info.Time.Synced, "a verified time must be synced")
-				testkit.True(t, info.Policy.ID.Equal(policyID), "Info.Policy must be the accepted policy")
+				info, err := newVerifier(t, a, nil).Verify(stamp(t, a), tsp.SHA256, imprint)
+				assert.NoError(t, err, "Verify must accept the token")
+				expect.True(t, info.Time.Time.Equal(origin), "Info.Time must be genTime")
+				expect.Equal(t, info.Time.MaxError, time.Second, "a token without accuracy must take the policy's")
+				expect.True(t, info.Time.Synced, "a verified time must be synced")
+				expect.Equal(t, info.Policy.ID, policyID, "Info.Policy must be the accepted policy")
 			})
 		}
+
+		// The goroutines share the cache of verified chains, which the first
+		// tokens fill at once, and the pooled buffers of the signed
+		// attributes. Each token has a serial of its own.
+		t.Run("returns the TSTInfo of each token to goroutines that verify at once", func(t *testing.T) {
+			t.Parallel()
+			a := newAuthority(t, tsptest.Config{Key: tsptest.KeyEd25519, Digest: tsptest.DigestSHA512})
+			tokens := [][]byte{stamp(t, a), stamp(t, a), stamp(t, a)}
+			serials := make([][]byte, len(tokens))
+			for i, tok := range tokens {
+				info, err := newVerifier(t, a, nil).Verify(tok, tsp.SHA256, imprint)
+				assert.NoError(t, err, "Verify must accept the token")
+				serials[i] = info.Serial
+			}
+
+			v := newVerifier(t, a, nil)
+			outcomes := history.Concurrently(verifiers, 10*time.Second, func(client int) (any, error) {
+				got := make([][]byte, 0, verifications)
+				for i := range verifications {
+					info, err := v.Verify(tokens[(client+i)%len(tokens)], tsp.SHA256, imprint)
+					if err != nil {
+						return got, err
+					}
+					got = append(got, info.Serial)
+				}
+
+				return got, nil
+			})
+			for client, o := range outcomes {
+				assert.True(t, o.Finished, "every goroutine must finish")
+				assert.NoError(t, o.Error, "Verify must accept every token on every goroutine")
+				want := make([][]byte, verifications)
+				for i := range want {
+					want[i] = serials[(client+i)%len(serials)]
+				}
+				got, _ := o.Output.([][]byte)
+				assert.Equal(t, got, want, "Verify must return the serial of each token")
+			}
+		})
 
 		configs := []struct {
 			name string
@@ -198,50 +272,66 @@ func TestVerifier(t *testing.T) {
 
 				a := newAuthority(t, cfg)
 				_, err := newVerifier(t, a, nil).Verify(stamp(t, a), tsp.SHA256, imprint)
-				testkit.NoError(t, err, "Verify must accept the token")
+				assert.NoError(t, err, "Verify must accept the token")
 			})
 		}
 
-		t.Run("returns the serial and the nonce of the token", func(t *testing.T) {
-			t.Parallel()
-			a := newAuthority(t, tsptest.Config{Key: tsptest.KeyEd25519, Digest: tsptest.DigestSHA512})
+		plain := newAuthority(t, tsptest.Config{Key: tsptest.KeyEd25519, Digest: tsptest.DigestSHA512})
+		info, err := newVerifier(t, plain, nil).Verify(stamp(t, plain), tsp.SHA256, imprint)
+		assert.NoError(t, err, "Verify must accept the token of the plain authority")
 
-			info, err := newVerifier(t, a, nil).Verify(stamp(t, a), tsp.SHA256, imprint)
-			testkit.NoError(t, err, "Verify must accept the token")
-			testkit.Equal(t, info.Serial, []byte{0x01}, "Serial must be the content of the serialNumber")
-			testkit.Equal(t, info.Nonce, []byte{0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef},
-				"Nonce must be the content of the nonce")
-			testkit.True(t, info.TSA == nil, "a token without a tsa must return nil")
-			testkit.False(t, info.Ordering, "ordering must default to FALSE")
+		t.Run("returns the content of the serialNumber", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, info.Serial, []byte{0x01}, "Serial must be the content of the serialNumber")
 		})
 
-		t.Run("returns the accuracy, the ordering and the tsa of the token", func(t *testing.T) {
+		t.Run("returns the content of the nonce", func(t *testing.T) {
 			t.Parallel()
-			a := newAuthority(t, tsptest.Config{
-				Key: tsptest.KeyEd25519, Digest: tsptest.DigestSHA512,
-				Accuracy: 2*time.Millisecond + 500*time.Microsecond, Ordering: true, TSA: true,
-			})
+			assert.Equal(t, info.Nonce, []byte{0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef},
+				"Nonce must be the content of the nonce")
+		})
 
-			info, err := newVerifier(t, a, nil).Verify(stamp(t, a), tsp.SHA256, imprint)
-			testkit.NoError(t, err, "Verify must accept the token")
-			testkit.Equal(t, info.Time.MaxError, 2*time.Millisecond+500*time.Microsecond,
-				"Info.Time.MaxError must be the token's accuracy")
-			testkit.True(t, info.Ordering, "Ordering must be the token's")
-			testkit.Equal(t, info.TSA, element(der.ContextConstructed(4), a.Leaf().RawSubject),
-				"TSA must be the directoryName of the authority")
+		t.Run("returns a nil TSA for a token without a tsa field", func(t *testing.T) {
+			t.Parallel()
+			assert.Nil(t, info.TSA, "TSA must be nil for a token without a tsa field")
+		})
+
+		t.Run("returns ordering FALSE for a token without the field", func(t *testing.T) {
+			t.Parallel()
+			assert.False(t, info.Ordering, "ordering must default to FALSE")
 		})
 
 		t.Run("returns the verified chain of the authority", func(t *testing.T) {
 			t.Parallel()
-			a := newAuthority(t, tsptest.Config{Key: tsptest.KeyEd25519, Digest: tsptest.DigestSHA512})
-
-			info, err := newVerifier(t, a, nil).Verify(stamp(t, a), tsp.SHA256, imprint)
-			testkit.NoError(t, err, "Verify must accept the token")
-			testkit.Len(t, info.Chain, 3, "the chain must run from the authority to the root")
-			testkit.True(t, info.Chain[0].Equal(a.Leaf()), "the chain must start at the authority's certificate")
-			testkit.True(t, info.Chain[1].Equal(a.Intermediate()), "the chain must pass the intermediate")
-			testkit.NoError(t, info.Chain[2].CheckSignatureFrom(info.Chain[2]),
+			assert.Length(t, info.Chain, 3, "the chain must run from the authority to the root")
+			expect.True(t, info.Chain[0].Equal(plain.Leaf()), "the chain must start at the authority's certificate")
+			expect.True(t, info.Chain[1].Equal(plain.Intermediate()), "the chain must pass the intermediate")
+			expect.NoError(t, info.Chain[2].CheckSignatureFrom(info.Chain[2]),
 				"the chain must end at the self-signed root")
+		})
+
+		stated := newAuthority(t, tsptest.Config{
+			Key: tsptest.KeyEd25519, Digest: tsptest.DigestSHA512,
+			Accuracy: 2*time.Millisecond + 500*time.Microsecond, Ordering: true, TSA: true,
+		})
+		statedInfo, err := newVerifier(t, stated, nil).Verify(stamp(t, stated), tsp.SHA256, imprint)
+		assert.NoError(t, err, "Verify must accept the token that states its optional fields")
+
+		t.Run("returns the accuracy of the token as the MaxError of its Time", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, statedInfo.Time.MaxError, 2*time.Millisecond+500*time.Microsecond,
+				"Info.Time.MaxError must be the accuracy of the token")
+		})
+
+		t.Run("returns the ordering of the token", func(t *testing.T) {
+			t.Parallel()
+			assert.True(t, statedInfo.Ordering, "Ordering must be the ordering of the token")
+		})
+
+		t.Run("returns the tsa of the token", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, statedInfo.TSA, element(der.ContextConstructed(4), stated.Leaf().RawSubject),
+				"TSA must be the directoryName of the authority")
 		})
 
 		t.Run("returns the chain that the Verifier keeps for a known certificate", func(t *testing.T) {
@@ -250,12 +340,12 @@ func TestVerifier(t *testing.T) {
 			v := newVerifier(t, a, nil)
 
 			first, err := v.Verify(stamp(t, a), tsp.SHA256, imprint)
-			testkit.NoError(t, err, "Verify must accept the first token")
+			assert.NoError(t, err, "Verify must accept the first token")
 			second, err := v.Verify(stamp(t, a), tsp.SHA256, imprint)
-			testkit.NoError(t, err, "Verify must accept the second token")
-
-			testkit.True(t, &first.Chain[0] == &second.Chain[0],
-				"two tokens of one certificate must share the chain that the Verifier keeps")
+			assert.NoError(t, err, "Verify must accept the second token")
+			assert.NotEmpty(t, first.Chain, "the first token must have a chain")
+			assert.Equal(t, second.Chain, first.Chain,
+				"two tokens of one certificate must share the chain that the Verifier keeps", assert.ByIdentity())
 		})
 
 		for _, k := range keys {
@@ -269,17 +359,15 @@ func TestVerifier(t *testing.T) {
 				// once Verify returns.
 				first := stamp(t, a)
 				_, err := v.Verify(first, tsp.SHA256, imprint)
-				testkit.NoError(t, err, "Verify must accept the first token")
+				assert.NoError(t, err, "Verify must accept the first token")
 				clear(first)
 
 				info, err := v.Verify(stamp(t, a), tsp.SHA256, imprint)
-				testkit.NoError(t, err, "Verify must accept the second token")
-				testkit.True(
-					t,
-					info.Chain[0].Equal(a.Leaf()),
-					"the kept chain must start at the authority's certificate",
-				)
-				testkit.True(t, info.Chain[1].Equal(a.Intermediate()), "the kept chain must pass the intermediate")
+				assert.NoError(t, err, "Verify must accept the second token")
+				assert.Length(t, info.Chain, 3, "the kept chain must run from the authority to the root")
+				expect.True(t, info.Chain[0].Equal(a.Leaf()),
+					"the kept chain must start at the authority's certificate")
+				expect.True(t, info.Chain[1].Equal(a.Intermediate()), "the kept chain must pass the intermediate")
 			})
 		}
 
@@ -291,9 +379,9 @@ func TestVerifier(t *testing.T) {
 			}})
 
 			info, err := v.Verify(stamp(t, a), tsp.SHA256, imprint)
-			testkit.NoError(t, err, "Verify must accept a token of any accepted policy")
-			testkit.True(t, info.Policy.ID.Equal(otherID), "Info.Policy must be the token's policy")
-			testkit.Equal(t, info.Time.MaxError, time.Minute, "the accuracy must be that of the token's policy")
+			assert.NoError(t, err, "Verify must accept a token of any accepted policy")
+			expect.Equal(t, info.Policy.ID, otherID, "Info.Policy must be the policy of the token")
+			expect.Equal(t, info.Time.MaxError, time.Minute, "the accuracy must be that of the policy of the token")
 		})
 
 		t.Run("verifies a token of a known certificate again", func(t *testing.T) {
@@ -301,9 +389,9 @@ func TestVerifier(t *testing.T) {
 			a := newAuthority(t, tsptest.Config{Key: tsptest.KeyEd25519, Digest: tsptest.DigestSHA512})
 			v := newVerifier(t, a, nil)
 
-			for i := range 3 {
+			for range 3 {
 				_, err := v.Verify(stamp(t, a), tsp.SHA256, imprint)
-				testkit.NoError(t, err, "Verify must accept token "+strconv.Itoa(i))
+				assert.NoError(t, err, "Verify must accept each token of the known certificate")
 			}
 		})
 
@@ -323,7 +411,7 @@ func TestVerifier(t *testing.T) {
 				tsp.SHA256,
 				imprint,
 			)
-			testkit.NoError(t, err, "Verify must chain through the configured intermediates")
+			assert.NoError(t, err, "Verify must chain through the configured intermediates")
 		})
 
 		t.Run("reads past certificates that serve no chain", func(t *testing.T) {
@@ -337,7 +425,7 @@ func TestVerifier(t *testing.T) {
 				}
 			})
 			_, err := newVerifier(t, a, nil).Verify(tok, tsp.SHA256, imprint)
-			testkit.NoError(t, err, "Verify must read past other choices and certificates that do not parse")
+			assert.NoError(t, err, "Verify must read past other choices and certificates that do not parse")
 		})
 
 		t.Run("reads past certificates of other choices for a SigningCertificate", func(t *testing.T) {
@@ -351,7 +439,12 @@ func TestVerifier(t *testing.T) {
 				s.Certificates = [][]byte{element(der.ContextConstructed(1)), a.Leaf().Raw, a.Intermediate().Raw}
 			})
 			_, err := newVerifier(t, a, nil).Verify(tok, tsp.SHA256, imprint)
-			testkit.NoError(t, err, "Verify must find the certificate by its SHA-1 digest")
+			assert.NoError(t, err, "Verify must find the certificate by its SHA-1 digest")
+		})
+
+		t.Run("returns an Info that refers to the token", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, verifyContract, verifiesToken(newVerifier(t, plain, nil)))
 		})
 
 		t.Run("returns ErrCertificate for a token after the expiry of the authority's certificate", func(t *testing.T) {
@@ -364,7 +457,7 @@ func TestVerifier(t *testing.T) {
 			clk.Advance(2 * time.Hour)
 
 			_, err := newVerifier(t, a, nil).Verify(stamp(t, a), tsp.SHA256, imprint)
-			testkit.ErrorIs(t, err, tsp.ErrCertificate, "a certificate must be valid at genTime")
+			assert.ErrorIs(t, err, tsp.ErrCertificate, "a certificate must be valid at genTime")
 		})
 
 		t.Run("returns ErrCertificate for a token of a known certificate after its expiry", func(t *testing.T) {
@@ -377,11 +470,41 @@ func TestVerifier(t *testing.T) {
 			v := newVerifier(t, a, nil)
 
 			_, err := v.Verify(stamp(t, a), tsp.SHA256, imprint)
-			testkit.NoError(t, err, "Verify must accept the token within the validity")
+			assert.NoError(t, err, "Verify must accept the token within the validity")
 
 			clk.Advance(2 * time.Hour)
 			_, err = v.Verify(stamp(t, a), tsp.SHA256, imprint)
-			testkit.ErrorIs(t, err, tsp.ErrCertificate, "a known chain must be valid at genTime")
+			assert.ErrorIs(t, err, tsp.ErrCertificate, "a known chain must be valid at genTime")
+		})
+
+		// The leaf is valid for twenty years, and the root and the
+		// intermediate for ten.
+		t.Run("returns ErrCertificate for a token of a known certificate after the expiry of its intermediate",
+			func(t *testing.T) {
+				t.Parallel()
+				clk := fake.New(origin)
+				a := newAuthority(t, tsptest.Config{
+					Clock: clk, Key: tsptest.KeyEd25519, Digest: tsptest.DigestSHA512, Validity: 20 * 8760 * time.Hour,
+				})
+				v := newVerifier(t, a, nil)
+
+				_, err := v.Verify(stamp(t, a), tsp.SHA256, imprint)
+				assert.NoError(t, err, "Verify must accept the token within the validity of the chain")
+
+				clk.Advance(15 * 8760 * time.Hour)
+				_, err = v.Verify(stamp(t, a), tsp.SHA256, imprint)
+				assert.ErrorIs(t, err, tsp.ErrCertificate, "a known chain must be valid at genTime in each certificate")
+			})
+
+		t.Run("verifies a token whose certificates list the intermediate first", func(t *testing.T) {
+			t.Parallel()
+			a := newAuthority(t, tsptest.Config{Key: tsptest.KeyEd25519, Digest: tsptest.DigestSHA512})
+
+			tok := token(t, a, func(s *tsptest.Spec) {
+				s.Certificates = [][]byte{a.Intermediate().Raw, a.Leaf().Raw}
+			})
+			_, err := newVerifier(t, a, nil).Verify(tok, tsp.SHA256, imprint)
+			assert.NoError(t, err, "Verify must find the certificate by its digest")
 		})
 
 		t.Run("returns ErrCertificate for a token of a known certificate before its validity", func(t *testing.T) {
@@ -391,11 +514,11 @@ func TestVerifier(t *testing.T) {
 			v := newVerifier(t, a, nil)
 
 			_, err := v.Verify(stamp(t, a), tsp.SHA256, imprint)
-			testkit.NoError(t, err, "Verify must accept the token within the validity")
+			assert.NoError(t, err, "Verify must accept the token within the validity")
 
 			clk.Set(origin.Add(-2 * time.Hour))
 			_, err = v.Verify(stamp(t, a), tsp.SHA256, imprint)
-			testkit.ErrorIs(t, err, tsp.ErrCertificate, "a known chain must be valid at genTime")
+			assert.ErrorIs(t, err, tsp.ErrCertificate, "a known chain must be valid at genTime")
 		})
 
 		t.Run("returns ErrCertificate for a certificate without a chain to the roots", func(t *testing.T) {
@@ -404,8 +527,8 @@ func TestVerifier(t *testing.T) {
 			stranger := newAuthority(t, tsptest.Config{Key: tsptest.KeyEd25519, Digest: tsptest.DigestSHA512})
 
 			_, err := newVerifier(t, stranger, nil).Verify(stamp(t, a), tsp.SHA256, imprint)
-			testkit.ErrorIs(t, err, tsp.ErrCertificate, "the chain must end at a root of the Verifier")
-			testkit.Equal(t, errs.Classify(err), errs.Integrity, "ErrCertificate must classify as Integrity")
+			expect.ErrorIs(t, err, tsp.ErrCertificate, "the chain must end at a root of the Verifier")
+			expect.Equal(t, errs.Classify(err), errs.Integrity, "ErrCertificate must classify as Integrity")
 		})
 
 		refused := []struct {
@@ -429,6 +552,7 @@ func TestVerifier(t *testing.T) {
 			},
 			{
 				name: "returns ErrUnsupported for a digest algorithm that this package does not compute",
+				cfg:  tsptest.Config{Key: tsptest.KeyMLDSA44, Digest: tsptest.DigestSHA512},
 				token: spec(func(_ *tsptest.Authority, s *tsptest.Spec) {
 					s.DigestAlgorithm = element(der.TagSequence, element(der.TagOID, sha1OID))
 				}),
@@ -457,14 +581,9 @@ func TestVerifier(t *testing.T) {
 					s.Attributes = [][]byte{
 						attrs[0],
 						attrs[1],
-						tsptest.Attribute(
-							signingCertificateV2OID,
-							signingCertificate(
-								element(der.TagSequence, element(der.TagOID, unknownOID)),
-								make([]byte, 20),
-								nil,
-							),
-						),
+						tsptest.Attribute(signingCertificateV2OID, element(der.TagSequence, element(der.TagSequence,
+							element(der.TagSequence, element(der.TagSequence, element(der.TagOID, unknownOID)),
+								element(der.TagOctetString, make([]byte, 20)))))),
 					}
 				}),
 				want:  tsp.ErrUnsupported,
@@ -506,7 +625,7 @@ func TestVerifier(t *testing.T) {
 				name: "returns ErrSignature for a SigningCertificate of another certificate",
 				token: spec(func(a *tsptest.Authority, s *tsptest.Spec) {
 					s.Attributes = append(a.Attributes(s.TSTInfo),
-						tsptest.Attribute(signingCertificateOID, signingCertificate(nil, make([]byte, 20), nil)))
+						tsptest.Attribute(signingCertificateOID, zeroSigningCertificate))
 				}),
 				want:  tsp.ErrSignature,
 				class: errs.Integrity,
@@ -518,7 +637,8 @@ func TestVerifier(t *testing.T) {
 					sum := sha256.Sum256(a.Leaf().Raw)
 					attrs := a.Attributes(s.TSTInfo)
 					s.Attributes = [][]byte{attrs[0], attrs[1], tsptest.Attribute(signingCertificateV2OID,
-						signingCertificate(nil, sum[:], issuerSerial(a.Leaf().RawIssuer, 99)))}
+						element(der.TagSequence, element(der.TagSequence, element(der.TagSequence,
+							element(der.TagOctetString, sum[:]), issuerSerial(a.Leaf().RawIssuer, 99)))))}
 				}),
 				want:  tsp.ErrSignature,
 				class: errs.Integrity,
@@ -609,7 +729,8 @@ func TestVerifier(t *testing.T) {
 					attrs := a.Attributes(s.TSTInfo)
 					s.Attributes = [][]byte{
 						attrs[0], attrs[1],
-						tsptest.Attribute(signingCertificateV2OID, signingCertificate(nil, sum[:], nil)),
+						tsptest.Attribute(signingCertificateV2OID, element(der.TagSequence, element(der.TagSequence,
+							element(der.TagSequence, element(der.TagOctetString, sum[:]))))),
 					}
 					s.Certificates = [][]byte{bogus}
 				}),
@@ -652,8 +773,8 @@ func TestVerifier(t *testing.T) {
 
 				a := newAuthority(t, cfg)
 				_, err := newVerifier(t, a, nil).Verify(tt.token(t, a), tsp.SHA256, imprint)
-				testkit.ErrorIs(t, err, tt.want, "Verify must refuse the token")
-				testkit.Equal(t, errs.Classify(err), tt.class, "the error must classify by its sentinel")
+				expect.ErrorIs(t, err, tt.want, "Verify must refuse the token")
+				expect.Equal(t, errs.Classify(err), tt.class, "the error must classify by its sentinel")
 			})
 		}
 
@@ -692,8 +813,8 @@ func TestVerifier(t *testing.T) {
 				a := newAuthority(t, tsptest.Config{Key: tsptest.KeyEd25519, Digest: tsptest.DigestSHA512})
 
 				_, err := newVerifier(t, a, nil).Verify(stamp(t, a), tt.hash, tt.imprint)
-				testkit.ErrorIs(t, err, tt.want, "Verify must refuse the imprint")
-				testkit.Equal(t, errs.Classify(err), tt.class, "the error must classify by its sentinel")
+				expect.ErrorIs(t, err, tt.want, "Verify must refuse the imprint")
+				expect.Equal(t, errs.Classify(err), tt.class, "the error must classify by its sentinel")
 			})
 		}
 
@@ -702,53 +823,55 @@ func TestVerifier(t *testing.T) {
 			a := newAuthority(t, tsptest.Config{Key: tsptest.KeyEd25519, Digest: tsptest.DigestSHA512, Policy: otherID})
 
 			_, err := newVerifier(t, a, nil).Verify(stamp(t, a), tsp.SHA256, imprint)
-			testkit.ErrorIs(t, err, tsp.ErrPolicy, "a token under another policy must be refused")
-			testkit.Equal(t, errs.Classify(err), errs.Integrity, "ErrPolicy must classify as Integrity")
+			expect.ErrorIs(t, err, tsp.ErrPolicy, "a token under another policy must be refused")
+			expect.Equal(t, errs.Classify(err), errs.Integrity, "ErrPolicy must classify as Integrity")
 		})
 
 		t.Run("returns the error of Check wrapped", func(t *testing.T) {
 			t.Parallel()
 			a := newAuthority(t, tsptest.Config{Key: tsptest.KeyEd25519, Digest: tsptest.DigestSHA512})
-			refused := errors.New("not in the trusted list")
-			v := newVerifier(t, a, func(tsp.Info) error { return refused })
+			errCheck := errors.New("not in the trusted list")
+			v := newVerifier(t, a, func(tsp.Info) error { return errCheck })
 
 			_, err := v.Verify(stamp(t, a), tsp.SHA256, imprint)
-			testkit.ErrorIs(t, err, refused, "the error of Check must fail the verification")
+			assert.ErrorIs(t, err, errCheck, "the error of Check must fail the verification")
 		})
 
 		t.Run("passes Check the Info with the chain of the authority", func(t *testing.T) {
 			t.Parallel()
 			a := newAuthority(t, tsptest.Config{Key: tsptest.KeyEd25519, Digest: tsptest.DigestSHA512})
 
-			var calls atomic.Int32
+			calls := 0
 			v := newVerifier(t, a, func(info tsp.Info) error {
-				calls.Add(1)
-				testkit.Len(t, info.Chain, 3, "the chain must run from the authority to the root")
-				testkit.True(t, info.Chain[0].Equal(a.Leaf()), "the chain must start at the authority's certificate")
-				testkit.True(t, info.Time.Time.Equal(origin), "Check must receive the Info")
+				calls++
+				assert.Length(t, info.Chain, 3, "the chain must run from the authority to the root")
+				expect.True(t, info.Chain[0].Equal(a.Leaf()), "the chain must start at the authority's certificate")
+				expect.True(t, info.Time.Time.Equal(origin), "Check must receive the Info")
 
 				return nil
 			})
 
 			_, err := v.Verify(stamp(t, a), tsp.SHA256, imprint)
-			testkit.NoError(t, err, "Verify must accept the token")
-			testkit.Equal(t, calls.Load(), int32(1), "Check must run once per token")
+			assert.NoError(t, err, "Verify must accept the token")
+			assert.Equal(t, calls, 1, "Check must run once per token")
 		})
 	})
 }
 
-// TestFIPSOnlyMode checks the SHA-1 certificate identifier under
+// TestVerifierFIPSOnlyMode checks the SHA-1 certificate identifier under
 // GODEBUG=fips140=only. The mode is fixed when a process starts, so the
 // test runs itself again in a child process with the mode set, and the
 // child builds its tokens with SHA-1 inside fips140.WithoutEnforcement.
-func TestFIPSOnlyMode(t *testing.T) {
+func TestVerifierFIPSOnlyMode(t *testing.T) {
 	t.Parallel()
 
 	if !fips140.Enforced() {
 		t.Run("passes in a child process under fips140=only", func(t *testing.T) {
 			t.Parallel()
 
-			args := []string{"-test.run=^TestFIPSOnlyMode$", "-test.v", "-test.timeout=" + childTimeout.String()}
+			args := []string{
+				"-test.run=^TestVerifierFIPSOnlyMode$", "-test.v", "-test.timeout=" + childTimeout.String(),
+			}
 			if dir := flag.Lookup("test.gocoverdir"); dir != nil && dir.Value.String() != "" {
 				// The child writes its coverage counters where the parent's
 				// profile merges them.
@@ -759,12 +882,10 @@ func TestFIPSOnlyMode(t *testing.T) {
 			cmd := exec.CommandContext(t.Context(), os.Args[0], args...)
 			cmd.Env = append(os.Environ(), "GODEBUG=fips140=only")
 			out, err := cmd.CombinedOutput()
-			testkit.NoError(t, err, "the fips140=only child must pass:\n"+string(out))
-			testkit.True(
-				t,
-				bytes.Contains(out, []byte("returns_ErrUnsupported_for_a_token_with_only_a_SigningCertificate")),
-				"the child must run the FIPS checks, not skip them",
-			)
+			output := string(out)
+			assert.NoError(t, err, "the fips140=only child must pass:\n"+output)
+			assert.Contains(t, output, "returns_ErrUnsupported_for_a_token_with_only_a_SigningCertificate",
+				"the child must run the FIPS checks")
 		})
 
 		return
@@ -786,8 +907,8 @@ func TestFIPSOnlyMode(t *testing.T) {
 		})
 
 		_, err := newVerifier(t, a, nil).Verify(tok, tsp.SHA256, imprint)
-		testkit.ErrorIs(t, err, tsp.ErrUnsupported, "FIPS 140-only mode must refuse a SHA-1 identifier alone")
-		testkit.Equal(t, errs.Classify(err), errs.Unsupported, "ErrUnsupported must classify as Unsupported")
+		expect.ErrorIs(t, err, tsp.ErrUnsupported, "FIPS 140-only mode must refuse a SHA-1 identifier alone")
+		expect.Equal(t, errs.Classify(err), errs.Unsupported, "ErrUnsupported must classify as Unsupported")
 	})
 
 	t.Run("verifies a token with both attributes without the SHA-1 identifier", func(t *testing.T) {
@@ -801,83 +922,93 @@ func TestFIPSOnlyMode(t *testing.T) {
 			a = newAuthority(t, tsptest.Config{Key: tsptest.KeyEd25519, Digest: tsptest.DigestSHA512})
 			tok = token(t, a, func(s *tsptest.Spec) {
 				s.Attributes = append(a.Attributes(s.TSTInfo),
-					tsptest.Attribute(signingCertificateOID, signingCertificate(nil, make([]byte, 20), nil)))
+					tsptest.Attribute(signingCertificateOID, zeroSigningCertificate))
 			})
 		})
 
 		_, err := newVerifier(t, a, nil).Verify(tok, tsp.SHA256, imprint)
-		testkit.NoError(t, err, "FIPS 140-only mode must not check the SHA-1 identifier beside a SigningCertificateV2")
+		assert.NoError(t, err, "FIPS 140-only mode must not check the SHA-1 identifier beside a SigningCertificateV2")
 	})
 }
 
-// BenchmarkVerifier measures Verify for a token of a known certificate.
-// Ed25519 and ML-DSA allocate nothing. The ceilings of ECDSA and RSA are the
-// allocations of crypto/ecdsa and crypto/rsa in Go 1.27.1, which convert the
-// public key and allocate their big numbers on each verification. A memory
-// profile attributes no allocation of those paths to this package.
-func BenchmarkVerifier(b *testing.B) {
-	keys := []struct {
-		name   string
-		key    tsptest.Key
-		digest tsptest.Digest
-		allocs float64
-	}{
-		{name: "Verify of an Ed25519 token", key: tsptest.KeyEd25519, digest: tsptest.DigestSHA512, allocs: 0},
-		{name: "Verify of an ML-DSA-65 token", key: tsptest.KeyMLDSA65, digest: tsptest.DigestSHA512, allocs: 0},
-		{name: "Verify of an ECDSA P-256 token", key: tsptest.KeyECDSAP256, digest: tsptest.DigestSHA256, allocs: 9},
-		{name: "Verify of an ECDSA P-384 token", key: tsptest.KeyECDSAP384, digest: tsptest.DigestSHA384, allocs: 17},
-		{
-			name:   "Verify of an RSA PKCS #1 v1.5 token",
-			key:    tsptest.KeyRSAPKCS1,
-			digest: tsptest.DigestSHA256,
-			allocs: 9,
-		},
-		{name: "Verify of an RSA PSS token", key: tsptest.KeyRSAPSS, digest: tsptest.DigestSHA256, allocs: 13},
-	}
-	for _, k := range keys {
-		b.Run(k.name, func(b *testing.B) {
-			a := newAuthority(b, tsptest.Config{Key: k.key, Digest: k.digest, TSA: true})
-			v := newVerifier(b, a, nil)
-			tok := stamp(b, a)
+// TestVerifierAllocs checks the allocation ceilings of Verify for a token
+// of a known certificate of each key. MaxAllocs counts the allocations of
+// the whole process, so the test does not run in parallel.
+//
+//nolint:paralleltest // see above
+func TestVerifierAllocs(t *testing.T) {
+	t.Run("Verify", func(t *testing.T) {
+		for _, k := range verifyCeilings {
+			t.Run(k.name, func(t *testing.T) {
+				a := newAuthority(t, tsptest.Config{Key: k.key, Digest: k.digest, TSA: true})
+				v := newVerifier(t, a, nil)
+				tok := stamp(t, a)
 
-			_, err := v.Verify(tok, tsp.SHA256, imprint)
-			testkit.NoError(b, err, "the first Verify must accept the token")
+				_, err := v.Verify(tok, tsp.SHA256, imprint)
+				assert.NoError(t, err, "the first Verify must accept the token")
 
-			tspAllocs(b, k.allocs, func() { sinkInfo, errSink = v.Verify(tok, tsp.SHA256, imprint) })
-			testkit.NoError(b, errSink, "the benchmark must measure a token that verifies")
-		})
-	}
+				var info tsp.Info
+				expect.MaxAllocs(t, func() { info, err = v.Verify(tok, tsp.SHA256, imprint) }, k.allocs,
+					"Verify must allocate no more than the signature scheme of the key")
+				assert.NoError(t, err, "the test must measure a token that verifies")
+				assert.NotEmpty(t, info.Serial, "the test must measure the Info of the token")
+			})
+		}
+	})
 }
 
+// BenchmarkVerifier reports the cost of Verify for a token of a known
+// certificate of each key, and fails when it allocates more than
+// TestVerifierAllocs allows.
+func BenchmarkVerifier(b *testing.B) {
+	b.Run("Verify", func(b *testing.B) {
+		for _, k := range verifyCeilings {
+			b.Run(k.name, func(b *testing.B) {
+				a := newAuthority(b, tsptest.Config{Key: k.key, Digest: k.digest, TSA: true})
+				v := newVerifier(b, a, nil)
+				tok := stamp(b, a)
+
+				info, err := v.Verify(tok, tsp.SHA256, imprint)
+				assert.NoError(b, err, "the first Verify must accept the token")
+
+				c := bench.Start(b).MaxAllocs(k.allocs)
+				defer c.End()
+
+				for c.Loop() {
+					info, err = v.Verify(tok, tsp.SHA256, imprint)
+				}
+
+				assert.NoError(b, err, "the benchmark must measure a token that verifies")
+				assert.NotEmpty(b, info.Serial, "the benchmark must measure the Info of the token")
+			})
+		}
+	})
+}
+
+// FuzzVerifier checks the contract of verifiesToken on the inputs that a
+// fuzzer finds. The seed is a token with every optional field, after the
+// two octets of its length that the bridge reads first.
 func FuzzVerifier(f *testing.F) {
 	a := newAuthority(f, tsptest.Config{
 		Key: tsptest.KeyEd25519, Digest: tsptest.DigestSHA512, ESS: tsptest.ESSBoth, IssuerSerial: true,
 		Accuracy: time.Second, Ordering: true, TSA: true,
 	})
-	v := newVerifier(f, a, nil)
+	tok := stamp(f, a)
 
-	f.Add(stamp(f, a))
-	f.Fuzz(func(t *testing.T, tok []byte) {
-		info, err := v.Verify(tok, tsp.SHA256, imprint)
-		if err == nil {
-			testkit.True(t, bytes.Contains(tok, info.Serial), "the Info must refer to the token")
-		}
-	})
+	f.Add(append(binary.LittleEndian.AppendUint16(nil, uint16(len(tok))), tok...))
+	prop.Fuzz(f, verifyContract, verifiesToken(newVerifier(f, a, nil)))
 }
 
-// tspAllocs fails b when call allocates more than ceiling times per call,
-// averaged over benchRuns calls, and then reports the time and the
-// allocations of call per iteration.
-func tspAllocs(b *testing.B, ceiling float64, call func()) {
-	b.Helper()
+// verifiesToken returns the property that v refuses a drawn token, or
+// returns an Info whose serial is a slice of the token.
+func verifiesToken(v *tsp.Verifier) func(*prop.Case) {
+	return func(c *prop.Case) {
+		tok := c.Draw(prop.Bytes(), "token")
 
-	if allocs := testing.AllocsPerRun(benchRuns, call); allocs > ceiling {
-		b.Fatalf("allocates %v times per call, want at most %v", allocs, ceiling)
-	}
-
-	b.ReportAllocs()
-	for b.Loop() {
-		call()
+		info, err := v.Verify(tok, tsp.SHA256, imprint)
+		if err == nil {
+			assert.True(c, bytes.Contains(tok, info.Serial), "the Info must refer to the token")
+		}
 	}
 }
 
@@ -904,7 +1035,7 @@ func x509OID(tb testing.TB, id asn1.ObjectIdentifier) x509.OID {
 	}
 
 	oid, err := x509.OIDFromInts(arcs)
-	testkit.NoError(tb, err, "the identifier must convert")
+	assert.NoError(tb, err, "the identifier must convert")
 
 	return oid
 }
@@ -930,7 +1061,7 @@ func newAuthority(tb testing.TB, cfg tsptest.Config) *tsptest.Authority {
 	}
 
 	a, err := tsptest.New(cfg)
-	testkit.NoError(tb, err, "tsptest.New must accept the configuration")
+	assert.NoError(tb, err, "tsptest.New must accept the configuration")
 
 	return a
 }
@@ -941,7 +1072,7 @@ func request(tb testing.TB) []byte {
 	tb.Helper()
 
 	req, err := tsp.AppendRequest(nil, tsp.SHA256, imprint, nonce, x509.OID{})
-	testkit.NoError(tb, err, "AppendRequest must encode the request")
+	assert.NoError(tb, err, "AppendRequest must encode the request")
 
 	return req
 }
@@ -952,10 +1083,10 @@ func stamp(tb testing.TB, a *tsptest.Authority) []byte {
 	tb.Helper()
 
 	resp, err := a.Respond(request(tb))
-	testkit.NoError(tb, err, "the authority must respond")
+	assert.NoError(tb, err, "the authority must respond")
 
 	tok, err := tsp.ParseResponse(resp, tsp.SHA256, imprint, nonce, x509.OID{})
-	testkit.NoError(tb, err, "ParseResponse must return the token")
+	assert.NoError(tb, err, "ParseResponse must return the token")
 
 	return tok
 }
@@ -1000,17 +1131,9 @@ func verifierOf(tb testing.TB, cfg tsp.VerifierConfig) *tsp.Verifier {
 	tb.Helper()
 
 	v, err := tsp.NewVerifier(cfg)
-	testkit.NoError(tb, err, "NewVerifier must accept the configuration")
+	assert.NoError(tb, err, "NewVerifier must accept the configuration")
 
 	return v
-}
-
-// signingCertificate returns the DER of a SigningCertificate or
-// SigningCertificateV2 with one identifier: the hashAlgorithm element alg,
-// none when nil, certHash, and the IssuerSerial element is, none when nil.
-func signingCertificate(alg, certHash, is []byte) []byte {
-	return element(der.TagSequence, element(der.TagSequence,
-		element(der.TagSequence, alg, element(der.TagOctetString, certHash), is)))
 }
 
 // issuerSerial returns the DER of an IssuerSerial of the directoryName

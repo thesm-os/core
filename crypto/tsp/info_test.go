@@ -8,7 +8,9 @@ import (
 	"encoding/asn1"
 	"testing"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/bench"
+	"go.dokimi.dev/assert/expect"
 
 	"go.thesmos.sh/core/coretest/tsptest"
 	"go.thesmos.sh/core/crypto/tsp"
@@ -37,7 +39,7 @@ func TestInfo(t *testing.T) {
 			Extensions: []pkix.Extension{criticalExtension, plainExtension},
 		})
 		info, err := newVerifier(t, a, nil).Verify(stamp(t, a), tsp.SHA256, imprint)
-		testkit.NoError(t, err, "Verify must accept the token")
+		assert.NoError(t, err, "Verify must accept the token")
 
 		tests := []struct {
 			name         string
@@ -64,9 +66,9 @@ func TestInfo(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
 				value, critical, ok := info.Extension(x509OID(t, tt.id))
-				testkit.Equal(t, value, tt.value, "Extension must return the extnValue")
-				testkit.Equal(t, critical, tt.critical, "Extension must report the critical flag")
-				testkit.Equal(t, ok, tt.ok, "Extension must report whether the token has the extension")
+				expect.Equal(t, value, tt.value, "Extension must return the extnValue")
+				expect.Equal(t, critical, tt.critical, "Extension must report the critical flag")
+				expect.Equal(t, ok, tt.ok, "Extension must report whether the token has the extension")
 			})
 		}
 
@@ -74,14 +76,37 @@ func TestInfo(t *testing.T) {
 			t.Parallel()
 			plain := newAuthority(t, tsptest.Config{Key: tsptest.KeyEd25519, Digest: tsptest.DigestSHA512})
 			info, err := newVerifier(t, plain, nil).Verify(stamp(t, plain), tsp.SHA256, imprint)
-			testkit.NoError(t, err, "Verify must accept the token")
+			assert.NoError(t, err, "Verify must accept the token")
 
 			_, _, ok := info.Extension(x509OID(t, plainExtension.Id))
-			testkit.False(t, ok, "a token without extensions has none")
+			assert.False(t, ok, "a token without extensions has none")
 		})
 	})
 }
 
+// TestInfoAllocs checks the allocation contract of Extension. MaxAllocs
+// counts the allocations of the whole process, so the test does not run
+// in parallel.
+//
+//nolint:paralleltest // see above
+func TestInfoAllocs(t *testing.T) {
+	a := newAuthority(t, tsptest.Config{
+		Key: tsptest.KeyEd25519, Digest: tsptest.DigestSHA512,
+		Extensions: []pkix.Extension{criticalExtension, plainExtension},
+	})
+	info, err := newVerifier(t, a, nil).Verify(stamp(t, a), tsp.SHA256, imprint)
+	assert.NoError(t, err, "Verify must accept the token")
+	id := x509OID(t, plainExtension.Id)
+
+	t.Run("Extension", func(t *testing.T) {
+		var ok bool
+		expect.MaxAllocs(t, func() { _, _, ok = info.Extension(id) }, 0, "Extension must not allocate")
+		assert.True(t, ok, "the test must measure an extension that the token has")
+	})
+}
+
+// BenchmarkInfo reports the cost of Extension, and fails when it
+// allocates.
 func BenchmarkInfo(b *testing.B) {
 	b.Run("Extension", func(b *testing.B) {
 		a := newAuthority(b, tsptest.Config{
@@ -89,12 +114,18 @@ func BenchmarkInfo(b *testing.B) {
 			Extensions: []pkix.Extension{criticalExtension, plainExtension},
 		})
 		info, err := newVerifier(b, a, nil).Verify(stamp(b, a), tsp.SHA256, imprint)
-		testkit.NoError(b, err, "Verify must accept the token")
-
+		assert.NoError(b, err, "Verify must accept the token")
 		id := x509OID(b, plainExtension.Id)
 
 		var ok bool
-		tspAllocs(b, 0, func() { sinkBytes, _, ok = info.Extension(id) })
-		testkit.True(b, ok, "the benchmark must measure an extension that the token has")
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			_, _, ok = info.Extension(id)
+		}
+
+		assert.True(b, ok, "the benchmark must measure an extension that the token has")
 	})
 }

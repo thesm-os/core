@@ -6,10 +6,12 @@ package tsp
 import (
 	"bytes"
 	"crypto/x509"
+	"slices"
 	"testing"
 	"time"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/expect"
 
 	"go.thesmos.sh/core/internal/der"
 )
@@ -40,16 +42,17 @@ func TestTSTInfo(t *testing.T) {
 		t.Run("returns the fields of a TSTInfo without optional fields", func(t *testing.T) {
 			t.Parallel()
 			info, ok := parseTSTInfo(tstInfoOf())
-			testkit.True(t, ok, "parseTSTInfo must accept the TSTInfo")
-			testkit.Equal(t, info.policy, oidUnknown, "policy must be the content of the OID")
-			testkit.Equal(t, info.hash.oid, oidSHA256, "hash must be the hashAlgorithm")
-			testkit.Equal(t, info.imprint, tstDigest, "imprint must be the hashedMessage")
-			testkit.Equal(t, info.serial, []byte{0x07}, "serial must be the content of the INTEGER")
-			testkit.True(t, info.genTime.Equal(tstGenTime), "genTime must be the GeneralizedTime")
-			testkit.False(t, info.stated, "a TSTInfo without accuracy states none")
-			testkit.False(t, info.ordering, "ordering must default to FALSE")
-			testkit.True(t, info.nonce == nil && info.tsa == nil && info.extensions == nil,
-				"absent fields must be nil")
+			assert.True(t, ok, "parseTSTInfo must accept the TSTInfo")
+			expect.Equal(t, info.policy, oidUnknown, "policy must be the content of the OID")
+			expect.Equal(t, info.hash.oid, oidSHA256, "hash must be the hashAlgorithm")
+			expect.Equal(t, info.imprint, tstDigest, "imprint must be the hashedMessage")
+			expect.Equal(t, info.serial, []byte{0x07}, "serial must be the content of the INTEGER")
+			expect.True(t, info.genTime.Equal(tstGenTime), "genTime must be the GeneralizedTime")
+			expect.False(t, info.stated, "a TSTInfo without accuracy states none")
+			expect.False(t, info.ordering, "ordering must default to FALSE")
+			expect.Nil(t, info.nonce, "an absent nonce must be nil")
+			expect.Nil(t, info.tsa, "an absent tsa must be nil")
+			expect.Nil(t, info.extensions, "absent extensions must be nil")
 		})
 
 		t.Run("returns the optional fields of a TSTInfo", func(t *testing.T) {
@@ -62,15 +65,15 @@ func TestTSTInfo(t *testing.T) {
 				p.tsa = el(der.ContextConstructed(0), el(der.ContextConstructed(4), el(der.TagSequence)))
 				p.extensions = el(der.ContextConstructed(1), extPlain)
 			}))
-			testkit.True(t, ok, "parseTSTInfo must accept the TSTInfo")
-			testkit.True(t, info.stated, "the TSTInfo states an accuracy")
-			testkit.Equal(t, info.accuracy, 2*time.Second+3*time.Millisecond+4*time.Microsecond,
+			assert.True(t, ok, "parseTSTInfo must accept the TSTInfo")
+			expect.True(t, info.stated, "the TSTInfo states an accuracy")
+			expect.Equal(t, info.accuracy, 2*time.Second+3*time.Millisecond+4*time.Microsecond,
 				"accuracy must add seconds, millis and micros")
-			testkit.True(t, info.ordering, "ordering must be TRUE")
-			testkit.Equal(t, info.nonce, []byte{0x01, 0x02}, "nonce must be the content of the INTEGER")
-			testkit.Equal(t, info.tsa, el(der.ContextConstructed(4), el(der.TagSequence)),
+			expect.True(t, info.ordering, "ordering must be TRUE")
+			expect.Equal(t, info.nonce, []byte{0x01, 0x02}, "nonce must be the content of the INTEGER")
+			expect.Equal(t, info.tsa, el(der.ContextConstructed(4), el(der.TagSequence)),
 				"tsa must be the GeneralName")
-			testkit.Equal(t, info.extensions, extPlain, "extensions must be the content of the field")
+			expect.Equal(t, info.extensions, extPlain, "extensions must be the content of the field")
 		})
 
 		accuracies := []struct {
@@ -105,17 +108,17 @@ func TestTSTInfo(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
 				info, ok := parseTSTInfo(tstInfoOf(func(p *tstParts) { p.accuracy = tt.give }))
-				testkit.True(t, ok, "parseTSTInfo must accept the accuracy")
-				testkit.True(t, info.stated, "the TSTInfo states an accuracy")
-				testkit.Equal(t, info.accuracy, tt.want, "accuracy must be the sum of its fields")
+				assert.True(t, ok, "parseTSTInfo must accept the accuracy")
+				expect.True(t, info.stated, "the TSTInfo states an accuracy")
+				expect.Equal(t, info.accuracy, tt.want, "accuracy must be the sum of its fields")
 			})
 		}
 
-		t.Run("returns ordering FALSE when the TSTInfo states it", func(t *testing.T) {
+		t.Run("returns ordering FALSE for a TSTInfo that states it", func(t *testing.T) {
 			t.Parallel()
 			info, ok := parseTSTInfo(tstInfoOf(func(p *tstParts) { p.ordering = el(der.TagBoolean, []byte{0x00}) }))
-			testkit.True(t, ok, "parseTSTInfo must accept ordering FALSE")
-			testkit.False(t, info.ordering, "ordering must be FALSE")
+			assert.True(t, ok, "parseTSTInfo must accept ordering FALSE")
+			assert.False(t, info.ordering, "ordering must be FALSE")
 		})
 
 		tests := []struct {
@@ -164,7 +167,7 @@ func TestTSTInfo(t *testing.T) {
 			},
 			{
 				name: "reports false for an accuracy that is not DER",
-				give: func(p *tstParts) { p.accuracy = cat([]byte{byte(der.TagSequence)}, notDER) },
+				give: func(p *tstParts) { p.accuracy = slices.Concat([]byte{byte(der.TagSequence)}, notDER) },
 			},
 			{
 				name: "reports false for seconds above the largest accuracy",
@@ -178,7 +181,9 @@ func TestTSTInfo(t *testing.T) {
 			},
 			{
 				name: "reports false for seconds that are not DER",
-				give: func(p *tstParts) { p.accuracy = el(der.TagSequence, cat([]byte{byte(der.TagInteger)}, notDER)) },
+				give: func(p *tstParts) {
+					p.accuracy = el(der.TagSequence, slices.Concat([]byte{byte(der.TagInteger)}, notDER))
+				},
 			},
 			{
 				name: "reports false for millis of zero",
@@ -208,7 +213,7 @@ func TestTSTInfo(t *testing.T) {
 			},
 			{
 				name: "reports false for an ordering element that is not DER",
-				give: func(p *tstParts) { p.ordering = cat([]byte{byte(der.TagBoolean)}, notDER) },
+				give: func(p *tstParts) { p.ordering = slices.Concat([]byte{byte(der.TagBoolean)}, notDER) },
 			},
 			{
 				name: "reports false for a nonce that is not an INTEGER in DER",
@@ -216,7 +221,7 @@ func TestTSTInfo(t *testing.T) {
 			},
 			{
 				name: "reports false for a nonce element that is not DER",
-				give: func(p *tstParts) { p.nonce = cat([]byte{byte(der.TagInteger)}, notDER) },
+				give: func(p *tstParts) { p.nonce = slices.Concat([]byte{byte(der.TagInteger)}, notDER) },
 			},
 			{
 				name: "reports false for a tsa without a GeneralName",
@@ -228,11 +233,13 @@ func TestTSTInfo(t *testing.T) {
 			},
 			{
 				name: "reports false for a tsa that is not DER",
-				give: func(p *tstParts) { p.tsa = cat([]byte{byte(der.ContextConstructed(0))}, notDER) },
+				give: func(p *tstParts) { p.tsa = slices.Concat([]byte{byte(der.ContextConstructed(0))}, notDER) },
 			},
 			{
 				name: "reports false for extensions that are not DER",
-				give: func(p *tstParts) { p.extensions = cat([]byte{byte(der.ContextConstructed(1))}, notDER) },
+				give: func(p *tstParts) {
+					p.extensions = slices.Concat([]byte{byte(der.ContextConstructed(1))}, notDER)
+				},
 			},
 			{
 				name: "reports false for an extension that is not a SEQUENCE",
@@ -264,7 +271,7 @@ func TestTSTInfo(t *testing.T) {
 				name: "reports false for a critical element that is not DER",
 				give: func(p *tstParts) {
 					p.extensions = el(der.ContextConstructed(1), el(der.TagSequence, el(der.TagOID, oidUnknown),
-						cat([]byte{byte(der.TagBoolean)}, notDER)))
+						slices.Concat([]byte{byte(der.TagBoolean)}, notDER)))
 				},
 			},
 			{
@@ -289,27 +296,27 @@ func TestTSTInfo(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
 				_, ok := parseTSTInfo(tstInfoOf(tt.give))
-				testkit.False(t, ok, "parseTSTInfo must refuse the TSTInfo")
+				assert.False(t, ok, "parseTSTInfo must refuse the TSTInfo")
 			})
 		}
 
 		t.Run("reports false for a TSTInfo that is not a SEQUENCE", func(t *testing.T) {
 			t.Parallel()
 			_, ok := parseTSTInfo(el(der.TagSet))
-			testkit.False(t, ok, "parseTSTInfo must refuse a SET")
+			assert.False(t, ok, "parseTSTInfo must refuse a SET")
 		})
 
 		t.Run("reports false for octets after the TSTInfo", func(t *testing.T) {
 			t.Parallel()
-			_, ok := parseTSTInfo(cat(tstInfoOf(), el(der.TagNull)))
-			testkit.False(t, ok, "parseTSTInfo must refuse trailing octets")
+			_, ok := parseTSTInfo(slices.Concat(tstInfoOf(), el(der.TagNull)))
+			assert.False(t, ok, "parseTSTInfo must refuse trailing octets")
 		})
 	})
 
 	t.Run("Extension", func(t *testing.T) {
 		t.Parallel()
 
-		info := Info{extensions: cat(extCritical, extFalse, extPlain)}
+		info := Info{extensions: slices.Concat(extCritical, extFalse, extPlain)}
 		tests := []struct {
 			name         string
 			id           x509.OID
@@ -341,9 +348,9 @@ func TestTSTInfo(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
 				value, critical, ok := info.Extension(tt.id)
-				testkit.Equal(t, value, tt.value, "Extension must return the extnValue")
-				testkit.Equal(t, critical, tt.critical, "Extension must report the critical flag")
-				testkit.Equal(t, ok, tt.ok, "Extension must report whether the token has the extension")
+				expect.Equal(t, value, tt.value, "Extension must return the extnValue")
+				expect.Equal(t, critical, tt.critical, "Extension must report the critical flag")
+				expect.Equal(t, ok, tt.ok, "Extension must report whether the token has the extension")
 			})
 		}
 	})

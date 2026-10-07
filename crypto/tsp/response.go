@@ -58,6 +58,7 @@ func ParseResponse(resp []byte, h Hash, imprint crypto.Digest, nonce uint64, pol
 	r := der.NewReader(resp)
 
 	seq, ok := r.Read(der.TagSequence)
+	//dokimi:mutate-skip lcr-right: a failed Read leaves r unchanged, and the nil content of an empty r has no status
 	if !ok || !r.Empty() {
 		return nil, ErrMalformed
 	}
@@ -65,6 +66,7 @@ func ParseResponse(resp []byte, h Hash, imprint crypto.Digest, nonce uint64, pol
 	s := der.NewReader(seq)
 
 	status, ok := s.Read(der.TagSequence)
+	//dokimi:mutate-skip sbr-delete: granted returns ErrMalformed for the nil status of a failed Read
 	if !ok {
 		return nil, ErrMalformed
 	}
@@ -74,11 +76,13 @@ func ParseResponse(resp []byte, h Hash, imprint crypto.Digest, nonce uint64, pol
 	}
 
 	tok, _, ok := s.ReadElement(der.TagSequence)
+	//dokimi:mutate-skip lcr-right: a failed ReadElement leaves s unchanged, and parseToken refuses the nil token of an empty s
 	if !ok || !s.Empty() {
 		return nil, ErrMalformed
 	}
 
 	t, ok := parseToken(tok)
+	//dokimi:mutate-skip sbr-delete: the zero token has no TSTInfo, which parseTSTInfo refuses with the same ErrMalformed
 	if !ok {
 		return nil, ErrMalformed
 	}
@@ -119,6 +123,7 @@ func granted(status []byte) error {
 	r := der.NewReader(status)
 
 	content, ok := r.Read(der.TagInteger)
+	//dokimi:mutate-skip sbr-delete: a failed Read returns nil, which der.Uint64 refuses
 	if !ok {
 		return ErrMalformed
 	}
@@ -129,11 +134,13 @@ func granted(status []byte) error {
 	}
 
 	texts, _, ok := r.Optional(der.TagSequence)
+	//dokimi:mutate-skip lcr-right: a malformed statusString stays in r, which the check that r is empty refuses
 	if !ok || !validTexts(texts) {
 		return ErrMalformed
 	}
 
 	failInfo, _, ok := r.Optional(der.TagBitString)
+	//dokimi:mutate-skip lcr-right: a malformed failInfo stays in r, which the check that r is empty refuses
 	if !ok || !r.Empty() {
 		return ErrMalformed
 	}

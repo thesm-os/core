@@ -207,6 +207,7 @@ func pssOf(params []byte, d digest) (signatureAlgorithm, bool) {
 	r := der.NewReader(params)
 
 	seq, ok := r.Read(der.TagSequence)
+	//dokimi:mutate-skip lcr-right: a failed Read leaves r unchanged, and the nil content of an empty r has no hash
 	if !ok || !r.Empty() {
 		return signatureAlgorithm{}, false
 	}
@@ -214,12 +215,23 @@ func pssOf(params []byte, d digest) (signatureAlgorithm, bool) {
 	pr := der.NewReader(seq)
 
 	hash, ok := explicitAlgorithm(&pr, 0)
-	if h, known := digestOf(hash); !ok || !known || h != d {
+	h, known := digestOf(hash)
+	//dokimi:mutate-skip lcr-left: digestOf returns the zero digest for an unknown algorithm, which differs from d
+	if !ok || !known {
+		return signatureAlgorithm{}, false
+	}
+
+	if h != d {
 		return signatureAlgorithm{}, false
 	}
 
 	mgf, ok := explicitAlgorithm(&pr, 1)
-	if !ok || !bytes.Equal(mgf.oid, oidMGF1) || !mgfHash(mgf.params, d) {
+	//dokimi:mutate-skip lcr-right: a failed explicitAlgorithm returns no OID, which differs from oidMGF1
+	if !ok || !bytes.Equal(mgf.oid, oidMGF1) {
+		return signatureAlgorithm{}, false
+	}
+
+	if !mgfHash(mgf.params, d) {
 		return signatureAlgorithm{}, false
 	}
 
@@ -229,7 +241,12 @@ func pssOf(params []byte, d digest) (signatureAlgorithm, bool) {
 	}
 
 	trailer, ok := explicitUint(&pr, 3, 1)
-	if !ok || trailer != 1 || !pr.Empty() {
+	//dokimi:mutate-skip lcr-right: explicitUint returns 0 when it reports false, which is not the trailer 1
+	if !ok || trailer != 1 {
+		return signatureAlgorithm{}, false
+	}
+
+	if !pr.Empty() {
 		return signatureAlgorithm{}, false
 	}
 
@@ -242,6 +259,7 @@ func mgfHash(params []byte, d digest) bool {
 	r := der.NewReader(params)
 
 	seq, ok := r.Read(der.TagSequence)
+	//dokimi:mutate-skip lcr-right: a failed Read leaves r unchanged, and parseAlgorithm refuses the nil content of an empty r
 	if !ok || !r.Empty() {
 		return false
 	}
@@ -249,7 +267,12 @@ func mgfHash(params []byte, d digest) bool {
 	alg, ok := parseAlgorithm(seq)
 	h, known := digestOf(alg)
 
-	return ok && known && h == d
+	//dokimi:mutate-skip lcr-left,lcr-right,sbr-delete: digestOf returns the zero digest for an algorithm that is unknown or does not parse, which differs from d
+	if !ok || !known {
+		return false
+	}
+
+	return h == d
 }
 
 // explicitAlgorithm reads the AlgorithmIdentifier of the [n] EXPLICIT
@@ -257,6 +280,7 @@ func mgfHash(params []byte, d digest) bool {
 // one.
 func explicitAlgorithm(r *der.Reader, n uint8) (algorithmIdentifier, bool) {
 	content, ok := r.Read(der.ContextConstructed(n))
+	//dokimi:mutate-skip sbr-delete: a failed Read returns nil, which readAlgorithm refuses
 	if !ok {
 		return algorithmIdentifier{}, false
 	}
@@ -265,6 +289,7 @@ func explicitAlgorithm(r *der.Reader, n uint8) (algorithmIdentifier, bool) {
 
 	a, ok := readAlgorithm(&er)
 
+	//dokimi:mutate-skip lcr-right: a failed readAlgorithm returns the zero AlgorithmIdentifier, which every caller refuses
 	return a, ok && er.Empty()
 }
 
@@ -272,6 +297,7 @@ func explicitAlgorithm(r *der.Reader, n uint8) (algorithmIdentifier, bool) {
 // r, and returns def when the element is absent.
 func explicitUint(r *der.Reader, n uint8, def uint64) (uint64, bool) {
 	content, present, ok := r.Optional(der.ContextConstructed(n))
+	//dokimi:mutate-skip sbr-delete: a malformed element stays in r, which the check of pssOf that the parameters end refuses
 	if !ok {
 		return 0, false
 	}
@@ -283,6 +309,7 @@ func explicitUint(r *der.Reader, n uint8, def uint64) (uint64, bool) {
 	er := der.NewReader(content)
 
 	v, ok := er.Read(der.TagInteger)
+	//dokimi:mutate-skip lcr-right: a failed Read returns nil, which der.Uint64 refuses
 	if !ok || !er.Empty() {
 		return 0, false
 	}

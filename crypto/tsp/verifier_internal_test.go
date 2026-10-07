@@ -4,13 +4,20 @@
 package tsp
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/sha1" //nolint:gosec // G505: SigningCertificate names a certificate by its SHA-1 digest
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
+	"math/big"
+	"slices"
 	"testing"
 	"time"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/expect"
 
 	"go.thesmos.sh/core/cache"
 	"go.thesmos.sh/core/internal/der"
@@ -27,8 +34,12 @@ func TestChain(t *testing.T) {
 
 	t.Run("chainsConfig", func(t *testing.T) {
 		t.Parallel()
-		_, err := cache.New(chainsConfig)
-		testkit.NoError(t, err, "cache.New must accept the configuration of every Verifier")
+
+		t.Run("is a configuration that cache.New accepts", func(t *testing.T) {
+			t.Parallel()
+			_, err := cache.New(chainsConfig)
+			assert.NoError(t, err, "cache.New must accept the configuration of every Verifier")
+		})
 	})
 
 	t.Run("valid", func(t *testing.T) {
@@ -48,7 +59,7 @@ func TestChain(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-				testkit.Equal(t, c.valid(tt.give), tt.want, "valid must report whether t is within the validity")
+				assert.Equal(t, c.valid(tt.give), tt.want, "valid must report whether t is within the validity")
 			})
 		}
 	})
@@ -100,7 +111,7 @@ func TestChain(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
 				c := &chain{leaf: tt.leaf, serial: []byte{0x05}}
-				testkit.Equal(t, c.identifies(tt.give), tt.want, "identifies must report whether s names the leaf")
+				assert.Equal(t, c.identifies(tt.give), tt.want, "identifies must report whether s names the leaf")
 			})
 		}
 	})
@@ -109,7 +120,7 @@ func TestChain(t *testing.T) {
 		t.Parallel()
 
 		c := &chain{leaf: &x509.Certificate{RawIssuer: attrName}, serial: attrSerial}
-		other := cat(
+		other := slices.Concat(
 			el(der.TagSequence, el(der.ContextConstructed(directoryName), attrName)),
 			el(der.TagInteger, []byte{0x0a}),
 		)
@@ -135,8 +146,8 @@ func TestChain(t *testing.T) {
 			},
 			{
 				name: "reports false for an issuerSerial of another issuer",
-				give: attributes{issuerSerialV1: cat(el(der.TagSequence, el(der.ContextConstructed(directoryName),
-					el(der.TagSequence))), el(der.TagInteger, attrSerial))},
+				give: attributes{issuerSerialV1: slices.Concat(el(der.TagSequence,
+					el(der.ContextConstructed(directoryName), el(der.TagSequence))), el(der.TagInteger, attrSerial))},
 			},
 			{
 				name: "reports false for an issuerSerial that does not parse",
@@ -146,14 +157,17 @@ func TestChain(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-				testkit.Equal(
-					t,
-					c.issues(tt.give),
-					tt.want,
-					"issues must report whether each issuerSerial names the leaf",
-				)
+				assert.Equal(t, c.issues(tt.give), tt.want,
+					"issues must report whether each issuerSerial names the leaf")
 			})
 		}
+
+		t.Run("reports false for an issuerSerial that does not parse for a leaf without an issuer", func(t *testing.T) {
+			t.Parallel()
+			bare := &chain{leaf: &x509.Certificate{}}
+			assert.False(t, bare.issues(attributes{issuerSerialV2: el(der.TagNull)}),
+				"an issuerSerial that does not parse must name no leaf")
+		})
 	})
 
 	t.Run("names", func(t *testing.T) {
@@ -163,9 +177,6 @@ func TestChain(t *testing.T) {
 			el(der.TagOID, []byte{0x55, 0x04, 0x03}), el(der.TagUTF8String, []byte("tsa")))))
 		email := el(der.Context(1), []byte("tsa@example.com"))
 		dns := el(der.Context(2), []byte("tsa.example.com"))
-		san := func(names ...[]byte) pkix.Extension {
-			return pkix.Extension{Id: oidSubjectAltName, Value: el(der.TagSequence, names...)}
-		}
 		usage := pkix.Extension{Id: oidExtKeyUsage, Critical: true}
 
 		tests := []struct {
@@ -175,7 +186,7 @@ func TestChain(t *testing.T) {
 			want bool
 		}{
 			{
-				name: "reports true for a directoryName of the leaf's subject",
+				name: "reports true for a directoryName of the subject of the leaf",
 				give: el(der.ContextConstructed(directoryName), subject),
 				want: true,
 			},
@@ -189,18 +200,20 @@ func TestChain(t *testing.T) {
 			},
 			{
 				name: "reports true for a name of the subjectAltName extension",
-				exts: []pkix.Extension{usage, san(email, dns)},
+				exts: []pkix.Extension{usage, {Id: oidSubjectAltName, Value: el(der.TagSequence, email, dns)}},
 				give: dns,
 				want: true,
 			},
 			{
 				name: "reports false for a name that the subjectAltName extension does not have",
-				exts: []pkix.Extension{san(email)},
+				exts: []pkix.Extension{{Id: oidSubjectAltName, Value: el(der.TagSequence, email)}},
 				give: dns,
 			},
 			{
 				name: "reports false for a subjectAltName extension whose names are not DER",
-				exts: []pkix.Extension{san([]byte{0x82, 0x81, 0x01, 'x'})},
+				exts: []pkix.Extension{
+					{Id: oidSubjectAltName, Value: el(der.TagSequence, []byte{0x82, 0x81, 0x01, 'x'})},
+				},
 				give: dns,
 			},
 		}
@@ -208,9 +221,15 @@ func TestChain(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
 				c := &chain{leaf: &x509.Certificate{RawSubject: subject, Extensions: tt.exts}}
-				testkit.Equal(t, c.names(tt.give), tt.want, "names must report whether the tsa field names the leaf")
+				assert.Equal(t, c.names(tt.give), tt.want, "names must report whether the tsa field names the leaf")
 			})
 		}
+
+		t.Run("reports false for a name other than a directoryName of a leaf without a subject", func(t *testing.T) {
+			t.Parallel()
+			bare := &chain{leaf: &x509.Certificate{}}
+			assert.False(t, bare.names(dns), "a name other than a directoryName must not match an empty subject")
+		})
 	})
 
 	t.Run("timeStampingOnly", func(t *testing.T) {
@@ -268,7 +287,7 @@ func TestChain(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-				testkit.Equal(t, timeStampingOnly(tt.give), tt.want,
+				assert.Equal(t, timeStampingOnly(tt.give), tt.want,
 					"timeStampingOnly must report whether the certificate has one critical id-kp-timeStamping")
 			})
 		}
@@ -294,12 +313,8 @@ func TestChain(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-				testkit.Equal(
-					t,
-					serialOf(tt.give),
-					[]byte{0x00, 0x80},
-					"serialOf must return the content of the INTEGER",
-				)
+				assert.Equal(t, serialOf(tt.give), []byte{0x00, 0x80},
+					"serialOf must return the content of the INTEGER")
 			})
 		}
 	})
@@ -307,20 +322,103 @@ func TestChain(t *testing.T) {
 	t.Run("laterOf", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("returns the later time in either order", func(t *testing.T) {
+		t.Run("returns b when b is later", func(t *testing.T) {
 			t.Parallel()
-			testkit.Equal(t, laterOf(chainFrom, chainUntil), chainUntil, "laterOf must return b when b is later")
-			testkit.Equal(t, laterOf(chainUntil, chainFrom), chainUntil, "laterOf must return a when a is later")
+			assert.Equal(t, laterOf(chainFrom, chainUntil), chainUntil, "laterOf must return the later time")
+		})
+
+		t.Run("returns a when a is later", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, laterOf(chainUntil, chainFrom), chainUntil, "laterOf must return the later time")
 		})
 	})
 
 	t.Run("earlierOf", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("returns the earlier time in either order", func(t *testing.T) {
+		t.Run("returns a when a is earlier", func(t *testing.T) {
 			t.Parallel()
-			testkit.Equal(t, earlierOf(chainFrom, chainUntil), chainFrom, "earlierOf must return a when a is earlier")
-			testkit.Equal(t, earlierOf(chainUntil, chainFrom), chainFrom, "earlierOf must return b when b is earlier")
+			assert.Equal(t, earlierOf(chainFrom, chainUntil), chainFrom, "earlierOf must return the earlier time")
+		})
+
+		t.Run("returns b when b is earlier", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, earlierOf(chainUntil, chainFrom), chainFrom, "earlierOf must return the earlier time")
 		})
 	})
+
+	t.Run("pool", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the certificates of the token other than the leaf", func(t *testing.T) {
+			t.Parallel()
+			leaf, other := selfSigned(t, "tsp leaf"), selfSigned(t, "tsp other")
+			want := x509.NewCertPool()
+			want.AddCert(other)
+			got := (&Verifier{}).pool(slices.Concat(leaf.Raw, other.Raw), leaf.Raw)
+			assert.True(t, got.Equal(want), "pool must leave the leaf out of the intermediates")
+		})
+	})
+
+	t.Run("certificate", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns ErrCertificate for a certHash of no certificate of the token", func(t *testing.T) {
+			t.Parallel()
+			attrs := attributes{certHashV2: attrDigest, hashV2: digestSHA256}
+			leaf, err := certificate(attrs, selfSigned(t, "tsp leaf").Raw)
+			assert.ErrorIs(t, err, ErrCertificate, "certificate must refuse a certHash of no certificate")
+			expect.Equal(t, err.Error(), ErrCertificate.Error()+
+				": the token does not contain the certificate that it names", "the error must state the missing certificate")
+			expect.Nil(t, leaf, "certificate must return no leaf with an error")
+		})
+	})
+
+	// A token may contain certificates of other choices than a
+	// Certificate, such as an attribute certificate, [1] IMPLICIT. The
+	// element of the cases has the digest that the attribute names.
+	t.Run("find", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns nil for an element that is not a SEQUENCE", func(t *testing.T) {
+			t.Parallel()
+			element := el(der.ContextConstructed(1), el(der.TagNull))
+			sum := sha256.Sum256(element)
+			assert.Nil(t, find(element, digestSHA256, sum[:]), "find must skip an element that is not a Certificate")
+		})
+	})
+
+	t.Run("findSHA1", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns nil for an element that is not a SEQUENCE", func(t *testing.T) {
+			t.Parallel()
+			element := el(der.ContextConstructed(1), el(der.TagNull))
+			sum := sha1.Sum(element) //nolint:gosec // G401: SigningCertificate names a certificate by its SHA-1 digest
+			assert.Nil(t, findSHA1(element, sum[:]), "findSHA1 must skip an element that is not a Certificate")
+		})
+	})
+}
+
+// selfSigned returns a self-signed Ed25519 certificate whose subject has
+// the common name cn. It fails tb when the certificate does not build.
+func selfSigned(tb testing.TB, cn string) *x509.Certificate {
+	tb.Helper()
+
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	assert.NoError(tb, err, "GenerateKey must make a key")
+
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: cn},
+		NotBefore:    chainFrom,
+		NotAfter:     chainUntil,
+	}
+	raw, err := x509.CreateCertificate(rand.Reader, template, template, pub, priv)
+	assert.NoError(tb, err, "CreateCertificate must make the certificate")
+
+	cert, err := x509.ParseCertificate(raw)
+	assert.NoError(tb, err, "ParseCertificate must read the certificate")
+
+	return cert
 }

@@ -141,6 +141,7 @@ func parseTSTInfo(b []byte) (tstInfo, bool) {
 	r := der.NewReader(b)
 
 	seq, ok := r.Read(der.TagSequence)
+	//dokimi:mutate-skip lcr-right: a failed Read leaves r unchanged, and the nil content of an empty r fails the read of its version
 	if !ok || !r.Empty() {
 		return tstInfo{}, false
 	}
@@ -148,15 +149,18 @@ func parseTSTInfo(b []byte) (tstInfo, bool) {
 	s := der.NewReader(seq)
 
 	version, ok := s.Read(der.TagInteger)
+	//dokimi:mutate-skip lcr-right: a failed Read returns nil, which isOne refuses
 	if !ok || !isOne(version) {
 		return tstInfo{}, false
 	}
 
+	//dokimi:mutate-skip lcr-right: a failed Read returns nil, which der.ObjectIdentifier refuses
 	if t.policy, ok = s.Read(der.TagOID); !ok || !der.ObjectIdentifier(t.policy) {
 		return tstInfo{}, false
 	}
 
 	imprint, ok := s.Read(der.TagSequence)
+	//dokimi:mutate-skip sbr-delete: a failed Read returns nil, which parseImprint refuses
 	if !ok {
 		return tstInfo{}, false
 	}
@@ -165,11 +169,13 @@ func parseTSTInfo(b []byte) (tstInfo, bool) {
 		return tstInfo{}, false
 	}
 
+	//dokimi:mutate-skip lcr-right: a failed Read returns nil, which der.Integer refuses
 	if t.serial, ok = s.Read(der.TagInteger); !ok || !der.Integer(t.serial) {
 		return tstInfo{}, false
 	}
 
 	genTime, ok := s.Read(der.TagGeneralizedTime)
+	//dokimi:mutate-skip sbr-delete: a failed Read returns nil, which der.GeneralizedTime refuses
 	if !ok {
 		return tstInfo{}, false
 	}
@@ -190,6 +196,7 @@ func parseTSTInfo(b []byte) (tstInfo, bool) {
 // reports false when one is malformed or s has octets after them.
 func parseOptional(s *der.Reader, t *tstInfo) bool {
 	accuracy, present, ok := s.Optional(der.TagSequence)
+	//dokimi:mutate-skip sbr-delete: a malformed element stays in s, which the check that s is empty refuses
 	if !ok {
 		return false
 	}
@@ -203,6 +210,7 @@ func parseOptional(s *der.Reader, t *tstInfo) bool {
 	}
 
 	ordering, present, ok := s.Optional(der.TagBoolean)
+	//dokimi:mutate-skip sbr-delete: a malformed element stays in s, which the check that s is empty refuses
 	if !ok {
 		return false
 	}
@@ -213,14 +221,27 @@ func parseOptional(s *der.Reader, t *tstInfo) bool {
 		}
 	}
 
-	if t.nonce, _, ok = s.Optional(der.TagInteger); !ok || t.nonce != nil && !der.Integer(t.nonce) {
+	t.nonce, _, ok = s.Optional(der.TagInteger)
+	//dokimi:mutate-skip sbr-delete: a malformed element stays in s, which the check that s is empty refuses
+	if !ok {
 		return false
 	}
 
-	if t.tsa, _, ok = s.Optional(der.ContextConstructed(0)); !ok || t.tsa != nil && !oneElement(t.tsa) {
+	if t.nonce != nil && !der.Integer(t.nonce) {
 		return false
 	}
 
+	t.tsa, _, ok = s.Optional(der.ContextConstructed(0))
+	//dokimi:mutate-skip sbr-delete: a malformed element stays in s, which the check that s is empty refuses
+	if !ok {
+		return false
+	}
+
+	if t.tsa != nil && !oneElement(t.tsa) {
+		return false
+	}
+
+	//dokimi:mutate-skip lcr-right: a malformed element stays in s, which the check that s is empty refuses
 	if t.extensions, _, ok = s.Optional(der.ContextConstructed(1)); !ok || !validExtensions(t.extensions) {
 		return false
 	}
@@ -277,6 +298,7 @@ func parseAccuracy(accuracy []byte) (time.Duration, bool) {
 // hi, and for a malformed INTEGER.
 func optionalUint(r *der.Reader, tag der.Tag, lo, hi uint64) (uint64, bool) {
 	content, present, ok := r.Optional(tag)
+	//dokimi:mutate-skip sbr-delete: a malformed element stays in r, which the check of parseAccuracy that r is empty refuses
 	if !ok {
 		return 0, false
 	}
@@ -313,20 +335,30 @@ func validExtensions(exts []byte) bool {
 	r := der.NewReader(exts)
 	for !r.Empty() {
 		ext, ok := r.Read(der.TagSequence)
+		//dokimi:mutate-skip sbr-delete: the nil content of a failed Read fails the read of its OID
 		if !ok {
 			return false
 		}
 
 		er := der.NewReader(ext)
-		if oid, ok := er.Read(der.TagOID); !ok || !der.ObjectIdentifier(oid) {
+
+		oid, ok := er.Read(der.TagOID)
+		//dokimi:mutate-skip lcr-right: a failed Read returns nil, which der.ObjectIdentifier refuses
+		if !ok || !der.ObjectIdentifier(oid) {
 			return false
 		}
 
-		if flag, present, ok := er.Optional(der.TagBoolean); !ok || present && !validBoolean(flag) {
+		flag, present, ok := er.Optional(der.TagBoolean)
+		//dokimi:mutate-skip sbr-delete: a malformed BOOLEAN stays in er, which the read of the extnValue refuses
+		if !ok {
 			return false
 		}
 
-		if _, ok := er.Read(der.TagOctetString); !ok || !er.Empty() {
+		if present && !validBoolean(flag) {
+			return false
+		}
+
+		if _, ok = er.Read(der.TagOctetString); !ok || !er.Empty() {
 			return false
 		}
 	}
@@ -353,5 +385,6 @@ func oneElement(b []byte) bool {
 func isOne(content []byte) bool {
 	v, ok := der.Uint64(content)
 
+	//dokimi:mutate-skip lcr-right: der.Uint64 returns 0 when it reports false
 	return ok && v == 1
 }

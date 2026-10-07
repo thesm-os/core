@@ -6,7 +6,8 @@ package tsp_test
 import (
 	"testing"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/expect"
 
 	"go.thesmos.sh/core/coretest/tsptest"
 	"go.thesmos.sh/core/crypto"
@@ -39,9 +40,9 @@ func TestHash(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			testkit.True(t, tt.give.OID.Equal(mustOID(tt.dotted)), "the OID must be the one of RFC 5754")
-			testkit.Equal(t, tt.give.Algorithm, tt.algorithm, "the Algorithm must name the hash in core")
-			testkit.Equal(t, tt.give.Size, tt.size, "the Size must be the size of a digest")
+			expect.Equal(t, tt.give.OID, mustOID(tt.dotted), "the OID must be the one of RFC 5754")
+			expect.Equal(t, tt.give.Algorithm, tt.algorithm, "the Algorithm must name the hash in core")
+			expect.Equal(t, tt.give.Size, tt.size, "the Size must be the size of a digest")
 		})
 	}
 
@@ -52,6 +53,6 @@ func TestHash(t *testing.T) {
 
 		renamed := tsp.Hash{OID: tsp.SHA256.OID, Algorithm: "sha-256-of-a-suite", Size: tsp.SHA256.Size}
 		_, err := v.Verify(stamp(t, a), renamed, imprint)
-		testkit.NoError(t, err, "Verify must compare the hash by its OID alone")
+		assert.NoError(t, err, "Verify must compare the hash by its OID alone")
 	})
 }

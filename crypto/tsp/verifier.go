@@ -238,6 +238,7 @@ func (v *Verifier) Verify(token []byte, h Hash, imprint crypto.Digest) (Info, er
 	}
 
 	t, ok := parseToken(token)
+	//dokimi:mutate-skip sbr-delete: the zero token has no TSTInfo, which parseTSTInfo refuses with the same ErrMalformed
 	if !ok {
 		return Info{}, ErrMalformed
 	}
@@ -414,12 +415,12 @@ func (v *Verifier) pool(certificates, leaf []byte) *x509.CertPool {
 
 	r := der.NewReader(certificates)
 	for !r.Empty() {
-		tag, element, _, ok := r.Next()
+		_, element, _, ok := r.Next()
 		if !ok {
 			break
 		}
 
-		if tag != der.TagSequence || bytes.Equal(element, leaf) {
+		if bytes.Equal(element, leaf) {
 			continue
 		}
 

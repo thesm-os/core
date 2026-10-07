@@ -4,17 +4,20 @@
 package tsp_test
 
 import (
-	"bytes"
 	"crypto/sha512"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
 	"math"
 	"math/big"
+	"slices"
 	"strings"
 	"testing"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/bench"
+	"go.dokimi.dev/assert/expect"
+	"go.dokimi.dev/assert/prop"
 
 	"go.thesmos.sh/core/crypto"
 	"go.thesmos.sh/core/crypto/tsp"
@@ -34,9 +37,19 @@ var imprint512 = crypto.NewDigest512(sha512.Sum512([]byte("the checkpoint")))
 // arcs of 1.
 var longPolicy = mustOID("1.3" + strings.Repeat(".1", 63))
 
+// imprints are the hashes of the requests that the encoding property
+// draws, each with an imprint of its size.
+var imprints = []struct {
+	hash    tsp.Hash
+	imprint crypto.Digest
+}{
+	{hash: tsp.SHA256, imprint: imprint},
+	{hash: tsp.SHA512, imprint: imprint512},
+}
+
 // timeStampReq is a TimeStampReq, RFC 3161 section 2.4.1, as encoding/asn1
-// decodes it. The cases decode the requests of AppendRequest with it and
-// encode the result again, so a second encoder checks every octet.
+// decodes it. The property decodes the requests of AppendRequest with it
+// and encodes the result again, so a second encoder checks every octet.
 type timeStampReq struct {
 	Version        int
 	MessageImprint messageImprint
@@ -52,108 +65,144 @@ type messageImprint struct {
 	HashedMessage []byte
 }
 
-func TestAppendRequest(t *testing.T) {
+func TestRequest(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name    string
-		hash    tsp.Hash
-		imprint crypto.Digest
-		nonce   uint64
-		policy  x509.OID
-	}{
-		{name: "encodes a request without a policy for the zero OID", hash: tsp.SHA256, imprint: imprint, nonce: nonce},
-		{name: "encodes the policy of a request", hash: tsp.SHA256, imprint: imprint, nonce: nonce, policy: policyID},
-		{name: "encodes a nonce of zero", hash: tsp.SHA256, imprint: imprint},
-		{name: "encodes a nonce whose top bit is set", hash: tsp.SHA512, imprint: imprint512, nonce: math.MaxUint64},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			req, err := tsp.AppendRequest(nil, tt.hash, tt.imprint, tt.nonce, tt.policy)
-			testkit.NoError(t, err, "AppendRequest must encode the request")
-
-			var got timeStampReq
-			rest, err := asn1.Unmarshal(req, &got)
-			testkit.NoError(t, err, "the request must be a TimeStampReq")
-			testkit.Len(t, rest, 0, "the request must have no octets after the TimeStampReq")
-			testkit.Equal(t, got.Version, 1, "the version must be 1")
-			testkit.True(t, got.MessageImprint.HashAlgorithm.Algorithm.Equal(asn1OID(t, tt.hash.OID)),
-				"the hashAlgorithm must be the Hash's OID")
-			testkit.Len(t, got.MessageImprint.HashAlgorithm.Parameters.FullBytes, 0,
-				"the hashAlgorithm must have no parameters")
-			testkit.Equal(
-				t,
-				got.MessageImprint.HashedMessage,
-				tt.imprint.Bytes(),
-				"the hashedMessage must be the imprint",
-			)
-			testkit.True(t, got.ReqPolicy.Equal(asn1OID(t, tt.policy)), "the reqPolicy must be the policy")
-			testkit.Equal(t, got.Nonce.Uint64(), tt.nonce, "the nonce must be the caller's")
-			testkit.True(t, got.CertReq, "certReq must be TRUE")
-			testkit.Len(t, got.Extensions, 0, "the request must have no extensions")
-
-			again, err := asn1.Marshal(got)
-			testkit.NoError(t, err, "the decoded request must encode")
-			testkit.Equal(t, req, again, "the request must be the one DER encoding of its value")
-		})
-	}
-
-	t.Run("appends the request to dst", func(t *testing.T) {
+	t.Run("AppendRequest", func(t *testing.T) {
 		t.Parallel()
-		prefix := []byte("prefix")
-		req, err := tsp.AppendRequest(bytes.Clone(prefix), tsp.SHA256, imprint, nonce, x509.OID{})
-		testkit.NoError(t, err, "AppendRequest must encode the request")
-		testkit.True(t, bytes.HasPrefix(req, prefix), "the request must follow the octets of dst")
-		testkit.Equal(t, req[len(prefix):], request(t), "the octets after dst must be the request")
-	})
 
-	t.Run("encodes the largest request in its room", func(t *testing.T) {
-		t.Parallel()
-		req, err := tsp.AppendRequest(nil, tsp.SHA512, imprint512, math.MaxUint64, longPolicy)
-		testkit.NoError(t, err, "AppendRequest must encode the request")
-		testkit.Len(t, req, largestRequest, "the largest request must fill its room exactly")
-	})
-
-	refused := []struct {
-		name    string
-		hash    tsp.Hash
-		imprint crypto.Digest
-	}{
-		{
-			name:    "returns ErrHash for a Hash without an OID",
-			hash:    tsp.Hash{Size: crypto.DigestSize256},
-			imprint: imprint,
-		},
-		{name: "returns ErrHash for an imprint of another size than the Hash's", hash: tsp.SHA384, imprint: imprint},
-	}
-	for _, tt := range refused {
-		t.Run(tt.name, func(t *testing.T) {
+		t.Run("returns the one DER encoding of the TimeStampReq", func(t *testing.T) {
 			t.Parallel()
-			dst := []byte("dst")
-			got, err := tsp.AppendRequest(dst, tt.hash, tt.imprint, nonce, x509.OID{})
-			testkit.ErrorIs(t, err, tsp.ErrHash, "AppendRequest must refuse the imprint")
-			testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrHash must classify as Invalid")
-			testkit.Equal(t, got, dst, "AppendRequest must return dst unchanged")
+			prop.ForAll(t, "AppendRequest must encode each field of the request in DER", func(c *prop.Case) {
+				p := c.Draw(prop.SampledFrom(imprints...), "hash")
+				policy := c.Draw(prop.SampledFrom(x509.OID{}, policyID, longPolicy), "policy")
+				n := c.Draw(prop.Integer[uint64](0, math.MaxUint64), "nonce")
+
+				req, err := tsp.AppendRequest(nil, p.hash, p.imprint, n, policy)
+				assert.NoError(c, err, "AppendRequest must encode the request")
+
+				var got timeStampReq
+				rest, err := asn1.Unmarshal(req, &got)
+				assert.NoError(c, err, "the request must be a TimeStampReq")
+				assert.Empty(c, rest, "the request must have no octets after the TimeStampReq")
+				assert.Equal(c, got.Version, 1, "the version must be 1")
+				assert.Equal(c, got.MessageImprint.HashAlgorithm.Algorithm, asn1OID(c, p.hash.OID),
+					"the hashAlgorithm must be the OID of the Hash")
+				assert.Empty(c, got.MessageImprint.HashAlgorithm.Parameters.FullBytes,
+					"the hashAlgorithm must have no parameters")
+				assert.Equal(c, got.MessageImprint.HashedMessage, p.imprint.Bytes(),
+					"the hashedMessage must be the imprint")
+				assert.Equal(c, got.ReqPolicy, asn1OID(c, policy), "the reqPolicy must be the policy")
+				assert.NotNil(c, got.Nonce, "the request must have a nonce")
+				assert.Equal(c, got.Nonce.Uint64(), n, "the nonce must be the nonce of the caller")
+				assert.True(c, got.CertReq, "certReq must be TRUE")
+				assert.Empty(c, got.Extensions, "the request must have no extensions")
+
+				again, err := asn1.Marshal(got)
+				assert.NoError(c, err, "the decoded request must encode")
+				assert.Equal(c, req, again, "the request must be the one DER encoding of its value")
+			})
 		})
-	}
+
+		t.Run("appends the request to dst", func(t *testing.T) {
+			t.Parallel()
+			want := request(t)
+			prop.ForAll(t, "AppendRequest must keep dst and append the request", func(c *prop.Case) {
+				dst := c.Draw(prop.Bytes(prop.MaxSize(16)), "dst")
+				prefix := slices.Clone(dst)
+
+				got, err := tsp.AppendRequest(dst, tsp.SHA256, imprint, nonce, x509.OID{})
+				assert.NoError(c, err, "AppendRequest must encode the request")
+				assert.Equal(c, got, slices.Concat(prefix, want), "the request must follow the octets of dst")
+			})
+		})
+
+		t.Run("returns the largest request in its room", func(t *testing.T) {
+			t.Parallel()
+			req, err := tsp.AppendRequest(nil, tsp.SHA512, imprint512, math.MaxUint64, longPolicy)
+			assert.NoError(t, err, "AppendRequest must encode the request")
+			assert.Length(t, req, largestRequest, "the largest request must fill its room exactly")
+		})
+
+		refused := []struct {
+			name    string
+			hash    tsp.Hash
+			imprint crypto.Digest
+		}{
+			{
+				name:    "returns ErrHash for a Hash without an OID",
+				hash:    tsp.Hash{Size: crypto.DigestSize256},
+				imprint: imprint,
+			},
+			{
+				name:    "returns ErrHash for an imprint of another size than the Hash's",
+				hash:    tsp.SHA384,
+				imprint: imprint,
+			},
+		}
+		for _, tt := range refused {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				got, err := tsp.AppendRequest([]byte("dst"), tt.hash, tt.imprint, nonce, x509.OID{})
+				expect.ErrorIs(t, err, tsp.ErrHash, "AppendRequest must refuse the imprint")
+				expect.Equal(t, errs.Classify(err), errs.Invalid, "ErrHash must classify as Invalid")
+				expect.Equal(t, got, []byte("dst"), "AppendRequest must return dst unchanged")
+			})
+		}
+	})
 }
 
-func BenchmarkAppendRequest(b *testing.B) {
-	dst := make([]byte, 0, largestRequest)
-	tspAllocs(b, 0, func() {
-		sinkBytes, errSink = tsp.AppendRequest(dst[:0], tsp.SHA512, imprint512, math.MaxUint64, longPolicy)
+// TestRequestAllocs checks the allocation contract of AppendRequest.
+// MaxAllocs counts the allocations of the whole process, so the test does
+// not run in parallel.
+//
+//nolint:paralleltest // see above
+func TestRequestAllocs(t *testing.T) {
+	t.Run("AppendRequest", func(t *testing.T) {
+		dst := make([]byte, 0, largestRequest)
+
+		var (
+			got []byte
+			err error
+		)
+		expect.MaxAllocs(t, func() {
+			got, err = tsp.AppendRequest(dst[:0], tsp.SHA512, imprint512, math.MaxUint64, longPolicy)
+		}, 0, "AppendRequest must not allocate when dst has room for the request")
+		assert.NoError(t, err, "the test must measure a request that encodes")
+		assert.Length(t, got, largestRequest, "the test must measure the largest request")
 	})
-	testkit.NoError(b, errSink, "the benchmark must measure a request that encodes")
-	testkit.Len(b, sinkBytes, largestRequest, "the benchmark must measure the largest request")
+}
+
+// BenchmarkRequest reports the cost of AppendRequest into a slice with
+// room, and fails when it allocates.
+func BenchmarkRequest(b *testing.B) {
+	b.Run("AppendRequest", func(b *testing.B) {
+		dst := make([]byte, 0, largestRequest)
+
+		var (
+			got []byte
+			err error
+		)
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			got, err = tsp.AppendRequest(dst[:0], tsp.SHA512, imprint512, math.MaxUint64, longPolicy)
+		}
+
+		assert.NoError(b, err, "the benchmark must measure a request that encodes")
+		assert.Length(b, got, largestRequest, "the benchmark must measure the largest request")
+	})
 }
 
 // asn1OID returns oid as an encoding/asn1 identifier, nil for the zero OID.
-func asn1OID(tb testing.TB, oid x509.OID) asn1.ObjectIdentifier {
+// It fails tb when oid does not convert.
+func asn1OID(tb assert.TB, oid x509.OID) asn1.ObjectIdentifier {
 	tb.Helper()
 
 	content, err := oid.AppendBinary(nil)
-	testkit.NoError(tb, err, "the OID must encode")
+	assert.NoError(tb, err, "the OID must encode")
 
 	if len(content) == 0 {
 		return nil
@@ -161,7 +210,7 @@ func asn1OID(tb testing.TB, oid x509.OID) asn1.ObjectIdentifier {
 
 	var id asn1.ObjectIdentifier
 	_, err = asn1.Unmarshal(append([]byte{0x06, byte(len(content))}, content...), &id)
-	testkit.NoError(tb, err, "the OID must decode")
+	assert.NoError(tb, err, "the OID must decode")
 
 	return id
 }

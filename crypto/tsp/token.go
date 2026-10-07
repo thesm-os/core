@@ -68,6 +68,7 @@ func parseToken(b []byte) (token, bool) {
 	r := der.NewReader(b)
 
 	ci, ok := r.Read(der.TagSequence)
+	//dokimi:mutate-skip lcr-right: a failed Read leaves r unchanged, and the nil content of an empty r fails the read of its OID
 	if !ok || !r.Empty() {
 		return token{}, false
 	}
@@ -75,11 +76,13 @@ func parseToken(b []byte) (token, bool) {
 	cr := der.NewReader(ci)
 
 	ct, ok := cr.Read(der.TagOID)
+	//dokimi:mutate-skip lcr-right: a failed Read returns nil, which differs from oidSignedData
 	if !ok || !bytes.Equal(ct, oidSignedData) {
 		return token{}, false
 	}
 
 	explicit, ok := cr.Read(der.ContextConstructed(0))
+	//dokimi:mutate-skip lcr-right: a failed Read leaves cr unchanged, and the nil content of an empty cr fails the read of its SignedData
 	if !ok || !cr.Empty() {
 		return token{}, false
 	}
@@ -87,6 +90,7 @@ func parseToken(b []byte) (token, bool) {
 	er := der.NewReader(explicit)
 
 	sd, ok := er.Read(der.TagSequence)
+	//dokimi:mutate-skip lcr-right: a failed Read leaves er unchanged, and parseSignedData refuses the nil content of an empty er
 	if !ok || !er.Empty() {
 		return token{}, false
 	}
@@ -101,6 +105,7 @@ func parseSignedData(sd []byte) (token, bool) {
 	var t token
 
 	r := der.NewReader(sd)
+	//dokimi:mutate-skip lcr-right: a failed Read returns nil, which der.Integer refuses
 	if version, ok := r.Read(der.TagInteger); !ok || !der.Integer(version) {
 		return token{}, false
 	}
@@ -110,6 +115,7 @@ func parseSignedData(sd []byte) (token, bool) {
 	}
 
 	encap, ok := r.Read(der.TagSequence)
+	//dokimi:mutate-skip sbr-delete: a failed Read returns nil, which parseEncapsulated refuses
 	if !ok {
 		return token{}, false
 	}
@@ -127,6 +133,7 @@ func parseSignedData(sd []byte) (token, bool) {
 	}
 
 	signers, ok := r.Read(der.TagSet)
+	//dokimi:mutate-skip lcr-right: a failed Read leaves r unchanged, and the nil content of an empty r fails the read of its SignerInfo
 	if !ok || !r.Empty() {
 		return token{}, false
 	}
@@ -134,6 +141,7 @@ func parseSignedData(sd []byte) (token, bool) {
 	sr := der.NewReader(signers)
 
 	si, ok := sr.Read(der.TagSequence)
+	//dokimi:mutate-skip lcr-right: a failed Read leaves sr unchanged, and parseSignerInfo refuses the nil content of an empty sr
 	if !ok || !sr.Empty() {
 		return token{}, false
 	}
@@ -150,11 +158,13 @@ func parseSignedData(sd []byte) (token, bool) {
 // id-ct-TSTInfo and its eContent is a primitive OCTET STRING.
 func parseEncapsulated(encap []byte) ([]byte, bool) {
 	r := der.NewReader(encap)
+	//dokimi:mutate-skip lcr-right: a failed Read returns nil, which differs from oidTSTInfo
 	if ct, ok := r.Read(der.TagOID); !ok || !bytes.Equal(ct, oidTSTInfo) {
 		return nil, false
 	}
 
 	explicit, ok := r.Read(der.ContextConstructed(0))
+	//dokimi:mutate-skip lcr-right: a failed Read leaves r unchanged, and the nil content of an empty r fails the read of its eContent
 	if !ok || !r.Empty() {
 		return nil, false
 	}
@@ -162,6 +172,7 @@ func parseEncapsulated(encap []byte) ([]byte, bool) {
 	er := der.NewReader(explicit)
 
 	content, ok := er.Read(der.TagOctetString)
+	//dokimi:mutate-skip lcr-right: a failed Read leaves er unchanged, and parseTSTInfo refuses the nil content of an empty er
 	if !ok || !er.Empty() {
 		return nil, false
 	}
@@ -176,6 +187,7 @@ func parseSignerInfo(si []byte) (signerInfo, bool) {
 	var s signerInfo
 
 	r := der.NewReader(si)
+	//dokimi:mutate-skip lcr-right: a failed Read returns nil, which der.Integer refuses
 	if version, ok := r.Read(der.TagInteger); !ok || !der.Integer(version) {
 		return signerInfo{}, false
 	}
@@ -205,6 +217,7 @@ func parseSignerInfo(si []byte) (signerInfo, bool) {
 		return signerInfo{}, false
 	}
 
+	//dokimi:mutate-skip lcr-right: a malformed element stays in r, which the check that r is empty refuses
 	if _, _, ok = r.Optional(der.ContextConstructed(1)); !ok || !r.Empty() {
 		return signerInfo{}, false
 	}
@@ -221,7 +234,13 @@ func parseIssuerAndSerial(ias []byte) (issuer, serial []byte, ok bool) {
 		return nil, nil, false
 	}
 
-	if serial, ok = r.Read(der.TagInteger); !ok || !der.Integer(serial) || !r.Empty() {
+	serial, ok = r.Read(der.TagInteger)
+	//dokimi:mutate-skip lcr-right: a failed Read returns nil, which der.Integer refuses
+	if !ok || !der.Integer(serial) {
+		return nil, nil, false
+	}
+
+	if !r.Empty() {
 		return nil, nil, false
 	}
 
@@ -232,6 +251,7 @@ func parseIssuerAndSerial(ias []byte) (issuer, serial []byte, ok bool) {
 // and, optionally, one element of parameters.
 func readAlgorithm(r *der.Reader) (algorithmIdentifier, bool) {
 	seq, ok := r.Read(der.TagSequence)
+	//dokimi:mutate-skip sbr-delete: a failed Read returns nil, which parseAlgorithm refuses
 	if !ok {
 		return algorithmIdentifier{}, false
 	}
@@ -246,11 +266,13 @@ func parseAlgorithm(seq []byte) (algorithmIdentifier, bool) {
 	r := der.NewReader(seq)
 
 	var ok bool
+	//dokimi:mutate-skip lcr-right: a failed Read returns nil, which der.ObjectIdentifier refuses
 	if a.oid, ok = r.Read(der.TagOID); !ok || !der.ObjectIdentifier(a.oid) {
 		return algorithmIdentifier{}, false
 	}
 
 	if !r.Empty() {
+		//dokimi:mutate-skip lcr-right: a failed Next reads nothing, so r is not empty
 		if _, a.params, _, ok = r.Next(); !ok || !r.Empty() {
 			return algorithmIdentifier{}, false
 		}

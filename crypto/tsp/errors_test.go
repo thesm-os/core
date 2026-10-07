@@ -6,7 +6,8 @@ package tsp_test
 import (
 	"testing"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/expect"
 
 	"go.thesmos.sh/core/crypto/tsp"
 	"go.thesmos.sh/core/errs"
@@ -24,7 +25,7 @@ func TestStatusError(t *testing.T) {
 			want string
 		}{
 			{
-				name: "returns the status, the failure bits and the text",
+				name: "returns every field for an error with every field set",
 				give: tsp.StatusError{
 					Status:   tsp.StatusRejection,
 					FailInfo: 1 << tsp.FailTimeNotAvailable,
@@ -33,17 +34,17 @@ func TestStatusError(t *testing.T) {
 				want: "tsp: authority returned status 2, failure bits 0x4000: time source unavailable",
 			},
 			{
-				name: "returns the status alone without failure bits or text",
+				name: "returns the status alone for an error that has only a status",
 				give: tsp.StatusError{Status: tsp.StatusWaiting},
 				want: "tsp: authority returned status 3",
 			},
 			{
-				name: "returns the failure bits without text",
+				name: "returns the failure bits for an error without text",
 				give: tsp.StatusError{Status: tsp.StatusRejection, FailInfo: 1 << tsp.FailBadAlg},
 				want: "tsp: authority returned status 2, failure bits 0x1",
 			},
 			{
-				name: "returns the text without failure bits",
+				name: "returns the text for an error without failure bits",
 				give: tsp.StatusError{Status: tsp.StatusRejection, Text: "no"},
 				want: "tsp: authority returned status 2: no",
 			},
@@ -51,7 +52,7 @@ func TestStatusError(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-				testkit.Equal(t, tt.give.Error(), tt.want, "Error must describe the status")
+				assert.Equal(t, tt.give.Error(), tt.want, "Error must describe the status")
 			})
 		}
 	})
@@ -111,8 +112,8 @@ func TestStatusError(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-				testkit.Equal(t, tt.give.Class(), tt.want, "Class must classify the status")
-				testkit.Equal(t, errs.Classify(&tt.give), tt.want, "errs.Classify must use Class")
+				expect.Equal(t, tt.give.Class(), tt.want, "Class must classify the status")
+				expect.Equal(t, errs.Classify(&tt.give), tt.want, "errs.Classify must use Class")
 			})
 		}
 	})
