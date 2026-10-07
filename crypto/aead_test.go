@@ -179,8 +179,9 @@ func TestAEAD(t *testing.T) {
 			copy(forged[2:2+len(nameA)], nameB)
 
 			_, err = crypto.Open(relabelled{AEAD: a, name: nameB}, forged, nil)
-			assert.HasError(t, err, "a rewritten algorithm must not authenticate")
-			assert.ErrorIsNot(t, err, crypto.ErrAlgorithmMismatch, "only the tag must refuse the rewrite")
+			assert.That(t, err).
+				HasError("a rewritten algorithm must not authenticate").
+				ErrorIsNot(crypto.ErrAlgorithmMismatch, "only the tag must refuse the rewrite")
 		})
 
 		// An independently rebuilt frame opens what Seal produced, so a
@@ -217,13 +218,10 @@ func TestAEAD(t *testing.T) {
 
 		// A deterministic source repeats the nonce, the hazard that the
 		// docblock of Seal names.
-		t.Run("returns the same envelope twice for a constant source", func(t *testing.T) {
+		t.Run("returns the same envelope on every call for a constant source", func(t *testing.T) {
 			t.Parallel()
-			first, err := crypto.Seal(a, constant.New(1), []byte("payload"), nil)
-			assert.NoError(t, err, "Seal must succeed")
-			second, err := crypto.Seal(a, constant.New(1), []byte("payload"), nil)
-			assert.NoError(t, err, "Seal must succeed")
-			assert.Equal(t, first, second, "a constant source must repeat the nonce")
+			assert.Deterministic(t, func(p []byte) ([]byte, error) { return crypto.Seal(a, constant.New(1), p, nil) },
+				[]byte("payload"), "a constant source must repeat the nonce")
 		})
 
 		// A nil source panics on its first read, so a call that returns
@@ -231,11 +229,9 @@ func TestAEAD(t *testing.T) {
 		t.Run("reads no source for an AEAD with a module nonce", func(t *testing.T) {
 			t.Parallel()
 			m := newModuleNonceAEAD(t)
-			sealed, err := crypto.Seal(m, nil, []byte("payload"), []byte("aad"))
-			assert.NoError(t, err, "Seal must not read a source")
-			opened, err := crypto.Open(m, sealed, []byte("aad"))
-			assert.NoError(t, err, "Open must open the envelope")
-			assert.Equal(t, opened, []byte("payload"), "Open must recover the plaintext")
+			assert.RoundTrip(t, func(p []byte) ([]byte, error) { return crypto.Seal(m, nil, p, []byte("aad")) },
+				func(sealed []byte) ([]byte, error) { return crypto.Open(m, sealed, []byte("aad")) },
+				[]byte("payload"), "Open must recover the plaintext that Seal sealed without a source")
 		})
 	})
 
@@ -304,16 +300,18 @@ func TestAEAD(t *testing.T) {
 		t.Run("returns an error of the AEAD for a nonce without a body", func(t *testing.T) {
 			t.Parallel()
 			_, err := crypto.Open(a, sealed[:header+a.NonceSize()], []byte("aad"))
-			assert.HasError(t, err, "a nonce without a tag must fail")
-			assert.ErrorIsNot(t, err, crypto.ErrCiphertextShort, "a nonce of full length must not be a size error")
+			assert.That(t, err).
+				HasError("a nonce without a tag must fail").
+				ErrorIsNot(crypto.ErrCiphertextShort, "a nonce of full length must not be a size error")
 		})
 
 		t.Run("returns an error of the AEAD for other associated data", func(t *testing.T) {
 			t.Parallel()
 			_, err := crypto.Open(a, sealed, []byte("other"))
 			assert.HasError(t, err, "associated data must be authenticated")
-			expect.ErrorIsNot(t, err, crypto.ErrCiphertextShort, "the failure must not be a size error")
-			expect.ErrorIsNot(t, err, crypto.ErrAlgorithmMismatch, "the failure must not be a name error")
+			expect.That(t, err).
+				ErrorIsNot(crypto.ErrCiphertextShort, "the failure must not be a size error").
+				ErrorIsNot(crypto.ErrAlgorithmMismatch, "the failure must not be a name error")
 		})
 
 		// The pre-envelope framing is a nonce and a ciphertext without a

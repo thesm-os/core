@@ -871,11 +871,12 @@ func TestChunkFIPSOnlyMode(t *testing.T) {
 		t.Parallel()
 		a := newModuleNonceAEAD(t)
 		h := newHeader(t)
-		msg := bytes.Repeat([]byte{0x5A}, 3*testChunkSize+5)
+		assert.RoundTrip(t, func(msg []byte) ([][]byte, error) { return sealMessage(t, a, h, msg, chunkAAD), nil },
+			func(chunks [][]byte) ([]byte, error) {
+				msg, _, err := openMessage(a, h, chunks, chunkAAD)
 
-		got, _, err := openMessage(a, h, sealMessage(t, a, h, msg, chunkAAD), chunkAAD)
-		assert.NoError(t, err, "every chunk must open in FIPS 140-only mode")
-		assert.Equal(t, got, msg, "the chunks must open to the message")
+				return msg, err
+			}, bytes.Repeat([]byte{0x5A}, 3*testChunkSize+5), "the chunks must open to the message in FIPS 140-only mode")
 	})
 }
 
