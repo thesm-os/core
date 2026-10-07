@@ -215,12 +215,12 @@ func TestAESGCM(t *testing.T) {
 				if c.name == constructors[0].name {
 					other = constructors[1].build
 				}
-				sealed, err := crypto.Seal(mustBuild(t, c.build, testKey256), randcrypto.New(),
-					[]byte("payload"), []byte("aad"))
-				assert.NoError(t, err, "Seal must succeed")
-				opened, err := crypto.Open(mustBuild(t, other, testKey256), sealed, []byte("aad"))
-				assert.NoError(t, err, "the other constructor must open the envelope")
-				assert.Equal(t, opened, []byte("payload"), "Open must recover the plaintext")
+				sealer, opener := mustBuild(t, c.build, testKey256), mustBuild(t, other, testKey256)
+				assert.RoundTrip(t, func(p []byte) ([]byte, error) {
+					return crypto.Seal(sealer, randcrypto.New(), p, []byte("aad"))
+				}, func(sealed []byte) ([]byte, error) {
+					return crypto.Open(opener, sealed, []byte("aad"))
+				}, []byte("payload"), "the other constructor must open the envelope to its plaintext")
 			})
 
 			t.Run("returns an AEAD that opens the envelopes that goroutines seal at once", func(t *testing.T) {
@@ -329,13 +329,9 @@ func TestFIPSOnlyMode(t *testing.T) {
 	t.Run("NewRandomNonce seals and opens", func(t *testing.T) {
 		t.Parallel()
 		a := mustBuild(t, aesgcm.NewRandomNonce, testKey256)
-
-		sealed, err := crypto.Seal(a, nil, []byte("payload"), nil)
-		assert.NoError(t, err, "Seal must succeed without a random source")
-
-		opened, err := crypto.Open(a, sealed, nil)
-		assert.NoError(t, err, "Open must succeed on the output of Seal")
-		assert.Equal(t, opened, []byte("payload"), "Open must recover the plaintext")
+		assert.RoundTrip(t, func(p []byte) ([]byte, error) { return crypto.Seal(a, nil, p, nil) },
+			func(sealed []byte) ([]byte, error) { return crypto.Open(a, sealed, nil) },
+			[]byte("payload"), "Open must recover the plaintext that Seal sealed without a random source")
 	})
 }
 
