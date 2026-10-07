@@ -4,147 +4,107 @@
 package page_test
 
 import (
-	"context"
 	"testing"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/bench"
+	"go.dokimi.dev/assert/expect"
+	"go.dokimi.dev/assert/prop"
 
 	"go.thesmos.sh/core/page"
 )
 
+// MapCursor is an alias of a SliceCursor over Entry values, so TestSliceCursor
+// covers its methods. TestMapCursor covers what NewMapCursor adds.
 func TestMapCursor(t *testing.T) {
 	t.Parallel()
 
-	t.Run("yields every entry exactly once with no error", func(t *testing.T) {
+	t.Run("NewMapCursor", func(t *testing.T) {
 		t.Parallel()
-		entries := []page.Entry[string, int]{
-			{Key: "a", Value: 1},
-			{Key: "b", Value: 2},
-			{Key: "c", Value: 3},
-		}
-		c := page.NewMapCursor(entries, "")
-		var got []page.Entry[string, int]
-		for e, err := range c.Seq(t.Context()) {
-			testkit.NoError(t, err, "iteration must not error")
-			got = append(got, e)
-		}
-		testkit.Equal(t, got, entries, "Seq must yield every entry in order")
-	})
 
-	t.Run("empty entries yield nothing without error", func(t *testing.T) {
-		t.Parallel()
-		c := page.NewMapCursor[string, int](nil, "")
-		count := 0
-		for _, err := range c.Seq(t.Context()) {
-			testkit.NoError(t, err, "empty Seq must not error")
-			count++
-		}
-		testkit.Equal(t, count, 0, "empty cursor must yield nothing")
-	})
+		t.Run("returns a cursor over the entries in order", func(t *testing.T) {
+			t.Parallel()
+			prop.Equal(t, func(entries []page.Entry[string, int]) []page.Entry[string, int] {
+				got := make([]page.Entry[string, int], 0, len(entries))
+				for e, err := range page.NewMapCursor(entries, "").Seq(t.Context()) {
+					if err != nil {
+						return nil
+					}
+					got = append(got, e)
+				}
 
-	t.Run("NextPage returns the configured token", func(t *testing.T) {
-		t.Parallel()
-		final := page.NewMapCursor[string, int](nil, "")
-		testkit.Equal(t, final.NextPage(), "", "NextPage on final cursor must be empty")
-		more := page.NewMapCursor([]page.Entry[string, int]{{Key: "x"}}, "next")
-		testkit.Equal(t, more.NextPage(), "next", "NextPage must return the configured token")
-	})
+				return got
+			}, func(entries []page.Entry[string, int]) []page.Entry[string, int] { return entries },
+				"the cursor must yield the entries in order and no error", assert.EquateEmpty(),
+				prop.Example([]page.Entry[string, int]{{Key: "a", Value: 1}, {Key: "b", Value: 2}}))
+		})
 
-	t.Run("Close returns nil and is idempotent", func(t *testing.T) {
-		t.Parallel()
-		c := page.NewMapCursor([]page.Entry[string, int]{{Key: "a", Value: 1}}, "")
-		testkit.NoError(t, c.Close(), "first Close must succeed")
-		testkit.NoError(t, c.Close(), "second Close must succeed (idempotent)")
-	})
+		t.Run("returns a cursor whose NextPage is the token", func(t *testing.T) {
+			t.Parallel()
+			prop.Equal(t, func(token string) string { return page.NewMapCursor[string, int](nil, token).NextPage() },
+				func(token string) string { return token }, "NextPage must return the token it was given",
+				prop.Example(""), prop.Example("next"))
+		})
 
-	t.Run("early break stops iteration", func(t *testing.T) {
-		t.Parallel()
-		entries := []page.Entry[string, int]{
-			{Key: "a", Value: 1},
-			{Key: "b", Value: 2},
-			{Key: "c", Value: 3},
-			{Key: "d", Value: 4},
-			{Key: "e", Value: 5},
-		}
-		c := page.NewMapCursor(entries, "")
-		count := 0
-		for e, err := range c.Seq(t.Context()) {
-			testkit.NoError(t, err, "iteration must not error")
-			count++
-			if e.Value == 2 {
-				break
+		t.Run("returns a cursor over entries of any key and value types", func(t *testing.T) {
+			t.Parallel()
+			entries := []page.Entry[int, []byte]{{Key: 1, Value: []byte("hello")}, {Key: 2, Value: []byte("world")}}
+			var got []page.Entry[int, []byte]
+			for e, err := range page.NewMapCursor(entries, "").Seq(t.Context()) {
+				assert.NoError(t, err, "the iteration must not fail")
+				got = append(got, e)
 			}
-		}
-		testkit.Equal(t, count, 2, "early break must stop iteration")
-	})
-
-	t.Run("cancelled context yields ctx.Err and stops", func(t *testing.T) {
-		t.Parallel()
-		ctx, cancel := context.WithCancel(t.Context())
-		cancel()
-		c := page.NewMapCursor([]page.Entry[string, int]{
-			{Key: "a", Value: 1},
-			{Key: "b", Value: 2},
-		}, "")
-		var sawErr error
-		count := 0
-		for e, err := range c.Seq(ctx) {
-			count++
-			if err != nil {
-				sawErr = err
-				_ = e
-				break
-			}
-		}
-		testkit.ErrorIs(t, sawErr, context.Canceled,
-			"cancelled context must surface context.Canceled")
-		testkit.Equal(t, count, 1,
-			"cancelled context must yield exactly one (entry, err) pair before stopping")
-	})
-
-	t.Run("works with non-string K and V types", func(t *testing.T) {
-		t.Parallel()
-		entries := []page.Entry[int, []byte]{
-			{Key: 1, Value: []byte("hello")},
-			{Key: 2, Value: []byte("world")},
-		}
-		c := page.NewMapCursor(entries, "")
-		var seen int
-		for e, err := range c.Seq(t.Context()) {
-			testkit.NoError(t, err, "iteration must not error")
-			seen++
-			_ = e.Key
-			_ = e.Value
-		}
-		testkit.Equal(t, seen, 2, "must yield every entry regardless of K/V types")
+			assert.Equal(t, got, entries, "the cursor must yield every entry")
+		})
 	})
 }
 
+// TestMapCursorAllocs checks that NewMapCursor allocates only the cursor.
+// MaxAllocs counts the allocations of the whole process, so the test does
+// not run in parallel.
+//
+//nolint:paralleltest // see above
+func TestMapCursorAllocs(t *testing.T) {
+	t.Run("NewMapCursor", func(t *testing.T) {
+		entries := make([]page.Entry[string, int], 64)
+
+		var got *page.MapCursor[string, int]
+		expect.MaxAllocs(t, func() { got = page.NewMapCursor(entries, "") }, 1,
+			"NewMapCursor must allocate only the cursor")
+		assert.NotNil(t, got, "the test must measure a cursor")
+	})
+}
+
+// BenchmarkMapCursor reports the cost of a whole pass over a cursor of
+// entries, and fails when the pass allocates more than the cursor.
 func BenchmarkMapCursor(b *testing.B) {
-	for _, sz := range []struct {
-		name string
-		n    int
-	}{
-		{"16", 16},
-		{"256", 256},
-		{"4K", 4096},
-	} {
-		b.Run(sz.name, func(b *testing.B) {
-			entries := make([]page.Entry[string, int], sz.n)
+	for _, size := range sizes {
+		b.Run(size.name, func(b *testing.B) {
+			entries := make([]page.Entry[string, int], size.n)
 			for i := range entries {
 				entries[i] = page.Entry[string, int]{Key: "k", Value: i}
 			}
 			ctx := b.Context()
-			b.ReportAllocs()
-			for b.Loop() {
-				c := page.NewMapCursor(entries, "")
-				for _, err := range c.Seq(ctx) {
-					if err != nil {
-						b.Fatal(err)
-					}
+
+			var (
+				n   int
+				err error
+			)
+
+			c := bench.Start(b).MaxAllocs(1)
+			defer c.End()
+
+			for c.Loop() {
+				cur := page.NewMapCursor(entries, "")
+				n = 0
+				for range cur.Seq(ctx) {
+					n++
 				}
-				_ = c.Close()
+				err = cur.Close()
 			}
+
+			assert.NoError(b, err, "the benchmark must measure a Close that succeeds")
+			assert.Equal(b, n, size.n, "the benchmark must measure every entry")
 		})
 	}
 }
