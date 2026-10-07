@@ -554,7 +554,9 @@ func TestMap(t *testing.T) {
 			m, _ := filled(big)
 			n := 0
 			for range m.All() {
-				n++
+				if n++; n > 1 {
+					break
+				}
 				m.Reset()
 			}
 			assert.Equal(t, n, 1, "the iteration must end once the map is empty")
@@ -1453,12 +1455,19 @@ func firstPairs(seq iter.Seq2[int, int], n int) []int {
 // sets the key 3 behind, and clones m. The test fails unless the iteration
 // yields its keys in order, yields every key set ahead, and yields no key
 // deleted ahead or set behind.
+//
+// An iteration in order yields each key of m and each key set ahead once,
+// which is at most twice the keys of m. The loop stops after one key more,
+// so an iteration that yields keys again fails in bounded memory.
 func requireWrites(tb testing.TB, m *btree.Map[int, int], seq iter.Seq2[int, int], ahead int) {
 	tb.Helper()
+	bound := 2 * m.Len()
 	var yielded []int
 	seen, setAhead, deleted := map[int]bool{}, map[int]bool{}, map[int]bool{}
 	for k := range seq {
-		yielded = append(yielded, k)
+		if yielded = append(yielded, k); len(yielded) > bound {
+			break
+		}
 		seen[k] = true
 		if k%6 != 0 {
 			continue
@@ -1472,6 +1481,7 @@ func requireWrites(tb testing.TB, m *btree.Map[int, int], seq iter.Seq2[int, int
 	}
 	assert.Pairwise(tb, yielded, func(earlier, later int) bool { return (later-earlier)*ahead > 0 },
 		"each key must be past the key before it")
+	assert.InRange(tb, len(yielded), 0, float64(bound), "the iteration must yield each key once")
 	var missing, unexpected []int
 	for k := range setAhead {
 		if !seen[k] {
@@ -1488,12 +1498,15 @@ func requireWrites(tb testing.TB, m *btree.Map[int, int], seq iter.Seq2[int, int
 }
 
 // requireEnds fails the test unless a loop over seq that clears m ends after
-// one key.
+// one key. The loop stops at the second key, so an iteration that goes on
+// fails at once.
 func requireEnds(tb testing.TB, m *btree.Map[int, int], seq iter.Seq2[int, int]) {
 	tb.Helper()
 	n := 0
 	for range seq {
-		n++
+		if n++; n > 1 {
+			break
+		}
 		m.Clear()
 	}
 	assert.Equal(tb, n, 1, "the iteration must end once the map is empty")
