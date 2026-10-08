@@ -105,7 +105,8 @@ The excerpt leaves out the other levels of both functions.
   process. `go test` runs it, so CI checks the ceiling on every change.
 - `MaxAllocs` counts 100 calls with `GOMAXPROCS` at 1, and rounds the
   mean to the nearest whole number. It checks no ceiling under the race
-  detector.
+  detector, or in a run whose result `go test` can cache, such as a
+  plain `go test ./...`. Run `go test -count=1` to check the ceilings.
 - Build the inputs before the measured function, and assert on its
   result afterwards. The assertion keeps the call from being optimised
   away, and fails a measurement of an error path.
