@@ -782,8 +782,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   signatures encode.
 - Core's production code imports `go.thesmos.sh/kanon` and
   `go.thesmos.sh/kanon/wire` at the pseudo-version of kanon's commit
-  55eb987, and its tests import kanon's conformance suite and
-  `go.dokimi.dev/assert`. The generated files declare version 2 of the
+  47ccacd, and its tests import kanon's conformance suite and
+  `go.dokimi.dev/assert`. The generated files declare version 3 of the
   generator. CI checks that the generated files are current and that a
   pull request keeps every recorded field number. See ADR-0035.
 - The hand-written tests assert with `go.dokimi.dev/assert` instead of
