@@ -26,6 +26,10 @@ const (
 
 	// measuredPath is the path of the allocation tests and the benchmarks.
 	measuredPath = "tile/4/x001/x234/067.p/1"
+
+	// measuredPrefix is the prefix of the concatenation of the allocation
+	// tests and the benchmarks.
+	measuredPrefix = "log/"
 )
 
 // paths are tiles and the paths of C2SP tlog-tiles that name them.
@@ -204,15 +208,31 @@ func TestTileAllocs(t *testing.T) {
 	tile := tlog.Tile{Level: 4, Index: 1234067, Width: 1}
 
 	t.Run("Path", func(t *testing.T) {
-		var got string
-		expect.MaxAllocs(t, func() { got = tile.Path() }, 1, "Path must allocate the path alone")
-		assert.Equal(t, got, measuredPath, "the test must measure the path of the tile")
+		t.Run("the path", func(t *testing.T) {
+			var got string
+			expect.MaxAllocs(t, func() { got = tile.Path() }, 1, "Path must allocate the path alone")
+			assert.Equal(t, got, measuredPath, "the test must measure the path of the tile")
+		})
+
+		t.Run("a concatenation with the path", func(t *testing.T) {
+			var got string
+			expect.MaxAllocs(t, func() { got = measuredPrefix + tile.Path() }, 1,
+				"a concatenation with the path must allocate its result alone")
+			assert.Equal(t, got, measuredPrefix+measuredPath, "the test must measure the concatenation")
+		})
+
+		t.Run("a comparison with the path", func(t *testing.T) {
+			var same bool
+			expect.MaxAllocs(t, func() { same = tile.Path() == measuredPath }, 0,
+				"a comparison with the path must not allocate")
+			assert.True(t, same, "the test must measure a comparison with the path of the tile")
+		})
 	})
 
 	t.Run("ParseTilePath", func(t *testing.T) {
 		var got tlog.Tile
-		expect.MaxAllocs(t, func() { got, _ = tlog.ParseTilePath(measuredPath) }, 1,
-			"ParseTilePath must allocate the path that it compares alone")
+		expect.MaxAllocs(t, func() { got, _ = tlog.ParseTilePath(measuredPath) }, 0,
+			"ParseTilePath must not allocate")
 		assert.Equal(t, got, tile, "the test must measure a path that ParseTilePath accepts")
 	})
 
@@ -222,7 +242,7 @@ func TestTileAllocs(t *testing.T) {
 			for range tlog.Tiles(0, 513) {
 				n++
 			}
-		}, 1, "Tiles must allocate its closure alone")
+		}, 0, "a range over Tiles must not allocate")
 		assert.NotEqual(t, n, 0, "the test must measure tiles")
 	})
 }
@@ -233,22 +253,50 @@ func BenchmarkTile(b *testing.B) {
 	tile := tlog.Tile{Level: 4, Index: 1234067, Width: 1}
 
 	b.Run("Path", func(b *testing.B) {
-		var got string
+		b.Run("the path", func(b *testing.B) {
+			var got string
 
-		c := bench.Start(b).MaxAllocs(1)
-		defer c.End()
+			c := bench.Start(b).MaxAllocs(1)
+			defer c.End()
 
-		for c.Loop() {
-			got = tile.Path()
-		}
+			for c.Loop() {
+				got = tile.Path()
+			}
 
-		assert.Equal(b, got, measuredPath, "the benchmark must measure the path of the tile")
+			assert.Equal(b, got, measuredPath, "the benchmark must measure the path of the tile")
+		})
+
+		b.Run("a concatenation with the path", func(b *testing.B) {
+			var got string
+
+			c := bench.Start(b).MaxAllocs(1)
+			defer c.End()
+
+			for c.Loop() {
+				got = measuredPrefix + tile.Path()
+			}
+
+			assert.Equal(b, got, measuredPrefix+measuredPath, "the benchmark must measure the concatenation")
+		})
+
+		b.Run("a comparison with the path", func(b *testing.B) {
+			var same bool
+
+			c := bench.Start(b).MaxAllocs(0)
+			defer c.End()
+
+			for c.Loop() {
+				same = tile.Path() == measuredPath
+			}
+
+			assert.True(b, same, "the benchmark must measure a comparison with the path of the tile")
+		})
 	})
 
 	b.Run("ParseTilePath", func(b *testing.B) {
 		var got tlog.Tile
 
-		c := bench.Start(b).MaxAllocs(1)
+		c := bench.Start(b).MaxAllocs(0)
 		defer c.End()
 
 		for c.Loop() {
@@ -261,7 +309,7 @@ func BenchmarkTile(b *testing.B) {
 	b.Run("Tiles", func(b *testing.B) {
 		n := 0
 
-		c := bench.Start(b).MaxAllocs(1)
+		c := bench.Start(b).MaxAllocs(0)
 		defer c.End()
 
 		for c.Loop() {

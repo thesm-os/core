@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"runtime"
 	"slices"
 	"strconv"
 	"sync"
@@ -17,6 +18,7 @@ import (
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/bench"
 	"go.dokimi.dev/assert/expect"
+	"go.dokimi.dev/assert/history"
 
 	"go.thesmos.sh/core/blob"
 	"go.thesmos.sh/core/blob/memory"
@@ -174,6 +176,46 @@ func TestReader(t *testing.T) {
 					"ReadTiles must succeed")
 				expect.Equal(t, dst[0], append([]byte("kept"), want[0]...), "the first tile must follow the kept bytes")
 				expect.Equal(t, dst[1:], want[1:], "every other tile must be read whole")
+			})
+
+			t.Run("appends each tile under concurrent calls", func(t *testing.T) {
+				t.Parallel()
+
+				// clients call ReadTiles on one reader at once, rounds times each.
+				const (
+					clients = 8
+					rounds  = 50
+				)
+
+				r := tlog.BlobTiles(s, "log/", readLimit)
+				outcomes := history.Concurrently(clients, time.Minute, func(client int) (any, error) {
+					// Each client starts at a tile of its own, so concurrent calls
+					// read different tiles into the same index.
+					first := client % len(tiles)
+					order := append(slices.Clone(tiles[first:]), tiles[:first]...)
+					got := make([][][]byte, rounds)
+					for i := range got {
+						got[i] = make([][]byte, len(order))
+						if err := r.ReadTiles(t.Context(), order, got[i]); err != nil {
+							return nil, err
+						}
+					}
+
+					return got, nil
+				})
+
+				for _, o := range outcomes {
+					assert.True(t, o.Finished, "every client must finish")
+					assert.NoError(t, o.Error, "every call must succeed")
+					got, ok := o.Output.([][][]byte)
+					assert.True(t, ok, "every client must return the tiles of its calls")
+
+					first := o.Client % len(tiles)
+					inOrder := append(slices.Clone(want[first:]), want[:first]...)
+					for _, dst := range got {
+						expect.Equal(t, dst, inOrder, "every call must read the tiles that it asks for")
+					}
+				}
 			})
 
 			t.Run("returns an error classified NotFound for a missing tile", func(t *testing.T) {
@@ -438,9 +480,10 @@ func TestReader(t *testing.T) {
 	})
 }
 
-// TestReaderAllocs checks the allocation contract of each prove function
-// over a reader that allocates nothing. MaxAllocs counts the allocations of
-// the whole process, so the test does not run in parallel.
+// TestReaderAllocs checks the allocation contract of BlobTiles over a
+// memory store, and of each prove function over a reader that allocates
+// nothing. MaxAllocs counts the allocations of the whole process, so the
+// test does not run in parallel.
 //
 //nolint:paralleltest // see above
 func TestReaderAllocs(t *testing.T) {
@@ -448,6 +491,31 @@ func TestReaderAllocs(t *testing.T) {
 	_, _, _, largeTiles := storedTree(t)
 	ctx := t.Context()
 	dst := make([]crypto.Digest, 0, vectorBound)
+
+	t.Run("BlobTiles", func(t *testing.T) {
+		t.Run("ReadTiles", func(t *testing.T) {
+			s := memory.New(fake.New(time.Unix(0, 0).UTC()))
+			tile := tlog.Tile{Index: proofIndex, Width: fullWidth}
+			data := make([]byte, fullWidth*h.Hash(nil).Size())
+			_, err := blob.PutBytes(ctx, s, "log/"+tile.Path(), data, blob.PutOptions{})
+			assert.NoError(t, err, "PutBytes must succeed")
+
+			r := tlog.BlobTiles(s, "log/", readLimit)
+			tiles := []tlog.Tile{tile}
+			buf := [][]byte{make([]byte, 0, len(data)+bytes.MinRead)}
+
+			// The collections empty the pool of the states of a call, so a call
+			// that does not return its state allocates a new one.
+			runtime.GC()
+			runtime.GC()
+			expect.MaxAllocs(t, func() {
+				buf[0] = buf[0][:0]
+				err = r.ReadTiles(ctx, tiles, buf)
+			}, 6, "ReadTiles must allocate the key, the reader of the store and what task.Each allocates")
+			assert.NoError(t, err, "the test must measure a tile that ReadTiles reads")
+			assert.Length(t, buf[0], len(data), "the test must measure the whole tile")
+		})
+	})
 
 	t.Run("TreeRoot", func(t *testing.T) {
 		var err error
@@ -471,13 +539,39 @@ func TestReaderAllocs(t *testing.T) {
 	})
 }
 
-// BenchmarkReader reports the cost of each prove function over a reader
-// that allocates nothing, and fails above the allocations that their
-// contracts state.
+// BenchmarkReader reports the cost of BlobTiles over a memory store, and of
+// each prove function over a reader that allocates nothing, and fails above
+// the allocations that their contracts state.
 func BenchmarkReader(b *testing.B) {
 	h := coresha256.New()
 	_, _, _, largeTiles := storedTree(b)
 	dst := make([]crypto.Digest, 0, vectorBound)
+
+	b.Run("BlobTiles", func(b *testing.B) {
+		b.Run("ReadTiles", func(b *testing.B) {
+			ctx := b.Context()
+			s := memory.New(fake.New(time.Unix(0, 0).UTC()))
+			tile := tlog.Tile{Index: proofIndex, Width: fullWidth}
+			data := make([]byte, fullWidth*h.Hash(nil).Size())
+			_, err := blob.PutBytes(ctx, s, "log/"+tile.Path(), data, blob.PutOptions{})
+			assert.NoError(b, err, "PutBytes must succeed")
+
+			r := tlog.BlobTiles(s, "log/", readLimit)
+			tiles := []tlog.Tile{tile}
+			buf := [][]byte{make([]byte, 0, len(data)+bytes.MinRead)}
+
+			c := bench.Start(b).MaxAllocs(6)
+			defer c.End()
+
+			for c.Loop() {
+				buf[0] = buf[0][:0]
+				err = r.ReadTiles(ctx, tiles, buf)
+			}
+
+			assert.NoError(b, err, "the benchmark must measure a tile that ReadTiles reads")
+			assert.Length(b, buf[0], len(data), "the benchmark must measure the whole tile")
+		})
+	})
 
 	b.Run("TreeRoot", func(b *testing.B) {
 		ctx := b.Context()

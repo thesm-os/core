@@ -66,16 +66,24 @@ type Tile struct {
 //
 // # Allocation contract
 //
-// One allocation for the string.
+// One allocation for the string. Path inlines, so a concatenation with
+// the path, such as prefix + t.Path(), allocates only its result, and a
+// comparison with the path allocates nothing.
 func (t Tile) Path() string {
 	var buf [64]byte
 
-	b := append(buf[:0], tilePrefix...)
+	return string(t.appendPath(buf[:0]))
+}
+
+// appendPath appends the path that [Tile.Path] returns to b, and returns
+// the extended slice. Path calls it, so the body of Path fits the inlining
+// budget of the compiler.
+func (t Tile) appendPath(b []byte) []byte {
+	b = append(b, tilePrefix...)
 	b = strconv.AppendUint(b, uint64(t.Level), 10)
 	b = append(b, '/')
-	b = appendIndex(b, t.Index, t.Width)
 
-	return string(b)
+	return appendIndex(b, t.Index, t.Width)
 }
 
 // appendIndex appends index in groups of three digits, and the partial
@@ -131,7 +139,7 @@ func appendIndex(b []byte, index uint64, width uint16) []byte {
 //
 // # Allocation contract
 //
-// One allocation to check the path against [Tile.Path].
+// Zero alloc.
 func ParseTilePath(path string) (Tile, error) {
 	level, rest, _ := strings.Cut(strings.TrimPrefix(path, tilePrefix), "/")
 
@@ -179,7 +187,9 @@ func maxTileIndex(level uint8) uint64 {
 //
 // # Allocation contract
 //
-// One closure per call.
+// A range over the call allocates nothing. An iterator that escapes, such
+// as one that the caller passes to another function, allocates its
+// closure.
 func Tiles(oldSize, newSize uint64) iter.Seq[Tile] {
 	return func(yield func(Tile) bool) {
 		// The sizes agree from some level up, and above it no tile

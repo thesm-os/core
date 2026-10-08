@@ -182,7 +182,7 @@ func TestBundleAllocs(t *testing.T) {
 			for range tlog.BundleEntries(bundle) {
 				n++
 			}
-		}, 1, "BundleEntries must allocate its closure alone")
+		}, 0, "a range over BundleEntries must not allocate")
 		assert.NotEqual(t, n, 0, "the test must measure entries")
 	})
 
@@ -220,7 +220,7 @@ func BenchmarkBundle(b *testing.B) {
 
 		n := 0
 
-		c := bench.Start(b).MaxAllocs(1)
+		c := bench.Start(b).MaxAllocs(0)
 		defer c.End()
 
 		for c.Loop() {

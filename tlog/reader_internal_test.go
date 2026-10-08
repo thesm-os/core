@@ -35,4 +35,26 @@ func TestReaderInternal(t *testing.T) {
 			})
 		})
 	})
+
+	t.Run("tileRead", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("Reset", func(t *testing.T) {
+			t.Parallel()
+
+			t.Run("drops the reader of the last call", func(t *testing.T) {
+				t.Parallel()
+				tr := tileRead{r: &blobTiles{}}
+				tr.Reset()
+				assert.Nil(t, tr.r, "Reset must drop the reader of the last call")
+			})
+
+			t.Run("drops the buffers of the last call", func(t *testing.T) {
+				t.Parallel()
+				tr := tileRead{dst: make([][]byte, 1)}
+				tr.Reset()
+				assert.Nil(t, tr.dst, "Reset must drop the buffers of the last call")
+			})
+		})
+	})
 }

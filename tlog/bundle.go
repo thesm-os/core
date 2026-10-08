@@ -34,7 +34,9 @@ func AppendBundleEntry(dst, entry []byte) ([]byte, error) {
 //
 // # Allocation contract
 //
-// One closure per call. Iterating allocates nothing.
+// A range over the call allocates nothing. An iterator that escapes, such
+// as one that the caller passes to another function, allocates its
+// closure, and nothing for each entry.
 func BundleEntries(data []byte) iter.Seq2[[]byte, error] {
 	return func(yield func([]byte, error) bool) {
 		rest := data

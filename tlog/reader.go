@@ -49,9 +49,10 @@ type TileReader interface {
 // # Allocation contract
 //
 // One allocation for the reader. ReadTiles allocates one key per tile,
-// and what [task.Each] and the store allocate. It allocates nothing to
-// store the data when dst[i] has room for the tile and [bytes.MinRead]
-// more bytes, as blob.AppendBytes states.
+// the string that blob.Store.Get takes, and what [task.Each] and the
+// store allocate. The state of a call comes from a pool. ReadTiles
+// allocates nothing to store the data when dst[i] has room for the tile
+// and [bytes.MinRead] more bytes, as blob.AppendBytes states.
 func BlobTiles(s blob.Store, prefix string, limit int) TileReader {
 	return &blobTiles{s: s, prefix: prefix, limit: limit}
 }
@@ -71,19 +72,55 @@ func (r *blobTiles) ReadTiles(ctx context.Context, tiles []Tile, dst [][]byte) e
 		return ErrRange
 	}
 
-	// Each returns the first error of fn, which fn wraps with the key.
+	tr := tileReads.Get()
+	defer tileReads.Put(tr)
+
+	tr.r, tr.dst = r, dst
+
+	// Each returns the first error of read, which read wraps with the key.
 	//nolint:wrapcheck // see comment above
-	return task.Each(ctx, r.limit, tiles, func(ctx context.Context, i int, t Tile) error {
-		key := r.prefix + t.Path()
+	return task.Each(ctx, r.limit, tiles, tr.read)
+}
 
-		var err error
-		dst[i], _, err = blob.AppendBytes(ctx, r.s, key, dst[i], int64(t.Width)*crypto.MaxDigestSize)
-		if err != nil {
-			return fmt.Errorf("tlog: read %s: %w", key, err)
-		}
+// tileRead is the state of one [blobTiles.ReadTiles] call: the reader and
+// the buffers of the call. Calls borrow it from tileReads.
+type tileRead struct {
+	r *blobTiles
 
-		return nil
-	})
+	// read is the method value of readTile, which tileReads binds once for
+	// each state, so a call passes task.Each a function without allocating
+	// one.
+	read func(ctx context.Context, i int, t Tile) error
+
+	dst [][]byte
+}
+
+// tileReads supplies the state of one ReadTiles call.
+var tileReads = pool.NewResetPool(func() *tileRead {
+	tr := new(tileRead)
+	tr.read = tr.readTile
+
+	return tr
+})
+
+// Reset drops the reader and the buffers of the last call.
+func (tr *tileRead) Reset() {
+	tr.r, tr.dst = nil, nil
+}
+
+// readTile appends the body of t to tr.dst[i] with blob.AppendBytes, under
+// a limit of the tile's width times crypto.MaxDigestSize. It wraps an
+// error with the key of the tile.
+func (tr *tileRead) readTile(ctx context.Context, i int, t Tile) error {
+	key := tr.r.prefix + t.Path()
+
+	var err error
+	tr.dst[i], _, err = blob.AppendBytes(ctx, tr.r.s, key, tr.dst[i], int64(t.Width)*crypto.MaxDigestSize)
+	if err != nil {
+		return fmt.Errorf("tlog: read %s: %w", key, err)
+	}
+
+	return nil
 }
 
 // TreeRoot returns the root of the tree of size leaves stored in r. It

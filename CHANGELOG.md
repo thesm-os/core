@@ -906,6 +906,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `errs.Invalid` for a larger object. It read the whole object under the
   key of a tile, whatever its size, before `tlog.TreeRoot`,
   `ProveInclusion` and `ProveConsistency` checked its length.
+- `tlog.Tile.Path` inlines, so `prefix + t.Path()` allocates only the
+  concatenation, and a comparison with the path allocates nothing.
+  `tlog.ParseTilePath` allocates nothing, where it allocated the path that
+  it compares. A `ReadTiles` call of `tlog.BlobTiles` takes its state from
+  a pool, so a read of one tile from `blob/memory` costs 6 allocations
+  instead of 8. The contracts of `tlog.Tiles` and `tlog.BundleEntries`
+  state that a range over the call allocates nothing.
 
 ## [0.6.1] - 2026-08-05
 
