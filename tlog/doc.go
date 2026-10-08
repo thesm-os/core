@@ -61,6 +61,11 @@
 // [TreeRoot], [ProveInclusion] and [ProveConsistency] read every tile
 // they need in one batch, at most two per tile level.
 //
+// A [TileVerifier] checks the leaves of a tree of a known size and root
+// against its tiles. It verifies each tile that it reads and keeps the
+// tiles of the path of the last leaf. Checks of the leaves in index order
+// then read each tile once and hash each interior node once.
+//
 // [AppendBundleEntry], [BundleEntries] and [BundlePath] implement the
 // C2SP entry bundles that store the entries themselves.
 //
@@ -85,14 +90,17 @@
 // The prove functions read tiles and trust them. A proof built from a
 // corrupted tile fails [VerifyInclusion] or [VerifyConsistency] at the
 // verifier. A caller that caches tiles from an untrusted server
-// verifies a proof against a signed root before it keeps them.
+// verifies a proof against a signed root before it keeps them. A
+// [TileVerifier] verifies every tile that it reads against the root
+// before it compares a leaf with the tile, and keeps only the tiles that
+// it verified.
 //
 // # Failure semantics
 //
 // Every error classifies under [go.thesmos.sh/core/errs.Classify]. A
-// proof that does not verify is [ErrProof], an index or size outside
-// the tree is [ErrRange], and tile data of the wrong length is
-// [ErrTileSize]. Errors from a [TileReader] keep their class.
+// proof, a tile or a leaf that does not verify is [ErrProof], an index or
+// size outside the tree is [ErrRange], and tile data of the wrong length
+// is [ErrTileSize]. Errors from a [TileReader] keep their class.
 //
 // [VerifyInclusion] and [VerifyTaggedInclusion] return [ErrProof] for a
 // proof hash whose size differs from the leaf's. The content of a proof
@@ -107,5 +115,6 @@
 // the warm path. [Builder.Integrate] into a reused [Update] allocates
 // nothing once the Update has grown, and [TaggedTree.Reset] into a
 // reused TaggedTree allocates nothing once the tree has grown. The
-// prove functions borrow their tile buffers from a pool.
+// prove functions borrow their tile buffers from a pool, and a
+// [TileVerifier] allocates the buffer of each tile that it keeps once.
 package tlog

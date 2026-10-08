@@ -14,8 +14,9 @@ import (
 // Sentinel errors returned by this package.
 var (
 	// ErrProof is returned by [VerifyInclusion] and [VerifyConsistency]
-	// when a proof does not recompute the root. It classifies as
-	// errs.Integrity.
+	// when a proof does not recompute the root, and by
+	// [TileVerifier.Verify] when a tile or the leaf does not match the
+	// root. It classifies as errs.Integrity.
 	ErrProof = errs.WithClass(errors.New("tlog: proof does not verify"), errs.Integrity)
 
 	// ErrRange is returned for an index or a size outside the tree, and

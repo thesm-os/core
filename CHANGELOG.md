@@ -597,6 +597,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   digests whatever the number of leaves, where a list of 2^20 leaves for
   `TaggedRoot` takes 68,158,136 bytes. `Root` leaves the fold unchanged, so
   `Add` continues after it, and no method allocates.
+- `tlog.TileVerifier` checks that leaf hashes are in the tree of a size and a
+  root, against the tiles that a `TileReader` reads. It verifies the partial
+  tiles of the right edge against the root, and each full tile against its
+  hash in the tile above it. It keeps the verified tiles of the path of the
+  last leaf, so checks of the leaves in index order read each tile once and
+  hash each interior node once. With SHA-256 on one core and the tiles of a
+  tree of 2^20 leaves in memory, the check of a leaf in index order takes
+  174 ns, where `ProveInclusion` and `VerifyInclusion` take 53.8 µs. `Verify`
+  allocates nothing once its buffers have grown.
 
 ### Changed
 
