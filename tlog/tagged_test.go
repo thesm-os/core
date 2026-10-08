@@ -9,12 +9,15 @@ import (
 	"math/bits"
 	"slices"
 	"strconv"
+	"sync/atomic"
 	"testing"
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/bench"
 	"go.dokimi.dev/assert/expect"
+	"go.dokimi.dev/assert/history"
 	"go.dokimi.dev/assert/prop"
+	"go.dokimi.dev/assert/stateful"
 
 	"go.thesmos.sh/core/crypto"
 	coresha256 "go.thesmos.sh/core/crypto/sha256"
@@ -62,6 +65,21 @@ const (
 
 	// noLeaves is the panic of a tagged tree over no leaves.
 	noLeaves = "tlog: a tagged tree over no leaves has no root"
+
+	// noFold is the panic of Add on a TaggedFold that Reset did not start.
+	noFold = "tlog: Add on a TaggedFold that Reset did not start"
+
+	// concurrentRoot labels a case of the machine of TaggedFold that ran Root
+	// over leaves on a client of a concurrent section, and concurrentShare
+	// is the share of the cases that the machine requires to carry it. 48
+	// of 100 cases carried it in a run of 100 cases.
+	concurrentRoot  = "a concurrent Root of a fold of leaves"
+	concurrentShare = 0.3
+
+	// addWeight is how much more often a step of the machine of TaggedFold
+	// adds a leaf than it takes another action, so that most folds have
+	// leaves when the concurrent section reads them.
+	addWeight = 4
 )
 
 // pinnedPayloads are the payloads of the pinned tree's leaves.
@@ -322,6 +340,229 @@ func TestTagged(t *testing.T) {
 				var tree tlog.TaggedTree
 				_, err := tree.RangeProof(0, 1, nil)
 				assert.ErrorIs(t, err, tlog.ErrRange, "a tree with no leaves must have no ranges")
+			})
+		})
+	})
+
+	t.Run("TaggedFold", func(t *testing.T) {
+		t.Parallel()
+
+		// The state of the spec is the leaves since the last Reset, one byte
+		// per leaf: its index in all. Size returns their number, and Root
+		// their root by the recursive definition, or the panic of a tree
+		// without leaves.
+		spec := history.Spec[string]{
+			Initial: func() string { return "" },
+			Next: func(state string, op history.Operation) []string {
+				if op.Name == "reset" {
+					return []string{""}
+				}
+
+				if op.Name == "add" {
+					index, _ := op.Args[0].(int)
+
+					return []string{state + string([]byte{byte(index)})}
+				}
+
+				var want any = uint64(len(state))
+				if op.Name == "root" {
+					want = noLeaves
+					if state != "" {
+						folded := make([]crypto.Digest, len(state))
+						for i := range len(state) {
+							folded[i] = all[state[i]]
+						}
+						want = recursiveRoot(h, nodeRole, folded)
+					}
+				}
+
+				if op.Returned(want) {
+					return []string{state}
+				}
+
+				return nil
+			},
+		}
+
+		t.Run("folds the leaves since the last Reset for any sequence of calls", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "Size and Root must follow the leaves since the last Reset", func(c *prop.Case) {
+				var f tlog.TaggedFold
+				f.Reset(h, nodeRole)
+
+				// concurrent records a read of a fold of leaves on a client of a
+				// concurrent section, which runs on a goroutine of its own.
+				var concurrent atomic.Bool
+
+				// Reset and Add state an Enabled, so the concurrent sections of
+				// the clients run Size and Root alone, the calls that may run at
+				// once. Swarm(false) keeps the four actions in a case, so that
+				// most concurrent sections read a fold of leaves.
+				stateful.Steps(c, stateful.Machine[string]{
+					Spec: spec,
+					Actions: []stateful.Action[string]{{
+						Name:    "reset",
+						Enabled: func(string) bool { return true },
+						Run: func(c *prop.Case, client int, _ any) {
+							call := c.History().Invoke(client, "reset", nil)
+							f.Reset(h, nodeRole)
+							call.OK(nil)
+						},
+					}, {
+						Name:    "add",
+						Weight:  addWeight,
+						Enabled: func(string) bool { return true },
+						Input: func(c *prop.Case, _ string) any {
+							return c.Draw(prop.Integer(0, len(all)-1), "leaf")
+						},
+						Run: func(c *prop.Case, client int, input any) {
+							call := c.History().Invoke(client, "add", []any{input})
+							index, _ := input.(int)
+							f.Add(all[index])
+							call.OK(nil)
+						},
+					}, {
+						Name: "size",
+						Run: func(c *prop.Case, client int, _ any) {
+							call := c.History().Invoke(client, "size", nil)
+							call.OK(f.Size())
+						},
+					}, {
+						Name: "root",
+						Run: func(c *prop.Case, client int, _ any) {
+							call := c.History().Invoke(client, "root", nil)
+							if f.Size() == 0 {
+								call.OK(assert.Panics(c, func() { _ = f.Root() }, "the root of no leaves must panic"))
+
+								return
+							}
+							call.OK(f.Root())
+							if client > 0 {
+								concurrent.Store(true)
+							}
+						},
+					}},
+				}, stateful.Clients(2), stateful.Swarm(false))
+
+				if concurrent.Load() {
+					c.Classify(concurrentRoot)
+				}
+			}, prop.Require(concurrentRoot, concurrentShare))
+		})
+
+		t.Run("Reset", func(t *testing.T) {
+			t.Parallel()
+
+			t.Run("panics on a unary node role", func(t *testing.T) {
+				t.Parallel()
+				var f tlog.TaggedFold
+				assert.Panics(t, func() { f.Reset(h, unaryRole) }, "a unary role must panic")
+			})
+
+			t.Run("leaves the fold unchanged after a panic", func(t *testing.T) {
+				t.Parallel()
+				var f tlog.TaggedFold
+				f.Reset(h, nodeRole)
+				for _, leaf := range all[:3] {
+					f.Add(leaf)
+				}
+				assert.Panics(t, func() { f.Reset(h, unaryRole) }, "a unary role must panic")
+				assert.Equal(t, f.Root(), tlog.TaggedRoot(h, nodeRole, all[:3]),
+					"a Reset that panics must keep the leaves")
+			})
+		})
+
+		t.Run("Add", func(t *testing.T) {
+			t.Parallel()
+
+			t.Run("hashes n - popcount(n) nodes over n leaves", func(t *testing.T) {
+				t.Parallel()
+				c := &countingHasher{}
+				var f tlog.TaggedFold
+				f.Reset(c, nodeRole)
+				for i, leaf := range all {
+					f.Add(leaf)
+					n := uint64(i + 1)
+					expect.Equal(t, uint64(c.combines), n-uint64(bits.OnesCount64(n)),
+						"the leaves of a fold of "+strconv.FormatUint(n, 10)+" leaves")
+				}
+			})
+
+			t.Run("panics for the zero TaggedFold", func(t *testing.T) {
+				t.Parallel()
+				var f tlog.TaggedFold
+				got := assert.Panics(t, func() { f.Add(all[0]) }, "a fold that Reset did not start must panic")
+				assert.Equal(t, got, any(noFold), "Add must panic with the text of a fold without a hasher")
+			})
+
+			t.Run("panics for a leaf that is not a digest of the hasher", func(t *testing.T) {
+				t.Parallel()
+				var f tlog.TaggedFold
+				f.Reset(h, nodeRole)
+				f.Add(all[0])
+				wider := coresha512.New384().Hash([]byte("wider"))
+				assert.Panics(t, func() { f.Add(wider) }, "a SHA-384 leaf must panic in a fold of SHA-256 leaves")
+			})
+		})
+
+		t.Run("Size", func(t *testing.T) {
+			t.Parallel()
+
+			t.Run("returns zero for the zero TaggedFold", func(t *testing.T) {
+				t.Parallel()
+				var f tlog.TaggedFold
+				assert.Equal(t, f.Size(), uint64(0), "the zero TaggedFold must have no leaves")
+			})
+		})
+
+		t.Run("Root", func(t *testing.T) {
+			t.Parallel()
+
+			t.Run("returns the root of the recursive definition after each leaf of a tree of 130", func(t *testing.T) {
+				t.Parallel()
+				var f tlog.TaggedFold
+				f.Reset(h, nodeRole)
+				for i, leaf := range all {
+					f.Add(leaf)
+					expect.Equal(t, f.Root(), recursiveRoot(h, nodeRole, all[:i+1]),
+						"the root of "+strconv.Itoa(i+1)+" leaves")
+				}
+			})
+
+			t.Run("returns the root of TaggedRoot for generated leaves", func(t *testing.T) {
+				t.Parallel()
+				prop.ForAll(t, "the fold must return the same root as TaggedRoot", func(c *prop.Case) {
+					n := c.Draw(prop.Integer(1, rangeBound), "size")
+					var f tlog.TaggedFold
+					f.Reset(h, nodeRole)
+					for _, leaf := range many[:n] {
+						f.Add(leaf)
+					}
+					assert.Equal(c, f.Root(), tlog.TaggedRoot(h, nodeRole, many[:n]),
+						"the fold of the leaves must return the same root as TaggedRoot")
+				})
+			})
+
+			t.Run("hashes popcount(n) - 1 nodes", func(t *testing.T) {
+				t.Parallel()
+				c := &countingHasher{}
+				var f tlog.TaggedFold
+				f.Reset(c, nodeRole)
+				for i, leaf := range all {
+					f.Add(leaf)
+					before := c.combines
+					_ = f.Root()
+					n := uint64(i + 1)
+					expect.Equal(t, c.combines-before, bits.OnesCount64(n)-1,
+						"the root of a fold of "+strconv.FormatUint(n, 10)+" leaves")
+				}
+			})
+
+			t.Run("panics for a fold of no leaves", func(t *testing.T) {
+				t.Parallel()
+				var f tlog.TaggedFold
+				got := assert.Panics(t, func() { _ = f.Root() }, "the root of no leaves must panic")
+				assert.Equal(t, got, any(noLeaves), "Root must panic with the text of a tree without leaves")
 			})
 		})
 	})
@@ -844,6 +1085,42 @@ func TestTaggedAllocs(t *testing.T) {
 		})
 	})
 
+	t.Run("TaggedFold", func(t *testing.T) {
+		var f tlog.TaggedFold
+
+		t.Run("Reset", func(t *testing.T) {
+			expect.MaxAllocs(t, func() { f.Reset(h, nodeRole) }, 0, "Reset must not allocate")
+			assert.Equal(t, f.Size(), uint64(0), "the test must measure a fold that Reset starts")
+		})
+
+		t.Run("Add", func(t *testing.T) {
+			f.Reset(h, nodeRole)
+			i := 0
+			expect.MaxAllocs(t, func() {
+				f.Add(all[i%measuredSize])
+				i++
+			}, 0, "Add must not allocate")
+			assert.NotEqual(t, f.Size(), uint64(0), "the test must measure a fold of leaves")
+		})
+
+		t.Run("Size", func(t *testing.T) {
+			var got uint64
+			expect.MaxAllocs(t, func() { got = f.Size() }, 0, "Size must not allocate")
+			assert.NotEqual(t, got, uint64(0), "the test must measure the size of a fold of leaves")
+		})
+
+		t.Run("Root", func(t *testing.T) {
+			f.Reset(h, nodeRole)
+			for _, leaf := range all {
+				f.Add(leaf)
+			}
+
+			var got crypto.Digest
+			expect.MaxAllocs(t, func() { got = f.Root() }, 0, "Root must not allocate")
+			assert.Equal(t, got, tree.Root(), "the test must measure the root of the leaves")
+		})
+	})
+
 	t.Run("TaggedRoot", func(t *testing.T) {
 		var got crypto.Digest
 		expect.MaxAllocs(t, func() { got = tlog.TaggedRoot(h, nodeRole, all) }, 0, "TaggedRoot must not allocate")
@@ -962,6 +1239,73 @@ func BenchmarkTagged(b *testing.B) {
 			}
 
 			assert.NotEmpty(b, got, "the benchmark must measure a proof")
+		})
+	})
+
+	b.Run("TaggedFold", func(b *testing.B) {
+		b.Run("Reset", func(b *testing.B) {
+			var f tlog.TaggedFold
+
+			c := bench.Start(b).MaxAllocs(0)
+			defer c.End()
+
+			for c.Loop() {
+				f.Reset(h, nodeRole)
+			}
+
+			assert.Equal(b, f.Size(), uint64(0), "the benchmark must measure a fold that Reset starts")
+		})
+
+		b.Run("Add", func(b *testing.B) {
+			var f tlog.TaggedFold
+			f.Reset(h, nodeRole)
+			i := 0
+
+			c := bench.Start(b).MaxAllocs(0)
+			defer c.End()
+
+			for c.Loop() {
+				f.Add(all[i%measuredSize])
+				i++
+			}
+
+			assert.NotEqual(b, f.Size(), uint64(0), "the benchmark must measure a fold of leaves")
+		})
+
+		b.Run("Size", func(b *testing.B) {
+			var f tlog.TaggedFold
+			f.Reset(h, nodeRole)
+			f.Add(all[0])
+
+			var got uint64
+
+			c := bench.Start(b).MaxAllocs(0)
+			defer c.End()
+
+			for c.Loop() {
+				got = f.Size()
+			}
+
+			assert.Equal(b, got, uint64(1), "the benchmark must measure the size of a fold of one leaf")
+		})
+
+		b.Run("Root", func(b *testing.B) {
+			var f tlog.TaggedFold
+			f.Reset(h, nodeRole)
+			for _, leaf := range all {
+				f.Add(leaf)
+			}
+
+			var got crypto.Digest
+
+			c := bench.Start(b).MaxAllocs(0)
+			defer c.End()
+
+			for c.Loop() {
+				got = f.Root()
+			}
+
+			assert.Equal(b, got, tree.Root(), "the benchmark must measure the root of the leaves")
 		})
 	})
 

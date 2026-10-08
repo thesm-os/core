@@ -6,6 +6,7 @@ package tlog
 import (
 	"fmt"
 	"math/bits"
+	"slices"
 
 	"go.thesmos.sh/core/crypto"
 )
@@ -165,6 +166,100 @@ func (t *TaggedTree) RangeProof(begin, end uint64, dst []crypto.Digest) ([]crypt
 	}
 
 	return dst, nil
+}
+
+// TaggedFold computes the root of a tagged tree from its leaves, which it
+// receives one at a time and in order: the root that [TaggedRoot] returns
+// for the same leaves. It keeps the roots of the perfect subtrees of the
+// leaves so far, one for each set bit of the number of leaves, so its state
+// is 64 digests whatever the number of leaves.
+//
+// [TaggedFold.Reset] starts a fold. The zero TaggedFold has no leaves and
+// no hasher: its Size is 0, its Root panics as for a fold of no leaves, and
+// its Add panics. A fold has at most 2^64 - 1 leaves.
+//
+// # Concurrency
+//
+// Size and Root do not modify the fold, so goroutines may call them
+// concurrently between calls to Reset and Add. Reset and Add are not safe
+// for concurrent use.
+//
+// # Allocation contract
+//
+// Reset, Add, Size and Root allocate nothing. Over n leaves, Add hashes
+// n - popcount(n) interior nodes in all, and each Root hashes
+// popcount(n) - 1.
+type TaggedFold struct {
+	// h hashes the interior nodes under node.
+	h crypto.Hasher
+
+	// stack contains the roots of the perfect subtrees of the leaves so
+	// far, largest first: one for each set bit of size.
+	stack [64]crypto.Digest
+
+	// size is the number of leaves that Add received since the last Reset.
+	size uint64
+
+	node crypto.Role
+}
+
+// Reset starts the fold of the tagged tree whose interior nodes are
+// h.CombineTagged(node, left, right), for node a binary role. It drops the
+// leaves of the last fold.
+//
+// Panics when node is a unary role, and leaves f unchanged.
+func (f *TaggedFold) Reset(h crypto.Hasher, node crypto.Role) {
+	requireBinary(node)
+
+	f.h, f.node, f.size = h, node, 0
+}
+
+// Add folds leaf into f as the next leaf of the tree. It stacks the leaf as
+// a subtree of one leaf, and combines the two smallest stacked roots once
+// for each subtree that the leaf completes.
+//
+// Panics when Reset did not start f, and, through CombineTagged, when leaf
+// is not a digest of the hasher of f.
+func (f *TaggedFold) Add(leaf crypto.Digest) {
+	if f.h == nil {
+		//nolint:forbidigo // a fold without a hasher is a programmer error, as TaggedRoot over no leaves is
+		panic("tlog: Add on a TaggedFold that Reset did not start")
+	}
+
+	// A fold of up to 2^64 - 1 leaves stacks at most 63 roots before the
+	// leaf.
+	n := bits.OnesCount64(f.size)
+	f.stack[n] = leaf //nolint:gosec // G602: n is the number of set bits of size, at most 63 below 2^64 - 1 leaves
+	n++
+
+	for j := f.size; j&1 == 1; j >>= 1 {
+		n--
+		f.stack[n-1] = f.h.CombineTagged(f.node, f.stack[n-1], f.stack[n])
+	}
+
+	f.size++
+}
+
+// Size returns the number of leaves that Add received since the last
+// Reset.
+func (f *TaggedFold) Size() uint64 { return f.size }
+
+// Root returns the root of the tagged tree over the leaves that Add
+// received, the root that [TaggedRoot] returns for the same leaves. It
+// combines the stacked roots from the smallest up, and leaves f unchanged,
+// so Add can continue after it.
+//
+// Panics when f has no leaves, as TaggedRoot does for an empty list.
+func (f *TaggedFold) Root() crypto.Digest {
+	requireLeaves(f.size)
+
+	n := bits.OnesCount64(f.size)
+	root := f.stack[n-1]
+	for _, d := range slices.Backward(f.stack[:n-1]) {
+		root = f.h.CombineTagged(f.node, d, root)
+	}
+
+	return root
 }
 
 // TaggedRoot returns the root of the tagged tree over leaves: the tree of

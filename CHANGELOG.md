@@ -591,6 +591,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   leaves in a tree of 65,536 has a proof of at most 24 hashes, where its 16
   paths have 256. `TaggedRangeRoot` refuses a proof of another length and a
   hash of another size before it hashes, and allocates nothing.
+- `tlog.TaggedFold` computes the root of a tagged tree from leaves that
+  arrive one at a time, in order, with `Reset`, `Add`, `Size` and `Root`.
+  It keeps the roots of the perfect subtrees of the leaves so far, 64
+  digests whatever the number of leaves, where a list of 2^20 leaves for
+  `TaggedRoot` takes 68,158,136 bytes. `Root` leaves the fold unchanged, so
+  `Add` continues after it, and no method allocates.
 
 ### Changed
 

@@ -28,7 +28,9 @@
 // another role, or of an RFC 9162 tree. [TaggedRoot],
 // [TaggedInclusionProof] and [VerifyTaggedInclusion] give these trees RFC
 // 9162's shape and proofs. A [TaggedTree] keeps every node of one tree, so
-// the paths of all its leaves cost one hash per interior node.
+// the paths of all its leaves cost one hash per interior node. A
+// [TaggedFold] computes the root from leaves that arrive one at a time, such
+// as the digests of the chunks of a stream, in a state of 64 digests.
 //
 // [TaggedRangeProof] and [TaggedTree.RangeProof] prove a range of
 // consecutive leaves with at most two hashes per tree level, and the proof
