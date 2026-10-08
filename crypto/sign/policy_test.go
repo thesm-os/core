@@ -1208,17 +1208,59 @@ func TestPolicy(t *testing.T) {
 			})
 		})
 	})
+
+	t.Run("SatisfiedBy", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("evaluates generated trees as Check evaluates them", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "SatisfiedBy must evaluate as Check evaluates", func(c *prop.Case) {
+				next := byte(0)
+				s := drawShape(c, &next, 3, c.Draw(prop.Boolean(), "parties"))
+				keys := s.all()
+				sigs := drawSignatures(c, keys)
+
+				exclude := make([]sign.KeyID, 0, 2)
+				for range c.Draw(prop.Integer(0, 2), "exclusions") {
+					exclude = append(exclude, keys[c.Draw(prop.Integer(0, len(keys)-1), "excluded key")].id)
+				}
+
+				p := mustTree(c, s.rule())
+				satisfied := p.SatisfiedBy(message, sigs, exclude...)
+				satisfiedCalls := make([]int32, len(keys))
+				for i, k := range keys {
+					satisfiedCalls[i] = k.calls.Swap(0)
+				}
+
+				err := p.Check(message, sigs, exclude...)
+				checkCalls := make([]int32, len(keys))
+				for i, k := range keys {
+					checkCalls[i] = k.calls.Load()
+				}
+
+				assert.Equal(c, satisfied, err == nil, "SatisfiedBy must report whether Check returns nil")
+				assert.Equal(c, satisfiedCalls, checkCalls, "SatisfiedBy must run the verifications of Check")
+			})
+		})
+
+		t.Run("reports false for the zero Policy", func(t *testing.T) {
+			t.Parallel()
+			var p sign.Policy
+			assert.False(t, p.SatisfiedBy(message, nil), "the zero Policy must not be satisfied")
+		})
+	})
 }
 
-// TestPolicyAllocs checks the allocation contracts of Check, of the
-// construction of a policy in new memory, and of Reset and Rules in the
-// memory of the last construction. MaxAllocs counts the allocations of
-// the whole process, so the test does not run in parallel.
+// TestPolicyAllocs checks the allocation contracts of Check and
+// SatisfiedBy, of the construction of a policy in new memory, and of Reset
+// and Rules in the memory of the last construction. MaxAllocs counts the
+// allocations of the whole process, so the test does not run in parallel.
 //
 //nolint:paralleltest // see above
 func TestPolicyAllocs(t *testing.T) {
 	keys := numberedKeys(64)
 	sigs := signedBy(keys...)
+	forged := append(signedBy(keys[1:]...), keys[0].forged())
 	unanimous := mustPolicy(t, len(keys), solo(keys...)...)
 	allButOne := mustPolicy(t, len(keys)-1, solo(keys...)...)
 	example, rebuild, satisfying := exampleTree()
@@ -1247,6 +1289,22 @@ func TestPolicyAllocs(t *testing.T) {
 			expect.MaxAllocs(t, func() { err = approvals.Check(message, peopleSigs, people.ada.id) }, 0,
 				"Check of a tree with parties must not allocate")
 			assert.NoError(t, err, "the test must measure a check that succeeds")
+		})
+	})
+
+	t.Run("SatisfiedBy", func(t *testing.T) {
+		t.Run("allocates nothing for 64 keys that satisfy the policy", func(t *testing.T) {
+			var satisfied bool
+			expect.MaxAllocs(t, func() { satisfied = unanimous.SatisfiedBy(message, sigs) }, 0,
+				"SatisfiedBy must not allocate")
+			assert.True(t, satisfied, "the test must measure signatures that satisfy the policy")
+		})
+
+		t.Run("allocates nothing for 64 keys with a forged signature", func(t *testing.T) {
+			var satisfied bool
+			expect.MaxAllocs(t, func() { satisfied = unanimous.SatisfiedBy(message, forged) }, 0,
+				"SatisfiedBy must not allocate for signatures that do not satisfy the policy")
+			assert.False(t, satisfied, "the test must measure signatures that do not satisfy the policy")
 		})
 	})
 
@@ -1326,10 +1384,12 @@ func TestPolicyAllocs(t *testing.T) {
 	})
 }
 
-// BenchmarkPolicy reports the cost of Check for six policies, of the
-// construction of a policy in new memory, and of Reset and Rules in the
-// memory of the last construction, and fails when one of them allocates
-// more than TestPolicyAllocs allows. The policies of Check are:
+// BenchmarkPolicy reports the cost of Check for six policies, of
+// SatisfiedBy for signatures that satisfy a policy of 64 keys and for
+// signatures with a forged one, of the construction of a policy in new
+// memory, and of Reset and Rules in the memory of the last construction,
+// and fails when one of them allocates more than TestPolicyAllocs allows.
+// The policies of Check are:
 //
 //   - a threshold of three Ed25519 approvers of five;
 //   - a hybrid party of an Ed25519 and an ML-DSA-65 key;
@@ -1420,6 +1480,35 @@ func BenchmarkPolicy(b *testing.B) {
 				}
 
 				assert.NoError(b, err, "the benchmark must measure a check that succeeds")
+			})
+		}
+	})
+
+	b.Run("SatisfiedBy", func(b *testing.B) {
+		unanimous := mustPolicy(b, len(doubles), solo(doubles...)...)
+
+		for _, tt := range []struct {
+			name string
+			sigs []sign.Signature
+			want bool
+		}{
+			{name: "of 64 test-double keys that satisfy it", sigs: signedBy(doubles...), want: true},
+			{
+				name: "of 64 test-double keys with a forged signature",
+				sigs: append(signedBy(doubles[1:]...), doubles[0].forged()),
+			},
+		} {
+			b.Run(tt.name, func(b *testing.B) {
+				var satisfied bool
+
+				c := bench.Start(b).MaxAllocs(0)
+				defer c.End()
+
+				for c.Loop() {
+					satisfied = unanimous.SatisfiedBy(message, tt.sigs)
+				}
+
+				assert.Equal(b, satisfied, tt.want, "the benchmark must measure the result of its signatures")
 			})
 		}
 	})

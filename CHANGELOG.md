@@ -577,6 +577,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reads at most the limit of a body whose size the store does not report.
   It allocates nothing beyond what the store allocates when the buffer has
   room for the object and `bytes.MinRead` more bytes.
+- `sign.Policy.SatisfiedBy` reports whether signatures satisfy a policy,
+  by the rules of `Policy.Check`, as a bool. A failed `Check` allocates
+  its error. `SatisfiedBy` allocates nothing for a policy of at most 64
+  keys and 128 rules, whatever its result, so a search for the earliest
+  cosignatures that satisfy a quorum probes without an allocation.
 
 ### Changed
 

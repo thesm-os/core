@@ -13,12 +13,12 @@ import (
 
 const (
 	// maxStackKeys is the largest number of keys whose bookkeeping
-	// [Policy.Check] keeps on the stack, and whose order by public key
-	// [Policy.Reset] keeps on the stack.
+	// [Policy.Check] and [Policy.SatisfiedBy] keep on the stack, and whose
+	// order by public key [Policy.Reset] keeps on the stack.
 	maxStackKeys = 64
 
 	// maxStackRules is the largest number of rules whose bookkeeping
-	// [Policy.Check] keeps on the stack.
+	// [Policy.Check] and [Policy.SatisfiedBy] keep on the stack.
 	maxStackRules = 128
 
 	// maxDepth is the largest number of rules on the path from the root
@@ -384,7 +384,7 @@ func (p *Policy) reset(root Rule) error {
 // classified [errs.Integrity], wrapped with the most rules that could
 // count and the number of rules that the root requires: its children, or
 // the root itself when it is an AllOf rule. Returns [ErrPolicy] for the
-// zero Policy.
+// zero Policy. [Policy.SatisfiedBy] reports the result without an error.
 //
 // # Allocation contract
 //
@@ -397,6 +397,43 @@ func (p Policy) Check(message []byte, sigs []Signature, exclude ...KeyID) error 
 		return fmt.Errorf("%w: the zero Policy checks nothing", ErrPolicy)
 	}
 
+	counted, possible, required := p.evaluate(message, sigs, exclude)
+	if counted >= required {
+		return nil
+	}
+
+	return fmt.Errorf("%w: at most %d of %d required rules", ErrThreshold, possible, required)
+}
+
+// SatisfiedBy reports whether sigs satisfy p for message, by the rules of
+// [Policy.Check]: it considers the same signatures, runs the same
+// verifications and removes the same parties for the keys in exclude. It
+// reports false for the zero Policy.
+//
+// A caller that probes one set of signatures after another, such as a
+// search for the earliest cosignatures that satisfy a quorum, calls
+// SatisfiedBy, because every failed Check allocates its error.
+//
+// # Allocation contract
+//
+// Zero-alloc for a policy of at most 64 keys and 128 rules, apart from
+// what each Verifier allocates, whatever the result. A larger policy
+// allocates its bookkeeping.
+func (p Policy) SatisfiedBy(message []byte, sigs []Signature, exclude ...KeyID) bool {
+	if len(p.rules) == 0 {
+		return false
+	}
+
+	counted, _, required := p.evaluate(message, sigs, exclude)
+
+	return counted >= required
+}
+
+// evaluate counts the rules at the root of p for message and sigs, by the
+// rules of Check. p is not the zero Policy. It returns the rules that
+// counted, the most rules that could count, and the rules that the root
+// requires: its children, or the root itself when it is an AllOf rule.
+func (p Policy) evaluate(message []byte, sigs []Signature, exclude []KeyID) (counted, possible, required int) {
 	var (
 		keyStack  [maxStackKeys]int
 		ruleStack [maxStackRules]int
@@ -431,7 +468,8 @@ func (p Policy) Check(message []byte, sigs []Signature, exclude ...KeyID) error 
 	}
 
 	root := &p.rules[0]
-	counted, left, required := 0, 0, 1
+	left := 0
+	required = 1
 
 	if root.children == 0 {
 		if b.reach[0] == root.need && p.counts(0, message, sigs, &b) {
@@ -442,11 +480,7 @@ func (p Policy) Check(message []byte, sigs []Signature, exclude ...KeyID) error 
 		required = root.need
 	}
 
-	if counted >= required {
-		return nil
-	}
-
-	return fmt.Errorf("%w: at most %d of %d required rules", ErrThreshold, counted+left, required)
+	return counted, counted + left, required
 }
 
 // reachable returns the number of rule i's children, or of a key set's
@@ -557,9 +591,9 @@ type rule struct {
 	lo, hi int
 }
 
-// bookkeeping is the state of one [Policy.Check]. It contains nothing
-// that a Verifier receives, so escape analysis keeps the arrays behind
-// first and reach on the stack of Check.
+// bookkeeping is the state of one evaluation of a [Policy]. It contains
+// nothing that a Verifier receives, so escape analysis keeps the arrays
+// behind first and reach on the stack of evaluate.
 type bookkeeping struct {
 	// first[k] is one more than the position in sigs of the first
 	// signature for key k, zero when there is none, or excluded.

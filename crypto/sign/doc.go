@@ -83,7 +83,9 @@
 // alternatives of one party. [NewPolicy] builds a threshold of parties,
 // and [NewPolicyTree] builds any tree, such as the nested groups of a
 // C2SP tlog-policy. [Policy.Check] counts each key once and verifies at
-// most one signature per key of the policy.
+// most one signature per key of the policy. [Policy.SatisfiedBy] runs the
+// same check and reports its result without an error, for a caller that
+// probes one set of signatures after another.
 //
 // [Policy.Check] takes keys to exclude, such as the key of the requester
 // of an approval, and removes the whole party of an excluded key. The
@@ -180,9 +182,10 @@
 // since both return a new slice.
 //
 // [Policy.Check] allocates nothing when it returns nil for a policy of
-// at most 64 keys and 128 rules. [NewPolicyTree] allocates the index of
-// the keys, the keys and the rules at their exact sizes: four
-// allocations for the example policy of tlog-policy. [Policy.Reset] and
-// the methods of [Rules] allocate nothing when they reuse the memory of
-// a build of the same size.
+// at most 64 keys and 128 rules, and [Policy.SatisfiedBy] allocates
+// nothing for such a policy whatever its result. [NewPolicyTree]
+// allocates the index of the keys, the keys and the rules at their exact
+// sizes: four allocations for the example policy of tlog-policy.
+// [Policy.Reset] and the methods of [Rules] allocate nothing when they
+// reuse the memory of a build of the same size.
 package sign
