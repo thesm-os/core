@@ -582,6 +582,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its error. `SatisfiedBy` allocates nothing for a policy of at most 64
   keys and 128 rules, whatever its result, so a search for the earliest
   cosignatures that satisfy a quorum probes without an allocation.
+- `tlog.TaggedRangeProof`, `tlog.TaggedTree.RangeProof` and
+  `tlog.TaggedRangeRoot` prove a range of consecutive leaves of a tagged
+  tree, and recompute its root from the leaves of the range and the proof.
+  The proof contains the roots of the largest subtrees of RFC 9162's split
+  outside the range, at most two hashes per tree level, and the proof of
+  one leaf is the path that `TaggedInclusionProof` returns. A range of 16
+  leaves in a tree of 65,536 has a proof of at most 24 hashes, where its 16
+  paths have 256. `TaggedRangeRoot` refuses a proof of another length and a
+  hash of another size before it hashes, and allocates nothing.
 
 ### Changed
 

@@ -21,6 +21,136 @@ type span struct {
 	lo, hi uint64
 }
 
+// rangeWalk is the walk of RFC 9162's split that the range proof of the
+// leaves [begin, end) of a tree follows, for 0 <= begin < end <= the size
+// of the tree.
+//
+// The walk descends from the root while the range lies in one child of a
+// node. At the smallest node that contains the range, the range is either
+// that node or straddles its split. A range that straddles the split
+// continues down two edges: from the left child of the node to begin, and
+// from its right child to end.
+type rangeWalk struct {
+	// path contains, from the root down, the sibling of each node on the
+	// way to the smallest node that contains the range. Every sibling lies
+	// outside the range.
+	path [maxPath]span
+
+	// left and right contain, from the top down, the child that each edge
+	// leaves at each node, and last the node of the range at the bottom of
+	// the edge. A child on the far side of an edge lies outside the range,
+	// and a child on the near side inside it. Both are empty when the range
+	// is a node of the tree.
+	left, right [maxPath]span
+
+	// np, nl and nr are the lengths of path, left and right.
+	np, nl, nr int
+
+	// begin and end bound the range.
+	begin, end uint64
+}
+
+// walk records the walk of the range [begin, end) in a tree of size leaves.
+func (w *rangeWalk) walk(size, begin, end uint64) {
+	*w = rangeWalk{begin: begin, end: end}
+
+	lo, hi := uint64(0), size
+	for range maxPath {
+		if begin <= lo && hi <= end {
+			return
+		}
+
+		k := split(hi - lo)
+		if end <= lo+k {
+			w.path[w.np] = span{lo + k, hi}
+			hi = lo + k
+		} else if begin >= lo+k {
+			w.path[w.np] = span{lo, lo + k}
+			lo += k
+		} else {
+			w.edges(lo, lo+k, hi)
+
+			return
+		}
+
+		w.np++
+	}
+}
+
+// edges records the two edges of a range that straddles the split m of the
+// node [lo, hi): from [lo, m) down to begin, and from [m, hi) down to end.
+// begin lies in the node of each step of the left edge, and end - 1 in the
+// node of each step of the right edge, so neither edge splits a single
+// leaf.
+func (w *rangeWalk) edges(lo, m, hi uint64) {
+	l, h := lo, m
+	for range maxPath {
+		if w.begin <= l {
+			break
+		}
+
+		k := split(h - l)
+		if w.begin >= l+k {
+			w.left[w.nl] = span{l, l + k}
+			l += k
+		} else {
+			w.left[w.nl] = span{l + k, h}
+			h = l + k
+		}
+
+		w.nl++
+	}
+
+	w.left[w.nl] = span{l, h}
+	w.nl++
+
+	l, h = m, hi
+	for range maxPath {
+		if h <= w.end {
+			break
+		}
+
+		k := split(h - l)
+		if w.end <= l+k {
+			w.right[w.nr] = span{l + k, h}
+			h = l + k
+		} else {
+			w.right[w.nr] = span{l, l + k}
+			l += k
+		}
+
+		w.nr++
+	}
+
+	w.right[w.nr] = span{l, h}
+	w.nr++
+}
+
+// spans appends to dst the leaf ranges whose hashes form the range proof,
+// in proof order. The children outside the range on the edge down to begin
+// come first, then those on the edge down to end, and the siblings of the
+// path last, each group from the bottom up. The proof of one leaf is the
+// path that inclusionSpans returns.
+func (w *rangeWalk) spans(dst []span) []span {
+	for _, s := range slices.Backward(w.left[:w.nl]) {
+		if s.hi <= w.begin {
+			dst = append(dst, s)
+		}
+	}
+
+	for _, s := range slices.Backward(w.right[:w.nr]) {
+		if s.lo >= w.end {
+			dst = append(dst, s)
+		}
+	}
+
+	for _, s := range slices.Backward(w.path[:w.np]) {
+		dst = append(dst, s)
+	}
+
+	return dst
+}
+
 // split returns k, the largest power of two below n, for n of at least
 // two. RFC 9162 splits a tree of n leaves into its first k leaves and
 // the rest.

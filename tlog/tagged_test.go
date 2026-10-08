@@ -5,6 +5,7 @@ package tlog_test
 
 import (
 	"encoding/hex"
+	"math"
 	"math/bits"
 	"slices"
 	"strconv"
@@ -13,6 +14,7 @@ import (
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/bench"
 	"go.dokimi.dev/assert/expect"
+	"go.dokimi.dev/assert/prop"
 
 	"go.thesmos.sh/core/crypto"
 	coresha256 "go.thesmos.sh/core/crypto/sha256"
@@ -44,6 +46,19 @@ const (
 	// cover. It is past the perfect tree of 128 leaves, so the tests
 	// include trees whose right subtree has one or two leaves.
 	differentialBound = 130
+
+	// rangeBound is the largest tree of the generated ranges. It is past
+	// the perfect tree of 1,024 leaves, so the generated trees have up to
+	// eleven levels.
+	rangeBound = 1100
+
+	// exhaustiveBound is the largest tree whose every range a test proves.
+	// It is past the perfect tree of 32 leaves.
+	exhaustiveBound = 33
+
+	// measuredRange is the number of leaves of the range of the allocation
+	// tests and the benchmarks, which starts at measuredIndex.
+	measuredRange = 16
 
 	// noLeaves is the panic of a tagged tree over no leaves.
 	noLeaves = "tlog: a tagged tree over no leaves has no root"
@@ -84,6 +99,7 @@ func TestTagged(t *testing.T) {
 	v := loadVectors(t)
 	h := coresha256.New()
 	all := leaves(differentialBound)
+	many := leaves(rangeBound)
 
 	t.Run("TaggedTree", func(t *testing.T) {
 		t.Parallel()
@@ -245,6 +261,69 @@ func TestTagged(t *testing.T) {
 				assert.ErrorIs(t, err, tlog.ErrRange, "a tree with no leaves must have no paths")
 			})
 		})
+
+		t.Run("RangeProof", func(t *testing.T) {
+			t.Parallel()
+
+			t.Run("returns the proof of TaggedRangeProof for generated ranges", func(t *testing.T) {
+				t.Parallel()
+				prop.ForAll(t, "RangeProof must return the proof of TaggedRangeProof", func(c *prop.Case) {
+					n, begin, end := drawRange(c)
+					got, err := taggedTree(h, many[:n]).RangeProof(begin, end, nil)
+					assert.NoError(c, err, "RangeProof must succeed")
+					want, err := tlog.TaggedRangeProof(h, nodeRole, many[:n], begin, end, nil)
+					assert.NoError(c, err, "TaggedRangeProof must succeed")
+					assert.Equal(c, got, want, "the proof of the kept nodes must be the proof of the leaves")
+				})
+			})
+
+			t.Run("hashes nothing", func(t *testing.T) {
+				t.Parallel()
+				c := &countingHasher{}
+				tree := taggedTree(c, all[:100])
+				before := c.combines
+				for begin := range uint64(100) {
+					_, err := tree.RangeProof(begin, 100, nil)
+					assert.NoError(t, err, "RangeProof must succeed")
+				}
+				assert.Equal(t, c.combines, before, "RangeProof must read the kept nodes")
+			})
+
+			t.Run("appends the proof to dst", func(t *testing.T) {
+				t.Parallel()
+				prefix := []crypto.Digest{h.Hash([]byte("kept"))}
+				p, err := taggedTree(h, all[:5]).RangeProof(1, 3, prefix)
+				assert.NoError(t, err, "RangeProof must succeed")
+				want, err := tlog.TaggedRangeProof(h, nodeRole, all[:5], 1, 3, nil)
+				assert.NoError(t, err, "TaggedRangeProof must succeed")
+				assert.Equal(t, p, append(slices.Clone(prefix), want...), "the proof must follow the kept digest")
+			})
+
+			tests := []struct {
+				name       string
+				begin, end uint64
+			}{
+				{name: "returns ErrRange with dst unchanged for an empty range", begin: 2, end: 2},
+				{name: "returns ErrRange with dst unchanged for a range that ends before it begins", begin: 3, end: 2},
+				{name: "returns ErrRange with dst unchanged for a range past the size", begin: 2, end: 6},
+			}
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					t.Parallel()
+					prefix := []crypto.Digest{h.Hash([]byte("kept"))}
+					p, err := taggedTree(h, all[:5]).RangeProof(tt.begin, tt.end, prefix)
+					expect.ErrorIs(t, err, tlog.ErrRange, "a range outside the tree must be ErrRange")
+					expect.Equal(t, p, prefix, "dst must be returned unchanged")
+				})
+			}
+
+			t.Run("returns ErrRange for every range of the zero TaggedTree", func(t *testing.T) {
+				t.Parallel()
+				var tree tlog.TaggedTree
+				_, err := tree.RangeProof(0, 1, nil)
+				assert.ErrorIs(t, err, tlog.ErrRange, "a tree with no leaves must have no ranges")
+			})
+		})
 	})
 
 	t.Run("TaggedRoot", func(t *testing.T) {
@@ -342,6 +421,83 @@ func TestTagged(t *testing.T) {
 		t.Run("panics on a unary node role", func(t *testing.T) {
 			t.Parallel()
 			assert.Panics(t, func() { _, _ = tlog.TaggedInclusionProof(h, unaryRole, all[:1], 0, nil) },
+				"a unary role must panic")
+		})
+	})
+
+	t.Run("TaggedRangeProof", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the path of TaggedInclusionProof for a range of one leaf", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "the range proof of one leaf must be its path", func(c *prop.Case) {
+				n := c.Draw(prop.Integer[uint64](1, rangeBound), "size")
+				i := c.Draw(prop.Integer[uint64](0, n-1), "index")
+				got, err := tlog.TaggedRangeProof(h, nodeRole, many[:n], i, i+1, nil)
+				assert.NoError(c, err, "TaggedRangeProof must succeed")
+				want, err := tlog.TaggedInclusionProof(h, nodeRole, many[:n], i, nil)
+				assert.NoError(c, err, "TaggedInclusionProof must succeed")
+				assert.Equal(c, got, want, "the proof of one leaf must be its path")
+			})
+		})
+
+		t.Run("returns at most 2⌈log2 n⌉ hashes for a tree of n leaves", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "a range proof must have at most two hashes per level", func(c *prop.Case) {
+				n, begin, end := drawRange(c)
+				got, err := tlog.TaggedRangeProof(h, nodeRole, many[:n], begin, end, nil)
+				assert.NoError(c, err, "TaggedRangeProof must succeed")
+				bound := float64(2 * bits.Len64(n-1))
+				assert.InRange(c, len(got), 0, bound, "the proof must have at most two hashes per level")
+			})
+		})
+
+		t.Run("returns the subtrees beside the range in the order of the proof", func(t *testing.T) {
+			t.Parallel()
+			// The leaves [3, 5) of a tree of 16 straddle the split of [0, 8).
+			// The left edge leaves [2, 3) and [0, 2), the right edge [5, 6)
+			// and [6, 8), and the path leaves [8, 16).
+			got, err := tlog.TaggedRangeProof(h, nodeRole, all[:16], 3, 5, nil)
+			assert.NoError(t, err, "TaggedRangeProof must succeed")
+			assert.Equal(t, got, []crypto.Digest{
+				all[2],
+				tlog.TaggedRoot(h, nodeRole, all[0:2]),
+				all[5],
+				tlog.TaggedRoot(h, nodeRole, all[6:8]),
+				tlog.TaggedRoot(h, nodeRole, all[8:16]),
+			}, "the proof must list the subtrees beside the range in the order of the proof")
+		})
+
+		t.Run("appends the proof to dst", func(t *testing.T) {
+			t.Parallel()
+			prefix := []crypto.Digest{h.Hash([]byte("kept"))}
+			p, err := tlog.TaggedRangeProof(h, nodeRole, all[:16], 3, 5, prefix)
+			assert.NoError(t, err, "TaggedRangeProof must succeed")
+			assert.Length(t, p, 6, "the proof must follow the kept digest")
+			assert.Equal(t, p[0], prefix[0], "dst must keep its contents")
+		})
+
+		tests := []struct {
+			name       string
+			begin, end uint64
+		}{
+			{name: "returns ErrRange with dst unchanged for an empty range", begin: 2, end: 2},
+			{name: "returns ErrRange with dst unchanged for a range that ends before it begins", begin: 3, end: 2},
+			{name: "returns ErrRange with dst unchanged for a range past the size", begin: 2, end: 6},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				prefix := []crypto.Digest{h.Hash([]byte("kept"))}
+				p, err := tlog.TaggedRangeProof(h, nodeRole, all[:5], tt.begin, tt.end, prefix)
+				expect.ErrorIs(t, err, tlog.ErrRange, "a range outside the tree must be ErrRange")
+				expect.Equal(t, p, prefix, "dst must be returned unchanged")
+			})
+		}
+
+		t.Run("panics on a unary node role", func(t *testing.T) {
+			t.Parallel()
+			assert.Panics(t, func() { _, _ = tlog.TaggedRangeProof(h, unaryRole, all[:1], 0, 1, nil) },
 				"a unary role must panic")
 		})
 	})
@@ -470,6 +626,168 @@ func TestTagged(t *testing.T) {
 				"a unary role must panic")
 		})
 	})
+
+	t.Run("TaggedRangeRoot", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the root of TaggedRoot for every range of every tree up to 33 leaves", func(t *testing.T) {
+			t.Parallel()
+			for n := uint64(1); n <= exhaustiveBound; n++ {
+				root := tlog.TaggedRoot(h, nodeRole, all[:n])
+				for begin := range n {
+					for end := begin + 1; end <= n; end++ {
+						proof, err := tlog.TaggedRangeProof(h, nodeRole, all[:n], begin, end, nil)
+						assert.NoError(t, err, "TaggedRangeProof must succeed")
+						got, err := tlog.TaggedRangeRoot(h, nodeRole, begin, n, all[begin:end], proof)
+						assert.NoError(t, err, "TaggedRangeRoot must succeed")
+						expect.Equal(t, got, root, "the range ["+strconv.FormatUint(begin, 10)+", "+
+							strconv.FormatUint(end, 10)+") of "+strconv.FormatUint(n, 10)+" leaves")
+					}
+				}
+			}
+		})
+
+		t.Run("returns the root of TaggedRoot for generated ranges", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "a range and its proof must recompute the root", func(c *prop.Case) {
+				n, begin, end := drawRange(c)
+				tree := taggedTree(h, many[:n])
+				proof, err := tree.RangeProof(begin, end, nil)
+				assert.NoError(c, err, "RangeProof must succeed")
+				got, err := tlog.TaggedRangeRoot(h, nodeRole, begin, n, many[begin:end], proof)
+				assert.NoError(c, err, "TaggedRangeRoot must succeed")
+				assert.Equal(c, got, tree.Root(), "the range and its proof must recompute the root")
+			})
+		})
+
+		t.Run("returns the root for one leaf exactly when VerifyTaggedInclusion accepts its path", func(t *testing.T) {
+			t.Parallel()
+			var tree tlog.TaggedTree
+			for n := uint64(1); n <= vectorBound; n++ {
+				tree.Reset(h, nodeRole, all[:n])
+				for i := range n {
+					p, err := tree.InclusionProof(i, nil)
+					assert.NoError(t, err, "InclusionProof must succeed")
+					for _, m := range append(mutations(h, p), p) {
+						got, err := tlog.TaggedRangeRoot(h, nodeRole, i, n, all[i:i+1], m)
+						verified := tlog.VerifyTaggedInclusion(h, nodeRole, i, n, all[i], tree.Root(), m) == nil
+						expect.Equal(t, err == nil && got.Equal(tree.Root()), verified, "a path of leaf "+
+							strconv.FormatUint(i, 10)+" of "+strconv.FormatUint(n, 10)+" must recompute the root "+
+							"exactly when VerifyTaggedInclusion accepts it")
+					}
+				}
+			}
+		})
+
+		t.Run("returns another root for a range with another leaf", func(t *testing.T) {
+			t.Parallel()
+			other := h.Hash([]byte("not in the tree"))
+			prop.ForAll(t, "a changed leaf of the range must change the root", func(c *prop.Case) {
+				n, begin, end := drawRange(c)
+				tree := taggedTree(h, many[:n])
+				proof, err := tree.RangeProof(begin, end, nil)
+				assert.NoError(c, err, "RangeProof must succeed")
+				rng := slices.Clone(many[begin:end])
+				rng[c.Draw(prop.Integer(0, len(rng)-1), "changed leaf")] = other
+				got, err := tlog.TaggedRangeRoot(h, nodeRole, begin, n, rng, proof)
+				assert.NoError(c, err, "TaggedRangeRoot must succeed")
+				assert.NotEqual(c, got, tree.Root(), "a changed leaf must change the root")
+			})
+		})
+
+		t.Run("returns another root for a proof with another hash", func(t *testing.T) {
+			t.Parallel()
+			other := h.Hash([]byte("not in the tree"))
+			prop.ForAll(t, "a changed hash of the proof must change the root", func(c *prop.Case) {
+				n, begin, end := drawRange(c)
+				tree := taggedTree(h, many[:n])
+				proof, err := tree.RangeProof(begin, end, nil)
+				assert.NoError(c, err, "RangeProof must succeed")
+				c.Assume(len(proof) > 0)
+				proof[c.Draw(prop.Integer(0, len(proof)-1), "changed hash")] = other
+				got, err := tlog.TaggedRangeRoot(h, nodeRole, begin, n, many[begin:end], proof)
+				assert.NoError(c, err, "TaggedRangeRoot must succeed")
+				assert.NotEqual(c, got, tree.Root(), "a changed hash must change the root")
+			})
+		})
+
+		t.Run("returns ErrProof without hashing for a proof one hash longer", func(t *testing.T) {
+			t.Parallel()
+			extra := h.Hash([]byte("not in the tree"))
+			prop.ForAll(t, "a longer proof must cost no hash", func(c *prop.Case) {
+				n, begin, end := drawRange(c)
+				proof, err := taggedTree(h, many[:n]).RangeProof(begin, end, nil)
+				assert.NoError(c, err, "RangeProof must succeed")
+				counting := &countingHasher{}
+				_, err = tlog.TaggedRangeRoot(counting, nodeRole, begin, n, many[begin:end], append(proof, extra))
+				assert.ErrorIs(c, err, tlog.ErrProof, "a longer proof must be ErrProof")
+				assert.Equal(c, counting.combines, 0, "a longer proof must cost no hash")
+			})
+		})
+
+		t.Run("returns ErrProof without hashing for a proof one hash shorter", func(t *testing.T) {
+			t.Parallel()
+			proof, err := tlog.TaggedRangeProof(h, nodeRole, all[:16], 3, 5, nil)
+			assert.NoError(t, err, "TaggedRangeProof must succeed")
+			counting := &countingHasher{}
+			_, err = tlog.TaggedRangeRoot(counting, nodeRole, 3, 16, all[3:5], proof[:len(proof)-1])
+			assert.ErrorIs(t, err, tlog.ErrProof, "a shorter proof must be ErrProof")
+			assert.Equal(t, counting.combines, 0, "a shorter proof must cost no hash")
+		})
+
+		proof, err := tlog.TaggedRangeProof(h, nodeRole, all[:16], 3, 5, nil)
+		assert.NoError(t, err, "TaggedRangeProof must succeed")
+
+		wider, zero := slices.Clone(proof), slices.Clone(proof)
+		wider[1] = coresha512.New384().Hash([]byte("wider"))
+		zero[1] = crypto.Digest{}
+
+		tests := []struct {
+			want        error
+			name        string
+			rng         []crypto.Digest
+			proof       []crypto.Digest
+			begin, size uint64
+		}{
+			{
+				name: "returns ErrProof for a SHA-384 digest in the proof",
+				rng:  all[3:5], proof: wider, begin: 3, size: 16, want: tlog.ErrProof,
+			},
+			{
+				name: "returns ErrProof for the zero Digest in the proof",
+				rng:  all[3:5], proof: zero, begin: 3, size: 16, want: tlog.ErrProof,
+			},
+			{
+				name: "returns ErrRange for an empty range",
+				rng:  nil, proof: proof, begin: 3, size: 16, want: tlog.ErrRange,
+			},
+			{
+				name: "returns ErrRange for a range past the size",
+				rng:  all[15:17], proof: proof, begin: 15, size: 16, want: tlog.ErrRange,
+			},
+			{
+				name: "returns ErrRange for a begin at the size",
+				rng:  all[16:17], proof: proof, begin: 16, size: 16, want: tlog.ErrRange,
+			},
+			{
+				name: "returns ErrRange for a range whose end overflows",
+				rng:  all[:1], proof: proof, begin: math.MaxUint64, size: 16, want: tlog.ErrRange,
+			},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				_, err := tlog.TaggedRangeRoot(h, nodeRole, tt.begin, tt.size, tt.rng, tt.proof)
+				assert.ErrorIs(t, err, tt.want, "TaggedRangeRoot must refuse the range or its proof")
+			})
+		}
+
+		t.Run("panics on a unary node role", func(t *testing.T) {
+			t.Parallel()
+			assert.Panics(t, func() { _, _ = tlog.TaggedRangeRoot(h, unaryRole, 0, 1, all[:1], nil) },
+				"a unary role must panic")
+		})
+	})
 }
 
 // TestTaggedAllocs checks the allocation contract of each function and
@@ -485,6 +803,10 @@ func TestTaggedAllocs(t *testing.T) {
 
 	path, err := tree.InclusionProof(measuredIndex, nil)
 	assert.NoError(t, err, "InclusionProof must succeed")
+
+	rng := all[measuredIndex : measuredIndex+measuredRange]
+	rangeProof, err := tree.RangeProof(measuredIndex, measuredIndex+measuredRange, nil)
+	assert.NoError(t, err, "RangeProof must succeed")
 
 	t.Run("TaggedTree", func(t *testing.T) {
 		t.Run("Reset", func(t *testing.T) {
@@ -512,6 +834,14 @@ func TestTaggedAllocs(t *testing.T) {
 				"InclusionProof must not allocate into a dst with room")
 			assert.NotEmpty(t, got, "the test must measure a path")
 		})
+
+		t.Run("RangeProof", func(t *testing.T) {
+			var got []crypto.Digest
+			expect.MaxAllocs(t, func() {
+				got, _ = tree.RangeProof(measuredIndex, measuredIndex+measuredRange, dst[:0])
+			}, 0, "RangeProof must not allocate into a dst with room")
+			assert.NotEmpty(t, got, "the test must measure a proof")
+		})
 	})
 
 	t.Run("TaggedRoot", func(t *testing.T) {
@@ -527,12 +857,29 @@ func TestTaggedAllocs(t *testing.T) {
 		assert.NotEmpty(t, got, "the test must measure a path")
 	})
 
+	t.Run("TaggedRangeProof", func(t *testing.T) {
+		var got []crypto.Digest
+		expect.MaxAllocs(t, func() {
+			got, _ = tlog.TaggedRangeProof(h, nodeRole, all, measuredIndex, measuredIndex+measuredRange, dst[:0])
+		}, 0, "TaggedRangeProof must not allocate into a dst with room")
+		assert.NotEmpty(t, got, "the test must measure a proof")
+	})
+
 	t.Run("VerifyTaggedInclusion", func(t *testing.T) {
 		root := tree.Root()
 		expect.MaxAllocs(t, func() {
 			err = tlog.VerifyTaggedInclusion(h, nodeRole, measuredIndex, measuredSize, all[measuredIndex], root, path)
 		}, 0, "VerifyTaggedInclusion must not allocate")
 		assert.NoError(t, err, "the test must measure a path that verifies")
+	})
+
+	t.Run("TaggedRangeRoot", func(t *testing.T) {
+		var got crypto.Digest
+		expect.MaxAllocs(t, func() {
+			got, err = tlog.TaggedRangeRoot(h, nodeRole, measuredIndex, measuredSize, rng, rangeProof)
+		}, 0, "TaggedRangeRoot must not allocate")
+		assert.NoError(t, err, "the test must measure a proof that TaggedRangeRoot accepts")
+		assert.Equal(t, got, tree.Root(), "the test must measure a proof of the root")
 	})
 }
 
@@ -546,6 +893,10 @@ func BenchmarkTagged(b *testing.B) {
 
 	path, err := tree.InclusionProof(measuredIndex, nil)
 	assert.NoError(b, err, "InclusionProof must succeed")
+
+	rng := all[measuredIndex : measuredIndex+measuredRange]
+	rangeProof, err := tree.RangeProof(measuredIndex, measuredIndex+measuredRange, nil)
+	assert.NoError(b, err, "RangeProof must succeed")
 
 	b.Run("TaggedTree", func(b *testing.B) {
 		b.Run("Reset", func(b *testing.B) {
@@ -599,6 +950,19 @@ func BenchmarkTagged(b *testing.B) {
 
 			assert.NotEmpty(b, got, "the benchmark must measure a path")
 		})
+
+		b.Run("RangeProof", func(b *testing.B) {
+			var got []crypto.Digest
+
+			c := bench.Start(b).MaxAllocs(0)
+			defer c.End()
+
+			for c.Loop() {
+				got, _ = tree.RangeProof(measuredIndex, measuredIndex+measuredRange, dst[:0])
+			}
+
+			assert.NotEmpty(b, got, "the benchmark must measure a proof")
+		})
 	})
 
 	b.Run("TaggedRoot", func(b *testing.B) {
@@ -627,6 +991,19 @@ func BenchmarkTagged(b *testing.B) {
 		assert.NotEmpty(b, got, "the benchmark must measure a path")
 	})
 
+	b.Run("TaggedRangeProof", func(b *testing.B) {
+		var got []crypto.Digest
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			got, _ = tlog.TaggedRangeProof(h, nodeRole, all, measuredIndex, measuredIndex+measuredRange, dst[:0])
+		}
+
+		assert.NotEmpty(b, got, "the benchmark must measure a proof")
+	})
+
 	b.Run("VerifyTaggedInclusion", func(b *testing.B) {
 		root := tree.Root()
 
@@ -640,6 +1017,23 @@ func BenchmarkTagged(b *testing.B) {
 		}
 
 		assert.NoError(b, err, "the benchmark must measure a path that verifies")
+	})
+
+	b.Run("TaggedRangeRoot", func(b *testing.B) {
+		var (
+			got crypto.Digest
+			err error
+		)
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			got, err = tlog.TaggedRangeRoot(h, nodeRole, measuredIndex, measuredSize, rng, rangeProof)
+		}
+
+		assert.NoError(b, err, "the benchmark must measure a proof that TaggedRangeRoot accepts")
+		assert.Equal(b, got, tree.Root(), "the benchmark must measure a proof of the root")
 	})
 }
 
@@ -686,4 +1080,14 @@ func taggedTree(h crypto.Hasher, leaves []crypto.Digest) *tlog.TaggedTree {
 	t.Reset(h, nodeRole, leaves)
 
 	return &t
+}
+
+// drawRange draws the size n of a tree of up to rangeBound leaves, and a
+// range [begin, end) of its leaves.
+func drawRange(c *prop.Case) (n, begin, end uint64) {
+	n = c.Draw(prop.Integer[uint64](1, rangeBound), "size")
+	begin = c.Draw(prop.Integer[uint64](0, n-1), "begin")
+	end = c.Draw(prop.Integer[uint64](begin+1, n), "end")
+
+	return n, begin, end
 }

@@ -30,6 +30,12 @@
 // 9162's shape and proofs. A [TaggedTree] keeps every node of one tree, so
 // the paths of all its leaves cost one hash per interior node.
 //
+// [TaggedRangeProof] and [TaggedTree.RangeProof] prove a range of
+// consecutive leaves with at most two hashes per tree level, and the proof
+// of one leaf is its path. [TaggedRangeRoot] recomputes the root from the
+// leaves of a range and its proof, for a verifier that compares the root,
+// or a value that it derives from the root, with a value that it trusts.
+//
 // A tagged tree over no leaves has no root, and [TaggedRoot] panics
 // instead of returning one. A protocol whose tree can be empty chooses the
 // value it commits to for that case.

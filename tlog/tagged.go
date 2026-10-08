@@ -128,6 +128,45 @@ func (t *TaggedTree) InclusionProof(index uint64, dst []crypto.Digest) ([]crypto
 	return dst, nil
 }
 
+// RangeProof appends to dst the range proof of the leaves [begin, end) of
+// t, the proof that [TaggedRangeProof] returns for the same leaves and node
+// role, and returns the extended slice. It reads the proof from the kept
+// nodes and hashes nothing.
+//
+// Returns dst unchanged and [ErrRange] when begin is not below end, and
+// when end is above [TaggedTree.Size].
+//
+// # Allocation contract
+//
+// Allocates only to grow dst.
+func (t *TaggedTree) RangeProof(begin, end uint64, dst []crypto.Digest) ([]crypto.Digest, error) {
+	if begin >= end || end > t.size {
+		return dst, ErrRange
+	}
+
+	var (
+		w     rangeWalk
+		spans [2 * maxPath]span
+	)
+
+	w.walk(t.size, begin, end)
+	for _, s := range w.spans(spans[:0]) {
+		// The node over the leaves of s is on the level of the smallest
+		// perfect tree that holds them, and the index of s.lo there is its
+		// index on that level.
+		level := bits.Len64(s.hi - s.lo - 1)
+
+		nodes, width := t.nodes, t.size
+		for range level {
+			nodes, width = nodes[width:], above(width)
+		}
+
+		dst = append(dst, nodes[s.lo>>level])
+	}
+
+	return dst, nil
+}
+
 // TaggedRoot returns the root of the tagged tree over leaves: the tree of
 // RFC 9162's shape whose interior nodes are h.CombineTagged(node, left,
 // right), for node a binary role. The leaves are digests that the
@@ -185,6 +224,55 @@ func TaggedInclusionProof(
 	return dst, nil
 }
 
+// TaggedRangeProof appends to dst the range proof of the leaves [begin,
+// end) in the tagged tree that [TaggedRoot] computes over leaves, and
+// returns the extended slice. The proof contains the roots of the largest
+// subtrees of RFC 9162's split that lie outside the range, each after the
+// proof of the subtree beside it. Each of these groups lists its roots
+// from the bottom up, and the groups follow one another in this order:
+//
+//   - the subtrees beside the edge from the smallest subtree that contains
+//     the range down to begin;
+//   - the subtrees beside the edge from that subtree down to the last leaf
+//     of the range;
+//   - the siblings on the path from the root down to that subtree.
+//
+// The proof of one leaf is the path that [TaggedInclusionProof] returns,
+// and a range in a tree of n leaves has a proof of at most 2⌈log2 n⌉
+// hashes. [TaggedRangeRoot] recomputes the root from the leaves of the
+// range and the proof.
+//
+// Returns dst unchanged and [ErrRange] when begin is not below end, and
+// when end is above len(leaves). Panics when node is a unary role, and,
+// through CombineTagged, when a leaf it combines is not a digest of h.
+//
+// # Allocation contract
+//
+// Allocates only to grow dst. One call hashes about len(leaves) nodes. A
+// [TaggedTree] returns the proof of every range after hashing each node
+// once.
+func TaggedRangeProof(
+	h crypto.Hasher, node crypto.Role, leaves []crypto.Digest, begin, end uint64, dst []crypto.Digest,
+) ([]crypto.Digest, error) {
+	requireBinary(node)
+
+	if begin >= end || end > uint64(len(leaves)) {
+		return dst, ErrRange
+	}
+
+	var (
+		w     rangeWalk
+		spans [2 * maxPath]span
+	)
+
+	w.walk(uint64(len(leaves)), begin, end)
+	for _, s := range w.spans(spans[:0]) {
+		dst = append(dst, taggedFold(h, node, leaves[s.lo:s.hi]))
+	}
+
+	return dst, nil
+}
+
 // VerifyTaggedInclusion reports whether proof shows that leaf is the leaf
 // at index in the tagged tree of size leaves with the given root, whose
 // interior nodes are h.CombineTagged(node, left, right). It follows RFC
@@ -233,6 +321,98 @@ func VerifyTaggedInclusion(
 	}
 
 	return nil
+}
+
+// TaggedRangeRoot returns the root of the tagged tree of size leaves whose
+// leaves from begin on are rng, as the range proof in proof proves them.
+// The proof is one that [TaggedRangeProof] or [TaggedTree.RangeProof]
+// returns. A verifier compares the root, or a value that it derives from
+// the root, with a value that it trusts. For a range of one leaf,
+// TaggedRangeRoot returns the root that [VerifyTaggedInclusion] compares.
+//
+// Returns [ErrRange] for an empty rng and for a range past size, and
+// [ErrProof] for a proof whose length is not the length of the proof of the
+// range, and for a proof that contains a hash whose size is not the size of
+// the leaves. It checks both before it hashes, so a proof from an untrusted
+// source never makes CombineTagged panic, and a proof of another length
+// costs no hash. Panics when node is a unary role, and, through
+// CombineTagged, when a leaf of rng is not a digest of h.
+//
+// # Allocation contract
+//
+// Zero alloc. It hashes len(rng) + len(proof) - 1 nodes.
+func TaggedRangeRoot(
+	h crypto.Hasher, node crypto.Role, begin, size uint64, rng, proof []crypto.Digest,
+) (crypto.Digest, error) {
+	requireBinary(node)
+
+	// An end at or below begin is an empty rng, or a range whose end
+	// overflows.
+	end := begin + uint64(len(rng))
+	if end <= begin || end > size {
+		return crypto.Digest{}, ErrRange
+	}
+
+	var (
+		w     rangeWalk
+		spans [2 * maxPath]span
+	)
+
+	w.walk(size, begin, end)
+	if len(proof) != len(w.spans(spans[:0])) {
+		return crypto.Digest{}, ErrProof
+	}
+
+	for _, p := range proof {
+		if p.Size() != rng[0].Size() {
+			return crypto.Digest{}, ErrProof
+		}
+	}
+
+	// next is the position in proof of the next hash. The folds below take
+	// the hashes in the order of the proof.
+	next := 0
+
+	var r crypto.Digest
+	if w.nl == 0 {
+		r = taggedFold(h, node, rng)
+	} else {
+		// The left edge ends at the node of the range that starts at begin,
+		// and the right edge at the node that ends at end.
+		left := taggedFold(h, node, rng[:w.left[w.nl-1].hi-begin])
+		for i := w.nl - 2; i >= 0; i-- {
+			if s := w.left[i]; s.hi <= begin {
+				left = h.CombineTagged(node, proof[next], left)
+				next++
+			} else {
+				left = h.CombineTagged(node, left, taggedFold(h, node, rng[s.lo-begin:s.hi-begin]))
+			}
+		}
+
+		right := taggedFold(h, node, rng[w.right[w.nr-1].lo-begin:])
+		for i := w.nr - 2; i >= 0; i-- {
+			if s := w.right[i]; s.lo >= end {
+				right = h.CombineTagged(node, right, proof[next])
+				next++
+			} else {
+				right = h.CombineTagged(node, taggedFold(h, node, rng[s.lo-begin:s.hi-begin]), right)
+			}
+		}
+
+		r = h.CombineTagged(node, left, right)
+	}
+
+	for i := w.np - 1; i >= 0; i-- {
+		if w.path[i].lo >= end {
+			r = h.CombineTagged(node, r, proof[next])
+		} else {
+			r = h.CombineTagged(node, proof[next], r)
+		}
+
+		next++
+	}
+
+	return r, nil
 }
 
 // taggedFold returns the root of the tagged tree over leaves, which must
