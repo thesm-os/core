@@ -3,7 +3,7 @@
 
 //go:build !linux
 
-package kernel
+package kernel_test
 
 import (
 	"errors"
@@ -12,6 +12,7 @@ import (
 
 	"go.thesmos.sh/testkit"
 
+	"go.thesmos.sh/core/clock/kernel"
 	"go.thesmos.sh/core/errs"
 )
 
@@ -20,7 +21,7 @@ func TestReadKernel(t *testing.T) {
 
 	t.Run("returns an error classified Unsupported", func(t *testing.T) {
 		t.Parallel()
-		s, err := New(time.Second)
+		s, err := kernel.New(time.Second)
 		testkit.NoError(t, err, "New must accept a positive refresh")
 
 		_, err = s.ReadUTC()
