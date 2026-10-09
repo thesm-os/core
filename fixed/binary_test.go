@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package fixed_test
@@ -184,8 +184,6 @@ func FuzzUnmarshalBinary(f *testing.F) {
 // TestBinaryAllocs checks the allocation contract of the binary methods.
 // MarshalBinary allocates its result. MaxAllocs counts the allocations of
 // the whole process, so the test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestBinaryAllocs(t *testing.T) {
 	f := fixed.Fixed64(-1234567890)
 	form := []byte{0xff, 0xff, 0xff, 0xff, 0xb6, 0x69, 0xfd, 0x2e}

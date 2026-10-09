@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package fixed
@@ -129,19 +129,6 @@ func FromRaw(raw int64) (Fixed64, error) {
 	return Fixed64(raw), nil
 }
 
-// valid returns [ErrRange] for math.MinInt64, the one int64 outside
-// the domain, and nil for every other value. It is the one domain
-// check of the package: [FromRaw], [Fixed64.AppendBinary],
-// [Fixed64.AppendText] and [Fixed64.ValidateKanon] call it, so every
-// form of a Fixed64 accepts the same values.
-func (f Fixed64) valid() error {
-	if f == outOfDomain {
-		return ErrRange
-	}
-
-	return nil
-}
-
 // Raw returns f as a count of 10⁻⁸ units, its underlying int64.
 //
 // [FromRaw] is its inverse, and a storage layer with an integer column
@@ -198,6 +185,19 @@ func (f Fixed64) Neg() Fixed64 {
 // explains why, and names the one value for which Abs is wrong.
 func (f Fixed64) Abs() Fixed64 {
 	return max(f, -f)
+}
+
+// valid returns [ErrRange] for math.MinInt64, the one int64 outside
+// the domain, and nil for every other value. It is the one domain
+// check of the package: [FromRaw], [Fixed64.AppendBinary],
+// [Fixed64.AppendText] and [Fixed64.ValidateKanon] call it, so every
+// form of a Fixed64 accepts the same values.
+func (f Fixed64) valid() error {
+	if f == outOfDomain {
+		return ErrRange
+	}
+
+	return nil
 }
 
 // magnitude returns |f| as a uint64, for the 128-bit paths.

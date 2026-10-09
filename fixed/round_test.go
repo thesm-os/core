@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package fixed_test
@@ -188,8 +188,6 @@ func TestRound(t *testing.T) {
 // TestRoundAllocs checks the allocation contract of Round and RoundAway.
 // MaxAllocs counts the allocations of the whole process, so the test does
 // not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestRoundAllocs(t *testing.T) {
 	f := fixed.Fixed64(-1234567890)
 

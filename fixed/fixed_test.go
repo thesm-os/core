@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package fixed_test
@@ -303,8 +303,6 @@ func TestFixed64(t *testing.T) {
 // TestFixed64Allocs checks the allocation contract of the constructors and
 // the inspection methods. MaxAllocs counts the allocations of the whole
 // process, so the test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestFixed64Allocs(t *testing.T) {
 	f := fixed.Fixed64(-1234567890)
 
