@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package semconv_test
@@ -63,8 +63,6 @@ func TestSemconv(t *testing.T) {
 // TestSemconvAllocs checks the allocation contract of Method. MaxAllocs
 // counts the allocations of the whole process, so the test does not run
 // in parallel.
-//
-//nolint:paralleltest // see above
 func TestSemconvAllocs(t *testing.T) {
 	t.Run("Method", func(t *testing.T) {
 		var got string

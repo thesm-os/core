@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package httpserver
@@ -191,5 +191,5 @@ func writeProblem(w http.ResponseWriter, r *http.Request, status int, retryAfter
 	}
 
 	w.WriteHeader(status)
-	_, _ = w.Write(problems[status]) //nolint:errcheck // the client went away, and the status is written
+	_, _ = w.Write(problems[status])
 }

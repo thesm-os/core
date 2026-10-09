@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package httpclient_test
@@ -117,8 +117,6 @@ var _ slog.Handler = (*logs)(nil)
 func (*logs) Enabled(context.Context, slog.Level) bool { return true }
 
 // Handle keeps a clone of r.
-//
-//nolint:gocritic // hugeParam: slog.Handler passes the Record by value
 func (l *logs) Handle(_ context.Context, r slog.Record) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()

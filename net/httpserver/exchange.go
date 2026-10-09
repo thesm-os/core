@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package httpserver
@@ -152,7 +152,7 @@ func (e *exchange) ReadFrom(r io.Reader) (int64, error) {
 // when none is written. A ResponseWriter that cannot flush ignores it.
 func (e *exchange) Flush() {
 	e.status = cmp.Or(e.status, http.StatusOK)
-	_ = http.NewResponseController(e.w).Flush() //nolint:errcheck // http.Flusher returns no error
+	_ = http.NewResponseController(e.w).Flush()
 }
 
 // Hijack takes over the connection of the request, as http.Hijacker

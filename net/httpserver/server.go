@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package httpserver
@@ -210,6 +210,51 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 }
 
+// Addr returns the address that Run listens on, and nil before it listens.
+// With [WithAddr] of port 0, it returns the port that the system chose.
+func (s *Server) Addr() net.Addr {
+	if a := s.bound.Load(); a != nil {
+		return *a
+	}
+
+	return nil
+}
+
+// Live returns a handler that responds with 200 to every request while the
+// process runs. A deployment serves it as its liveness probe.
+func (*Server) Live() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+}
+
+// Ready returns a handler that responds with 200 while Run serves and every
+// check of [WithReadyCheck] returns nil for the context of the probe's
+// request. It responds with 503 before Run listens, from the start of the
+// drain, after Run returns, and while a check returns an error, which it
+// logs at slog.LevelWarn. A deployment serves it as its readiness probe, on
+// a second Server, so that it responds with 503 for the whole drain of this
+// one.
+func (s *Server) Ready() http.Handler { return http.HandlerFunc(s.serveReady) }
+
+// serveReady responds to a readiness probe, as Ready describes.
+func (s *Server) serveReady(w http.ResponseWriter, r *http.Request) {
+	if !s.ready.Load() {
+		w.WriteHeader(http.StatusServiceUnavailable)
+
+		return
+	}
+
+	for _, check := range s.readyChecks {
+		if err := check(r.Context()); err != nil {
+			s.logger.LogAttrs(r.Context(), slog.LevelWarn, msgNotReady, slog.Any(keyError, err))
+			w.WriteHeader(http.StatusServiceUnavailable)
+
+			return
+		}
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
 // listen returns the listener of WithListener, or a TCP listener on the
 // address.
 func (s *Server) listen(ctx context.Context) (net.Listener, error) {
@@ -259,7 +304,7 @@ func (s *Server) drain(ctx context.Context, served <-chan error) error {
 		// Shutdown returns once its context ends, and leaves the connections
 		// of the requests in flight open.
 		if ctx.Err() != nil {
-			_ = s.srv.Close() //nolint:errcheck // Shutdown closed the listeners, and Close only closes connections
+			_ = s.srv.Close()
 			//dokimi:mutate-skip sbr-delete: served has room for the result of serve, which then ends a moment after Run returns
 			<-served
 
@@ -297,49 +342,4 @@ func (s *Server) expire(parent context.Context, d time.Duration) (context.Contex
 	}()
 
 	return ctx, cancel
-}
-
-// Addr returns the address that Run listens on, and nil before it listens.
-// With [WithAddr] of port 0, it returns the port that the system chose.
-func (s *Server) Addr() net.Addr {
-	if a := s.bound.Load(); a != nil {
-		return *a
-	}
-
-	return nil
-}
-
-// Live returns a handler that responds with 200 to every request while the
-// process runs. A deployment serves it as its liveness probe.
-func (*Server) Live() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
-}
-
-// Ready returns a handler that responds with 200 while Run serves and every
-// check of [WithReadyCheck] returns nil for the context of the probe's
-// request. It responds with 503 before Run listens, from the start of the
-// drain, after Run returns, and while a check returns an error, which it
-// logs at slog.LevelWarn. A deployment serves it as its readiness probe, on
-// a second Server, so that it responds with 503 for the whole drain of this
-// one.
-func (s *Server) Ready() http.Handler { return http.HandlerFunc(s.serveReady) }
-
-// serveReady responds to a readiness probe, as Ready describes.
-func (s *Server) serveReady(w http.ResponseWriter, r *http.Request) {
-	if !s.ready.Load() {
-		w.WriteHeader(http.StatusServiceUnavailable)
-
-		return
-	}
-
-	for _, check := range s.readyChecks {
-		if err := check(r.Context()); err != nil {
-			s.logger.LogAttrs(r.Context(), slog.LevelWarn, msgNotReady, slog.Any(keyError, err))
-			w.WriteHeader(http.StatusServiceUnavailable)
-
-			return
-		}
-	}
-
-	w.WriteHeader(http.StatusOK)
 }

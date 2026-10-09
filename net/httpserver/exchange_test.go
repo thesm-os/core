@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package httpserver_test
@@ -505,8 +505,6 @@ func TestExchange(t *testing.T) {
 // TestExchangeAllocs checks the allocation contract of Annotate for a
 // context of no request. MaxAllocs counts the allocations of the whole
 // process, so the test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestExchangeAllocs(t *testing.T) {
 	t.Run("Annotate", func(t *testing.T) {
 		t.Run("of a context of no request", func(t *testing.T) {

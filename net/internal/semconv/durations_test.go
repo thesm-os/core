@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package semconv_test
@@ -220,8 +220,6 @@ func TestDurations(t *testing.T) {
 // TestDurationsAllocs checks the allocation contract of Record of a bound
 // set. MaxAllocs counts the allocations of the whole process, so the test
 // does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestDurationsAllocs(t *testing.T) {
 	t.Run("Record", func(t *testing.T) {
 		t.Run("of a bound set", func(t *testing.T) {

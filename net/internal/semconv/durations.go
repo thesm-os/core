@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package semconv
@@ -85,7 +85,7 @@ func NewDurations[K comparable](
 
 	// cache.New refuses only a nil Clock and a Capacity below 1. The cache
 	// releases the bound histogram of every set that leaves it.
-	d.bound, _ = cache.New(cache.Config[K, telemetry.Histogram]{ //nolint:errcheck // see above
+	d.bound, _ = cache.New(cache.Config[K, telemetry.Histogram]{
 		Clock:    c,
 		Capacity: maxSeries,
 		Evicted:  func(_ K, h telemetry.Histogram) { h.Release() },

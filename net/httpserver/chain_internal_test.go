@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package httpserver
@@ -50,8 +50,6 @@ type enabled struct{}
 func (enabled) Enabled(context.Context, slog.Level) bool { return true }
 
 // Handle discards r.
-//
-//nolint:gocritic // hugeParam: slog.Handler passes the Record by value
 func (enabled) Handle(context.Context, slog.Record) error { return nil }
 
 // WithAttrs returns the handler.
@@ -122,8 +120,6 @@ type serveCase struct {
 // of unknown length or a traced request that matched a route. MaxAllocs
 // counts the allocations of the whole process, so the test does not run in
 // parallel.
-//
-//nolint:paralleltest // see above
 func TestChainAllocs(t *testing.T) {
 	t.Run("ServeHTTP", func(t *testing.T) {
 		for _, tt := range serveCases() {

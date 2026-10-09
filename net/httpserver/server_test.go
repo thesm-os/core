@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package httpserver_test
@@ -115,8 +115,6 @@ func (l *logs) Enabled(_ context.Context, level slog.Level) bool { return level 
 
 // Handle keeps a clone of r, and sends one to requests for a record of a
 // request. A case that sets requests gives it room for every record.
-//
-//nolint:gocritic // hugeParam: slog.Handler passes the Record by value
 func (l *logs) Handle(_ context.Context, r slog.Record) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -922,8 +920,6 @@ func TestServer(t *testing.T) {
 // TestServerAllocs checks the allocation contract of Addr and the probes.
 // MaxAllocs counts the allocations of the whole process, so the test does
 // not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestServerAllocs(t *testing.T) {
 	s, err := httpserver.New(http.NotFoundHandler(), required)
 	assert.NoError(t, err, "New must accept the options")

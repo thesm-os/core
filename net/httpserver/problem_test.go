@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package httpserver_test
@@ -149,8 +149,6 @@ func TestProblem(t *testing.T) {
 // allocation test of the chain checks Error for a request of a Server.
 // MaxAllocs counts the allocations of the whole process, so the test does
 // not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestProblemAllocs(t *testing.T) {
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil)
 	w := &discardWriter{header: http.Header{}}
