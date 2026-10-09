@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package tsp
@@ -6,7 +6,7 @@ package tsp
 import (
 	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/sha1" //nolint:gosec // G505: SigningCertificate names a certificate by its SHA-1 digest
+	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -394,7 +394,7 @@ func TestChain(t *testing.T) {
 		t.Run("returns nil for an element that is not a SEQUENCE", func(t *testing.T) {
 			t.Parallel()
 			element := el(der.ContextConstructed(1), el(der.TagNull))
-			sum := sha1.Sum(element) //nolint:gosec // G401: SigningCertificate names a certificate by its SHA-1 digest
+			sum := sha1.Sum(element)
 			assert.Nil(t, findSHA1(element, sum[:]), "findSHA1 must skip an element that is not a Certificate")
 		})
 	})

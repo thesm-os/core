@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package crypto_test
@@ -464,8 +464,6 @@ func TestDigest(t *testing.T) {
 // TestDigestAllocs checks the allocation contract of every method of a
 // Digest. MaxAllocs counts the allocations of the whole process, so the
 // test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestDigestAllocs(t *testing.T) {
 	for _, tt := range digestCalls {
 		t.Run(tt.name, func(t *testing.T) {

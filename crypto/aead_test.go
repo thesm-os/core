@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package crypto_test
@@ -453,8 +453,6 @@ func TestAEAD(t *testing.T) {
 // envelope, in both nonce modes where the mode matters. MaxAllocs counts
 // the allocations of the whole process, so the test does not run in
 // parallel.
-//
-//nolint:paralleltest // see above
 func TestAEADAllocs(t *testing.T) {
 	plaintext := make([]byte, 64)
 	dst := make([]byte, 0, 256)

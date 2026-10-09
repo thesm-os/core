@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package sign
@@ -47,7 +47,7 @@ type AppendSigner interface {
 // capability, what SignContext allocates and the growth of dst.
 func AppendSign(ctx context.Context, s Signer, dst, message []byte) ([]byte, error) {
 	if as, ok := AsAppendSigner(s); ok {
-		return as.AppendSign(ctx, dst, message) //nolint:wrapcheck // returned as the signer produced it
+		return as.AppendSign(ctx, dst, message)
 	}
 
 	sig, err := SignContext(ctx, s, message)

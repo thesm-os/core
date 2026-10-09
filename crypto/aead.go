@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package crypto
@@ -267,7 +267,7 @@ func appendSeal(dst []byte, a AEAD, r rand.Rand, plaintext, aad []byte, chunk *c
 	// is neither read nor required.
 	if nonceSize > 0 {
 		if _, err := r.Read(nonce); err != nil {
-			return nil, err //nolint:wrapcheck // returned as the source produced it
+			return nil, err
 		}
 	}
 

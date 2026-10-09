@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package crypto_test
@@ -672,8 +672,6 @@ func TestChunk(t *testing.T) {
 // method of the chunk format, in both nonce modes where the mode matters.
 // MaxAllocs counts the allocations of the whole process, so the test does
 // not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestChunkAllocs(t *testing.T) {
 	h := crypto.ChunkHeader{ChunkSize: benchChunkSize}
 	chunk := bytes.Repeat([]byte{0x5A}, benchChunkSize)
@@ -855,7 +853,6 @@ func TestChunkFIPSOnlyMode(t *testing.T) {
 	if !fips140.Enforced() {
 		t.Run("passes in a child process under fips140=only", func(t *testing.T) {
 			t.Parallel()
-			//nolint:gosec // G204: the child is this test binary, run again with a fixed pattern.
 			cmd := exec.CommandContext(t.Context(), os.Args[0],
 				"-test.run=^TestChunkFIPSOnlyMode$", "-test.v", "-test.timeout="+chunkChildTimeout.String())
 			cmd.Env = append(os.Environ(), "GODEBUG=fips140=only")

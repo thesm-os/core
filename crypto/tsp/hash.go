@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package tsp
@@ -69,7 +69,7 @@ func (h Hash) names(a algorithmIdentifier) bool {
 // appendOID appends the content of oid in DER to dst, and returns the
 // extended slice. The content of the zero OID is empty.
 func appendOID(dst []byte, oid x509.OID) []byte {
-	b, _ := oid.AppendBinary(dst) //nolint:errcheck // AppendBinary of an OID returns no error
+	b, _ := oid.AppendBinary(dst)
 
 	return b
 }
@@ -78,7 +78,7 @@ func appendOID(dst []byte, oid x509.OID) []byte {
 // identifier of this package.
 func oidOf(content []byte) x509.OID {
 	var oid x509.OID
-	_ = oid.UnmarshalBinary(content) //nolint:errcheck // the identifiers of this package are valid, as TestOIDs checks
+	_ = oid.UnmarshalBinary(content)
 
 	return oid
 }

@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package kek
@@ -290,7 +290,7 @@ func generate(r rand.Rand, keyID string, wrap func(record []byte) ([]byte, error
 	defer clear(record)
 
 	if _, err := r.Read(record[:KeySize]); err != nil {
-		return nil, nil, err //nolint:wrapcheck // returned as the source produced it
+		return nil, nil, err
 	}
 
 	binding := sha256.Sum256(info)
@@ -381,7 +381,7 @@ func (k *Keeper) rotate() (*wrappingKey, error) {
 
 	var salt [SaltSize]byte
 	if _, err := k.r.Read(salt[:]); err != nil {
-		return nil, err //nolint:wrapcheck // returned as the source produced it
+		return nil, err
 	}
 
 	a, err := k.newCipher(salt[:])

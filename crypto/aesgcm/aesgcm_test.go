@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package aesgcm_test
@@ -307,7 +307,6 @@ func TestFIPSOnlyMode(t *testing.T) {
 	if !fips140.Enforced() {
 		t.Run("passes in a child process under fips140=only", func(t *testing.T) {
 			t.Parallel()
-			//nolint:gosec // G204: the child is this test binary, run again with a fixed pattern.
 			cmd := exec.CommandContext(t.Context(), os.Args[0],
 				"-test.run=^TestFIPSOnlyMode$", "-test.v", "-test.timeout="+childTimeout.String())
 			cmd.Env = append(os.Environ(), "GODEBUG=fips140=only")

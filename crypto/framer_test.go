@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package crypto_test
@@ -180,8 +180,6 @@ func TestFramer(t *testing.T) {
 // buffer with capacity, and the growth of a buffer that NewFramer must
 // enlarge. MaxAllocs counts the allocations of the whole process, so the
 // test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestFramerAllocs(t *testing.T) {
 	buf := make([]byte, 0, 256)
 

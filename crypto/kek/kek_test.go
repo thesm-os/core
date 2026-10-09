@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package kek_test
@@ -99,7 +99,7 @@ type generatorSpy struct {
 func (s *generatorSpy) Wrap(ctx context.Context, dek []byte) ([]byte, error) {
 	s.wraps.Add(1)
 
-	return s.Keeper.Wrap(ctx, dek) //nolint:wrapcheck // the test double passes the error through
+	return s.Keeper.Wrap(ctx, dek)
 }
 
 // GenerateKey fails the test, because no code under test may call it.
@@ -123,7 +123,7 @@ type recordingParent struct {
 func (p *recordingParent) Wrap(ctx context.Context, record []byte) ([]byte, error) {
 	p.wrapped = record
 
-	return p.Keeper.Wrap(ctx, record) //nolint:wrapcheck // the test double passes the error through
+	return p.Keeper.Wrap(ctx, record)
 }
 
 // Unwrap unwraps wrapped with the embedded Keeper and keeps the record
@@ -132,7 +132,7 @@ func (p *recordingParent) Unwrap(ctx context.Context, wrapped []byte) ([]byte, e
 	record, err := p.Keeper.Unwrap(ctx, wrapped)
 	p.unwrapped = record
 
-	return record, err //nolint:wrapcheck // the test double passes the error through
+	return record, err
 }
 
 // TestKeeperContract runs the contract suite of crypto.Keeper with a
@@ -593,7 +593,6 @@ func TestFIPSOnlyMode(t *testing.T) {
 	if !fips140.Enforced() {
 		t.Run("passes in a child process under fips140=only", func(t *testing.T) {
 			t.Parallel()
-			//nolint:gosec // G204: the child is this test binary, run again with a fixed pattern.
 			cmd := exec.CommandContext(t.Context(), os.Args[0],
 				"-test.run=^TestFIPSOnlyMode$", "-test.v", "-test.timeout="+childTimeout.String())
 			cmd.Env = append(os.Environ(), "GODEBUG=fips140=only")
@@ -620,8 +619,6 @@ func TestFIPSOnlyMode(t *testing.T) {
 // wrapping key exists, and that Unwrap allocates only the DEK once its
 // cipher is derived. MaxAllocs counts the allocations of the whole
 // process, so the test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestKeeperAllocs(t *testing.T) {
 	parent := newParent(t)
 	k, wrapped := mustGenerate(t, parent, randcrypto.New(), keyIDA)

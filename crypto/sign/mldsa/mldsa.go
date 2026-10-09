@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package mldsa
@@ -283,7 +283,7 @@ func expandSigner(
 func Generate(p Params, r rand.Rand, context string) (*Signer, error) {
 	seed := make([]byte, SeedSize)
 	if _, err := r.Read(seed); err != nil {
-		return nil, err //nolint:wrapcheck // returned as the source produced it
+		return nil, err
 	}
 
 	s, err := New(p, seed, context)

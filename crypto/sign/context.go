@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package sign
@@ -42,12 +42,12 @@ type ContextSigner interface {
 //nolint:revive // named for the ContextSigner method it dispatches to, as crypto.SignMessage is for MessageSigner.SignMessage
 func SignContext(ctx context.Context, s Signer, message []byte) ([]byte, error) {
 	if cs, ok := AsContextSigner(s); ok {
-		return cs.SignContext(ctx, message) //nolint:wrapcheck // returned as the signer produced it
+		return cs.SignContext(ctx, message)
 	}
 
 	if err := context.Cause(ctx); err != nil {
 		return nil, err
 	}
 
-	return s.Sign(message) //nolint:wrapcheck // returned as the signer produced it
+	return s.Sign(message)
 }

@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package sign_test
@@ -128,7 +128,7 @@ func TestResolver(t *testing.T) {
 
 		t.Run("returns ErrUnknownAlgorithm for an entry that returns no verifier", func(t *testing.T) {
 			t.Parallel()
-			empty := func([]byte) (sign.Verifier, error) { return nil, nil } //nolint:nilnil // the defect under test
+			empty := func([]byte) (sign.Verifier, error) { return nil, nil }
 			r := sign.Resolver{crypto.AlgEd25519: empty}
 			_, err := r.Verifier(crypto.AlgEd25519, signer.PublicKey())
 			assert.ErrorIs(t, err, sign.ErrUnknownAlgorithm, "an entry without a verifier must be refused")
@@ -139,8 +139,6 @@ func TestResolver(t *testing.T) {
 // TestResolverAllocs checks that Verifier allocates only what its entry
 // allocates. MaxAllocs counts the allocations of the whole process, so
 // the test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestResolverAllocs(t *testing.T) {
 	signer, err := ed25519.Generate(seeded.New(rand.Seed(1)))
 	assert.NoError(t, err, "ed25519.Generate must succeed")

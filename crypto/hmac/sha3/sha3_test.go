@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package sha3_test
@@ -289,8 +289,6 @@ func TestSHA3(t *testing.T) {
 // allocate nothing on the warm path, with data on the heap. MaxAllocs
 // counts the allocations of the whole process, so the test does not run
 // in parallel.
-//
-//nolint:paralleltest // see above
 func TestSHA3Allocs(t *testing.T) {
 	data := make([]byte, 1024)
 

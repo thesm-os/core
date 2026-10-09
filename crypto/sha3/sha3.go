@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package sha3
@@ -436,7 +436,7 @@ func requireUnary(r crypto.Role, alg string) {
 		// Precondition violation; see crypto package "Failure
 		// semantics" — programmer errors panic to surface silent
 		// audit-chain corruption.
-		panic(fmt.Sprintf( //nolint:forbidigo
+		panic(fmt.Sprintf( //nolint:forbidigo // a role or a digest of the wrong kind is a programmer error
 			"crypto/sha3: %s HashTagged requires a unary role (high bit clear), got %#02x",
 			alg, byte(r),
 		))
@@ -451,20 +451,20 @@ func requireUnary(r crypto.Role, alg string) {
 // sentinel needs to be told that, not sent hunting for a width bug.
 func requireBinaryOperands(r crypto.Role, left, right crypto.Digest, size int, alg string) {
 	if !r.IsBinary() {
-		panic(fmt.Sprintf( //nolint:forbidigo
+		panic(fmt.Sprintf( //nolint:forbidigo // a role or a digest of the wrong kind is a programmer error
 			"crypto/sha3: %s CombineTagged requires a binary role (high bit set), got %#02x",
 			alg, byte(r),
 		))
 	}
 	if left.IsZero() || right.IsZero() {
-		panic(fmt.Sprintf( //nolint:forbidigo
+		panic(fmt.Sprintf( //nolint:forbidigo // a role or a digest of the wrong kind is a programmer error
 			"crypto/sha3: %s CombineTagged refuses the zero Digest; the genesis sentinel "+
 				"is retired — a chain's first link is a unary role over one operand",
 			alg,
 		))
 	}
 	if !sized(left, size) || !sized(right, size) {
-		panic(fmt.Sprintf( //nolint:forbidigo
+		panic(fmt.Sprintf( //nolint:forbidigo // a role or a digest of the wrong kind is a programmer error
 			"crypto/sha3: %s CombineTagged requires %d-byte digests, got left=%d right=%d",
 			alg, size, left.Size(), right.Size(),
 		))

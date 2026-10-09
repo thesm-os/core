@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package tsp
@@ -191,7 +191,7 @@ func NewVerifier(cfg VerifierConfig) (*Verifier, error) {
 		policies = append(policies, policy{id: id, Policy: p})
 	}
 
-	chains, _ := cache.New(chainsConfig) //nolint:errcheck // cache.New accepts chainsConfig, as TestChain checks
+	chains, _ := cache.New(chainsConfig)
 
 	return &Verifier{
 		roots:         cfg.Roots,

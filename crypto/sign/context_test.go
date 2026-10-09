@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package sign_test
@@ -32,7 +32,7 @@ type counting struct {
 func (c *counting) Sign(message []byte) ([]byte, error) {
 	c.signs.Add(1)
 
-	return c.Signer.Sign(message) //nolint:wrapcheck // the test double passes the error through
+	return c.Signer.Sign(message)
 }
 
 // contextual is a counting signer that also implements
@@ -50,7 +50,7 @@ func (c *contextual) SignContext(ctx context.Context, message []byte) ([]byte, e
 		return nil, fmt.Errorf("contextual: %w", err)
 	}
 
-	return c.Signer.Sign(message) //nolint:wrapcheck // the test double passes the error through
+	return c.Signer.Sign(message)
 }
 
 // TestContextSignerContract runs the contract suite of sign.Signer with
@@ -119,8 +119,6 @@ func TestContext(t *testing.T) {
 // allocates only the signature that Sign allocates. MaxAllocs counts the
 // allocations of the whole process, so the test does not run in
 // parallel.
-//
-//nolint:paralleltest // see above
 func TestContextAllocs(t *testing.T) {
 	s := newEd25519(t)
 	msg := []byte("payload")

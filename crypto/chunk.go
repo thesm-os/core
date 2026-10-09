@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package crypto
@@ -82,7 +82,7 @@ func NewChunkHeader(r rand.Rand, chunkSize int) (ChunkHeader, error) {
 
 	h := ChunkHeader{ChunkSize: uint32(chunkSize)}
 	if _, err := r.Read(h.MessageID[:]); err != nil {
-		return ChunkHeader{}, err //nolint:wrapcheck // returned as the source produced it
+		return ChunkHeader{}, err
 	}
 
 	return h, nil

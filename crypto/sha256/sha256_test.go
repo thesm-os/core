@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package sha256_test
@@ -282,8 +282,6 @@ func TestHasher(t *testing.T) {
 // caller that must not allocate passes it. MaxAllocs counts the
 // allocations of the whole process, so the test does not run in
 // parallel.
-//
-//nolint:paralleltest // see above
 func TestHasherAllocs(t *testing.T) {
 	for name, fn := range cryptotest.HasherZeroAllocCases(cryptosha256.New(), make([]byte, 1024)) {
 		t.Run(name, func(t *testing.T) {

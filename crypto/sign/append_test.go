@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package sign_test
@@ -38,7 +38,7 @@ func (a *appending) AppendSign(ctx context.Context, dst, message []byte) ([]byte
 
 	sig, err := a.Signer.Sign(message)
 	if err != nil {
-		return dst, err //nolint:wrapcheck // the test double passes the error through
+		return dst, err
 	}
 
 	return append(dst, sig...), nil
@@ -122,8 +122,6 @@ func TestAppend(t *testing.T) {
 // TestAppendAllocs checks that AppendSign of an Ed25519 signer into a dst
 // with room allocates nothing. MaxAllocs counts the allocations of the
 // whole process, so the test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestAppendAllocs(t *testing.T) {
 	s := newEd25519(t)
 	msg := []byte("payload")

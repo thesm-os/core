@@ -1,11 +1,11 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package aesgcm
 
 import (
 	"crypto/cipher"
-	"crypto/des" //nolint:gosec // 64-bit block cipher, used only to prove GCM rejects it
+	"crypto/des"
 	"testing"
 
 	"go.dokimi.dev/assert"

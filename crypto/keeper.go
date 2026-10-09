@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package crypto
@@ -279,7 +279,7 @@ func find[T any](k Keeper) (T, bool) {
 // allocates.
 func GenerateKey(ctx context.Context, k Keeper, r rand.Rand, size int) (plaintext, wrapped []byte, err error) {
 	if g, ok := AsKeyGenerator(k); ok {
-		return g.GenerateKey(ctx, size) //nolint:wrapcheck // returned as the custodian produced it
+		return g.GenerateKey(ctx, size)
 	}
 
 	if size <= 0 {
@@ -290,14 +290,14 @@ func GenerateKey(ctx context.Context, k Keeper, r rand.Rand, size int) (plaintex
 	if _, err = r.Read(plaintext); err != nil {
 		clear(plaintext)
 
-		return nil, nil, err //nolint:wrapcheck // returned as the source produced it
+		return nil, nil, err
 	}
 
 	wrapped, err = k.Wrap(ctx, plaintext)
 	if err != nil {
 		clear(plaintext)
 
-		return nil, nil, err //nolint:wrapcheck // returned as the custodian produced it
+		return nil, nil, err
 	}
 
 	return plaintext, wrapped, nil

@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package ecdsap384_test
@@ -413,8 +413,6 @@ func TestECDSAP384(t *testing.T) {
 // TestECDSAP384Allocs checks the allocation ceiling of Resolve.
 // MaxAllocs counts the allocations of the whole process, so the test
 // does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestECDSAP384Allocs(t *testing.T) {
 	pub := mustSigner(t, cryptotest.NewECDSAP384Sample()).PublicKey()
 

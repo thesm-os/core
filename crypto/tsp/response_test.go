@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package tsp_test
@@ -289,8 +289,6 @@ func TestResponse(t *testing.T) {
 // TestResponseAllocs checks the allocation contract of ParseResponse.
 // MaxAllocs counts the allocations of the whole process, so the test does
 // not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestResponseAllocs(t *testing.T) {
 	a := newAuthority(t, tsptest.Config{Key: tsptest.KeyEd25519, Digest: tsptest.DigestSHA512})
 	resp, err := a.Respond(request(t))

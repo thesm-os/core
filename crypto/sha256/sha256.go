@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package sha256
@@ -125,7 +125,7 @@ func (h Hasher) HashTagged(r crypto.Role, data []byte) crypto.Digest {
 		// Precondition violation; see crypto package "Failure
 		// semantics" — programmer errors panic to surface silent
 		// audit-chain corruption.
-		panic(fmt.Sprintf( //nolint:forbidigo
+		panic(fmt.Sprintf( //nolint:forbidigo // a role or a digest of the wrong kind is a programmer error
 			"crypto/sha256: HashTagged requires a unary role (high bit clear), got %#02x",
 			byte(r),
 		))
@@ -160,20 +160,20 @@ func (h Hasher) HashTagged(r crypto.Role, data []byte) crypto.Digest {
 // (concrete function, not the [hash.Hash] interface).
 func (Hasher) CombineTagged(r crypto.Role, left, right crypto.Digest) crypto.Digest {
 	if !r.IsBinary() {
-		panic(fmt.Sprintf( //nolint:forbidigo
+		panic(fmt.Sprintf( //nolint:forbidigo // a role or a digest of the wrong kind is a programmer error
 			"crypto/sha256: CombineTagged requires a binary role (high bit set), got %#02x",
 			byte(r),
 		))
 	}
 	if left.IsZero() || right.IsZero() {
-		panic( //nolint:forbidigo
+		panic( //nolint:forbidigo // a role or a digest of the wrong kind is a programmer error
 			"crypto/sha256: CombineTagged refuses the zero Digest; " +
 				"the genesis sentinel is retired — a chain's first link is " +
 				"a unary role over one operand",
 		)
 	}
 	if !sized(left) || !sized(right) {
-		panic(fmt.Sprintf( //nolint:forbidigo
+		panic(fmt.Sprintf( //nolint:forbidigo // a role or a digest of the wrong kind is a programmer error
 			"crypto/sha256: CombineTagged requires %d-byte digests, got left=%d right=%d",
 			crypto.DigestSize256, left.Size(), right.Size(),
 		))

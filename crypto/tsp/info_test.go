@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package tsp_test
@@ -87,8 +87,6 @@ func TestInfo(t *testing.T) {
 // TestInfoAllocs checks the allocation contract of Extension. MaxAllocs
 // counts the allocations of the whole process, so the test does not run
 // in parallel.
-//
-//nolint:paralleltest // see above
 func TestInfoAllocs(t *testing.T) {
 	a := newAuthority(t, tsptest.Config{
 		Key: tsptest.KeyEd25519, Digest: tsptest.DigestSHA512,

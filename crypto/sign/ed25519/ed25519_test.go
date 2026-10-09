@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package ed25519_test
@@ -402,8 +402,6 @@ func TestEd25519(t *testing.T) {
 // KeyIDFromPub, Sign, AppendSign and Resolve. MaxAllocs counts the
 // allocations of the whole process, so the test does not run in
 // parallel.
-//
-//nolint:paralleltest // see above
 func TestEd25519Allocs(t *testing.T) {
 	fix := cryptotest.NewEd25519Sample()
 	s := mustSigner(t, fix)

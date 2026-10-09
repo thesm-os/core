@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package sign
@@ -309,45 +309,6 @@ func (p *Policy) Reset(root Rule) error {
 	return nil
 }
 
-// reset is Policy.Reset without the emptying of p on an error. It checks
-// the shape of the tree and counts its keys and rules first, then checks
-// the marked rules of a tree that has one, so that it sizes the memory of
-// p once, and then copies the tree in depth-first order, where it finds
-// repeated keys.
-func (p *Policy) reset(root Rule) error {
-	var (
-		b     builder
-		at    [maxDepth]int
-		stack [maxStackKeys]int
-	)
-
-	if err := b.check(root, root, at[:0]); err != nil {
-		return err
-	}
-
-	if b.marked {
-		if err := checkParties(root, root, at[:0]); err != nil {
-			return err
-		}
-	}
-
-	if p.index == nil {
-		p.index = make(map[KeyID]int, b.nkeys)
-	} else {
-		clear(p.index)
-	}
-
-	clear(p.keys)
-	b.index = p.index
-	b.keys = slices.Grow(p.keys[:0], b.nkeys)
-	b.rules = slices.Grow(p.rules[:0], b.nrules)
-
-	_, err := b.add(root, root, at[:0], 0, slices.Grow(stack[:0], b.nkeys))
-	p.keys, p.rules = b.keys, b.rules
-
-	return err
-}
-
 // Check reports whether sigs satisfy p for message.
 //
 // Check considers at most one signature per key of p: the first in
@@ -427,6 +388,45 @@ func (p Policy) SatisfiedBy(message []byte, sigs []Signature, exclude ...KeyID) 
 	counted, _, required := p.evaluate(message, sigs, exclude)
 
 	return counted >= required
+}
+
+// reset is Policy.Reset without the emptying of p on an error. It checks
+// the shape of the tree and counts its keys and rules first, then checks
+// the marked rules of a tree that has one, so that it sizes the memory of
+// p once, and then copies the tree in depth-first order, where it finds
+// repeated keys.
+func (p *Policy) reset(root Rule) error {
+	var (
+		b     builder
+		at    [maxDepth]int
+		stack [maxStackKeys]int
+	)
+
+	if err := b.check(root, root, at[:0]); err != nil {
+		return err
+	}
+
+	if b.marked {
+		if err := checkParties(root, root, at[:0]); err != nil {
+			return err
+		}
+	}
+
+	if p.index == nil {
+		p.index = make(map[KeyID]int, b.nkeys)
+	} else {
+		clear(p.index)
+	}
+
+	clear(p.keys)
+	b.index = p.index
+	b.keys = slices.Grow(p.keys[:0], b.nkeys)
+	b.rules = slices.Grow(p.rules[:0], b.nrules)
+
+	_, err := b.add(root, root, at[:0], 0, slices.Grow(stack[:0], b.nkeys))
+	p.keys, p.rules = b.keys, b.rules
+
+	return err
 }
 
 // evaluate counts the rules at the root of p for message and sigs, by the
