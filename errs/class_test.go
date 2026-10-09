@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package errs_test
@@ -239,8 +239,6 @@ func FuzzClass(f *testing.F) {
 // TestClassAllocs checks the allocation contract of each method of a
 // Class. MaxAllocs counts the allocations of the whole process, so the
 // test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestClassAllocs(t *testing.T) {
 	t.Run("String", func(t *testing.T) {
 		var got string

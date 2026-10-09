@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package errs_test
@@ -173,8 +173,6 @@ func TestWithRetryAfter(t *testing.T) {
 // TestRetryAfterAllocs checks the allocation contracts of RetryAfter and
 // WithRetryAfter. MaxAllocs counts the allocations of the whole process,
 // so the test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestRetryAfterAllocs(t *testing.T) {
 	t.Run("RetryAfter", func(t *testing.T) {
 		err := fmt.Errorf("outer: %w", errs.WithRetryAfter(errSentinel, time.Second))

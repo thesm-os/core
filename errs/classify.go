@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package errs
@@ -166,7 +166,7 @@ func classOf(err error) (Class, bool) {
 		// costs an allocation per call. The assertions below are on
 		// the Unwrap contract itself, which is what any traversal —
 		// including errors.As — must switch on somewhere.
-		switch x := err.(type) { //nolint:errorlint
+		switch x := err.(type) { //nolint:errorlint // errors.As allocates, and the switch is on the Unwrap contract
 		case interface{ Unwrap() error }:
 			err = x.Unwrap()
 		case interface{ Unwrap() []error }:

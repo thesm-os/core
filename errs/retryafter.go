@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package errs
@@ -62,7 +62,7 @@ func delayOf(err error) time.Duration {
 
 		// The switch is on the Unwrap contract itself, as in classOf,
 		// and errors.As would allocate the pointer to its target.
-		switch x := err.(type) { //nolint:errorlint
+		switch x := err.(type) { //nolint:errorlint // errors.As allocates, and the switch is on the Unwrap contract
 		case interface{ Unwrap() error }:
 			err = x.Unwrap()
 		case interface{ Unwrap() []error }:
