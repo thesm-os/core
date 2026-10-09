@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package btree_test
@@ -1077,8 +1077,6 @@ func TestMap(t *testing.T) {
 // TestMapAllocs checks the allocation contract of the methods of a Map of
 // benchKeys keys. MaxAllocs counts the allocations of the whole process, so
 // the test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestMapAllocs(t *testing.T) {
 	keys := evens(benchKeys)
 	var m btree.Map[int, int]

@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package btree_test
@@ -469,8 +469,6 @@ func TestMapFunc(t *testing.T) {
 // TestMapFuncAllocs checks that Get and Set of a present key of a MapFunc
 // do not allocate. MaxAllocs counts the allocations of the whole process,
 // so the test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestMapFuncAllocs(t *testing.T) {
 	keys := evens(benchKeys)
 	m := btree.NewMapFunc[int, int](cmp.Compare[int])
