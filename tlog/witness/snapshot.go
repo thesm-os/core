@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package witness
@@ -399,7 +399,7 @@ func (s *Server) flush(ctx context.Context, w *snapper) error {
 	}
 
 	w.keys = append(w.keys, key)
-	w.counts = append(w.counts, uint32(updates)) //nolint:gosec // a group has at most maxUpdates updates per call
+	w.counts = append(w.counts, uint32(updates))
 	w.group, w.bytes = group{}, 0
 
 	return nil

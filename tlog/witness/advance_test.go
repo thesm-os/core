@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package witness_test
@@ -485,8 +485,6 @@ func TestAdvance(t *testing.T) {
 // BenchmarkAdvance states, in the ordinary build that CI and the
 // confirmation of a mutation run test. MaxAllocs counts the allocations of
 // the whole process, so the test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestAdvanceAllocs(t *testing.T) {
 	t.Run("Advance", func(t *testing.T) {
 		for _, tt := range advanceCeilings {

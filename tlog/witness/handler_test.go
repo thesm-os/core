@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package witness_test
@@ -411,8 +411,6 @@ func TestHandler(t *testing.T) {
 // TestHandlerAllocs checks the allocation contract of the handler of
 // add-checkpoint that BenchmarkHandler states. MaxAllocs counts the
 // allocations of the whole process, so the test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestHandlerAllocs(t *testing.T) {
 	t.Run("AddCheckpoint", func(t *testing.T) {
 		c := newAddCheckpointCall(t)

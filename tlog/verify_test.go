@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package tlog_test
@@ -288,8 +288,6 @@ func TestVerify(t *testing.T) {
 // TestVerifyAllocs checks the allocation contract of each function.
 // MaxAllocs counts the allocations of the whole process, so the test does
 // not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestVerifyAllocs(t *testing.T) {
 	h := coresha256.New()
 	all := leaves(measuredSize)

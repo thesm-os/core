@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package witness
@@ -257,8 +257,6 @@ func TestQueueInternal(t *testing.T) {
 // TestQueueInternalAllocs checks the allocation contract of deliver that
 // BenchmarkQueueInternal states. MaxAllocs counts the allocations of the
 // whole process, so the test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestQueueInternalAllocs(t *testing.T) {
 	t.Run("deliver", func(t *testing.T) {
 		t.Run("of an abandoned call", func(t *testing.T) {

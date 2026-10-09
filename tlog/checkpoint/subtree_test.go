@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package checkpoint_test
@@ -570,8 +570,6 @@ func TestSubtree(t *testing.T) {
 // starts with two collections, which empty the pool. The warm-up call of
 // MaxAllocs then grows a buffer, and the measured calls reuse it only when
 // the path keeps the growth of the buffer and returns it to the pool.
-//
-//nolint:paralleltest // see above
 func TestSubtreeAllocs(t *testing.T) {
 	entry := checkpoint.SubtreeV1(mldsa.Resolver(mldsa.MLDSA44, ""))
 	n := mustParse(t, readFile(t, cosignedFile))

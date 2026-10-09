@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package tlog
@@ -245,7 +245,7 @@ func Root(h crypto.Hasher, leaves []crypto.Digest) crypto.Digest {
 
 	n := 0
 	for i, leaf := range leaves {
-		stack[n] = leaf //nolint:gosec // G602: n is the number of set bits of i+1, at most 64
+		stack[n] = leaf
 		n++
 		for j := uint64(i); j&1 == 1; j >>= 1 {
 			n--

@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package tlog_test
@@ -159,8 +159,6 @@ func TestBundle(t *testing.T) {
 // TestBundleAllocs checks the allocation contract of each function.
 // MaxAllocs counts the allocations of the whole process, so the test does
 // not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestBundleAllocs(t *testing.T) {
 	entry := []byte("an entry")
 

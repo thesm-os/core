@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package tlog
@@ -78,7 +78,6 @@ func (r *blobTiles) ReadTiles(ctx context.Context, tiles []Tile, dst [][]byte) e
 	tr.r, tr.dst = r, dst
 
 	// Each returns the first error of read, which read wraps with the key.
-	//nolint:wrapcheck // see comment above
 	return task.Each(ctx, r.limit, tiles, tr.read)
 }
 
@@ -284,7 +283,7 @@ func prove(
 	scratch := p.scratch[:]
 
 	if err := r.ReadTiles(ctx, p.tiles, p.dst); err != nil {
-		return dst, err //nolint:wrapcheck // the reader's error passes through with its class
+		return dst, err
 	}
 	for i, t := range p.tiles {
 		if len(p.dst[i]) != int(t.Width)*ds {

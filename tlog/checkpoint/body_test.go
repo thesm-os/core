@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package checkpoint_test
@@ -448,8 +448,6 @@ func TestBody(t *testing.T) {
 // TestBodyAllocs checks the allocation contract of each function and
 // method. MaxAllocs counts the allocations of the whole process, so the
 // test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestBodyAllocs(t *testing.T) {
 	text := []byte(exampleBody + "an extension line\n")
 	body := checkpoint.Body{

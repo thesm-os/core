@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package checkpoint_test
@@ -483,8 +483,6 @@ func TestVerifier(t *testing.T) {
 // pool. The warm-up call of MaxAllocs then grows a buffer, and the measured
 // calls reuse it only when the Verifier of each key keeps the growth of the
 // buffer and returns it to the pool.
-//
-//nolint:paralleltest // see above
 func TestVerifierAllocs(t *testing.T) {
 	p := mustParsePolicy(t, []byte(oneGroupPolicyText(t)))
 	v := mustVerifier(t, p)

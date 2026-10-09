@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package witness
@@ -130,9 +130,9 @@ func (s *Server) serveCheckpoint(w http.ResponseWriter, r *http.Request) {
 	c := &l.calls[o.served.call]
 
 	w.Header()[contentType] = linesTypes[:1:1]
-	_, _ = w.Write(c.Updates[o.served.update].Prefix) //nolint:errcheck // the client went away
-	_, _ = w.Write(c.Note)                            //nolint:errcheck // as above
-	_, _ = w.Write(l.lines[o.served.call])            //nolint:errcheck // as above
+	_, _ = w.Write(c.Updates[o.served.update].Prefix)
+	_, _ = w.Write(c.Note)
+	_, _ = w.Write(l.lines[o.served.call])
 }
 
 // parseRoute returns the origin hash of path, the path of the monitor

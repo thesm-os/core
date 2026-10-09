@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package checkpoint_test
@@ -255,7 +255,7 @@ func TestCosignature(t *testing.T) {
 		t.Run("returns ErrUnknownType when resolve returns no Verifier with no error", func(t *testing.T) {
 			t.Parallel()
 			none := func([]byte) (sign.Verifier, error) {
-				return nil, nil //nolint:nilnil // the case is a resolve that returns neither
+				return nil, nil
 			}
 			_, err := checkpoint.CosignatureV1(none)(vectorKey(t, vectorW1))
 			expect.ErrorIs(t, err, note.ErrUnknownType, "CosignatureV1 must refuse a resolve without a Verifier")
@@ -844,8 +844,6 @@ func TestCosignature(t *testing.T) {
 // starts with two collections, which empty the pool. The warm-up call of
 // MaxAllocs then grows a buffer, and the measured calls reuse it only when
 // the path keeps the growth of the buffer and returns it to the pool.
-//
-//nolint:paralleltest // see above
 func TestCosignatureAllocs(t *testing.T) {
 	n := mustParse(t, readFile(t, cosignedFile))
 	k := vectorKey(t, vectorW1)

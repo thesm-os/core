@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package tlog_test
@@ -108,7 +108,7 @@ type brokenBodies struct {
 func (s brokenBodies) Get(ctx context.Context, key string) (io.ReadCloser, blob.Info, error) {
 	rc, info, err := s.Store.Get(ctx, key)
 	if err != nil {
-		return nil, info, err //nolint:wrapcheck // the test double passes the error through
+		return nil, info, err
 	}
 
 	return brokenBody{rc, s.readErr, s.closeErr}, info, nil
@@ -484,8 +484,6 @@ func TestReader(t *testing.T) {
 // memory store, and of each prove function over a reader that allocates
 // nothing. MaxAllocs counts the allocations of the whole process, so the
 // test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestReaderAllocs(t *testing.T) {
 	h := coresha256.New()
 	_, _, _, largeTiles := storedTree(t)

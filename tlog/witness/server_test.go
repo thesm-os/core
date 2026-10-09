@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package witness_test
@@ -147,7 +147,7 @@ func (*records) Enabled(context.Context, slog.Level) bool {
 }
 
 // Handle keeps a clone of r.
-func (h *records) Handle(_ context.Context, r slog.Record) error { //nolint:gocritic // the signature of slog.Handler
+func (h *records) Handle(_ context.Context, r slog.Record) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -395,8 +395,6 @@ func TestServer(t *testing.T) {
 // TestServerAllocs checks the allocation contract of NewServer that
 // BenchmarkServer states. MaxAllocs counts the allocations of the whole
 // process, so the test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestServerAllocs(t *testing.T) {
 	t.Run("NewServer", func(t *testing.T) {
 		cfg := newFixture(t).config()

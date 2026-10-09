@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package tlog_test
@@ -521,8 +521,6 @@ func TestVerifier(t *testing.T) {
 // TestVerifierAllocs checks the allocation contract of TileVerifier over a
 // reader that allocates nothing. MaxAllocs counts the allocations of the whole
 // process, so the test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestVerifierAllocs(t *testing.T) {
 	h := coresha256.New()
 	_, _, large, largeTiles := storedTree(t)

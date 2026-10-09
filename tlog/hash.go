@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package tlog
@@ -101,7 +101,7 @@ func subtreeRoot(s crypto.Stream, size int, data, scratch []byte) crypto.Digest 
 		}
 	}
 
-	d, _ := crypto.DigestFromBytes(scratch[:size]) //nolint:errcheck // size is the hasher's own digest size
+	d, _ := crypto.DigestFromBytes(scratch[:size])
 
 	return d
 }

@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package checkpoint
@@ -90,18 +90,6 @@ type verifier struct {
 
 var _ note.Verifier = (*verifier)(nil)
 
-// reset sets v to the verifier of k, a Valid key, that verifies the
-// messages of message with inner, whose public key equals the public key
-// of k. It keeps the public key of inner in place of the public key of k,
-// so that v does not alias the memory of the caller.
-func (v *verifier) reset(
-	k note.Key, inner sign.Verifier,
-	message func(b []byte, name note.Name, t uint64, text []byte) ([]byte, error),
-) {
-	k.PublicKey = inner.PublicKey()
-	v.inner, v.message, v.key, v.keyID = inner, message, k, note.KeyID(k.Name, k.ID())
-}
-
 // Key returns the key that v checks. Its PublicKey aliases the storage of
 // the Verifier of the algorithm.
 func (v *verifier) Key() note.Key { return v.key }
@@ -136,6 +124,18 @@ func (v *verifier) Verify(text, value []byte) bool {
 	buffers.Put(buf)
 
 	return ok
+}
+
+// reset sets v to the verifier of k, a Valid key, that verifies the
+// messages of message with inner, whose public key equals the public key
+// of k. It keeps the public key of inner in place of the public key of k,
+// so that v does not alias the memory of the caller.
+func (v *verifier) reset(
+	k note.Key, inner sign.Verifier,
+	message func(b []byte, name note.Name, t uint64, text []byte) ([]byte, error),
+) {
+	k.PublicKey = inner.PublicKey()
+	v.inner, v.message, v.key, v.keyID = inner, message, k, note.KeyID(k.Name, k.ID())
 }
 
 // Cosigner is a [note.Signer] of timestamped signatures that also signs at
@@ -182,47 +182,6 @@ type cosigner struct {
 	// maxError is the largest error bound of a reading that the
 	// cosigner signs with.
 	maxError time.Duration
-}
-
-// reset sets c to the cosigner of f for the key with name, type t and the
-// public key of s, with the timestamps of readings of utc within
-// maxError. The public key of the key is the slice that s returns from
-// PublicKey, which the [sign.Verifier] contract makes immutable, so c does
-// not copy it. It leaves c unchanged on an error.
-//
-// Returns [note.ErrKey] for a nil s, a signer of another algorithm than
-// f.alg for the type f.assigned, an invalid name, and a signer without a
-// public key. Returns [note.ErrType] for an invalid type, and
-// [ErrTimestamp] for a negative maxError.
-func (c *cosigner) reset(
-	f format, name note.Name, t note.Type, s sign.Signer, utc clock.UTCSource, maxError time.Duration,
-) error {
-	if s == nil {
-		return fmt.Errorf("%w: a nil signer", note.ErrKey)
-	}
-
-	if !t.Valid() {
-		return fmt.Errorf("%w: %s", note.ErrType, t)
-	}
-
-	if t == f.assigned && s.Algorithm() != f.alg {
-		return fmt.Errorf("%w: type %s signs with %s, and the signer with %s",
-			note.ErrKey, t, f.alg, s.Algorithm())
-	}
-
-	if maxError < 0 {
-		return fmt.Errorf("%w: the negative error bound %v", ErrTimestamp, maxError)
-	}
-
-	k := note.Key{Name: name, Type: t, PublicKey: s.PublicKey()}
-	if !k.Valid() {
-		return fmt.Errorf("%w: a signer needs a valid name and a public key", note.ErrKey)
-	}
-
-	c.signer, c.utc, c.maxError = s, utc, maxError
-	c.verifier.reset(k, s, f.message)
-
-	return nil
 }
 
 // Sign returns the value of a signature line for text, as SignContext
@@ -293,7 +252,7 @@ func (c *cosigner) AppendSignAt(ctx context.Context, dst, text []byte, t time.Ti
 			ErrTimestamp, t)
 	}
 
-	return c.appendAt(ctx, dst, uint64(sec), text) //nolint:gosec // sec is positive
+	return c.appendAt(ctx, dst, uint64(sec), text)
 }
 
 // CheckText returns nil when AppendSignAt signs text, and the error that
@@ -313,6 +272,47 @@ func (c *cosigner) CheckText(text []byte) error {
 	buffers.Put(buf)
 
 	return err
+}
+
+// reset sets c to the cosigner of f for the key with name, type t and the
+// public key of s, with the timestamps of readings of utc within
+// maxError. The public key of the key is the slice that s returns from
+// PublicKey, which the [sign.Verifier] contract makes immutable, so c does
+// not copy it. It leaves c unchanged on an error.
+//
+// Returns [note.ErrKey] for a nil s, a signer of another algorithm than
+// f.alg for the type f.assigned, an invalid name, and a signer without a
+// public key. Returns [note.ErrType] for an invalid type, and
+// [ErrTimestamp] for a negative maxError.
+func (c *cosigner) reset(
+	f format, name note.Name, t note.Type, s sign.Signer, utc clock.UTCSource, maxError time.Duration,
+) error {
+	if s == nil {
+		return fmt.Errorf("%w: a nil signer", note.ErrKey)
+	}
+
+	if !t.Valid() {
+		return fmt.Errorf("%w: %s", note.ErrType, t)
+	}
+
+	if t == f.assigned && s.Algorithm() != f.alg {
+		return fmt.Errorf("%w: type %s signs with %s, and the signer with %s",
+			note.ErrKey, t, f.alg, s.Algorithm())
+	}
+
+	if maxError < 0 {
+		return fmt.Errorf("%w: the negative error bound %v", ErrTimestamp, maxError)
+	}
+
+	k := note.Key{Name: name, Type: t, PublicKey: s.PublicKey()}
+	if !k.Valid() {
+		return fmt.Errorf("%w: a signer needs a valid name and a public key", note.ErrKey)
+	}
+
+	c.signer, c.utc, c.maxError = s, utc, maxError
+	c.verifier.reset(k, s, f.message)
+
+	return nil
 }
 
 // appendAt appends the value of a signature line for text with the

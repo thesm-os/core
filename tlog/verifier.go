@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package tlog
@@ -177,7 +177,7 @@ func (v *TileVerifier) load(ctx context.Context, index uint64, full *[tileLevels
 	var s crypto.Stream
 	if n > 0 {
 		if err := v.r.ReadTiles(ctx, v.read[:n], v.dst[:n]); err != nil {
-			return nil, err //nolint:wrapcheck // the reader's error passes through with its class
+			return nil, err
 		}
 
 		for i, t := range v.read[:n] {

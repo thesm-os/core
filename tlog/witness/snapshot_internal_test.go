@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package witness
@@ -654,7 +654,7 @@ func TestSnapshotInternal(t *testing.T) {
 
 				for i, obj := range snap.Objects {
 					if obj.Updates > 0 {
-						assert.InRange(t, obj.Updates, 0, float64(2*current[uint32(i)]), //nolint:gosec // an index
+						assert.InRange(t, obj.Updates, 0, float64(2*current[uint32(i)]),
 							"at least half of the updates of "+obj.Key+" must be current")
 					}
 				}
@@ -1308,7 +1308,7 @@ func (f *faulty) List(ctx context.Context, prefix string, p page.Page) (page.Cur
 
 	if pg != nil {
 		if err := pg(prefix); err != nil {
-			return failingCursor{err: err}, nil //nolint:nilerr // the walk yields the error, and List succeeds
+			return failingCursor{err: err}, nil
 		}
 	}
 
@@ -1355,7 +1355,7 @@ func (*logged) Enabled(context.Context, slog.Level) bool {
 }
 
 // Handle keeps the message of r.
-func (h *logged) Handle(_ context.Context, r slog.Record) error { //nolint:gocritic // the signature of slog.Handler
+func (h *logged) Handle(_ context.Context, r slog.Record) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 

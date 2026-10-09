@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package tlog
@@ -91,7 +91,7 @@ func NewBuilder(ctx context.Context, h crypto.Hasher, size uint64, r TileReader)
 	}
 
 	if err := r.ReadTiles(ctx, tiles[:n], dst[:n]); err != nil {
-		return nil, err //nolint:wrapcheck // the reader's error passes through with its class
+		return nil, err
 	}
 
 	for i, t := range tiles[:n] {
@@ -251,7 +251,6 @@ func rootOf(s crypto.Stream, ds int, edge *[tileLevels][]byte, scratch []byte) c
 				continue
 			}
 			m := (1 << bit) * ds
-			//nolint:gosec // G602: eight levels of eight bits, so n is below 64
 			stack[n] = subtreeRoot(s, ds, p[off:off+m], scratch)
 			n++
 			off += m
@@ -308,14 +307,6 @@ type placedTile struct {
 	off  int
 }
 
-// reset empties u for an integration into b's tree.
-func (u *Update) reset(b *Builder) {
-	u.b, u.base, u.size, u.root = b, b.size, b.size, b.root
-	u.data.Reset()
-	u.tiles = u.tiles[:0]
-	u.levels = 0
-}
-
 // Size returns the number of leaves in the tree the update produces.
 func (u *Update) Size() uint64 { return u.size }
 
@@ -340,4 +331,12 @@ func (u *Update) Tiles() iter.Seq2[Tile, []byte] {
 			}
 		}
 	}
+}
+
+// reset empties u for an integration into b's tree.
+func (u *Update) reset(b *Builder) {
+	u.b, u.base, u.size, u.root = b, b.size, b.size, b.root
+	u.data.Reset()
+	u.tiles = u.tiles[:0]
+	u.levels = 0
 }

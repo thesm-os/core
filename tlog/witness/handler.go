@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package witness
@@ -85,7 +85,7 @@ func (s *Server) serveAddCheckpoint(w http.ResponseWriter, r *http.Request) {
 
 	// The commit runs under a context of its own, which no caller's
 	// context ends and whose values are no caller's.
-	s.enqueue(p) //nolint:contextcheck // see above
+	s.enqueue(p)
 
 	owned, err := s.wait(r.Context(), p)
 	if err == nil {
@@ -106,7 +106,7 @@ func (s *Server) serveAddCheckpoint(w http.ResponseWriter, r *http.Request) {
 
 	//dokimi:mutate-skip sbr-delete: net/http sniffs the type text/plain; charset=utf-8 from the lines, which are text
 	w.Header()[contentType] = linesTypes[:1:1]
-	_, _ = w.Write(p.lines) //nolint:errcheck // the client went away, and the status is written
+	_, _ = w.Write(p.lines)
 }
 
 // parseRequest reads the body of an add-checkpoint request from body into
@@ -191,7 +191,7 @@ func writeFailure(w http.ResponseWriter, r *http.Request, err error) {
 
 		w.Header()[contentType] = sizeTypes[:1:1]
 		w.WriteHeader(http.StatusConflict)
-		_, _ = w.Write(appendSize(body[:0], se.Size)) //nolint:errcheck // as in serveAddCheckpoint
+		_, _ = w.Write(appendSize(body[:0], se.Size))
 
 		return
 	}

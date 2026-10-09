@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package tlog
@@ -229,7 +229,7 @@ func (f *TaggedFold) Add(leaf crypto.Digest) {
 	// A fold of up to 2^64 - 1 leaves stacks at most 63 roots before the
 	// leaf.
 	n := bits.OnesCount64(f.size)
-	f.stack[n] = leaf //nolint:gosec // G602: n is the number of set bits of size, at most 63 below 2^64 - 1 leaves
+	f.stack[n] = leaf
 	n++
 
 	for j := f.size; j&1 == 1; j >>= 1 {
@@ -523,7 +523,7 @@ func taggedFold(h crypto.Hasher, node crypto.Role, leaves []crypto.Digest) crypt
 
 	n := 0
 	for i, leaf := range leaves {
-		stack[n] = leaf //nolint:gosec // G602: n is the number of set bits of i+1, at most 64
+		stack[n] = leaf
 		n++
 		for j := uint64(i); j&1 == 1; j >>= 1 {
 			n--
