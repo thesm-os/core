@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package arena_test
@@ -176,8 +176,6 @@ func TestAppendVia(t *testing.T) {
 // TestAppendViaAllocs checks the allocation contracts of AppendVia and
 // TruncateTo. MaxAllocs counts the allocations of the whole process, so the
 // test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestAppendViaAllocs(t *testing.T) {
 	t.Run("AppendVia", func(t *testing.T) {
 		a := arena.NewWithCapacity(4096)

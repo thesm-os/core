@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package arena_test
@@ -428,8 +428,6 @@ func FuzzList(f *testing.F) {
 // TestListAllocs checks the allocation contract of each method of a List
 // whose chunks have room for its elements. MaxAllocs counts the allocations
 // of the whole process, so the test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestListAllocs(t *testing.T) {
 	full := filled(2 * chunk)
 

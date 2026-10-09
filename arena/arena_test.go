@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package arena_test
@@ -271,8 +271,6 @@ func FuzzArena(f *testing.F) {
 // TestArenaAllocs checks the allocation contract of each method of an
 // Arena whose backing buffer has room for its writes. MaxAllocs counts the
 // allocations of the whole process, so the test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestArenaAllocs(t *testing.T) {
 	data := []byte("hello world")
 

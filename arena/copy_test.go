@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package arena_test
@@ -153,8 +153,6 @@ func TestCopy(t *testing.T) {
 // TestCopyAllocs checks the allocation contracts of CopyOut, CopyOutTo,
 // RebaseSlices and RebaseSlicesTo. MaxAllocs counts the allocations of the
 // whole process, so the test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestCopyAllocs(t *testing.T) {
 	data := []byte("hello world")
 
