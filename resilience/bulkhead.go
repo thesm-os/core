@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package resilience
@@ -150,18 +150,6 @@ func (b *Bulkhead) Acquire(ctx context.Context) (func(), error) {
 	}
 }
 
-// grant returns the release of a permit that the caller took. The release
-// gives the permit back on its first call alone.
-func (b *Bulkhead) grant() func() {
-	var released atomic.Bool
-
-	return func() {
-		if released.CompareAndSwap(false, true) {
-			b.permits <- struct{}{}
-		}
-	}
-}
-
 // InFlight returns the number of permits that callers have taken, for a
 // gauge. The value is a snapshot, which concurrent calls change.
 func (b *Bulkhead) InFlight() int {
@@ -174,4 +162,16 @@ func (b *Bulkhead) InFlight() int {
 // slow. It grows before [ErrFull] appears, so it is the value to alert on.
 func (b *Bulkhead) Queued() int {
 	return len(b.queue)
+}
+
+// grant returns the release of a permit that the caller took. The release
+// gives the permit back on its first call alone.
+func (b *Bulkhead) grant() func() {
+	var released atomic.Bool
+
+	return func() {
+		if released.CompareAndSwap(false, true) {
+			b.permits <- struct{}{}
+		}
+	}
 }

@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package resilience_test
@@ -514,8 +514,6 @@ func TestLimiter(t *testing.T) {
 // TestLimiterAllocs checks the allocation contract of AllowN and of a WaitN
 // that does not wait. MaxAllocs counts the allocations of the whole
 // process, so the test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestLimiterAllocs(t *testing.T) {
 	ctx := t.Context()
 

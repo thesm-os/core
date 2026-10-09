@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package resilience
@@ -309,6 +309,51 @@ func (b *Breaker) Allow(target string) bool {
 	return ok
 }
 
+// Record adds the outcome of one call to target's circuit. failed
+// reports whether the caller counts the call as a failure.
+//
+// Record ignores a target that [Breaker.Allow] has never seen.
+func (b *Breaker) Record(target string, failed bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	m, ok := b.circuits[target]
+	if !ok {
+		return
+	}
+
+	outcome := success
+	if failed {
+		outcome = failure
+	}
+
+	// Every state accepts both outcomes, so Fire cannot reject one.
+	_, _ = m.Fire(outcome)
+}
+
+// State returns target's current state, for export as a gauge.
+//
+// The result is a snapshot. Another goroutine can change the state
+// before the caller uses it, so use [Breaker.Allow] to decide whether
+// to call the dependency. State returns [HalfOpen] for an open circuit
+// whose interval has elapsed, because the next Allow admits a probe. A
+// target with no circuit is [Closed].
+func (b *Breaker) State(target string) State {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	m, ok := b.circuits[target]
+	if !ok {
+		return Closed
+	}
+
+	if m.State() == Open && elapsed(m.Data()) {
+		return HalfOpen
+	}
+
+	return m.State()
+}
+
 // admit asks target's circuit to admit a call, as Allow describes, and
 // reports whether it did. probe is the number of the probe that the
 // circuit gave the call, and zero for a call that a closed circuit
@@ -355,51 +400,6 @@ func (b *Breaker) abandon(target string, probe uint64) {
 		// edge, so Fire cannot reject it.
 		_, _ = m.Fire(release)
 	}
-}
-
-// Record adds the outcome of one call to target's circuit. failed
-// reports whether the caller counts the call as a failure.
-//
-// Record ignores a target that [Breaker.Allow] has never seen.
-func (b *Breaker) Record(target string, failed bool) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	m, ok := b.circuits[target]
-	if !ok {
-		return
-	}
-
-	outcome := success
-	if failed {
-		outcome = failure
-	}
-
-	// Every state accepts both outcomes, so Fire cannot reject one.
-	_, _ = m.Fire(outcome)
-}
-
-// State returns target's current state, for export as a gauge.
-//
-// The result is a snapshot. Another goroutine can change the state
-// before the caller uses it, so use [Breaker.Allow] to decide whether
-// to call the dependency. State returns [HalfOpen] for an open circuit
-// whose interval has elapsed, because the next Allow admits a probe. A
-// target with no circuit is [Closed].
-func (b *Breaker) State(target string) State {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	m, ok := b.circuits[target]
-	if !ok {
-		return Closed
-	}
-
-	if m.State() == Open && elapsed(m.Data()) {
-		return HalfOpen
-	}
-
-	return m.State()
 }
 
 // Call runs fn under target's circuit. When the circuit refuses the
