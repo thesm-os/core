@@ -1,8 +1,7 @@
+# Managed by ergon init. Add repository settings to .ergon/local/.github/ISSUE_TEMPLATE/config.yml and run ergon init sync.
+
 blank_issues_enabled: false
 contact_links:
-  - name: Security vulnerability
-    url: https://github.com/thesmos-ai/core/blob/main/SECURITY.md
-    about: Security issues must be reported privately. Do not open a public issue.
-  - name: Question or discussion
-    url: https://github.com/thesmos-ai/core/discussions
-    about: General questions, ideas, and design discussion belong in Discussions.
+  - name: Report a vulnerability
+    url: https://github.com/thesm-os/core/security/advisories/new
+    about: Report a vulnerability privately, as SECURITY.md describes. Do not open a public issue for it.

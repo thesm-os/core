@@ -1,0 +1,33 @@
+# Copyright ThesmOS B.V. 2026
+# SPDX-License-Identifier: Apache-2.0
+
+jobs:
+  # A pull request must not renumber a field that its base branch records, since data that the base
+  # branch encoded would decode into another field. The full history makes the base branch
+  # available as a remote branch.
+  numbers:
+    name: Field numbers
+    needs: skip
+    if: "needs.skip.outputs.skip != 'true' && github.event_name == 'pull_request'"
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          cache-dependency-path: "**/go.sum"
+          go-version-file: go.work
+      - name: Check the field numbers
+        env:
+          BASE: origin/${{ github.base_ref }}
+        run: |
+          make check-numbers BASE="$BASE"
+
+  result:
+    needs: [numbers]

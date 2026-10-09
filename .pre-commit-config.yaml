@@ -1,56 +1,62 @@
-# core pre-commit configuration.
+# Managed by ergon init. Add repository settings to .ergon/local/.pre-commit-config.yaml and run ergon init sync.
 #
-# Install:  pre-commit install --hook-type pre-commit \
-#                              --hook-type pre-push \
-#                              --hook-type commit-msg
+# Install the hooks with: pre-commit install
 
+default_install_hook_types: [pre-commit, commit-msg, pre-push]
 default_stages: [pre-commit]
 
 repos:
-  # ─── File hygiene ──────────────────────────────────────────────
+  # File hygiene, without a language toolchain, at the release of the section common of
+  # .ergon.yaml, before each commit. pre-commit-hooks declares three of these hooks for the stage
+  # pre-push as well, so this configuration limits each of them to the stage pre-commit.
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
       - id: trailing-whitespace
         exclude: '\.md$'
+        stages: [pre-commit]
       - id: end-of-file-fixer
+        stages: [pre-commit]
       - id: mixed-line-ending
         args: ["--fix=lf"]
       - id: check-merge-conflict
       - id: detect-private-key
       - id: check-added-large-files
         args: ["--maxkb=500"]
+        stages: [pre-commit]
       - id: check-yaml
         args: ["--allow-multiple-documents"]
       - id: check-json
       - id: check-toml
       - id: check-symlinks
 
-  # ─── The gate, minus the one slow stage ───────────────────────
-  #
-  # mod + lint + test + coverage is 2.4s on a warm Go cache, so it
-  # belongs at commit time where the feedback is worth most. Mutation
-  # is the entire remaining cost of `make check` — tens of minutes —
-  # and running it here would train everyone to pass --no-verify,
-  # which costs more than it catches. CI runs it per push instead.
-  #
-  # Repeated at pre-push deliberately: with caches warm it is
-  # near-instant, and it catches the case where a commit landed
-  # through --no-verify or an amend.
   - repo: local
     hooks:
-      - id: check-fast
-        name: ergon check (skip mutation)
-        entry: ergon check --skip mutation
+      # Each commit runs the targets of the Makefile that common.hooks.pre-commit of .ergon.yaml
+      # lists.
+      - id: lint
+        name: make lint
+        entry: make lint
         language: system
         pass_filenames: false
-        stages: [pre-commit, pre-push]
+      - id: test
+        name: make test
+        entry: make test
+        language: system
+        pass_filenames: false
 
-  # ─── Commit message ───────────────────────────────────────────
-  - repo: local
-    hooks:
-      - id: ergon-commit-msg
-        name: ergon check commit-msg
-        entry: ergon check commit-msg
+      # Each push runs the targets of the Makefile that common.hooks.pre-push of .ergon.yaml lists.
+      - id: check
+        name: make check
+        entry: make check
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
+
+      # The commit message, against .commitlint.yaml. ergon installs the commitlint of the section
+      # common of .ergon.yaml, and checks its archive against the digest of the section.
+      - id: commitlint
+        name: commitlint
+        entry: ergon tool run common.commitlint -- lint --message
         language: system
         stages: [commit-msg]

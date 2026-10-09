@@ -1,9 +1,4 @@
-# Text files check out with LF line endings on every platform, so that the
-# generated files and the golden files match the bytes that the generator
-# and the tests write, which end lines with LF.
+# Managed by ergon init. Add repository settings to .ergon/local/.gitattributes and run ergon init sync.
 * text=auto eol=lf
-
-# Generated code — collapse in GitHub PRs
-*.gen.go linguist-generated=true
-*.gen_test.go linguist-generated=true
-*_string.go linguist-generated=true
+*.go diff=golang
+go.sum linguist-generated=true

@@ -1,73 +1,65 @@
-name: Setup ergon
+# Managed by ergon init. Add repository settings to .ergon/local/.github/actions/setup-ergon/action.yml and run ergon init sync.
+
+name: Set up ergon
 description: >-
-  Install a pinned ergon release into the Go bin directory, which
-  actions/setup-go adds to PATH, so run this after actions/setup-go.
-  Every job that invokes a make target needs this: the Makefile
-  delegates to ergon, and `make bootstrap` is itself `ergon bootstrap`,
-  so ergon cannot bootstrap itself. On Windows it also installs GNU
-  make, which the Windows image does not include.
+  Installs a release of ergon from github.com/dokimasia/ergon on a Linux, macOS or Windows runner,
+  and checks the archive against the checksums.txt of the release. The release is the one that
+  .ergon/init.lock names, unless the input version names another.
 
 inputs:
   version:
-    description: ergon release version, without the leading "v".
+    description: >-
+      The release of ergon to install, such as 1.4.0, or latest for the newest release. An empty
+      version installs the release that .ergon/init.lock names. The version source installs no
+      release, for a repository that builds ergon in a step of its local file of this action.
     required: false
-    # Pinned rather than latest so a CI failure is attributable to the
-    # commit under test and not to a tool that moved underneath it.
-    # Bump here and the whole workflow set follows.
-    default: "1.8.1"
+    default: ""
 
 runs:
   using: composite
   steps:
-    - name: Install ergon ${{ inputs.version }}
-      if: runner.os != 'Windows'
+    - name: Install ergon
+      if: inputs.version != 'source'
       shell: bash
       env:
         VERSION: ${{ inputs.version }}
+        GH_TOKEN: ${{ github.token }}
       run: |
-        set -euo pipefail
-        case "$RUNNER_OS" in
-          Linux) os=linux ;;
-          macOS) os=darwin ;;
-          *) echo "::error::ergon ships no build for $RUNNER_OS"; exit 1 ;;
+        case "$VERSION" in
+          "") VERSION="$(jq -r .ergon .ergon/init.lock)" ;;
+          latest) VERSION="$(gh release view --repo dokimasia/ergon --json tagName --jq .tagName)" ;;
         esac
-        case "$RUNNER_ARCH" in
-          X64) arch=amd64 ;;
-          ARM64) arch=arm64 ;;
-          *) echo "::error::ergon ships no build for $RUNNER_ARCH"; exit 1 ;;
+        VERSION="${VERSION#v}"
+        case "$RUNNER_OS/$RUNNER_ARCH" in
+          Linux/X64) platform=linux_amd64 ;;
+          Linux/ARM64) platform=linux_arm64 ;;
+          macOS/X64) platform=darwin_amd64 ;;
+          macOS/ARM64) platform=darwin_arm64 ;;
+          Windows/X64) platform=windows_amd64 ;;
+          Windows/ARM64) platform=windows_arm64 ;;
+          *) echo "::error::ergon has no release for $RUNNER_OS on $RUNNER_ARCH"; exit 1 ;;
         esac
-        bin="$(go env GOPATH)/bin"
-        mkdir -p "$bin"
-        url="https://github.com/thesm-os/ergon/releases/download/v${VERSION}/ergon_${VERSION}_${os}_${arch}.tar.gz"
-        curl --fail --silent --show-error --location --retry 3 "$url" \
-          | tar -xz -C "$bin" ergon
-        "$bin/ergon" --version
-
-    # Windows releases are zip archives. PowerShell extracts them with
-    # native Windows paths.
-    - name: Install ergon ${{ inputs.version }}
-      if: runner.os == 'Windows'
-      shell: pwsh
-      env:
-        VERSION: ${{ inputs.version }}
-      run: |
-        $ErrorActionPreference = 'Stop'
-        $arch = @{ X64 = 'amd64'; ARM64 = 'arm64' }[$env:RUNNER_ARCH]
-        if (-not $arch) { throw "ergon ships no build for $env:RUNNER_ARCH" }
-        $asset = "ergon_$($env:VERSION)_windows_$arch.zip"
-        $zip = Join-Path $env:RUNNER_TEMP $asset
-        $url = "https://github.com/thesm-os/ergon/releases/download/v$($env:VERSION)/$asset"
-        Invoke-WebRequest -Uri $url -OutFile $zip -MaximumRetryCount 3
-        $dir = Join-Path $env:RUNNER_TEMP 'ergon'
-        Expand-Archive -Path $zip -DestinationPath $dir -Force
-        $bin = Join-Path (go env GOPATH) 'bin'
-        New-Item -ItemType Directory -Force -Path $bin | Out-Null
-        Copy-Item (Join-Path $dir 'ergon.exe') $bin
-        & (Join-Path $bin 'ergon.exe') --version
-
-    - name: Install GNU make
-      if: runner.os == 'Windows'
-      shell: pwsh
-      run: |
-        choco install make --version 4.4.1 --no-progress --yes
-        make --version
+        archive="ergon_${VERSION}_${platform}.tar.gz"
+        release="https://github.com/dokimasia/ergon/releases/download/v${VERSION}"
+        dir="${RUNNER_TEMP//\\//}/ergon"
+        mkdir -p "$dir"
+        cd "$dir"
+        curl --fail --silent --show-error --location --retry 3 --output "$archive" "$release/$archive"
+        curl --fail --silent --show-error --location --retry 3 --output checksums.txt "$release/checksums.txt"
+        awk -v name="$archive" '$2 == name' checksums.txt > archive.sha256
+        if [ ! -s archive.sha256 ]; then
+          echo "::error::checksums.txt of ergon $VERSION has no line for $archive"
+          exit 1
+        fi
+        if command -v sha256sum > /dev/null; then
+          sha256sum --check --strict archive.sha256
+        else
+          shasum --algorithm 256 --check archive.sha256
+        fi
+        tar -xzf "$archive"
+        if [ "$RUNNER_OS" = Windows ]; then
+          cygpath --windows "$dir" >> "$GITHUB_PATH"
+        else
+          echo "$dir" >> "$GITHUB_PATH"
+        fi
+        ./ergon --version

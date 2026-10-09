@@ -1,3 +1,8 @@
+<!--
+  ~ Copyright ThesmOS B.V. 2026
+  ~ SPDX-License-Identifier: Apache-2.0
+-->
+
 # core
 
 [![CI](https://github.com/thesm-os/core/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/thesm-os/core/actions/workflows/ci.yml)
@@ -18,7 +23,7 @@ builds on them.
 go get go.thesmos.sh/core@latest
 ```
 
-core requires Go 1.27 or later.
+core requires Go 1.27.2 or later.
 
 ## Quick start
 
@@ -95,8 +100,8 @@ for concurrent use and its allocations in its
   Merkle trees, the C2SP specifications for tiles, signed notes,
   checkpoints, cosignatures and witnesses, RFC 3161 for time stamps,
   RFC 9562 for UUIDs, and FIPS 186-5 and FIPS 204 for ECDSA and ML-DSA.
-- CI runs the race detector on Linux, macOS and Windows, requires 100%
-  statement coverage, and runs mutation testing.
+- CI runs the tests and the race detector on Linux, macOS and Windows,
+  and a nightly job runs the fuzz targets and mutation testing.
 
 ## Documentation
 

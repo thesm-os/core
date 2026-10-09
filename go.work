@@ -1,0 +1,7 @@
+// Copyright ThesmOS B.V. 2026
+// SPDX-License-Identifier: Apache-2.0
+
+go 1.27.2
+
+// The targets of ergon run in the modules of the workspace, and core is one module.
+use .

@@ -11,6 +11,11 @@ superseded-by: RFC-NNNN | none
 produces-adr: ADR-NNNN, ADR-NNNN | tbd | none
 ---
 
+<!--
+  ~ Copyright ThesmOS B.V. 2026
+  ~ SPDX-License-Identifier: Apache-2.0
+-->
+
 # RFC-NNNN: <Short title>
 
 ## Summary

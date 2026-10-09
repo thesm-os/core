@@ -1,0 +1,157 @@
+# Copyright ThesmOS B.V. 2026
+# SPDX-License-Identifier: Apache-2.0
+
+# The settings of core, which ergon init merges into .golangci.yml.
+
+linters:
+  settings:
+    # Production code imports the stdlib, this module, golang.org/x modules without requirements
+    # (ADR-0015) and the runtime packages of kanon (ADR-0035), each listed by name. Test code may
+    # also import kanon's conformance suite and the assertions it uses. Any other import fails lint.
+    # Adding a module to either list takes a new ADR.
+    depguard:
+      rules:
+        main:
+          list-mode: strict
+          files:
+            - "$all"
+            - "!$test"
+            - "!**/coretest/**"
+          allow:
+            - $gostd
+            - go.thesmos.sh/core
+            - golang.org/x/sync
+            - go.thesmos.sh/kanon$
+            - go.thesmos.sh/kanon/wire$
+        test:
+          # Files in coretest/ are non-_test.go but they are test infrastructure (hand-rolled spec,
+          # model and stub companions). Treat them as tests for import-allow purposes.
+          list-mode: strict
+          files:
+            - "$test"
+            - "**/coretest/**"
+          allow:
+            - $gostd
+            - go.thesmos.sh/core
+            - golang.org/x/sync
+            - go.thesmos.sh/testkit
+            - go.thesmos.sh/testkit/model
+            - pgregory.net/rapid
+            - go.thesmos.sh/kanon
+            - go.dokimi.dev/assert
+
+    # Each package of core starts its errors with its own name and wraps the cause, so an error
+    # that one package returns from another already carries its context.
+    wrapcheck:
+      ignore-package-globs:
+        - go.thesmos.sh/core/*
+
+    # Core takes its values, such as the rules of a policy, the body of a checkpoint and the config
+    # of a constructor, by value on purpose, and a copy allocates nothing. The checks report a copy
+    # of more than 256 bytes.
+    gocritic:
+      settings:
+        hugeParam:
+          sizeThreshold: 256
+        rangeValCopy:
+          sizeThreshold: 256
+
+    # The testing guide of core puts a case that needs the unexported state of a package in
+    # <file>_internal_test.go, in the package itself. Every other test file declares the package
+    # x_test.
+    testpackage:
+      skip-regexp: _internal_test\.go$
+
+  exclusions:
+    rules:
+      # rand/pcg is a deliberately non-cryptographic PRNG. The G404 warning ("use crypto/rand") is
+      # wrong for this package by design (see docs/adr/0006 and rand/pcg/doc.go), and the int64 to
+      # uint64 seed conversion is a deliberate bit-pattern reinterpretation supported by the PCG
+      # construction.
+      - path: "rand/pcg/"
+        linters: [gosec]
+        text: "G404:|G115:"
+
+      # rand/helpers Shuffle converts the bounded result of uint64n to int. The result is
+      # mathematically guaranteed to fit, and G115 cannot prove it. The same logic applies in the
+      # reference implementation of helpers_test.go.
+      - path: "rand/helpers"
+        linters: [gosec]
+        text: "G115:"
+
+      # rand/seeded uses int64 to uint64 as a bit-pattern reinterpretation when it keys HMAC, which
+      # is safe by construction. The same logic applies in seeded_test.go.
+      - path: "rand/seeded"
+        linters: [gosec]
+        text: "G115:"
+
+      # The base62 long division of id/ksuid uses uint64 to uint32 as multi-precision arithmetic.
+      # Format: the dividend x = rem<<32 | num[j] with rem in [0,61], so x/62 < 2^32 and the
+      # truncation is exact. Parse: x = num[j]*62 + carry splits into the new num[j] (the low 32
+      # bits) and the next carry (x>>32), so uint32(x) is the intended split of a multi-precision
+      # multiply-and-add.
+      - path: 'id/ksuid/parse\.go'
+        linters: [gosec]
+        text: "G115:"
+
+      # rand/crypto.Rand.Uint64 panics when the entropy source fails, by design: see the Failure
+      # semantics section of rand/crypto/crypto.go. A CSPRNG that returns a sentinel is the worst
+      # failure mode of a security primitive.
+      - path: 'rand/crypto/crypto\.go'
+        linters: [forbidigo]
+        text: "panic"
+
+      # The crash of task raises the panic of a task again on the goroutine of the task, after a
+      # recover that tells a panic from runtime.Goexit. It originates no panic: it lets the panic
+      # of the task crash the process with the frames of the task in the trace, as
+      # sync.WaitGroup.Go does.
+      - path: 'task/crash\.go'
+        linters: [forbidigo]
+        text: "panic"
+
+      # The chain of httpserver aborts a response after it recovers a panic of a handler that
+      # wrote the header, or a panic with http.ErrAbortHandler. net/http aborts a response only
+      # through a panic with http.ErrAbortHandler, which its own recover handles without a log: it
+      # closes the connection, or resets the stream of HTTP/2, so the client does not read a
+      # partial body as complete.
+      - path: 'net/httpserver/chain\.go'
+        linters: [forbidigo]
+        text: "panic"
+
+      # The XxxCustom callbacks of a testkit suite take a *testing.T as their first argument, but
+      # they are no test helpers: each closure runs as the body of a t.Run subtest that
+      # AssertXxxContract sets up. t.Helper() would attribute a failure to the registration line
+      # instead of the failing line inside the closure.
+      - path: 'coretest/[a-z]+test/[a-z_]+\.(go)'
+        linters: [thelper]
+
+      # The helpers of cryptotest panic on an unsupported digest size, a programmer error: the
+      # caller passed a Sum function with the wrong return shape. The Failure semantics of the
+      # package permit a panic for a misuse by the caller.
+      - path: 'coretest/cryptotest/.*\.go'
+        linters: [forbidigo]
+        text: "panic"
+
+      # gocritic's unlambda reports func() hash.Hash { return sha256.New() } as replaceable with
+      # sha256.New. The explicit function literal is clearer in an assignment to a struct field of
+      # a typed function type.
+      - path: 'crypto/(hmac/)?sha[0-9_]+/sha[0-9_]+_test\.go'
+        linters: [gocritic]
+        text: "unlambda"
+
+      # The Spec, stub and fixture structs of cryptotest exist once per test, so their pointer
+      # bytes do not matter.
+      - path: 'coretest/cryptotest/[a-z]+_(model|stub|fixtures)\.go'
+        linters: [govet]
+        text: "fieldalignment"
+
+formatters:
+  settings:
+    # The imports of this module form a group of their own, after the standard library and the
+    # other modules.
+    gci:
+      sections:
+        - standard
+        - default
+        - prefix(go.thesmos.sh/core)
+      custom-order: true

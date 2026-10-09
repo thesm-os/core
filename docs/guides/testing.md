@@ -1,10 +1,15 @@
+<!--
+  ~ Copyright ThesmOS B.V. 2026
+  ~ SPDX-License-Identifier: Apache-2.0
+-->
+
 # How to test core
 
 Write each hand-written test of core with [go.dokimi.dev/assert][assert].
 The generated conformance suites and sentinel tests come from testkit,
 as the [testkit guide](testkit.md) describes. Do not edit a file whose
 name contains `.gen`. Change its `//go:generate` directive instead, and
-run `make generate`.
+run `go generate ./...` with testkit on your `PATH`.
 
 ## Put each test beside its source file
 
@@ -126,12 +131,13 @@ its seed corpus. Declare the same property in a test with
 
 ## Cover every statement and detect every mutant
 
-- CI requires 100% statement coverage of every package outside
-  `coretest`. `make check-coverage` runs the gate, and
-  `make check-uncovered` lists each uncovered line.
-- CI runs mutation testing against the thresholds of `.ergon.yaml`.
-  `make check-mutation` runs the same gate. Each mutant that the tests
-  do not detect needs a case that detects it.
+- Cover every statement of every package outside `coretest`. CI does
+  not measure the coverage, so run `go test -cover ./...` before you
+  open a pull request.
+- `nightly.yml` runs `make mutate-go` every night. dokimi-mutate-go
+  fails on each mutant that the tests do not detect, and each such
+  mutant needs a case that detects it. `make mutate-go` runs the same
+  check, for a long time.
 - A mutant that no test can detect, because it does not change the
   behaviour of the code, gets an annotation on the line before it:
   `//dokimi:mutate-skip <kinds>: <reason>`. The reason states why the

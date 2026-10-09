@@ -1,59 +1,72 @@
-version: "2"
+# Managed by ergon init, with .ergon/local/.golangci.yml merged in. Change the repository's settings there and run ergon init sync.
+#
+# The configuration of golangci-lint for every module of the repository. It enables each linter
+# that a Go repository of the baseline enables, with the strictest setting that one of them uses.
+# A repository adds its own settings in its local file, which merges into this one: maps key by
+# key, lists appended. The depguard rules of the repository's module boundaries go there.
 
+version: "2"
 run:
   timeout: 5m
   modules-download-mode: readonly
   allow-parallel-runners: true
   tests: true
-  go: "1.27"
   relative-path-mode: gomod
-
 output:
   show-stats: true
-  path-mode: "abs"
   sort-order:
     - linter
     - severity
     - file
-
 linters:
   default: none
   enable:
-    # Bugs & safety
+    # Correctness
     - copyloopvar
+    - durationcheck
     - errcheck
     - errorlint
     - exhaustive
+    - forcetypeassert
     - gosec
     - govet
+    - ineffassign
+    - makezero
     - nilerr
+    - nilnil
     - predeclared
+    - reassign
     - staticcheck
+    - unconvert
     - unused
     - wastedassign
-    # Modernization / BC
+    # Modernization
     - modernize
     - unparam
     # Performance
     - bodyclose
     - gocritic
+    - mirror
     - noctx
     - perfsprint
     - prealloc
-    # Architecture & style
+    # Architecture and style
     - decorder
     - depguard
+    - dupl
     - dupword
     - forbidigo
+    - funcorder
+    - goconst
     - interfacebloat
     - misspell
-    - revive
-    - wrapcheck
     - musttag
+    - nolintlint
+    - revive
     - sloglint
     - usestdlibvars
-    - nilnil
-    - goconst
+    - whitespace
+    - wrapcheck
     # Concurrency
     - asasalint
     - containedctx
@@ -61,26 +74,43 @@ linters:
     - errname
     - fatcontext
     - spancheck
-    - whitespace
     # Test hygiene
+    - paralleltest
     - testifylint
+    - testpackage
     - thelper
     - tparallel
-    - paralleltest
     - usetesting
-
   settings:
+    asasalint:
+      use-builtin-exclusions: true
+    copyloopvar:
+      check-alias: true
     decorder:
       disable-dec-order-check: true
       disable-init-func-first-check: false
-
-    # Production code imports the stdlib, this module, golang.org/x
-    # modules without requirements (ADR-0015) and the runtime packages of
-    # kanon (ADR-0035), each listed by name. Test code may also import
-    # kanon's conformance suite and the assertions it uses. Any other
-    # import fails lint. Adding a module to either list takes a new ADR.
+    # depguard allows only the standard library in a module without rules, so this rule denies
+    # the packages that the standard library or a successor replaces, and allows everything else.
+    # A repository adds the rules of its module boundaries in its local file.
     depguard:
       rules:
+        replaced:
+          list-mode: lax
+          files:
+            - $all
+          deny:
+            - pkg: io/ioutil$
+              desc: io/ioutil is deprecated, so use io and os
+            - pkg: github.com/pkg/errors
+              desc: wrap with fmt.Errorf and %w, and match with errors.Is and errors.As
+            - pkg: golang.org/x/exp/slices$
+              desc: use slices of the standard library
+            - pkg: golang.org/x/exp/maps$
+              desc: use maps of the standard library
+            - pkg: golang.org/x/net/context$
+              desc: use context of the standard library
+            - pkg: github.com/golang/protobuf
+              desc: github.com/golang/protobuf is deprecated, so use google.golang.org/protobuf
         main:
           list-mode: strict
           files:
@@ -94,10 +124,8 @@ linters:
             - go.thesmos.sh/kanon$
             - go.thesmos.sh/kanon/wire$
         test:
-          # Files in coretest/ are non-_test.go but they are test
-          # infrastructure (hand-rolled spec / model / stub
-          # companions). Treat them as tests for import-allow
-          # purposes.
+          # Files in coretest/ are non-_test.go but they are test infrastructure (hand-rolled spec,
+          # model and stub companions). Treat them as tests for import-allow purposes.
           list-mode: strict
           files:
             - "$test"
@@ -111,228 +139,210 @@ linters:
             - pgregory.net/rapid
             - go.thesmos.sh/kanon
             - go.dokimi.dev/assert
-
-    forbidigo:
-      analyze-types: true
-      forbid:
-        - pattern: ^panic$
-          msg: "panic() is forbidden in library code; return errors explicitly."
-        - pattern: ^fmt\.(Print|Printf|Println|Fprint|Fprintf|Fprintln)$
-          msg: "Use structured logging, not fmt.Print*."
-
     exhaustive:
       default-signifies-exhaustive: true
       check:
         - switch
-
+    forbidigo:
+      analyze-types: true
+      forbid:
+        - pattern: ^panic$
+          msg: return an error instead of a panic
+        - pattern: ^(fmt\.(Print|Printf|Println)|print|println)$
+          msg: write to an io.Writer that the caller passes, or log through log/slog
+    funcorder:
+      constructor: true
+      struct-method: true
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - performance
+      disabled-checks:
+        - ifElseChain
+      settings:
+        hugeParam:
+          sizeThreshold: 256
+        rangeValCopy:
+          sizeThreshold: 256
+    govet:
+      enable-all: true
+    interfacebloat:
+      max: 10
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+      allow-unused: false
+    revive:
+      severity: error
+      confidence: 0.1
+      rules:
+        - name: blank-imports
+        # thelper requires the test first in a helper, so a helper takes its context second.
+        - name: context-as-argument
+          arguments:
+            - allowTypesBefore: "*testing.T"
+        - name: early-return
+        - name: empty-block
+        - name: error-naming
+        - name: error-return
+        - name: error-strings
+        - name: errorf
+        - name: exported
+        - name: if-return
+        - name: indent-error-flow
+        - name: modifies-value-receiver
+        - name: package-comments
+        - name: range
+        - name: receiver-naming
+        - name: redundant-import-alias
+        - name: time-naming
+        - name: unexported-return
+        - name: unnecessary-stmt
+        - name: unused-receiver
+        - name: var-naming
+    # revive checks the package comments and the names, so staticcheck runs every other check.
+    staticcheck:
+      checks:
+        - all
+        - -ST1000
+        - -ST1003
+    # Every test file declares the package x_test, so a test calls only what its package exports.
+    # The pattern matches no file name, and an empty pattern would match every one.
+    testpackage:
+      skip-regexp: _internal_test\.go$
     usetesting:
       context-background: true
       context-todo: true
       os-setenv: true
       os-mkdir-temp: true
       os-temp-dir: true
-
-    gocritic:
-      enabled-tags:
-        - performance
-        - diagnostic
-      disabled-checks:
-        - ifElseChain
-        - commentedOutCode
-      settings:
-        hugeParam:
-          sizeThreshold: 256
-        rangeValCopy:
-          sizeThreshold: 256
-
+    whitespace:
+      multi-if: true
+      multi-func: false
+    # An error that the constructor of an error, a wrap, a join or a context returns already
+    # carries its cause, and a walk of a file tree returns the error of the caller's own function,
+    # so neither needs a second wrap.
     wrapcheck:
       ignore-sig-regexps:
         - \.New.*Error\(
         - \.(Wrap|Wrapf)\(
         - errors\.(Join|Unwrap)\(
         - \.Err\(
-        # context.Cause is ctx.Err with the recorded cause, and a
-        # function that reports why its context ended returns it as
-        # is, as it returns ctx.Err.
         - context\.Cause\(
-        # testkit.TestError builds a sentinel for a test double to
-        # return; the test matches it with errors.Is, so wrapping it
-        # adds nothing.
-        - testkit\.TestError\(
+        - (fs|filepath)\.WalkDir\(
+        - filepath\.Walk\(
       ignore-package-globs:
         - go.thesmos.sh/core/*
-
-    revive:
-      severity: error
-      confidence: 0.1
-      rules:
-        - name: context-as-argument
-        - name: var-naming
-        - name: package-comments
-        - name: receiver-naming
-        - name: exported
-          severity: warning
-        - name: error-return
-        - name: error-naming
-        - name: error-strings
-        - name: errorf
-        - name: if-return
-        - name: indent-error-flow
-        - name: early-return
-        - name: unexported-return
-        - name: redundant-import-alias
-        - name: range
-        - name: empty-block
-        - name: unnecessary-stmt
-        - name: modifies-value-receiver
-        - name: time-naming
-        - name: unused-receiver
-
-    govet:
-      enable-all: true
-
-    interfacebloat:
-      max: 10
-
-    asasalint:
-      use-builtin-exclusions: true
-
-    copyloopvar:
-      check-alias: true
-
-    whitespace:
-      multi-if: true
-      multi-func: false
-
   exclusions:
     generated: lax
-    paths:
-      - docs
     presets:
       - std-error-handling
       - common-false-positives
+    paths:
+      - (^|/)testdata($|/)
     rules:
-      # rand/pcg is a deliberately non-cryptographic PRNG. The G404
-      # warning ("use crypto/rand") is wrong for this package by
-      # design (see docs/adr/0006 and rand/pcg/doc.go), and the
-      # int64 → uint64 seed conversion is a deliberate bit-pattern
-      # reinterpretation supported by the PCG construction.
+      # A table or a fixture of a test exists once per test, so its layout and its size do not
+      # matter.
+      - path: _test\.go$
+        linters: [govet]
+        text: "fieldalignment:"
+      - path: _test\.go$
+        linters: [gocritic]
+        text: "(hugeParam|rangeValCopy):"
+      # A test states its values inline, because the value is the assertion.
+      - path: _test\.go$
+        linters: [goconst, gosec]
+      # A failed type assertion or an unused parameter in a test fails the test, which is the
+      # signal these linters exist for.
+      - path: _test\.go$
+        linters: [forcetypeassert, unparam]
+      # A test file puts its fakes and helpers below the tests that use them, in reading order.
+      - path: _test\.go$
+        linters: [funcorder]
+      # A fake of a test returns a nil value with a nil error on purpose, to prove the guard
+      # against a broken value-or-error contract.
+      - path: _test\.go$
+        linters: [nilnil]
+      # A spec mirrors its source file, so the specs of two similar files repeat each other.
+      - path: _test\.go$
+        linters: [dupl]
+      # A test of an allocation ceiling, of an environment variable or of the test binary as a
+      # process runs serially, and its name ends in Allocs, Env or Process.
+      # testing.AllocsPerRun and t.Setenv panic in a parallel test, and two processes that exit
+      # in the same nanosecond write one coverage file.
+      - path: _test\.go$
+        linters: [paralleltest, tparallel]
+        text: 'Test\w*(Allocs|Env|Process)\b'
+      # rand/pcg is a deliberately non-cryptographic PRNG. The G404 warning ("use crypto/rand") is
+      # wrong for this package by design (see docs/adr/0006 and rand/pcg/doc.go), and the int64 to
+      # uint64 seed conversion is a deliberate bit-pattern reinterpretation supported by the PCG
+      # construction.
       - path: "rand/pcg/"
         linters: [gosec]
         text: "G404:|G115:"
-
-      # rand/helpers Shuffle converts uint64n's bounded result to
-      # int. The result is mathematically guaranteed to fit; G115
-      # cannot prove it. Same logic applies in helpers_test.go's
-      # reference implementation.
+      # rand/helpers Shuffle converts the bounded result of uint64n to int. The result is
+      # mathematically guaranteed to fit, and G115 cannot prove it. The same logic applies in the
+      # reference implementation of helpers_test.go.
       - path: "rand/helpers"
         linters: [gosec]
         text: "G115:"
-
-      # rand/seeded uses int64 → uint64 as a bit-pattern
-      # reinterpretation when keying HMAC; safe by construction.
-      # Same logic in seeded_test.go.
+      # rand/seeded uses int64 to uint64 as a bit-pattern reinterpretation when it keys HMAC, which
+      # is safe by construction. The same logic applies in seeded_test.go.
       - path: "rand/seeded"
         linters: [gosec]
         text: "G115:"
-
-      # id/ksuid base62 long division uses uint64 → uint32 as
-      # multi-precision arithmetic. Format: dividend x = rem<<32 |
-      # num[j] where rem ∈ [0,61], so x/62 < 2^32 and the
-      # truncation is provably exact. Parse: x = num[j]*62 + carry
-      # is split into the new num[j] (low 32) and the next carry
-      # (x>>32), so uint32(x) is the intentional bit-pattern
-      # split for multi-precision multiply-and-add.
+      # The base62 long division of id/ksuid uses uint64 to uint32 as multi-precision arithmetic.
+      # Format: the dividend x = rem<<32 | num[j] with rem in [0,61], so x/62 < 2^32 and the
+      # truncation is exact. Parse: x = num[j]*62 + carry splits into the new num[j] (the low 32
+      # bits) and the next carry (x>>32), so uint32(x) is the intended split of a multi-precision
+      # multiply-and-add.
       - path: 'id/ksuid/parse\.go'
         linters: [gosec]
         text: "G115:"
-
-      # rand/crypto.Rand.Uint64 panics on entropy-source failure
-      # by deliberate design — see the Failure semantics section
-      # in rand/crypto/crypto.go. Returning a sentinel from a
-      # CSPRNG is the worst possible failure mode for a security
-      # primitive.
+      # rand/crypto.Rand.Uint64 panics when the entropy source fails, by design: see the Failure
+      # semantics section of rand/crypto/crypto.go. A CSPRNG that returns a sentinel is the worst
+      # failure mode of a security primitive.
       - path: 'rand/crypto/crypto\.go'
         linters: [forbidigo]
         text: "panic"
-
-      # task's crash raises a task's own panic again on the task's
-      # goroutine, after a recover that tells a panic from
-      # runtime.Goexit. It originates no panic: it lets the task's
-      # panic crash the process with the task's frames in the trace,
-      # as sync.WaitGroup.Go does.
+      # The crash of task raises the panic of a task again on the goroutine of the task, after a
+      # recover that tells a panic from runtime.Goexit. It originates no panic: it lets the panic
+      # of the task crash the process with the frames of the task in the trace, as
+      # sync.WaitGroup.Go does.
       - path: 'task/crash\.go'
         linters: [forbidigo]
         text: "panic"
-
-      # httpserver's chain aborts a response after it recovers a panic of
-      # the handler that followed the header, or a panic with
-      # http.ErrAbortHandler. net/http aborts a response only through a
-      # panic with http.ErrAbortHandler, which its own recover handles
-      # without a log: it closes the connection, or resets the stream of
-      # HTTP/2, so the client does not read a partial body as complete.
+      # The chain of httpserver aborts a response after it recovers a panic of a handler that
+      # wrote the header, or a panic with http.ErrAbortHandler. net/http aborts a response only
+      # through a panic with http.ErrAbortHandler, which its own recover handles without a log: it
+      # closes the connection, or resets the stream of HTTP/2, so the client does not read a
+      # partial body as complete.
       - path: 'net/httpserver/chain\.go'
         linters: [forbidigo]
         text: "panic"
-
-      # TestZeroAlloc tests use testing.AllocsPerRun which relies
-      # on a process-global malloc counter; running them in
-      # parallel with other tests produces flaky alloc counts.
-      - source: "func TestZeroAlloc"
-        linters: [paralleltest]
-      - path: '_test\.go'
-        text: "TestZeroAlloc"
-        linters: [paralleltest]
-
-      # fieldalignment checks production code only. A table or fixture
-      # struct in a test file exists once per test, so its layout is
-      # not worth optimizing.
-      - path: '_test\.go'
-        linters: [govet]
-        text: "fieldalignment:.*"
-
-      # Goconst
-      - path: '_test\.go'
-        linters: [goconst, gosec]
-
-      # testkit suite XxxCustom callbacks accept a *testing.T as
-      # their first argument, but they are NOT test helpers —
-      # each closure runs as the body of a t.Run subtest set up
-      # by AssertXxxContract. t.Helper() would mis-attribute
-      # failures to the registration line instead of the failing
-      # line inside the closure. Suppress thelper for hand-rolled
-      # spec / stub / fixture files in coretest/<pkg>test/.
+      # The XxxCustom callbacks of a testkit suite take a *testing.T as their first argument, but
+      # they are no test helpers: each closure runs as the body of a t.Run subtest that
+      # AssertXxxContract sets up. t.Helper() would attribute a failure to the registration line
+      # instead of the failing line inside the closure.
       - path: 'coretest/[a-z]+test/[a-z_]+\.(go)'
         linters: [thelper]
-
-      # cryptotest helpers panic on unsupported digest sizes (a
-      # programmer error — caller passed a Sum function with the
-      # wrong return shape). The package-level "Failure semantics"
-      # contract permits panic for caller-misuse paths.
+      # The helpers of cryptotest panic on an unsupported digest size, a programmer error: the
+      # caller passed a Sum function with the wrong return shape. The Failure semantics of the
+      # package permit a panic for a misuse by the caller.
       - path: 'coretest/cryptotest/.*\.go'
         linters: [forbidigo]
         text: "panic"
-
-      # cryptotest stream companion delegates Write straight to a
-      # stdlib hash.Hash; nothing meaningful to wrap.
-      - path: 'coretest/cryptotest/stream_stub\.go'
-        linters: [wrapcheck]
-
-      # gocritic's unlambda flags `func() hash.Hash { return
-      # sha256.New() }` as replaceable with `sha256.New`. The
-      # explicit-lambda form is clearer when assigning to a
-      # struct field with a typed function shape.
+      # gocritic's unlambda reports func() hash.Hash { return sha256.New() } as replaceable with
+      # sha256.New. The explicit function literal is clearer in an assignment to a struct field of
+      # a typed function type.
       - path: 'crypto/(hmac/)?sha[0-9_]+/sha[0-9_]+_test\.go'
         linters: [gocritic]
         text: "unlambda"
-
-      # govet fieldalignment on test-only Spec / fixture structs:
-      # pointer-byte savings don't matter for a one-per-test
-      # instance.
+      # The Spec, stub and fixture structs of cryptotest exist once per test, so their pointer
+      # bytes do not matter.
       - path: 'coretest/cryptotest/[a-z]+_(model|stub|fixtures)\.go'
         linters: [govet]
         text: "fieldalignment"
-
 formatters:
   enable:
     - gci
@@ -340,24 +350,27 @@ formatters:
     - gofumpt
     - goimports
     - golines
-
+  # gci groups the standard library apart from every other import. A repository puts its own
+  # modules in a group of their own by adding gci's sections in its local file, such as standard,
+  # default and the prefix of its module paths.
   settings:
+    gofumpt:
+      extra:
+        group-params: true
+    golines:
+      max-len: 120
+    # The imports of this module form a group of their own, after the standard library and the
+    # other modules.
     gci:
       sections:
         - standard
         - default
         - prefix(go.thesmos.sh/core)
       custom-order: true
-    golines:
-      max-len: 120
-    gofumpt:
-      extra:
-        group-params: true
-
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
+  uniq-by-line: false
   fix: false
-
 severity:
   default: error

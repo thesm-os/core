@@ -7,6 +7,11 @@ supersedes: ADR-NNNN | none
 superseded-by: ADR-NNNN | none
 ---
 
+<!--
+  ~ Copyright ThesmOS B.V. 2026
+  ~ SPDX-License-Identifier: Apache-2.0
+-->
+
 # ADR-NNNN: <Short decision title>
 
 ## Status

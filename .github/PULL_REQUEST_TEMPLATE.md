@@ -1,43 +1,15 @@
-<!--
-Thank you for contributing to core. A few reminders before submitting:
+<!-- Managed by ergon init. Add repository settings to .ergon/local/.github/PULL_REQUEST_TEMPLATE.md and run ergon init sync. -->
 
-  - core is stdlib-first. An import outside the depguard allow-lists
-    fails CI.
-  - Commits should be cryptographically signed (Verified on GitHub).
-  - Use Conventional Commits (`feat:`, `fix:`, `docs:`, ...).
--->
+<!-- The title is a commit subject, because the merge uses it as one. -->
 
 ## Summary
 
-<!-- One paragraph: what does this PR change, and why? -->
+<!-- One bullet for each change, naming the mechanism. -->
 
-## Type of change
+-
 
-- [ ] Bug fix
-- [ ] New feature (interface / package)
-- [ ] Breaking change (requires major version bump)
-- [ ] Documentation
-- [ ] Refactor / internal cleanup
-- [ ] CI / tooling
-- [ ] Other:
+## Checklist
 
-## Linked issues / RFCs / ADRs
-
-<!-- Cite the issue, RFC, or ADR this PR implements. If the change is
-     load-bearing and no doc exists yet, link the doc PR here. -->
-
-- Closes #
-- Implements RFC-####
-- Lands ADR-####
-
-## Verification
-
-- [ ] `make check` passes locally
-- [ ] No import outside the depguard allow-lists
-- [ ] Public-API changes documented in `CHANGELOG.md`
-- [ ] Commits are signed and show as Verified on GitHub
-
-## Notes for reviewers
-
-<!-- Anything reviewers should look at first, edge cases worth flagging,
-     follow-up work intentionally left out, etc. -->
+- [ ] `make check` passes.
+- [ ] A changeset under `.changeset/` for each package whose consumers notice the change.
+- [ ] An RFC under `docs/rfc/` for a change to a published interface, and an ADR under `docs/adr/` for a decision that constrains later work.

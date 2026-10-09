@@ -1,18 +1,49 @@
-# ----------------------------------------------------------------------
+# Managed by ergon init, with .ergon/local/.gitignore merged in. Change the repository's settings there and run ergon init sync.
+
+# Editors and IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Agents
+.claude/
+.codex/
+.gemini/
+AGENT.md
+CLAUDE.md
+GEMINI.md
+
+# Operating systems
+.DS_Store
+Thumbs.db
+
+# Secrets
+.env
+*.local
+secrets.json
+
+# ergon release
+# The publish plan of the release workflow, which a build of a release must not see as a change
+/publish-plan.json
+
+# Go
+bin/
+coverage.out
+*.test
+# The artifacts of ergon release pack, which a build of a release must not see as changes
+/dist/
+
 # Binaries and compiled outputs
-# ----------------------------------------------------------------------
 *.exe
 *.exe~
 *.dll
 *.so
 *.dylib
-bin/
 dist/
 
-# ----------------------------------------------------------------------
-# Test and coverage outputs
-# ----------------------------------------------------------------------
-*.test
+# Test, fuzz and coverage outputs
 *.out
 fuzz/
 coverage/
@@ -20,54 +51,20 @@ coverage.txt
 coverage.html
 profile.out
 
-# ----------------------------------------------------------------------
 # Build artifacts
-# ----------------------------------------------------------------------
 artifacts/
 
-# ----------------------------------------------------------------------
-# Benchmark transient — only .bench/baseline.txt is committed
-# ----------------------------------------------------------------------
+# The benchmark of the working tree. Only .bench/baseline.txt is committed.
 .bench/current.txt
 
-# ----------------------------------------------------------------------
 # Dependency directories
-# ----------------------------------------------------------------------
 vendor/
 
-# ----------------------------------------------------------------------
-# IDEs, editors, and AI
-# ----------------------------------------------------------------------
-.idea/
-.vscode/
-.codex/
-.claude/
-.gemini/
-*.swp
-*.swo
-*~
-
-# ----------------------------------------------------------------------
-# Agentic / LLM
-# ----------------------------------------------------------------------
+# Agents
 superpowers/
 docs/superpowers/
-AGENT.md
-CLAUDE.md
-GEMINI.md
 
-# ----------------------------------------------------------------------
-# OS-specific files
-# ----------------------------------------------------------------------
-.DS_Store
+# Operating systems
 .AppleDouble
 .LSOverride
-Thumbs.db
 ehthumbs.db
-
-# ----------------------------------------------------------------------
-# Secrets
-# ----------------------------------------------------------------------
-.env
-*.local
-secrets.json

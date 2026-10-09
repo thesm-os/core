@@ -1,3 +1,8 @@
+<!--
+  ~ Copyright ThesmOS B.V. 2026
+  ~ SPDX-License-Identifier: Apache-2.0
+-->
+
 # How to generate the conformance suites
 
 [testkit][testkit] generates the conformance suites, test doubles,
@@ -6,7 +11,9 @@ packages. Its [documentation][testkit-docs] describes each generator in
 full. This guide covers how core lays out and uses the generated files.
 
 Each generated file has `.gen` in its name. Do not edit one. Change the
-`//go:generate` directive that writes it, and run `make generate`.
+`//go:generate` directive that writes it, and run `go generate ./...`
+with testkit on your `PATH`. `make generate` runs the directives of
+kanon alone, whose output CI checks.
 
 ## Place the generated files
 

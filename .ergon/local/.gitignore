@@ -1,0 +1,36 @@
+# Copyright ThesmOS B.V. 2026
+# SPDX-License-Identifier: Apache-2.0
+
+# Binaries and compiled outputs
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+dist/
+
+# Test, fuzz and coverage outputs
+*.out
+fuzz/
+coverage/
+coverage.txt
+coverage.html
+profile.out
+
+# Build artifacts
+artifacts/
+
+# The benchmark of the working tree. Only .bench/baseline.txt is committed.
+.bench/current.txt
+
+# Dependency directories
+vendor/
+
+# Agents
+superpowers/
+docs/superpowers/
+
+# Operating systems
+.AppleDouble
+.LSOverride
+ehthumbs.db
