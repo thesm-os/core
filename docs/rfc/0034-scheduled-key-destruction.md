@@ -11,6 +11,11 @@ superseded-by: none
 produces-adr: ADR-0021
 ---
 
+<!--
+  ~ Copyright ThesmOS B.V. 2026
+  ~ SPDX-License-Identifier: Apache-2.0
+-->
+
 # RFC-0034: Scheduled Key Destruction
 
 ## Summary

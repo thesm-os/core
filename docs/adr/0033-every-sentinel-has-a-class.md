@@ -7,6 +7,11 @@ supersedes: none
 superseded-by: none
 ---
 
+<!--
+  ~ Copyright ThesmOS B.V. 2026
+  ~ SPDX-License-Identifier: Apache-2.0
+-->
+
 # ADR-0033: Every Core Sentinel Has a Class or a Stated Reason
 
 ## Status

@@ -7,6 +7,11 @@ supersedes: none
 superseded-by: ADR-0045
 ---
 
+<!--
+  ~ Copyright ThesmOS B.V. 2026
+  ~ SPDX-License-Identifier: Apache-2.0
+-->
+
 # ADR-0008: Core Defines Contracts That Describe IO
 
 ## Status

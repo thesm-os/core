@@ -7,6 +7,11 @@ supersedes: ADR-0001
 superseded-by: ADR-0015
 ---
 
+<!--
+  ~ Copyright ThesmOS B.V. 2026
+  ~ SPDX-License-Identifier: Apache-2.0
+-->
+
 # ADR-0006: Stdlib-Only Scope: Test Dependencies
 
 ## Status

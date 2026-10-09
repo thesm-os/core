@@ -11,6 +11,11 @@ superseded-by: none
 produces-adr: ADR-0027
 ---
 
+<!--
+  ~ Copyright ThesmOS B.V. 2026
+  ~ SPDX-License-Identifier: Apache-2.0
+-->
+
 # RFC-0043: B-Tree Ordered Maps
 
 ## Summary

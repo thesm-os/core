@@ -7,6 +7,11 @@ supersedes: none
 superseded-by: ADR-0013, ADR-0014
 ---
 
+<!--
+  ~ Copyright ThesmOS B.V. 2026
+  ~ SPDX-License-Identifier: Apache-2.0
+-->
+
 # ADR-0007: The Zero Digest Is a Valid Chain Genesis
 
 ## Status

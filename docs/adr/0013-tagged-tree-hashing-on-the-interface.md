@@ -7,6 +7,11 @@ supersedes: ADR-0007
 superseded-by: none
 ---
 
+<!--
+  ~ Copyright ThesmOS B.V. 2026
+  ~ SPDX-License-Identifier: Apache-2.0
+-->
+
 # ADR-0013: Tagged Tree Hashing on the Hasher Interface
 
 ## Status

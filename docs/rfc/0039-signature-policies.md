@@ -11,6 +11,11 @@ superseded-by: none
 produces-adr: ADR-0023
 ---
 
+<!--
+  ~ Copyright ThesmOS B.V. 2026
+  ~ SPDX-License-Identifier: Apache-2.0
+-->
+
 # RFC-0039: Signature Policies and Verifier Resolution
 
 ## Summary

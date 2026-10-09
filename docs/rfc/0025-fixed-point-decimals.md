@@ -11,6 +11,11 @@ superseded-by: none
 produces-adr: ADR-0010, ADR-0011
 ---
 
+<!--
+  ~ Copyright ThesmOS B.V. 2026
+  ~ SPDX-License-Identifier: Apache-2.0
+-->
+
 # RFC-0025: Fixed-Point Decimals
 
 ## Summary

@@ -7,6 +7,11 @@ supersedes: ADR-0008
 superseded-by: none
 ---
 
+<!--
+  ~ Copyright ThesmOS B.V. 2026
+  ~ SPDX-License-Identifier: Apache-2.0
+-->
+
 # ADR-0045: Core Ships IO Built on the Standard Library
 
 ## Status

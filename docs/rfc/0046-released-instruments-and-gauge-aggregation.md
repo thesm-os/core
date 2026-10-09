@@ -11,6 +11,11 @@ superseded-by: none
 produces-adr: ADR-0037, ADR-0038
 ---
 
+<!--
+  ~ Copyright ThesmOS B.V. 2026
+  ~ SPDX-License-Identifier: Apache-2.0
+-->
+
 # RFC-0046: Released Instruments and Gauge Aggregation
 
 ## Summary
