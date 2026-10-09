@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package blob_test
@@ -313,8 +313,6 @@ func TestAppendBytes(t *testing.T) {
 // GetBytes over a memory store, whose Get allocates one reader. MaxAllocs
 // counts the allocations of the whole process, so the test does not run in
 // parallel.
-//
-//nolint:paralleltest // see above
 func TestBytesAllocs(t *testing.T) {
 	ctx := t.Context()
 	s := memory.New(fake.New(origin))

@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package blob_test
@@ -67,8 +67,6 @@ type selfRanging struct {
 }
 
 // ReadRange delegates to the wrapped RangeReader.
-//
-//nolint:wrapcheck // the test double passes the error through
 func (s selfRanging) ReadRange(
 	ctx context.Context, key string, off int64, dst []byte, ifMatch version.Version,
 ) (int, blob.Info, error) {
@@ -215,8 +213,6 @@ func TestValidContentType(t *testing.T) {
 // TestBlobAllocs checks the allocation contracts of ValidKey,
 // ValidContentType and AsRangeReader. MaxAllocs counts the allocations of
 // the whole process, so the test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestBlobAllocs(t *testing.T) {
 	t.Run("ValidKey", func(t *testing.T) {
 		key := maxLengthKey()

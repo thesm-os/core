@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package blob
@@ -138,7 +138,7 @@ func AppendBytes(ctx context.Context, s Store, key string, dst []byte, limit int
 	closeErr := rc.Close()
 
 	if err != nil {
-		return dst, Info{}, err //nolint:wrapcheck // AppendBytes returns the error of the body unwrapped
+		return dst, Info{}, err
 	}
 
 	if closeErr != nil {

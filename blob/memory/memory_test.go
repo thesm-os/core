@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package memory_test
@@ -246,8 +246,6 @@ func TestStore(t *testing.T) {
 // TestStoreAllocs checks the allocation contract of each method of a
 // Store. MaxAllocs counts the allocations of the whole process, so the
 // test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestStoreAllocs(t *testing.T) {
 	s := filled(t, benchObjects)
 	ctx := t.Context()
