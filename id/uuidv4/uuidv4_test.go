@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package uuidv4_test
@@ -154,8 +154,6 @@ func TestUUIDv4(t *testing.T) {
 // TestUUIDv4Allocs checks the allocation contract of Generate over a
 // seeded source. MaxAllocs counts the allocations of the whole process,
 // so the test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestUUIDv4Allocs(t *testing.T) {
 	g := uuidv4.New(seeded.New(rand.Seed(1)))
 

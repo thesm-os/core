@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package uuidv7_test
@@ -252,8 +252,6 @@ func TestUUIDv7(t *testing.T) {
 // TestUUIDv7Allocs checks the allocation contract of Generate over a fake
 // clock and a constant source. MaxAllocs counts the allocations of the
 // whole process, so the test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestUUIDv7Allocs(t *testing.T) {
 	g := uuidv7.New(fake.New(exampleTime), constant.New(randomBits))
 

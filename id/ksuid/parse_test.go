@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package ksuid_test
@@ -206,8 +206,6 @@ func TestParse(t *testing.T) {
 // TestParseAllocs checks the allocation contracts of Format and Parse.
 // MaxAllocs counts the allocations of the whole process, so the test does
 // not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestParseAllocs(t *testing.T) {
 	u := id.New160(referenceBytes)
 

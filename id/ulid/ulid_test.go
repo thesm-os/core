@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package ulid_test
@@ -178,8 +178,6 @@ func TestULID(t *testing.T) {
 // TestULIDAllocs checks the allocation contracts of Generate over a
 // seeded source and of TimestampMillis. MaxAllocs counts the allocations
 // of the whole process, so the test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestULIDAllocs(t *testing.T) {
 	g := ulid.New(fake.New(origin), seeded.New(rand.Seed(1)))
 	u := g.Generate()

@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package ulid_test
@@ -298,8 +298,6 @@ func TestParse(t *testing.T) {
 // TestParseAllocs checks the allocation contracts of Format and ParseULID.
 // MaxAllocs counts the allocations of the whole process, so the test does
 // not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestParseAllocs(t *testing.T) {
 	t.Run("Format", func(t *testing.T) {
 		var s string

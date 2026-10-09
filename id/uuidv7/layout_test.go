@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package uuidv7_test
@@ -89,8 +89,6 @@ func TestLayout(t *testing.T) {
 // TestLayoutAllocs checks the allocation contracts of TimestampMillis and
 // Valid. MaxAllocs counts the allocations of the whole process, so the
 // test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestLayoutAllocs(t *testing.T) {
 	t.Run("TimestampMillis", func(t *testing.T) {
 		var ms uint64

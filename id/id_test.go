@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package id_test
@@ -288,8 +288,6 @@ func TestID(t *testing.T) {
 // TestIDAllocs checks the allocation contracts of the constructors and the
 // methods of an ID. MaxAllocs counts the allocations of the whole process,
 // so the test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestIDAllocs(t *testing.T) {
 	raw128, raw160, raw256 := fill128(0x42), fill160(0x42), fill256(0x42)
 	a, other := id.New128(fill128(0x42)), id.New128(fill128(0x43))

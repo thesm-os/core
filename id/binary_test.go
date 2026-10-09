@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package id_test
@@ -180,8 +180,6 @@ func TestExactKanon(t *testing.T) {
 // TestBinaryAllocs checks the allocation contracts of the binary methods.
 // MaxAllocs counts the allocations of the whole process, so the test does
 // not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestBinaryAllocs(t *testing.T) {
 	u := id.New256(fill256(0x7f))
 	data := bytes.Repeat([]byte{0x7f}, id.Size256)
