@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package page_test
@@ -62,8 +62,6 @@ func TestMapCursor(t *testing.T) {
 // TestMapCursorAllocs checks that NewMapCursor allocates only the cursor.
 // MaxAllocs counts the allocations of the whole process, so the test does
 // not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestMapCursorAllocs(t *testing.T) {
 	t.Run("NewMapCursor", func(t *testing.T) {
 		entries := make([]page.Entry[string, int], 64)

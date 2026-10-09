@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package page_test
@@ -110,8 +110,6 @@ func TestSliceCursor(t *testing.T) {
 // TestSliceCursorAllocs checks the allocation contract of SliceCursor.
 // MaxAllocs counts the allocations of the whole process, so the test does
 // not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestSliceCursorAllocs(t *testing.T) {
 	ctx := t.Context()
 	items := make([]int, 64)
