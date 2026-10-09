@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package blobtest_test
@@ -87,7 +87,7 @@ type hooked struct {
 // it hides the [blob.RangeReader] of the store that it embeds.
 type storeOnly struct{ blob.Store }
 
-//nolint:wrapcheck // the test double passes the error through
+// Put calls the put hook when it is set, and Put of the memory store otherwise.
 func (h *hooked) Put(ctx context.Context, key string, r io.Reader, opts blob.PutOptions) (blob.Info, error) {
 	if h.put != nil {
 		return h.put(ctx, key, r, opts)
@@ -96,7 +96,7 @@ func (h *hooked) Put(ctx context.Context, key string, r io.Reader, opts blob.Put
 	return h.Store.Put(ctx, key, r, opts)
 }
 
-//nolint:wrapcheck // the test double passes the error through
+// Get calls the get hook when it is set, and Get of the memory store otherwise.
 func (h *hooked) Get(ctx context.Context, key string) (io.ReadCloser, blob.Info, error) {
 	if h.get != nil {
 		return h.get(ctx, key)
@@ -105,7 +105,7 @@ func (h *hooked) Get(ctx context.Context, key string) (io.ReadCloser, blob.Info,
 	return h.Store.Get(ctx, key)
 }
 
-//nolint:wrapcheck // the test double passes the error through
+// Stat calls the stat hook when it is set, and Stat of the memory store otherwise.
 func (h *hooked) Stat(ctx context.Context, key string) (blob.Info, error) {
 	if h.stat != nil {
 		return h.stat(ctx, key)
@@ -114,7 +114,8 @@ func (h *hooked) Stat(ctx context.Context, key string) (blob.Info, error) {
 	return h.Store.Stat(ctx, key)
 }
 
-//nolint:wrapcheck // the test double passes the error through
+// Delete calls the delete hook when it is set, and Delete of the memory store
+// otherwise.
 func (h *hooked) Delete(ctx context.Context, key string, ifMatch version.Version) error {
 	if h.delete != nil {
 		return h.delete(ctx, key, ifMatch)
@@ -123,7 +124,7 @@ func (h *hooked) Delete(ctx context.Context, key string, ifMatch version.Version
 	return h.Store.Delete(ctx, key, ifMatch)
 }
 
-//nolint:wrapcheck // the test double passes the error through
+// List calls the list hook when it is set, and List of the memory store otherwise.
 func (h *hooked) List(ctx context.Context, prefix string, p page.Page) (page.Cursor[blob.Info], error) {
 	if h.list != nil {
 		return h.list(ctx, prefix, p)
@@ -132,7 +133,8 @@ func (h *hooked) List(ctx context.Context, prefix string, p page.Page) (page.Cur
 	return h.Store.List(ctx, prefix, p)
 }
 
-//nolint:wrapcheck // the test double passes the error through
+// ReadRange calls the readRange hook when it is set, and ReadRange of the
+// memory store otherwise.
 func (h *hooked) ReadRange(
 	ctx context.Context, key string, off int64, dst []byte, ifMatch version.Version,
 ) (int, blob.Info, error) {
@@ -231,8 +233,6 @@ func breaking(hook func(s *memory.Store, h *hooked)) run {
 
 // purgingStore returns a run against the memory store whose readers fail
 // with gone once the version that they opened is replaced or deleted.
-//
-//nolint:wrapcheck // the test double passes the error through
 func purgingStore(gone error) run {
 	return run{newStore: func(c clock.Clock) blob.Store {
 		s := memory.New(c)
@@ -543,7 +543,7 @@ func runSuite(t *testing.T, name string) (string, error) {
 	cmd.Env = append(os.Environ(), brokenEnv+"="+name)
 	out, err := cmd.CombinedOutput()
 
-	return string(out), err //nolint:wrapcheck // the exit error is the result
+	return string(out), err
 }
 
 // TestAssertStore checks that the suite detects the breach of each law

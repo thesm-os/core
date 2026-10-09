@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package tsptest
@@ -441,7 +441,7 @@ func serialOf(tbs []byte) []byte {
 // oidContent returns the content of id in DER, and nil for an identifier
 // that encoding/asn1 does not encode, which a test does not pass.
 func oidContent(id asn1.ObjectIdentifier) []byte {
-	raw, _ := asn1.Marshal(id) //nolint:errcheck // the content of an identifier that does not encode is nil
+	raw, _ := asn1.Marshal(id)
 
 	r := der.NewReader(raw)
 	content, _ := r.Read(der.TagOID)

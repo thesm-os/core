@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package cryptotest
@@ -33,7 +33,7 @@ func (h *stdlibHasher) Hash(data []byte) crypto.Digest {
 
 func (h *stdlibHasher) HashTagged(r crypto.Role, data []byte) crypto.Digest {
 	if !r.IsUnary() {
-		panic(fmt.Sprintf( //nolint:forbidigo
+		panic(fmt.Sprintf(
 			"cryptotest: HashTagged requires a unary role (high bit clear), got %#02x", byte(r),
 		))
 	}
@@ -46,12 +46,12 @@ func (h *stdlibHasher) HashTagged(r crypto.Role, data []byte) crypto.Digest {
 
 func (h *stdlibHasher) CombineTagged(r crypto.Role, left, right crypto.Digest) crypto.Digest {
 	if !r.IsBinary() {
-		panic(fmt.Sprintf( //nolint:forbidigo
+		panic(fmt.Sprintf(
 			"cryptotest: CombineTagged requires a binary role (high bit set), got %#02x", byte(r),
 		))
 	}
 	if left.IsZero() || right.IsZero() {
-		panic( //nolint:forbidigo
+		panic(
 			"cryptotest: CombineTagged refuses the zero Digest; the genesis sentinel is retired",
 		)
 	}

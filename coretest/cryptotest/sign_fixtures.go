@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package cryptotest
@@ -68,7 +68,7 @@ func NewEd25519Sample() Ed25519Fixture {
 	)
 	seed := mustDecodeHexFixture(seedHex)
 	priv := stded25519.NewKeyFromSeed(seed)
-	pub := priv.Public().(stded25519.PublicKey)
+	pub := priv.Public().(stded25519.PublicKey) //nolint:forcetypeassert // the public key of an ed25519.PrivateKey
 
 	keyIDFull := sha256.Sum256(pub)
 	var keyID sign.KeyID

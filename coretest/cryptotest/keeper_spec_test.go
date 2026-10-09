@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package cryptotest_test
@@ -32,7 +32,7 @@ type scheduled struct {
 
 func (s *scheduled) Destroy(ctx context.Context, keyID string) (time.Time, error) {
 	if _, err := s.Keeper.Destroy(ctx, keyID); err != nil {
-		return time.Time{}, err //nolint:wrapcheck // the test double passes the error through
+		return time.Time{}, err
 	}
 
 	if s.calls.Add(1) == 1 {

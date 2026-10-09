@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package castest_test
@@ -74,7 +74,7 @@ func (h *hooked) Hasher() crypto.Hasher {
 	return h.Store.Hasher()
 }
 
-//nolint:wrapcheck // the test double passes the error through
+// Put calls the put hook when it is set, and Put of the memory store otherwise.
 func (h *hooked) Put(ctx context.Context, d crypto.Digest, data []byte) (bool, error) {
 	if h.put != nil {
 		return h.put(ctx, d, data)
@@ -83,7 +83,7 @@ func (h *hooked) Put(ctx context.Context, d crypto.Digest, data []byte) (bool, e
 	return h.Store.Put(ctx, d, data)
 }
 
-//nolint:wrapcheck // the test double passes the error through
+// Get calls the get hook when it is set, and Get of the memory store otherwise.
 func (h *hooked) Get(ctx context.Context, d crypto.Digest, dst []byte) ([]byte, error) {
 	if h.get != nil {
 		return h.get(ctx, d, dst)
@@ -92,7 +92,7 @@ func (h *hooked) Get(ctx context.Context, d crypto.Digest, dst []byte) ([]byte, 
 	return h.Store.Get(ctx, d, dst)
 }
 
-//nolint:wrapcheck // the test double passes the error through
+// Has calls the has hook when it is set, and Has of the memory store otherwise.
 func (h *hooked) Has(ctx context.Context, d crypto.Digest) (bool, error) {
 	if h.has != nil {
 		return h.has(ctx, d)
@@ -101,7 +101,8 @@ func (h *hooked) Has(ctx context.Context, d crypto.Digest) (bool, error) {
 	return h.Store.Has(ctx, d)
 }
 
-//nolint:wrapcheck // the test double passes the error through
+// PutStream calls the putStream hook when it is set, and PutStream of the
+// memory store otherwise.
 func (h *hooked) PutStream(ctx context.Context, d crypto.Digest, r io.Reader) (bool, error) {
 	if h.putStream != nil {
 		return h.putStream(ctx, d, r)
@@ -110,7 +111,8 @@ func (h *hooked) PutStream(ctx context.Context, d crypto.Digest, r io.Reader) (b
 	return h.Store.PutStream(ctx, d, r)
 }
 
-//nolint:wrapcheck // the test double passes the error through
+// GetStream calls the getStream hook when it is set, and GetStream of the
+// memory store otherwise.
 func (h *hooked) GetStream(ctx context.Context, d crypto.Digest) (io.ReadCloser, error) {
 	if h.getStream != nil {
 		return h.getStream(ctx, d)
@@ -389,7 +391,7 @@ func runSuite(t *testing.T, name string) (string, error) {
 	cmd.Env = append(os.Environ(), brokenEnv+"="+name)
 	out, err := cmd.CombinedOutput()
 
-	return string(out), err //nolint:wrapcheck // the exit error is the result
+	return string(out), err
 }
 
 // TestAssertStore checks that the suite detects the breach of each law
