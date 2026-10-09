@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package note
@@ -106,16 +106,6 @@ func (t Type) Valid() bool {
 	return len(t) > 2 && t[0] == typeOther && int(t[1]) == len(t)-2
 }
 
-// valid returns nil for a Valid type, and an error that wraps [ErrType]
-// for any other. The generated ValidateKanon calls it.
-func (t Type) valid() error {
-	if !t.Valid() {
-		return fmt.Errorf("%w: %s", ErrType, t)
-	}
-
-	return nil
-}
-
 // String returns the type for diagnostics: "0x01" for the type of the byte
 // 0x01, the identifier for a valid type without an assigned byte, such as
 // "example.com/ml-dsa-87", and "0x" followed by the bytes of t in
@@ -140,4 +130,14 @@ func (t Type) String() string {
 	var buf [stringBuffer]byte
 
 	return string(hex.AppendEncode(append(buf[:0], hexPrefix...), []byte(t)))
+}
+
+// valid returns nil for a Valid type, and an error that wraps [ErrType]
+// for any other. The generated ValidateKanon calls it.
+func (t Type) valid() error {
+	if !t.Valid() {
+		return fmt.Errorf("%w: %s", ErrType, t)
+	}
+
+	return nil
 }

@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package note_test
@@ -526,8 +526,6 @@ func TestKey(t *testing.T) {
 // TestKeyAllocs checks the allocation contract of each function and method.
 // MaxAllocs counts the allocations of the whole process, so the test does
 // not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestKeyAllocs(t *testing.T) {
 	k := mustParseKey(t, exampleKey)
 

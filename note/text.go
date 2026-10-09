@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package note
@@ -185,15 +185,6 @@ type textVerifier struct {
 	keyID sign.KeyID
 }
 
-// reset sets v to the Verifier of k, a Valid key, that verifies with
-// inner, whose public key equals the public key of k. It keeps the
-// public key of inner in place of the public key of k, so that v does not
-// alias the memory of the caller.
-func (v *textVerifier) reset(k Key, inner sign.Verifier) {
-	k.PublicKey = inner.PublicKey()
-	v.inner, v.key, v.keyID = inner, k, KeyID(k.Name, k.ID())
-}
-
 // Key returns the key that v checks. Its PublicKey aliases the storage of
 // the Verifier of the algorithm.
 func (v *textVerifier) Key() Key { return v.key }
@@ -212,4 +203,13 @@ func (*textVerifier) Algorithm() crypto.Algorithm { return Algorithm }
 // key. It reports false for the zero TextSigner, which has no key.
 func (v *textVerifier) Verify(text, value []byte) bool {
 	return v.inner != nil && v.inner.Verify(text, value)
+}
+
+// reset sets v to the Verifier of k, a Valid key, that verifies with
+// inner, whose public key equals the public key of k. It keeps the
+// public key of inner in place of the public key of k, so that v does not
+// alias the memory of the caller.
+func (v *textVerifier) reset(k Key, inner sign.Verifier) {
+	k.PublicKey = inner.PublicKey()
+	v.inner, v.key, v.keyID = inner, k, KeyID(k.Name, k.ID())
 }

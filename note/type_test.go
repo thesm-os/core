@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package note_test
@@ -192,8 +192,6 @@ func TestType(t *testing.T) {
 // TestTypeAllocs checks the allocation contract of each function and
 // method. MaxAllocs counts the allocations of the whole process, so the
 // test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestTypeAllocs(t *testing.T) {
 	t.Run("NewType", func(t *testing.T) {
 		var got note.Type

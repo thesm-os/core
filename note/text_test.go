@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package note_test
@@ -126,7 +126,7 @@ func TestText(t *testing.T) {
 		t.Run("returns ErrUnknownType when resolve returns no Verifier with no error", func(t *testing.T) {
 			t.Parallel()
 			none := func([]byte) (sign.Verifier, error) {
-				return nil, nil //nolint:nilnil // the case is a resolve that returns neither
+				return nil, nil
 			}
 			_, err := note.Text(none)(mustParseKey(t, exampleKey))
 			expect.ErrorIs(t, err, note.ErrUnknownType, "Text must refuse a resolve without a Verifier")
@@ -432,8 +432,6 @@ func TestText(t *testing.T) {
 // TestTextAllocs checks the allocation contract of each function and
 // method. MaxAllocs counts the allocations of the whole process, so the
 // test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestTextAllocs(t *testing.T) {
 	k := mustParseKey(t, peterKey)
 	ed := peterEd25519(t)

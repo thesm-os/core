@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package note
@@ -161,56 +161,6 @@ func (n *Note) Sign(ctx context.Context, text []byte, signers ...Signer) error {
 	return nil
 }
 
-// sign is Note.Sign without the emptying of n on an error. It reuses the
-// lines in the capacity of Signatures, so that a Note that an error
-// emptied signs into the memory of its last note.
-func (n *Note) sign(ctx context.Context, text []byte, signers []Signer) error {
-	if !validText(text) {
-		return fmt.Errorf(
-			"%w: a text ends in a newline, is valid UTF-8, and has no character below U+0020 other than newline",
-			ErrNote,
-		)
-	}
-
-	if len(signers) == 0 {
-		return fmt.Errorf("%w: no signer", ErrNote)
-	}
-
-	old := n.Signatures[:cap(n.Signatures)]
-	sigs := slices.Grow(old[:0], len(signers))
-
-	for i, s := range signers {
-		if s == nil {
-			return fmt.Errorf("%w: a nil signer", ErrKey)
-		}
-
-		k := s.Key()
-		if !k.Name.Valid() {
-			return fmt.Errorf("%w: a signer with the invalid name %q", ErrKey, k.Name)
-		}
-
-		var room []byte
-		if i < len(old) {
-			room = old[i].Value[:0]
-		}
-
-		value, err := s.AppendSign(ctx, room, text)
-		if err != nil {
-			return fmt.Errorf("note: sign with %s: %w", k.Name, err)
-		}
-
-		if len(value) == 0 {
-			return fmt.Errorf("%w: %s returned an empty signature", ErrNote, k.Name)
-		}
-
-		sigs = append(sigs, Signature{Name: k.Name, Value: value, ID: k.ID()})
-	}
-
-	n.Text, n.Signatures = text, sigs
-
-	return nil
-}
-
 // Check reports whether the signature lines of n satisfy p for n.Text. It
 // converts each line to the [sign.Signature] {[Algorithm], [KeyID](Name,
 // ID), Value} and calls [sign.Policy.Check], which considers the first
@@ -350,6 +300,56 @@ func (n *Note) UnmarshalText(msg []byte) error {
 
 		return err
 	}
+
+	return nil
+}
+
+// sign is Note.Sign without the emptying of n on an error. It reuses the
+// lines in the capacity of Signatures, so that a Note that an error
+// emptied signs into the memory of its last note.
+func (n *Note) sign(ctx context.Context, text []byte, signers []Signer) error {
+	if !validText(text) {
+		return fmt.Errorf(
+			"%w: a text ends in a newline, is valid UTF-8, and has no character below U+0020 other than newline",
+			ErrNote,
+		)
+	}
+
+	if len(signers) == 0 {
+		return fmt.Errorf("%w: no signer", ErrNote)
+	}
+
+	old := n.Signatures[:cap(n.Signatures)]
+	sigs := slices.Grow(old[:0], len(signers))
+
+	for i, s := range signers {
+		if s == nil {
+			return fmt.Errorf("%w: a nil signer", ErrKey)
+		}
+
+		k := s.Key()
+		if !k.Name.Valid() {
+			return fmt.Errorf("%w: a signer with the invalid name %q", ErrKey, k.Name)
+		}
+
+		var room []byte
+		if i < len(old) {
+			room = old[i].Value[:0]
+		}
+
+		value, err := s.AppendSign(ctx, room, text)
+		if err != nil {
+			return fmt.Errorf("note: sign with %s: %w", k.Name, err)
+		}
+
+		if len(value) == 0 {
+			return fmt.Errorf("%w: %s returned an empty signature", ErrNote, k.Name)
+		}
+
+		sigs = append(sigs, Signature{Name: k.Name, Value: value, ID: k.ID()})
+	}
+
+	n.Text, n.Signatures = text, sigs
 
 	return nil
 }

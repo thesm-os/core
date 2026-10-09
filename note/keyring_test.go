@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package note_test
@@ -153,8 +153,6 @@ func TestKeyring(t *testing.T) {
 // TestKeyringAllocs checks the allocation contract of each method.
 // MaxAllocs counts the allocations of the whole process, so the test does
 // not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestKeyringAllocs(t *testing.T) {
 	r := note.Resolver{note.TypeEd25519: note.Text(ed25519.Resolve)}
 	k := mustParseKey(t, peterKey)

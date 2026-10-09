@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package note_test
@@ -136,7 +136,7 @@ func TestResolver(t *testing.T) {
 			{
 				name: "returns ErrUnknownType for an entry that returns no Verifier with no error",
 				resolver: note.Resolver{note.TypeEd25519: func(note.Key) (note.Verifier, error) {
-					return nil, nil //nolint:nilnil // the case is an entry that returns neither
+					return nil, nil
 				}},
 			},
 			{
@@ -191,8 +191,6 @@ func TestResolver(t *testing.T) {
 // TestResolverAllocs checks the allocation contract of Verifier. MaxAllocs
 // counts the allocations of the whole process, so the test does not run in
 // parallel.
-//
-//nolint:paralleltest // see above
 func TestResolverAllocs(t *testing.T) {
 	t.Run("Verifier", func(t *testing.T) {
 		r := note.Resolver{note.TypeEd25519: note.Text(ed25519.Resolve)}

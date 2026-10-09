@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package note_test
@@ -91,8 +91,6 @@ func TestKeyID(t *testing.T) {
 // TestKeyIDAllocs checks the allocation contract of KeyID. MaxAllocs counts
 // the allocations of the whole process, so the test does not run in
 // parallel.
-//
-//nolint:paralleltest // see above
 func TestKeyIDAllocs(t *testing.T) {
 	t.Run("KeyID", func(t *testing.T) {
 		t.Run("of a name shorter than the buffer of the hash", func(t *testing.T) {
