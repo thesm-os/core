@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package tag_test
@@ -188,8 +188,6 @@ func TestTags(t *testing.T) {
 // TestTagsAllocs checks the allocation contract of each method. MaxAllocs
 // counts the allocations of the whole process, so the test does not run in
 // parallel.
-//
-//nolint:paralleltest // see above
 func TestTagsAllocs(t *testing.T) {
 	t.Run("Find", func(t *testing.T) {
 		t.Run("of a key that the Tags contain", func(t *testing.T) {
