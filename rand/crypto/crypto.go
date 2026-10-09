@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package crypto
@@ -98,15 +98,6 @@ func NewWithReader(src io.Reader) Rand {
 	return Rand{src: &source{r: src}}
 }
 
-// reader returns the configured source, defaulting to
-// [crypto/rand.Reader] for the zero-value [Rand].
-func (r Rand) reader() io.Reader {
-	if r.src == nil {
-		return cryptorand.Reader
-	}
-	return r.src.r
-}
-
 // Uint64 returns a uniformly distributed 64-bit value drawn from
 // the configured reader. Panics with a wrapped error if the
 // reader fails — see package-level "Failure semantics".
@@ -139,4 +130,13 @@ func (r Rand) Read(p []byte) (int, error) {
 		return n, fmt.Errorf("rand/crypto: read from source: %w", err)
 	}
 	return n, nil
+}
+
+// reader returns the configured source, defaulting to
+// [crypto/rand.Reader] for the zero-value [Rand].
+func (r Rand) reader() io.Reader {
+	if r.src == nil {
+		return cryptorand.Reader
+	}
+	return r.src.r
 }

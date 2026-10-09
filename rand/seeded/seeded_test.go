@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package seeded_test
@@ -225,8 +225,6 @@ func TestRand(t *testing.T) {
 // TestRandAllocs checks that Uint64 and Read allocate nothing.
 // MaxAllocs counts the allocations of the whole process, so the test
 // does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestRandAllocs(t *testing.T) {
 	r := seeded.New(rand.Seed(1))
 	p := make([]byte, 100)

@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package rand_test
@@ -202,8 +202,6 @@ func TestUint64N(t *testing.T) {
 // TestHelpersAllocs checks the allocation contracts of Float64, Shuffle
 // and Uint64N. MaxAllocs counts the allocations of the whole process, so
 // the test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestHelpersAllocs(t *testing.T) {
 	r := pcg.New(rand.Seed(1))
 
