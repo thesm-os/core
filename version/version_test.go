@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package version_test
@@ -51,8 +51,6 @@ func TestVersion(t *testing.T) {
 // TestVersionAllocs checks that the predicates of a Version do not
 // allocate. MaxAllocs counts the allocations of the whole process, so the
 // test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestVersionAllocs(t *testing.T) {
 	v := version.Version("opaque-token")
 

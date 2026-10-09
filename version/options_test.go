@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package version_test
@@ -37,8 +37,6 @@ func TestWriteOptions(t *testing.T) {
 // TestWriteOptionsAllocs checks that IsConditional does not allocate.
 // MaxAllocs counts the allocations of the whole process, so the test does
 // not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestWriteOptionsAllocs(t *testing.T) {
 	t.Run("IsConditional", func(t *testing.T) {
 		opts := version.WriteOptions{IfMatch: "v1"}
