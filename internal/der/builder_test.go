@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package der_test
@@ -243,8 +243,6 @@ func TestBuilder(t *testing.T) {
 // long-form length of one octet, and the largest uint64 takes an INTEGER
 // of 11 octets. MaxAllocs counts the allocations of the whole process, so
 // the test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestBuilderAllocs(t *testing.T) {
 	dst := make([]byte, 0, 512)
 	content := make([]byte, 200)

@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package der
@@ -121,7 +121,7 @@ func appendLength(dst []byte, n int) []byte {
 		return append(dst, byte(n)) //nolint:gosec // G115: n is below 128 and not negative
 	}
 
-	octets := (bits.Len64(uint64(n)) + 7) / 8 //nolint:gosec // G115: n is a length, so it is not negative
+	octets := (bits.Len64(uint64(n)) + 7) / 8
 
 	dst = append(dst, longForm|byte(octets)) //nolint:gosec // G115: a length takes at most eight octets
 	for i := range octets {

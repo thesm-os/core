@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package der_test
@@ -219,8 +219,6 @@ func TestValues(t *testing.T) {
 // TestValuesAllocs checks the allocation contract of the value decoders.
 // MaxAllocs counts the allocations of the whole process, so the test does
 // not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestValuesAllocs(t *testing.T) {
 	integer := []byte{0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff}
 	boolean := []byte{0xff}

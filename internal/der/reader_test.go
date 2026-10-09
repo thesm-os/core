@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package der_test
@@ -288,8 +288,6 @@ func TestReader(t *testing.T) {
 // TestReaderAllocs checks the allocation contract of the methods that read
 // an element. MaxAllocs counts the allocations of the whole process, so the
 // test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestReaderAllocs(t *testing.T) {
 	sequence := []byte{0x30, 0x03, 0x02, 0x01, 0x05}
 	implicit := []byte{0x80, 0x01, 0x07}

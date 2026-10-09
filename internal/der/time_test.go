@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package der_test
@@ -178,8 +178,6 @@ func TestTime(t *testing.T) {
 // TestTimeAllocs checks the allocation contract of the GeneralizedTime
 // decoder and encoder. MaxAllocs counts the allocations of the whole
 // process, so the test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestTimeAllocs(t *testing.T) {
 	content := []byte("20261002235959.123456789Z")
 	instant := time.Date(2026, 10, 2, 23, 59, 59, 123_456_789, time.UTC)
