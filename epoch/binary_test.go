@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package epoch_test
@@ -109,8 +109,6 @@ func FuzzUnmarshalBinary(f *testing.F) {
 // TestBinaryAllocs checks the allocation contract of AppendBinary.
 // MaxAllocs counts the allocations of the whole process, so the test does
 // not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestBinaryAllocs(t *testing.T) {
 	t.Run("AppendBinary", func(t *testing.T) {
 		e := epoch.Epoch(123456789)

@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package epoch
@@ -136,7 +136,7 @@ func (c *EventCount) Wait(ctx context.Context, v Epoch) error {
 		select {
 		case <-wake:
 		case <-ctx.Done():
-			return ctx.Err() //nolint:wrapcheck // Wait returns the context's own error
+			return ctx.Err()
 		}
 	}
 }

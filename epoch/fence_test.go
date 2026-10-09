@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package epoch_test
@@ -206,8 +206,6 @@ func TestWatermark(t *testing.T) {
 // TestFenceAllocs checks the allocation contracts of Admissible and of a
 // Watermark. MaxAllocs counts the allocations of the whole process, so the
 // test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestFenceAllocs(t *testing.T) {
 	t.Run("Admissible", func(t *testing.T) {
 		var got bool

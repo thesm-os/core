@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package epoch_test
@@ -327,8 +327,6 @@ func TestEventCount(t *testing.T) {
 // TestEventCountAllocs checks the allocation contract of EventCount.
 // MaxAllocs counts the allocations of the whole process, so the test does
 // not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestEventCountAllocs(t *testing.T) {
 	t.Run("Current", func(t *testing.T) {
 		var c epoch.EventCount
@@ -391,7 +389,7 @@ func stepCount(s countState, op history.Operation) []countState {
 		return []countState{s}
 	}
 
-	want := error(context.Canceled)
+	want := context.Canceled
 	if s.count >= op.Args[0].(epoch.Epoch) {
 		want = nil
 	} else if s.failed {

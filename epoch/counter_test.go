@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package epoch_test
@@ -111,8 +111,6 @@ func TestCounter(t *testing.T) {
 // TestCounterAllocs checks the allocation ceiling of every method of a
 // Counter. MaxAllocs counts the allocations of the whole process, so the
 // test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestCounterAllocs(t *testing.T) {
 	t.Run("Next", func(t *testing.T) {
 		c := epoch.NewCounter(epoch.Zero)

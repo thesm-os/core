@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package epoch_test
@@ -92,7 +92,7 @@ func TestEpochString(t *testing.T) {
 			func(s string) (epoch.Epoch, error) {
 				v, err := strconv.ParseUint(s, 10, 64)
 
-				return epoch.Epoch(v), err //nolint:wrapcheck // the round trip compares the parser's own outcome
+				return epoch.Epoch(v), err
 			},
 			"strconv.ParseUint must read the text of String back as the epoch",
 			prop.Example(epoch.Zero),
@@ -105,8 +105,6 @@ func TestEpochString(t *testing.T) {
 // Epoch. MaxAllocs counts the allocations of the whole process, so the
 // test does not run in parallel. String formats a value above 99,
 // because strconv returns a constant string below 100.
-//
-//nolint:paralleltest // see above
 func TestEpochAllocs(t *testing.T) {
 	e, other := epoch.Epoch(123456789), epoch.Epoch(123456790)
 
