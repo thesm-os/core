@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package telemetry_test
@@ -72,8 +72,6 @@ func TestMapCarrier(t *testing.T) {
 // TestMapCarrierAllocs checks the allocation contract of each method.
 // MaxAllocs counts the allocations of the whole process, so the test does
 // not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestMapCarrierAllocs(t *testing.T) {
 	carrier := telemetry.MapCarrier{attrKey: attrValue, "a": "1", "b": "2"}
 

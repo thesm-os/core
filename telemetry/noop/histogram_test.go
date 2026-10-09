@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package noop_test
@@ -28,8 +28,6 @@ func TestNoopHistogramContract(t *testing.T) {
 // TestHistogramAllocs checks that no method of the histogram allocates.
 // MaxAllocs counts the allocations of the whole process, so the test does
 // not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestHistogramAllocs(t *testing.T) {
 	ctx := t.Context()
 	h := noop.New().Histogram(histogramSpec)

@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package noop_test
@@ -74,8 +74,6 @@ func TestTracer(t *testing.T) {
 // TestTracerAllocs checks that no method of the tracer or its span
 // allocates. MaxAllocs counts the allocations of the whole process, so the
 // test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestTracerAllocs(t *testing.T) {
 	ctx := t.Context()
 	tr := noop.New().Tracer(tracerName)

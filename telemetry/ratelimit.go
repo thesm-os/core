@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package telemetry
@@ -117,7 +117,7 @@ func NewRateLimitHandler(next slog.Handler, cfg RateLimitConfig) (*RateLimitHand
 
 	// cache.New refuses only a nil Clock and a Capacity below 1, which the
 	// check above refuses first.
-	last, _ := cache.New(cache.Config[uint64, *atomic.Int64]{ //nolint:errcheck // see above
+	last, _ := cache.New(cache.Config[uint64, *atomic.Int64]{
 		Clock: cfg.Clock, Capacity: int64(cfg.Keys),
 	})
 

@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package telemetry_test
@@ -146,8 +146,6 @@ func TestSpanOption(t *testing.T) {
 // TestSpanOptionAllocs checks the allocation contract of the options and
 // of the functions that read them. MaxAllocs counts the allocations of the
 // whole process, so the test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestSpanOptionAllocs(t *testing.T) {
 	var opt telemetry.SpanOption
 

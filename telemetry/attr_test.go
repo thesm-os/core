@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package telemetry_test
@@ -162,8 +162,6 @@ func TestAttr(t *testing.T) {
 // TestAttrAllocs checks the allocation contract of the constructors and of
 // SlogAttr. MaxAllocs counts the allocations of the whole process, so the
 // test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestAttrAllocs(t *testing.T) {
 	var got telemetry.Attr
 

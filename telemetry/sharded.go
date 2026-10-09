@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package telemetry
@@ -91,7 +91,7 @@ func (s *ShardedCounter) Cells() int {
 //
 // Zero alloc.
 func (s *ShardedCounter) Add(i int, n int64) {
-	s.cells[uint(i)&s.mask].n.Add(max(n, 0)) //nolint:gosec // G115: a negative i wraps to a cell, by design
+	s.cells[uint(i)&s.mask].n.Add(max(n, 0))
 }
 
 // Flush adds the sum of the cells since the previous Flush to the Counter

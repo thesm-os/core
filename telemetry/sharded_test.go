@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package telemetry_test
@@ -204,8 +204,6 @@ func TestShardedCounter(t *testing.T) {
 // TestShardedCounterAllocs checks the allocation contract of Add and Flush
 // over the no-op counter. MaxAllocs counts the allocations of the whole
 // process, so the test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestShardedCounterAllocs(t *testing.T) {
 	ctx := t.Context()
 	s := newSharded(t, noop.Reporter{}.Counter(telemetry.InstrumentSpec{Name: "bench"}), 64)
