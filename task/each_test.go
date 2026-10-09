@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package task_test
@@ -202,8 +202,6 @@ func TestAll(t *testing.T) {
 // The calls run on one worker, so each waits for its worker in the same
 // way. MaxAllocs counts the allocations of the whole process, so the test
 // does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestEachAllocs(t *testing.T) {
 	ctx := t.Context()
 	noop := func(context.Context, int, int) error { return nil }
