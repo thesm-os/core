@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package pool_test
@@ -275,8 +275,6 @@ func TestBounded(t *testing.T) {
 // TestBoundedAllocs checks that a Get of an available value and its Put do
 // not allocate. MaxAllocs counts the allocations of the whole process, so
 // the test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestBoundedAllocs(t *testing.T) {
 	p, _ := bounded(t, 1)
 	ctx := t.Context()

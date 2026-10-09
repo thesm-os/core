@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package pool_test
@@ -73,8 +73,6 @@ func TestResetPool(t *testing.T) {
 // TestResetPoolAllocs checks that a Get of a pooled pointer and its Put do
 // not allocate. MaxAllocs counts the allocations of the whole process, so
 // the test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestResetPoolAllocs(t *testing.T) {
 	p := pool.NewResetPool(func() *resettable { return new(resettable) })
 	p.Put(p.Get())

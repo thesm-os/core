@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package pool_test
@@ -62,8 +62,6 @@ func TestBuffer(t *testing.T) {
 // TestBufferAllocs checks that a Get of a pooled Buffer, a short write and
 // the Put that zeroes it do not allocate. MaxAllocs counts the allocations
 // of the whole process, so the test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestBufferAllocs(t *testing.T) {
 	p := pool.NewBufferPool()
 	warm := p.Get()

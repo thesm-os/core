@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package pool
@@ -99,7 +99,7 @@ func NewResetPool[T Resettable](newFn func() T) *ResetPool[T] {
 // Zero-alloc when the pool has a cached value. One allocation
 // via newFn when the pool is empty.
 func (p *ResetPool[T]) Get() T {
-	return p.p.Get().(T)
+	return p.p.Get().(T) //nolint:forcetypeassert // newFn and Put store a T alone
 }
 
 // Put calls [Resettable.Reset] on v then returns v to the

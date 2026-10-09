@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package pool
@@ -74,7 +74,7 @@ func NewPool[T any](newFn func() T) *Pool[T] {
 // Zero-alloc when the pool has a cached value. One allocation
 // via newFn when the pool is empty.
 func (p *Pool[T]) Get() T {
-	return p.p.Get().(T)
+	return p.p.Get().(T) //nolint:forcetypeassert // newFn and Put store a T alone
 }
 
 // Put returns v to the pool for future reuse. The pool may

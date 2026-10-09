@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package pool_test
@@ -96,8 +96,6 @@ func TestPool(t *testing.T) {
 // TestPoolAllocs checks that a Get of a pooled pointer and its Put do not
 // allocate. MaxAllocs counts the allocations of the whole process, so the
 // test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestPoolAllocs(t *testing.T) {
 	p := pool.NewPool(func() *int { return new(int) })
 	p.Put(p.Get())
