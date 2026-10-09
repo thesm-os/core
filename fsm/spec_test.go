@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package fsm_test
@@ -339,8 +339,6 @@ func TestSpec(t *testing.T) {
 // TestSpecAllocs checks the allocation contract of the queries of a Spec.
 // MaxAllocs counts the allocations of the whole process, so the test does
 // not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestSpecAllocs(t *testing.T) {
 	spec := jobSpec(t)
 	j := job{limit: 3}
