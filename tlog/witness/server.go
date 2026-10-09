@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package witness
@@ -126,7 +126,7 @@ type lineKey struct {
 // # Allocation contract
 //
 // Each method documents its allocations. A commit allocates 9 objects of
-// its own on Go 1.27.1, which the calls of the commit share:
+// its own on Go 1.27.2, which the calls of the commit share:
 //   - 4 for each of its two contexts with a deadline: the context, its
 //     timer, the timer's function and the cancel function.
 //   - The string of the keys of its record, which the state keeps.
@@ -250,7 +250,7 @@ type Server struct {
 //
 // Allocates the Server, its pool of calls, its cache, its state and the
 // bindings of its instruments, and what the walk reads: 29 objects over an
-// empty store with the reporter of telemetry/noop on Go 1.27.1.
+// empty store with the reporter of telemetry/noop on Go 1.27.2.
 func NewServer(ctx context.Context, cfg *ServerConfig) (*Server, error) {
 	if err := cfg.check(); err != nil {
 		return nil, err
@@ -300,7 +300,7 @@ func NewServer(ctx context.Context, cfg *ServerConfig) (*Server, error) {
 
 	// cache.New refuses only a nil Clock, which check refuses, and a
 	// Capacity that is not positive.
-	s.objects, _ = cache.New(cache.Config[string, *loaded]{ //nolint:errcheck // see above
+	s.objects, _ = cache.New(cache.Config[string, *loaded]{
 		Clock:    cfg.Clock,
 		Capacity: cacheBytes,
 		Cost:     func(l *loaded) int64 { return l.size },

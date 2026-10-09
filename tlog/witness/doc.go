@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 // Package witness implements both sides of C2SP tlog-witness, the protocol
@@ -108,7 +108,7 @@
 //
 // # Allocation contract
 //
-// The benchmarks of the package measure these counts with Go 1.27.1:
+// The benchmarks of the package measure these counts with Go 1.27.2:
 //
 //   - Server.Advance and the add-checkpoint handler allocate 15 objects
 //     for a commit of one call with one Ed25519 cosigner over blob/memory,
@@ -117,9 +117,9 @@
 //     for both.
 //   - The monitor retrieval route allocates nothing for an origin whose
 //     served update is its latest and whose object the cache contains.
-//   - Client.AddCheckpoint allocates 65 objects, and Client.Checkpoint 59,
+//   - Client.AddCheckpoint allocates 66 objects, and Client.Checkpoint 60,
 //     on a connection that the transport reuses. net/http and httpclient
-//     allocate every object of AddCheckpoint, and 58 of Checkpoint.
+//     allocate every object of AddCheckpoint, and 59 of Checkpoint.
 //   - AppendRequest and ParseRequest allocate nothing when their buffers
 //     have room, and Client.AppendCosignatures allocates nothing for the
 //     Ed25519 key of a witness.

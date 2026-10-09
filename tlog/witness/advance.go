@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package witness
@@ -92,7 +92,7 @@ type Failure struct {
 // Allocates the failures of a call that has them, and what the commit
 // allocates, which the calls of the commit share, when dst has room for
 // the lines. A commit of one call with one Ed25519 cosigner over
-// blob/memory allocates 15 objects on Go 1.27.1: the 9 of the commit that
+// blob/memory allocates 15 objects on Go 1.27.2: the 9 of the commit that
 // [Server] lists, and 6 of blob/memory. The concurrent signatures of a
 // commit cost what [Server] lists. The call copies msg, the prefixes and
 // the proofs into pooled memory, and waits on a pooled result. It
@@ -123,7 +123,7 @@ func (s *Server) Advance(ctx context.Context, msg []byte, updates []Update, dst 
 
 	// The commit runs under a context of its own, which no caller's
 	// context ends and whose values are no caller's.
-	s.enqueue(p) //nolint:contextcheck // see above
+	s.enqueue(p)
 
 	owned, err := s.wait(ctx, p)
 	if err != nil {

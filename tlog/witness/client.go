@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package witness
@@ -97,7 +97,7 @@ type Client struct {
 //
 // Allocates the Client, its slice of Verifiers, the URL of add-checkpoint,
 // the parse of each prefix, and what the Resolver allocates: 7 objects for
-// one Ed25519 cosignature key on Go 1.27.1.
+// one Ed25519 cosignature key on Go 1.27.2.
 func NewClient(cfg *ClientConfig) (*Client, error) {
 	if cfg == nil || cfg.HTTP == nil || cfg.Resolver == nil || len(cfg.Keys) == 0 {
 		return nil, fmt.Errorf("%w: a client needs HTTP, Resolver and Keys", ErrConfig)
@@ -169,8 +169,8 @@ func NewClient(cfg *ClientConfig) (*Client, error) {
 //
 // Allocates the 3 objects of the request that net/http builds, and what
 // AppendFetchBody allocates for a POST of the body, when dst has room for
-// the lines: 65 objects on a connection that the transport reuses, with Go
-// 1.27.1. It builds the body and parses the response in pooled memory, and
+// the lines: 66 objects on a connection that the transport reuses, with Go
+// 1.27.2. It builds the body and parses the response in pooled memory, and
 // the Verifier of an Ed25519 key allocates nothing.
 func (c *Client) AddCheckpoint(
 	ctx context.Context, msg []byte, oldSize uint64, proof []crypto.Digest, dst []byte,
@@ -273,18 +273,6 @@ func (c *Client) AppendCosignatures(dst, text, lines []byte) ([]byte, error) {
 	return out, nil
 }
 
-// index returns the index of the key of c whose name and key ID are those
-// of s, and -1 for a line of another key.
-func (c *Client) index(s note.Signature) int {
-	for i, k := range c.keys {
-		if k.Name == s.Name && k.ID() == s.ID {
-			return i
-		}
-	}
-
-	return -1
-}
-
 // Checkpoint appends to dst what the witness serves for origin on its
 // monitor retrieval route, and reports whether the witness served it. It
 // reports false without an error for a 404, with which the witness states
@@ -301,8 +289,8 @@ func (c *Client) index(s note.Signature) int {
 //
 // Allocates the text of the URL, which it builds in pooled memory, the 3
 // objects of the request that net/http builds, and what AppendFetch
-// allocates, when dst has room for the response: 59 objects on a
-// connection that the transport reuses, with Go 1.27.1.
+// allocates, when dst has room for the response: 60 objects on a
+// connection that the transport reuses, with Go 1.27.2.
 func (c *Client) Checkpoint(ctx context.Context, origin checkpoint.Origin, dst []byte) ([]byte, bool, error) {
 	if !origin.Valid() {
 		return dst, false, fmt.Errorf("%w: the origin %q is not a line", ErrRequest, origin)
@@ -333,6 +321,18 @@ func (c *Client) Checkpoint(ctx context.Context, origin checkpoint.Origin, dst [
 	}
 
 	return got, true, nil
+}
+
+// index returns the index of the key of c whose name and key ID are those
+// of s, and -1 for a line of another key.
+func (c *Client) index(s note.Signature) int {
+	for i, k := range c.keys {
+		if k.Name == s.Name && k.ID() == s.ID {
+			return i
+		}
+	}
+
+	return -1
 }
 
 // statusError returns the error of a call whose response the HTTP client

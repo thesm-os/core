@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package tsp_test
@@ -84,7 +84,7 @@ var zeroSigningCertificate = element(der.TagSequence, element(der.TagSequence,
 // verifyCeilings are the allocation ceilings of Verify for a token of a
 // known certificate of each key. Ed25519 and ML-DSA allocate nothing. The
 // ceilings of ECDSA and RSA are the allocations of crypto/ecdsa and
-// crypto/rsa in Go 1.27.1, which convert the public key and allocate their
+// crypto/rsa in Go 1.27.2, which convert the public key and allocate their
 // big numbers on each verification. A memory profile attributes no
 // allocation of those paths to this package.
 var verifyCeilings = []struct {
@@ -877,7 +877,6 @@ func TestVerifierFIPSOnlyMode(t *testing.T) {
 				args = append(args, "-test.gocoverdir="+dir.Value.String())
 			}
 
-			//nolint:gosec // G204: the child is this test binary, run again with a fixed pattern.
 			cmd := exec.CommandContext(t.Context(), os.Args[0], args...)
 			cmd.Env = append(os.Environ(), "GODEBUG=fips140=only")
 			out, err := cmd.CombinedOutput()
@@ -933,8 +932,6 @@ func TestVerifierFIPSOnlyMode(t *testing.T) {
 // TestVerifierAllocs checks the allocation ceilings of Verify for a token
 // of a known certificate of each key. MaxAllocs counts the allocations of
 // the whole process, so the test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestVerifierAllocs(t *testing.T) {
 	t.Run("Verify", func(t *testing.T) {
 		for _, k := range verifyCeilings {
@@ -1030,7 +1027,7 @@ func x509OID(tb testing.TB, id asn1.ObjectIdentifier) x509.OID {
 
 	arcs := make([]uint64, len(id))
 	for i, arc := range id {
-		arcs[i] = uint64(arc) //nolint:gosec // G115: the identifiers of the cases have small positive arcs
+		arcs[i] = uint64(arc)
 	}
 
 	oid, err := x509.OIDFromInts(arcs)

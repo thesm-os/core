@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package httpclient
@@ -325,8 +325,8 @@ func New(name string, opts ...Option) (*Client, error) {
 // its headers, which leave the caller's request unchanged. An attempt whose
 // span has a trace identity also allocates the attributes of the span. The
 // state of the call and the guards allocate nothing. On a connection that
-// the transport reuses, a call allocates 54 objects with Go 1.27.1, 52 of
-// them in net/http's Client and Transport, and a traced call allocates 60.
+// the transport reuses, a call allocates 55 objects with Go 1.27.2, 53 of
+// them in net/http's Client and Transport, and a traced call allocates 61.
 // The tracer, the propagator, and the functions of WithPrepare and
 // WithClassify allocate on their own.
 func (c *Client) Do(req *http.Request) (*http.Response, error) {
@@ -370,7 +370,7 @@ func (c *Client) Do(req *http.Request) (*http.Response, error) {
 //
 // # Allocation contract
 //
-// Fetch allocates as Do does, and the body: 55 objects for a call on a
+// Fetch allocates as Do does, and the body: 56 objects for a call on a
 // connection that the transport reuses. Under a limit, it allocates the
 // body once when the response declares its length. A refused response
 // allocates its StatusError and the 1 KiB buffer of its body as well.
@@ -397,11 +397,11 @@ func (c *Client) Fetch(req *http.Request) ([]byte, error) {
 //
 // # Allocation contract
 //
-// AppendFetch allocates as Do does when dst has room for the body: 54
+// AppendFetch allocates as Do does when dst has room for the body: 55
 // objects for a call on a connection that the transport reuses, with Go
-// 1.27.1. For a body of unknown length, room means 512 bytes beyond the
+// 1.27.2. For a body of unknown length, room means 512 bytes beyond the
 // body, because each step makes room for 512 bytes before its read. A
-// chunked response costs 57 objects, because net/http allocates the key and
+// chunked response costs 58 objects, because net/http allocates the key and
 // the value of its Transfer-Encoding header and the TransferEncoding of the
 // response. A body without room in dst grows dst. A refused response
 // allocates its StatusError and the 1 KiB buffer of its body as well.
@@ -442,7 +442,7 @@ func (c *Client) AppendFetch(dst []byte, req *http.Request) ([]byte, error) {
 // KiB, through which it copies a body that it does not know to be in memory.
 // A body of 100 bytes or more costs 1 object more, the digits of its length.
 // On a connection that the transport reuses, a POST of a body of 12 bytes
-// into a dst with room for the response allocates 60 objects with Go 1.27.1.
+// into a dst with room for the response allocates 61 objects with Go 1.27.2.
 // Over HTTP/2, net/http reads the body through a buffer from its pool. An
 // empty body allocates as AppendFetch does.
 func (c *Client) AppendFetchBody(dst []byte, req *http.Request, body []byte) ([]byte, error) {

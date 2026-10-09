@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package witness
@@ -27,7 +27,7 @@ import (
 // cosignCeilings are the allocation contracts of cosign. Each call creates
 // the context of the signatures of a commit, as finish does: 4 objects. One
 // cosigner signs one text on the calling goroutine. Each task.Each costs 5
-// objects on Go 1.27.1, and 3 more as the first under its parent context: 8
+// objects on Go 1.27.2, and 3 more as the first under its parent context: 8
 // over the texts of one cosigner, 8 over two cosigners, and 21 over two
 // cosigners and the texts of each.
 var cosignCeilings = []struct {
@@ -270,8 +270,6 @@ func TestCosignInternal(t *testing.T) {
 // TestCosignInternalAllocs checks the allocation contracts of cosign that
 // BenchmarkCosignInternal states. MaxAllocs counts the allocations of the
 // whole process, so the test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestCosignInternalAllocs(t *testing.T) {
 	t.Run("cosign", func(t *testing.T) {
 		for _, tt := range cosignCeilings {

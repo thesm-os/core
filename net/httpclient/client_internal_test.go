@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package httpclient
@@ -53,12 +53,12 @@ const (
 	pipeWarmup = 1000
 
 	// appendFetchBodyAllocs is the ceiling of AppendFetchBody of a POST of
-	// requestBody into a buffer with room: the 54 objects of AppendFetch, the
+	// requestBody into a buffer with room: the 55 objects of AppendFetch, the
 	// attemptBody of the attempt and its GetBody, and 4 objects of net/http
 	// for a request with a body. net/http copies the request and wraps its
 	// body to rewind it, formats the value of its Content-Length header, and
 	// copies a body that it does not know to be in memory through a buffer.
-	appendFetchBodyAllocs = 60
+	appendFetchBodyAllocs = 61
 
 	// patience bounds every wait of an internal case for its clients, above
 	// any correct wait, so a case fails where a defect would leave it
@@ -122,8 +122,8 @@ var fetches = []struct {
 	want  int
 	limit uint64
 }{
-	{name: "of a declared body of 2 bytes", reply: declared, want: len(payload), limit: 55},
-	{name: "of a declared body of 8 KiB", reply: large, want: largeBody, limit: 56},
+	{name: "of a declared body of 2 bytes", reply: declared, want: len(payload), limit: 56},
+	{name: "of a declared body of 8 KiB", reply: large, want: largeBody, limit: 57},
 }
 
 // bodies are the responses of the allocation ceilings of AppendFetch.
@@ -135,8 +135,8 @@ var bodies = []struct {
 	reply []byte
 	want  uint64
 }{
-	{name: "of a declared body into a buffer with room", reply: declared, want: 54},
-	{name: "of a body of unknown length into a buffer with room", reply: chunked, want: 57},
+	{name: "of a declared body into a buffer with room", reply: declared, want: 55},
+	{name: "of a body of unknown length into a buffer with room", reply: chunked, want: 58},
 }
 
 // roundTrip is an http.RoundTripper of a function. An internal case puts
@@ -781,11 +781,9 @@ func TestClientInternal(t *testing.T) {
 
 // TestClientAllocs checks the allocation ceilings of a call on a
 // connection that the transport reuses, which the package documentation
-// states with Go 1.27.1, and of the classification of a refused response.
+// states with Go 1.27.2, and of the classification of a refused response.
 // MaxAllocs counts the allocations of the whole process, so the test does
 // not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestClientAllocs(t *testing.T) {
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "http://example.test/", http.NoBody)
 	assert.NoError(t, err, "the request must build")
@@ -1053,9 +1051,9 @@ func dos(tb testing.TB) []doConfig {
 	assert.NoError(tb, err, "the breaker must build")
 
 	return []doConfig{
-		{name: "of an untraced request", want: 54},
-		{name: "of a traced request", opts: []Option{WithReporter(traced{})}, want: 60},
-		{name: "with a breaker and a retrier", opts: []Option{WithBreaker(breaker), WithRetrier(retrier)}, want: 54},
+		{name: "of an untraced request", want: 55},
+		{name: "of a traced request", opts: []Option{WithReporter(traced{})}, want: 61},
+		{name: "with a breaker and a retrier", opts: []Option{WithBreaker(breaker), WithRetrier(retrier)}, want: 55},
 	}
 }
 

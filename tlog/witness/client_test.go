@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package witness_test
@@ -70,14 +70,14 @@ const (
 
 	// clientAddCheckpointAllocs is the allocation contract of
 	// AddCheckpoint: the 3 objects of the request that net/http builds, and
-	// 62 of httpclient's AppendFetchBody for a POST of a body of 100 bytes
+	// 63 of httpclient's AppendFetchBody for a POST of a body of 100 bytes
 	// or more.
-	clientAddCheckpointAllocs = 65
+	clientAddCheckpointAllocs = 66
 
 	// clientCheckpointAllocs is the allocation contract of Checkpoint: the
 	// text of the URL, the 3 objects of the request that net/http builds,
-	// and 55 of httpclient's AppendFetch.
-	clientCheckpointAllocs = 59
+	// and 56 of httpclient's AppendFetch.
+	clientCheckpointAllocs = 60
 
 	// pipeWarmup is the number of calls that a benchmark over the pipe
 	// makes before it measures. They fill the runtime's per-processor
@@ -616,8 +616,6 @@ func TestClient(t *testing.T) {
 // TestClientAllocs checks the allocation contracts of the methods of Client
 // that BenchmarkClient states. MaxAllocs counts the allocations of the
 // whole process, so the test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestClientAllocs(t *testing.T) {
 	ed := ed25519Cosigner(t, witnessName)
 	msg := logNote(t)

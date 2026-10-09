@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package witness
@@ -41,7 +41,7 @@ type signing struct {
 // # Allocation contract
 //
 // Allocates what the cosigners allocate when g has room for the values.
-// Each task.Each costs 5 objects on Go 1.27.1: its context, the cancel
+// Each task.Each costs 5 objects on Go 1.27.2: its context, the cancel
 // function of that context, its state, the closure of its goroutines and
 // the closure of the signatures. The first task.Each under a context
 // costs 3 more, for the done channel and the map of children of that

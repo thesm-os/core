@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 // Package httpclient calls one HTTP dependency on net/http with the
@@ -102,20 +102,20 @@
 // once when the response declares its length. AppendFetch does not allocate
 // the body when the caller's buffer has room for it. The benchmarks of the
 // package measure a call on a connection that the transport reuses, with Go
-// 1.27.1:
+// 1.27.2:
 //
-//   - Do: 54 objects, 52 of them in net/http's Client and Transport.
-//   - Do of a traced request: 60 objects.
-//   - Do with a breaker and a retrier: 54 objects.
-//   - Fetch: 55 objects, the body included.
-//   - Fetch of a declared body of 8 KiB: 56 objects. net/http allocates the
+//   - Do: 55 objects, 53 of them in net/http's Client and Transport.
+//   - Do of a traced request: 61 objects.
+//   - Do with a breaker and a retrier: 55 objects.
+//   - Fetch: 56 objects, the body included.
+//   - Fetch of a declared body of 8 KiB: 57 objects. net/http allocates the
 //     value of a Content-Length header of more than one digit.
-//   - AppendFetch into a buffer with room for the body: 54 objects.
-//   - AppendFetch of a chunked response into a buffer with room: 57
+//   - AppendFetch into a buffer with room for the body: 55 objects.
+//   - AppendFetch of a chunked response into a buffer with room: 58
 //     objects. net/http allocates the key and the value of its
 //     Transfer-Encoding header, and the TransferEncoding of the response.
 //   - AppendFetchBody of a POST of a body of 12 bytes into a buffer with
-//     room: 60 objects. The client allocates the first fence of the body of
+//     room: 61 objects. The client allocates the first fence of the body of
 //     the attempt and its GetBody, and net/http allocates 4 objects over
 //     HTTP/1.1 for a request with a body.
 //
