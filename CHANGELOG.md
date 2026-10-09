@@ -1,5 +1,146 @@
 # Changelog
 
+## 0.7.0
+
+### Minor Changes
+
+- 1338d20: Encode `errs.Class` as text, so JSON and `log/slog` write its name instead of its number.
+- 1338d20: Add `aesgcm.NewRandomNonce` for AES-GCM in FIPS 140-only mode.
+- 1338d20: Speed up `arena.Arena.Alloc` by clearing only the bytes that a rewind or a failed `AppendVia` left written.
+- 1338d20: Make `arena.Arena.Reset` zero every written byte, so `AppendVia` never exposes the bytes of a previous user.
+- 1338d20: Add `arena.List` for append-only sequences of typed values in chunks that never move.
+- 1338d20: Add `arena.Slabs` for byte slices that a caller frees one at a time in any order.
+- 1338d20: Run the batches of `batch.Loader.LoadAll` through `task.Each`, so a failed batch cancels the others.
+- 1338d20: Add `blob.AppendBytes` to read an object into a buffer of the caller under a read limit.
+- 1338d20: Read an 8 KiB object with `blob.GetBytes` from `blob/memory` in 2 allocations instead of 13.
+- 1338d20: Keep the objects of `blob/memory.Store` in a `btree.Map`, so `List` reads a page in O(log n + p).
+- 1338d20: Add package `blob` for named-object storage with a memory store and a conformance suite.
+- 1338d20: Add `blob.RangeReader` and `blob.AsRangeReader` to read a byte range of one version of an object.
+- 1338d20: Add `blob.ValidContentType` and `blob.MaxContentTypeLen` for content types that every store accepts.
+- 1338d20: **Breaking:** Let a reader of `blob.Store.Get` fail with `version.ErrMismatch` once its version is replaced or deleted.
+- 1338d20: **Breaking:** Make `blob.Store.Put` refuse an invalid content type with `errs.Invalid` before it writes.
+- 1338d20: **Breaking:** Require Go 1.27.2.
+- 1338d20: **Breaking:** Return the time at which destruction becomes irreversible from `crypto.Destroyer.Destroy`.
+- 1338d20: **Breaking:** Replace `crypto.Hasher.Combine` with `CombineTagged`, and treat the zero `Digest` as invalid.
+- 1338d20: **Breaking:** Encode `sign.Signature` in gob through its kanon codec, which needs an addressable value.
+- 1338d20: **Breaking:** Encode `tag.Tag` in gob through its kanon codec, which needs an addressable value.
+- 1338d20: **Breaking:** Make `fsm.Builder.Build` reject a state that has no path to a declared terminal state.
+- 1338d20: **Breaking:** Pass a `clock.Clock` to `localkey.New` for the time that `Keeper.Destroy` returns.
+- 1338d20: **Breaking:** Decode kanon fields of `epoch.Epoch`, `fixed.Fixed64` and `errs.Class` only as integers.
+- 1338d20: **Breaking:** Make `page.MapCursor[K, V]` an alias of `page.SliceCursor[page.Entry[K, V]]`.
+- 1338d20: **Breaking:** Make `pool.NewBufferPool` pool `*pool.Buffer`, whose `Reset` zeroes the bytes of the previous user.
+- 1338d20: **Breaking:** Forbid instruments to panic, and make `telemetry.Counter.Add` discard a negative value.
+- 1338d20: **Breaking:** Add `Release` to `telemetry.Counter`, `Gauge` and `Histogram` to end a bound instrument.
+- 1338d20: **Breaking:** Decode only the canonical kanon encoding of `sign.Signature`.
+- 1338d20: Add package `btree` for ordered maps and sets as in-memory B+ trees.
+- 1338d20: Add package `cache` for a cost-bounded map with S3-FIFO eviction, expiry and pinning.
+- 1338d20: Find the optional capabilities of `cas`, `crypto` and `sign` values through decorators that implement `Unwrap`.
+- 1338d20: Add package `cas` for content-addressed storage with a memory store and a conformance suite.
+- 1338d20: Add `checkpoint.Cosigner` to sign a cosignature at a time that the caller sets.
+- 1338d20: Add `crypto.AppendSealChunk` and `AppendOpenChunk` to seal and open a message one chunk at a time.
+- 1338d20: Add `clock.UTCSource` and `clock/kernel.Source` to read UTC with a bound on its error.
+- 1338d20: Generate codecs with kanon at e296e64, and check in CI that they are current and keep every field number.
+- 1338d20: Report the failures of the concurrent `Put` races of `coretest/castest` on the test goroutine.
+- 1338d20: Add `coretest/epochtest` to test the fenced writes of a consumer.
+- 1338d20: Add a time-stamp authority for tests in `coretest/tsptest`.
+- 1338d20: Add `coretest/versiontest` with fixtures that expose an ordering assumption over `version.Version`.
+- 1338d20: Add `crypto.AADKeeper` for custodians that bind associated data to a wrapped key.
+- 1338d20: Implement `kanon.Exact` on `crypto.Digest`, `id.ID` and `clock.Instant`.
+- 1338d20: Speed up `crypto.Digest.IsZero` from 5.1 ns to 0.3 ns by comparing the size alone.
+- 1338d20: Add `SizeKanon` to `crypto.Digest`, `id.ID` and `clock.Instant`, so kanon writes their fields in place.
+- 1338d20: Make `UnmarshalBinary` of `crypto.Digest` and `id.ID` decode into the receiver without a copy.
+- 1338d20: Add `crypto.GenerateKey` to create a data key in the clear and wrapped.
+- 1338d20: Add `crypto/kek` to wrap data keys in process memory under a key-encryption key.
+- 1338d20: Add `crypto.KeyCreator` to rotate wrapping keys without an operator.
+- 1338d20: Add `crypto.Role` and tagged hashing with `Hasher.HashTagged` and `Hasher.CombineTagged`.
+- 1338d20: Accept a nil `rand.Rand` in `crypto.Seal` and `AppendSeal` for an AEAD without a nonce.
+- 1338d20: Add `crypto/sign/mldsa` for ML-DSA-44, ML-DSA-65 and ML-DSA-87 signatures per FIPS 204.
+- 1338d20: Add package `crypto/tsp` to build RFC 3161 time-stamp requests and verify their tokens offline.
+- 1338d20: Check the idempotence of `Destroy` and its error for an unknown key in `cryptotest.AssertDestroyerContract`.
+- 1338d20: Cut `ecdsap384.NewVerifierFromPKIX` and `ecdsap384.Resolve` from 50 allocations to 22.
+- 1338d20: Copy the public key into an `ed25519.Verifier`, so the caller may reuse its buffer.
+- 1338d20: Document that `epoch.Admissible` and `epoch.Watermark` require one holder per epoch.
+- 1338d20: Encode `epoch.Epoch`, `fixed.Fixed64` and `errs.Class` as integers in kanon records.
+- 1338d20: Add `epoch.EventCount` to wait until a monotonic `Epoch` is at least a target.
+- 1338d20: Add epoch fencing with `epoch.Admissible`, `epoch.Watermark` and `epoch.ErrFenced`.
+- 1338d20: Classify a joined error as the highest-ranked class of its branches in `errs.Classify`.
+- 1338d20: Classify `fs.ErrPermission`, `fs.ErrExist`, `fs.ErrInvalid` and `fs.ErrClosed` in `errs.Classify`.
+- 1338d20: Add `errs.RetryAfter` and `errs.WithRetryAfter` for the retry delay that a server sets.
+- 1338d20: Add package `fsm` for validated finite state machines over `uint8` states and events.
+- 1338d20: Add `httpclient.Client.AppendFetchBody` to send a pooled buffer as a request body.
+- 1338d20: Implement `kanon.Appender` on `id.ID` and `clock.Instant` without an error result.
+- 1338d20: Add `AppendBinary`, `MarshalBinary` and `UnmarshalBinary` to `id.ID`.
+- 1338d20: Speed up `id.ID.IsZero` from 3.25 ns to 0.36 ns by comparing the size alone.
+- 1338d20: Add `id/uuidv7` for RFC 9562 version-7 UUIDs that sort by creation time.
+- 1338d20: Cut `mldsa.NewVerifier` and the entries of `mldsa.Resolver` from four allocations to three.
+- 1338d20: Add `mldsa.Verifier.Context`, and refuse ML-DSA-44 cosignature keys with a non-empty context in `tlog/checkpoint`.
+- 1338d20: Add package `net/httpclient` to call one HTTP dependency with limits and guards.
+- 1338d20: Add package `net/httpserver` to serve HTTP with limits, a drain, panic recovery and telemetry.
+- 1338d20: Add package `note` for C2SP signed notes.
+- 1338d20: Add `note.TextOf` to read the text of a signed note without an allocation.
+- 1338d20: Add options to `blobtest.AssertStore` and `castest.AssertStore` for durable and zero-allocation stores.
+- 1338d20: Add `pool.Buffer`, whose `Reset` zeroes the capacity of its `bytes.Buffer`.
+- 1338d20: Classify the argument errors of `pool`, `clock`, `id`, `task`, `batch` and the signers as `errs.Invalid`.
+- 1338d20: Run each circuit of `resilience.Breaker` as an `fsm.Machine`.
+- 1338d20: Make `resilience.Do` honour a retry delay of at most `RetryConfig.MaxRetryAfter`.
+- 1338d20: Add `resilience.Failover` to call redundant targets one after another until one succeeds.
+- 1338d20: Add the token bucket `resilience.Limiter` over `clock.Clock`.
+- 1338d20: Add `sign.AllOf`, `sign.AtLeast` and `sign.NewPolicyTree` for nested signature policies.
+- 1338d20: Add `sign.AppendSigner` and `sign.AppendSign` to append a signature to a buffer of the caller.
+- 1338d20: Add `sign.ContextSigner` and `sign.SignContext` to bound a signature with a context.
+- 1338d20: Cut `sign.NewPolicyTree` from 29 allocations to 4 for the tlog-policy example.
+- 1338d20: Add `sign.Policy.SatisfiedBy` to test a policy with a bool instead of an allocated error.
+- 1338d20: Add `sign.Resolver` and `sign.Policy` for k-of-n signature policies.
+- 1338d20: Add `sign.Rule.AsParty` to mark the parties of a policy at any depth.
+- 1338d20: Add `sign.Rules` and `sign.Policy.Reset` to rebuild a policy without an allocation.
+- 1338d20: Add `sign.Signature.Complete` to detect a signature that no verifier can check.
+- 1338d20: Generate a kanon codec for `sign.Signature`.
+- 1338d20: Generate a canonical kanon codec for `tag.Tag`.
+- 1338d20: Add `tlog.TaggedTree` and the functions that build, prove and verify tagged Merkle trees.
+- 1338d20: Add `task.Every` for periodic work and `task.Quorum` for k-of-n calls.
+- 1338d20: Add package `task` for structured concurrent work.
+- 1338d20: Add `telemetry.GaugeAggregation` to declare how the attribute sets of a gauge combine.
+- 1338d20: Add `telemetry.HeaderCarrier` and `telemetry.WithRemoteParent` to continue a trace from HTTP headers.
+- 1338d20: Add `telemetry.ShardedCounter`, `BoundedHistogram` and `RateLimitHandler` for hot paths.
+- 1338d20: Add `telemetrytest.ReleaseAllocsWithin` to bound the allocations of `Release`.
+- 1338d20: Count required rules instead of parties in the `sign.ErrThreshold` error of `Policy.Check`.
+- 1338d20: Assert with `go.dokimi.dev/assert` instead of testkit in the hand-written tests.
+- 1338d20: Classify the sentinels of `crypto`, `kek`, `resilience` and `epoch` under `errs.Classify`.
+- 1338d20: Add package `tlog/checkpoint` for the C2SP checkpoint, cosignature and policy formats.
+- 1338d20: Add `tlog.TaggedFold` to compute a tagged root from leaves that arrive one at a time.
+- 1338d20: Add `tlog.TaggedRangeProof` and `tlog.TaggedRangeRoot` to prove a range of consecutive leaves.
+- 1338d20: Add package `tlog` for RFC 9162 Merkle trees stored as C2SP tlog-tiles.
+- 1338d20: Add `tlog.TileVerifier` to check leaves in index order with one read of each tile.
+- 1338d20: Add package `tlog/witness` with a client and a server of C2SP tlog-witness.
+- 1338d20: Add `version.ErrOutcomeUnknown` for a write that may or may not have taken effect.
+- 1338d20: Document `version.Version` as equality-only.
+- 1338d20: Add `witness.AppendRequest`, `ParseRequest` and `Client.AppendCosignatures` for protocols that extend add-checkpoint.
+- 1338d20: Send the body of `witness.Client.AddCheckpoint` from pooled memory instead of a copy per call.
+
+### Patch Changes
+
+- 1338d20: Report the FIPS 140-only refusal of `aesgcm.New` as `errs.Unsupported` instead of `crypto.ErrKeySize`.
+- 1338d20: Apply the S3-FIFO hit rules of a `cache.Cache` eviction to pinned and expired entries.
+- 1338d20: Grow `dst` once in `arena.RebaseSlicesTo`, so every entry refers to the returned slice.
+- 1338d20: **Breaking:** Fix the timestamp bits of `ulid.Format` and `ulid.ParseULID` to match the ULID specification.
+- 1338d20: Stop `btree.Map`, `MapFunc` and `Set` from keeping a deleted key as a separator.
+- 1338d20: Convert a `rand/crypto.Rand` to `rand.Rand` without an allocation.
+- 1338d20: Classify `version.ErrMismatch`, `version.ErrExists` and `epoch.ErrFenced` as Conflict in `errs.Classify`.
+- 1338d20: Classify the sentinels of `fixed` as `errs.Invalid`.
+- 1338d20: Close the request body on every path of `httpclient.Client.Do`, `Fetch` and `AppendFetch`.
+- 1338d20: Classify a body read that ends at the `httpclient` timeout as `errs.Transient`.
+- 1338d20: Make `localkey.New` work in FIPS 140-only mode.
+- 1338d20: Fix the overflow of `rand.Shuffle` for an n of `math.MinInt`.
+- 1338d20: Stop `resilience.Call` from recording an outcome for a call whose context ended.
+- 1338d20: Release the half-open probe of `resilience.Call` when its function panics.
+- 1338d20: Allocate the slice of `telemetry.HeaderCarrier.Keys` and `MapCarrier.Keys` once.
+- 1338d20: Link `Arena.CapExceeds` in the `arena` documentation.
+- 1338d20: Remove references to renamed and removed symbols from the package documentation.
+- 1338d20: Limit each tile read of `tlog.BlobTiles` to the largest size of the tile.
+- 1338d20: Reduce the allocations of `tlog` tile paths and of `tlog.BlobTiles` reads.
+- 1338d20: Stop `tsp.Verifier` from keeping a reference to the token, so a caller can reuse its buffer.
+- 1338d20: Return the empty string from `uuidv4.Format` for an ID that is not 128 bits.
+
 ## [0.6.1] - 2026-08-05
 
 ### Added
