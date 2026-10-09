@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package cas_test
@@ -51,12 +51,12 @@ type selfStreaming struct {
 
 // PutStream calls PutStream of the wrapped Streamer.
 func (s selfStreaming) PutStream(ctx context.Context, d crypto.Digest, r io.Reader) (bool, error) {
-	return s.inner.PutStream(ctx, d, r) //nolint:wrapcheck // the test double passes the error through
+	return s.inner.PutStream(ctx, d, r)
 }
 
 // GetStream calls GetStream of the wrapped Streamer.
 func (s selfStreaming) GetStream(ctx context.Context, d crypto.Digest) (io.ReadCloser, error) {
-	return s.inner.GetStream(ctx, d) //nolint:wrapcheck // the test double passes the error through
+	return s.inner.GetStream(ctx, d)
 }
 
 // streamOnly is a memory Store whose Get fails, so a read through it
@@ -336,8 +336,6 @@ func TestCAS(t *testing.T) {
 // TestCASAllocs checks the allocation contract of AsStreamer, of the
 // fallback of GetStream and of a verified read. MaxAllocs counts the
 // allocations of the whole process, so the test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestCASAllocs(t *testing.T) {
 	h := sha256.New()
 	d := h.Hash([]byte(payload))
