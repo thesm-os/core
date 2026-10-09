@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package kernel
@@ -86,16 +86,6 @@ func newSource(refresh time.Duration, read func() (status, error), now func() ti
 	return s
 }
 
-// call calls the kernel and returns the result. It reads the time
-// before the call, so the growth computed from it errs on the large
-// side.
-func (s *Source) call() *snapshot {
-	at := s.now()
-	st, err := s.read()
-
-	return &snapshot{at: at, err: err, maxError: st.maxError, synced: st.synced}
-}
-
 // ReadUTC returns a reading of the kernel's clock.
 //
 // Time is the current time. MaxError is the kernel's maximum error at
@@ -138,4 +128,14 @@ func (s *Source) ReadUTC() (clock.UTCReading, error) {
 	}
 
 	return clock.UTCReading{Time: now, MaxError: maxError, Synced: synced}, nil
+}
+
+// call calls the kernel and returns the result. It reads the time
+// before the call, so the growth computed from it errs on the large
+// side.
+func (s *Source) call() *snapshot {
+	at := s.now()
+	st, err := s.read()
+
+	return &snapshot{at: at, err: err, maxError: st.maxError, synced: st.synced}
 }

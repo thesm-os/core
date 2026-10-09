@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package clock_test
@@ -372,8 +372,6 @@ func TestInstant(t *testing.T) {
 // TestInstantAllocs checks the allocation contract of each method of
 // Instant and InstantRange. MaxAllocs counts the allocations of the whole
 // process, so the test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestInstantAllocs(t *testing.T) {
 	a := clock.Instant{Wall: 1_000_000_000, Logical: 1, Node: 1}
 	b := clock.Instant{Wall: 2_000_000_000, Logical: 2, Node: 2}

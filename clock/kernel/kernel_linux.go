@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package kernel
@@ -38,7 +38,7 @@ func readWith(adjtimex func(*syscall.Timex) (int, error)) (status, error) {
 // microseconds.
 func fromTimex(state int, tx *syscall.Timex) status {
 	return status{
-		maxError: time.Duration(int64(tx.Maxerror)) * time.Microsecond,
+		maxError: time.Duration(tx.Maxerror) * time.Microsecond,
 		synced:   state != timeError && tx.Status&staUnsync == 0,
 	}
 }

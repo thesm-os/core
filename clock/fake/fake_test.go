@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package fake_test
@@ -197,7 +197,7 @@ func TestUpdate(t *testing.T) {
 		c := fake.New(origin)
 		c.Now() // local logical = 1
 		got := c.Update(clock.Instant{Wall: origin.UnixNano(), Logical: 5, Node: 9})
-		// max(1, 5) + 1 = 6.
+		// Logical is one more than the larger of the local 1 and the observed 5.
 		testkit.Equal(t, got.Logical, uint32(6),
 			"Logical must equal max(local=1, observed=5)+1")
 	})
@@ -211,7 +211,7 @@ func TestUpdate(t *testing.T) {
 			c.Now()
 		}
 		got := c.Update(clock.Instant{Wall: origin.UnixNano(), Logical: 3, Node: 9})
-		// max(10, 3) + 1 = 11.
+		// Logical is one more than the larger of the local 10 and the observed 3.
 		testkit.Equal(t, got.Logical, uint32(11),
 			"Logical must equal max(local=10, observed=3)+1")
 	})

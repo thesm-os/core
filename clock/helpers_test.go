@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package clock_test
@@ -217,8 +217,6 @@ func TestWait(t *testing.T) {
 // besides what the NewTimer of their Clock allocates, through a
 // stoppingClock, whose NewTimer allocates nothing. MaxAllocs counts the
 // allocations of the whole process, so the test does not run in parallel.
-//
-//nolint:paralleltest // see above
 func TestHelpersAllocs(t *testing.T) {
 	t.Run("Sleep", func(t *testing.T) {
 		c := &stoppingClock{}

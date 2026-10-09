@@ -1,4 +1,4 @@
-// Copyright Thesmos 2026
+// Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
 package clock
@@ -131,7 +131,7 @@ func (i *Instant) UnmarshalBinary(data []byte) error {
 
 	// The conversion reverses the one in AppendBinary and keeps the
 	// bit pattern, so gosec's G115 does not apply.
-	i.Wall = int64(binary.BigEndian.Uint64(data[:8])) //nolint:gosec
+	i.Wall = int64(binary.BigEndian.Uint64(data[:8])) //nolint:gosec // the bit pattern of AppendBinary
 	i.Logical = binary.BigEndian.Uint32(data[8:12])
 	i.Node = NodeID(binary.BigEndian.Uint32(data[12:16]))
 
@@ -177,7 +177,7 @@ func (i Instant) AppendKanon(dst []byte) []byte {
 	// The conversion keeps the bit pattern of the int64, so gosec's
 	// G115 does not apply. UnmarshalBinary reverses it, and
 	// TestInstantBinaryRoundTrip covers a negative Wall.
-	dst = binary.BigEndian.AppendUint64(dst, uint64(i.Wall)) //nolint:gosec
+	dst = binary.BigEndian.AppendUint64(dst, uint64(i.Wall)) //nolint:gosec // the bit pattern of the int64
 	dst = binary.BigEndian.AppendUint32(dst, i.Logical)
 	dst = binary.BigEndian.AppendUint32(dst, uint32(i.Node))
 
