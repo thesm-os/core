@@ -19,7 +19,9 @@
 //     calls in flight, and each of them occupies a goroutine.
 //   - [Retrier] retries a call, bounded by an attempt count and a budget.
 //     The budget stops the retries of every caller from adding load to a
-//     dependency that fails for all of them.
+//     dependency that fails for all of them. [Do] waits each backoff on the
+//     goroutine of its caller, and [Retrier.Retry] returns the same
+//     decision to a caller that schedules its own waits.
 //   - [Limiter] bounds the rate of work in units per second, with a
 //     burst, such as the bytes that background jobs read and write.
 //   - [Failover] calls redundant dependencies one after another under

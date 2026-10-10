@@ -42,10 +42,11 @@ type RetryConfig struct {
 	// Max caps the ceiling of the backoff. It must be at least Base.
 	Max time.Duration
 
-	// MaxRetryAfter is the longest delay that [Do] waits for when
-	// [errs.RetryAfter] reports one for a failure. Do returns a failure
-	// whose delay is longer instead of waiting. It must not be negative, and
-	// zero makes Do return every failure with a delay.
+	// MaxRetryAfter is the longest delay that a retry waits for when
+	// [errs.RetryAfter] reports one for a failure. [Retrier.Retry] refuses
+	// a failure whose delay is longer, and [Do] returns it instead of
+	// waiting. It must not be negative, and zero makes Do return every
+	// failure with a delay.
 	MaxRetryAfter time.Duration
 
 	// Budget is the fraction of calls that may become retries, across every
@@ -84,6 +85,13 @@ type RetryConfig struct {
 // A budget is state that the calls share, so Retrier is a type and not a
 // function. A process keeps one Retrier per dependency, and every caller of
 // the dependency shares it.
+//
+// [Do] makes the attempts of a call and waits each backoff on the
+// goroutine of its caller. A caller that schedules its own waits, such as
+// an event loop on one goroutine, makes the attempts itself. It calls
+// [Retrier.Start] once per call and [Retrier.Retry] after each failed
+// attempt, and waits the delays that Retry returns. Both kinds of caller
+// share the budget.
 //
 // # Concurrency
 //
@@ -150,8 +158,66 @@ func NewRetrier(cfg RetryConfig) (*Retrier, error) {
 	}, nil
 }
 
+// Start counts one call in the budget window of r, as [Do] does before the
+// first attempt of a call. A caller that makes the attempts of a call
+// itself calls Start once per call, before the first attempt. The calls
+// that Start counts fund the retries of every caller of r.
+//
+// Start cannot fail.
+//
+// # Allocation contract
+//
+// Zero alloc.
+func (r *Retrier) Start() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.roll()
+	r.calls[r.cur]++
+}
+
+// Retry decides whether a call may make attempt after err, the failure of
+// the attempt before it. The first attempt of a call is attempt 0, so the
+// first retry is attempt 1, as for [Backoff]. Retry returns the delay to
+// wait before attempt: the larger of its backoff and the delay that
+// [errs.RetryAfter] reports for err.
+//
+// Retry returns err unchanged, and takes nothing from the budget, when
+// [errs.Classify] does not report err as [errs.Transient], when attempt is
+// below 1 or not below Attempts, and when the delay of err exceeds
+// MaxRetryAfter. When the budget refuses the retry, Retry returns an error
+// that wraps [ErrBudget] and err. Otherwise it takes one retry from the
+// budget and returns a nil error.
+//
+// Retry returns at once. The caller waits the delay, and does not make the
+// attempt once the context of the call has ended. A caller calls Retry only
+// after a failed attempt: for a nil err, Retry returns 0 and a nil error,
+// and takes nothing from the budget.
+//
+// # Allocation contract
+//
+// Zero alloc, apart from the error of a retry that the budget refuses.
+func (r *Retrier) Retry(attempt int, err error) (time.Duration, error) {
+	if attempt < 1 || attempt >= r.attempts || !errs.Retryable(err) {
+		return 0, err
+	}
+
+	delay, _ := errs.RetryAfter(err)
+	if delay > r.maxRetryAfter {
+		return 0, err
+	}
+
+	backoff, ok := r.spend(attempt)
+	if !ok {
+		return 0, fmt.Errorf("%w: %w", ErrBudget, err)
+	}
+
+	return max(backoff, delay), nil
+}
+
 // Do calls fn until it succeeds, ctx ends, the attempts run out, or the
-// budget refuses a retry.
+// budget refuses a retry. It counts the call with [Retrier.Start], decides
+// each retry with [Retrier.Retry], and waits each delay on the clock of r.
 //
 // Do stops at an error that [errs.Classify] does not report as
 // [errs.Transient]. A retry of an error that its producer attributes to the
@@ -199,42 +265,27 @@ func Do[T any](
 	ctx context.Context, r *Retrier,
 	fn func(context.Context) (T, error),
 ) (T, error) {
-	r.observe()
+	r.Start()
 
-	var (
-		v     T
-		err   error
-		delay time.Duration
-	)
-
-	for attempt := range r.attempts {
-		if attempt > 0 {
-			if !r.spend() {
-				return v, fmt.Errorf("%w: %w", ErrBudget, err)
-			}
-
-			if werr := clock.Wait(ctx, r.clock, max(r.backoff(attempt), delay)); werr != nil {
-				return v, werr
-			}
-		}
-
-		v, err = fn(ctx)
-		//dokimi:mutate-skip sbr-delete,ror-false: errs.Retryable reports false for nil, so the check below returns a success too
+	for next := 1; ; next++ {
+		v, err := fn(ctx)
 		if err == nil {
 			return v, nil
 		}
 
-		if ctx.Err() != nil || !errs.Retryable(err) {
+		if ctx.Err() != nil {
 			return v, err
 		}
 
-		delay, _ = errs.RetryAfter(err)
-		if delay > r.maxRetryAfter {
-			return v, err
+		delay, rerr := r.Retry(next, err)
+		if rerr != nil {
+			return v, rerr
+		}
+
+		if werr := clock.Wait(ctx, r.clock, delay); werr != nil {
+			return v, werr
 		}
 	}
-
-	return v, err
 }
 
 // Backoff returns the delay before retry attempt: zero for an attempt below
@@ -272,26 +323,10 @@ func Backoff(r rand.Rand, attempt int, base, limit time.Duration) time.Duration 
 	return time.Duration(rand.Float64(r) * float64(d))
 }
 
-// backoff computes the delay before attempt under the lock of r.
-func (r *Retrier) backoff(attempt int) time.Duration {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	return Backoff(r.rand, attempt, r.base, r.max)
-}
-
-// observe counts one call in the budget window.
-func (r *Retrier) observe() {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	r.roll()
-	r.calls[r.cur]++
-}
-
-// spend takes one retry from the budget, and reports whether the window
-// allows it.
-func (r *Retrier) spend() bool {
+// spend takes one retry from the budget and returns the backoff of attempt,
+// both under the lock of r. When the window does not allow the retry, it
+// reports false and does not compute a backoff.
+func (r *Retrier) spend(attempt int) (time.Duration, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -304,11 +339,11 @@ func (r *Retrier) spend() bool {
 	}
 
 	if float64(retries+1) > max(float64(r.minRetries), r.budget*float64(calls)) {
-		return false
+		return 0, false
 	}
 	r.retries[r.cur]++
 
-	return true
+	return Backoff(r.rand, attempt, r.base, r.max), true
 }
 
 // roll moves the ring forward to the current bucket, and clears the buckets

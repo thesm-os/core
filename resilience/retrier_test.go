@@ -206,6 +206,122 @@ func TestRetrier(t *testing.T) {
 		}
 	})
 
+	t.Run("Start", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("counts each call in the budget window", func(t *testing.T) {
+			t.Parallel()
+			r := newRetrier(t, fake.New(originUTC), noJitter, func(c *resilience.RetryConfig) { c.Budget = 0.5 })
+			r.Start()
+			r.Start()
+
+			_, first := r.Retry(1, errTransient)
+			_, second := r.Retry(1, errTransient)
+			expect.NoError(t, first, "two calls at 0.5 must afford one retry")
+			expect.ErrorIs(t, second, resilience.ErrBudget, "two calls at 0.5 must not afford a second retry")
+		})
+	})
+
+	t.Run("Retry", func(t *testing.T) {
+		t.Parallel()
+
+		// once affords one retry from the floor of the budget, and none from
+		// its fraction.
+		once := func(c *resilience.RetryConfig) { c.Budget, c.MinRetries = 0, 1 }
+
+		t.Run("returns the backoff of the attempt for a Transient failure", func(t *testing.T) {
+			t.Parallel()
+			r := newRetrier(t, fake.New(originUTC), halfJitter)
+			r.Start()
+
+			delay, err := r.Retry(2, errTransient)
+			assert.NoError(t, err, "Retry must afford the retry")
+			assert.Equal(t, delay, 100*time.Millisecond, "Retry must return half the ceiling of the second retry")
+		})
+
+		t.Run("returns the delay of a failure that exceeds the backoff", func(t *testing.T) {
+			t.Parallel()
+			r := newRetrier(t, fake.New(originUTC), halfJitter)
+			r.Start()
+
+			delay, err := r.Retry(1, errs.WithRetryAfter(errTransient, 30*time.Second))
+			assert.NoError(t, err, "Retry must afford the retry")
+			assert.Equal(t, delay, 30*time.Second, "Retry must return the delay of the failure")
+		})
+
+		unchanged := []struct {
+			err     error
+			name    string
+			attempt int
+		}{
+			{name: "returns a failure that is not retryable unchanged", attempt: 1, err: errPermanent},
+			{name: "returns an unclassified failure unchanged", attempt: 1, err: errUnclassified},
+			{name: "returns the failure unchanged for attempt 0", attempt: 0, err: errTransient},
+			{name: "returns the failure unchanged for the attempt count", attempt: 3, err: errTransient},
+			{
+				name:    "returns a failure whose delay exceeds MaxRetryAfter unchanged",
+				attempt: 1,
+				err:     errs.WithRetryAfter(errTransient, time.Minute+time.Nanosecond),
+			},
+			{name: "returns nil for a nil failure", attempt: 1, err: nil},
+		}
+		for _, tt := range unchanged {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				r := newRetrier(t, fake.New(originUTC), noJitter, once)
+				r.Start()
+
+				delay, err := r.Retry(tt.attempt, tt.err)
+				expect.Equal(t, err, tt.err, "Retry must return the failure unchanged")
+				expect.Equal(t, delay, time.Duration(0), "Retry must return no delay with the failure")
+
+				_, err = r.Retry(1, errTransient)
+				expect.NoError(t, err, "the failure must leave the retry of the floor in the budget")
+			})
+		}
+
+		t.Run("returns ErrBudget for a retry that the floor no longer affords", func(t *testing.T) {
+			t.Parallel()
+			r := newRetrier(t, fake.New(originUTC), noJitter, once)
+			r.Start()
+
+			_, first := r.Retry(1, errTransient)
+			_, second := r.Retry(2, errTransient)
+			expect.NoError(t, first, "the floor must afford the first retry")
+			expect.That(t, second).
+				ErrorIs(resilience.ErrBudget, "the second retry must exceed the floor").
+				ErrorIs(errTransient, "the refusal must wrap the failure")
+		})
+
+		t.Run("returns the delays that a loop on one goroutine waits on a fake clock", func(t *testing.T) {
+			t.Parallel()
+			clk := fake.New(originUTC)
+			r := newRetrier(t, clk, halfJitter)
+			fn, calls := failFor(2, errTransient)
+
+			r.Start()
+
+			var err error
+			for attempt := 1; ; attempt++ {
+				if _, err = fn(t.Context()); err == nil {
+					break
+				}
+
+				var delay time.Duration
+				if delay, err = r.Retry(attempt, err); err != nil {
+					break
+				}
+
+				clk.Advance(delay)
+			}
+
+			expect.NoError(t, err, "the loop must run the call to its success")
+			expect.Equal(t, *calls, 3, "the loop must make both retries")
+			expect.Equal(t, clk.Time(), originUTC.Add(150*time.Millisecond),
+				"the loop must wait the backoffs of both retries")
+		})
+	})
+
 	t.Run("Do", func(t *testing.T) {
 		t.Parallel()
 
@@ -815,10 +931,33 @@ func TestRetrier(t *testing.T) {
 	})
 }
 
-// TestRetrierAllocs checks the allocation contract of Backoff and of a Do
-// whose first attempt succeeds. MaxAllocs counts the allocations of the
-// whole process, so the test does not run in parallel.
+// TestRetrierAllocs checks the allocation contract of Start, of a Retry that
+// the budget affords, of Backoff and of a Do whose first attempt succeeds.
+// MaxAllocs counts the allocations of the whole process, so the test does
+// not run in parallel.
 func TestRetrierAllocs(t *testing.T) {
+	t.Run("Start", func(t *testing.T) {
+		r := newRetrier(t, fake.New(originUTC), noJitter)
+		expect.MaxAllocs(t, r.Start, 0, "Start must not allocate")
+	})
+
+	t.Run("Retry", func(t *testing.T) {
+		t.Run("of a retry that the budget affords", func(t *testing.T) {
+			r := newRetrier(t, fake.New(originUTC), halfJitter)
+
+			var (
+				delay time.Duration
+				err   error
+			)
+			expect.MaxAllocs(t, func() {
+				r.Start()
+				delay, err = r.Retry(1, errTransient)
+			}, 0, "a Start and a Retry that the budget affords must not allocate")
+			assert.NoError(t, err, "the test must measure a retry that the budget affords")
+			assert.Equal(t, delay, 50*time.Millisecond, "the test must measure the backoff of the first retry")
+		})
+	})
+
 	t.Run("Do", func(t *testing.T) {
 		t.Run("of a call that succeeds", func(t *testing.T) {
 			ctx := t.Context()
@@ -843,9 +982,43 @@ func TestRetrierAllocs(t *testing.T) {
 	})
 }
 
-// BenchmarkRetrier reports the cost of Backoff and of a Do whose first
-// attempt succeeds, and fails when one allocates.
+// BenchmarkRetrier reports the cost of Start, of a Retry that the budget
+// affords, of Backoff and of a Do whose first attempt succeeds, and fails
+// when one allocates.
 func BenchmarkRetrier(b *testing.B) {
+	b.Run("Start", func(b *testing.B) {
+		r := newRetrier(b, fake.New(originUTC), noJitter)
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			r.Start()
+		}
+	})
+
+	b.Run("Retry", func(b *testing.B) {
+		b.Run("of a retry that the budget affords", func(b *testing.B) {
+			r := newRetrier(b, fake.New(originUTC), halfJitter)
+
+			var (
+				delay time.Duration
+				err   error
+			)
+
+			c := bench.Start(b).MaxAllocs(0)
+			defer c.End()
+
+			for c.Loop() {
+				r.Start()
+				delay, err = r.Retry(1, errTransient)
+			}
+
+			assert.NoError(b, err, "the benchmark must measure a retry that the budget affords")
+			assert.Equal(b, delay, 50*time.Millisecond, "the benchmark must measure the backoff of the first retry")
+		})
+	})
+
 	b.Run("Do", func(b *testing.B) {
 		b.Run("of a call that succeeds", func(b *testing.B) {
 			ctx := b.Context()

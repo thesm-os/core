@@ -50,9 +50,9 @@ var (
 	// caller waited its full allowance and no permit came free.
 	ErrWaitTimeout = errors.New("resilience: timed out waiting for a permit")
 
-	// ErrBudget is returned by [Do] when a retry would exceed the
-	// [Retrier]'s budget. Classifies as Transient: the call may succeed
-	// later, once the budget has recovered.
+	// ErrBudget is returned by [Do] and [Retrier.Retry] when a retry would
+	// exceed the budget of the [Retrier]. Classifies as Transient: the call
+	// may succeed later, once the budget has recovered.
 	ErrBudget = errs.WithClass(errors.New("resilience: retry budget exhausted"), errs.Transient)
 
 	// ErrUnits is returned by [Limiter.WaitN] for a negative number of
