@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.0
+
+### Minor Changes
+
+- 3909b9c: Add `cache.Cache.Expire` to remove every expired entry in the order of the expiry times.
+
+### Patch Changes
+
+- 78890c4: Refuse a note of more than 64 signature lines before `witness.Server.Advance` or add-checkpoint copies or decodes it.
+
 ## 0.7.0
 
 ### Minor Changes
