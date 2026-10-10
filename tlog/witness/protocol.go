@@ -43,6 +43,10 @@ const (
 	// server verifies. signed-note requires a verifier to accept 16.
 	maxLines = 64
 
+	// signatureSplit separates the text of a signed note from its signature
+	// lines: the newline that ends the text, and a blank line.
+	signatureSplit = "\n\n"
+
 	// maxHashText is the length of the longest proof line: the padded
 	// standard base64 of a 64-byte hash.
 	maxHashText = 88
@@ -296,4 +300,25 @@ func parseHash(line []byte) (crypto.Digest, bool) {
 	h, err := crypto.DigestFromBytes(raw[:n])
 
 	return h, err == nil
+}
+
+// checkLines returns nil when the note msg has at most maxLines signature
+// lines. It counts the lines after the last blank line of msg, which are
+// the lines that [note.Parse] parses as signature lines. The count does not
+// need a parse or a copy, so a call refuses a note of more lines before it
+// copies or decodes the note. A msg without a blank line has no line to
+// count, and its parse refuses it later.
+//
+// Returns an error that wraps [ErrRequest] for a note of more lines.
+func checkLines(msg []byte) error {
+	n := 0
+	if _, lines, ok := bytes.CutLast(msg, []byte(signatureSplit)); ok {
+		n = bytes.Count(lines, []byte{'\n'})
+	}
+
+	if n > maxLines {
+		return fmt.Errorf("%w: a note of %d signature lines, above %d", ErrRequest, n, maxLines)
+	}
+
+	return nil
 }

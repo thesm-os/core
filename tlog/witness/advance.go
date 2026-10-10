@@ -97,7 +97,8 @@ type Failure struct {
 // commit cost what [Server] lists. The call copies msg, the prefixes and
 // the proofs into pooled memory, and waits on a pooled result. It
 // parses msg into the note of a pooled call, under the allocation contract
-// of [note.Note.UnmarshalText].
+// of [note.Note.UnmarshalText]. A msg of more than 64 signature lines fails
+// before the copy and the parse.
 func (s *Server) Advance(ctx context.Context, msg []byte, updates []Update, dst []byte) ([]byte, []Failure, error) {
 	if len(updates) == 0 || len(updates) > maxUpdates {
 		return dst, nil, fmt.Errorf("%w: %d updates, outside 1 to %d", ErrRequest, len(updates), maxUpdates)
@@ -142,8 +143,10 @@ func (s *Server) Advance(ctx context.Context, msg []byte, updates []Update, dst 
 }
 
 // fill copies msg and updates into p, and runs the checks of the form of
-// a call that need no configuration: the count of the updates, their
-// distinct origins, their bodies, and the note.
+// a call that do not need the configuration. It checks the body of each
+// update and the number of signature lines of msg before it copies them.
+// It then checks that the origins of the updates are distinct, and parses
+// msg.
 //
 // Returns an error that wraps [ErrRequest] for a call that fails one.
 func (p *pending) fill(msg []byte, updates []Update) error {
@@ -151,6 +154,10 @@ func (p *pending) fill(msg []byte, updates []Update) error {
 		if !u.Body.Valid() {
 			return fmt.Errorf("%w: the body of %q is not valid", ErrRequest, u.Body.Origin)
 		}
+	}
+
+	if err := checkLines(msg); err != nil {
+		return err
 	}
 
 	// A later append that grows p.buf leaves msg and the earlier prefixes
@@ -214,21 +221,18 @@ func (p *pending) distinct() error {
 //
 //   - Logs accepts the origin of every update.
 //   - Every line of a key of the log of an update verifies, and every key
-//     of one key set of the log signed. A note of more than maxLines lines
-//     fails before any line verifies, and each line verifies at most once.
+//     of one key set of the log signed. Each line verifies at most once.
 //   - The old size is at most the size, the root and each proof hash have
 //     the size of the log's digests, and every cosigner signs the text.
 //
-// It then computes the size of the encoding of the call in a record.
+// It then computes the size of the encoding of the call in a record. The
+// caller has refused a note of more than maxLines signature lines before
+// the parse, so at most maxLines lines verify.
 //
 // Returns an error that wraps [ErrUnknownOrigin], [ErrSignature],
 // [ErrRequest] or [ErrConfig] for a call that fails, and the error of the
 // Resolver for a key of a log that it does not resolve.
 func (s *Server) prepare(p *pending) error {
-	if len(p.note.Signatures) > maxLines {
-		return fmt.Errorf("%w: a note of %d signature lines, above %d", ErrRequest, len(p.note.Signatures), maxLines)
-	}
-
 	for i := range p.updates {
 		u := &p.updates[i]
 

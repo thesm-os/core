@@ -36,6 +36,15 @@ func TestHandlerInternal(t *testing.T) {
 				assert.ErrorIs(t, err, ErrRequest, "parseRequest must refuse the body")
 			})
 
+			t.Run("returns ErrRequest for a note of 65 signature lines before it parses the note", func(t *testing.T) {
+				t.Parallel()
+				long := string(withLines(t, []byte(exampleNote), maxLines+1))
+				p := &pending{}
+				err := p.parseRequest(strings.NewReader(strings.Replace(exampleRequest, exampleNote, long, 1)))
+				assert.ErrorIs(t, err, ErrRequest, "parseRequest must refuse the note")
+				assert.Nil(t, p.note.Signatures, "parseRequest must refuse the note before it parses the note")
+			})
+
 			_, lines, _ := strings.Cut(exampleNote, "\n\n")
 			tests := []struct {
 				want error

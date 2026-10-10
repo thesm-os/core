@@ -7,11 +7,26 @@ import (
 	"testing"
 
 	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/expect"
 	"go.thesmos.sh/kanon/wire"
 )
 
 func TestAdvanceInternal(t *testing.T) {
 	t.Parallel()
+
+	t.Run("fill", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns ErrRequest for a note of 65 signature lines before it copies the note", func(t *testing.T) {
+			t.Parallel()
+			l := newInternalLog(t, "example.com/a")
+			p := &pending{}
+			err := p.fill(withLines(t, l.note(t, 5), maxLines+1), []Update{l.update(t, 0, 5, nil)})
+			assert.ErrorIs(t, err, ErrRequest, "fill must refuse the note")
+			expect.Nil(t, p.buf, "fill must refuse the note before it copies the note")
+			expect.Nil(t, p.note.Signatures, "fill must refuse the note before it parses the note")
+		})
+	})
 
 	t.Run("prepare", func(t *testing.T) {
 		t.Parallel()

@@ -5,12 +5,16 @@ package witness
 
 import (
 	"math"
+	"slices"
+	"strings"
 	"testing"
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/expect"
+	"go.dokimi.dev/assert/prop"
 
 	"go.thesmos.sh/core/crypto"
+	"go.thesmos.sh/core/note"
 )
 
 // The proof lines and the note of the example request of tlog-witness,
@@ -23,6 +27,10 @@ const (
 		"zyWE+xeMcTOAYQ8=\n"
 	exampleRequest = "old 20852014\n" + exampleProof1 + "\n" + exampleProof2 + "\n\n" + exampleNote
 )
+
+// unknownLine is a signature line of a key that no log has: a valid name,
+// and the base64 of a key ID and a signature of four bytes each.
+const unknownLine = "— unknown.example AAAAAAAAAAA=\n"
 
 func TestProtocolInternal(t *testing.T) {
 	t.Parallel()
@@ -117,4 +125,73 @@ func TestProtocolInternal(t *testing.T) {
 			})
 		}
 	})
+
+	t.Run("checkLines", func(t *testing.T) {
+		t.Parallel()
+
+		accepted := []struct {
+			name string
+			give string
+		}{
+			{
+				name: "returns nil for a note of 64 signature lines",
+				give: string(withLines(t, []byte(exampleNote), maxLines)),
+			},
+			{
+				name: "returns nil for a note of 64 signature lines whose text contains a blank line",
+				give: "a\n\n" + string(withLines(t, []byte(exampleNote), maxLines)),
+			},
+			{name: "returns nil for a msg without a blank line", give: "a\n" + strings.Repeat(unknownLine, maxLines+1)},
+		}
+		for _, tt := range accepted {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				assert.NoError(t, checkLines([]byte(tt.give)), "checkLines must accept the msg")
+			})
+		}
+
+		refused := []struct {
+			name string
+			give string
+		}{
+			{
+				name: "returns ErrRequest for a note of 65 signature lines",
+				give: string(withLines(t, []byte(exampleNote), maxLines+1)),
+			},
+			{
+				name: "returns ErrRequest for a note of 65 signature lines whose blank line starts the note",
+				give: "\n\n" + strings.Repeat(unknownLine, maxLines+1),
+			},
+		}
+		for _, tt := range refused {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				assert.ErrorIs(t, checkLines([]byte(tt.give)), ErrRequest, "checkLines must refuse the note")
+			})
+		}
+
+		t.Run("returns ErrRequest for exactly the notes of more than 64 signature lines", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "checkLines must count the signature lines that note.Parse parses", func(c *prop.Case) {
+				text := c.Draw(prop.List(prop.SampledFrom("a", "", "b c"), prop.MaxSize(4)), "text")
+				lines := c.Draw(prop.Integer(0, maxLines+4), "lines")
+				msg := []byte(strings.Join(text, "\n") + "\n\n" + strings.Repeat(unknownLine, lines))
+
+				n, err := note.Parse(msg)
+				c.Assume(err == nil)
+				assert.Equal(c, checkLines(msg) != nil, len(n.Signatures) > maxLines,
+					"checkLines must refuse a note exactly when note.Parse returns more than 64 signature lines")
+			})
+		})
+	})
+}
+
+// withLines returns a copy of msg, a signed note, with lines of a key that
+// no log has appended until the note has n signature lines.
+func withLines(tb assert.TB, msg []byte, n int) []byte {
+	tb.Helper()
+	parsed, err := note.Parse(msg)
+	assert.NoError(tb, err, "the note must parse")
+
+	return append(slices.Clone(msg), strings.Repeat(unknownLine, n-len(parsed.Signatures))...)
 }

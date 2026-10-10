@@ -53,7 +53,8 @@ var (
 // reads the body into pooled memory, and waits on a pooled result. It
 // parses the note and its body into those of a pooled call, under the
 // allocation contracts of [note.Note.UnmarshalText] and
-// [checkpoint.Body.UnmarshalText].
+// [checkpoint.Body.UnmarshalText]. A note of more than 64 signature lines
+// fails before the parse.
 func (s *Server) AddCheckpoint() http.Handler {
 	return http.HandlerFunc(s.serveAddCheckpoint)
 }
@@ -111,9 +112,10 @@ func (s *Server) serveAddCheckpoint(w http.ResponseWriter, r *http.Request) {
 
 // parseRequest reads the body of an add-checkpoint request from body into
 // p, and runs check 1 of the protocol: the form of the body, and a note
-// whose text is a checkpoint body. p can contain the parses of an earlier
-// body, which [pending.reset] keeps, and none of them stands in for a
-// part of body that fails to parse.
+// whose text is a checkpoint body. It refuses a note of more than maxLines
+// signature lines before it parses the note. p can contain the parses of
+// an earlier body, which [pending.reset] keeps. parseRequest uses none of
+// them in place of a part of body that fails to parse.
 //
 // Error modes:
 //   - an error that wraps [ErrRequest] for a body that fails the check.
@@ -135,6 +137,10 @@ func (p *pending) parseRequest(body io.Reader) error {
 	}
 
 	p.msg = p.req.note
+	if err := checkLines(p.msg); err != nil {
+		return err
+	}
+
 	if err := p.note.UnmarshalText(p.msg); err != nil {
 		return fmt.Errorf("%w: %w", ErrRequest, err)
 	}
