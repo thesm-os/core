@@ -179,8 +179,6 @@ func breaking(hook func(s *memory.Store, h *hooked)) run {
 
 // runs maps reference to the passing run, and the name of each case of
 // [castest.AssertStore] to a run that breaks the law of that case.
-//
-//nolint:wrapcheck // the test doubles pass errors through
 func runs() map[string]run {
 	newMemory := func(h crypto.Hasher) cas.Store { return memory.New(h) }
 

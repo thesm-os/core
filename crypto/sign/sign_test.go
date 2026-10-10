@@ -42,7 +42,7 @@ func TestSign(t *testing.T) {
 					var k sign.KeyID
 					_, err := hex.Decode(k[:], []byte(s))
 
-					return k, err //nolint:wrapcheck // the decoder's own error is the failure
+					return k, err
 				}, "String must encode every byte of the KeyID")
 			})
 		})

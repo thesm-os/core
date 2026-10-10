@@ -259,7 +259,7 @@ type served struct {
 func (l *served) Accept() (net.Conn, error) {
 	l.acceptOnce.Do(func() { close(l.accepting) })
 
-	return l.Listener.Accept() //nolint:wrapcheck // a test listener returns the error of the listener under it
+	return l.Listener.Accept()
 }
 
 // Close closes closed once and the listener under it, and returns closeErr
@@ -272,7 +272,7 @@ func (l *served) Close() error {
 		return l.closeErr
 	}
 
-	return err //nolint:wrapcheck // as in Accept
+	return err
 }
 
 // fixture is a Server that a case runs on a loopback listener. It reads a
@@ -428,7 +428,7 @@ func (l *failingListener) Accept() (net.Conn, error) {
 func (l *failingListener) Close() error {
 	l.once.Do(func() { close(l.closed) })
 
-	return l.Listener.Close() //nolint:wrapcheck // a test listener returns the error of the listener under it
+	return l.Listener.Close()
 }
 
 // discardWriter is a ResponseWriter that keeps the status of its last
@@ -1035,19 +1035,19 @@ func request(t *testing.T, client *http.Client, url string) error {
 
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, url, http.NoBody)
 	if err != nil {
-		return err //nolint:wrapcheck // the case asserts the error
+		return err
 	}
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return err //nolint:wrapcheck // the case asserts the error
+		return err
 	}
 
 	defer resp.Body.Close()
 
 	_, err = io.Copy(io.Discard, resp.Body)
 
-	return err //nolint:wrapcheck // the case asserts the error
+	return err
 }
 
 // value returns the value of the attribute key of r, and fails t when r has

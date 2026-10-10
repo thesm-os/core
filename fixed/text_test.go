@@ -306,7 +306,7 @@ func TestText(t *testing.T) {
 				var p payload
 				err := json.Unmarshal(document, &p)
 
-				return p.Amount, err //nolint:wrapcheck // the decoder's own error is the failure
+				return p.Amount, err
 			}, "json.Unmarshal must undo json.Marshal of a field", prop.Using(values))
 		})
 

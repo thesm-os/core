@@ -187,7 +187,7 @@ jobs:
       - name: Check Go
         if: "hashFiles('**/go.mod') != ''"
         run: |
-          make check-go
+          make --keep-going check-go
   result:
     name: Result
     if: always()

@@ -437,7 +437,7 @@ func drain(tb assert.TB, r io.Reader) ([]byte, error) {
 		n, err := r.Read(buf)
 		out = append(out, buf[:n]...)
 		if err != nil {
-			return out, err //nolint:wrapcheck // the subject's own error is the assertion
+			return out, err
 		}
 	}
 	tb.Fatalf("the reader returned no error within 64 reads")

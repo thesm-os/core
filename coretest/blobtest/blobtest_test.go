@@ -153,7 +153,8 @@ type lateReader struct {
 	open func() (io.ReadCloser, error)
 }
 
-//nolint:wrapcheck // the test double passes the error through
+// Read opens the object on the first call, and reads from the object that
+// it opened.
 func (r *lateReader) Read(p []byte) (int, error) {
 	if r.rc == nil {
 		rc, err := r.open()
@@ -166,7 +167,8 @@ func (r *lateReader) Read(p []byte) (int, error) {
 	return r.rc.Read(p)
 }
 
-//nolint:wrapcheck // the test double passes the error through
+// Close closes the object that Read opened, and returns nil when Read has
+// not opened one.
 func (r *lateReader) Close() error {
 	if r.rc == nil {
 		return nil
@@ -186,7 +188,8 @@ type purgingReader struct {
 	version version.Version
 }
 
-//nolint:wrapcheck // the test double passes the error through
+// Read reads from the version that Get opened. It returns gone once Stat of
+// the key fails or returns another version.
 func (r *purgingReader) Read(p []byte) (int, error) {
 	if info, err := r.stat(); err != nil || info.Version != r.version {
 		return 0, r.gone
@@ -256,8 +259,6 @@ func purgingStore(gone error) run {
 // runs maps reference and purging to the runs that pass, and the name of
 // each case of [blobtest.AssertStore] to a run that breaks the law of
 // that case.
-//
-//nolint:wrapcheck // the test doubles pass errors through
 func runs() map[string]run {
 	return map[string]run{
 		purging: purgingStore(errPurged),

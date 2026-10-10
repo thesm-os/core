@@ -46,7 +46,7 @@ func TestHasher(t *testing.T) {
 					var id crypto.ID
 					_, err := hex.Decode(id[:], []byte(s))
 
-					return id, err //nolint:wrapcheck // the decoder's own error is the failure
+					return id, err
 				}, "String must encode every byte of the ID")
 			})
 		})

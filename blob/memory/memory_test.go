@@ -201,7 +201,7 @@ func TestStore(t *testing.T) {
 					if err != nil {
 						call.Unknown(err)
 
-						return nil, err //nolint:wrapcheck // the error of the reader is the outcome of the client
+						return nil, err
 					}
 					call.OK(string(data))
 					last = string(data)

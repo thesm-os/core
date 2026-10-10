@@ -92,15 +92,15 @@ fmt-go: ## Format the Go sources of every module with the formatters of .golangc
 	@$(GO) list -m -f '{{.Dir}}' | while IFS= read -r dir; do echo "golangci-lint fmt $$dir"; \
 		(cd "$$dir" && $(GOLANGCI_LINT) fmt $(GO_PATHS)) || exit 1; done
 lint-go: ## Lint every module with .golangci.yml and ergon-go-vet, and check its format
-	@$(GO) list -m -f '{{.Dir}}' | while IFS= read -r dir; do echo "golangci-lint $$dir"; \
+	@$(GO) list -m -f '{{.Dir}}' | { status=0; while IFS= read -r dir; do echo "golangci-lint $$dir"; \
 		(cd "$$dir" && $(GOLANGCI_LINT) run $(GO_PATHS) && $(GOLANGCI_LINT) fmt --diff $(GO_PATHS) \
-			&& $(ERGON_GO_VET) $(addprefix -exclude=,$(GO_LINT_EXCLUDE)) $(GO_PATHS)) || exit 1; done
+			&& $(ERGON_GO_VET) $(addprefix -exclude=,$(GO_LINT_EXCLUDE)) $(GO_PATHS)) || status=1; done; exit $$status; }
 test-go: ## Run the Go tests of every module
-	@$(GO) list -m -f '{{.Dir}}' | while IFS= read -r dir; do echo "go test $$dir"; \
-		$(GO) -C "$$dir" test $(GO_TEST_ARGS) $(GO_PATHS) || exit 1; done
+	@$(GO) list -m -f '{{.Dir}}' | { status=0; while IFS= read -r dir; do echo "go test $$dir"; \
+		$(GO) -C "$$dir" test $(GO_TEST_ARGS) $(GO_PATHS) || status=1; done; exit $$status; }
 race-go: ## Run the Go tests of every module under the race detector
-	@$(GO) list -m -f '{{.Dir}}' | while IFS= read -r dir; do echo "go test -race $$dir"; \
-		$(GO) -C "$$dir" test -race $(GO_RACE_ARGS) $(GO_PATHS) || exit 1; done
+	@$(GO) list -m -f '{{.Dir}}' | { status=0; while IFS= read -r dir; do echo "go test -race $$dir"; \
+		$(GO) -C "$$dir" test -race $(GO_RACE_ARGS) $(GO_PATHS) || status=1; done; exit $$status; }
 fuzz-go: ## Fuzz each fuzz target of every module whose name matches GO_FUZZ_MATCH, for GO_FUZZ_TIME each
 	@$(GO) list -m -f '{{.Dir}}' | while IFS= read -r dir; do \
 		list="$$($(GO) -C "$$dir" test -list '$(GO_FUZZ_MATCH)' $(GO_PATHS))" || { printf '%s\n' "$$list"; exit 1; }; \
@@ -127,8 +127,8 @@ generate-go: ## Run the generators of every module, such as go generate
 verify-generate-go: ## Fail when the generators of a module change a file of the repository
 	@$(call verify-generated,GO_GENERATE,generate-go)
 audit-go: ## Scan every Go module for known vulnerabilities that its code reaches
-	@$(GO) list -m -f '{{.Dir}}' | while IFS= read -r dir; do echo "govulncheck $$dir"; \
-		$(GOVULNCHECK) -C "$$dir" $(GO_AUDIT_ARGS) $(GO_PATHS) || exit 1; done
+	@$(GO) list -m -f '{{.Dir}}' | { status=0; while IFS= read -r dir; do echo "govulncheck $$dir"; \
+		$(GOVULNCHECK) -C "$$dir" $(GO_AUDIT_ARGS) $(GO_PATHS) || status=1; done; exit $$status; }
 check-go: lint-go test-go race-go verify-generate-go audit-go ## Run the gate of Go
 
 # The targets of core, which ergon init appends to the Makefile.

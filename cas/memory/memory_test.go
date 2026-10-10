@@ -49,7 +49,7 @@ func (g *gatedReader) Read(p []byte) (int, error) {
 		<-g.release
 	}
 
-	return g.Reader.Read(p) //nolint:wrapcheck // the wrapped reader's result passes through
+	return g.Reader.Read(p)
 }
 
 // cancelOnRead cancels its context at every Read, so a transfer ends
@@ -65,7 +65,7 @@ func (c cancelOnRead) Read(p []byte) (int, error) {
 	n, err := c.Reader.Read(p)
 	c.cancel()
 
-	return n, err //nolint:wrapcheck // the wrapped reader's result passes through
+	return n, err
 }
 
 // TestMemoryStoreConformance runs the conformance suite with every

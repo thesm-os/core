@@ -128,7 +128,7 @@ func (b brokenBody) Read(p []byte) (int, error) {
 		return 0, b.readErr
 	}
 
-	return b.ReadCloser.Read(p) //nolint:wrapcheck // the test double passes the error through
+	return b.ReadCloser.Read(p)
 }
 
 // Close closes the body and returns closeErr.

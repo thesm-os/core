@@ -447,7 +447,7 @@ func TestDigest(t *testing.T) {
 			}, func(s string) (crypto.Digest, error) {
 				b, err := hex.DecodeString(s)
 				if err != nil {
-					return crypto.Digest{}, err //nolint:wrapcheck // the decoder's own error is the failure
+					return crypto.Digest{}, err
 				}
 
 				return crypto.DigestFromBytes(b)

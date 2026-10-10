@@ -203,7 +203,7 @@ func (b *tracked) Read(p []byte) (int, error) {
 	n, err := b.r.Read(p)
 	b.read.Add(int64(n))
 
-	return n, err //nolint:wrapcheck // the reader's own error is the end of the body
+	return n, err
 }
 
 // Close records the call, and returns nil.

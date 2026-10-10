@@ -1,5 +1,5 @@
 {
-  "ergon": "0.6.1",
+  "ergon": "0.7.0",
   "files": [
     {
       "path": ".commitlint.yaml",
@@ -60,7 +60,7 @@
       "path": ".github/workflows/ci.yml",
       "producer": "github",
       "local": "aa116c1bcc35968eb68ec30762d8af1a1cb601429c26eb65c281cf332a4209b6",
-      "sha256": "f3cb7ec912b3fd5de4781cdf35b65439d09630eeae2a1a576e4ae0e330ed1efe"
+      "sha256": "2f06142371e31f24ace6fe12b0323d124e52e5cf862dcb6bf8eff567c4c22c88"
     },
     {
       "path": ".github/workflows/codeql.yml",
@@ -97,7 +97,7 @@
       "path": ".golangci.yml",
       "producer": "go",
       "local": "9b8e1e370a0ebad4e88cdce9e546e649c7b197223eeb4260d0a389c2409c8619",
-      "sha256": "10720481f51b92aae3231008eb9f7d2bceb94d29cf09747630fd2022076a5e3f"
+      "sha256": "ec47c4df3287cf343d6f8751bf8e46a8ddf41c14aaa1e39f004027b0be29bf94"
     },
     {
       "path": ".markdownlint.yml",
@@ -123,7 +123,7 @@
       "path": "Makefile",
       "producer": "common",
       "local": "0c287df46de1a009b2e3b0d02e8ea50e63c567469a0b551708eaa561ee1f8848",
-      "sha256": "433c1eecb80924b3da592b07a57540deaddfddfcb2c99a86f58b6f34be9f0ba9"
+      "sha256": "b4b349833a5ed2fff7dd88dd82024cc1d13c538bd1321cc80490c99df53f8936"
     },
     {
       "path": "NOTICE",
@@ -218,6 +218,7 @@
     ],
     "go.homebrew.tap": "",
     "go.lint.exclude": [],
+    "go.lint.plugins": {},
     "go.mutate.args": [],
     "go.mutate.timeout": "0s",
     "go.mutate.workers": 1,

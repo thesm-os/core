@@ -81,11 +81,18 @@ linters:
     - thelper
     - tparallel
     - usetesting
+    # The module plugins of go.lint.plugins, which ergon tool run builds into golangci-lint
+    - assertlint
   settings:
     asasalint:
       use-builtin-exclusions: true
     copyloopvar:
       check-alias: true
+    # golangci-lint loads each module plugin of go.lint.plugins from its program. A repository
+    # sets the settings of a plugin in its local file, under the name of the plugin.
+    custom:
+      assertlint:
+        type: module
     decorder:
       disable-dec-order-check: true
       disable-init-func-first-check: false
@@ -266,6 +273,10 @@ linters:
       # A spec mirrors its source file, so the specs of two similar files repeat each other.
       - path: _test\.go$
         linters: [dupl]
+      # A test and the code of a generator return the errors of the code that they call unchanged.
+      # A test checks such an error with errors.Is, and a generator has no context to add.
+      - path: (_test|[._]gen)\.go$
+        linters: [wrapcheck]
       # A test of an allocation ceiling, of an environment variable or of the test binary as a
       # process runs serially, and its name ends in Allocs, Env or Process.
       # testing.AllocsPerRun and t.Setenv panic in a parallel test, and two processes that exit

@@ -242,7 +242,7 @@ func TestKeeperState(t *testing.T) {
 				key, err := hkdf.Key(h, secret, salt, info, n)
 				derived = key
 
-				return key, err //nolint:wrapcheck // the test double passes the error through
+				return key, err
 			}
 			_, err := k.Wrap(t.Context(), testDEK)
 			assert.NoError(t, err, "Wrap must succeed")

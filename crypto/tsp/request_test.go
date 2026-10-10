@@ -102,7 +102,7 @@ func TestRequest(t *testing.T) {
 					var v timeStampReq
 					_, err := asn1.Unmarshal(b, &v)
 
-					return v, err //nolint:wrapcheck // the decoder's own error is the failure
+					return v, err
 				}, func(v timeStampReq) ([]byte, error) { return asn1.Marshal(v) }, req,
 					"the request must be the one DER encoding of its value")
 			})
