@@ -53,8 +53,9 @@ repos:
         pass_filenames: false
         stages: [pre-push]
 
-      # The commit message, against .commitlint.yaml. ergon installs the commitlint of the section
-      # common of .ergon.yaml, and checks its archive against the digest of the section.
+      # The commit message, against .commitlint.yaml. The command of the key ergon of the section
+      # common of .ergon.yaml installs the commitlint of the section, and checks its archive against
+      # the digest of the section.
       - id: commitlint
         name: commitlint
         entry: ergon tool run common.commitlint -- lint --message

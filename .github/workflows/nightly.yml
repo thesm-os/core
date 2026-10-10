@@ -4,8 +4,12 @@
 # section github of .ergon.yaml and on demand. Each step of each language is a job of its own, so
 # the jobs run in parallel and fail independently. A job runs on the Linux runner of the section
 # github unless its setup states runners, sets up its toolchain before ergon once the repository
-# has the files of the toolchain, and keeps the tools of ergon in the cache of GitHub Actions. A
-# run that starts while another runs waits for it.
+# has the files of the toolchain, and keeps the tools of ergon in the cache of GitHub Actions as a
+# job of ci.yml does. A run that starts while another runs waits for it.
+#
+# The job prune-tools runs when a job of the repository keeps the tools of ergon in the cache. It
+# deletes each cache of the tools that a newer cache of the same job replaced, because a job
+# restores only the newest cache of its own.
 
 name: Nightly
 
@@ -52,15 +56,21 @@ jobs:
       - if: "hashFiles('**/go.mod') != ''"
         uses: ./.github/actions/setup-ergon
       - name: Keep the tools of ergon
+        id: ergon-tools
         if: "hashFiles('**/go.mod') != ''"
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          key: "ergon-tools-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('.ergon.yaml', '.ergon/init.lock') }}"
+          key: "ergon-tools-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('.ergon.yaml', '.ergon/init.lock', 'go.work') }}"
           path: "${{ runner.os == 'Windows' && '~/AppData/Local/ergon/tools' || runner.os == 'macOS' && '~/Library/Caches/ergon/tools' || '~/.cache/ergon/tools' }}"
+          restore-keys: "ergon-tools-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-"
       - name: Fuzz Go
         if: "hashFiles('**/go.mod') != ''"
         run: |
           make fuzz-go
+      - name: Prune the tools of ergon
+        if: "hashFiles('**/go.mod') != '' && (steps.ergon-tools.outputs.cache-hit != 'true')"
+        run: |
+          ergon tool prune
 
   mutate-go:
     name: Mutate Go
@@ -88,12 +98,36 @@ jobs:
       - if: "hashFiles('**/go.mod') != ''"
         uses: ./.github/actions/setup-ergon
       - name: Keep the tools of ergon
+        id: ergon-tools
         if: "hashFiles('**/go.mod') != ''"
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          key: "ergon-tools-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('.ergon.yaml', '.ergon/init.lock') }}"
+          key: "ergon-tools-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('.ergon.yaml', '.ergon/init.lock', 'go.work') }}"
           path: "${{ runner.os == 'Windows' && '~/AppData/Local/ergon/tools' || runner.os == 'macOS' && '~/Library/Caches/ergon/tools' || '~/.cache/ergon/tools' }}"
+          restore-keys: "ergon-tools-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-"
       - name: Mutate Go
         if: "hashFiles('**/go.mod') != ''"
         run: |
           make mutate-go
+      - name: Prune the tools of ergon
+        if: "hashFiles('**/go.mod') != '' && (steps.ergon-tools.outputs.cache-hit != 'true')"
+        run: |
+          ergon tool prune
+
+  prune-tools:
+    name: Prune the tool caches
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup-ergon
+      - name: Delete the tool caches that newer caches replaced
+        env:
+          GITHUB_TOKEN: "${{ github.token }}"
+        run: |
+          ergon tool ci prune

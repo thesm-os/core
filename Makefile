@@ -9,7 +9,8 @@
 
 .DEFAULT_GOAL := check
 
-# The ergon that runs the tools of the targets.
+# The command that runs ergon for the tools of the targets. The key ergon of the section common of
+# .ergon.yaml sets it.
 ERGON ?= ergon
 
 # verify-generated runs the command of the variable $(1) and fails when the run changes a file of
@@ -51,11 +52,9 @@ GOLANGCI_LINT := $(ERGON) tool run go.golangci-lint --
 GOVULNCHECK := $(ERGON) tool run go.govulncheck --
 BENCHSTAT := $(ERGON) tool run go.benchstat --
 DOKIMI_MUTATE_GO := $(ERGON) tool run go.dokimi-mutate-go --
-ERGON_GO_VET := $(ERGON) tool run go.ergon-go-vet --
 
 # The options of the section go.
 GO_PATHS ?= ./...
-GO_LINT_EXCLUDE ?=
 GO_TEST_ARGS ?= -count=1
 GO_RACE_ARGS ?= -count=1 -p=1
 GO_FUZZ_MATCH ?= .
@@ -91,10 +90,10 @@ check: check-go
 fmt-go: ## Format the Go sources of every module with the formatters of .golangci.yml
 	@$(GO) list -m -f '{{.Dir}}' | while IFS= read -r dir; do echo "golangci-lint fmt $$dir"; \
 		(cd "$$dir" && $(GOLANGCI_LINT) fmt $(GO_PATHS)) || exit 1; done
-lint-go: ## Lint every module with .golangci.yml and ergon-go-vet, and check its format
+lint-go: ## Lint every module with .golangci.yml, and check its format
 	@$(GO) list -m -f '{{.Dir}}' | { status=0; while IFS= read -r dir; do echo "golangci-lint $$dir"; \
-		(cd "$$dir" && $(GOLANGCI_LINT) run $(GO_PATHS) && $(GOLANGCI_LINT) fmt --diff $(GO_PATHS) \
-			&& $(ERGON_GO_VET) $(addprefix -exclude=,$(GO_LINT_EXCLUDE)) $(GO_PATHS)) || status=1; done; exit $$status; }
+		(cd "$$dir" && $(GOLANGCI_LINT) run $(GO_PATHS) && $(GOLANGCI_LINT) fmt --diff $(GO_PATHS)) \
+			|| status=1; done; exit $$status; }
 test-go: ## Run the Go tests of every module
 	@$(GO) list -m -f '{{.Dir}}' | { status=0; while IFS= read -r dir; do echo "go test $$dir"; \
 		$(GO) -C "$$dir" test $(GO_TEST_ARGS) $(GO_PATHS) || status=1; done; exit $$status; }

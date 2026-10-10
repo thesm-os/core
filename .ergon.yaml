@@ -2,6 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 
 common:
+  # The command that runs ergon in the targets of the Makefile and in the hooks of
+  # .pre-commit-config.yaml, as its words, such as [ergon] for the ergon on the PATH. The repository
+  # of ergon runs ergon from its own source with [go, run, go.dokimi.dev/ergon/cmd/ergon].
+  ergon: [ergon]
   # The tools of the common files.
   tools:
     # The release of commitlint, which checks each commit message in the commit-msg hook of
@@ -145,8 +149,8 @@ go:
   # with go install, as <module>@<version>, and a release binary by its version and the SHA-256 of
   # the asset of each platform.
   tools:
-    # The linter and the formatter of lint-go and fmt-go, with the rules of .golangci.yml and the
-    # module plugins of lint.plugins.
+    # The linter and the formatter of lint-go and fmt-go, with the rules of .golangci.yml, and with
+    # the analyzers of lint.analyzers and the module plugins of lint.plugins built in.
     golangci-lint: github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0
     # The vulnerability scan of audit-go, which reports a known vulnerability that the code calls.
     govulncheck: golang.org/x/vuln/cmd/govulncheck@v1.8.0
@@ -154,9 +158,6 @@ go:
     benchstat: golang.org/x/perf/cmd/benchstat@v0.0.0-20260929162123-406019bb8b68
     # The mutation engine of mutate-go.
     dokimi-mutate-go: go.dokimi.dev/mutate/cmd/dokimi-mutate-go@v0.0.0-20261006212535-719083ce3457
-    # The analyzers of lint-go: errorprefix, which reports an error whose text does not start with
-    # the name of its package, and skipexpiry, which reports a skipped test whose date has passed.
-    ergon-go-vet: go.dokimi.dev/ergon/lang/go/cmd/ergon-go-vet@v0.2.1
     # The release of GoReleaser, which builds, packs and signs the commands of binaries in the job
     # pack of release.yml.
     goreleaser:
@@ -206,8 +207,8 @@ go:
   nightly:
     fuzz: 120
     mutate: 60
-  # The options of lint-go, which runs golangci-lint with the rules of .golangci.yml and
-  # ergon-go-vet in every module.
+  # The options of lint-go, which runs golangci-lint in every module with the rules of
+  # .golangci.yml, the analyzers of the key analyzers and the module plugins of the key plugins.
   lint:
     # The module plugins of golangci-lint, by the name of the linter that each registers, in
     # lowercase, as <package>@<version> of the package that registers it, such as assertlint:
@@ -216,8 +217,12 @@ go:
     # settings of a plugin under linters.settings.custom.<name>.settings.
     plugins:
       assertlint: go.dokimi.dev/assert/lint/golangci@v0.1.0
-    # The package patterns that ergon-go-vet skips, such as ./internal/legacy/....
-    exclude: []
+    # The package that registers the analyzers errorprefix and skipexpiry as module plugins of
+    # golangci-lint, as <package>@<version>. errorprefix reports a text of errors.New that does not
+    # start with the name of its package, and skipexpiry reports a skipped test whose expiry has
+    # passed. ergon tool run builds them into golangci-lint with the plugins, and .golangci.yml
+    # enables both.
+    analyzers: go.dokimi.dev/lint/golangci@v0.2.0
   # test-go runs go test with args.
   test:
     args: [-count=1]
