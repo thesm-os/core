@@ -53,6 +53,12 @@ const (
 	opDelete = "delete"
 )
 
+// The actions of the machine of Expire, beside opSet and opDelete.
+const (
+	opAdvance = "advance"
+	opExpire  = "expire"
+)
+
 // origin is the time of the fake clock of every case.
 var origin = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
@@ -495,6 +501,151 @@ func TestCache(t *testing.T) {
 		})
 	})
 
+	t.Run("Expire", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("removes the entries whose expiry time has passed", func(t *testing.T) {
+			t.Parallel()
+			c, clk, r := newCache(t, 10, nil)
+			c.Set("a", 1, origin.Add(time.Second))
+			c.Set("b", 1, origin.Add(2*time.Second))
+			c.Set("c", 1, time.Time{})
+			clk.Advance(time.Second)
+			expect.Equal(t, c.Expire(), 1, "Expire must return the number of entries that it removed")
+			expect.Equal(t, c.Len(), 2, "the expired entry must leave the cache")
+			expect.Equal(t, r.got(), []string{"a"}, "Evicted must receive the expired entry")
+		})
+
+		t.Run("keeps an entry one nanosecond before its expiry time", func(t *testing.T) {
+			t.Parallel()
+			c, clk, r := newCache(t, 10, nil)
+			c.Set("a", 1, origin.Add(time.Second))
+			clk.Advance(time.Second - time.Nanosecond)
+			expect.Equal(t, c.Expire(), 0, "Expire must keep an entry before its expiry time")
+			expect.Empty(t, r.got(), "Evicted must not receive an entry")
+		})
+
+		t.Run("keeps an entry without an expiry time at any time", func(t *testing.T) {
+			t.Parallel()
+			c, clk, _ := newCache(t, 10, nil)
+			c.Set("a", 1, time.Time{})
+			clk.Advance(1000 * time.Hour)
+			assert.Equal(t, c.Expire(), 0, "the zero expiry time must never expire")
+		})
+
+		t.Run("passes the removed entries to Evicted in the order of their expiry times", func(t *testing.T) {
+			t.Parallel()
+			c, clk, r := newCache(t, 10, nil)
+			c.Set("late", 1, origin.Add(3*time.Second))
+			c.Set("early", 1, origin.Add(time.Second))
+			c.Set("middle", 1, origin.Add(2*time.Second))
+			clk.Advance(3 * time.Second)
+			c.Expire()
+			assert.Equal(t, r.got(), []string{"early", "middle", "late"},
+				"Evicted must receive the entries in the order of their expiry times")
+		})
+
+		t.Run("removes more than eight expired entries in one call", func(t *testing.T) {
+			t.Parallel()
+			c, clk, r := newCache(t, 30, nil)
+			keys := names("k", 20)
+			for i, k := range keys {
+				c.Set(k, 1, origin.Add(time.Duration(i+1)*time.Second))
+			}
+			clk.Advance(20 * time.Second)
+			expect.Equal(t, c.Expire(), 20, "Expire must remove every expired entry")
+			expect.Equal(t, r.got(), keys, "Evicted must receive every removed entry in the order of its expiry time")
+		})
+
+		t.Run("passes a pinned entry to Evicted at its Unpin", func(t *testing.T) {
+			t.Parallel()
+			c, clk, r := newCache(t, 10, nil)
+			c.Set("k", 7, origin.Add(time.Second))
+			p, _ := c.Pin("k")
+			clk.Advance(time.Second)
+			expect.Equal(t, c.Expire(), 1, "Expire must remove a pinned entry")
+			expect.Empty(t, r.got(), "a pinned entry must wait for its Unpin")
+			p.Unpin()
+			expect.Equal(t, r.got(), []string{"k"}, "the Unpin must pass the entry to Evicted")
+		})
+
+		t.Run("does not remove an entry that a Set replaced", func(t *testing.T) {
+			t.Parallel()
+			c, clk, r := newCache(t, 10, nil)
+			c.Set("k", 1, origin.Add(time.Second))
+			c.Set("k", 2, origin.Add(time.Hour))
+			clk.Advance(time.Second)
+			expect.Equal(t, c.Expire(), 0, "the replaced entry must not leave the cache again")
+			expect.Equal(t, r.got(), []string{"k"}, "Evicted must receive the replaced entry once")
+		})
+
+		t.Run("does not remove an entry that Delete removed", func(t *testing.T) {
+			t.Parallel()
+			c, clk, r := newCache(t, 10, nil)
+			c.Set("k", 1, origin.Add(time.Second))
+			c.Delete("k")
+			clk.Advance(time.Second)
+			expect.Equal(t, c.Expire(), 0, "the deleted entry must not leave the cache again")
+			expect.Equal(t, r.got(), []string{"k"}, "Evicted must receive the deleted entry once")
+		})
+
+		t.Run("does not remove an entry that a Get removed", func(t *testing.T) {
+			t.Parallel()
+			c, clk, r := newCache(t, 10, nil)
+			c.Set("k", 1, origin.Add(time.Second))
+			clk.Advance(time.Second)
+			c.Get("k")
+			expect.Equal(t, c.Expire(), 0, "the entry that the Get removed must not leave the cache again")
+			expect.Equal(t, r.got(), []string{"k"}, "Evicted must receive the expired entry once")
+		})
+
+		t.Run("does not remove an entry that the evictor removed", func(t *testing.T) {
+			t.Parallel()
+			c, clk, r := newCache(t, 1, nil)
+			c.Set("a", 1, origin.Add(time.Second))
+			c.Set("b", 1, origin.Add(time.Second))
+			clk.Advance(time.Second)
+			expect.Equal(t, c.Expire(), 1, "Expire must remove only the entry that the cache kept")
+			expect.Equal(t, r.got(), []string{"a", "b"}, "Evicted must receive each entry once")
+		})
+
+		t.Run("calls Evicted after it releases its lock", func(t *testing.T) {
+			t.Parallel()
+			var c *cache.Cache[string, int]
+			var deleted atomic.Bool
+			clk := fake.New(origin)
+			c, err := cache.New(cache.Config[string, int]{
+				Clock:    clk,
+				Capacity: 10,
+				Evicted:  func(string, int) { deleted.Store(!c.Delete("other")) },
+			})
+			assert.NoError(t, err, "New must accept the configuration")
+			c.Set("a", 1, origin.Add(time.Second))
+			clk.Advance(time.Second)
+			assert.CompletesWithin(t, time.Second, func(context.Context) error {
+				c.Expire()
+
+				return nil
+			}, "a Delete inside Evicted must not wait for the lock of Expire")
+			assert.True(t, deleted.Load(), "the Delete inside Evicted must run")
+		})
+
+		t.Run("removes exactly the entries whose expiry time has passed after any calls", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "Expire must remove exactly the entries whose expiry time has passed", func(pc *prop.Case) {
+				clk := fake.New(origin)
+				evicted := 0
+				c, err := cache.New(cache.Config[int, int]{
+					Clock:    clk,
+					Capacity: workloadKeys,
+					Evicted:  func(int, int) { evicted++ },
+				})
+				assert.NoError(pc, err, "New must accept the configuration")
+				stateful.Steps(pc, stateful.Machine[struct{}]{Actions: expiryActions(c, clk, &evicted)})
+			})
+		})
+	})
+
 	t.Run("Len", func(t *testing.T) {
 		t.Parallel()
 
@@ -635,6 +786,23 @@ func TestCacheAllocs(t *testing.T) {
 		expect.True(t, presentDeleted, "the test must measure a present key")
 	})
 
+	t.Run("Expire", func(t *testing.T) {
+		clk := fake.New(origin)
+		c, err := cache.New(cache.Config[string, int]{Clock: clk, Capacity: benchCapacity})
+		assert.NoError(t, err, "New must accept the configuration")
+		var n int
+		expect.MaxAllocsWithSetup(t, func() struct{} {
+			for _, k := range keys[:20] {
+				c.Set(k, 1, clk.Time().Add(time.Nanosecond))
+			}
+			clk.Advance(time.Nanosecond)
+
+			return struct{}{}
+		}, func(struct{}) { n = c.Expire() }, 0, "an Expire of twenty entries must not allocate")
+		assert.Equal(t, n, 20, "the test must measure the removal of twenty entries")
+		expect.MaxAllocs(t, func() { n = c.Expire() }, 0, "an Expire without an expired entry must not allocate")
+	})
+
 	t.Run("Len", func(t *testing.T) {
 		c := benchCache(t, keys[:benchCapacity])
 		var n int
@@ -767,6 +935,44 @@ func BenchmarkCache(b *testing.B) {
 			}
 
 			assert.Equal(b, c.Len(), benchCapacity, "the benchmark must measure Sets that evict")
+		})
+
+		b.Run("of a key with an expiry time that replaces its entry", func(b *testing.B) {
+			c := benchCache(b, keys[:benchCapacity])
+			expires := origin.Add(time.Hour)
+
+			bc := bench.Start(b).MaxAllocs(1)
+			defer bc.End()
+
+			for bc.Loop() {
+				c.Set("k500", 1, expires)
+			}
+
+			assert.Equal(b, c.Len(), benchCapacity, "the benchmark must measure a full cache")
+		})
+	})
+
+	b.Run("Expire", func(b *testing.B) {
+		b.Run("of eight expired entries", func(b *testing.B) {
+			clk := fake.New(origin)
+			c, err := cache.New(cache.Config[string, int]{Clock: clk, Capacity: benchCapacity})
+			assert.NoError(b, err, "New must accept the configuration")
+			n := 0
+
+			bc := bench.Start(b).MaxAllocs(0)
+			defer bc.End()
+
+			for bc.Loop() {
+				bc.Excluding(func() {
+					for _, k := range keys[:8] {
+						c.Set(k, 1, clk.Time().Add(time.Nanosecond))
+					}
+					clk.Advance(time.Nanosecond)
+				})
+				n = c.Expire()
+			}
+
+			assert.Equal(b, n, 8, "the benchmark must measure the removal of eight entries")
 		})
 	})
 
@@ -920,4 +1126,66 @@ func stepCache(state keyValues, op history.Operation) []keyValues {
 	}
 
 	return nil
+}
+
+// expiryActions returns the actions of a machine over c, whose capacity
+// fits an entry of every key below workloadKeys, so no entry leaves it by
+// eviction. The actions are a Set without an expiry time or with one of 0
+// to 3 seconds after the clock, a Delete, an advance of clk by 0 to 2
+// seconds, and an Expire. They keep the expiry time of each key that c
+// contains, and the Expire checks its result against them. evicted counts
+// the calls of Evicted.
+func expiryActions(c *cache.Cache[int, int], clk *fake.Clock, evicted *int) []stateful.Action[struct{}] {
+	expires := map[int]time.Time{}
+
+	return []stateful.Action[struct{}]{
+		{
+			Name: opSet,
+			Input: func(pc *prop.Case, _ struct{}) any {
+				return [2]int{pc.Draw(prop.Integer(0, workloadKeys-1), "key"), pc.Draw(prop.Integer(0, 4), "seconds")}
+			},
+			Run: func(_ *prop.Case, _ int, in any) {
+				kv := in.([2]int)
+				var at time.Time
+				if kv[1] > 0 {
+					at = clk.Time().Add(time.Duration(kv[1]-1) * time.Second)
+				}
+				c.Set(kv[0], 1, at)
+				expires[kv[0]] = at
+			},
+		},
+		{
+			Name:  opDelete,
+			Input: func(pc *prop.Case, _ struct{}) any { return pc.Draw(prop.Integer(0, workloadKeys-1), "key") },
+			Run: func(_ *prop.Case, _ int, in any) {
+				c.Delete(in.(int))
+				delete(expires, in.(int))
+			},
+		},
+		{
+			Name:  opAdvance,
+			Input: func(pc *prop.Case, _ struct{}) any { return pc.Draw(prop.Integer(0, 2), "seconds") },
+			Run: func(_ *prop.Case, _ int, in any) {
+				seconds := in.(int)
+				clk.Advance(time.Duration(seconds) * time.Second)
+			},
+		},
+		{
+			Name: opExpire,
+			Run: func(pc *prop.Case, _ int, _ any) {
+				now, want := clk.Time(), 0
+				for k, at := range expires {
+					if !at.IsZero() && !now.Before(at) {
+						delete(expires, k)
+						want++
+					}
+				}
+				before := *evicted
+				assert.Equal(pc, c.Expire(), want, "Expire must remove each entry whose expiry time has passed")
+				assert.Equal(pc, *evicted-before, want, "Evicted must receive each entry that Expire removed")
+				assert.Equal(pc, c.Len(), len(expires),
+					"the cache must keep each entry whose expiry time has not passed")
+			},
+		},
+	}
 }

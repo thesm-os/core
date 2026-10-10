@@ -24,8 +24,8 @@ const removed = 1 << 62
 // The fields key, value, expires, hash and cost do not change once the
 // entry is in the index, so a lookup reads them without the lock: the
 // writer fills them before the atomic store that publishes the entry. The
-// fields prev, next and queue are read and written only by the holder of
-// the cache's lock. state and freq are atomic, and both lookups and the
+// fields prev, next, slot and queue are read and written only by the holder
+// of the cache's lock. state and freq are atomic, and both lookups and the
 // evictor change them.
 //
 // # Allocation contract
@@ -41,6 +41,10 @@ type entry[K comparable, V any] struct {
 	// prev links the entry to the next older entry of its queue, and next
 	// to the next newer one. Both are nil outside a queue.
 	prev, next *entry[K, V]
+
+	// slot is the position of the entry in the expiry heap of the cache,
+	// while the entry has an expiry time and is in the cache.
+	slot int
 
 	// hash is the hash of key under the cache's seed.
 	hash uint64

@@ -16,9 +16,9 @@ import (
 // and Evicted are optional. The zero Config is invalid, because it has no
 // Clock.
 type Config[K comparable, V any] struct {
-	// Clock reads the time against which entries expire. Set reads it once
-	// per call, and Get and Pin read it only for an entry with an expiry
-	// time. A test passes a fake clock and advances it.
+	// Clock reads the time against which entries expire. Set and Expire
+	// read it once per call, and Get and Pin read it only for an entry with
+	// an expiry time. A test passes a fake clock and advances it.
 	Clock clock.Clock
 
 	// Cost returns the cost of a value, such as the bytes that it
@@ -47,13 +47,15 @@ type Config[K comparable, V any] struct {
 // removal. It evicts with S3-FIFO, whose queues the package documentation
 // describes, and a lookup that finds its entry takes no lock.
 //
-// A Cache keeps three structures. A hash table of entries, the index,
+// A Cache keeps four structures. A hash table of entries, the index,
 // serves lookups without a lock. A small queue and a main queue order the
 // entries for eviction. A ghost remembers the keys that the small queue
-// evicted. A Set allocates a new entry and links it into the index and a
-// queue, and the evictor removes entries from the oldest end of a queue.
-// No code reuses an entry, so a lookup that loaded an entry which has
-// since left reads the key and the value of that entry.
+// evicted. A heap orders the entries that have an expiry time for
+// [Cache.Expire]. A Set allocates a new entry and links it into the index
+// and a queue, and into the heap when the entry has an expiry time. The
+// evictor removes entries from the oldest end of a queue. No code reuses
+// an entry, so a lookup that loaded an entry which has since left reads
+// the key and the value of that entry.
 //
 // The zero Cache is not usable. [New] returns a Cache.
 //
@@ -61,17 +63,17 @@ type Config[K comparable, V any] struct {
 //
 // Safe for concurrent use. Get and Pin take no lock, and a hit on an entry
 // that already counts three hits writes nothing. One mutex per Cache
-// serializes Set, Delete, and a Get or Pin that finds an expired entry.
-// Len and Cost read atomic counters, and take no lock.
+// serializes Set, Delete, Expire, and a Get or Pin that finds an expired
+// entry. Len and Cost read atomic counters, and take no lock.
 //
 // # Allocation contract
 //
 // Get, Pin, [Pinned.Unpin], Delete, Len and Cost do not allocate, for a key
 // whose hash [maphash.Comparable] computes without an allocation: a string,
 // or a value without pointers. Set allocates the entry, and the memory of
-// the index and of the ghost when they grow, so a cache in a steady state
-// allocates once per Set. A Set that evicts more than eight entries
-// allocates the list of their callbacks.
+// the index, the ghost and the heap when they grow, so a cache in a steady
+// state allocates once per Set. A Set that evicts more than eight entries
+// allocates the list of their callbacks. Expire does not allocate.
 type Cache[K comparable, V any] struct {
 	// index is the current index. A writer replaces it when it grows.
 	index atomic.Pointer[index[K, V]]
@@ -83,6 +85,10 @@ type Cache[K comparable, V any] struct {
 	// tomb marks a slot of the index whose entry has left the cache. It is
 	// an entry of its own, so it equals no entry of the cache.
 	tomb *entry[K, V]
+
+	// expiry orders the entries that have an expiry time by that time.
+	// Only a writer that has locked mu reads or writes it.
+	expiry expiry[K, V]
 
 	// small, main and ghost are the queues and the ghost of S3-FIFO. Only
 	// a writer that has locked mu reads or writes them.
@@ -204,12 +210,17 @@ func (c *Cache[K, V]) Pin(k K) (Pinned[K, V], bool) {
 // time at or before the clock's time stores an entry that the next Get
 // misses.
 //
+// An entry with an expiry time also joins the heap that [Cache.Expire]
+// reads. The heap adds an entry, and removes an entry that has an expiry
+// time, in O(log n) steps for n entries with an expiry time.
+//
 // Set cannot fail.
 //
 // # Allocation contract
 //
-// One allocation for the entry. The index and the ghost allocate when they
-// grow, and the list of callbacks when Set evicts more than eight entries.
+// One allocation for the entry. The index, the ghost and the heap allocate
+// when they grow, and the list of callbacks when Set evicts more than eight
+// entries.
 func (c *Cache[K, V]) Set(k K, v V, expires time.Time) {
 	cost := int64(1)
 	if c.cost != nil {
@@ -276,10 +287,60 @@ func (c *Cache[K, V]) Delete(k K) bool {
 	return true
 }
 
-// Len returns the number of entries in the cache, expired entries that no
-// lookup has found yet included, and pinned entries that have left
-// excluded. It reads an atomic counter, so under concurrent writers its
-// result may already be out of date.
+// Expire removes every expired entry and returns the number of entries
+// that it removed. Evicted receives each entry after Expire releases its
+// lock. Evicted receives a pinned entry at its last Unpin instead. The cache
+// does not start a goroutine for expiry. Its owner calls Expire from a
+// timer of its own.
+//
+// Expire reads the clock once and removes the entries in the order of
+// their expiry times. It removes at most eight entries each time it locks
+// the cache. It passes those entries to Evicted before it locks the cache
+// again, so a concurrent Set waits for at most eight removals. Each removal
+// takes O(log n) steps for n entries with an expiry time.
+//
+// Expire cannot fail.
+//
+// # Allocation contract
+//
+// Zero alloc, apart from what Evicted allocates.
+func (c *Cache[K, V]) Expire() int {
+	now := c.clock.Time()
+	removed := 0
+
+	for {
+		var gone victims[K, V]
+
+		c.mu.Lock()
+
+		n := 0
+		for ; n < len(gone.few); n++ {
+			e := c.expiry.first()
+			if e == nil || !e.expired(now) {
+				break
+			}
+
+			c.detach(e)
+			if e.leave() {
+				gone.add(e)
+			}
+		}
+
+		c.mu.Unlock()
+
+		gone.notify(c.evicted)
+		removed += n
+
+		if n < len(gone.few) {
+			return removed
+		}
+	}
+}
+
+// Len returns the number of entries in the cache. It counts the expired
+// entries that neither a lookup nor Expire has removed yet, and does not
+// count the pinned entries that have left. It reads an atomic counter, so
+// under concurrent writers its result may already be out of date.
 //
 // # Allocation contract
 //
@@ -352,6 +413,10 @@ func (c *Cache[K, V]) attach(e *entry[K, V]) {
 		c.small.push(e)
 	}
 
+	if !e.expires.IsZero() {
+		c.expiry.push(e)
+	}
+
 	c.total.Add(e.cost)
 	c.entries.Add(1)
 }
@@ -367,6 +432,10 @@ func (c *Cache[K, V]) detach(e *entry[K, V]) {
 		c.small.remove(e)
 	} else {
 		c.main.remove(e)
+	}
+
+	if !e.expires.IsZero() {
+		c.expiry.remove(e)
 	}
 
 	c.total.Add(-e.cost)

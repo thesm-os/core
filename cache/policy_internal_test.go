@@ -325,9 +325,9 @@ func TestExamine(t *testing.T) {
 		t.Run("removes an expired entry that was hit", func(t *testing.T) {
 			t.Parallel()
 			c := policyCache(t, 10)
-			es := attachNew(c, "a")
-			es[0].expires = origin
-			es[0].freq.Store(3)
+			e := &entry[string, int]{key: "a", cost: 1, expires: origin}
+			c.attach(e)
+			e.freq.Store(3)
 			var gone victims[string, int]
 			c.examine(origin, nil, &gone, false)
 			assert.Equal(t, keysOf(&gone), []string{"a"}, "an expired entry must leave whatever its hits")

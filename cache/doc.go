@@ -42,8 +42,15 @@
 //
 // An entry expires at the time that Set gives it, read through
 // [Config.Clock], and the zero time never expires. An expired entry is a
-// miss, and it leaves the cache at the next Get or Pin that finds it, or
-// when the evictor examines it.
+// miss, and it leaves the cache at the next Get or Pin that finds it, when
+// the evictor examines it, or at the next [Cache.Expire].
+//
+// Expire removes every expired entry, in the order of the expiry times. A
+// heap orders the entries that have an expiry time, so Expire takes
+// O(log n) steps per removed entry for n such entries, and does not visit
+// the other entries. The cache does not start a goroutine for expiry, so
+// its owner calls Expire from a timer of its own, such as
+// [go.thesmos.sh/core/task.Every].
 //
 // # Callbacks
 //
@@ -55,16 +62,18 @@
 //
 // # Concurrency
 //
-// A Cache is safe for concurrent use. Get and Pin take no lock. Set and
-// Delete take one lock per Cache, and so does a Get or Pin that removes an
-// expired entry.
+// A Cache is safe for concurrent use. Get and Pin take no lock. Set,
+// Delete and Expire take one lock per Cache, and so does a Get or Pin that
+// removes an expired entry. Expire releases the lock after each eight
+// entries that it removes.
 //
 // # Allocation contract
 //
 // Get, Pin, [Pinned.Unpin], Delete, Len and Cost do not allocate for a key
 // whose hash [hash/maphash.Comparable] computes without an allocation,
 // such as a string or a value without pointers. Set allocates the entry,
-// and the memory of the index and of the ghost when they grow.
+// and the memory of the index, the ghost and the expiry heap when they
+// grow. Expire does not allocate.
 //
 // # Errors
 //
