@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.0
+
+### Minor Changes
+
+- f00d9e1: Add `resilience.Retrier.Start` and `Retry` to decide each retry of a call without the wait of `Do`.
+
 ## 0.8.0
 
 ### Minor Changes
