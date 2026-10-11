@@ -30,6 +30,11 @@ const (
 	MaxSize = Size256
 )
 
+// textPrefix is the prefix of the text that [ID.String] and the String
+// method of each fixed-size type return. No canonical encoding of an
+// identifier starts with it.
+const textPrefix = "id:"
+
 // ID is an identifier of 128, 160 or 256 bits in one value type.
 // [ID.Size] returns the length of the active prefix, and [ID.Bytes]
 // returns the prefix.
@@ -189,7 +194,20 @@ func (i ID) Compare(other ID) int {
 //
 // Allocates the result string.
 func (i ID) String() string {
-	return "id:" + hex.EncodeToString(i.bytes[:i.size])
+	return text(i.bytes[:i.size])
+}
+
+// text returns "id:" followed by b in hexadecimal. [ID.String] and the String
+// method of each fixed-size type return it. b has at most [MaxSize] bytes, so
+// text builds the text in an array on its stack and allocates only the
+// returned string.
+func text(b []byte) string {
+	var buf [len(textPrefix) + 2*MaxSize]byte
+
+	n := copy(buf[:], textPrefix)
+	n += hex.Encode(buf[n:], b)
+
+	return string(buf[:n])
 }
 
 // idSize returns the size of the ID whose binary form is n bytes long: 0

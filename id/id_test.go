@@ -354,9 +354,13 @@ func TestIDAllocs(t *testing.T) {
 	})
 
 	t.Run("String", func(t *testing.T) {
-		var s string
-		expect.MaxAllocs(t, func() { s = a.String() }, 1, "String must allocate only the result")
-		assert.Length(t, s, len("id:")+2*id.Size128, "the test must measure the string of the ID")
+		for _, w := range widths {
+			t.Run(w.name, func(t *testing.T) {
+				var s string
+				expect.MaxAllocs(t, func() { s = w.a.String() }, 1, "String must allocate only the result")
+				assert.Length(t, s, len("id:")+2*w.a.Size(), "the test must measure the string of the ID")
+			})
+		}
 	})
 }
 
@@ -450,17 +454,20 @@ func BenchmarkID(b *testing.B) {
 	})
 
 	b.Run("String", func(b *testing.B) {
-		a := id.New128(fill128(0x42))
-		var s string
+		for _, w := range widths {
+			b.Run(w.name, func(b *testing.B) {
+				var s string
 
-		c := bench.Start(b).MaxAllocs(1)
-		defer c.End()
+				c := bench.Start(b).MaxAllocs(1)
+				defer c.End()
 
-		for c.Loop() {
-			s = a.String()
+				for c.Loop() {
+					s = w.a.String()
+				}
+
+				assert.Length(b, s, len("id:")+2*w.a.Size(), "the benchmark must measure the string of the ID")
+			})
 		}
-
-		assert.Length(b, s, len("id:")+2*id.Size128, "the benchmark must measure the string of the ID")
 	})
 }
 
