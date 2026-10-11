@@ -124,6 +124,7 @@ Start from [`docs/templates/RFC.md`](../templates/RFC.md).
 | [0054](0054-checkpoint-witnesses.md) | Checkpoint Witnesses | Accepted |
 | [0055](0055-party-markers-in-signature-policies.md) | Party Markers in Signature Policies | Accepted |
 | [0056](0056-proofs-from-cached-node-tiles.md) | Proofs from Cached Node Tiles | Accepted |
+| [0057](0057-fixed-size-identifiers.md) | Fixed-Size Identifiers | Accepted |
 
 ## Canonical first RFC
 
