@@ -30,30 +30,23 @@ const (
 	benchIndex = 40000
 )
 
-// sumCounter is SHA-256 whose streams count the digests that they return.
+// sumCounter is SHA-256 that counts its node hashes in sums: the calls of
+// Hash over data that is not empty. The package hashes each node with one
+// call of Hash, and calls Hash over no data only to learn the digest size.
 type sumCounter struct {
 	coresha256.Hasher
 
 	sums *int
 }
 
-// NewStream returns a SHA-256 stream that counts its sums in c.
-func (c sumCounter) NewStream() crypto.Stream {
-	return countedStream{Stream: c.Hasher.NewStream(), sums: c.sums}
-}
+// Hash counts a call over data that is not empty, and returns SHA-256 of
+// data.
+func (c sumCounter) Hash(data []byte) crypto.Digest {
+	if len(data) > 0 {
+		*c.sums++
+	}
 
-// countedStream is a crypto.Stream that counts its calls to Sum.
-type countedStream struct {
-	crypto.Stream
-
-	sums *int
-}
-
-// Sum counts the call and returns the sum of the embedded Stream.
-func (s countedStream) Sum() crypto.Digest {
-	*s.sums++
-
-	return s.Stream.Sum()
+	return c.Hasher.Hash(data)
 }
 
 func TestVerify(t *testing.T) {

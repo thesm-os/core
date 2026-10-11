@@ -34,7 +34,8 @@ type Builder struct {
 	// 256 hashes of tree level 8L.
 	edge [tileLevels][]byte
 
-	// scratch has room for one full tile, for folding tiles into roots.
+	// scratch has room for one full tile and the input of one node hash,
+	// for folding tiles into roots.
 	scratch []byte
 
 	root crypto.Digest
@@ -63,13 +64,14 @@ func NewBuilder(ctx context.Context, h crypto.Hasher, size uint64, r TileReader)
 	empty := h.Hash(nil)
 	ds := empty.Size()
 
-	// state is one tile of scratch, then room for the widest partial tile
-	// at each level. Only the Builder writes an edge, and never more than
-	// its room.
-	state := make([]byte, (tileLevels*maxPartialWidth+tileWidth)*ds)
-	b := &Builder{h: h, root: empty, size: size, digestSize: ds, scratch: state[:tileWidth*ds]}
+	// state is the scratch of one tile and one node hash, then room for the
+	// widest partial tile at each level. Only the Builder writes an edge,
+	// and never more than its room.
+	scratch := tileWidth*ds + nodeRoom
+	state := make([]byte, scratch+tileLevels*maxPartialWidth*ds)
+	b := &Builder{h: h, root: empty, size: size, digestSize: ds, scratch: state[:scratch]}
 	for level := range b.edge {
-		off := (tileWidth + level*maxPartialWidth) * ds
+		off := scratch + level*maxPartialWidth*ds
 		b.edge[level] = state[off:off]
 	}
 
@@ -101,9 +103,7 @@ func NewBuilder(ctx context.Context, h crypto.Hasher, size uint64, r TileReader)
 		b.edge[t.Level] = append(b.edge[t.Level][:0], dst[i]...)
 	}
 
-	s := h.NewStream()
-	b.root = rootOf(s, ds, &b.edge, b.scratch)
-	s.Close()
+	b.root = rootOf(h, ds, &b.edge, b.scratch)
 
 	return b, nil
 }
@@ -145,8 +145,6 @@ func (b *Builder) Integrate(leaves []crypto.Digest, u *Update) error {
 	ds := b.digestSize
 	tileBytes := tileWidth * ds
 	in := u.carry[0][:0]
-	s := b.h.NewStream()
-	defer s.Close()
 
 	for level := range tileLevels {
 		if level > 0 && len(in) == 0 {
@@ -174,7 +172,7 @@ func (b *Builder) Integrate(leaves []crypto.Digest, u *Update) error {
 				tile: Tile{Level: uint8(level), Index: first + uint64(i), Width: tileWidth},
 				off:  off,
 			})
-			d := subtreeRoot(s, ds, u.data.Bytes()[off:off+tileBytes], b.scratch)
+			d := subtreeRoot(b.h, ds, u.data.Bytes()[off:off+tileBytes], b.scratch)
 			out = append(out, d.Bytes()...)
 		}
 
@@ -204,7 +202,7 @@ func (b *Builder) Integrate(leaves []crypto.Digest, u *Update) error {
 	}
 
 	u.size = b.size + uint64(len(leaves))
-	u.root = rootOf(s, ds, &edge, b.scratch)
+	u.root = rootOf(b.h, ds, &edge, b.scratch)
 
 	return nil
 }
@@ -234,9 +232,9 @@ func (b *Builder) Commit(u *Update) error {
 }
 
 // rootOf returns the root of the tree whose right edge is edge, the
-// partial tile at each level, hashing through s. The tree has at least
-// one leaf.
-func rootOf(s crypto.Stream, ds int, edge *[tileLevels][]byte, scratch []byte) crypto.Digest {
+// partial tile at each level, hashing with h. The tree has at least one
+// leaf. scratch has room for half a tile and the input of one node hash.
+func rootOf(h crypto.Hasher, ds int, edge *[tileLevels][]byte, scratch []byte) crypto.Digest {
 	// The perfect subtrees of the tree, largest first: the bits of the
 	// size, read from the partial tile of the highest level down.
 	var stack [64]crypto.Digest
@@ -251,7 +249,7 @@ func rootOf(s crypto.Stream, ds int, edge *[tileLevels][]byte, scratch []byte) c
 				continue
 			}
 			m := (1 << bit) * ds
-			stack[n] = subtreeRoot(s, ds, p[off:off+m], scratch)
+			stack[n] = subtreeRoot(h, ds, p[off:off+m], scratch)
 			n++
 			off += m
 		}
@@ -260,7 +258,7 @@ func rootOf(s crypto.Stream, ds int, edge *[tileLevels][]byte, scratch []byte) c
 	//nolint:gosec // G602: the tree has a leaf, so n is at least one
 	root := stack[n-1]
 	for k := n - 2; k >= 0; k-- {
-		root = nodeHash(s, scratch, stack[k], root)
+		root = nodeHash(h, scratch, stack[k], root)
 	}
 
 	return root

@@ -236,8 +236,6 @@ func Root(h crypto.Hasher, leaves []crypto.Digest) crypto.Digest {
 
 	scratch := scratchPool.Get()
 	defer scratchPool.Put(scratch)
-	s := h.NewStream()
-	defer s.Close()
 
 	// stack lists the roots of the perfect subtrees of the leaves seen so
 	// far, largest first. A tree of up to 2^64 leaves has at most 64.
@@ -249,14 +247,14 @@ func Root(h crypto.Hasher, leaves []crypto.Digest) crypto.Digest {
 		n++
 		for j := uint64(i); j&1 == 1; j >>= 1 {
 			n--
-			stack[n-1] = nodeHash(s, *scratch, stack[n-1], stack[n])
+			stack[n-1] = nodeHash(h, *scratch, stack[n-1], stack[n])
 		}
 	}
 
 	//nolint:gosec // G602: leaves is not empty, so n is at least one
 	root := stack[n-1]
 	for k := n - 2; k >= 0; k-- {
-		root = nodeHash(s, *scratch, stack[k], root)
+		root = nodeHash(h, *scratch, stack[k], root)
 	}
 
 	return root

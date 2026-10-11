@@ -208,10 +208,10 @@ type prover struct {
 	// mem contains the data of every tile.
 	mem arena.Arena
 
-	// scratch folds the hashes of one perfect subtree. A subtree of a
-	// proof covers at most half a tile, 128 hashes of at most
-	// crypto.MaxDigestSize, 64 bytes.
-	scratch [8192]byte
+	// scratch folds the hashes of one perfect subtree, and has room for
+	// the input of one node hash. A subtree of a proof covers at most half
+	// a tile, 128 hashes of at most crypto.MaxDigestSize, 64 bytes.
+	scratch [tileWidth/2*crypto.MaxDigestSize + nodeRoom]byte
 }
 
 // nodeRef locates the hashes under one perfect subtree in a tile.
@@ -291,19 +291,16 @@ func prove(
 		}
 	}
 
-	s := h.NewStream()
-	defer s.Close()
-
 	start := 0
 	for _, end := range p.ends {
 		var root crypto.Digest
 		for k := end - 1; k >= start; k-- {
 			n := p.nodes[k]
-			d := subtreeRoot(s, ds, p.dst[n.tile][n.off*ds:(n.off+n.count)*ds], scratch)
+			d := subtreeRoot(h, ds, p.dst[n.tile][n.off*ds:(n.off+n.count)*ds], scratch)
 			if k == end-1 {
 				root = d
 			} else {
-				root = nodeHash(s, scratch, d, root)
+				root = nodeHash(h, scratch, d, root)
 			}
 		}
 		dst = append(dst, root)

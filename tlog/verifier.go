@@ -57,11 +57,6 @@ type TileVerifier struct {
 	// read.
 	dst [2 * tileLevels][]byte
 
-	root crypto.Digest
-
-	// edgeOK reports whether edgeData recomputes root.
-	edgeOK bool
-
 	size uint64
 
 	// ds is the digest size of h.
@@ -80,9 +75,14 @@ type TileVerifier struct {
 	// the eight partial tiles of the edge and the seven full tiles of a path.
 	read [2 * tileLevels]Tile
 
+	root crypto.Digest
+
 	// scratch has room to fold a full tile of the largest digest into its
-	// root.
-	scratch [tileWidth * crypto.MaxDigestSize]byte
+	// root, and for the input of one node hash.
+	scratch [tileWidth*crypto.MaxDigestSize + nodeRoom]byte
+
+	// edgeOK reports whether edgeData recomputes root.
+	edgeOK bool
 }
 
 // Reset starts the checks of the tree of size leaves with root under h, whose
@@ -174,7 +174,6 @@ func (v *TileVerifier) load(ctx context.Context, index uint64, full *[tileLevels
 		}
 	}
 
-	var s crypto.Stream
 	if n > 0 {
 		if err := v.r.ReadTiles(ctx, v.read[:n], v.dst[:n]); err != nil {
 			return nil, err
@@ -186,13 +185,10 @@ func (v *TileVerifier) load(ctx context.Context, index uint64, full *[tileLevels
 			}
 			*v.slot[i] = v.dst[i]
 		}
-
-		s = v.h.NewStream()
-		defer s.Close()
 	}
 
 	if !v.edgeOK {
-		if !rootOf(s, v.ds, &v.edgeData, v.scratch[:]).Equal(v.root) {
+		if !rootOf(v.h, v.ds, &v.edgeData, v.scratch[:]).Equal(v.root) {
 			return nil, ErrProof
 		}
 		v.edgeOK = true
@@ -203,7 +199,7 @@ func (v *TileVerifier) load(ctx context.Context, index uint64, full *[tileLevels
 		data := v.pathData[level]
 		if full[level] != v.path[level] {
 			at := int(index>>(tileHeight*uint(level+1))%tileWidth) * v.ds
-			if !bytes.Equal(subtreeRoot(s, v.ds, data, v.scratch[:]).Bytes(), above[at:at+v.ds]) {
+			if !bytes.Equal(subtreeRoot(v.h, v.ds, data, v.scratch[:]).Bytes(), above[at:at+v.ds]) {
 				return nil, ErrProof
 			}
 			v.path[level] = full[level]

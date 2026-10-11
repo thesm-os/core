@@ -93,33 +93,6 @@ func (r *roomTiles) ReadTiles(ctx context.Context, tiles []tlog.Tile, dst [][]by
 	return r.m.ReadTiles(ctx, tiles, dst)
 }
 
-// summingHasher is SHA-256 whose streams count the hashes that they finish in
-// sums.
-type summingHasher struct {
-	coresha256.Hasher
-
-	sums *int
-}
-
-// NewStream returns a SHA-256 stream that counts its sums in h.sums.
-func (h summingHasher) NewStream() crypto.Stream {
-	return summingStream{Stream: h.Hasher.NewStream(), sums: h.sums}
-}
-
-// summingStream is a stream that counts its sums in sums.
-type summingStream struct {
-	crypto.Stream
-
-	sums *int
-}
-
-// Sum counts the hash and returns the sum of the stream.
-func (s summingStream) Sum() crypto.Digest {
-	*s.sums++
-
-	return s.Stream.Sum()
-}
-
 func TestVerifier(t *testing.T) {
 	t.Parallel()
 
@@ -298,7 +271,7 @@ func TestVerifier(t *testing.T) {
 			for _, tr := range trees {
 				sums := 0
 				var v tlog.TileVerifier
-				v.Reset(summingHasher{sums: &sums}, &memTiles{data: tr.tiles.data}, tr.size, tr.root)
+				v.Reset(sumCounter{sums: &sums}, &memTiles{data: tr.tiles.data}, tr.size, tr.root)
 				assert.Total(t, func(i uint64) error { return v.Verify(t.Context(), i, tr.all[i]) }, indexes(tr.size),
 					"Verify must accept every leaf of the tree")
 				expect.Equal(t, sums, int(tr.size)-1,
@@ -320,7 +293,7 @@ func TestVerifier(t *testing.T) {
 			t.Parallel()
 			sums := 0
 			var v tlog.TileVerifier
-			v.Reset(summingHasher{sums: &sums}, &memTiles{data: largeTiles.data}, largeSize, largeRoot)
+			v.Reset(sumCounter{sums: &sums}, &memTiles{data: largeTiles.data}, largeSize, largeRoot)
 			assert.NoError(t, v.Verify(t.Context(), 0, large[0]), "Verify must accept the first leaf")
 			hashed := sums
 			assert.NoError(t, v.Verify(t.Context(), 1, large[1]), "Verify must accept the second leaf")
@@ -348,7 +321,7 @@ func TestVerifier(t *testing.T) {
 			sums := 0
 			m := &memTiles{data: largeTiles.data}
 			var v tlog.TileVerifier
-			v.Reset(summingHasher{sums: &sums}, m, largeSize, largeRoot)
+			v.Reset(sumCounter{sums: &sums}, m, largeSize, largeRoot)
 			assert.NoError(t, v.Verify(t.Context(), farIndex, large[farIndex]), "Verify must accept the far leaf")
 			for _, i := range []uint64{0, farIndex, 0, farIndex} {
 				hashed := sums

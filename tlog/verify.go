@@ -24,8 +24,6 @@ func VerifyInclusion(h crypto.Hasher, index, size uint64, leaf, root crypto.Dige
 
 	scratch := scratchPool.Get()
 	defer scratchPool.Put(scratch)
-	s := h.NewStream()
-	defer s.Close()
 
 	fn, sn, r := index, size-1, leaf
 	for _, p := range proof {
@@ -34,12 +32,12 @@ func VerifyInclusion(h crypto.Hasher, index, size uint64, leaf, root crypto.Dige
 		}
 
 		if fn&1 == 1 || fn == sn {
-			r = nodeHash(s, *scratch, p, r)
+			r = nodeHash(h, *scratch, p, r)
 			// fn equals sn here and sn is not zero, so the shift ends at
 			// a set bit.
 			fn, sn = shiftUntil(fn, sn, 1)
 		} else {
-			r = nodeHash(s, *scratch, r, p)
+			r = nodeHash(h, *scratch, r, p)
 		}
 
 		fn >>= 1
@@ -96,8 +94,6 @@ func VerifyConsistency(
 
 	scratch := scratchPool.Get()
 	defer scratchPool.Put(scratch)
-	s := h.NewStream()
-	defer s.Close()
 
 	for _, c := range rest {
 		if sn == 0 {
@@ -105,11 +101,11 @@ func VerifyConsistency(
 		}
 
 		if fn&1 == 1 || fn == sn {
-			fr = nodeHash(s, *scratch, c, fr)
-			sr = nodeHash(s, *scratch, c, sr)
+			fr = nodeHash(h, *scratch, c, fr)
+			sr = nodeHash(h, *scratch, c, sr)
 			fn, sn = shiftUntil(fn, sn, 1)
 		} else {
-			sr = nodeHash(s, *scratch, sr, c)
+			sr = nodeHash(h, *scratch, sr, c)
 		}
 
 		fn >>= 1

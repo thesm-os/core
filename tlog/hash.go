@@ -17,15 +17,16 @@ const (
 	nodeRole crypto.Role = 0x01
 )
 
-// nodePrefix is the node prefix in static memory, so writing it to a
-// Stream does not allocate.
-var nodePrefix = [1]byte{byte(nodeRole)}
+// nodeRoom is the room that the input of one node hash takes in scratch:
+// the node prefix and two digests of the largest size.
+const nodeRoom = 1 + 2*crypto.MaxDigestSize
 
-// scratchPool supplies the buffer that [NodeHash] writes two digests
-// into. A digest passed to a Stream directly would escape to the heap.
-// The size is computed in the function body, where coverage counts it.
+// scratchPool supplies the buffer that a node hash writes its input into,
+// so the hasher hashes the node with one call to Hash. A buffer on the
+// stack would escape to the heap through the Hasher interface. The size is
+// computed in the function body, where coverage counts it.
 var scratchPool = pool.NewPool(func() *[]byte {
-	b := make([]byte, 2*crypto.MaxDigestSize)
+	b := make([]byte, nodeRoom)
 
 	return &b
 })
@@ -45,49 +46,50 @@ func LeafHash(h crypto.Hasher, data []byte) crypto.Digest {
 // HASH(0x01 || left || right).
 //
 // RFC 9162 prefixes a node with 0x01, which falls in the unary half of
-// [crypto.Role], so CombineTagged cannot produce it. NodeHash writes left
-// and right into pooled scratch and calls h.HashTagged with role 0x01
-// over it, which gives the RFC's bytes.
+// [crypto.Role], so CombineTagged cannot produce it. NodeHash writes the
+// prefix, left and right into pooled scratch and hashes them with h.Hash,
+// which gives the RFC's bytes in one call.
 //
 // # Allocation contract
 //
 // Zero alloc on the warm path. The scratch comes from a package pool.
 func NodeHash(h crypto.Hasher, left, right crypto.Digest) crypto.Digest {
 	scratch := scratchPool.Get()
-	n := copy(*scratch, left.Bytes())
-	n += copy((*scratch)[n:], right.Bytes())
-	d := h.HashTagged(nodeRole, (*scratch)[:n])
+	d := nodeHash(h, *scratch, left, right)
 	scratchPool.Put(scratch)
 
 	return d
 }
 
-// nodeHash returns the node hash of left and right through s, which the
-// caller borrows once for every node it hashes. scratch has room for the
-// two digests. A digest written to s directly would escape to the heap.
-func nodeHash(s crypto.Stream, scratch []byte, left, right crypto.Digest) crypto.Digest {
-	n := copy(scratch, left.Bytes())
+// nodeHash writes the node prefix and the digests left and right into
+// scratch, and returns their hash from one call to h.Hash. scratch has
+// nodeRoom bytes.
+func nodeHash(h crypto.Hasher, scratch []byte, left, right crypto.Digest) crypto.Digest {
+	scratch[0] = byte(nodeRole)
+	n := 1 + copy(scratch[1:], left.Bytes())
 	n += copy(scratch[n:], right.Bytes())
 
-	return pairHash(s, scratch[:n])
+	return h.Hash(scratch[:n])
 }
 
-// pairHash returns HASH(0x01 || pair) through s, for pair the two
-// children of a node written side by side.
-func pairHash(s crypto.Stream, pair []byte) crypto.Digest {
-	s.Reset()
-	_, _ = s.Write(nodePrefix[:])
-	_, _ = s.Write(pair)
+// pairHash returns HASH(0x01 || pair), for pair the two children of a node
+// written side by side. It writes the node prefix and pair into buf, which
+// has room for both, and hashes them with one call to h.Hash.
+func pairHash(h crypto.Hasher, buf, pair []byte) crypto.Digest {
+	buf[0] = byte(nodeRole)
+	n := 1 + copy(buf[1:], pair)
 
-	return s.Sum()
+	return h.Hash(buf[:n])
 }
 
 // subtreeRoot returns the root of the perfect subtree whose leaves are
 // the hashes in data, each size bytes long. The number of hashes is a
-// power of two. subtreeRoot folds in scratch, which has room for at
-// least len(data) bytes, and hashes through s.
-func subtreeRoot(s crypto.Stream, size int, data, scratch []byte) crypto.Digest {
+// power of two. subtreeRoot folds in scratch, which has room for
+// len(data) + nodeRoom bytes: the hashes of the fold, then the input of
+// one node hash.
+func subtreeRoot(h crypto.Hasher, size int, data, scratch []byte) crypto.Digest {
 	copy(scratch, data)
+	buf := scratch[len(data):]
 
 	// A power of two of hashes halves to one in as many passes as its
 	// trailing zero bits, eight for a full tile. Each pass halves count and
@@ -96,7 +98,7 @@ func subtreeRoot(s crypto.Stream, size int, data, scratch []byte) crypto.Digest 
 	for range bits.TrailingZeros(uint(count)) {
 		count /= 2
 		for j := range count {
-			d := pairHash(s, scratch[2*j*size:(2*j+2)*size])
+			d := pairHash(h, buf, scratch[2*j*size:(2*j+2)*size])
 			copy(scratch[j*size:], d.Bytes())
 		}
 	}

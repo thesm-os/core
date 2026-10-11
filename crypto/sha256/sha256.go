@@ -24,6 +24,12 @@ var streamPool = pool.NewPool(func() *stream {
 // [crypto.IDSize].
 var id = crypto.ID{'s', 'h', 'a', '2', '5', '6', '/', 'v', '1'}
 
+// shortData is the longest data that [Hasher.HashTagged] copies into an
+// array on its stack, with the role byte, and hashes in one call to
+// [sha256.Sum256]. It is the input of a Merkle node: two digests of the
+// largest size.
+const shortData = 2 * crypto.MaxDigestSize
+
 // Hasher implements [crypto.Hasher] using [crypto/sha256].
 //
 // The zero value is usable. Stateless and safe for concurrent
@@ -113,11 +119,17 @@ func rolePrefix(r crypto.Role) []byte {
 // to make unconstructible. Empty data is legal and yields
 // SHA-256 of the single role byte.
 //
+// Data of up to 128 bytes, such as a leaf of two digests, is copied with
+// the role byte into an array on the stack and hashed with
+// [sha256.Sum256], as CombineTagged hashes its operands. Longer data is
+// written through a [crypto.Stream] from the package pool.
+//
 // # Allocation contract
 //
-// Zero alloc on the warm path: the [crypto.Stream] is borrowed from
-// the package pool and returned before HashTagged returns, and the
-// role byte is sliced from static memory. A cold-path caller (first
+// Zero alloc on the warm path: data of up to 128 bytes never reaches the
+// pool, and the [crypto.Stream] of longer data is borrowed from the
+// package pool and returned before HashTagged returns, with the role byte
+// sliced from static memory. A cold-path caller of longer data (first
 // call after process start, or after GC pool eviction) pays the one
 // Stream allocation [Hasher.NewStream] documents.
 func (h Hasher) HashTagged(r crypto.Role, data []byte) crypto.Digest {
@@ -129,6 +141,14 @@ func (h Hasher) HashTagged(r crypto.Role, data []byte) crypto.Digest {
 			"crypto/sha256: HashTagged requires a unary role (high bit clear), got %#02x",
 			byte(r),
 		))
+	}
+
+	if len(data) <= shortData {
+		var buf [1 + shortData]byte
+		buf[0] = byte(r)
+		n := 1 + copy(buf[1:], data)
+
+		return crypto.NewDigest256(sha256.Sum256(buf[:n]))
 	}
 
 	s := h.NewStream()

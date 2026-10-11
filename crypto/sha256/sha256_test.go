@@ -4,9 +4,11 @@
 package sha256_test
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"hash"
+	"runtime"
 	"slices"
 	"strconv"
 	"testing"
@@ -198,6 +200,35 @@ func TestHasher(t *testing.T) {
 				"the crafted leaf must match its recorded digest")
 		})
 
+		// HashTagged hashes data of up to 128 bytes from an array on its
+		// stack, and longer data through a stream.
+		boundary := []struct {
+			name string
+			give int
+		}{
+			{name: "returns SHA-256 of the role byte and 128 bytes of data", give: 128},
+			{name: "returns SHA-256 of the role byte and 129 bytes of data", give: 129},
+		}
+		for _, tt := range boundary {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				data := bytes.Repeat([]byte{0xa5}, tt.give)
+				want := sha256.Sum256(append([]byte{byte(entryLeaf)}, data...))
+				assert.Equal(t, h.HashTagged(entryLeaf, data).Bytes(), want[:],
+					"HashTagged must hash the role byte followed by data")
+			})
+		}
+
+		t.Run("returns SHA-256 of the role byte and data of any length", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "HashTagged must hash the role byte followed by data", func(c *prop.Case) {
+				data := c.Draw(prop.Bytes(prop.MaxSize(300)), "data")
+				want := sha256.Sum256(append([]byte{byte(entryLeaf)}, data...))
+				assert.Equal(c, h.HashTagged(entryLeaf, data).Bytes(), want[:],
+					"HashTagged must hash the role byte followed by data")
+			})
+		})
+
 		t.Run("returns the digest of one call to goroutines that hash at once", func(t *testing.T) {
 			t.Parallel()
 			outcomes := history.Concurrently(goroutines, 10*time.Second, func(client int) (any, error) {
@@ -288,6 +319,22 @@ func TestHasherAllocs(t *testing.T) {
 			expect.MaxAllocs(t, fn, 0, name+" must not allocate on the warm path")
 		})
 	}
+
+	// The pool of streams is empty after the second collection, so a call
+	// that takes a stream allocates a new one.
+	t.Run("HashTagged/of 128 bytes with an empty pool", func(t *testing.T) {
+		var h crypto.Hasher = cryptosha256.New()
+		data := make([]byte, 128)
+		var d crypto.Digest
+		expect.MaxAllocsWithSetup(t, func() struct{} {
+			runtime.GC()
+			runtime.GC()
+
+			return struct{}{}
+		}, func(struct{}) { d = h.HashTagged(entryLeaf, data) }, 0,
+			"HashTagged of 128 bytes must not take a stream from the pool")
+		assert.Equal(t, d.Size(), crypto.DigestSize256, "the test must measure a digest")
+	})
 }
 
 // BenchmarkSHA256Hasher runs the standard Hasher bench contract: a
