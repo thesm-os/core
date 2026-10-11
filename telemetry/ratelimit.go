@@ -115,11 +115,10 @@ func NewRateLimitHandler(next slog.Handler, cfg RateLimitConfig) (*RateLimitHand
 		return nil, ErrConfig
 	}
 
-	// cache.New refuses only a nil Clock and a Capacity below 1, which the
-	// check above refuses first.
-	last, _ := cache.New(cache.Config[uint64, *atomic.Int64]{
-		Clock: cfg.Clock, Capacity: int64(cfg.Keys),
-	})
+	// The remembered events do not expire, so the cache has no Clock.
+	// cache.New refuses only a Capacity below 1, which the check above
+	// refuses first.
+	last, _ := cache.New(cache.Config[uint64, *atomic.Int64]{Capacity: int64(cfg.Keys)})
 
 	return &RateLimitHandler{
 		next:       next,

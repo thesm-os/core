@@ -298,10 +298,10 @@ func NewServer(ctx context.Context, cfg *ServerConfig) (*Server, error) {
 
 	s.keys.ring.Reset(cfg.Resolver)
 
-	// cache.New refuses only a nil Clock, which check refuses, and a
-	// Capacity that is not positive.
+	// The cached objects do not expire, so the cache has no Clock. cache.New
+	// refuses only a Capacity that is not positive, and cacheBytes is
+	// positive.
 	s.objects, _ = cache.New(cache.Config[string, *loaded]{
-		Clock:    cfg.Clock,
 		Capacity: cacheBytes,
 		Cost:     func(l *loaded) int64 { return l.size },
 	})

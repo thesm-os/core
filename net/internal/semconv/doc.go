@@ -27,6 +27,6 @@
 // # Dependency position
 //
 // Imports context, net/http and time from the standard library, and
-// go.thesmos.sh/core/cache, go.thesmos.sh/core/clock and
-// go.thesmos.sh/core/telemetry from this module.
+// go.thesmos.sh/core/cache and go.thesmos.sh/core/telemetry from this
+// module.
 package semconv

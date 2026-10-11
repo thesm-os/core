@@ -248,7 +248,7 @@ func New(name string, opts ...Option) (*Client, error) {
 		transport.Proxy = http.ProxyURL(s.proxy)
 	}
 
-	durations := semconv.NewDurations(s.reporter, semconv.ClientDuration, durationDescription, s.clock, series.attrs)
+	durations := semconv.NewDurations(s.reporter, semconv.ClientDuration, durationDescription, series.attrs)
 	c := &Client{
 		logger:      s.logger,
 		tracer:      s.reporter.Tracer(scope),

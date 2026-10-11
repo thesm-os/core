@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"go.thesmos.sh/core/cache"
-	"go.thesmos.sh/core/clock"
 	"go.thesmos.sh/core/telemetry"
 )
 
@@ -63,15 +62,14 @@ type Durations[K comparable] struct {
 // NewDurations returns a Durations over the histogram name of r, with
 // description and the buckets that the semantic conventions advise for
 // an HTTP duration, from 5 ms to 10 s. attrs returns the attributes of the
-// set of a key. The cache of the bound sets reads c, which no entry uses,
-// because a bound set does not expire.
+// set of a key. A bound set does not expire, so the cache of the bound sets
+// has no clock.
 //
-// NewDurations returns no error: it constructs the cache with a clock and
-// a positive capacity, which [cache.New] accepts. The caller passes a
-// non-nil r, c and attrs.
+// NewDurations returns no error: it constructs the cache with a positive
+// capacity, which [cache.New] accepts. The caller passes a non-nil r and
+// attrs.
 func NewDurations[K comparable](
-	r telemetry.Reporter, name telemetry.InstrumentName, description string,
-	c clock.Clock, attrs func(K) []telemetry.Attr,
+	r telemetry.Reporter, name telemetry.InstrumentName, description string, attrs func(K) []telemetry.Attr,
 ) *Durations[K] {
 	d := &Durations[K]{
 		histogram: r.Histogram(telemetry.InstrumentSpec{
@@ -83,10 +81,9 @@ func NewDurations[K comparable](
 		attrs: attrs,
 	}
 
-	// cache.New refuses only a nil Clock and a Capacity below 1. The cache
-	// releases the bound histogram of every set that leaves it.
+	// cache.New refuses only a Capacity below 1. Evicted releases the bound
+	// histogram of a set that leaves the cache.
 	d.bound, _ = cache.New(cache.Config[K, telemetry.Histogram]{
-		Clock:    c,
 		Capacity: maxSeries,
 		Evicted:  func(_ K, h telemetry.Histogram) { h.Release() },
 	})

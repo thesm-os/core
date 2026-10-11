@@ -14,7 +14,6 @@ import (
 	"go.dokimi.dev/assert/expect"
 	"go.dokimi.dev/assert/history"
 
-	"go.thesmos.sh/core/clock/fake"
 	"go.thesmos.sh/core/coretest/telemetrytest"
 	"go.thesmos.sh/core/net/internal/semconv"
 	"go.thesmos.sh/core/telemetry"
@@ -30,9 +29,6 @@ const recorders = 8
 
 // description is the description of the histogram of the cases.
 const description = "Duration of HTTP server requests."
-
-// origin is the time of the fake clock of the cases.
-var origin = time.Date(2026, 10, 4, 12, 0, 0, 0, time.UTC)
 
 // series is the key of the attribute sets of the cases.
 type series struct {
@@ -97,7 +93,7 @@ func TestDurations(t *testing.T) {
 			t.Parallel()
 			r := telemetrytest.NewReporterStub(t)
 			r.OnHistogram.Returns(noop.Reporter{}.Histogram(telemetry.InstrumentSpec{}))
-			semconv.NewDurations(r, semconv.ServerDuration, description, fake.New(origin), attrsOf)
+			semconv.NewDurations(r, semconv.ServerDuration, description, attrsOf)
 
 			call := r.OnHistogram.AssertCalledOnce(t, "NewDurations must construct one histogram")
 			assert.Equal(t, call.Spec, telemetry.InstrumentSpec{
@@ -223,7 +219,7 @@ func TestDurations(t *testing.T) {
 func TestDurationsAllocs(t *testing.T) {
 	t.Run("Record", func(t *testing.T) {
 		t.Run("of a bound set", func(t *testing.T) {
-			d := semconv.NewDurations(noop.Reporter{}, semconv.ServerDuration, description, fake.New(origin), attrsOf)
+			d := semconv.NewDurations(noop.Reporter{}, semconv.ServerDuration, description, attrsOf)
 			key := series{route: "/items/{id}", status: 200}
 			ctx := t.Context()
 			d.Record(ctx, key, time.Second)
@@ -239,7 +235,7 @@ func TestDurationsAllocs(t *testing.T) {
 func BenchmarkDurations(b *testing.B) {
 	b.Run("Record", func(b *testing.B) {
 		b.Run("of a bound set", func(b *testing.B) {
-			d := semconv.NewDurations(noop.Reporter{}, semconv.ServerDuration, description, fake.New(origin), attrsOf)
+			d := semconv.NewDurations(noop.Reporter{}, semconv.ServerDuration, description, attrsOf)
 			key := series{route: "/items/{id}", status: 200}
 			ctx := b.Context()
 			d.Record(ctx, key, time.Second)
@@ -262,7 +258,7 @@ func newDurations(tb testing.TB) (*histograms, *semconv.Durations[series]) {
 	r := telemetrytest.NewReporterStub(tb)
 	r.OnHistogram.Returns(h)
 
-	return h, semconv.NewDurations(r, semconv.ServerDuration, description, fake.New(origin), attrsOf)
+	return h, semconv.NewDurations(r, semconv.ServerDuration, description, attrsOf)
 }
 
 // attrsOf returns the attributes of the set of s.

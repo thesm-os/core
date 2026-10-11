@@ -76,7 +76,7 @@
 // crypto/x509, encoding/asn1, errors, fmt, math, strconv, strings, time
 // and unicode/utf8 from the standard library, and
 // go.thesmos.sh/core/cache, go.thesmos.sh/core/clock,
-// go.thesmos.sh/core/clock/hlc, go.thesmos.sh/core/crypto,
-// go.thesmos.sh/core/errs, go.thesmos.sh/core/internal/der and
-// go.thesmos.sh/core/pool from this module.
+// go.thesmos.sh/core/crypto, go.thesmos.sh/core/errs,
+// go.thesmos.sh/core/internal/der and go.thesmos.sh/core/pool from this
+// module.
 package tsp

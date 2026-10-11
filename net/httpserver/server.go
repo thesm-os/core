@@ -119,7 +119,7 @@ func New(h http.Handler, opts ...Option) (*Server, error) {
 		}
 	}
 
-	durations := semconv.NewDurations(s.reporter, semconv.ServerDuration, durationDescription, s.clock, series.attrs)
+	durations := semconv.NewDurations(s.reporter, semconv.ServerDuration, durationDescription, series.attrs)
 	c := &chain{
 		next:       next,
 		clock:      s.clock,

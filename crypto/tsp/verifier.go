@@ -16,7 +16,6 @@ import (
 
 	"go.thesmos.sh/core/cache"
 	"go.thesmos.sh/core/clock"
-	"go.thesmos.sh/core/clock/hlc"
 	"go.thesmos.sh/core/crypto"
 	"go.thesmos.sh/core/internal/der"
 	"go.thesmos.sh/core/pool"
@@ -40,16 +39,11 @@ var oidSubjectAltName = asn1.ObjectIdentifier{2, 5, 29, 17}
 // attributes, under the tag of a SET, to verify their signature.
 var buffers = pool.NewBufferPool()
 
-// clockForCache is the clock of the caches of verified chains. The chains
-// do not expire, so a cache reads it only when a Set evicts, and its time
-// changes no result.
-var clockForCache clock.Clock = hlc.New(0)
-
 // chainsConfig is the configuration of the cache of verified chains of
-// each Verifier. cache.New refuses only a configuration without a Clock or
-// with a Capacity below 1, so it accepts chainsConfig, as TestChain
-// checks.
-var chainsConfig = cache.Config[[sha256.Size]byte, *chain]{Clock: clockForCache, Capacity: verifiedChains}
+// each Verifier. The chains do not expire, so the cache has no Clock.
+// cache.New refuses only a Capacity below 1, so it accepts chainsConfig, as
+// TestChain checks.
+var chainsConfig = cache.Config[[sha256.Size]byte, *chain]{Capacity: verifiedChains}
 
 // Policy is a policy of time-stamp authorities that a [Verifier] accepts,
 // with the accuracy of its tokens that state none. RFC 3161 section 2.4.2
