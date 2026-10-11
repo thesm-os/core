@@ -11,7 +11,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"testing/synctest"
-	"time"
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/bench"
@@ -20,7 +19,7 @@ import (
 	"go.dokimi.dev/assert/prop"
 	"go.dokimi.dev/assert/stateful"
 
-	"go.thesmos.sh/core/clock/fake"
+	"go.thesmos.sh/core/cache"
 	"go.thesmos.sh/core/crypto"
 	coresha256 "go.thesmos.sh/core/crypto/sha256"
 	"go.thesmos.sh/core/errs"
@@ -343,30 +342,29 @@ func TestProver(t *testing.T) {
 	t.Run("NewProver", func(t *testing.T) {
 		t.Parallel()
 
-		clk := fake.New(time.Unix(0, 0).UTC())
 		tests := []struct {
 			name string
 			cfg  tlog.ProverConfig
 		}{
 			{
 				name: "returns ErrConfig for a nil Hasher",
-				cfg:  tlog.ProverConfig{Tiles: smallTiles, Clock: clk, Capacity: nodeTileBytes},
+				cfg:  tlog.ProverConfig{Tiles: smallTiles, Capacity: nodeTileBytes},
 			},
 			{
 				name: "returns ErrConfig for nil Tiles",
-				cfg:  tlog.ProverConfig{Hasher: h, Clock: clk, Capacity: nodeTileBytes},
+				cfg:  tlog.ProverConfig{Hasher: h, Capacity: nodeTileBytes},
 			},
 			{
-				name: "returns ErrConfig for a nil Clock",
-				cfg:  tlog.ProverConfig{Hasher: h, Tiles: smallTiles, Capacity: nodeTileBytes},
+				name: "returns ErrConfig for a Capacity of zero",
+				cfg:  tlog.ProverConfig{Hasher: h, Tiles: smallTiles},
 			},
 			{
 				name: "returns ErrConfig for a Capacity below one node tile",
-				cfg:  tlog.ProverConfig{Hasher: h, Tiles: smallTiles, Clock: clk, Capacity: nodeTileBytes - 1},
+				cfg:  tlog.ProverConfig{Hasher: h, Tiles: smallTiles, Capacity: nodeTileBytes - 1},
 			},
 			{
 				name: "returns ErrConfig for a Hasher whose digests have no size",
-				cfg:  tlog.ProverConfig{Hasher: zeroHasher{h}, Tiles: smallTiles, Clock: clk, Capacity: nodeTileBytes},
+				cfg:  tlog.ProverConfig{Hasher: zeroHasher{h}, Tiles: smallTiles, Capacity: nodeTileBytes},
 			},
 		}
 		for _, tt := range tests {
@@ -379,14 +377,15 @@ func TestProver(t *testing.T) {
 			})
 		}
 
+		t.Run("returns the error of cache.New for a Capacity of zero", func(t *testing.T) {
+			t.Parallel()
+			_, err := tlog.NewProver(tlog.ProverConfig{Hasher: h, Tiles: smallTiles})
+			assert.ErrorIs(t, err, cache.ErrConfig, "the error must wrap the refusal of the cache")
+		})
+
 		t.Run("returns a Prover for a Capacity of one node tile", func(t *testing.T) {
 			t.Parallel()
-			p, err := tlog.NewProver(tlog.ProverConfig{
-				Hasher:   h,
-				Tiles:    smallTiles,
-				Clock:    clk,
-				Capacity: nodeTileBytes,
-			})
+			p, err := tlog.NewProver(tlog.ProverConfig{Hasher: h, Tiles: smallTiles, Capacity: nodeTileBytes})
 			assert.NoError(t, err, "a Capacity of one node tile must be accepted")
 			assert.NotNil(t, p, "NewProver must return a Prover")
 		})
@@ -1127,7 +1126,6 @@ func newProver(tb assert.TB, r tlog.TileReader, tiles int64) *tlog.Prover {
 	p, err := tlog.NewProver(tlog.ProverConfig{
 		Hasher:   coresha256.New(),
 		Tiles:    r,
-		Clock:    fake.New(time.Unix(0, 0).UTC()),
 		Capacity: tiles * nodeTileBytes,
 	})
 	assert.NoError(tb, err, "NewProver must accept the configuration")

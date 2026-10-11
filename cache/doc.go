@@ -45,6 +45,10 @@
 // miss, and it leaves the cache at the next Get or Pin that finds it, when
 // the evictor examines it, or at the next [Cache.Expire].
 //
+// A Config without a Clock makes a cache for entries that do not expire.
+// Its Set panics for an expiry time other than zero, and its Expire returns
+// 0.
+//
 // Expire removes every expired entry, in the order of the expiry times. A
 // heap orders the entries that have an expiry time, so Expire takes
 // O(log n) steps per removed entry for n such entries, and does not visit
@@ -78,8 +82,8 @@
 // # Errors
 //
 // [New] returns [ErrConfig], classified
-// [go.thesmos.sh/core/errs.Invalid], for a Config without a Clock or with a
-// Capacity that is not positive.
+// [go.thesmos.sh/core/errs.Invalid], for a Config with a Capacity that is
+// not positive.
 //
 // # Dependency position
 //

@@ -120,7 +120,6 @@ func TestCache(t *testing.T) {
 			name string
 			give cache.Config[string, int]
 		}{
-			{name: "returns ErrConfig for a nil Clock", give: cache.Config[string, int]{Capacity: 1}},
 			{
 				name: "returns ErrConfig for a Capacity of zero",
 				give: cache.Config[string, int]{Clock: fake.New(origin)},
@@ -147,6 +146,13 @@ func TestCache(t *testing.T) {
 			expect.Equal(t, c.Cost(), int64(0), "a new Cache must cost nothing")
 			_, ok := c.Get("k")
 			expect.False(t, ok, "a new Cache must miss every key")
+		})
+
+		t.Run("returns an empty Cache for a nil Clock", func(t *testing.T) {
+			t.Parallel()
+			c, err := cache.New(cache.Config[string, int]{Capacity: 1})
+			assert.NoError(t, err, "New must accept a Config without a Clock")
+			assert.Equal(t, c.Len(), 0, "a new Cache must contain no entry")
 		})
 	})
 
@@ -426,6 +432,47 @@ func TestCache(t *testing.T) {
 			assert.False(t, ok, "an entry stored after its expiry time must be a miss")
 		})
 
+		t.Run("stores a value without an expiry time in a Cache without a Clock", func(t *testing.T) {
+			t.Parallel()
+			c, err := cache.New(cache.Config[string, int]{Capacity: 10})
+			assert.NoError(t, err, "New must accept a Config without a Clock")
+			c.Set("k", 7, time.Time{})
+			v, ok := c.Get("k")
+			assert.True(t, ok, "Get must find the stored key")
+			assert.Equal(t, v, 7, "Get must return the stored value")
+		})
+
+		t.Run("evicts the oldest entries without hits in a Cache without a Clock", func(t *testing.T) {
+			t.Parallel()
+			r := &recorder{}
+			c, err := cache.New(cache.Config[string, int]{Capacity: 3, Evicted: r.evicted})
+			assert.NoError(t, err, "New must accept a Config without a Clock")
+			setAll(c, "a", "b", "c", "d", "e")
+			assert.Equal(t, r.got(), []string{"a", "b"}, "the oldest entries must leave first")
+		})
+
+		t.Run("panics for an expiry time in a Cache without a Clock", func(t *testing.T) {
+			t.Parallel()
+			c, err := cache.New(cache.Config[string, int]{Capacity: 10})
+			assert.NoError(t, err, "New must accept a Config without a Clock")
+			assert.Panics(t, func() { c.Set("k", 7, origin.Add(time.Second)) },
+				"Set must refuse an expiry time in a cache that cannot expire its entries")
+		})
+
+		t.Run("leaves the Cache unchanged when it panics for an expiry time", func(t *testing.T) {
+			t.Parallel()
+			r := &recorder{}
+			c, err := cache.New(cache.Config[string, int]{Capacity: 10, Evicted: r.evicted})
+			assert.NoError(t, err, "New must accept a Config without a Clock")
+			c.Set("k", 1, time.Time{})
+			assert.Panics(t, func() { c.Set("k", 2, origin.Add(time.Second)) },
+				"Set must refuse an expiry time in a cache that cannot expire its entries")
+			v, ok := c.Get("k")
+			expect.True(t, ok, "the entry of the key must remain")
+			expect.Equal(t, v, 1, "the entry must keep the value of the first Set")
+			expect.Empty(t, r.got(), "the panic must not pass an entry to Evicted")
+		})
+
 		t.Run("passes the replaced entry to Evicted before the entries that it evicts", func(t *testing.T) {
 			t.Parallel()
 			c, _, r := newCache(t, 3, func(v int) int64 { return int64(v) })
@@ -531,6 +578,15 @@ func TestCache(t *testing.T) {
 			c.Set("a", 1, time.Time{})
 			clk.Advance(1000 * time.Hour)
 			assert.Equal(t, c.Expire(), 0, "the zero expiry time must never expire")
+		})
+
+		t.Run("returns 0 for a Cache without a Clock", func(t *testing.T) {
+			t.Parallel()
+			c, err := cache.New(cache.Config[string, int]{Capacity: 10})
+			assert.NoError(t, err, "New must accept a Config without a Clock")
+			c.Set("a", 1, time.Time{})
+			expect.Equal(t, c.Expire(), 0, "a cache without a Clock must expire nothing")
+			expect.Equal(t, c.Len(), 1, "the entry must remain in the cache")
 		})
 
 		t.Run("passes the removed entries to Evicted in the order of their expiry times", func(t *testing.T) {

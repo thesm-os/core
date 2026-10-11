@@ -12,13 +12,16 @@ import (
 	"go.thesmos.sh/core/clock"
 )
 
-// Config configures a [Cache]. Clock and Capacity are required, and Cost
-// and Evicted are optional. The zero Config is invalid, because it has no
-// Clock.
+// Config configures a [Cache]. Capacity is required, and Clock, Cost and
+// Evicted are optional. The zero Config is invalid, because its Capacity is
+// 0.
 type Config[K comparable, V any] struct {
 	// Clock reads the time against which entries expire. Set and Expire
 	// read it once per call, and Get and Pin read it only for an entry with
 	// an expiry time. A test passes a fake clock and advances it.
+	//
+	// A nil Clock makes a cache whose entries do not expire. Its Set panics
+	// for an expiry time other than zero, and its Expire returns 0.
 	Clock clock.Clock
 
 	// Cost returns the cost of a value, such as the bytes that it
@@ -78,6 +81,8 @@ type Cache[K comparable, V any] struct {
 	// index is the current index. A writer replaces it when it grows.
 	index atomic.Pointer[index[K, V]]
 
+	// clock, cost and evicted are the Clock, Cost and Evicted of the Config.
+	// clock is nil in a cache whose entries do not expire.
 	clock   clock.Clock
 	cost    func(V) int64
 	evicted func(K, V)
@@ -117,14 +122,14 @@ type Cache[K comparable, V any] struct {
 // New returns an empty Cache over cfg, whose ghost remembers keys up to
 // nine tenths of the capacity.
 //
-// Error modes: a nil Clock and a Capacity that is not positive return
-// [ErrConfig], classified [go.thesmos.sh/core/errs.Invalid].
+// Error modes: a Capacity that is not positive returns [ErrConfig],
+// classified [go.thesmos.sh/core/errs.Invalid].
 //
 // # Allocation contract
 //
 // The Cache, an index of 16 slots and the map of the ghost.
 func New[K comparable, V any](cfg Config[K, V]) (*Cache[K, V], error) {
-	if cfg.Clock == nil || cfg.Capacity <= 0 {
+	if cfg.Capacity <= 0 {
 		return nil, ErrConfig
 	}
 
@@ -214,7 +219,8 @@ func (c *Cache[K, V]) Pin(k K) (Pinned[K, V], bool) {
 // reads. The heap adds an entry, and removes an entry that has an expiry
 // time, in O(log n) steps for n entries with an expiry time.
 //
-// Set cannot fail.
+// Set cannot fail. In a cache without a [Config.Clock], Set panics for an
+// expiry time other than zero. The panic leaves the cache unchanged.
 //
 // # Allocation contract
 //
@@ -222,13 +228,21 @@ func (c *Cache[K, V]) Pin(k K) (Pinned[K, V], bool) {
 // when they grow, and the list of callbacks when Set evicts more than eight
 // entries.
 func (c *Cache[K, V]) Set(k K, v V, expires time.Time) {
+	var now time.Time
+	if c.clock != nil {
+		now = c.clock.Time()
+	} else if !expires.IsZero() {
+		panic( //nolint:forbidigo // an expiry time in a cache without a Clock is a programmer error
+			"cache: Set of an expiry time in a cache without a Clock",
+		)
+	}
+
 	cost := int64(1)
 	if c.cost != nil {
 		cost = max(c.cost(v), 0)
 	}
 
 	e := &entry[K, V]{key: k, value: v, expires: expires, hash: maphash.Comparable(c.seed, k), cost: cost}
-	now := c.clock.Time()
 
 	var gone victims[K, V]
 
@@ -299,12 +313,17 @@ func (c *Cache[K, V]) Delete(k K) bool {
 // again, so a concurrent Set waits for at most eight removals. Each removal
 // takes O(log n) steps for n entries with an expiry time.
 //
-// Expire cannot fail.
+// Expire cannot fail. In a cache without a [Config.Clock], Expire returns 0
+// and does not read a clock.
 //
 // # Allocation contract
 //
 // Zero alloc, apart from what Evicted allocates.
 func (c *Cache[K, V]) Expire() int {
+	if c.clock == nil {
+		return 0
+	}
+
 	now := c.clock.Time()
 	removed := 0
 

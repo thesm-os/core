@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"go.thesmos.sh/core/cache"
-	"go.thesmos.sh/core/clock"
 	"go.thesmos.sh/core/crypto"
 	"go.thesmos.sh/core/pool"
 )
@@ -22,7 +21,7 @@ import (
 // a node tile does not contain that root.
 const nodeTileHashes = 510
 
-// ProverConfig configures a [Prover]. Hasher, Tiles, Clock and Capacity are
+// ProverConfig configures a [Prover]. Hasher, Tiles and Capacity are
 // required, so the zero ProverConfig is invalid.
 type ProverConfig struct {
 	// Hasher is the hash function of the tree.
@@ -30,11 +29,6 @@ type ProverConfig struct {
 
 	// Tiles reads the tiles of the tree.
 	Tiles TileReader
-
-	// Clock is the clock that [cache.New] requires for the cache of node
-	// tiles. The cache reads it once for each node tile that it adds,
-	// because node tiles do not expire.
-	Clock clock.Clock
 
 	// Capacity bounds the sum of the bytes of the node tiles in the cache.
 	// A node tile has 510 hashes: 16,320 bytes with SHA-256. Capacity is at
@@ -137,9 +131,10 @@ type Prover struct {
 // NewProver returns a Prover with an empty cache.
 //
 // Error modes: a nil Hasher or Tiles, a Hasher whose digests have a size
-// that [crypto.DigestFromBytes] refuses, a Capacity below one node tile of
-// the digest size of the Hasher, and a nil Clock return an error that
-// wraps [ErrConfig].
+// that [crypto.DigestFromBytes] refuses, and a Capacity below one node tile
+// of the digest size of the Hasher return an error that wraps [ErrConfig].
+// For a Capacity that is not positive, the error also wraps the error of
+// [cache.New].
 //
 // # Allocation contract
 //
@@ -159,18 +154,19 @@ func NewProver(cfg ProverConfig) (*Prover, error) {
 		return nil, fmt.Errorf("%w: %w", ErrConfig, err)
 	}
 
-	if cfg.Capacity < nodeTileHashes*int64(ds) {
-		return nil, ErrConfig
-	}
-
-	// The Capacity is positive here, so cache.New refuses only a nil Clock.
+	// Node tiles do not expire, so the cache has no clock. cache.New refuses
+	// a Capacity that is not positive, and the check after it refuses the
+	// other Capacities below one node tile.
 	tiles, err := cache.New(cache.Config[tilePos, *nodeTile]{
-		Clock:    cfg.Clock,
 		Cost:     func(nt *nodeTile) int64 { return int64(len(nt.data)) },
 		Capacity: cfg.Capacity,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrConfig, err)
+	}
+
+	if cfg.Capacity < nodeTileHashes*int64(ds) {
+		return nil, ErrConfig
 	}
 
 	return &Prover{
