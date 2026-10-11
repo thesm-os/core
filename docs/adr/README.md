@@ -104,5 +104,6 @@ Start from [`docs/templates/ADR.md`](../templates/ADR.md).
 | [0044](0044-a-blob-reader-may-fail-after-removal.md) | A Blob Reader May Fail Once Its Version Is Removed | Accepted |
 | [0045](0045-core-ships-io-built-on-the-standard-library.md) | Core Ships IO Built on the Standard Library | Accepted |
 | [0046](0046-a-marked-rule-is-a-party-at-any-depth.md) | A Marked Rule Is a Party at Any Depth | Accepted |
+| [0047](0047-a-cache-without-a-clock-does-not-expire.md) | A Cache Without a Clock Does Not Expire | Accepted |
 
 [nygard]: https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions
