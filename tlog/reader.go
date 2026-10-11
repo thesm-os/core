@@ -124,7 +124,8 @@ func (tr *tileRead) readTile(ctx context.Context, i int, t Tile) error {
 
 // TreeRoot returns the root of the tree of size leaves stored in r. It
 // reads the tiles at the tree's right edge in one [TileReader.ReadTiles]
-// call. A size of zero reads nothing and returns HASH().
+// call. For a size of zero, it does not read and returns HASH(). It returns
+// the root that [PrefixRoot] returns for a prefix of the whole tree.
 //
 // Returns [ErrTileSize] when a tile read has the wrong length, and the
 // error of ReadTiles when it fails.
@@ -134,12 +135,34 @@ func (tr *tileRead) readTile(ctx context.Context, i int, t Tile) error {
 // The buffers for the tiles come from a pool, so a call allocates
 // nothing beyond what ReadTiles allocates.
 func TreeRoot(ctx context.Context, h crypto.Hasher, r TileReader, size uint64) (crypto.Digest, error) {
+	return PrefixRoot(ctx, h, r, size, size)
+}
+
+// PrefixRoot returns the root of the first size leaves of the tree of
+// treeSize leaves stored in r. It reads the tiles of the tree of treeSize
+// leaves that cover the prefix, in one [TileReader.ReadTiles] call, so it
+// does not read a partial tile of the tree of size leaves. A log serves
+// partial tiles only for the sizes that it published, and C2SP tlog-tiles
+// lets it delete a partial tile once the full tile exists. For a size of
+// zero, PrefixRoot does not read and returns HASH().
+//
+// Returns [ErrRange] when size exceeds treeSize, [ErrTileSize] when a tile
+// read has the wrong length, and the error of ReadTiles when it fails.
+//
+// # Allocation contract
+//
+// As [TreeRoot].
+func PrefixRoot(ctx context.Context, h crypto.Hasher, r TileReader, size, treeSize uint64) (crypto.Digest, error) {
+	if size > treeSize {
+		return crypto.Digest{}, ErrRange
+	}
+
 	if size == 0 {
 		return h.Hash(nil), nil
 	}
 
 	var root [1]crypto.Digest
-	if _, err := prove(ctx, h, r, size, []span{{0, size}}, root[:0]); err != nil {
+	if _, err := prove(ctx, h, r, treeSize, []span{{0, size}}, root[:0]); err != nil {
 		return crypto.Digest{}, err
 	}
 

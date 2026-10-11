@@ -58,8 +58,10 @@
 //
 // A reader builds a proof from stored tiles through a [TileReader], and
 // [BlobTiles] reads tiles from a [go.thesmos.sh/core/blob.Store].
-// [TreeRoot], [ProveInclusion] and [ProveConsistency] read every tile
-// they need in one batch, at most two per tile level.
+// [TreeRoot], [PrefixRoot], [ProveInclusion] and [ProveConsistency] read
+// every tile they need in one batch, at most two per tile level.
+// PrefixRoot computes the root of a prefix of a tree from the tiles of the
+// whole tree, so it does not read a partial tile of the size of the prefix.
 //
 // A [TileVerifier] checks the leaves of a tree of a known size and root
 // against its tiles. It verifies each tile that it reads and keeps the
@@ -87,13 +89,13 @@
 //
 // # Trust
 //
-// The prove functions read tiles and trust them. A proof built from a
-// corrupted tile fails [VerifyInclusion] or [VerifyConsistency] at the
-// verifier. A caller that caches tiles from an untrusted server
-// verifies a proof against a signed root before it keeps them. A
-// [TileVerifier] verifies every tile that it reads against the root
-// before it compares a leaf with the tile, and keeps only the tiles that
-// it verified.
+// The prove functions and [PrefixRoot] read tiles and trust them. A proof
+// built from a corrupted tile fails [VerifyInclusion] or
+// [VerifyConsistency] at the verifier. A caller that caches tiles from an
+// untrusted server verifies a proof against a signed root before it keeps
+// them. A [TileVerifier] verifies every tile that it reads against the
+// root before it compares a leaf with the tile, and keeps only the tiles
+// that it verified.
 //
 // # Failure semantics
 //

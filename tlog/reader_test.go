@@ -19,6 +19,7 @@ import (
 	"go.dokimi.dev/assert/bench"
 	"go.dokimi.dev/assert/expect"
 	"go.dokimi.dev/assert/history"
+	"go.dokimi.dev/assert/prop"
 
 	"go.thesmos.sh/core/blob"
 	"go.thesmos.sh/core/blob/memory"
@@ -329,6 +330,100 @@ func TestReader(t *testing.T) {
 		})
 	})
 
+	t.Run("PrefixRoot", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the root in memory of every prefix from the tiles of the larger tree", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "PrefixRoot must return the root in memory of each prefix", func(c *prop.Case) {
+				size := c.Draw(prop.Integer[uint64](1, smallSize), "tree size")
+				prefix := c.Draw(prop.Integer[uint64](0, size), "prefix size")
+
+				// only serves the tiles of the tree of size leaves, and no partial
+				// tile of a smaller size.
+				only := &memTiles{data: map[tlog.Tile][]byte{}}
+				for tile := range tlog.Tiles(0, size) {
+					only.data[tile] = smallTiles.data[tile]
+				}
+
+				root, err := tlog.PrefixRoot(c.Context(), h, only, prefix, size)
+				assert.NoError(c, err, "PrefixRoot must read the tiles of the larger tree")
+				assert.Equal(c, root, tlog.Root(h, small[:prefix]), "PrefixRoot must return the root in memory")
+			})
+		})
+
+		t.Run("returns the root in memory of prefixes of a tree of 70000 leaves", func(t *testing.T) {
+			t.Parallel()
+			for _, prefix := range []uint64{1, 255, 256, 257, proofOld, 65535, 65536, largeSize - 1, largeSize} {
+				root, err := tlog.PrefixRoot(t.Context(), h, largeTiles, prefix, largeSize)
+				assert.NoError(t, err, "PrefixRoot must succeed")
+				expect.Equal(t, root, tlog.Root(h, large[:prefix]), "the root of "+strconv.FormatUint(prefix, 10)+
+					" leaves")
+			}
+		})
+
+		t.Run("returns the root of a prefix that a consistency proof of the larger tree verifies", func(t *testing.T) {
+			t.Parallel()
+
+			// The forked tree shares the first 256 leaves of the tree of 300
+			// leaves whose root a monitor committed, and has 144 other leaves.
+			committed := tlog.Root(h, small[:300])
+			forked := slices.Clone(small[:256])
+			for i := range 144 {
+				forked = append(forked, tlog.LeafHash(h, []byte("forked "+strconv.Itoa(i))))
+			}
+			view := &memTiles{data: map[tlog.Tile][]byte{}}
+			b, err := tlog.NewBuilder(t.Context(), h, 0, view)
+			assert.NoError(t, err, "NewBuilder must succeed")
+			grow(t, b, view, forked, len(forked))
+
+			_, err = tlog.TreeRoot(t.Context(), h, view, 300)
+			assert.Equal(t, errs.Classify(err), errs.NotFound, "the forked tree must lack the partial tiles of 300")
+
+			root, err := tlog.PrefixRoot(t.Context(), h, view, 300, 400)
+			assert.NoError(t, err, "PrefixRoot must read the tiles of the forked tree")
+			proof, err := tlog.ProveConsistency(t.Context(), h, view, 300, 400, nil)
+			assert.NoError(t, err, "ProveConsistency must read the tiles of the forked tree")
+			expect.NoError(t, tlog.VerifyConsistency(h, 300, 400, root, tlog.Root(h, forked), proof),
+				"the consistency proof must verify the root of the prefix")
+			expect.NotEqual(t, root, committed, "the root of the forked prefix must differ from the committed root")
+		})
+
+		t.Run("reads its tiles in one call", func(t *testing.T) {
+			t.Parallel()
+			m := &memTiles{data: largeTiles.data}
+			_, err := tlog.PrefixRoot(t.Context(), h, m, proofOld, largeSize)
+			assert.NoError(t, err, "PrefixRoot must succeed")
+			assert.Equal(t, m.calls, 1, "PrefixRoot must read once")
+		})
+
+		t.Run("returns HASH() for a prefix of no leaves without a read", func(t *testing.T) {
+			t.Parallel()
+			root, err := tlog.PrefixRoot(t.Context(), h, nil, 0, largeSize)
+			assert.NoError(t, err, "PrefixRoot must succeed")
+			assert.Equal(t, root, h.Hash(nil), "the empty root must be HASH()")
+		})
+
+		t.Run("returns ErrRange for a prefix past the tree", func(t *testing.T) {
+			t.Parallel()
+			_, err := tlog.PrefixRoot(t.Context(), h, smallTiles, 10, 9)
+			assert.ErrorIs(t, err, tlog.ErrRange, "a prefix past the tree must be ErrRange")
+		})
+
+		t.Run("returns ErrTileSize for tile data of the wrong length", func(t *testing.T) {
+			t.Parallel()
+			short := &memTiles{data: map[tlog.Tile][]byte{{Width: 3}: make([]byte, 2*h.Hash(nil).Size())}}
+			_, err := tlog.PrefixRoot(t.Context(), h, short, 2, 3)
+			assert.ErrorIs(t, err, tlog.ErrTileSize, "a short tile must be ErrTileSize")
+		})
+
+		t.Run("returns the error of the reader", func(t *testing.T) {
+			t.Parallel()
+			_, err := tlog.PrefixRoot(t.Context(), h, &memTiles{data: map[tlog.Tile][]byte{}}, 2, 3)
+			assert.ErrorIs(t, err, errAbsent, "the error of the reader must be returned")
+		})
+	})
+
 	t.Run("ProveInclusion", func(t *testing.T) {
 		t.Parallel()
 
@@ -522,6 +617,13 @@ func TestReaderAllocs(t *testing.T) {
 		assert.NoError(t, err, "the test must measure a root that TreeRoot reads")
 	})
 
+	t.Run("PrefixRoot", func(t *testing.T) {
+		var err error
+		expect.MaxAllocs(t, func() { _, err = tlog.PrefixRoot(ctx, h, largeTiles, proofOld, largeSize) }, 0,
+			"PrefixRoot must not allocate")
+		assert.NoError(t, err, "the test must measure a root that PrefixRoot reads")
+	})
+
 	t.Run("ProveInclusion", func(t *testing.T) {
 		var got []crypto.Digest
 		expect.MaxAllocs(t, func() { got, _ = tlog.ProveInclusion(ctx, h, largeTiles, largeSize, proofIndex, dst[:0]) },
@@ -584,6 +686,21 @@ func BenchmarkReader(b *testing.B) {
 		}
 
 		assert.NoError(b, err, "the benchmark must measure a root that TreeRoot reads")
+	})
+
+	b.Run("PrefixRoot", func(b *testing.B) {
+		ctx := b.Context()
+
+		var err error
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			_, err = tlog.PrefixRoot(ctx, h, largeTiles, proofOld, largeSize)
+		}
+
+		assert.NoError(b, err, "the benchmark must measure a root that PrefixRoot reads")
 	})
 
 	b.Run("ProveInclusion", func(b *testing.B) {
