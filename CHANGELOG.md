@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.11.0
+
+### Minor Changes
+
+- 4e485bc: Add `tlog.PrefixRoot` to compute the root of a prefix of a tree from the tiles of the whole tree.
+- 53b7679: Add `tlog.Prover` to build proofs and roots from a cache of node tiles.
+
+### Patch Changes
+
+- 136dc7e: Hash each `tlog` node with one call to its hasher, and each input of up to 128 bytes to `sha256.Hasher.HashTagged` with one call to SHA-256.
+
 ## 0.10.0
 
 ### Minor Changes
