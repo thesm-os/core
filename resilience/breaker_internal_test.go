@@ -17,17 +17,6 @@ import (
 // probed is the target of the internal cases of the Breaker.
 const probed = "inventory"
 
-// TestCircuitSpec is in package resilience because circuitSpec and
-// errCircuitSpec are unexported.
-func TestCircuitSpec(t *testing.T) {
-	t.Parallel()
-
-	t.Run("builds without an error", func(t *testing.T) {
-		t.Parallel()
-		assert.NoError(t, errCircuitSpec, "the state machine of a circuit must be a valid declaration")
-	})
-}
-
 // TestEvent is in package resilience because event is unexported.
 func TestEvent(t *testing.T) {
 	t.Parallel()

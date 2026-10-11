@@ -82,6 +82,29 @@ func TestSpec(t *testing.T) {
 
 	spec := jobSpec(t)
 
+	t.Run("Must", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the Spec of a valid declaration", func(t *testing.T) {
+			t.Parallel()
+			valid, err := jobBuilder().Build()
+			assert.NoError(t, err, "the job lifecycle must build")
+			assert.Equal(t, fsm.Must(valid, err), valid, "Must must return the Spec that it receives",
+				assert.ByIdentity())
+		})
+
+		t.Run("panics with the error of Build for an invalid declaration", func(t *testing.T) {
+			t.Parallel()
+			// failed is terminal, and no edge leads to it.
+			b := fsm.NewBuilder[state, event, job](pending).Edge(pending, start, running).Terminal(running, failed)
+			_, want := b.Build()
+			assert.ErrorIs(t, want, fsm.ErrSpec, "the declaration must fail to build")
+
+			got := assert.Panics(t, func() { fsm.Must(b.Build()) }, "Must must panic for an invalid declaration")
+			assert.Equal(t, got, any(want), "Must must panic with the error of Build")
+		})
+	})
+
 	t.Run("Initial", func(t *testing.T) {
 		t.Parallel()
 

@@ -56,6 +56,28 @@ type Spec[S, E Enum, D any] struct {
 	nS, nE int
 }
 
+// Must returns s, and panics with err when err is not nil. A package that
+// declares a Spec once, in a package variable, passes the results of
+// [Builder.Build] to Must, as it passes a template to
+// [text/template.Must]:
+//
+//	var lifecycle = fsm.Must(fsm.NewBuilder[State, Event, struct{}](Open).
+//		Edge(Open, Close, Closed).
+//		Terminal(Closed).
+//		Build())
+//
+// An invalid declaration then panics while the package initialises. The
+// panic value is the error of Build, which wraps [ErrSpec] and states
+// every problem that Build found, so every test of the package fails
+// before its first case.
+func Must[S, E Enum, D any](s *Spec[S, E, D], err error) *Spec[S, E, D] {
+	if err != nil {
+		panic(err) //nolint:forbidigo // an invalid declaration in a package variable is a programmer error
+	}
+
+	return s
+}
+
 // Initial returns the state that [Spec.Start] begins in.
 func (sp *Spec[S, E, D]) Initial() S {
 	return sp.initial

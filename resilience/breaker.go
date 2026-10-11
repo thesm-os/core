@@ -172,14 +172,14 @@ type circuit struct {
 // circuitSpec is the state machine of every circuit. Guards and
 // actions read the thresholds and the clock through circuit.b, so one
 // Spec serves every Breaker and is built once, at package
-// initialisation. errCircuitSpec is nil for a valid declaration.
+// initialisation. fsm.Must panics there for an invalid declaration.
 //
 // Open covers the whole interval and the moment after it elapses. The
 // first Allow after the deadline claims the probe and moves the circuit
 // to HalfOpen. An outcome recorded while the circuit is open belongs to
 // a call admitted before it opened. It updates the counters and leaves
 // the circuit open.
-var circuitSpec, errCircuitSpec = fsm.NewBuilder[State, event, circuit](Closed).
+var circuitSpec = fsm.Must(fsm.NewBuilder[State, event, circuit](Closed).
 	Edge(Closed, allow, Closed).
 	Edge(Closed, success, Closed, fsm.Do(clearFailures)).
 	Edge(Closed, failure, Open, fsm.If(atThreshold), fsm.Do(countFailure)).
@@ -196,7 +196,7 @@ var circuitSpec, errCircuitSpec = fsm.NewBuilder[State, event, circuit](Closed).
 	Edge(HalfOpen, release, HalfOpen, fsm.Do(releaseProbe)).
 	OnEnter(Open, reopen).
 	OnEnter(Closed, reset).
-	Build()
+	Build())
 
 // atThreshold reports whether one more failure opens the circuit.
 func atThreshold(c *circuit) bool { return c.failures+1 >= c.b.failureThreshold }

@@ -190,7 +190,8 @@ func (b *Builder[S, E, D]) Terminal(states ...S) *Builder[S, E, D] {
 //     action;
 //   - more edges than 16-bit offsets can address.
 //
-// Build does not modify the Builder, so it can be called again.
+// Build does not modify the Builder, so it can be called again. [Must]
+// panics with the error instead, for a Spec in a package variable.
 func (b *Builder[S, E, D]) Build() (*Spec[S, E, D], error) {
 	problems := slices.Clone(b.problems)
 

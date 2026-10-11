@@ -14,8 +14,8 @@ import (
 // Sentinel errors returned by this package.
 var (
 	// ErrSpec is returned by [Builder.Build], joined with one error for
-	// every problem in the declaration. It classifies as Invalid under
-	// [go.thesmos.sh/core/errs.Classify].
+	// every problem in the declaration, and [Must] panics with that error.
+	// It classifies as Invalid under [go.thesmos.sh/core/errs.Classify].
 	ErrSpec = errs.WithClass(errors.New("fsm: invalid spec"), errs.Invalid)
 
 	// ErrRejected is returned by [Machine.Fire] when no edge accepts the

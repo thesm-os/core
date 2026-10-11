@@ -19,6 +19,12 @@
 //   - A caller that handles events in memory holds a Machine and calls
 //     [Machine.Fire] for each event.
 //
+// # Declaring a Spec
+//
+// A package declares a Spec once, in a package variable, and passes the
+// results of [Builder.Build] to [Must]. An invalid declaration then panics
+// while the package initialises, with every problem that Build found.
+//
 // # Semantics
 //
 // A Machine handles one event at a time. [Machine.Fire] tries the
