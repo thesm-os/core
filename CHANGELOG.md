@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.13.0
+
+### Minor Changes
+
+- 494923e: Let `cache.New` accept a `Config` without a `Clock` for a cache whose entries do not expire.
+- 494923e: **Breaking:** Remove `tlog.ProverConfig.Clock`.
+
 ## 0.12.0
 
 ### Minor Changes
