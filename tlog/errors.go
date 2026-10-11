@@ -50,4 +50,10 @@ var (
 	// not computed from the Builder's current tree. It classifies as
 	// errs.Conflict.
 	ErrStale = errs.WithClass(errors.New("tlog: update computed from another tree"), errs.Conflict)
+
+	// ErrConfig is returned by [NewProver] for a [ProverConfig] without a
+	// Hasher, Tiles or Clock, with a Hasher whose digests have none of the
+	// sizes of a digest, or with a Capacity below one node tile. It
+	// classifies as errs.Invalid.
+	ErrConfig = errs.WithClass(errors.New("tlog: invalid prover configuration"), errs.Invalid)
 )

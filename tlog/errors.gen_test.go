@@ -22,6 +22,7 @@ func TestTlogSentinelErrors(t *testing.T) {
 	}
 	all := []errEntry{
 		{"ErrBundle", tlog.ErrBundle},
+		{"ErrConfig", tlog.ErrConfig},
 		{"ErrEntrySize", tlog.ErrEntrySize},
 		{"ErrLeafSize", tlog.ErrLeafSize},
 		{"ErrProof", tlog.ErrProof},

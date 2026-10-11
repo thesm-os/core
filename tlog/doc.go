@@ -63,6 +63,12 @@
 // PrefixRoot computes the root of a prefix of a tree from the tiles of the
 // whole tree, so it does not read a partial tile of the size of the prefix.
 //
+// A [Prover] builds the proofs and roots of these functions from a cache of
+// node tiles: tiles with the hash of every perfect subtree inside them. A
+// proof whose node tiles the cache contains does not read, and hashes only
+// the nodes above the subtrees of its spans. Concurrent proofs that miss one
+// tile share one read of it.
+//
 // A [TileVerifier] checks the leaves of a tree of a known size and root
 // against its tiles. It verifies each tile that it reads and keeps the
 // tiles of the path of the last leaf. Checks of the leaves in index order
@@ -89,20 +95,23 @@
 //
 // # Trust
 //
-// The prove functions and [PrefixRoot] read tiles and trust them. A proof
-// built from a corrupted tile fails [VerifyInclusion] or
-// [VerifyConsistency] at the verifier. A caller that caches tiles from an
-// untrusted server verifies a proof against a signed root before it keeps
-// them. A [TileVerifier] verifies every tile that it reads against the
-// root before it compares a leaf with the tile, and keeps only the tiles
-// that it verified.
+// The prove functions, [PrefixRoot] and a [Prover] read tiles and trust
+// them. A proof built from a corrupted tile fails [VerifyInclusion] or
+// [VerifyConsistency] at the verifier. A Prover keeps the node tile of a
+// corrupted tile until its cache evicts the node tile. A caller that caches
+// tiles from an untrusted server verifies a proof against a signed root
+// before it keeps them. A
+// [TileVerifier] verifies every tile that it reads against the root
+// before it compares a leaf with the tile, and keeps only the tiles that
+// it verified.
 //
 // # Failure semantics
 //
 // Every error classifies under [go.thesmos.sh/core/errs.Classify]. A
 // proof, a tile or a leaf that does not verify is [ErrProof], an index or
 // size outside the tree is [ErrRange], and tile data of the wrong length
-// is [ErrTileSize]. Errors from a [TileReader] keep their class.
+// is [ErrTileSize]. [NewProver] returns [ErrConfig] for an invalid
+// [ProverConfig]. Errors from a [TileReader] keep their class.
 //
 // [VerifyInclusion] and [VerifyTaggedInclusion] return [ErrProof] for a
 // proof hash whose size differs from the leaf's. The content of a proof
@@ -118,5 +127,7 @@
 // nothing once the Update has grown, and [TaggedTree.Reset] into a
 // reused TaggedTree allocates nothing once the tree has grown. The
 // prove functions borrow their tile buffers from a pool, and a
-// [TileVerifier] allocates the buffer of each tile that it keeps once.
+// [TileVerifier] allocates the buffer of each tile that it keeps once. A
+// [Prover] allocates nothing for a proof whose node tiles its cache
+// contains, and three objects for each tile that a proof reads.
 package tlog

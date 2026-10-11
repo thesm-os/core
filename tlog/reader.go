@@ -192,7 +192,7 @@ func ProveInclusion(
 
 	var spans [maxPath]span
 
-	return prove(ctx, h, r, size, inclusionSpans(0, size, index, spans[:0]), dst)
+	return prove(ctx, h, r, size, inclusionSpans(size, index, spans[:0]), dst)
 }
 
 // ProveConsistency appends to dst the proof that the tree of oldSize
@@ -215,18 +215,86 @@ func ProveConsistency(
 
 	var spans [maxPath]span
 
-	return prove(ctx, h, r, newSize, consistencySpans(0, newSize, oldSize, spans[:0]), dst)
+	return prove(ctx, h, r, newSize, consistencySpans(newSize, oldSize, spans[:0]), dst)
+}
+
+// nodeRef locates the hashes under one perfect subtree in a tile: count
+// hashes from position off of tile number tile of its proof. count is a
+// power of two.
+type nodeRef struct {
+	tile  int
+	off   int
+	count int
+}
+
+// subtrees lists the perfect subtrees of the spans of one proof, and the
+// tiles that contain their hashes. The prove functions and a [Prover] plan
+// the reads of a proof with it.
+type subtrees struct {
+	tiles []Tile
+	nodes []nodeRef
+
+	// ends[i] is the end in nodes of the nodes of span i.
+	ends []int
+}
+
+// split records the perfect subtrees of every span in the tree of size
+// leaves, and the tiles that contain their hashes. Each span splits into
+// its perfect subtrees from the left, the largest first: at most 64, one
+// per bit of its length.
+func (s *subtrees) split(size uint64, spans []span) {
+	for _, sp := range spans {
+		lo := sp.lo
+		for range maxPath {
+			if lo >= sp.hi {
+				break
+			}
+
+			level := uint(bits.Len64(sp.hi-lo) - 1)
+			s.add(size, level, lo>>level)
+			lo += 1 << level
+		}
+		s.ends = append(s.ends, len(s.nodes))
+	}
+}
+
+// add records the perfect subtree at tree level and index in the tree
+// of size leaves, and the tile that contains its hashes. A subtree of level
+// 8L + k is the root of 2^k consecutive hashes of tile level L.
+func (s *subtrees) add(size uint64, level uint, index uint64) {
+	tileLevel, k := level/tileHeight, level%tileHeight
+	row := index << k
+	//nolint:gosec // G115: level is below 64, so tileLevel is below 8, and the width is at most 256
+	t := Tile{
+		Level: uint8(tileLevel),
+		Index: row >> tileHeight,
+		Width: uint16(min(tileWidth, (size>>(tileHeight*tileLevel))-(row>>tileHeight)<<tileHeight)),
+	}
+
+	i := 0
+	for i < len(s.tiles) && s.tiles[i] != t {
+		i++
+	}
+	if i == len(s.tiles) {
+		s.tiles = append(s.tiles, t)
+	}
+
+	s.nodes = append(s.nodes, nodeRef{tile: i, off: int(row % tileWidth), count: 1 << k})
+}
+
+// reset empties s for the next proof.
+func (s *subtrees) reset() {
+	s.tiles = s.tiles[:0]
+	s.nodes = s.nodes[:0]
+	s.ends = s.ends[:0]
 }
 
 // prover is the state of one proof built from tiles. Proofs borrow it
 // from provers.
 type prover struct {
-	tiles []Tile
-	dst   [][]byte
-	nodes []nodeRef
+	subtrees
 
-	// ends[i] is the end in nodes of the nodes of span i.
-	ends []int
+	dst [][]byte
 
 	// mem contains the data of every tile.
 	mem arena.Arena
@@ -237,20 +305,11 @@ type prover struct {
 	scratch [tileWidth/2*crypto.MaxDigestSize + nodeRoom]byte
 }
 
-// nodeRef locates the hashes under one perfect subtree in a tile.
-type nodeRef struct {
-	tile  int
-	off   int
-	count int
-}
-
 // Reset empties p for the next proof.
 func (p *prover) Reset() {
-	p.tiles = p.tiles[:0]
+	p.reset()
 	clear(p.dst)
 	p.dst = p.dst[:0]
-	p.nodes = p.nodes[:0]
-	p.ends = p.ends[:0]
 	p.mem.Reset()
 }
 
@@ -270,21 +329,7 @@ func prove(
 	p := provers.Get()
 	defer provers.Put(p)
 
-	// A span splits into at most 64 perfect subtrees, one per bit of its
-	// length.
-	for _, s := range spans {
-		lo := s.lo
-		for range maxPath {
-			if lo >= s.hi {
-				break
-			}
-
-			level := uint(bits.Len64(s.hi-lo) - 1)
-			p.add(size, level, lo>>level)
-			lo += 1 << level
-		}
-		p.ends = append(p.ends, len(p.nodes))
-	}
+	p.split(size, spans)
 
 	ds := h.Hash(nil).Size()
 	total := 0
@@ -331,28 +376,4 @@ func prove(
 	}
 
 	return dst, nil
-}
-
-// add records the perfect subtree at tree level and index in the tree
-// of size leaves, and the tile that contains its hashes. A subtree of level
-// 8L + k is the root of 2^k consecutive hashes of tile level L.
-func (p *prover) add(size uint64, level uint, index uint64) {
-	tileLevel, k := level/tileHeight, level%tileHeight
-	row := index << k
-	//nolint:gosec // G115: level is below 64, so tileLevel is below 8, and the width is at most 256
-	t := Tile{
-		Level: uint8(tileLevel),
-		Index: row >> tileHeight,
-		Width: uint16(min(tileWidth, (size>>(tileHeight*tileLevel))-(row>>tileHeight)<<tileHeight)),
-	}
-
-	i := 0
-	for i < len(p.tiles) && p.tiles[i] != t {
-		i++
-	}
-	if i == len(p.tiles) {
-		p.tiles = append(p.tiles, t)
-	}
-
-	p.nodes = append(p.nodes, nodeRef{tile: i, off: int(row % tileWidth), count: 1 << k})
 }

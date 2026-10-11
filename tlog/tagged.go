@@ -312,7 +312,7 @@ func TaggedInclusionProof(
 	}
 
 	var spans [maxPath]span
-	for _, s := range inclusionSpans(0, uint64(len(leaves)), index, spans[:0]) {
+	for _, s := range inclusionSpans(uint64(len(leaves)), index, spans[:0]) {
 		dst = append(dst, taggedFold(h, node, leaves[s.lo:s.hi]))
 	}
 

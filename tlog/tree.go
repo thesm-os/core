@@ -159,11 +159,12 @@ func split(n uint64) uint64 {
 }
 
 // inclusionSpans appends to dst the leaf ranges whose hashes form the
-// audit path of the leaf at index within [lo, hi), in proof order. It
-// follows PATH of RFC 9162, section 2.1.3.1, from the root down, and
-// then reverses the path so the deepest sibling comes first.
-func inclusionSpans(lo, hi, index uint64, dst []span) []span {
+// audit path of the leaf at index in the tree of size leaves, in proof
+// order. It follows PATH of RFC 9162, section 2.1.3.1, from the root down,
+// and then reverses the path so the deepest sibling comes first.
+func inclusionSpans(size, index uint64, dst []span) []span {
 	start := len(dst)
+	lo, hi := uint64(0), size
 
 	for range maxPath {
 		if hi-lo <= 1 {
@@ -187,13 +188,14 @@ func inclusionSpans(lo, hi, index uint64, dst []span) []span {
 
 // consistencySpans appends to dst the leaf ranges whose hashes form the
 // consistency proof between the tree of the first old leaves and the
-// tree [lo, hi), in proof order. It follows SUBPROOF of RFC 9162,
+// tree of size leaves, in proof order. It follows SUBPROOF of RFC 9162,
 // section 2.1.4.1, from the root down, and then reverses the proof so
 // the deepest subtree comes first. The proof leaves out the old tree's
 // root when the old tree is a subtree of the new one, because the
 // verifier has it.
-func consistencySpans(lo, hi, old uint64, dst []span) []span {
+func consistencySpans(size, old uint64, dst []span) []span {
 	start := len(dst)
+	lo, hi := uint64(0), size
 	whole := true
 
 	for range maxPath {
@@ -278,7 +280,7 @@ func InclusionProof(
 	}
 
 	var spans [maxPath]span
-	for _, s := range inclusionSpans(0, uint64(len(leaves)), index, spans[:0]) {
+	for _, s := range inclusionSpans(uint64(len(leaves)), index, spans[:0]) {
 		dst = append(dst, Root(h, leaves[s.lo:s.hi]))
 	}
 
@@ -303,7 +305,7 @@ func ConsistencyProof(
 	}
 
 	var spans [maxPath]span
-	for _, s := range consistencySpans(0, uint64(len(leaves)), oldSize, spans[:0]) {
+	for _, s := range consistencySpans(uint64(len(leaves)), oldSize, spans[:0]) {
 		dst = append(dst, Root(h, leaves[s.lo:s.hi]))
 	}
 
