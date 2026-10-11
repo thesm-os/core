@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.12.0
+
+### Minor Changes
+
+- 44e0ab6: Add `id.ID128`, `id.ID160` and `id.ID256` to store an identifier of one size in 16, 20 or 32 bytes.
+
+### Patch Changes
+
+- 899b176: Cut the allocations of `id.ID.String` for 160-bit and 256-bit identifiers from 3 to 1.
+
 ## 0.11.0
 
 ### Minor Changes
