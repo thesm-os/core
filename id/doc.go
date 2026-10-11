@@ -19,6 +19,29 @@
 // signatures, are key material, and [go.thesmos.sh/core/crypto/sign]
 // handles them.
 //
+// # Fixed-size identifiers
+//
+// [ID128], [ID160] and [ID256] are arrays of 16, 20 and 32 bytes, and each
+// stores an identifier of one size. A map keyed by one of them stores the
+// bytes of each identifier. A map keyed by [ID] stores 33 bytes per key. Each
+// type is comparable, and == compares two identifiers.
+//
+// [ID.As128], [ID.As160] and [ID.As256] convert an ID to the fixed-size type
+// of its size, and report false for [Zero] and for an ID of another size. The
+// size of an identifier comes from its input, so a caller handles false as a
+// refused input. The ID method of each fixed-size type converts a value back
+// to an ID.
+//
+// The zero value of a fixed-size type is the identifier whose bytes are all
+// zero. Its ID is not [Zero], so a fixed-size type has no value for "no
+// identifier".
+//
+// The bytes of a fixed-size value are the binary form of its ID, so kanon
+// writes a field of a fixed-size type with the bytes of a field of type ID.
+// The identifier whose bytes are all zero is the exception. kanon leaves it
+// out of a field of a fixed-size type, and writes its bytes for a field of
+// type ID.
+//
 // # Provided implementations
 //
 //   - [go.thesmos.sh/core/id/ulid] generates 128-bit ULIDs: a 48-bit
@@ -75,7 +98,9 @@
 // value. [ID.IsZero], [ID.Size], [ID.Bytes], [ID.Compare], [ID.Equal],
 // [ID.AppendBinary] into a buffer with room and [ID.UnmarshalBinary] do
 // not allocate. [ID.String] and [ID.MarshalBinary] allocate their
-// results.
+// results. [ID.As128], [ID.As160], [ID.As256] and the ID and Compare methods
+// of the fixed-size types do not allocate. The String method of each
+// fixed-size type allocates its result.
 //
 // Each [Generator] documents its allocation contract. The generators of
 // this module do not allocate per call when the
