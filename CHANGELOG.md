@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.0
+
+### Minor Changes
+
+- e023bc2: Add `fsm.Must` to declare a `Spec` in a package variable.
+
 ## 0.9.0
 
 ### Minor Changes
