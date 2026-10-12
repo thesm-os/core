@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.15.0
+
+### Minor Changes
+
+- 68999e7: Add `telemetrytest.Recorder` and `telemetrytest.Records` to record the telemetry and the logs of a package under test.
+
 ## 0.14.0
 
 ### Minor Changes
