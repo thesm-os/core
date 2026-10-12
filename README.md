@@ -77,7 +77,7 @@ for concurrent use and its allocations in its
 | Signatures | [`crypto/sign`][crypto/sign], [`crypto/sign/ed25519`][crypto/sign/ed25519], [`crypto/sign/ecdsap384`][crypto/sign/ecdsap384], [`crypto/sign/mldsa`][crypto/sign/mldsa], [`crypto/tsp`][crypto/tsp] | The `Signer` and `Verifier` interfaces with Ed25519, ECDSA P-384 and ML-DSA, threshold policies over sets of keys, and offline verification of RFC 3161 time stamps. |
 | Transparency logs | [`tlog`][tlog], [`tlog/checkpoint`][tlog/checkpoint], [`tlog/witness`][tlog/witness], [`note`][note] | Merkle trees of RFC 9162 stored as C2SP tiles with inclusion and consistency proofs, signed notes, checkpoints, cosignatures, witness policies, and both sides of the witness protocol. |
 | Storage | [`blob`][blob], [`blob/memory`][blob/memory], [`cas`][cas], [`cas/memory`][cas/memory] | Named object storage with conditional writes, content-addressed storage that checks each write against its address, and in-memory stores for tests. |
-| Data structures | [`btree`][btree], [`cache`][cache], [`pool`][pool], [`arena`][arena] | B+ tree maps and sets with copy-on-write clones, a bounded S3-FIFO cache, typed pools, and arenas for hot paths. |
+| Data structures | [`btree`][btree], [`idmap`][idmap], [`cache`][cache], [`pool`][pool], [`arena`][arena] | B+ tree maps and sets with copy-on-write clones, hash maps keyed by fixed-size identifiers, a bounded S3-FIFO cache, typed pools, and arenas for hot paths. |
 | Telemetry | [`telemetry`][telemetry], [`telemetry/noop`][telemetry/noop], [`telemetry/w3c`][telemetry/w3c] | Metric and trace interfaces whose bound instruments record without an allocation, and W3C Trace Context propagation. |
 | HTTP | [`net/httpserver`][net/httpserver], [`net/httpclient`][net/httpclient] | A server on `net/http` with limits, telemetry, panic recovery and graceful shutdown, and a client with a circuit breaker per host and retries. |
 | Testing | [`coretest`][coretest] | Conformance suites that check an implementation against its interface, generated test doubles, and a time-stamp authority for tests. |
@@ -177,6 +177,7 @@ and [NOTICE](NOTICE).
 [id/ulid]: https://pkg.go.dev/go.thesmos.sh/core/id/ulid
 [id/uuidv4]: https://pkg.go.dev/go.thesmos.sh/core/id/uuidv4
 [id/uuidv7]: https://pkg.go.dev/go.thesmos.sh/core/id/uuidv7
+[idmap]: https://pkg.go.dev/go.thesmos.sh/core/idmap
 [net/httpclient]: https://pkg.go.dev/go.thesmos.sh/core/net/httpclient
 [net/httpserver]: https://pkg.go.dev/go.thesmos.sh/core/net/httpserver
 [note]: https://pkg.go.dev/go.thesmos.sh/core/note
