@@ -3,7 +3,10 @@
 
 package id
 
-import "bytes"
+import (
+	"cmp"
+	"encoding/binary"
+)
 
 // ID128 is a 128-bit identifier as an array of its 16 bytes. ULIDs and UUIDs
 // have this size. [ID.As128] converts an [ID] of size [Size128] to an ID128,
@@ -29,13 +32,18 @@ func (k ID128) ID() ID {
 }
 
 // Compare returns -1, 0 or +1 by the order of the bytes of k and other. It
-// returns what [ID.Compare] returns for their IDs.
+// returns what [ID.Compare] returns for their IDs. It compares the two
+// big-endian 64-bit words of the identifiers, which order as the bytes do.
 //
 // # Allocation contract
 //
 // Zero alloc.
 func (k ID128) Compare(other ID128) int {
-	return bytes.Compare(k[:], other[:])
+	if a, b := binary.BigEndian.Uint64(k[0:8]), binary.BigEndian.Uint64(other[0:8]); a != b {
+		return cmp.Compare(a, b)
+	}
+
+	return cmp.Compare(binary.BigEndian.Uint64(k[8:16]), binary.BigEndian.Uint64(other[8:16]))
 }
 
 // String returns "id:" followed by the 16 bytes of k in hexadecimal. It
@@ -72,13 +80,23 @@ func (k ID160) ID() ID {
 }
 
 // Compare returns -1, 0 or +1 by the order of the bytes of k and other. It
-// returns what [ID.Compare] returns for their IDs.
+// returns what [ID.Compare] returns for their IDs. It compares two
+// big-endian 64-bit words and one big-endian 32-bit word of the
+// identifiers, which order as the bytes do.
 //
 // # Allocation contract
 //
 // Zero alloc.
 func (k ID160) Compare(other ID160) int {
-	return bytes.Compare(k[:], other[:])
+	if a, b := binary.BigEndian.Uint64(k[0:8]), binary.BigEndian.Uint64(other[0:8]); a != b {
+		return cmp.Compare(a, b)
+	}
+
+	if a, b := binary.BigEndian.Uint64(k[8:16]), binary.BigEndian.Uint64(other[8:16]); a != b {
+		return cmp.Compare(a, b)
+	}
+
+	return cmp.Compare(binary.BigEndian.Uint32(k[16:20]), binary.BigEndian.Uint32(other[16:20]))
 }
 
 // String returns "id:" followed by the 20 bytes of k in hexadecimal. It
@@ -115,13 +133,26 @@ func (k ID256) ID() ID {
 }
 
 // Compare returns -1, 0 or +1 by the order of the bytes of k and other. It
-// returns what [ID.Compare] returns for their IDs.
+// returns what [ID.Compare] returns for their IDs. It compares the four
+// big-endian 64-bit words of the identifiers, which order as the bytes do.
 //
 // # Allocation contract
 //
 // Zero alloc.
 func (k ID256) Compare(other ID256) int {
-	return bytes.Compare(k[:], other[:])
+	if a, b := binary.BigEndian.Uint64(k[0:8]), binary.BigEndian.Uint64(other[0:8]); a != b {
+		return cmp.Compare(a, b)
+	}
+
+	if a, b := binary.BigEndian.Uint64(k[8:16]), binary.BigEndian.Uint64(other[8:16]); a != b {
+		return cmp.Compare(a, b)
+	}
+
+	if a, b := binary.BigEndian.Uint64(k[16:24]), binary.BigEndian.Uint64(other[16:24]); a != b {
+		return cmp.Compare(a, b)
+	}
+
+	return cmp.Compare(binary.BigEndian.Uint64(k[24:32]), binary.BigEndian.Uint64(other[24:32]))
 }
 
 // String returns "id:" followed by the 32 bytes of k in hexadecimal. It

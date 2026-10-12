@@ -405,6 +405,18 @@ func testFixedType[K comparable](t *testing.T, f fixedType[K]) {
 						"Compare must return what ID.Compare returns")
 				})
 			})
+
+			t.Run("returns what bytes.Compare returns for identifiers that share a prefix", func(t *testing.T) {
+				t.Parallel()
+				prop.ForAll(t, "Compare must agree with bytes.Compare on a common prefix", func(c *prop.Case) {
+					a := c.Draw(keys, "a")
+					prefix := c.Draw(prop.Integer(0, f.size), "prefix")
+					rest := c.Draw(prop.Bytes(prop.MinSize(f.size-prefix), prop.MaxSize(f.size-prefix)), "rest")
+					b := f.of(append(bytes.Clone(f.bytesOf(a)[:prefix]), rest...))
+					assert.Equal(c, f.compare(a, b), bytes.Compare(f.bytesOf(a), f.bytesOf(b)),
+						"Compare must return what bytes.Compare returns for the bytes")
+				})
+			})
 		})
 
 		t.Run("String", func(t *testing.T) {
