@@ -26,35 +26,26 @@ func TestKey(t *testing.T) {
 
 		t.Run("returns the hash function of an ID128", func(t *testing.T) {
 			t.Parallel()
-			hash, _ := newHash[id.ID128]()
-			got, _ := hash(known, counting[id.ID128]())
-			want, _ := hash128(known, counting[id.ID128]())
+			k := counting[id.ID128]()
+			got, _ := newHash[id.ID128]()(known, k)
+			want, _ := hash128(known, &k)
 			assert.Equal(t, got, want, "newHash must return hash128 for ID128 keys")
 		})
 
 		t.Run("returns the hash function of an ID160", func(t *testing.T) {
 			t.Parallel()
-			hash, _ := newHash[id.ID160]()
-			got, _ := hash(known, counting[id.ID160]())
-			want, _ := hash160(known, counting[id.ID160]())
+			k := counting[id.ID160]()
+			got, _ := newHash[id.ID160]()(known, k)
+			want, _ := hash160(known, &k)
 			assert.Equal(t, got, want, "newHash must return hash160 for ID160 keys")
 		})
 
 		t.Run("returns the hash function of an ID256", func(t *testing.T) {
 			t.Parallel()
-			hash, _ := newHash[id.ID256]()
-			got, _ := hash(known, counting[id.ID256]())
-			want, _ := hash256(known, counting[id.ID256]())
+			k := counting[id.ID256]()
+			got, _ := newHash[id.ID256]()(known, k)
+			want, _ := hash256(known, &k)
 			assert.Equal(t, got, want, "newHash must return hash256 for ID256 keys")
-		})
-
-		t.Run("returns a new random seed on each call", func(t *testing.T) {
-			t.Parallel()
-			_, a := newHash[id.ID128]()
-			_, b := newHash[id.ID128]()
-			expect.NotEqual(t, a.s0, b.s0, "two calls must return different first secret words")
-			expect.NotEqual(t, a.s1, b.s1, "two calls must return different second secret words")
-			expect.NotEqual(t, a.s0, a.s1, "the two secret words of one seed must differ")
 		})
 	})
 
@@ -63,7 +54,8 @@ func TestKey(t *testing.T) {
 
 		t.Run("returns the known hash and the words of a key", func(t *testing.T) {
 			t.Parallel()
-			sum, w := hash128(known, counting[id.ID128]())
+			k := counting[id.ID128]()
+			sum, w := hash128(known, &k)
 			expect.Equal(t, sum, uint64(0x0a800074ac2c2504), "hash128 must return the known hash of the key")
 			expect.Equal(t, w, words{w0: 0x0706050403020100, w1: 0x0f0e0d0c0b0a0908},
 				"hash128 must return the two words of the key")
@@ -75,7 +67,8 @@ func TestKey(t *testing.T) {
 
 		t.Run("returns the known hash and the words of a key", func(t *testing.T) {
 			t.Parallel()
-			sum, w := hash160(known, counting[id.ID160]())
+			k := counting[id.ID160]()
+			sum, w := hash160(known, &k)
 			expect.Equal(t, sum, uint64(0xfcf5baeb13dcb4e8), "hash160 must return the known hash of the key")
 			expect.Equal(t, w, words{w0: 0x0706050403020100, w1: 0x0f0e0d0c0b0a0908, w2: 0x13121110},
 				"hash160 must return the three words of the key")
@@ -87,7 +80,8 @@ func TestKey(t *testing.T) {
 
 		t.Run("returns the known hash and the words of a key", func(t *testing.T) {
 			t.Parallel()
-			sum, w := hash256(known, counting[id.ID256]())
+			k := counting[id.ID256]()
+			sum, w := hash256(known, &k)
 			expect.Equal(t, sum, uint64(0x0874f577bf9557fb), "hash256 must return the known hash of the key")
 			expect.Equal(t, w, words{
 				w0: 0x0706050403020100, w1: 0x0f0e0d0c0b0a0908,

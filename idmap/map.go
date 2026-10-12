@@ -4,15 +4,28 @@
 package idmap
 
 import (
+	"hash/maphash"
 	"iter"
 	"math/bits"
 	"slices"
+
+	"go.thesmos.sh/core/id"
 )
 
 // minSlots is the number of slots of the smallest table of a [Map].
 const minSlots = 8
 
 // Map is a hash map from identifiers to values, for one goroutine.
+//
+// K is a fixed-size identifier of [Key], or a struct type of the caller
+// whose one field embeds one, such as
+//
+//	type ShardID struct{ id.ID128 }
+//
+// [New] returns a map of the identifiers of Key. [NewTyped128],
+// [NewTyped160] and [NewTyped256] return a map of the struct types. A key of
+// a struct type converts to its identifier for the hash, so its map hashes
+// and compares the same bytes as a map of the identifier.
 //
 // A Map keeps its keys in a table of a power of two of slots, with open
 // addressing and linear probing. A slot has a tag byte, a key and a value,
@@ -24,7 +37,8 @@ const minSlots = 8
 // never rehashes. The table is at most five eighths full. A Set of a new key
 // into a full table doubles the slots and moves every key.
 //
-// The zero Map is not usable. [New] returns an empty map.
+// The zero Map is not usable. New, NewTyped128, NewTyped160 and NewTyped256
+// return an empty map.
 //
 // # Concurrency
 //
@@ -33,10 +47,11 @@ const minSlots = 8
 //
 // # Allocation contract
 //
-// [New] and [Map.Clone] allocate the map and its three arrays. Get, Delete,
-// Len, Clear and a range over All do not allocate. Set allocates the three
-// arrays of a growth, and nothing otherwise.
-type Map[K Key, V any] struct {
+// [New] and [Map.Clone] allocate the map and its three arrays. NewTyped128,
+// NewTyped160 and NewTyped256 also allocate the hash function of the struct
+// type. Get, Delete, Len, Clear and a range over All do not allocate. Set
+// allocates the three arrays of a growth, and nothing otherwise.
+type Map[K comparable, V any] struct {
 	// hash is the hash function of K.
 	hash func(seed, K) (uint64, words)
 
@@ -59,10 +74,11 @@ type Map[K Key, V any] struct {
 	n, limit int
 }
 
-// New returns an empty map with room for capacity keys, or for one key when
-// capacity is below 1. The map does not grow before a Set of a new key finds
-// the map with capacity keys. Its table has the least power of two of slots,
-// and at least 8, whose five eighths are at least capacity.
+// New returns an empty map of the identifiers K, with room for capacity
+// keys, or for one key when capacity is below 1. The map does not grow
+// before a Set of a new key finds the map with capacity keys. Its table has
+// the least power of two of slots, and at least 8, whose five eighths are at
+// least capacity.
 //
 // New panics as make does when the slots for capacity exceed the memory
 // that make can allocate.
@@ -71,6 +87,76 @@ type Map[K Key, V any] struct {
 //
 // New allocates the map and its arrays of tags, keys and values.
 func New[K Key, V any](capacity int) *Map[K, V] {
+	return newMap[K, V](capacity, newHash[K]())
+}
+
+// NewTyped128 returns an empty map of the struct type K, whose one field
+// embeds an [id.ID128]. The map hashes the ID128 of each key, and its table
+// is the table that [New] allocates for capacity.
+//
+// NewTyped128 panics as make does when the slots for capacity exceed the
+// memory that make can allocate.
+//
+// # Allocation contract
+//
+// NewTyped128 allocates the map, its arrays of tags, keys and values, and
+// the hash function of K.
+func NewTyped128[K ~struct{ id.ID128 }, V any](capacity int) *Map[K, V] {
+	return newMap[K, V](capacity, func(s seed, k K) (uint64, words) {
+		c := struct{ id.ID128 }(k)
+
+		return hash128(s, &c.ID128)
+	})
+}
+
+// NewTyped160 returns an empty map of the struct type K, whose one field
+// embeds an [id.ID160]. The map hashes the ID160 of each key, and its table
+// is the table that [New] allocates for capacity.
+//
+// NewTyped160 panics as make does when the slots for capacity exceed the
+// memory that make can allocate.
+//
+// # Allocation contract
+//
+// NewTyped160 allocates the map, its arrays of tags, keys and values, and
+// the hash function of K.
+func NewTyped160[K ~struct{ id.ID160 }, V any](capacity int) *Map[K, V] {
+	return newMap[K, V](capacity, func(s seed, k K) (uint64, words) {
+		c := struct{ id.ID160 }(k)
+
+		return hash160(s, &c.ID160)
+	})
+}
+
+// NewTyped256 returns an empty map of the struct type K, whose one field
+// embeds an [id.ID256]. The map hashes the ID256 of each key, and its table
+// is the table that [New] allocates for capacity.
+//
+// NewTyped256 panics as make does when the slots for capacity exceed the
+// memory that make can allocate.
+//
+// # Allocation contract
+//
+// NewTyped256 allocates the map, its arrays of tags, keys and values, and
+// the hash function of K.
+func NewTyped256[K ~struct{ id.ID256 }, V any](capacity int) *Map[K, V] {
+	return newMap[K, V](capacity, func(s seed, k K) (uint64, words) {
+		c := struct{ id.ID256 }(k)
+
+		return hash256(s, &c.ID256)
+	})
+}
+
+// newMap returns an empty map whose keys hash with hash, under a new seed.
+// Its table has the least power of two of slots, and at least 8, whose five
+// eighths are at least capacity, or 1 when capacity is below 1. Each word of
+// the seed is the hash of the empty string under a new random seed of
+// hash/maphash.
+//
+// # Allocation contract
+//
+// newMap allocates the map and its arrays of tags, keys and values.
+func newMap[K comparable, V any](capacity int, hash func(seed, K) (uint64, words)) *Map[K, V] {
 	// Without this line, a capacity below 1 gives bits.Len a value of 64
 	// bits. The shift by 64 gives 0, and max gives minSlots as well.
 	//dokimi:mutate-skip sbr-delete: without it, max gives minSlots for a capacity below 1 as well
@@ -85,8 +171,10 @@ func New[K Key, V any](capacity int) *Map[K, V] {
 		slots *= 2
 	}
 
-	m := &Map[K, V]{}
-	m.hash, m.seed = newHash[K]()
+	m := &Map[K, V]{
+		hash: hash,
+		seed: seed{maphash.String(maphash.MakeSeed(), ""), maphash.String(maphash.MakeSeed(), "")},
+	}
 	m.alloc(slots)
 
 	return m
@@ -98,6 +186,9 @@ func New[K Key, V any](capacity int) *Map[K, V] {
 //
 // Zero alloc.
 func (m *Map[K, V]) Get(key K) (V, bool) {
+	// Get walks the run itself and does not call get. The compiler joins the
+	// two returns of an inlined get, and Get then takes 7.0 ns in place of
+	// 5.3 ns for a lookup in 10,000 keys.
 	h, _ := m.hash(m.seed, key)
 	tag := uint8(h>>tagShift) | fullTag
 
@@ -168,39 +259,8 @@ func (m *Map[K, V]) Set(key K, value V) (V, bool) {
 // Zero alloc.
 func (m *Map[K, V]) Delete(key K) (V, bool) {
 	h, _ := m.hash(m.seed, key)
-	tag := uint8(h>>tagShift) | fullTag
 
-	i := h & m.mask
-	for m.tags[i] != tag || m.keys[i] != key {
-		if m.tags[i] == 0 {
-			var zero V
-
-			return zero, false
-		}
-
-		i = (i + 1) & m.mask
-	}
-
-	old := m.vals[i]
-
-	for j := (i + 1) & m.mask; m.tags[j] != 0; j = (j + 1) & m.mask {
-		hj, _ := m.hash(m.seed, m.keys[j])
-
-		// (j-hj)&m.mask is the distance from the home slot of the key at j
-		// to j. The key moves into the hole at i unless its home slot lies
-		// after i, because a walk from that home slot does not pass i.
-		if (j-hj)&m.mask >= (j-i)&m.mask {
-			m.tags[i], m.keys[i], m.vals[i] = m.tags[j], m.keys[j], m.vals[j]
-			i = j
-		}
-	}
-
-	var zero V
-
-	m.tags[i], m.vals[i] = 0, zero
-	m.n--
-
-	return old, true
+	return m.remove(h, &key)
 }
 
 // Len returns the number of keys.
@@ -272,6 +332,105 @@ func (m *Map[K, V]) All() iter.Seq2[K, V] {
 			}
 		}
 	}
+}
+
+// get returns the value of *key, whose hash is h, and reports whether *key
+// is present. A [Typed] computes h with the hash function of m, and calls get
+// in place of Get with a pointer to the identifier of its key.
+//
+// get takes the key by pointer. The compiler inlines get, and the comparison
+// of an inlined array parameter assembles the key from its single bytes. The
+// comparison through the pointer loads the key as two to four words.
+func (m *Map[K, V]) get(h uint64, key *K) (V, bool) {
+	tag := uint8(h>>tagShift) | fullTag
+
+	for i := h & m.mask; ; i = (i + 1) & m.mask {
+		if m.tags[i] == 0 {
+			var zero V
+
+			return zero, false
+		}
+
+		// The comparison of the tags spares a comparison of the keys in the
+		// slots of other keys.
+		//dokimi:mutate-skip ror-true: a slot of another tag has another key, which the comparison of the keys refuses
+		if m.tags[i] == tag {
+			if m.keys[i] == *key {
+				return m.vals[i], true
+			}
+		}
+	}
+}
+
+// set sets the value of *key, whose hash is h, as Set describes. A [Typed]
+// calls it in place of Set. It takes the key by pointer for the reason that
+// get states.
+func (m *Map[K, V]) set(h uint64, key *K, value V) (V, bool) {
+	tag := uint8(h>>tagShift) | fullTag
+
+	i := h & m.mask
+	for ; m.tags[i] != 0; i = (i + 1) & m.mask {
+		//dokimi:mutate-skip ror-true: a slot of another tag has another key, which the comparison of the keys refuses
+		if m.tags[i] == tag {
+			if m.keys[i] == *key {
+				old := m.vals[i]
+				m.vals[i] = value
+
+				return old, true
+			}
+		}
+	}
+
+	if m.n == m.limit {
+		m.grow()
+		i = m.free(h)
+	}
+
+	m.tags[i], m.keys[i], m.vals[i] = tag, *key, value
+	m.n++
+
+	var zero V
+
+	return zero, false
+}
+
+// remove removes *key, whose hash is h, as Delete describes. The keys that
+// it moves back hash with the hash function of m. It takes the key by
+// pointer for the reason that get states.
+func (m *Map[K, V]) remove(h uint64, key *K) (V, bool) {
+	tag := uint8(h>>tagShift) | fullTag
+
+	i := h & m.mask
+	for m.tags[i] != tag || m.keys[i] != *key {
+		if m.tags[i] == 0 {
+			var zero V
+
+			return zero, false
+		}
+
+		i = (i + 1) & m.mask
+	}
+
+	old := m.vals[i]
+
+	for j := (i + 1) & m.mask; m.tags[j] != 0; j = (j + 1) & m.mask {
+		hj, _ := m.hash(m.seed, m.keys[j])
+
+		// (j-hj)&m.mask is the distance from the home slot of the key at j
+		// to j. The key moves into the hole at i unless its home slot lies
+		// after i, because a walk from that home slot does not pass i.
+		if (j-hj)&m.mask >= (j-i)&m.mask {
+			m.tags[i], m.keys[i], m.vals[i] = m.tags[j], m.keys[j], m.vals[j]
+			i = j
+		}
+	}
+
+	var zero V
+
+	m.tags[i], m.vals[i] = 0, zero
+	m.n--
+
+	return old, true
 }
 
 // alloc gives m empty arrays of slots slots, and the mask and the limit of

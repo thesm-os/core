@@ -8,13 +8,15 @@ import (
 	"testing"
 
 	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/expect"
 	"go.dokimi.dev/assert/prop"
 
 	"go.thesmos.sh/core/id"
 )
 
 // TestMapTable checks the table of a Map: the slots that New allocates, the
-// limit at which Set doubles them, and the runs that Delete leaves.
+// hash of the keys of an identifier type, the limit at which Set doubles the
+// slots, and the runs that Delete leaves.
 func TestMapTable(t *testing.T) {
 	t.Parallel()
 
@@ -40,6 +42,53 @@ func TestMapTable(t *testing.T) {
 				assert.Length(t, m.tags, tt.want, "New must allocate the least table with room for the capacity")
 			})
 		}
+
+		t.Run("draws a new random seed for each map", func(t *testing.T) {
+			t.Parallel()
+			a, b := New[id.ID128, int](1), New[id.ID128, int](1)
+			expect.NotEqual(t, a.seed.s0, b.seed.s0, "two maps must have different first secret words")
+			expect.NotEqual(t, a.seed.s1, b.seed.s1, "two maps must have different second secret words")
+			expect.NotEqual(t, a.seed.s0, a.seed.s1, "the two secret words of one seed must differ")
+		})
+	})
+
+	t.Run("NewTyped128", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns a map that hashes a key as hash128 hashes its identifier", func(t *testing.T) {
+			t.Parallel()
+			m := NewTyped128[struct{ id.ID128 }, int](1)
+			k := counting[id.ID128]()
+			got, _ := m.hash(m.seed, struct{ id.ID128 }{k})
+			want, _ := hash128(m.seed, &k)
+			assert.Equal(t, got, want, "the hash of a key must be the hash of its identifier")
+		})
+	})
+
+	t.Run("NewTyped160", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns a map that hashes a key as hash160 hashes its identifier", func(t *testing.T) {
+			t.Parallel()
+			m := NewTyped160[struct{ id.ID160 }, int](1)
+			k := counting[id.ID160]()
+			got, _ := m.hash(m.seed, struct{ id.ID160 }{k})
+			want, _ := hash160(m.seed, &k)
+			assert.Equal(t, got, want, "the hash of a key must be the hash of its identifier")
+		})
+	})
+
+	t.Run("NewTyped256", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns a map that hashes a key as hash256 hashes its identifier", func(t *testing.T) {
+			t.Parallel()
+			m := NewTyped256[struct{ id.ID256 }, int](1)
+			k := counting[id.ID256]()
+			got, _ := m.hash(m.seed, struct{ id.ID256 }{k})
+			want, _ := hash256(m.seed, &k)
+			assert.Equal(t, got, want, "the hash of a key must be the hash of its identifier")
+		})
 	})
 
 	t.Run("Set", func(t *testing.T) {

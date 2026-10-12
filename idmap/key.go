@@ -5,7 +5,6 @@ package idmap
 
 import (
 	"encoding/binary"
-	"hash/maphash"
 	"math/bits"
 
 	"go.thesmos.sh/core/id"
@@ -24,8 +23,9 @@ const (
 	tagShift = 57
 )
 
-// Key is the type set of the keys of a [Map] and of a [Concurrent]: the
-// fixed-size identifiers [id.ID128], [id.ID160] and [id.ID256].
+// Key is the type set of the fixed-size identifiers [id.ID128], [id.ID160]
+// and [id.ID256]. [New] returns a [Map] of them, and [NewConcurrent] returns
+// a [Concurrent] of them.
 type Key interface {
 	id.ID128 | id.ID160 | id.ID256
 }
@@ -49,45 +49,66 @@ type words struct {
 // a second multiplication of the same form, with the first hash in place
 // of s0. Every factor contains a secret word, so a caller who does not know
 // the seed cannot choose keys that share a hash.
+//
+// Each constructor of a map draws a new seed. Each word of the seed is the
+// hash of the empty string under a new random seed of hash/maphash.
 type seed struct {
 	s0, s1 uint64
 }
 
-// newHash returns the hash function of the keys of type K and a new seed.
-// A type switch on a pointer to the function selects hash128, hash160 or
-// hash256 once, so a hash does not branch on the size of the key. Each word
-// of the seed is the hash of the empty string under a new random seed of
-// hash/maphash.
+// newHash returns the hash function of the keys of type K. A type switch on
+// a pointer to the function selects keyHash128, keyHash160 or keyHash256
+// once, so a hash does not branch on the size of the key.
 //
 // # Allocation contract
 //
 // Zero alloc.
-func newHash[K Key]() (func(seed, K) (uint64, words), seed) {
+func newHash[K Key]() func(seed, K) (uint64, words) {
 	var hash func(seed, K) (uint64, words)
 
 	switch f := any(&hash).(type) {
 	case *func(seed, id.ID128) (uint64, words):
-		*f = hash128
+		*f = keyHash128
 	case *func(seed, id.ID160) (uint64, words):
-		*f = hash160
+		*f = keyHash160
 	case *func(seed, id.ID256) (uint64, words):
-		*f = hash256
+		*f = keyHash256
 	}
 
-	return hash, seed{maphash.String(maphash.MakeSeed(), ""), maphash.String(maphash.MakeSeed(), "")}
+	return hash
 }
 
-// hash128 returns the hash of the ID128 key k under the seed s, and the
-// words of k.
-func hash128(s seed, k id.ID128) (uint64, words) {
+// keyHash128, keyHash160 and keyHash256 return the hash and the words of a
+// key that a map passes by value through its hash function. A map passes the
+// key by value, because a pointer that passes through a function value makes
+// the key escape to the heap.
+func keyHash128(s seed, k id.ID128) (uint64, words) {
+	return hash128(s, &k)
+}
+
+func keyHash160(s seed, k id.ID160) (uint64, words) {
+	return hash160(s, &k)
+}
+
+func keyHash256(s seed, k id.ID256) (uint64, words) {
+	return hash256(s, &k)
+}
+
+// hash128 returns the hash of the ID128 key *k under the seed s, and the
+// words of *k.
+//
+// Each hash takes its key by pointer, and loads each word of the key from
+// memory. The compiler builds each word of an inlined array argument from
+// eight byte loads, seven shifts and seven ors.
+func hash128(s seed, k *id.ID128) (uint64, words) {
 	w := words{w0: binary.LittleEndian.Uint64(k[0:8]), w1: binary.LittleEndian.Uint64(k[8:16])}
 
 	return mix(w.w0^s.s0, w.w1^s.s1), w
 }
 
-// hash160 returns the hash of the ID160 key k under the seed s, and the
-// words of k.
-func hash160(s seed, k id.ID160) (uint64, words) {
+// hash160 returns the hash of the ID160 key *k under the seed s, and the
+// words of *k.
+func hash160(s seed, k *id.ID160) (uint64, words) {
 	w := words{
 		w0: binary.LittleEndian.Uint64(k[0:8]),
 		w1: binary.LittleEndian.Uint64(k[8:16]),
@@ -97,9 +118,9 @@ func hash160(s seed, k id.ID160) (uint64, words) {
 	return mix(w.w2^mix(w.w0^s.s0, w.w1^s.s1), w.w3^s.s1), w
 }
 
-// hash256 returns the hash of the ID256 key k under the seed s, and the
-// words of k.
-func hash256(s seed, k id.ID256) (uint64, words) {
+// hash256 returns the hash of the ID256 key *k under the seed s, and the
+// words of *k.
+func hash256(s seed, k *id.ID256) (uint64, words) {
 	w := words{
 		w0: binary.LittleEndian.Uint64(k[0:8]),
 		w1: binary.LittleEndian.Uint64(k[8:16]),

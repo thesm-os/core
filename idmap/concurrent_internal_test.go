@@ -60,6 +60,14 @@ func TestConcurrentBuckets(t *testing.T) {
 			c := NewConcurrent[id.ID256, int64](8)
 			assert.Length(t, c.rest, 2*4*bucketSlots, "an ID256 key must have two words past 16 bytes")
 		})
+
+		t.Run("draws a new random seed for each map", func(t *testing.T) {
+			t.Parallel()
+			a, b := NewConcurrent[id.ID128, int64](1), NewConcurrent[id.ID128, int64](1)
+			expect.NotEqual(t, a.seed.s0, b.seed.s0, "two maps must have different first secret words")
+			expect.NotEqual(t, a.seed.s1, b.seed.s1, "two maps must have different second secret words")
+			expect.NotEqual(t, a.seed.s0, a.seed.s1, "the two secret words of one seed must differ")
+		})
 	})
 
 	t.Run("find", func(t *testing.T) {

@@ -13,7 +13,6 @@ import (
 	"go.dokimi.dev/assert/bench"
 	"go.dokimi.dev/assert/expect"
 	"go.dokimi.dev/assert/prop"
-	"go.dokimi.dev/assert/stateful"
 
 	"go.thesmos.sh/core/id"
 	"go.thesmos.sh/core/idmap"
@@ -23,11 +22,13 @@ import (
 // allocation tests.
 const benchKeys = 1 << 16
 
-// entry is the input of a step that stores a key: the key and its value.
-type entry[K idmap.Key] struct {
-	key   K
-	value int
-}
+// typed128, typed160 and typed256 are key types of a caller whose one field
+// embeds an identifier of 16, 20 or 32 bytes.
+type (
+	typed128 struct{ id.ID128 }
+	typed160 struct{ id.ID160 }
+	typed256 struct{ id.ID256 }
+)
 
 func TestMap(t *testing.T) {
 	t.Parallel()
@@ -41,6 +42,33 @@ func TestMap(t *testing.T) {
 			_, ok := m.Get(keyOf[id.ID128](0))
 			expect.Equal(t, m.Len(), 0, "the new map must have no keys")
 			expect.False(t, ok, "the new map must not contain a key")
+		})
+	})
+
+	t.Run("NewTyped128", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns a map that returns what a Go map returns for random calls", func(t *testing.T) {
+			t.Parallel()
+			checkMap(t, idmap.NewTyped128[typed128, int], func(i int) typed128 { return typed128{keyOf[id.ID128](i)} })
+		})
+	})
+
+	t.Run("NewTyped160", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns a map that returns what a Go map returns for random calls", func(t *testing.T) {
+			t.Parallel()
+			checkMap(t, idmap.NewTyped160[typed160, int], func(i int) typed160 { return typed160{keyOf[id.ID160](i)} })
+		})
+	})
+
+	t.Run("NewTyped256", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns a map that returns what a Go map returns for random calls", func(t *testing.T) {
+			t.Parallel()
+			checkMap(t, idmap.NewTyped256[typed256, int], func(i int) typed256 { return typed256{keyOf[id.ID256](i)} })
 		})
 	})
 
@@ -288,17 +316,17 @@ func TestMap(t *testing.T) {
 
 	t.Run("returns what a Go map returns for random calls with ID128 keys", func(t *testing.T) {
 		t.Parallel()
-		checkMap[id.ID128](t)
+		checkMap(t, idmap.New[id.ID128, int], keyOf[id.ID128])
 	})
 
 	t.Run("returns what a Go map returns for random calls with ID160 keys", func(t *testing.T) {
 		t.Parallel()
-		checkMap[id.ID160](t)
+		checkMap(t, idmap.New[id.ID160, int], keyOf[id.ID160])
 	})
 
 	t.Run("returns what a Go map returns for random calls with ID256 keys", func(t *testing.T) {
 		t.Parallel()
-		checkMap[id.ID256](t)
+		checkMap(t, idmap.New[id.ID256, int], keyOf[id.ID256])
 	})
 }
 
@@ -314,6 +342,13 @@ func TestMapAllocs(t *testing.T) {
 		var m *idmap.Map[id.ID128, int]
 		expect.MaxAllocs(t, func() { m = idmap.New[id.ID128, int](benchKeys) }, 4,
 			"New must allocate the map and its three arrays")
+		expect.Equal(t, m.Len(), 0, "the test must measure an empty map")
+	})
+
+	t.Run("NewTyped128", func(t *testing.T) {
+		var m *idmap.Map[typed128, int]
+		expect.MaxAllocs(t, func() { m = idmap.NewTyped128[typed128, int](benchKeys) }, 5,
+			"NewTyped128 must allocate the map, its three arrays and its hash function")
 		expect.Equal(t, m.Len(), 0, "the test must measure an empty map")
 	})
 
@@ -476,103 +511,6 @@ func BenchmarkMap(b *testing.B) {
 		}
 
 		assert.Equal(b, sum, benchKeys*(benchKeys-1)/2, "the benchmark must measure every key")
-	})
-}
-
-// checkMap runs random calls on a Map with keys of type K, over a key space
-// of three times its capacity, and checks each result against a Go map that
-// receives the same calls. A Clone step continues the calls on the copy,
-// and every later step checks that the map that Clone copied is unchanged.
-func checkMap[K idmap.Key](t *testing.T) {
-	t.Helper()
-
-	prop.ForAll(t, "a Map must return what a Go map returns for the same calls", func(pc *prop.Case) {
-		capacity := pc.Draw(prop.Integer(1, 16), "capacity")
-		m := idmap.New[K, int](capacity)
-		ref := map[K]int{}
-		var original *idmap.Map[K, int]
-		var originalRef map[K]int
-		written := 0
-		key := func(pc *prop.Case, _ struct{}) any {
-			return keyOf[K](pc.Draw(prop.Integer(0, 3*capacity-1), "key"))
-		}
-
-		stateful.Steps(pc, stateful.Machine[struct{}]{
-			Actions: []stateful.Action[struct{}]{
-				{
-					Name: opClear,
-					Run: func(*prop.Case, int, any) {
-						m.Clear()
-						clear(ref)
-					},
-				},
-				{
-					Name: opClone,
-					Run: func(*prop.Case, int, any) {
-						original, originalRef = m, maps.Clone(ref)
-						m = m.Clone()
-					},
-				},
-				{
-					Name:   opGet,
-					Weight: 4,
-					Input:  key,
-					Run: func(pc *prop.Case, _ int, in any) {
-						got, ok := m.Get(in.(K))
-						want, present := ref[in.(K)]
-						assert.Equal(pc, ok, present, "Get must report whether the key is present")
-						assert.Equal(pc, got, want, "Get must return the value of the key")
-					},
-				},
-				{
-					Name:   opSet,
-					Weight: 4,
-					Input: func(pc *prop.Case, state struct{}) any {
-						written++
-
-						return entry[K]{key: key(pc, state).(K), value: written}
-					},
-					Run: func(pc *prop.Case, _ int, in any) {
-						e := in.(entry[K])
-						old, ok := m.Set(e.key, e.value)
-						want, present := ref[e.key]
-						ref[e.key] = e.value
-						assert.Equal(pc, ok, present, "Set must report whether the key was present")
-						assert.Equal(pc, old, want, "Set must return the previous value of the key")
-					},
-				},
-				{
-					Name:   opDelete,
-					Weight: 4,
-					Input:  key,
-					Run: func(pc *prop.Case, _ int, in any) {
-						old, ok := m.Delete(in.(K))
-						want, present := ref[in.(K)]
-						delete(ref, in.(K))
-						assert.Equal(pc, ok, present, "Delete must report whether the key was present")
-						assert.Equal(pc, old, want, "Delete must return the value of the key")
-					},
-				},
-				{
-					Name: opAll,
-					Run: func(pc *prop.Case, _ int, _ any) {
-						yields := 0
-						for range m.All() {
-							yields++
-						}
-						assert.Equal(pc, maps.Collect(m.All()), ref, "All must yield every key with its value")
-						assert.Equal(pc, yields, len(ref), "All must yield each key once")
-					},
-				},
-			},
-			Invariant: func(pc *prop.Case, _ struct{}) {
-				assert.Equal(pc, m.Len(), len(ref), "Len must return the number of keys")
-				if original != nil {
-					assert.Equal(pc, maps.Collect(original.All()), originalRef,
-						"a write to the copy must not change the map that Clone copied")
-				}
-			},
-		})
 	})
 }
 

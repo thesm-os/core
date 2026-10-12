@@ -4,6 +4,7 @@
 package idmap
 
 import (
+	"hash/maphash"
 	"math/bits"
 	"runtime"
 	"sync/atomic"
@@ -149,17 +150,16 @@ func NewConcurrent[K Key, V Word](capacity int) *Concurrent[K, V] {
 	//nolint:gosec // G115: a key has 16 to 32 bytes, so the words past 16 bytes are 0 to 2
 	extra := uint64((len(zero) - id.Size128 + 7) / 8)
 
-	c := &Concurrent[K, V]{
+	return &Concurrent[K, V]{
+		hash:    newHash[K](),
 		buckets: make([]bucket, n),
 		rest:    make([]atomic.Uint64, n*bucketSlots*extra),
 		yield:   runtime.Gosched,
+		seed:    seed{maphash.String(maphash.MakeSeed(), ""), maphash.String(maphash.MakeSeed(), "")},
 		mask:    n - 1,
 		limit:   int64(capacity),
 		extra:   extra,
 	}
-	c.hash, c.seed = newHash[K]()
-
-	return c
 }
 
 // Load returns the value of key, and reports whether key is present.
