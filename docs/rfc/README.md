@@ -125,6 +125,7 @@ Start from [`docs/templates/RFC.md`](../templates/RFC.md).
 | [0055](0055-party-markers-in-signature-policies.md) | Party Markers in Signature Policies | Accepted |
 | [0056](0056-proofs-from-cached-node-tiles.md) | Proofs from Cached Node Tiles | Accepted |
 | [0057](0057-fixed-size-identifiers.md) | Fixed-Size Identifiers | Accepted |
+| [0058](0058-fast-maps-for-identifier-keys.md) | Fast Maps for Identifier Keys | Accepted |
 
 ## Canonical first RFC
 
