@@ -313,11 +313,27 @@ func (m *Map[K, V]) Clone() *Map[K, V] {
 // before key. Map.Get took 8.6% less time this way than with the loop of
 // [slices.BinarySearch], whose count of iterations depends on the number
 // of keys.
+//
+// search first compares key with the last key of the leaf, and returns the
+// end of the leaf for a key after it. Every insert of an ascending fill
+// ends its search there. On 1M int64 keys, such inserts take 22.5-23.0 ns
+// per key with the comparison against 32.2-33.1 ns without it. Lookups in
+// 1M keys take the same time, and lookups in 10k keys about 1% longer.
+// route has no such comparison: in route it makes lookups in 1M keys about
+// 9% slower.
 type natural[K cmp.Ordered] struct{}
 
 // search returns the index of the first of keys at or after key, and
-// reports whether that key equals key. keys has at most maxItems keys.
+// reports whether that key equals key. keys has at least one key and at
+// most maxItems keys, because a descent searches only leaves of a tree that
+// has a key, and no such leaf is empty.
 func (natural[K]) search(keys []K, key K) (int, bool) {
+	n := len(keys)
+	//dokimi:mutate-skip sbr-delete: the steps return the same index and false for a key after the last key
+	if cmp.Less(keys[n-1], key) {
+		return n, false
+	}
+
 	i := 0
 	for k := range searchSteps {
 		if j := i + maxChildren>>(k+1); j <= len(keys) && cmp.Less(keys[j-1], key) {
