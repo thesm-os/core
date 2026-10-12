@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.14.0
+
+### Minor Changes
+
+- a75ca12: Stop `tlog.BundleEntries` with `tlog.ErrBundle` after 256 entries, and add `tlog.MaxBundleEntries`.
+- 4acd5a5: Add the package `idmap` with hash maps keyed by `id.ID128`, `id.ID160` and `id.ID256`.
+
+### Patch Changes
+
+- 9c1fed8: Cut the time of ascending inserts into `btree.Map` and `btree.Set` by 30%.
+- 40f0794: Compare `id.ID128`, `id.ID160` and `id.ID256` by big-endian words instead of bytes.
+
 ## 0.13.0
 
 ### Minor Changes
