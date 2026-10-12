@@ -43,7 +43,8 @@ var (
 	ErrEntrySize = errs.WithClass(errors.New("tlog: bundle entry longer than 65535 bytes"), errs.Invalid)
 
 	// ErrBundle is yielded by [BundleEntries] for an entry bundle whose
-	// lengths run past its data. It classifies as errs.Integrity.
+	// lengths run past its data, and for one with more than
+	// [MaxBundleEntries] entries. It classifies as errs.Integrity.
 	ErrBundle = errs.WithClass(errors.New("tlog: malformed entry bundle"), errs.Integrity)
 
 	// ErrStale is returned by [Builder.Commit] for an [Update] that was

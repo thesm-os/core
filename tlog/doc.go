@@ -75,7 +75,8 @@
 // then read each tile once and hash each interior node once.
 //
 // [AppendBundleEntry], [BundleEntries] and [BundlePath] implement the
-// C2SP entry bundles that store the entries themselves.
+// C2SP entry bundles that store the entries themselves. A bundle has at
+// most [MaxBundleEntries] entries, one for each leaf of a full tile.
 //
 // # Write order
 //

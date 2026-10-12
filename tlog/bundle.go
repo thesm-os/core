@@ -9,6 +9,10 @@ import (
 	"math"
 )
 
+// MaxBundleEntries is the most entries of a C2SP entry bundle: one for each
+// leaf of a full tile.
+const MaxBundleEntries = 256
+
 // AppendBundleEntry appends entry to a C2SP entry bundle, a big-endian
 // uint16 length followed by the entry, and returns the extended slice.
 //
@@ -30,7 +34,10 @@ func AppendBundleEntry(dst, entry []byte) ([]byte, error) {
 
 // BundleEntries iterates over the entries of a bundle. Each entry
 // aliases data and has no spare capacity. It yields [ErrBundle] and
-// stops at a length that runs past the end of data.
+// stops at a length that runs past the end of data. It also yields
+// ErrBundle and stops in place of an entry after the first
+// [MaxBundleEntries], so a caller that collects the entries of an
+// untrusted bundle collects at most MaxBundleEntries.
 //
 // # Allocation contract
 //
@@ -40,8 +47,8 @@ func AppendBundleEntry(dst, entry []byte) ([]byte, error) {
 func BundleEntries(data []byte) iter.Seq2[[]byte, error] {
 	return func(yield func([]byte, error) bool) {
 		rest := data
-		for len(rest) > 0 {
-			if len(rest) < 2 {
+		for count := 0; len(rest) > 0; count++ {
+			if count == MaxBundleEntries || len(rest) < 2 {
 				yield(nil, ErrBundle)
 
 				return

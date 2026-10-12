@@ -110,6 +110,28 @@ func TestBundle(t *testing.T) {
 			assert.Equal(t, got, [][]byte{[]byte("a"), {}}, "the empty entry must follow the first")
 		})
 
+		t.Run("yields the 256 entries of a full bundle", func(t *testing.T) {
+			t.Parallel()
+			n := 0
+			for _, err := range tlog.BundleEntries(bytes.Repeat([]byte{0, 0}, 256)) {
+				assert.NoError(t, err, "a bundle of 256 empty entries must iterate")
+				n++
+			}
+			assert.Equal(t, n, 256, "BundleEntries must yield every entry of a full bundle")
+		})
+
+		t.Run("yields ErrBundle in place of the 257th entry", func(t *testing.T) {
+			t.Parallel()
+			yields := 0
+			var last error
+			for _, err := range tlog.BundleEntries(bytes.Repeat([]byte{0, 0}, 257)) {
+				yields++
+				last = err
+			}
+			expect.Equal(t, yields, 257, "BundleEntries must yield 256 entries and then stop at ErrBundle")
+			expect.ErrorIs(t, last, tlog.ErrBundle, "the yield after the 256th entry must be ErrBundle")
+		})
+
 		tests := []struct {
 			name string
 			give []byte
