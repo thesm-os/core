@@ -104,42 +104,6 @@ var failing = &net.Resolver{
 	Dial:     func(context.Context, string, string) (net.Conn, error) { return nil, errDNS },
 }
 
-// logs is a slog.Handler that keeps a clone of every record. Its methods
-// are safe for concurrent use.
-type logs struct {
-	records []slog.Record
-	mu      sync.Mutex
-}
-
-var _ slog.Handler = (*logs)(nil)
-
-// Enabled reports true for every level.
-func (*logs) Enabled(context.Context, slog.Level) bool { return true }
-
-// Handle keeps a clone of r.
-func (l *logs) Handle(_ context.Context, r slog.Record) error {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	l.records = append(l.records, r.Clone())
-
-	return nil
-}
-
-// WithAttrs returns l, which keeps no attributes of its own.
-func (l *logs) WithAttrs([]slog.Attr) slog.Handler { return l }
-
-// WithGroup returns l, which keeps no groups of its own.
-func (l *logs) WithGroup(string) slog.Handler { return l }
-
-// all returns the records that l kept, in order.
-func (l *logs) all() []slog.Record {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	return slices.Clone(l.records)
-}
-
 // span is a span stub that the tracer of a reporter started.
 type span struct {
 	*telemetrytest.SpanStub
@@ -335,7 +299,7 @@ func TestClient(t *testing.T) {
 			}))
 			t.Cleanup(srv.Close)
 
-			l := &logs{}
+			l := telemetrytest.NewRecords(slog.LevelDebug)
 			c, err := httpclient.New(dependency, required, loopback, httpclient.WithLogger(slog.New(l)))
 			assert.NoError(t, err, "New must accept the options")
 
@@ -343,7 +307,7 @@ func TestClient(t *testing.T) {
 			assert.NoError(t, err, "Do must return the response")
 			assert.Equal(t, status, http.StatusServiceUnavailable, "Do must return the status of the response")
 
-			records := l.all()
+			records := l.All()
 			assert.Length(t, records, 1, "Do must log the failed call")
 			expect.Equal(t, records[0].Level, slog.LevelWarn, "the record must have the level Warn")
 			expect.Equal(t, records[0].Message, messageFailed, "the record must have the message of a failed call")
@@ -354,13 +318,13 @@ func TestClient(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 			t.Cleanup(srv.Close)
 
-			l := &logs{}
+			l := telemetrytest.NewRecords(slog.LevelDebug)
 			c, err := httpclient.New(dependency, required, loopback, httpclient.WithLogger(slog.New(l)))
 			assert.NoError(t, err, "New must accept the options")
 
 			_, _, err = get(t, c, srv.URL)
 			assert.NoError(t, err, "Do must return the response")
-			assert.Empty(t, l.all(), "Do must not log a call that succeeded")
+			assert.Empty(t, l.All(), "Do must not log a call that succeeded")
 		})
 
 		blocked := []struct {
@@ -373,14 +337,14 @@ func TestClient(t *testing.T) {
 		for _, tt := range blocked {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-				l := &logs{}
+				l := telemetrytest.NewRecords(slog.LevelDebug)
 				c, err := httpclient.New(dependency, required, loopback, httpclient.WithLogger(slog.New(l)))
 				assert.NoError(t, err, "New must accept the options")
 
 				_, _, err = get(t, c, tt.url)
 				expect.ErrorIs(t, err, httpclient.ErrBlocked, "Do must refuse the request")
 				expect.Equal(t, errs.Classify(err), errs.Denied, "ErrBlocked must classify as Denied")
-				expect.Length(t, l.all(), 1, "Do must log the refused call")
+				expect.Length(t, l.All(), 1, "Do must log the refused call")
 			})
 		}
 
@@ -478,7 +442,7 @@ func TestClient(t *testing.T) {
 			t.Cleanup(srv.Close)
 			t.Cleanup(func() { close(release) })
 
-			l := &logs{}
+			l := telemetrytest.NewRecords(slog.LevelDebug)
 			c, err := httpclient.New(dependency, required, loopback, httpclient.WithLogger(slog.New(l)))
 			assert.NoError(t, err, "New must accept the options")
 
@@ -494,7 +458,7 @@ func TestClient(t *testing.T) {
 			_, err = c.Do(req) //nolint:bodyclose // the call fails without a response
 			expect.ErrorIs(t, err, context.Canceled, "Do must return the error of the context")
 			expect.Equal(t, errs.Classify(err), errs.Unspecified, "the error of a context must have no class")
-			expect.Empty(t, l.all(), "Do must not log a call that its caller cancelled")
+			expect.Empty(t, l.All(), "Do must not log a call that its caller cancelled")
 		})
 
 		t.Run("returns the response when the context ends after a classification that succeeded", func(t *testing.T) {
