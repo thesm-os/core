@@ -80,7 +80,7 @@ for concurrent use and its allocations in its
 | Data structures | [`btree`][btree], [`idmap`][idmap], [`cache`][cache], [`pool`][pool], [`arena`][arena] | B+ tree maps and sets with copy-on-write clones, hash maps keyed by fixed-size identifiers, a bounded S3-FIFO cache, typed pools, and arenas for hot paths. |
 | Telemetry | [`telemetry`][telemetry], [`telemetry/noop`][telemetry/noop], [`telemetry/w3c`][telemetry/w3c] | Metric and trace interfaces whose bound instruments record without an allocation, and W3C Trace Context propagation. |
 | HTTP | [`net/httpserver`][net/httpserver], [`net/httpclient`][net/httpclient] | A server on `net/http` with limits, telemetry, panic recovery and graceful shutdown, and a client with a circuit breaker per host and retries. |
-| Testing | [`coretest`][coretest] | Conformance suites that check an implementation against its interface, generated test doubles, and a time-stamp authority for tests. |
+| Testing | [`coretest`][coretest] | Conformance suites that check an implementation against its interface, generated test doubles, recorders of telemetry and of logs, and a time-stamp authority for tests. |
 
 ## Design
 

@@ -1,19 +1,31 @@
 // Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
-// Package telemetrytest holds testkit-generated test
-// infrastructure for the [go.thesmos.sh/core/telemetry] interface
-// seams (Counter, Gauge, Histogram, Reporter, Span, Tracer) plus
-// hand-rolled assertion bundles. Generated artefacts have a
-// `.gen.go` suffix; hand-rolled spec files do not.
+// Package telemetrytest tests the packages that emit telemetry through
+// [go.thesmos.sh/core/telemetry], and the implementations of its
+// interfaces.
 //
-// Model-layer generation is intentionally omitted — the
-// instrument methods (Add / Set / Record / End / SetAttributes /
-// AddEvent) are side-effect-only with no return values to compare
-// against a reference, so the model framework's
-// auto-determinism / cross-stdlib equivalence properties don't
-// apply. -race + the contract suite cover the same ground without
-// the rapid harness overhead.
+// # Recorders
+//
+//   - [Recorder] is a [telemetry.Reporter] that keeps the spec of each
+//     instrument, the values of each series and every span that ends.
+//   - [Records] is a [log/slog.Handler] that keeps every record at or
+//     above its level.
+//
+// A test passes a Recorder as the Reporter of the package under test, and
+// a Records as the handler of its logger. It then reads what the package
+// emitted.
+//
+// # Contract suites and stubs
+//
+// testkit generates a contract suite, a stub and a benchmark suite for
+// each interface: Counter, Gauge, Histogram, Reporter, Span and Tracer. A
+// generated file has the suffix .gen.go. Each file *_spec.go lists the
+// assertions of one contract.
+//
+// The package has no model suites. The methods of the instruments return
+// no value that a model could compare with a reference, so the contract
+// suites under the race detector cover them.
 package telemetrytest
 
 // Counter
