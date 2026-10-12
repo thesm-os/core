@@ -105,5 +105,7 @@ Start from [`docs/templates/ADR.md`](../templates/ADR.md).
 | [0045](0045-core-ships-io-built-on-the-standard-library.md) | Core Ships IO Built on the Standard Library | Accepted |
 | [0046](0046-a-marked-rule-is-a-party-at-any-depth.md) | A Marked Rule Is a Party at Any Depth | Accepted |
 | [0047](0047-a-cache-without-a-clock-does-not-expire.md) | A Cache Without a Clock Does Not Expire | Accepted |
+| [0048](0048-a-map-clone-copies-its-arrays.md) | A Map Clone Copies Its Arrays | Accepted |
+| [0049](0049-the-idmap-hash-seeds-both-factors.md) | The idmap Hash Seeds Both Factors | Accepted |
 
 [nygard]: https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions
