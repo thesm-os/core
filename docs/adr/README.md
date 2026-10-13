@@ -108,5 +108,6 @@ Start from [`docs/templates/ADR.md`](../templates/ADR.md).
 | [0048](0048-a-map-clone-copies-its-arrays.md) | A Map Clone Copies Its Arrays | Accepted |
 | [0049](0049-the-idmap-hash-seeds-both-factors.md) | The idmap Hash Seeds Both Factors | Accepted |
 | [0050](0050-idmap-keys-maps-by-identifier-types.md) | idmap Keys Maps by Identifier Types | Accepted |
+| [0051](0051-serve-runs-functions-until-their-context-ends.md) | Serve Runs Functions Until Their Context Ends | Accepted |
 
 [nygard]: https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions
