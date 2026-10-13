@@ -5,7 +5,6 @@ package arena_test
 
 import (
 	"bytes"
-	"math/bits"
 	"slices"
 	"testing"
 
@@ -26,6 +25,22 @@ const slabSize = 1024
 // slabsContract is the contract of slabsSteps, which TestSlabs and
 // FuzzSlabs check.
 const slabsContract = "every slice in use must keep its own bytes, and InUse must sum their classes"
+
+// sizeClasses contains the size classes of a Slabs up to 2^30 bytes in
+// ascending order. The function builds them from the definition of the
+// classes. The first class is MinClass. Above each power of two from
+// MinClass up, the classes are the power plus one to eight times an eighth
+// of the power. The class of n is the first class that is at least n.
+var sizeClasses = func() []int {
+	c := []int{arena.MinClass}
+	for p := arena.MinClass; p < 1<<30; p *= 2 {
+		for k := 1; k <= 8; k++ {
+			c = append(c, p+k*(p/8))
+		}
+	}
+
+	return c
+}()
 
 // allocated is what a case of Alloc observes of the slice that it returns.
 type allocated struct {
@@ -75,10 +90,22 @@ func TestSlabs(t *testing.T) {
 
 				return allocated{len: len(b), cap: cap(b), zero: bytes.Count(b[:cap(b)], []byte{0}) == cap(b)}
 			}, func(n int) allocated {
-				return allocated{len: n, cap: max(arena.MinClass, 1<<bits.Len(uint(n-1))), zero: true}
-			}, "Alloc must return n zero bytes whose capacity is the smallest power of two of at least MinClass",
+				i, _ := slices.BinarySearch(sizeClasses, n)
+
+				return allocated{len: n, cap: sizeClasses[i], zero: true}
+			}, "Alloc must return n zero bytes whose capacity is the smallest size class that contains n",
 				prop.Using(prop.Integer(1, 4*slabSize)), prop.Example(1), prop.Example(63), prop.Example(64),
-				prop.Example(65), prop.Example(512), prop.Example(513), prop.Example(1025))
+				prop.Example(65), prop.Example(72), prop.Example(73), prop.Example(512), prop.Example(513),
+				prop.Example(1025), prop.Example(1070), prop.Example(1536), prop.Example(2049))
+		})
+
+		t.Run("returns a capacity below 1.125 times n for n above MinClass", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "the class of n must waste less than an eighth of n", func(c *prop.Case) {
+				n := c.Draw(prop.Integer(arena.MinClass+1, 1<<20), "n")
+				got := cap(arena.NewSlabs(slabSize).Alloc(n))
+				assert.True(c, 8*got < 9*n, "the capacity must be below 1.125 times n")
+			})
 		})
 
 		t.Run("returns nil for no bytes", func(t *testing.T) {
@@ -108,17 +135,17 @@ func TestSlabs(t *testing.T) {
 				"a write to the class of one slice must not reach another")
 		})
 
-		t.Run("returns a slice of a slab of its own class for a class larger than a slab", func(t *testing.T) {
+		t.Run("allocates a slab of the size of the class for a class larger than slabSize", func(t *testing.T) {
 			t.Parallel()
 			s := arena.NewSlabs(slabSize)
 			b := s.Alloc(1500)
-			assert.Equal(t, cap(b), 2048, "the capacity must be the class 2048")
-			assert.Equal(t, slabLens(s), []int{2048}, "the slab must have the size of the class")
+			assert.Equal(t, cap(b), 1536, "the capacity must be the class 1536")
+			assert.Equal(t, slabLens(s), []int{1536}, "the slab must have the size of the class")
 			s.Alloc(1)
-			assert.Equal(t, slabLens(s), []int{2048, slabSize}, "the next slice must take a slab of slabSize")
+			assert.Equal(t, slabLens(s), []int{1536, slabSize}, "the next slice must take a slab of slabSize")
 		})
 
-		t.Run("returns the rest of a slab without room for a class to a smaller class", func(t *testing.T) {
+		t.Run("returns the rest of the previous slab for a class that fits in it", func(t *testing.T) {
 			t.Parallel()
 			s := arena.NewSlabs(slabSize)
 			for _, n := range []int{512, 256, 128, 64} {
@@ -131,20 +158,21 @@ func TestSlabs(t *testing.T) {
 			assert.Equal(t, slabsWith(s, fill), []int{0}, "the slice must be in the first slab")
 		})
 
-		t.Run("returns the rest of a slab in the largest classes that fit", func(t *testing.T) {
+		// Alloc(72) leaves 952 bytes of the first slab. The largest class of
+		// at most 952 bytes is 896. The last 56 bytes are fewer than MinClass
+		// and remain unused.
+		t.Run("returns the largest class that fits in the rest of the previous slab", func(t *testing.T) {
 			t.Parallel()
 			s := arena.NewSlabs(slabSize)
-			s.Alloc(64)
+			s.Alloc(72)
 			s.Alloc(slabSize)
-			for _, n := range []int{512, 256, 128, 64} {
-				b := s.Alloc(n)
-				b[0] = fill
-			}
-			assert.Equal(t, slabLens(s), []int{slabSize, slabSize}, "the rest of the first slab must serve 4 classes")
-			assert.Equal(t, slabsWith(s, fill), []int{0}, "every slice must be in the first slab")
+			b := s.Alloc(896)
+			b[0] = fill
+			assert.Equal(t, slabLens(s), []int{slabSize, slabSize}, "the rest of the first slab must serve the class")
+			assert.Equal(t, slabsWith(s, fill), []int{0}, "the slice must be in the first slab")
 		})
 
-		t.Run("returns the zero Slabs's slices from slabs of DefaultSlabSize bytes", func(t *testing.T) {
+		t.Run("returns slices of slabs of DefaultSlabSize bytes for the zero Slabs", func(t *testing.T) {
 			t.Parallel()
 			var s arena.Slabs
 			s.Alloc(1)
@@ -160,9 +188,9 @@ func TestSlabs(t *testing.T) {
 			s := arena.NewSlabs(slabSize)
 			b := s.Alloc(100)
 			assert.NoError(t, s.Free(b), "Free must take the slice back")
-			c := s.Alloc(120)
+			c := s.Alloc(98)
 			assert.Equal(t, &c[0], &b[0], "Alloc must return the memory of the freed slice", assert.ByIdentity())
-			assert.Equal(t, cap(c), 128, "the slice must keep the capacity of its class")
+			assert.Equal(t, cap(c), 104, "the slice must keep the capacity of its class")
 			assert.Length(t, slabLens(s), 1, "Alloc must take no new slab")
 		})
 
@@ -231,6 +259,10 @@ func TestSlabs(t *testing.T) {
 				name: "returns ErrSizeClass for a power of two below MinClass",
 				give: func(*arena.Slabs) []byte { return make([]byte, arena.MinClass/2) },
 			},
+			{
+				name: "returns ErrSizeClass for a capacity between two classes",
+				give: func(*arena.Slabs) []byte { return make([]byte, 1100) },
+			},
 		}
 		for _, tt := range refused {
 			t.Run(tt.name, func(t *testing.T) {
@@ -254,11 +286,11 @@ func TestSlabs(t *testing.T) {
 			s := arena.NewSlabs(slabSize)
 			b := s.Alloc(1)
 			s.Alloc(100)
-			assert.Equal(t, s.InUse(), 64+128, "InUse must sum the classes in use")
+			assert.Equal(t, s.InUse(), 64+104, "InUse must sum the classes in use")
 			assert.NoError(t, s.Free(b), "Free must take the slice back")
-			assert.Equal(t, s.InUse(), 128, "InUse must drop the class that Free took back")
+			assert.Equal(t, s.InUse(), 104, "InUse must drop the class that Free took back")
 			s.Alloc(10)
-			assert.Equal(t, s.InUse(), 64+128, "InUse must count a reused slice")
+			assert.Equal(t, s.InUse(), 64+104, "InUse must count a reused slice")
 		})
 
 		t.Run("returns 0 for the zero Slabs", func(t *testing.T) {
@@ -495,8 +527,8 @@ func slabsSteps(c *prop.Case) {
 					n := in.(int)
 					b := s.Alloc(n)
 					assert.Length(c, b, n, "Alloc must return n bytes")
-					assert.Equal(c, cap(b), max(arena.MinClass, 1<<bits.Len(uint(n-1))),
-						"the capacity must be the size class of n")
+					i, _ := slices.BinarySearch(sizeClasses, n)
+					assert.Equal(c, cap(b), sizeClasses[i], "the capacity must be the size class of n")
 					assert.Equal(c, b[:cap(b)], make([]byte, cap(b)), "the class of the slice must be zero")
 
 					next = next%254 + 1
