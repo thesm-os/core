@@ -8,7 +8,9 @@
 // # Recorders
 //
 //   - [Recorder] is a [telemetry.Reporter] that keeps the spec of each
-//     instrument, the values of each series and every span that ends.
+//     instrument, the values of each series and every span that ends. It
+//     counts the bound instruments of each series that Release has not
+//     ended.
 //   - [Records] is a [log/slog.Handler] that keeps every record at or
 //     above its level.
 //

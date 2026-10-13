@@ -210,6 +210,68 @@ func TestRecorder(t *testing.T) {
 		})
 	})
 
+	t.Run("Bound", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("counts each instrument that With returned for the attribute set in any order", func(t *testing.T) {
+			t.Parallel()
+			r := telemetrytest.NewRecorder()
+			g := r.Gauge(telemetry.InstrumentSpec{Name: gaugeName})
+			g.With([]telemetry.Attr{region, tier})
+			g.With([]telemetry.Attr{tier, region})
+			g.With([]telemetry.Attr{tier})
+			assert.Equal(t, r.Bound(gaugeName, tier, region), 2,
+				"Bound must count the two instruments of the attribute set")
+		})
+
+		t.Run("does not count an instrument after its Release", func(t *testing.T) {
+			t.Parallel()
+			r := telemetrytest.NewRecorder()
+			c := r.Counter(telemetry.InstrumentSpec{Name: counterName})
+			a, b := c.With([]telemetry.Attr{region}), c.With([]telemetry.Attr{region})
+			a.Release()
+			expect.Equal(t, r.Bound(counterName, region), 1, "Bound must not count the released instrument")
+			b.Release()
+			expect.Equal(t, r.Bound(counterName, region), 0, "Bound must count no instrument once both are released")
+		})
+
+		t.Run("ignores a second Release of one instrument", func(t *testing.T) {
+			t.Parallel()
+			r := telemetrytest.NewRecorder()
+			h := r.Histogram(telemetry.InstrumentSpec{Name: histogramName})
+			a := h.With([]telemetry.Attr{region})
+			h.With([]telemetry.Attr{region})
+			a.Release()
+			a.Release()
+			assert.Equal(t, r.Bound(histogramName, region), 1,
+				"a second Release of one instrument must not end the other instrument")
+		})
+
+		t.Run("does not count an instrument of a Recorder method", func(t *testing.T) {
+			t.Parallel()
+			r := telemetrytest.NewRecorder()
+			g := r.Gauge(telemetry.InstrumentSpec{Name: gaugeName})
+			g.Set(t.Context(), 1)
+			g.Release()
+			assert.Equal(t, r.Bound(gaugeName), 0, "Bound must count only the instruments that With returned")
+		})
+
+		t.Run("returns 0 for a name without an instrument", func(t *testing.T) {
+			t.Parallel()
+			r := telemetrytest.NewRecorder()
+			r.Counter(telemetry.InstrumentSpec{Name: counterName}).With([]telemetry.Attr{region})
+			assert.Equal(t, r.Bound(gaugeName, region), 0, "Bound must return 0 for a name without an instrument")
+		})
+
+		t.Run("returns 0 for an attribute set without a series", func(t *testing.T) {
+			t.Parallel()
+			r := telemetrytest.NewRecorder()
+			r.Counter(telemetry.InstrumentSpec{Name: counterName}).With([]telemetry.Attr{region})
+			assert.Equal(t, r.Bound(counterName, tier), 0,
+				"Bound must return 0 for an attribute set without a series")
+		})
+	})
+
 	t.Run("keeps every value of emits on many goroutines", func(t *testing.T) {
 		t.Parallel()
 		const clients, adds = 4, 100

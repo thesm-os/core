@@ -18,7 +18,8 @@ import (
 // emits: the spec of each instrument, every value of each series of an
 // instrument, and every span that ends. A test passes a Recorder as the
 // Reporter of the package, and reads the signals with [Recorder.Specs],
-// [Recorder.Values], [Recorder.Series] and [Recorder.Spans].
+// [Recorder.Values], [Recorder.Series], [Recorder.Bound] and
+// [Recorder.Spans].
 //
 // # Instruments and series
 //
@@ -39,7 +40,9 @@ import (
 //     Gauge that With returns has a value of its own, which starts at 0.
 //   - [telemetry.Histogram.Record] keeps its value.
 //
-// An instrument keeps no value after its Release.
+// An instrument keeps no value after its Release. [Recorder.Bound] counts
+// the instruments of a series that With returned and that Release has not
+// ended, so a test detects a package that does not release what it binds.
 //
 // # Spans
 //
@@ -86,6 +89,10 @@ type series struct {
 	// attrs is a copy of the attribute set, sorted by key.
 	attrs  []telemetry.Attr
 	values []float64
+
+	// live is the number of the instruments of the series that With
+	// returned and that Release has not ended.
+	live int
 }
 
 // bound is the state of one instrument value that a [Recorder] returns:
@@ -195,14 +202,8 @@ func (r *Recorder) Values(name telemetry.InstrumentName, attrs ...telemetry.Attr
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	for _, in := range r.instruments {
-		if in.spec.Name == name {
-			for _, s := range in.series {
-				if slices.EqualFunc(s.attrs, want, sameAttr) {
-					return slices.Clone(s.values)
-				}
-			}
-		}
+	if s := r.findSeries(name, want); s != nil {
+		return slices.Clone(s.values)
 	}
 
 	return nil
@@ -234,6 +235,34 @@ func (r *Recorder) Series(name telemetry.InstrumentName) [][]telemetry.Attr {
 	return nil
 }
 
+// Bound returns the number of the instruments of the series of the
+// instrument name with the attribute set attrs that With returned and that
+// Release has not ended. The order of attrs does not matter. Bound returns 0
+// for a name or an attribute set without a series. An instrument that
+// Counter, Gauge or Histogram returned does not count, because its Release
+// does not end it.
+//
+// A test checks that a package releases each instrument that it binds:
+//
+//	assert.Equal(t, rec.Bound(routesName, cellAttr), 0,
+//		"the router must release the gauge of the routes of the cell")
+//
+// # Allocation contract
+//
+// Bound allocates a sorted copy of attrs.
+func (r *Recorder) Bound(name telemetry.InstrumentName, attrs ...telemetry.Attr) int {
+	want := sortedAttrs(attrs)
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if s := r.findSeries(name, want); s != nil {
+		return s.live
+	}
+
+	return 0
+}
+
 // Spans returns every span that has ended, in the order of its End.
 //
 // # Allocation contract
@@ -263,6 +292,23 @@ func (r *Recorder) unbound(spec telemetry.InstrumentSpec) *bound {
 	r.instruments = append(r.instruments, in)
 
 	return &bound{r: r, in: in}
+}
+
+// findSeries returns the series of the instrument name with the sorted
+// attribute set attrs, or nil for a name or an attribute set without a
+// series. The caller holds the mutex of r.
+func (r *Recorder) findSeries(name telemetry.InstrumentName, attrs []telemetry.Attr) *series {
+	for _, in := range r.instruments {
+		if in.spec.Name == name {
+			for _, s := range in.series {
+				if slices.EqualFunc(s.attrs, attrs, sameAttr) {
+					return s
+				}
+			}
+		}
+	}
+
+	return nil
 }
 
 // Add keeps value in the series of c. It discards a negative value.
@@ -329,7 +375,10 @@ func (b *bound) with(attrs []telemetry.Attr) *bound {
 	b.r.mu.Lock()
 	defer b.r.mu.Unlock()
 
-	return &bound{r: b.r, in: b.in, series: b.in.seriesOf(sorted), fromWith: true}
+	s := b.in.seriesOf(sorted)
+	s.live++
+
+	return &bound{r: b.r, in: b.in, series: s, fromWith: true}
 }
 
 // emit keeps a value in the series of b, unless Release ended b. The
@@ -356,12 +405,16 @@ func (b *bound) emit(v float64, add bool) {
 	b.series.values = append(b.series.values, v)
 }
 
-// release ends b when With returned it, so b keeps no value after it.
+// release ends b when With returned it, so b keeps no value after it. The
+// first release of b takes b from the count of its series.
 func (b *bound) release() {
 	b.r.mu.Lock()
 	defer b.r.mu.Unlock()
 
-	b.released = b.fromWith
+	if b.fromWith && !b.released {
+		b.series.live--
+		b.released = true
+	}
 }
 
 // seriesOf returns the series of the sorted attribute set attrs, which it
