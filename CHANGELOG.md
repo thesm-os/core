@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.17.0
+
+### Minor Changes
+
+- 4163dfc: Add `constant.Counter` for draws that differ while `rand.Float64` of each returns one value.
+- dd30e62: Add `telemetrytest.Recorder.Bound` to count the bound instruments of a series that a package has not released.
+
 ## 0.16.0
 
 ### Minor Changes
