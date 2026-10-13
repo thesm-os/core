@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.19.0
+
+### Minor Changes
+
+- fd65057: Give `arena.Slabs` eight size classes between two powers of two so that a slice above `arena.MinClass` takes less than 1.125 times its length.
+
 ## 0.18.0
 
 ### Minor Changes
