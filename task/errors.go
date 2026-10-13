@@ -51,4 +51,10 @@ var (
 	// without returning never reported its outcome, and the call cannot
 	// report success without it.
 	ErrExited = errs.WithClass(errors.New("task: exited without returning"), errs.Invalid)
+
+	// ErrReturned is recorded by [Serve] for a function that returns nil
+	// before its context has ended. A function of Serve lasts until its
+	// context ends, so an early return is a fault of the function. It
+	// classifies as Invalid.
+	ErrReturned = errs.WithClass(errors.New("task: function returned before its context ended"), errs.Invalid)
 )

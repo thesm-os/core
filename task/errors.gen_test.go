@@ -27,6 +27,7 @@ func TestTaskSentinelErrors(t *testing.T) {
 		{"ErrNoQuorum", task.ErrNoQuorum},
 		{"ErrPeriod", task.ErrPeriod},
 		{"ErrQuorumSize", task.ErrQuorumSize},
+		{"ErrReturned", task.ErrReturned},
 	}
 
 	t.Run("prefix", func(t *testing.T) {

@@ -41,7 +41,7 @@ func panickingTask() {
 func TestCrash(t *testing.T) {
 	t.Parallel()
 
-	for _, e := range entries() {
+	for _, e := range append(entries(), serveEntry) {
 		t.Run(e.name+" crashes from the task and does not return", func(t *testing.T) {
 			t.Parallel()
 

@@ -29,9 +29,11 @@
 //     witnesses.
 //   - [Every] calls one function repeatedly, with a delay between
 //     calls, until its context ends.
+//   - [Serve] runs functions that last until their context ends, such
+//     as the loops of a service, and ends them all when one returns.
 //
-// A task is a function passed to [All] or [Group.Go], or one call of
-// the function passed to [Each], [Map], [Stream] or [Quorum].
+// A task is a function passed to [All], [Serve] or [Group.Go], or one
+// call of the function passed to [Each], [Map], [Stream] or [Quorum].
 //
 // # Failure semantics
 //
@@ -41,10 +43,13 @@
 // done records the context's cause, so a nil result means that every
 // task ran and returned nil.
 //
-// [Quorum] and [Every] differ. Quorum succeeds when k calls succeed,
-// and fails only when k successes have become impossible. Every stops
-// at its function's first error, and returns nil when its context
-// ends.
+// [Quorum], [Every] and [Serve] differ. Quorum succeeds when k calls
+// succeed, and fails only when k successes have become impossible.
+// Every stops at its function's first error, and returns nil when its
+// context ends. Serve calls every function, also on an ended context,
+// and returns nil when every call stopped at the end of its context. A
+// function of Serve that returns nil before its context ends records
+// [ErrReturned].
 //
 // A task that ends by [runtime.Goexit] records [ErrExited]. The
 // testing package's FailNow and SkipNow call runtime.Goexit, and they
@@ -87,6 +92,6 @@
 // [Each], [Map], [Stream] and [Quorum] run on a fixed set of worker
 // goroutines that claim elements, so their allocations do not grow
 // with the number of elements. [Group.Go] starts one goroutine per task
-// and allocates the closure that starts it. [Every] allocates one timer
-// per wait.
+// and allocates the closure that starts it, and [Serve] starts one
+// goroutine per function. [Every] allocates one timer per wait.
 package task
