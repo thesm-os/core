@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.0
+
+### Minor Changes
+
+- 650942a: Add `task.Serve` to run functions that last until their context ends, and `task.ErrReturned` for a function that returns before its context ends.
+
 ## 0.17.0
 
 ### Minor Changes
