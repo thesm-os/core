@@ -111,5 +111,6 @@ Start from [`docs/templates/ADR.md`](../templates/ADR.md).
 | [0051](0051-serve-runs-functions-until-their-context-ends.md) | Serve Runs Functions Until Their Context Ends | Accepted |
 | [0052](0052-slabs-has-eight-classes-per-power-of-two.md) | Slabs Has Eight Size Classes per Power of Two | Accepted |
 | [0053](0053-setpinned-stores-an-entry-with-a-pin.md) | SetPinned Stores an Entry With a Pin | Accepted |
+| [0054](0054-resetwritten-clears-the-bytes-that-the-caller-wrote.md) | ResetWritten Clears the Bytes That the Caller Wrote | Accepted |
 
 [nygard]: https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions
