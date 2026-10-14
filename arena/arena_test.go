@@ -59,6 +59,7 @@ var ends = []struct {
 	end  func(*arena.Arena)
 }{
 	{name: "Reset", end: (*arena.Arena).Reset},
+	{name: "ResetWritten", end: func(a *arena.Arena) { a.ResetWritten(a.Len()) }},
 	{name: "Shrink", end: (*arena.Arena).Shrink},
 }
 
@@ -498,9 +499,9 @@ func appendsInOrder(c *prop.Case) {
 
 // arenaSteps runs the steps of a machine over the methods of an Arena that
 // change it, and checks every call against a model: the bytes of the
-// current lifecycle, the number of lifecycles that Reset and Shrink ended,
-// and the position and lifecycle of every Marker. Each region that Alloc
-// returns is filled, so later calls find written bytes to zero.
+// current lifecycle, the number of lifecycles that Reset, ResetWritten and
+// Shrink ended, and the position and lifecycle of every Marker. Each region
+// that Alloc returns is filled, so later calls find written bytes to zero.
 func arenaSteps(c *prop.Case) {
 	a := arena.NewWithCapacity(c.Draw(capacities, "initialCap"))
 
@@ -601,6 +602,25 @@ func arenaSteps(c *prop.Case) {
 					a.Reset()
 					want, cycle = want[:0], cycle+1
 					assert.Equal(c, spare(c, a), make([]byte, a.Cap()), "Reset must zero the backing buffer",
+						assert.EquateEmpty())
+				},
+			},
+			{
+				Name: "ResetWritten",
+				Input: func(c *prop.Case, _ struct{}) any {
+					// Every byte of the length is written, so an n at or past the
+					// length meets the precondition. A past of -1 tests a
+					// negative n.
+					return c.Draw(prop.Integer(-1, 64), "past")
+				},
+				Run: func(c *prop.Case, _ int, in any) {
+					n := -1
+					if past := in.(int); past >= 0 {
+						n = len(want) + past
+					}
+					a.ResetWritten(n)
+					want, cycle = want[:0], cycle+1
+					assert.Equal(c, spare(c, a), make([]byte, a.Cap()), "ResetWritten must zero the backing buffer",
 						assert.EquateEmpty())
 				},
 			},

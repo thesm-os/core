@@ -95,6 +95,80 @@ func TestLifecycle(t *testing.T) {
 		})
 	})
 
+	t.Run("ResetWritten", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("sets Len to zero", func(t *testing.T) {
+			t.Parallel()
+			a := arena.NewWithCapacity(64)
+			copy(a.Alloc(64), "data")
+			a.ResetWritten(4)
+			assert.Equal(t, a.Len(), 0, "Len after ResetWritten must be 0")
+		})
+
+		t.Run("keeps the backing buffer", func(t *testing.T) {
+			t.Parallel()
+			a := arena.NewWithCapacity(64)
+			copy(a.Alloc(64), "data")
+			assert.Pure(t, a.Cap, func() { a.ResetWritten(4) }, "ResetWritten must keep the capacity")
+		})
+
+		t.Run("zeroes the first n bytes", func(t *testing.T) {
+			t.Parallel()
+			a := arena.NewWithCapacity(64)
+			copy(a.Alloc(64), bytes.Repeat([]byte{fill}, 16))
+			a.ResetWritten(16)
+			assert.Equal(t, spare(t, a), make([]byte, 64), "ResetWritten must zero the bytes that the caller wrote")
+		})
+
+		t.Run("does not zero the length past n", func(t *testing.T) {
+			t.Parallel()
+			a := arena.NewWithCapacity(64)
+			copy(a.Alloc(64), bytes.Repeat([]byte{fill}, 64))
+			a.ResetWritten(0)
+			assert.Equal(t, spare(t, a), bytes.Repeat([]byte{fill}, 64), "ResetWritten must leave the bytes past n")
+		})
+
+		t.Run("zeroes the bytes that a TruncateTo rewind left written", func(t *testing.T) {
+			t.Parallel()
+			a := arena.NewWithCapacity(64)
+			m := a.Mark()
+			a.Append(bytes.Repeat([]byte{fill}, 16))
+			assert.True(t, a.TruncateTo(m), "TruncateTo must return true for a current marker")
+			a.ResetWritten(0)
+			assert.Equal(t, spare(t, a), make([]byte, 64), "bytes past the rewound length must be zeroed")
+		})
+
+		t.Run("zeroes the spare capacity that a failed AppendVia wrote into", func(t *testing.T) {
+			t.Parallel()
+			a := arena.NewWithCapacity(64)
+			_, err := a.AppendVia(func(dst []byte) ([]byte, error) {
+				_ = append(dst, bytes.Repeat([]byte{fill}, 16)...)
+
+				return nil, errEncode
+			})
+			assert.ErrorIs(t, err, errEncode, "AppendVia must return the appender's error")
+			a.ResetWritten(0)
+			assert.Equal(t, spare(t, a), make([]byte, 64), "bytes that a failed appender wrote must be zeroed")
+		})
+
+		t.Run("zeroes the whole length for a negative n", func(t *testing.T) {
+			t.Parallel()
+			a := arena.NewWithCapacity(64)
+			copy(a.Alloc(64), bytes.Repeat([]byte{fill}, 64))
+			a.ResetWritten(-1)
+			assert.Equal(t, spare(t, a), make([]byte, 64), "a negative n must zero what Reset zeroes")
+		})
+
+		t.Run("zeroes the whole length for an n above the capacity", func(t *testing.T) {
+			t.Parallel()
+			a := arena.NewWithCapacity(64)
+			copy(a.Alloc(64), bytes.Repeat([]byte{fill}, 64))
+			assert.NotPanics(t, func() { a.ResetWritten(1000) }, "an n above the capacity must count as the length")
+			assert.Equal(t, spare(t, a), make([]byte, 64), "an n above the length must zero the length")
+		})
+	})
+
 	t.Run("CapExceeds", func(t *testing.T) {
 		t.Parallel()
 
@@ -139,9 +213,9 @@ func TestLifecycle(t *testing.T) {
 	})
 }
 
-// TestLifecycleAllocs checks the allocation contracts of Reset, CapExceeds
-// and Shrink. MaxAllocs counts the allocations of the whole process, so the
-// test does not run in parallel.
+// TestLifecycleAllocs checks the allocation contracts of Reset,
+// ResetWritten, CapExceeds and Shrink. MaxAllocs counts the allocations of
+// the whole process, so the test does not run in parallel.
 func TestLifecycleAllocs(t *testing.T) {
 	t.Run("Reset", func(t *testing.T) {
 		a := arena.NewWithCapacity(1024)
@@ -151,6 +225,16 @@ func TestLifecycleAllocs(t *testing.T) {
 			a.Reset()
 		}, 0, "Reset must not allocate")
 		assert.Equal(t, a.Len(), 0, "the test must measure a Reset")
+	})
+
+	t.Run("ResetWritten", func(t *testing.T) {
+		a := arena.NewWithCapacity(1024)
+		data := make([]byte, 64)
+		expect.MaxAllocs(t, func() {
+			copy(a.Alloc(1024), data)
+			a.ResetWritten(len(data))
+		}, 0, "ResetWritten must not allocate")
+		assert.Equal(t, a.Len(), 0, "the test must measure a ResetWritten")
 	})
 
 	t.Run("CapExceeds", func(t *testing.T) {
@@ -168,8 +252,8 @@ func TestLifecycleAllocs(t *testing.T) {
 	})
 }
 
-// BenchmarkLifecycle reports the cost of Reset, CapExceeds and Shrink, and
-// fails when any of them allocates.
+// BenchmarkLifecycle reports the cost of Reset, ResetWritten, CapExceeds and
+// Shrink, and fails when any of them allocates.
 func BenchmarkLifecycle(b *testing.B) {
 	b.Run("Reset", func(b *testing.B) {
 		a := arena.NewWithCapacity(4096)
@@ -184,6 +268,21 @@ func BenchmarkLifecycle(b *testing.B) {
 		}
 
 		assert.Equal(b, a.Len(), 0, "the benchmark must measure a Reset")
+	})
+
+	b.Run("ResetWritten", func(b *testing.B) {
+		a := arena.NewWithCapacity(4096)
+		data := make([]byte, 1024)
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			copy(a.Alloc(4096), data)
+			a.ResetWritten(len(data))
+		}
+
+		assert.Equal(b, a.Len(), 0, "the benchmark must measure a ResetWritten")
 	})
 
 	b.Run("CapExceeds", func(b *testing.B) {

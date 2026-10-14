@@ -56,6 +56,8 @@
 //
 // [Arena.Reset] zeroes the bytes written in the finished lifecycle, so a
 // pooled arena does not pass the bytes of one user to the next.
+// [Arena.ResetWritten] ends a lifecycle in which the caller wrote only a
+// prefix of the length, and zeroes only that prefix.
 // [Arena.CapExceeds] reports whether the backing buffer has grown past a
 // threshold, so a pool can release an oversized arena with [Arena.Shrink]
 // instead of keeping it.
