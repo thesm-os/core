@@ -6,6 +6,7 @@ package resilience_test
 import (
 	"context"
 	"math"
+	"math/big"
 	"slices"
 	"sync"
 	"testing"
@@ -16,6 +17,7 @@ import (
 	"go.dokimi.dev/assert/expect"
 	"go.dokimi.dev/assert/history"
 	"go.dokimi.dev/assert/prop"
+	"go.dokimi.dev/assert/stateful"
 
 	"go.thesmos.sh/core/clock"
 	"go.thesmos.sh/core/clock/fake"
@@ -25,6 +27,28 @@ import (
 
 // maxBurst is the largest Burst that NewLimiter accepts.
 const maxBurst = 4_611_686_018
+
+// nsPerSecond is the number of nanoseconds in a second. A Rate in units per
+// second times a time in nanoseconds is nsPerSecond times the units.
+const nsPerSecond = int64(time.Second)
+
+// maxWaiting is the most calls that the machine of limiterSteps keeps
+// waiting at once.
+const maxWaiting = 3
+
+// limiterRates generates the Rate of the machine of limiterSteps. A Rate of
+// whole units per nanosecond makes the cost of some sizes a whole number of
+// nanoseconds and the cost of others not. Rounded costs of mixed sizes then
+// add up to more units than Burst. Any other Rate leaves a remainder on the
+// cost of most sizes.
+var limiterRates = prop.OneOf(
+	prop.SampledFrom[int64](1_000_000_000, 2_000_000_000, 3_000_000_000),
+	prop.Integer[int64](1, 3_000_000_000),
+)
+
+// limiterContract is the contract of limiterSteps.
+const limiterContract = "the units of the calls that return nil in a window must stay within " +
+	"the Rate times its length, Burst and the units of the calls that waited before it"
 
 // timedClock is a fake clock that records the duration of every timer that
 // it creates, so a case observes how long a WaitN waits, and that a call
@@ -56,6 +80,63 @@ func (c *timedClock) durations() []time.Duration {
 	defer c.mu.Unlock()
 
 	return slices.Clone(c.timers)
+}
+
+// lateTimer is a timer of a lateClock. A case delivers its tick with a send
+// on c at or after its deadline.
+type lateTimer struct {
+	deadline time.Time
+	c        chan time.Time
+}
+
+// C returns the channel on which a case delivers the tick.
+func (t *lateTimer) C() <-chan time.Time {
+	return t.c
+}
+
+// Reset reports false and changes nothing, because no call of a Limiter
+// resets a timer.
+func (*lateTimer) Reset(time.Duration) bool {
+	return false
+}
+
+// Stop reports false and changes nothing. Only a case delivers the tick of a
+// lateTimer, so the timer has no schedule to cancel.
+func (*lateTimer) Stop() bool {
+	return false
+}
+
+// lateClock is a fake clock whose timers deliver a tick only when a case
+// sends it. A case can then deliver the tick after the deadline, as a Clock
+// may. Its methods are safe for concurrent use: the fake clock guards
+// itself, and created is a channel.
+type lateClock struct {
+	*fake.Clock
+
+	// created receives every timer of the clock, in the order of creation.
+	created chan *lateTimer
+}
+
+// NewTimer returns a timer whose deadline is d after the time of the clock,
+// and sends it on created.
+func (c *lateClock) NewTimer(d time.Duration) clock.Timer {
+	t := &lateTimer{deadline: c.Time().Add(d), c: make(chan time.Time, 1)}
+	c.created <- t
+
+	return t
+}
+
+// limiterCall is one call of a Limiter that took or reserved units. start
+// and end are nanoseconds since originUTC, and end is -1 while the call
+// waits. ok reports whether the call returned nil. A call that waits has
+// its timer, the channel of its result and the cancellation of its context.
+type limiterCall struct {
+	n, start, end int64
+	ok            bool
+
+	timer  *lateTimer
+	done   chan error
+	cancel context.CancelFunc
 }
 
 func TestLimiter(t *testing.T) {
@@ -163,17 +244,38 @@ func TestLimiter(t *testing.T) {
 			assert.True(t, l.AllowN(10), "a second must add Rate units")
 		})
 
-		t.Run("charges a unit up to the next whole nanosecond", func(t *testing.T) {
+		t.Run("admits a unit at the first nanosecond after its exact cost", func(t *testing.T) {
 			t.Parallel()
 			c := fake.New(originUTC)
 			l := newLimiter(t, resilience.LimiterConfig{Clock: c, Rate: 3, Burst: 3})
 			assert.True(t, l.AllowN(3), "a full bucket must have Burst units")
 
 			c.Advance(333_333_333 * time.Nanosecond)
-			assert.False(t, l.AllowN(1), "a unit at Rate 3 must cost 333,333,334 ns")
+			assert.False(t, l.AllowN(1), "333,333,333 ns must add less than a unit at Rate 3")
 
 			c.Advance(time.Nanosecond)
-			assert.True(t, l.AllowN(1), "a unit at Rate 3 must cost no more than 333,333,334 ns")
+			assert.True(t, l.AllowN(1), "333,333,334 ns must add a unit at Rate 3")
+		})
+
+		t.Run("admits Burst units of one unit each after the bucket refills at Rate 3", func(t *testing.T) {
+			t.Parallel()
+			c := fake.New(originUTC)
+			l := newLimiter(t, resilience.LimiterConfig{Clock: c, Rate: 3, Burst: 3})
+			assert.True(t, l.AllowN(3), "a full bucket must have Burst units")
+
+			c.Advance(time.Second)
+			assert.True(t, l.AllowN(1), "a refilled bucket must admit its first unit")
+			assert.True(t, l.AllowN(1), "a refilled bucket must admit its second unit")
+			assert.True(t, l.AllowN(1), "a refilled bucket must admit its third unit")
+			assert.False(t, l.AllowN(1), "a refilled bucket must have no more than Burst units")
+		})
+
+		t.Run("admits no more than Burst units at once at 2 units per nanosecond", func(t *testing.T) {
+			t.Parallel()
+			l := newLimiter(t, resilience.LimiterConfig{Clock: fake.New(originUTC), Rate: 2_000_000_000, Burst: 3})
+			assert.True(t, l.AllowN(2), "a full bucket of 3 units must admit 2")
+			assert.False(t, l.AllowN(2), "a bucket with 1 unit left must refuse 2")
+			assert.True(t, l.AllowN(1), "a bucket with 1 unit left must admit 1")
 		})
 
 		t.Run("adds no more than Burst units", func(t *testing.T) {
@@ -202,6 +304,19 @@ func TestLimiter(t *testing.T) {
 			t.Parallel()
 			l := drained(t, fake.New(originUTC))
 			assert.True(t, l.AllowN(0), "an empty bucket must admit zero units")
+		})
+
+		t.Run("reports true for an n of zero while a waiting call owes the units", func(t *testing.T) {
+			t.Parallel()
+			c := fake.New(originUTC)
+			l := drained(t, c)
+
+			got := startWait(bounded(t), l, 5)
+			c.AwaitWaiters(1)
+			assert.True(t, l.AllowN(0), "a bucket that owes units to a waiting call must admit zero units")
+
+			c.Advance(500 * time.Millisecond)
+			assert.NoError(t, await(t, got, "WaitN must return"), "the waiting call must take its units")
 		})
 
 		t.Run("reports false for a negative n", func(t *testing.T) {
@@ -508,6 +623,36 @@ func TestLimiter(t *testing.T) {
 			expect.ErrorIs(t, await(t, second, "the second WaitN must return"), context.Canceled,
 				"a call past the largest Duration must wait until its context ends")
 		})
+
+		tests := []struct {
+			name      string
+			giveRate  int64
+			giveChunk int64
+		}{
+			{
+				name:      "refunds the exact units of a cancelled call at Burst 3 and 2 units per nanosecond",
+				giveRate:  2_000_000_000,
+				giveChunk: 3,
+			},
+			{
+				name:      "refunds the exact units of a cancelled call at Burst 4,096 and 3 units per nanosecond",
+				giveRate:  3_000_000_000,
+				giveChunk: 4096,
+			},
+			{
+				name:      "refunds the exact units of a cancelled call at Burst 1,048,575 and 2 units per nanosecond",
+				giveRate:  2_000_000_000,
+				giveChunk: 1<<20 - 1,
+			},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				returned, bound := refundTrace(t, tt.giveRate, tt.giveChunk)
+				assert.InRange(t, returned, 0, float64(bound),
+					"the window must admit at most the Rate times 1 ns, Burst and the open reservations")
+			})
+		}
 	})
 
 	t.Run("Burst", func(t *testing.T) {
@@ -546,6 +691,11 @@ func TestLimiter(t *testing.T) {
 			assert.Equal(t, l.Burst(), int64(math.MaxInt64),
 				"the zero Limiter must take any number of units in one call")
 		})
+	})
+
+	t.Run("admits no more units in a window than the Rate, Burst and the open reservations", func(t *testing.T) {
+		t.Parallel()
+		prop.ForAll(t, limiterContract, limiterSteps)
 	})
 }
 
@@ -675,4 +825,260 @@ func drained(tb testing.TB, c clock.Clock) *resilience.Limiter {
 	assert.True(tb, l.AllowN(10), "a full bucket must have Burst units")
 
 	return l
+}
+
+// refundTrace runs a trace in which a refund rounded to whole nanoseconds
+// funds more units than it took. It drains a Limiter of Rate rate and
+// Burst chunk, starts three waiting calls of chunk units, and moves the
+// clock past their deadlines. In a window of 1 ns it delivers the tick of
+// the first call, and takes two calls with AllowN after it and after the
+// cancellation of each of the other two calls. The two calls are of sizes
+// that fit the rounding of the cost of chunk units. refundTrace returns the
+// units of the calls that succeeded in the window and the bound of the
+// window: the Rate times 1 ns, Burst and the chunks of the three calls.
+// rate is a whole number of units per nanosecond.
+func refundTrace(tb testing.TB, rate, chunk int64) (returned, bound int64) {
+	tb.Helper()
+
+	perNS := rate / nsPerSecond
+	ceilNS := (chunk + perNS - 1) / perNS
+	pair := [2]int64{(ceilNS - 1) * perNS, perNS}
+
+	clk := &lateClock{Clock: fake.New(originUTC), created: make(chan *lateTimer, 1)}
+	l := newLimiter(tb, resilience.LimiterConfig{Clock: clk, Rate: rate, Burst: chunk})
+	assert.True(tb, l.AllowN(chunk), "a full bucket must have Burst units")
+
+	calls := make([]*limiterCall, 3)
+	for i := range calls {
+		ctx, cancel := context.WithCancel(bounded(tb))
+		tb.Cleanup(cancel)
+		call := &limiterCall{n: chunk, done: make(chan error, 1), cancel: cancel}
+		go func() { call.done <- l.WaitN(ctx, call.n) }()
+		call.timer = await(tb, clk.created, "a WaitN on an empty bucket must start a timer")
+		calls[i] = call
+	}
+
+	clk.Advance(time.Duration(4*ceilNS) + time.Nanosecond)
+	assert.False(tb, clk.Time().Before(calls[0].timer.deadline), "the timer of the first call must be due")
+	calls[0].timer.c <- clk.Time()
+	assert.NoError(tb, await(tb, calls[0].done, "the first WaitN must return"), "the first call must take its units")
+
+	returned = chunk
+	for i, call := range calls {
+		if i > 0 {
+			call.cancel()
+			assert.ErrorIs(tb, await(tb, call.done, "a cancelled WaitN must return"), context.Canceled,
+				"a cancelled call must return the error of its context")
+		}
+
+		for _, n := range pair {
+			if l.AllowN(n) {
+				returned += n
+			}
+		}
+	}
+
+	return returned, perNS + chunk + 3*chunk
+}
+
+// limiterSteps runs the steps of a machine over a Limiter on a lateClock.
+// The actions are an AllowN, a WaitN, the late tick of the timer of a
+// waiting call, the cancellation of a waiting call, and an advance of the
+// clock by up to 3 ns. At most maxWaiting calls wait at once.
+//
+// A model keeps the time of the generic cell rate algorithm as an exact
+// big.Rat of nanoseconds. Each AllowN must report what the model admits,
+// and each WaitN must return at once or start the timer of the model's
+// wait, rounded up to a whole nanosecond.
+//
+// After every step the invariant takes each window from a time s to the
+// time of the clock, both included. It checks that the units of the calls
+// that returned nil in the window stay within the Rate times the length of
+// the window, Burst and the units of the calls that waited before s. A
+// window of length 0 contains the calls of one instant, so the check also
+// bounds the units that a full bucket admits at once.
+func limiterSteps(c *prop.Case) {
+	rate := c.Draw(limiterRates, "rate")
+	burst := c.Draw(prop.Integer[int64](1, 16), "burst")
+	clk := &lateClock{Clock: fake.New(originUTC), created: make(chan *lateTimer, 1)}
+	l, err := resilience.NewLimiter(resilience.LimiterConfig{Clock: clk, Rate: rate, Burst: burst})
+	assert.NoError(c, err, "NewLimiter must accept the config")
+
+	ctx, cancel := context.WithCancel(c.Context())
+	c.Cleanup(cancel)
+
+	var calls, waiting []*limiterCall
+
+	// model is the time of the bucket in nanoseconds since originUTC, and
+	// fill is the time in which an empty bucket gains Burst units.
+	model := new(big.Rat)
+	fill := big.NewRat(burst*nsPerSecond, rate)
+
+	// gap returns the model's time once it covered n more units at the time
+	// of the clock, and that time minus the time of the clock.
+	gap := func(n int64) (after, ahead *big.Rat) {
+		now := new(big.Rat).SetInt64(int64(clk.Time().Sub(originUTC)))
+		after = new(big.Rat).Set(model)
+		if after.Cmp(now) < 0 {
+			after.Set(now)
+		}
+		after.Add(after, big.NewRat(n*nsPerSecond, rate))
+
+		return after, new(big.Rat).Sub(after, now)
+	}
+
+	// due returns the waiting calls whose ticks a case may deliver.
+	due := func() []*limiterCall {
+		var ready []*limiterCall
+		for _, call := range waiting {
+			if !clk.Time().Before(call.timer.deadline) {
+				ready = append(ready, call)
+			}
+		}
+
+		return ready
+	}
+
+	// end records that call returned at the time of the clock, and whether
+	// it returned nil.
+	end := func(call *limiterCall, ok bool) {
+		call.end, call.ok = int64(clk.Time().Sub(originUTC)), ok
+		waiting = slices.DeleteFunc(waiting, func(w *limiterCall) bool { return w == call })
+	}
+
+	stateful.Steps(c, stateful.Machine[struct{}]{
+		Actions: []stateful.Action[struct{}]{
+			{
+				Name:  "AllowN",
+				Input: func(c *prop.Case, _ struct{}) any { return c.Draw(prop.Integer[int64](0, burst+1), "n") },
+				Run: func(c *prop.Case, _ int, in any) {
+					n := in.(int64)
+					if n == 0 {
+						assert.True(c, l.AllowN(0), "AllowN must admit zero units")
+
+						return
+					}
+
+					after, ahead := gap(n)
+					fits := n <= burst && ahead.Cmp(fill) <= 0
+					assert.Equal(c, l.AllowN(n), fits, "AllowN must admit the calls that the exact bucket covers")
+					if fits {
+						model.Set(after)
+						at := int64(clk.Time().Sub(originUTC))
+						calls = append(calls, &limiterCall{n: n, start: at, end: at, ok: true})
+					}
+				},
+			},
+			{
+				Name:    "WaitN",
+				Enabled: func(struct{}) bool { return len(waiting) < maxWaiting },
+				Input:   func(c *prop.Case, _ struct{}) any { return c.Draw(prop.Integer[int64](0, burst), "n") },
+				Run: func(c *prop.Case, _ int, in any) {
+					n := in.(int64)
+					after, ahead := gap(n)
+					wait := new(big.Rat).Sub(ahead, fill)
+
+					callCtx, callCancel := context.WithCancel(ctx)
+					call := &limiterCall{
+						n: n, start: int64(clk.Time().Sub(originUTC)), end: -1,
+						done: make(chan error, 1), cancel: callCancel,
+					}
+					calls = append(calls, call)
+					go func() { call.done <- l.WaitN(callCtx, call.n) }()
+
+					patient := time.NewTimer(patience)
+					defer patient.Stop()
+
+					select {
+					case err := <-call.done:
+						assert.NoError(c, err, "a WaitN that the bucket covers must return nil")
+						assert.True(c, n == 0 || wait.Sign() <= 0,
+							"WaitN must return at once only when the exact bucket covers the units")
+						call.end, call.ok = call.start, true
+						callCancel()
+					case call.timer = <-clk.created:
+						// The exact wait is positive here, so QuoRem rounds it down
+						// and a remainder rounds it up to the next nanosecond.
+						whole, rest := new(big.Int).QuoRem(wait.Num(), wait.Denom(), new(big.Int))
+						if rest.Sign() > 0 {
+							whole.Add(whole, big.NewInt(1))
+						}
+						assert.Equal(c, call.timer.deadline.Sub(clk.Time()), time.Duration(whole.Int64()),
+							"WaitN must wait the exact time of the bucket rounded up to a whole nanosecond")
+						waiting = append(waiting, call)
+					case <-patient.C:
+						c.Fatalf("WaitN neither returned nor started a timer within %s", patience)
+					}
+
+					if n > 0 {
+						model.Set(after)
+					}
+				},
+			},
+			{
+				Name:    "tick",
+				Enabled: func(struct{}) bool { return len(due()) > 0 },
+				Input: func(c *prop.Case, _ struct{}) any {
+					return c.Draw(prop.Integer(0, len(due())-1), "call")
+				},
+				Run: func(c *prop.Case, _ int, in any) {
+					call := due()[in.(int)]
+					call.timer.c <- clk.Time()
+					err := await(c, call.done, "a WaitN must return once its tick arrives")
+					assert.NoError(c, err, "a call must take its units once its tick arrives")
+					end(call, true)
+				},
+			},
+			{
+				Name:    "cancel",
+				Enabled: func(struct{}) bool { return len(waiting) > 0 },
+				Input: func(c *prop.Case, _ struct{}) any {
+					return c.Draw(prop.Integer(0, len(waiting)-1), "call")
+				},
+				Run: func(c *prop.Case, _ int, in any) {
+					call := waiting[in.(int)]
+					call.cancel()
+					assert.ErrorIs(c, await(c, call.done, "a cancelled WaitN must return"), context.Canceled,
+						"a cancelled call must return the error of its context")
+					model.Sub(model, big.NewRat(call.n*nsPerSecond, rate))
+					end(call, false)
+				},
+			},
+			{
+				Name:  "advance",
+				Input: func(c *prop.Case, _ struct{}) any { return c.Draw(prop.Integer(0, 3), "ns") },
+				Run: func(_ *prop.Case, _ int, in any) {
+					clk.Advance(time.Duration(in.(int)))
+				},
+			},
+		},
+		Invariant: func(c *prop.Case, _ struct{}) {
+			now := int64(clk.Time().Sub(originUTC))
+			starts := make([]int64, 0, 2+2*len(calls))
+			starts = append(starts, 0, now)
+			for _, call := range calls {
+				starts = append(starts, call.start+1, call.end)
+			}
+
+			for _, s := range starts {
+				if s < 0 || s > now {
+					continue
+				}
+
+				var units, open int64
+				for _, call := range calls {
+					if call.ok && call.end >= s {
+						units += call.n
+					}
+					if call.start < s && (call.end < 0 || call.end >= s) {
+						open += call.n
+					}
+				}
+
+				// The values stay below 2^53, so InRange compares them exactly.
+				bound := rate*(now-s) + (burst+open)*nsPerSecond
+				assert.InRange(c, units*nsPerSecond, 0, float64(bound), limiterContract)
+			}
+		},
+	})
 }

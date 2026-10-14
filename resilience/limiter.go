@@ -50,10 +50,13 @@ type LimiterConfig struct {
 //
 // The Limiter keeps the bucket as the generic cell rate algorithm does:
 // one time, due, at which the bucket would be empty once it covered every
-// unit taken so far. A call of n units moves due forward by the time in
-// which the bucket gains n units, rounded up to a whole nanosecond, so the
-// Limiter admits at most Rate units per second, and over many calls a few
-// nanoseconds fewer. All the arithmetic is on int64 nanoseconds.
+// unit taken so far. A call of n units moves due forward by exactly the
+// time in which the bucket gains n units. The Limiter keeps each such time
+// as whole nanoseconds and a remainder in Rate-ths of a nanosecond, so the
+// bucket never has more than Burst units, and the refund of a call returns
+// exactly the units that the call reserved. Only the timer of a
+// wait rounds, up to the next whole nanosecond, so the Limiter admits at
+// most Rate units per second. All the arithmetic is on int64.
 //
 // A call that waits reserves its units when it starts, and the bucket owes
 // them to it while it waits. Calls that wait together therefore take their
@@ -86,14 +89,19 @@ type Limiter struct {
 
 	mu sync.Mutex
 
-	// due is the duration since start at which the bucket would be empty
-	// once it covered every unit taken so far: the theoretical arrival
-	// time of the generic cell rate algorithm. The bucket is full while
-	// due is at or before the current time. A write locks mu.
-	due time.Duration
+	// due and dueRem are the duration since start at which the bucket would
+	// be empty once it covered every unit taken so far: the theoretical
+	// arrival time of the generic cell rate algorithm. The time is due plus
+	// dueRem Rate-ths of a nanosecond, and dueRem is below rate. The bucket
+	// is full while the time is at or before the current time. A write
+	// locks mu.
+	due    time.Duration
+	dueRem int64
 
-	// fill is the time in which an empty bucket gains Burst units.
-	fill time.Duration
+	// fill and fillRem are the time in which an empty bucket gains Burst
+	// units: fill plus fillRem Rate-ths of a nanosecond.
+	fill    time.Duration
+	fillRem int64
 
 	// rate and burst are the Rate and Burst of the configuration. A rate
 	// of zero means no limit, and burst is then zero.
@@ -128,7 +136,7 @@ func NewLimiter(cfg LimiterConfig) (*Limiter, error) {
 	}
 
 	l.burst = cfg.Burst
-	l.fill = l.cost(cfg.Burst)
+	l.fill, l.fillRem = l.cost(cfg.Burst)
 
 	return l, nil
 }
@@ -152,7 +160,7 @@ func (l *Limiter) AllowN(n int64) bool {
 		return false
 	}
 
-	if l.rate == 0 {
+	if l.rate == 0 || n == 0 {
 		return true
 	}
 
@@ -164,12 +172,12 @@ func (l *Limiter) AllowN(n int64) bool {
 	defer l.mu.Unlock()
 
 	now := l.now()
-	due := addSaturated(max(l.due, now), l.cost(n))
-	if due-now > l.fill {
+	due, rem := l.after(now, n)
+	if d := due - now; d > l.fill || d == l.fill && rem > l.fillRem {
 		return false
 	}
 
-	l.due = due
+	l.due, l.dueRem = due, rem
 
 	return true
 }
@@ -256,28 +264,64 @@ func (l *Limiter) Burst() int64 {
 
 // reserve takes n units, at most Burst, from the bucket, and returns how
 // long the caller waits until the bucket has gained them: zero or less
-// when the bucket has them. The bucket may owe units to the calls that
-// reserved them, and due is then past the time at which the bucket would
-// be full. reserve locks the mutex while it reads the clock and moves due.
+// when the bucket has them. The wait rounds up to a whole nanosecond, so it
+// never ends before the bucket has gained the units. The bucket may owe
+// units to the calls that reserved them, and due is then past the time at
+// which the bucket would be full. reserve locks the mutex while it reads
+// the clock and moves due.
 func (l *Limiter) reserve(n int64) time.Duration {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
 	now := l.now()
-	l.due = addSaturated(max(l.due, now), l.cost(n))
+	l.due, l.dueRem = l.after(now, n)
 
-	return l.due - l.fill - now
+	wait := l.due - l.fill - now
+	if l.dueRem > l.fillRem {
+		wait++
+	}
+
+	return wait
 }
 
 // release gives back the n units of a reservation whose call stopped
-// waiting, by moving due back by their cost. A call that reserved after it
-// keeps the wait that it computed, which can only be longer than it needs
-// to be. release locks the mutex while it moves due.
+// waiting, by moving due back by their exact cost. A call that reserved
+// after it keeps the wait that it computed, which can only be longer than
+// it needs to be. release locks the mutex while it moves due.
 func (l *Limiter) release(n int64) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	l.due -= l.cost(n)
+	q, r := l.cost(n)
+	l.due -= q
+	//dokimi:mutate-skip ror-boundary: a borrow at dueRem == r leaves dueRem at rate, which every comparison and every carry count as one more nanosecond
+	if l.dueRem < r {
+		l.due--
+		l.dueRem += l.rate - r
+	} else {
+		l.dueRem -= r
+	}
+}
+
+// after returns due and dueRem as they would be once the bucket covered n
+// more units at now: the later of due and now, plus the exact cost of n
+// units. A time past the largest Duration saturates at it. after adds the
+// remainders without an overflow for any rate. The caller has locked the
+// mutex.
+func (l *Limiter) after(now time.Duration, n int64) (time.Duration, int64) {
+	due, rem := l.due, l.dueRem
+	if due < now {
+		due, rem = now, 0
+	}
+
+	q, r := l.cost(n)
+	due = addSaturated(due, q)
+	//dokimi:mutate-skip ror-boundary: no carry at rem+r == rate leaves the remainder at rate, which every comparison and every carry count as one more nanosecond
+	if rem >= l.rate-r {
+		return addSaturated(due, 1), rem - (l.rate - r)
+	}
+
+	return due, rem + r
 }
 
 // now returns the duration since the Limiter's construction, read from its
@@ -288,18 +332,13 @@ func (l *Limiter) now() time.Duration {
 }
 
 // cost returns the time in which the bucket gains n units at the Limiter's
-// rate, rounded up to a whole nanosecond, so the Limiter never charges a
-// call less than its units take to accrue. n is between 0 and maxBurst and
-// the rate is positive, so n*nanounits fits an int64 and the division is
-// exact apart from the rounding.
-func (l *Limiter) cost(n int64) time.Duration {
+// rate exactly: whole nanoseconds, and a remainder in Rate-ths of a
+// nanosecond that is below rate. n is between 0 and maxBurst and the rate
+// is positive, so n*nanounits fits an int64.
+func (l *Limiter) cost(n int64) (time.Duration, int64) {
 	c := n * nanounits
-	d := c / l.rate
-	if d*l.rate != c {
-		d++
-	}
 
-	return time.Duration(d)
+	return time.Duration(c / l.rate), c % l.rate
 }
 
 // addSaturated returns a+b, or the largest Duration when the sum does not

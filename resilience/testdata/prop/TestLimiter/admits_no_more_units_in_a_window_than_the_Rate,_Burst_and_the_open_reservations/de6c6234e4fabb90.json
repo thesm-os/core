@@ -1,0 +1,42 @@
+{
+  "store": 1,
+  "definition": "8.0.0",
+  "property": "the units of the calls that return nil in a window must stay within the Rate times its length, Burst and the units of the calls that waited before it",
+  "identity": {
+    "assertion": "in-range",
+    "file": "limiter_test.go",
+    "line": 1010
+  },
+  "choices": "prop1:AAAAAQAHAAAAAQAAAAAAAAABAAAAAgABAAAABg",
+  "counterexample": [
+    {
+      "label": "rate",
+      "value": {
+        "type": "int",
+        "value": 2000000000
+      }
+    },
+    {
+      "label": "burst",
+      "value": {
+        "type": "int",
+        "value": 7
+      }
+    },
+    {
+      "label": "n",
+      "value": {
+        "type": "int",
+        "value": 2
+      }
+    },
+    {
+      "label": "n",
+      "value": {
+        "type": "int",
+        "value": 6
+      }
+    }
+  ],
+  "found": "2026-10-14"
+}

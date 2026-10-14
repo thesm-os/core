@@ -1072,8 +1072,9 @@ func bounded(tb testing.TB) context.Context {
 
 // await returns the next value of ch, and fails tb when no value arrives
 // within patience of real time, so a call that never returns fails its
-// case and does not hang the test binary.
-func await[T any](tb testing.TB, ch <-chan T, what string) T {
+// case and does not hang the test binary. tb is a test or the case of a
+// property.
+func await[T any](tb assert.TB, ch <-chan T, what string) T {
 	tb.Helper()
 
 	timer := time.NewTimer(patience)
