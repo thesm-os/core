@@ -2,7 +2,7 @@
 rfc: 0048
 title: RFC 3161 Time-Stamp Tokens
 author: Roy Klopper <roy.klopper@stealthscale.io>
-status: Draft
+status: Accepted
 created: 2026-10-02
 updated: 2026-10-02
 discussion: none

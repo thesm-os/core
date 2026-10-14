@@ -2,7 +2,7 @@
 rfc: 0040
 title: Ranged Reads on Named Object Storage
 author: Roy Klopper <roy.klopper@stealthscale.io>
-status: Draft
+status: Accepted
 created: 2026-09-25
 updated: 2026-09-25
 discussion: none

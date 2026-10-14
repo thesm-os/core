@@ -2,7 +2,7 @@
 rfc: 0050
 title: Rate Limiter
 author: Roy Klopper <roy.klopper@stealthscale.io>
-status: Draft
+status: Accepted
 created: 2026-10-02
 updated: 2026-10-02
 discussion: none

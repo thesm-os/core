@@ -2,7 +2,7 @@
 rfc: 0042
 title: Intermediate Key-Encryption Keys
 author: Roy Klopper <roy.klopper@stealthscale.io>
-status: Draft
+status: Accepted
 created: 2026-09-25
 updated: 2026-09-25
 discussion: none

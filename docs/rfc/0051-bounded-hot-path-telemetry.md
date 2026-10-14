@@ -2,7 +2,7 @@
 rfc: 0051
 title: Bounded Telemetry on Hot Paths
 author: Roy Klopper <roy.klopper@stealthscale.io>
-status: Draft
+status: Accepted
 created: 2026-10-02
 updated: 2026-10-02
 discussion: none

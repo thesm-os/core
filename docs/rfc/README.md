@@ -107,19 +107,19 @@ Start from [`docs/templates/RFC.md`](../templates/RFC.md).
 | [0037](0037-periodic-and-quorum-tasks.md) | Periodic and Quorum Tasks | Accepted |
 | [0038](0038-conformance-for-durable-adapters.md) | Conformance for Durable Adapters and Decorators | Accepted |
 | [0039](0039-signature-policies.md) | Signature Policies and Verifier Resolution | Accepted |
-| [0040](0040-ranged-blob-reads.md) | Ranged Reads on Named Object Storage | Draft |
-| [0041](0041-chunked-authenticated-encryption.md) | Chunked Authenticated Encryption | Draft |
-| [0042](0042-intermediate-kek.md) | Intermediate Key-Encryption Keys | Draft |
+| [0040](0040-ranged-blob-reads.md) | Ranged Reads on Named Object Storage | Accepted |
+| [0041](0041-chunked-authenticated-encryption.md) | Chunked Authenticated Encryption | Accepted |
+| [0042](0042-intermediate-kek.md) | Intermediate Key-Encryption Keys | Accepted |
 | [0043](0043-btree-ordered-maps.md) | B-Tree Ordered Maps | Accepted |
 | [0044](0044-nested-signature-policies.md) | Nested Signature Policies | Accepted |
 | [0045](0045-kanon-forms-of-core-types.md) | kanon Forms of Core Types | Accepted |
 | [0046](0046-released-instruments-and-gauge-aggregation.md) | Released Instruments and Gauge Aggregation | Accepted |
-| [0047](0047-signed-notes-and-checkpoints.md) | Signed Notes and Checkpoints | Draft |
-| [0048](0048-time-stamp-tokens.md) | RFC 3161 Time-Stamp Tokens | Draft |
-| [0049](0049-bounded-cache.md) | Bounded Cache | Draft |
-| [0050](0050-rate-limiter.md) | Rate Limiter | Draft |
-| [0051](0051-bounded-hot-path-telemetry.md) | Bounded Telemetry on Hot Paths | Draft |
-| [0052](0052-failover.md) | Failover Between Redundant Dependencies | Draft |
+| [0047](0047-signed-notes-and-checkpoints.md) | Signed Notes and Checkpoints | Accepted |
+| [0048](0048-time-stamp-tokens.md) | RFC 3161 Time-Stamp Tokens | Accepted |
+| [0049](0049-bounded-cache.md) | Bounded Cache | Accepted |
+| [0050](0050-rate-limiter.md) | Rate Limiter | Accepted |
+| [0051](0051-bounded-hot-path-telemetry.md) | Bounded Telemetry on Hot Paths | Accepted |
+| [0052](0052-failover.md) | Failover Between Redundant Dependencies | Accepted |
 | [0053](0053-http-servers-and-clients.md) | HTTP Servers and Clients | Accepted |
 | [0054](0054-checkpoint-witnesses.md) | Checkpoint Witnesses | Accepted |
 | [0055](0055-party-markers-in-signature-policies.md) | Party Markers in Signature Policies | Accepted |
