@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.20.0
+
+### Minor Changes
+
+- 2b81a66: Add `cache.Cache.SetPinned` to store a value and return its new entry with one pin.
+
 ## 0.19.0
 
 ### Minor Changes
