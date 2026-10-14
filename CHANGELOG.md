@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.21.0
+
+### Minor Changes
+
+- d521359: Add `arena.Arena.ResetWritten` to zero only the bytes that the caller wrote before the arena starts its next lifecycle.
+- 5c90656: Add `resilience.Limiter.Burst` to return the most units that one call of the limiter takes.
+
 ## 0.20.0
 
 ### Minor Changes
