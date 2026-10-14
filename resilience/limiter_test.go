@@ -110,7 +110,7 @@ func TestLimiter(t *testing.T) {
 			assert.True(t, l.AllowN(math.MaxInt64), "a Rate of zero must admit any number of units")
 		})
 
-		t.Run("returns a Limiter whose bucket holds Burst units", func(t *testing.T) {
+		t.Run("returns a Limiter whose bucket has Burst units", func(t *testing.T) {
 			t.Parallel()
 			l := newLimiter(t, resilience.LimiterConfig{Clock: fake.New(originUTC), Rate: 1, Burst: 3})
 			assert.True(t, l.AllowN(3), "a new bucket must have Burst units")
@@ -509,11 +509,49 @@ func TestLimiter(t *testing.T) {
 				"a call past the largest Duration must wait until its context ends")
 		})
 	})
+
+	t.Run("Burst", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the Burst of the configuration", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "Burst must return the Burst of the configuration", func(pc *prop.Case) {
+				rate := pc.Draw(prop.Integer[int64](1, math.MaxInt64), "rate")
+				burst := pc.Draw(prop.Integer[int64](1, maxBurst), "burst")
+				cfg := resilience.LimiterConfig{Clock: fake.New(originUTC), Rate: rate, Burst: burst}
+				l, err := resilience.NewLimiter(cfg)
+				assert.NoError(pc, err, "NewLimiter must accept the config")
+				assert.Equal(pc, l.Burst(), burst, "Burst must return the Burst of the configuration")
+			})
+		})
+
+		t.Run("returns the most units that one WaitN takes", func(t *testing.T) {
+			t.Parallel()
+			l := newLimiter(t, resilience.LimiterConfig{Clock: fake.New(originUTC), Rate: 10, Burst: 7})
+			expect.NoError(t, l.WaitN(bounded(t), l.Burst()), "WaitN must take Burst units in one call")
+			expect.ErrorIs(t, l.WaitN(bounded(t), l.Burst()+1), resilience.ErrUnits,
+				"WaitN must refuse one unit more than Burst")
+		})
+
+		t.Run("returns math.MaxInt64 for a Rate of zero", func(t *testing.T) {
+			t.Parallel()
+			l := newLimiter(t, resilience.LimiterConfig{Clock: fake.New(originUTC), Burst: 7})
+			assert.Equal(t, l.Burst(), int64(math.MaxInt64),
+				"a Limiter without a limit must take any number of units in one call")
+		})
+
+		t.Run("returns math.MaxInt64 for the zero Limiter", func(t *testing.T) {
+			t.Parallel()
+			var l resilience.Limiter
+			assert.Equal(t, l.Burst(), int64(math.MaxInt64),
+				"the zero Limiter must take any number of units in one call")
+		})
+	})
 }
 
-// TestLimiterAllocs checks the allocation contract of AllowN and of a WaitN
-// that does not wait. MaxAllocs counts the allocations of the whole
-// process, so the test does not run in parallel.
+// TestLimiterAllocs checks the allocation contract of AllowN, of a WaitN
+// that does not wait and of Burst. MaxAllocs counts the allocations of the
+// whole process, so the test does not run in parallel.
 func TestLimiterAllocs(t *testing.T) {
 	ctx := t.Context()
 
@@ -539,10 +577,18 @@ func TestLimiterAllocs(t *testing.T) {
 			assert.NoError(t, err, "the test must measure an admitted call")
 		})
 	})
+
+	t.Run("Burst", func(t *testing.T) {
+		l := newLimiter(t, resilience.LimiterConfig{Clock: fake.New(originUTC), Rate: 10, Burst: 7})
+
+		var got int64
+		expect.MaxAllocs(t, func() { got = l.Burst() }, 0, "Burst must not allocate")
+		assert.Equal(t, got, int64(7), "the test must measure the Burst of the configuration")
+	})
 }
 
-// BenchmarkLimiter reports the cost of AllowN and of a WaitN that does not
-// wait, and fails when one allocates.
+// BenchmarkLimiter reports the cost of AllowN, of a WaitN that does not wait
+// and of Burst, and fails when one allocates.
 func BenchmarkLimiter(b *testing.B) {
 	ctx := b.Context()
 
@@ -579,6 +625,21 @@ func BenchmarkLimiter(b *testing.B) {
 
 			assert.NoError(b, err, "the benchmark must measure an admitted call")
 		})
+	})
+
+	b.Run("Burst", func(b *testing.B) {
+		l := newLimiter(b, resilience.LimiterConfig{Clock: fake.New(originUTC), Rate: 10, Burst: 7})
+
+		var got int64
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			got = l.Burst()
+		}
+
+		assert.Equal(b, got, int64(7), "the benchmark must measure the Burst of the configuration")
 	})
 }
 

@@ -74,9 +74,9 @@ type LimiterConfig struct {
 //
 // # Allocation contract
 //
-// [Limiter.AllowN] does not allocate. [Limiter.WaitN] allocates only the
-// timer of a call that waits, through [clock.Clock.NewTimer], and nothing
-// for a call that does not.
+// [Limiter.AllowN] and [Limiter.Burst] do not allocate. [Limiter.WaitN]
+// allocates only the timer of a call that waits, through
+// [clock.Clock.NewTimer], and nothing for a call that does not.
 type Limiter struct {
 	clock clock.Clock
 
@@ -231,6 +231,27 @@ func (l *Limiter) WaitN(ctx context.Context, n int64) error {
 
 		return ctx.Err()
 	}
+}
+
+// Burst returns the Burst of the configuration. One call of
+// [Limiter.AllowN] or [Limiter.WaitN] takes at most that many units, so a
+// caller splits work into calls of min(left, l.Burst()) units.
+//
+// A Limiter with a Rate of zero takes any number of units in one call, and
+// so does the zero Limiter. Burst returns [math.MaxInt64] for both, so the
+// loop needs no case for a Limiter without a limit.
+//
+// Burst takes no lock, because [NewLimiter] sets the burst once.
+//
+// # Allocation contract
+//
+// Zero alloc.
+func (l *Limiter) Burst() int64 {
+	if l.rate == 0 {
+		return math.MaxInt64
+	}
+
+	return l.burst
 }
 
 // reserve takes n units, at most Burst, from the bucket, and returns how
