@@ -32,11 +32,13 @@
 // # Pins
 //
 // [Cache.Pin] returns a [Pinned] entry, which the cache does not evict
-// until [Pinned.Unpin]. The sum of the costs exceeds the capacity only
-// while pinned entries fill the cache: a Set then keeps its new entry past
-// the capacity, and a later Set evicts down to the capacity again. Set and
-// Delete still remove a pinned entry from the cache, and its holder keeps
-// using the value until it calls Unpin.
+// until [Pinned.Unpin]. [Cache.SetPinned] stores a value as Set does and
+// returns its new entry pinned, so the evictor cannot remove the entry
+// before the caller uses the value. The sum of the costs exceeds the
+// capacity only while pinned entries fill the cache: a Set then keeps its
+// new entry past the capacity, and a later Set evicts down to the capacity
+// again. Set and Delete still remove a pinned entry from the cache, and its
+// holder keeps using the value until it calls Unpin.
 //
 // # Expiry
 //
@@ -59,25 +61,26 @@
 // # Callbacks
 //
 // [Config.Evicted] receives every entry that leaves the cache, once,
-// outside the cache's lock: by eviction, expiry, Delete, or a Set of its
-// key, and the value of a Set whose cost exceeds the capacity. Evicted
-// receives an entry that leaves while pinned at its last Unpin, so the
-// callback can release the value, such as closing a key keeper.
+// outside the cache's lock: by eviction, expiry, Delete, or a Set or
+// SetPinned of its key, and the value of a Set or SetPinned whose cost
+// exceeds the capacity. Evicted receives an entry that leaves while pinned
+// at its last Unpin, so the callback can release the value, such as
+// closing a key keeper.
 //
 // # Concurrency
 //
 // A Cache is safe for concurrent use. Get and Pin take no lock. Set,
-// Delete and Expire take one lock per Cache, and so does a Get or Pin that
-// removes an expired entry. Expire releases the lock after each eight
-// entries that it removes.
+// SetPinned, Delete and Expire take one lock per Cache, and so does a Get
+// or Pin that removes an expired entry. Expire releases the lock after
+// each eight entries that it removes.
 //
 // # Allocation contract
 //
 // Get, Pin, [Pinned.Unpin], Delete, Len and Cost do not allocate for a key
 // whose hash [hash/maphash.Comparable] computes without an allocation,
-// such as a string or a value without pointers. Set allocates the entry,
-// and the memory of the index, the ghost and the expiry heap when they
-// grow. Expire does not allocate.
+// such as a string or a value without pointers. Set and SetPinned allocate
+// the entry, and the memory of the index, the ghost and the expiry heap
+// when they grow. Expire does not allocate.
 //
 // # Errors
 //

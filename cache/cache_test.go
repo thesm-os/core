@@ -47,10 +47,11 @@ const (
 
 // The operations of the concurrent history of a Cache.
 const (
-	opSet    = "set"
-	opGet    = "get"
-	opPin    = "pin"
-	opDelete = "delete"
+	opSet       = "set"
+	opSetPinned = "setpinned"
+	opGet       = "get"
+	opPin       = "pin"
+	opDelete    = "delete"
 )
 
 // The actions of the machine of Expire, beside opSet and opDelete.
@@ -233,7 +234,7 @@ func TestCache(t *testing.T) {
 			clk.Advance(time.Second)
 			c.Get("k")
 			c.Get("k")
-			assert.Equal(t, r.got(), []string{"k"}, "the expired entry must reach Evicted once")
+			assert.Equal(t, r.got(), []string{"k"}, "Evicted must receive the expired entry once")
 		})
 
 		t.Run("passes a pinned expired entry to Evicted once at its Unpin", func(t *testing.T) {
@@ -263,7 +264,7 @@ func TestCache(t *testing.T) {
 			_, ok := c.Get("k")
 			expect.False(t, ok, "Get must miss the expired entry")
 			expect.Equal(t, c.Len(), 0, "the cache must count the entry once")
-			expect.Equal(t, r.got(), []string{"k"}, "the entry must reach Evicted once")
+			expect.Equal(t, r.got(), []string{"k"}, "Evicted must receive the entry once")
 		})
 
 		t.Run("unlocks the cache after it removes an expired entry", func(t *testing.T) {
@@ -317,7 +318,7 @@ func TestCache(t *testing.T) {
 			clk.Advance(time.Second)
 			c.Pin("k")
 			expect.Equal(t, c.Len(), 0, "the expired entry must leave the cache")
-			expect.Equal(t, r.got(), []string{"k"}, "the expired entry must reach Evicted")
+			expect.Equal(t, r.got(), []string{"k"}, "Evicted must receive the expired entry")
 		})
 
 		t.Run("reports false for an entry that a Delete removed", func(t *testing.T) {
@@ -348,7 +349,7 @@ func TestCache(t *testing.T) {
 			c, _, r := newCache(t, 10, nil)
 			c.Set("k", 1, time.Time{})
 			c.Set("k", 2, time.Time{})
-			assert.Equal(t, r.got(), []string{"k"}, "the replaced value must reach Evicted")
+			assert.Equal(t, r.got(), []string{"k"}, "Evicted must receive the replaced value")
 		})
 
 		t.Run("evicts the oldest entries without hits until the cost fits the capacity", func(t *testing.T) {
@@ -394,7 +395,7 @@ func TestCache(t *testing.T) {
 			c.Set("k", 11, time.Time{})
 			_, ok := c.Get("k")
 			expect.False(t, ok, "a value above the capacity must not be stored")
-			expect.Equal(t, r.got(), []string{"k", "k"}, "the replaced value and the refused value must reach Evicted")
+			expect.Equal(t, r.got(), []string{"k", "k"}, "Evicted must receive both values of the key")
 			expect.Equal(t, c.Cost(), int64(1), "the refused value must evict nothing else")
 		})
 
@@ -480,7 +481,7 @@ func TestCache(t *testing.T) {
 			c.Set("b", 1, time.Time{})
 			c.Set("c", 1, time.Time{})
 			c.Set("c", 2, time.Time{})
-			assert.Equal(t, r.got(), []string{"c", "a"}, "the replaced value must reach Evicted first")
+			assert.Equal(t, r.got(), []string{"c", "a"}, "Evicted must receive the replaced value first")
 		})
 
 		t.Run("calls Evicted after it releases its lock", func(t *testing.T) {
@@ -502,6 +503,109 @@ func TestCache(t *testing.T) {
 		})
 	})
 
+	t.Run("SetPinned", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the entry that it stores", func(t *testing.T) {
+			t.Parallel()
+			c, _, _ := newCache(t, 10, nil)
+			p := c.SetPinned("k", 7, time.Time{})
+			defer p.Unpin()
+			expect.Equal(t, p.Value(), 7, "the Pinned must contain the stored value")
+			v, _ := c.Get("k")
+			expect.Equal(t, v, 7, "Get must return the stored value")
+		})
+
+		t.Run("keeps its entry through evictions while it is pinned", func(t *testing.T) {
+			t.Parallel()
+			c, _, r := newCache(t, 1, nil)
+			p := c.SetPinned("k", 7, time.Time{})
+			defer p.Unpin()
+			setAll(c, "a", "b", "c")
+			_, ok := c.Get("k")
+			expect.True(t, ok, "the pinned entry must remain in the cache")
+			expect.NotContains(t, r.got(), "k", "Evicted must not receive the pinned entry")
+		})
+
+		t.Run("lets the cache evict its entry after Unpin", func(t *testing.T) {
+			t.Parallel()
+			c, _, r := newCache(t, 1, nil)
+			p := c.SetPinned("k", 7, time.Time{})
+			setAll(c, "a")
+			p.Unpin()
+			setAll(c, "b")
+			_, ok := c.Get("k")
+			expect.False(t, ok, "the unpinned entry must leave like any other")
+			expect.Contains(t, r.got(), "k", "Evicted must receive the unpinned entry")
+		})
+
+		t.Run("pins its entry before it passes the replaced entry to Evicted", func(t *testing.T) {
+			t.Parallel()
+			var c *cache.Cache[string, int]
+			c, err := cache.New(cache.Config[string, int]{
+				Clock:    fake.New(origin),
+				Capacity: 2,
+				Evicted: func(k string, v int) {
+					if k == "k" && v == 1 {
+						setAll(c, "a", "b", "c")
+					}
+				},
+			})
+			assert.NoError(t, err, "New must accept the configuration")
+			c.Set("k", 1, time.Time{})
+			p := c.SetPinned("k", 2, time.Time{})
+			defer p.Unpin()
+			v, ok := c.Get("k")
+			assert.True(t, ok, "the Sets inside Evicted must not evict the new entry")
+			assert.Equal(t, v, 2, "Get must return the value of SetPinned")
+		})
+
+		t.Run("counts no hit on its entry", func(t *testing.T) {
+			t.Parallel()
+			c, _, r := newCache(t, 2, nil)
+			c.SetPinned("a", 1, time.Time{}).Unpin()
+			setAll(c, "b", "c")
+			assert.Equal(t, r.got(), []string{"a"}, "an entry without a hit must leave at its first examination")
+		})
+
+		t.Run("returns a Pinned of a value whose cost exceeds the capacity", func(t *testing.T) {
+			t.Parallel()
+			c, _, _ := newCache(t, 10, func(v int) int64 { return int64(v) })
+			p := c.SetPinned("k", 11, time.Time{})
+			defer p.Unpin()
+			assert.Equal(t, p.Value(), 11, "the Pinned must contain the value above the capacity")
+		})
+
+		t.Run("removes the entry of its key for a value whose cost exceeds the capacity", func(t *testing.T) {
+			t.Parallel()
+			c, _, r := newCache(t, 10, func(v int) int64 { return int64(v) })
+			c.Set("k", 1, time.Time{})
+			p := c.SetPinned("k", 11, time.Time{})
+			defer p.Unpin()
+			_, ok := c.Get("k")
+			expect.False(t, ok, "a value above the capacity must not be stored")
+			expect.Equal(t, r.got(), []string{"k"}, "Evicted must receive the replaced value")
+			expect.Equal(t, c.Cost(), int64(0), "the refused value must not count toward the cost")
+		})
+
+		t.Run("passes a value whose cost exceeds the capacity to Evicted at its Unpin", func(t *testing.T) {
+			t.Parallel()
+			c, _, r := newCache(t, 10, func(v int) int64 { return int64(v) })
+			p := c.SetPinned("k", 11, time.Time{})
+			assert.Empty(t, r.got(), "the refused value must wait for its Unpin")
+			p.Unpin()
+			assert.Equal(t, r.got(), []string{"k"}, "the Unpin must pass the refused value to Evicted once")
+		})
+
+		t.Run("panics for an expiry time in a Cache without a Clock", func(t *testing.T) {
+			t.Parallel()
+			c, err := cache.New(cache.Config[string, int]{Capacity: 10})
+			assert.NoError(t, err, "New must accept a Config without a Clock")
+			assert.Panics(t, func() { c.SetPinned("k", 7, origin.Add(time.Second)) },
+				"SetPinned must refuse an expiry time in a cache that cannot expire its entries")
+		})
+	})
+
 	t.Run("Delete", func(t *testing.T) {
 		t.Parallel()
 
@@ -520,7 +624,7 @@ func TestCache(t *testing.T) {
 			_, ok := c.Get("k")
 			expect.False(t, ok, "a deleted key must miss")
 			expect.Equal(t, c.Len(), 0, "the deleted entry must leave the cache")
-			expect.Equal(t, r.got(), []string{"k"}, "the deleted entry must reach Evicted")
+			expect.Equal(t, r.got(), []string{"k"}, "Evicted must receive the deleted entry")
 		})
 
 		t.Run("reports false for a key that the cache does not contain", func(t *testing.T) {
@@ -536,7 +640,7 @@ func TestCache(t *testing.T) {
 			c.Set("k", 7, origin.Add(time.Second))
 			clk.Advance(2 * time.Second)
 			expect.True(t, c.Delete("k"), "an expired entry that no Get removed must count as present")
-			expect.Equal(t, r.got(), []string{"k"}, "the deleted entry must reach Evicted")
+			expect.Equal(t, r.got(), []string{"k"}, "Evicted must receive the deleted entry")
 		})
 
 		t.Run("calls no Evicted when the Config sets none", func(t *testing.T) {
@@ -763,7 +867,7 @@ func TestCache(t *testing.T) {
 
 	t.Run("passes each value that leaves the cache to Evicted once", func(t *testing.T) {
 		t.Parallel()
-		prop.ForAll(t, "each stored value must be in the cache or have reached Evicted once", func(pc *prop.Case) {
+		prop.ForAll(t, "Evicted must receive once each stored value that leaves the cache", func(pc *prop.Case) {
 			var evicted, sets atomic.Int64
 			c, err := cache.New(cache.Config[int, int]{
 				Clock:    fake.New(origin),
@@ -775,7 +879,7 @@ func TestCache(t *testing.T) {
 				Actions: cacheActions(c, &sets),
 				Settle: func(pc *prop.Case, _ keyValues) {
 					assert.Equal(pc, evicted.Load()+int64(c.Len()), sets.Load(),
-						"each stored value must be in the cache or have reached Evicted once")
+						"Evicted must receive once each stored value that leaves the cache")
 					assert.InRange(pc, c.Cost(), 0, workloadCapacity, "without pins the cost must fit the capacity")
 				},
 			}, stateful.Clients(clients-1))
@@ -826,6 +930,21 @@ func TestCacheAllocs(t *testing.T) {
 			i++
 		}, 1, "a Set of a new key that evicts an entry must allocate the entry")
 		assert.Equal(t, evicting.Len(), benchCapacity, "the test must measure Sets that evict")
+	})
+
+	t.Run("SetPinned", func(t *testing.T) {
+		full := benchCache(t, keys[:benchCapacity])
+		expect.MaxAllocs(t, func() { full.SetPinned("k500", 1, time.Time{}).Unpin() }, 1,
+			"a SetPinned that replaces an entry must allocate the entry")
+		assert.Equal(t, full.Len(), benchCapacity, "the test must measure SetPinned calls that replace")
+
+		evicting := benchCache(t, keys)
+		i := 0
+		expect.MaxAllocs(t, func() {
+			evicting.SetPinned(keys[i%len(keys)], i, time.Time{}).Unpin()
+			i++
+		}, 1, "a SetPinned of a new key that evicts an entry must allocate the entry")
+		assert.Equal(t, evicting.Len(), benchCapacity, "the test must measure SetPinned calls that evict")
 	})
 
 	t.Run("Delete", func(t *testing.T) {
@@ -1008,6 +1127,36 @@ func BenchmarkCache(b *testing.B) {
 		})
 	})
 
+	b.Run("SetPinned", func(b *testing.B) {
+		b.Run("of a key that replaces its entry followed by its Unpin", func(b *testing.B) {
+			c := benchCache(b, keys[:benchCapacity])
+
+			bc := bench.Start(b).MaxAllocs(1)
+			defer bc.End()
+
+			for bc.Loop() {
+				c.SetPinned("k500", 1, time.Time{}).Unpin()
+			}
+
+			assert.Equal(b, c.Len(), benchCapacity, "the benchmark must measure a full cache")
+		})
+
+		b.Run("of a new key that evicts an entry followed by its Unpin", func(b *testing.B) {
+			c := benchCache(b, keys)
+			i := 0
+
+			bc := bench.Start(b).MaxAllocs(1)
+			defer bc.End()
+
+			for bc.Loop() {
+				c.SetPinned(keys[i%len(keys)], i, time.Time{}).Unpin()
+				i++
+			}
+
+			assert.Equal(b, c.Len(), benchCapacity, "the benchmark must measure SetPinned calls that evict")
+		})
+	})
+
 	b.Run("Expire", func(b *testing.B) {
 		b.Run("of eight expired entries", func(b *testing.B) {
 			clk := fake.New(origin)
@@ -1096,29 +1245,45 @@ func names(prefix string, n int) []string {
 	return keys
 }
 
-// cacheActions returns the actions of a machine over c, each on a key
-// below workloadKeys: a Set of a value that no Set before it stored, a
-// Get, a Pin with its Unpin, and a Delete. Each records its call in the
-// history of its case, with the key as its first argument and a miss as
-// absent, and sets counts the Sets.
+// cacheActions returns the actions of a machine over c. Each action calls c
+// with a key below workloadKeys. The actions are a Set of a value that no
+// call before it stored, a SetPinned of such a value with its Unpin, a Get,
+// a Pin with its Unpin, and a Delete. Each action records its call in the
+// history of its case. The key is the first argument of each call, and a
+// miss records absent. sets counts the calls of Set and SetPinned.
 func cacheActions(c *cache.Cache[int, int], sets *atomic.Int64) []stateful.Action[keyValues] {
 	written := 0
 	key := func(pc *prop.Case, _ keyValues) any { return pc.Draw(prop.Integer(0, workloadKeys-1), "key") }
+	value := func(pc *prop.Case, _ keyValues) any {
+		written++
+
+		return [2]int{pc.Draw(prop.Integer(0, workloadKeys-1), "key"), written}
+	}
 
 	return []stateful.Action[keyValues]{
 		{
-			Name: opSet,
-			Input: func(pc *prop.Case, _ keyValues) any {
-				written++
-
-				return [2]int{pc.Draw(prop.Integer(0, workloadKeys-1), "key"), written}
-			},
+			Name:  opSet,
+			Input: value,
 			Run: func(pc *prop.Case, client int, in any) {
 				kv := in.([2]int)
 				call := pc.History().Invoke(client, opSet, []any{kv[0], kv[1]})
 				c.Set(kv[0], kv[1], time.Time{})
 				call.OK(nil)
 				sets.Add(1)
+			},
+		},
+		{
+			Name:  opSetPinned,
+			Input: value,
+			Run: func(pc *prop.Case, client int, in any) {
+				kv := in.([2]int)
+				call := pc.History().Invoke(client, opSetPinned, []any{kv[0], kv[1]})
+				p := c.SetPinned(kv[0], kv[1], time.Time{})
+				v := p.Value()
+				p.Unpin()
+				call.OK(nil)
+				sets.Add(1)
+				assert.Equal(pc, v, kv[1], "the Pinned of SetPinned must contain its value")
 			},
 		},
 		{
@@ -1159,12 +1324,13 @@ func cacheActions(c *cache.Cache[int, int], sets *atomic.Int64) []stateful.Actio
 }
 
 // stepCache returns the state of a Cache of the workload after op. The
-// state of a key is its value, and absent for a key without an entry. An
-// eviction removes an entry without a call, so a miss and a Delete that
-// reports false are allowed in every state.
+// state of a key is its value, and absent for a key without an entry. A
+// SetPinned changes the state as a Set does. An eviction removes an entry
+// without a call, so a miss and a Delete that reports false are allowed in
+// every state.
 func stepCache(state keyValues, op history.Operation) []keyValues {
 	k := op.Args[0].(int)
-	if op.Name == opSet {
+	if op.Name == opSet || op.Name == opSetPinned {
 		state[k] = op.Args[1].(int)
 
 		return []keyValues{state}

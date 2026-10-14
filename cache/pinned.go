@@ -3,16 +3,17 @@
 
 package cache
 
-// Pinned is an entry of a [Cache] with one pin, which [Cache.Pin] returns.
-// The cache does not evict the entry until Unpin, and the caller uses the
-// value until then, also when a Set or Delete of its key removes the entry
-// from the cache. The zero Pinned has no entry.
+// Pinned is an entry of a [Cache] with one pin, which [Cache.Pin] and
+// [Cache.SetPinned] return. The cache does not evict the entry until
+// Unpin, and the caller uses the value until then, also when a Set or
+// Delete of its key removes the entry from the cache. The zero Pinned has
+// no entry.
 //
 // # Concurrency
 //
 // A Pinned is a value, and every copy refers to the same pin, so the caller
-// calls Unpin once per Pin, as it unlocks a mutex once per lock. Value is
-// safe for concurrent use until Unpin.
+// calls Unpin once per Pin or SetPinned, as it unlocks a mutex once per
+// lock. Value is safe for concurrent use until Unpin.
 //
 // # Allocation contract
 //
@@ -24,8 +25,8 @@ type Pinned[K comparable, V any] struct {
 }
 
 // Value returns the value of the entry, and the zero value for the zero
-// Pinned. The value is the one that the entry had when Pin returned, also
-// after a Set of its key stores a new one.
+// Pinned. The value is the one that the entry had when Pin or SetPinned
+// returned, also after a Set of its key stores a new one.
 func (p Pinned[K, V]) Value() V {
 	if p.e == nil {
 		var zero V

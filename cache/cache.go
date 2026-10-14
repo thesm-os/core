@@ -32,11 +32,11 @@ type Config[K comparable, V any] struct {
 
 	// Evicted receives the key and the value of every entry that leaves
 	// the cache, once: an entry that the cache evicts, that expires, that
-	// Delete removes, or that a Set of its key replaces, and the value of a
-	// Set whose cost exceeds Capacity. The cache calls Evicted outside its
-	// lock, so Evicted can call the cache. Evicted receives a pinned entry
-	// at its last Unpin, on the goroutine of that Unpin. A nil Evicted is
-	// not called.
+	// Delete removes, or that a Set or SetPinned of its key replaces, and
+	// the value of a Set or SetPinned whose cost exceeds Capacity. The
+	// cache calls Evicted outside its lock, so Evicted can call the cache.
+	// Evicted receives a pinned entry at its last Unpin, on the goroutine
+	// of that Unpin. A nil Evicted is not called.
 	Evicted func(k K, v V)
 
 	// Capacity bounds the sum of the costs of the entries. It must be
@@ -66,17 +66,18 @@ type Config[K comparable, V any] struct {
 //
 // Safe for concurrent use. Get and Pin take no lock, and a hit on an entry
 // that already counts three hits writes nothing. One mutex per Cache
-// serializes Set, Delete, Expire, and a Get or Pin that finds an expired
-// entry. Len and Cost read atomic counters, and take no lock.
+// serializes Set, SetPinned, Delete, Expire, and a Get or Pin that finds an
+// expired entry. Len and Cost read atomic counters, and take no lock.
 //
 // # Allocation contract
 //
 // Get, Pin, [Pinned.Unpin], Delete, Len and Cost do not allocate, for a key
 // whose hash [maphash.Comparable] computes without an allocation: a string,
-// or a value without pointers. Set allocates the entry, and the memory of
-// the index, the ghost and the heap when they grow, so a cache in a steady
-// state allocates once per Set. A Set that evicts more than eight entries
-// allocates the list of their callbacks. Expire does not allocate.
+// or a value without pointers. Set and SetPinned allocate the entry, and
+// the memory of the index, the ghost and the heap when they grow, so a
+// cache in a steady state allocates once per Set or SetPinned. A Set or
+// SetPinned that evicts more than eight entries allocates the list of their
+// callbacks. Expire does not allocate.
 type Cache[K comparable, V any] struct {
 	// index is the current index. A writer replaces it when it grows.
 	index atomic.Pointer[index[K, V]]
@@ -228,43 +229,37 @@ func (c *Cache[K, V]) Pin(k K) (Pinned[K, V], bool) {
 // when they grow, and the list of callbacks when Set evicts more than eight
 // entries.
 func (c *Cache[K, V]) Set(k K, v V, expires time.Time) {
-	var now time.Time
-	if c.clock != nil {
-		now = c.clock.Time()
-	} else if !expires.IsZero() {
-		panic( //nolint:forbidigo // an expiry time in a cache without a Clock is a programmer error
-			"cache: Set of an expiry time in a cache without a Clock",
-		)
-	}
+	e, now := c.newEntry(k, v, expires)
+	c.store(e, now)
+}
 
-	cost := int64(1)
-	if c.cost != nil {
-		cost = max(c.cost(v), 0)
-	}
+// SetPinned stores v under k as [Cache.Set] does, and returns the new
+// entry with one pin. The entry has its pin before the cache publishes it.
+// The evictor does not evict the entry until [Pinned.Unpin], so the caller
+// uses v until then. A Set or Delete of k still removes the entry from the
+// cache. Evicted then receives the entry at its last Unpin.
+//
+// SetPinned counts no hit on the entry, because a store is not a lookup.
+// An entry without a lookup leaves the cache at the first examination
+// after its Unpin.
+//
+// A value whose cost exceeds the capacity is not stored. SetPinned removes
+// the entry of k and evicts nothing else. It returns a Pinned of v whose
+// Unpin passes v to Evicted.
+//
+// SetPinned cannot fail. In a cache without a [Config.Clock], SetPinned
+// panics for an expiry time other than zero. The panic leaves the cache
+// unchanged.
+//
+// # Allocation contract
+//
+// As [Cache.Set]. The Pinned is a value.
+func (c *Cache[K, V]) SetPinned(k K, v V, expires time.Time) Pinned[K, V] {
+	e, now := c.newEntry(k, v, expires)
+	e.state.Store(1)
+	c.store(e, now)
 
-	e := &entry[K, V]{key: k, value: v, expires: expires, hash: maphash.Comparable(c.seed, k), cost: cost}
-
-	var gone victims[K, V]
-
-	c.mu.Lock()
-
-	if old := c.index.Load().find(k, e.hash, c.tomb); old != nil {
-		c.detach(old)
-		if old.leave() {
-			gone.add(old)
-		}
-	}
-
-	if cost > c.capacity {
-		gone.add(e)
-	} else {
-		c.attach(e)
-		c.evict(now, e, &gone)
-	}
-
-	c.mu.Unlock()
-
-	gone.notify(c.evicted)
+	return Pinned[K, V]{c: c, e: e}
 }
 
 // Delete removes the entry of k from the cache, and reports whether the
@@ -410,6 +405,66 @@ func (c *Cache[K, V]) find(k K) *entry[K, V] {
 	}
 
 	return nil
+}
+
+// newEntry returns a new entry of k and v that expires at expires, and the
+// time of the cache's clock. The entry has the cost of v and the hash of k.
+// The time is zero in a cache without a Clock. newEntry takes no lock. It
+// reads the clock once and calls Cost once.
+//
+// In a cache without a Clock, newEntry panics for an expiry time other
+// than zero. The cache is unchanged after the panic.
+func (c *Cache[K, V]) newEntry(k K, v V, expires time.Time) (*entry[K, V], time.Time) {
+	var now time.Time
+	if c.clock != nil {
+		now = c.clock.Time()
+	} else if !expires.IsZero() {
+		panic( //nolint:forbidigo // an expiry time in a cache without a Clock is a programmer error
+			"cache: an expiry time in a cache without a Clock",
+		)
+	}
+
+	cost := int64(1)
+	if c.cost != nil {
+		cost = max(c.cost(v), 0)
+	}
+
+	return &entry[K, V]{key: k, value: v, expires: expires, hash: maphash.Comparable(c.seed, k), cost: cost}, now
+}
+
+// store adds e to the cache in place of the entry of its key, and evicts
+// other entries as Set documents. e is a new entry from newEntry, and now
+// is the time that newEntry read. SetPinned pins e before it calls store,
+// so attach publishes a pinned e and the evictor keeps it until its last
+// Unpin.
+//
+// An e whose cost exceeds the capacity leaves the cache at once. store
+// passes such an e to Evicted when it has no pin. The last Unpin of e
+// passes it otherwise.
+func (c *Cache[K, V]) store(e *entry[K, V], now time.Time) {
+	var gone victims[K, V]
+
+	c.mu.Lock()
+
+	if old := c.index.Load().find(e.key, e.hash, c.tomb); old != nil {
+		c.detach(old)
+		if old.leave() {
+			gone.add(old)
+		}
+	}
+
+	if e.cost > c.capacity {
+		if e.leave() {
+			gone.add(e)
+		}
+	} else {
+		c.attach(e)
+		c.evict(now, e, &gone)
+	}
+
+	c.mu.Unlock()
+
+	gone.notify(c.evicted)
 }
 
 // attach adds e, an entry whose key the index does not contain, to the
