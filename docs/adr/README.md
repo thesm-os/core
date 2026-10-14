@@ -110,5 +110,6 @@ Start from [`docs/templates/ADR.md`](../templates/ADR.md).
 | [0050](0050-idmap-keys-maps-by-identifier-types.md) | idmap Keys Maps by Identifier Types | Accepted |
 | [0051](0051-serve-runs-functions-until-their-context-ends.md) | Serve Runs Functions Until Their Context Ends | Accepted |
 | [0052](0052-slabs-has-eight-classes-per-power-of-two.md) | Slabs Has Eight Size Classes per Power of Two | Accepted |
+| [0053](0053-setpinned-stores-an-entry-with-a-pin.md) | SetPinned Stores an Entry With a Pin | Accepted |
 
 [nygard]: https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions
