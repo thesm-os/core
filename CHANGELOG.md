@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.21.1
+
+### Patch Changes
+
+- 1f8b004: Fix `resilience.Limiter` to count units exactly at any Rate, and to admit an n of zero while a call waits.
+
 ## 0.21.0
 
 ### Minor Changes
