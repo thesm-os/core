@@ -32,6 +32,14 @@ const (
 	dirMode     = 0o750
 )
 
+// joinWarmup is the number of calls of Classify of a join before its
+// allocations are counted. Go builds the cache of each type assertion and
+// type switch to an interface type with one allocation in about one of
+// 1,024 calls that miss the cache. The builds at the call sites of Classify
+// and of errors.Is continue for thousands of calls, and the warm-up makes
+// them before the count.
+const joinWarmup = 10000
+
 // stubError is an error type that classifies itself, the shape a
 // producer owning its error type should use in preference to
 // [errs.WithClass].
@@ -408,6 +416,9 @@ func TestClassifyAllocs(t *testing.T) {
 		)
 
 		var got errs.Class
+		for range joinWarmup {
+			got = errs.Classify(err)
+		}
 		expect.MaxAllocs(t, func() { got = errs.Classify(err) }, 0, "Classify of a join must not allocate")
 		assert.Equal(t, got, errs.Integrity, "the test must measure the join's rank")
 	})
