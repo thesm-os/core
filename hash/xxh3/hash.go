@@ -187,7 +187,7 @@ func long(b []byte) uint64 {
 	n := len(b)
 	rest := b
 	for len(rest) > blockLen {
-		accumulate(&acc, rest, secret[:], blockStripes)
+		accumulateBlock(&acc, (*[blockLen]byte)(rest))
 		for i := range acc {
 			acc[i] = (acc[i] ^ acc[i]>>47 ^ le.Uint64(secret[scrambleSecret+8*i:])) * prime32_1
 		}
@@ -209,27 +209,61 @@ func long(b []byte) uint64 {
 // accumulators acc. Stripe j takes the secret from byte 8j of keys. b has at
 // least 64 * count bytes, and keys at least 8 * count + 56. It does not
 // allocate.
+//
+// Each lane takes the low 32 bits of its word with a conversion, which
+// compiles to one move. A mask compiles to two instructions.
+//
+//nolint:gosec // G115: each lane multiplies the low 32 bits of its word by the high 32 bits
 func accumulate(acc *[8]uint64, b, keys []byte, count int) {
 	le := binary.LittleEndian
 	for ; count > 0; count-- {
 		s, k := (*[stripeLen]byte)(b), (*[stripeLen]byte)(keys)
 		v0, v1 := le.Uint64(s[0:]), le.Uint64(s[8:])
 		x0, x1 := v0^le.Uint64(k[0:]), v1^le.Uint64(k[8:])
-		acc[0] += v1 + (x0&0xFFFFFFFF)*(x0>>32)
-		acc[1] += v0 + (x1&0xFFFFFFFF)*(x1>>32)
+		acc[0] += v1 + uint64(uint32(x0))*(x0>>32)
+		acc[1] += v0 + uint64(uint32(x1))*(x1>>32)
 		v2, v3 := le.Uint64(s[16:]), le.Uint64(s[24:])
 		x2, x3 := v2^le.Uint64(k[16:]), v3^le.Uint64(k[24:])
-		acc[2] += v3 + (x2&0xFFFFFFFF)*(x2>>32)
-		acc[3] += v2 + (x3&0xFFFFFFFF)*(x3>>32)
+		acc[2] += v3 + uint64(uint32(x2))*(x2>>32)
+		acc[3] += v2 + uint64(uint32(x3))*(x3>>32)
 		v4, v5 := le.Uint64(s[32:]), le.Uint64(s[40:])
 		x4, x5 := v4^le.Uint64(k[32:]), v5^le.Uint64(k[40:])
-		acc[4] += v5 + (x4&0xFFFFFFFF)*(x4>>32)
-		acc[5] += v4 + (x5&0xFFFFFFFF)*(x5>>32)
+		acc[4] += v5 + uint64(uint32(x4))*(x4>>32)
+		acc[5] += v4 + uint64(uint32(x5))*(x5>>32)
 		v6, v7 := le.Uint64(s[48:]), le.Uint64(s[56:])
 		x6, x7 := v6^le.Uint64(k[48:]), v7^le.Uint64(k[56:])
-		acc[6] += v7 + (x6&0xFFFFFFFF)*(x6>>32)
-		acc[7] += v6 + (x7&0xFFFFFFFF)*(x7>>32)
+		acc[6] += v7 + uint64(uint32(x6))*(x6>>32)
+		acc[7] += v6 + uint64(uint32(x7))*(x7>>32)
 		b, keys = b[stripeLen:], keys[stripeStep:]
+	}
+}
+
+// accumulateBlock adds the 16 stripes of blk to the accumulators acc, as
+// accumulate does with the secret from byte 0. It reads each stripe and its
+// secret at offsets of the stripe's index, so the compiler proves every read
+// in bounds and the loop moves no slice. It does not allocate.
+//
+//nolint:gosec // G115: each lane multiplies the low 32 bits of its word by the high 32 bits
+func accumulateBlock(acc *[8]uint64, blk *[blockLen]byte) {
+	le := binary.LittleEndian
+	for i := range blockStripes {
+		s, k := (*[stripeLen]byte)(blk[stripeLen*i:]), (*[stripeLen]byte)(secret[stripeStep*i:])
+		v0, v1 := le.Uint64(s[0:]), le.Uint64(s[8:])
+		x0, x1 := v0^le.Uint64(k[0:]), v1^le.Uint64(k[8:])
+		acc[0] += v1 + uint64(uint32(x0))*(x0>>32)
+		acc[1] += v0 + uint64(uint32(x1))*(x1>>32)
+		v2, v3 := le.Uint64(s[16:]), le.Uint64(s[24:])
+		x2, x3 := v2^le.Uint64(k[16:]), v3^le.Uint64(k[24:])
+		acc[2] += v3 + uint64(uint32(x2))*(x2>>32)
+		acc[3] += v2 + uint64(uint32(x3))*(x3>>32)
+		v4, v5 := le.Uint64(s[32:]), le.Uint64(s[40:])
+		x4, x5 := v4^le.Uint64(k[32:]), v5^le.Uint64(k[40:])
+		acc[4] += v5 + uint64(uint32(x4))*(x4>>32)
+		acc[5] += v4 + uint64(uint32(x5))*(x5>>32)
+		v6, v7 := le.Uint64(s[48:]), le.Uint64(s[56:])
+		x6, x7 := v6^le.Uint64(k[48:]), v7^le.Uint64(k[56:])
+		acc[6] += v7 + uint64(uint32(x6))*(x6>>32)
+		acc[7] += v6 + uint64(uint32(x7))*(x7>>32)
 	}
 }
 
