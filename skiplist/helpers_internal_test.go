@@ -27,9 +27,9 @@ const (
 	benchValueLen = 100
 	benchEntries  = 1 << 20
 
-	// benchNodeBytes is the room of a node of the benchmarks: the 25 words
+	// benchNodeBytes is the room of a node of the benchmarks: the 27 words
 	// of the tallest node.
-	benchNodeBytes = 100
+	benchNodeBytes = 108
 )
 
 // keyMix and keyGamma are the multiplier and the increment of the mix that
@@ -100,9 +100,9 @@ func benchKey(k *[benchKeyLen]byte, i uint64) {
 	binary.BigEndian.PutUint64(k[8:], (x+keyGamma)*keyMix)
 }
 
-// filled returns a List of the n keys of the benchmarks from 0 up, each
-// with the sequence 1 and the value of benchValueLen bytes.
-func filled(tb testing.TB, n int) *List {
+// filled returns a List of the n keys that key writes for the numbers from
+// 0 up, each with the sequence 1 and the value of benchValueLen bytes.
+func filled(tb testing.TB, n int, key func(k *[benchKeyLen]byte, i uint64)) *List {
 	tb.Helper()
 
 	l, err := New(n*(benchKeyLen+benchValueLen), n*benchNodeBytes, 1)
@@ -110,7 +110,7 @@ func filled(tb testing.TB, n int) *List {
 	value := make([]byte, benchValueLen)
 	var k [benchKeyLen]byte
 	for i := range uint64(n) {
-		benchKey(&k, i)
+		key(&k, i)
 		assert.NoError(tb, l.Add(k[:], 1, value), "Add adds every entry")
 	}
 

@@ -172,7 +172,7 @@ func TestIter(t *testing.T) {
 // MaxAllocs counts the allocations of the whole process, so the test does
 // not run in parallel.
 func TestIterAllocs(t *testing.T) {
-	it := filled(t, 100).NewIter()
+	it := filled(t, 100, benchKey).NewIter()
 	var k [benchKeyLen]byte
 	benchKey(&k, 50)
 
@@ -203,7 +203,7 @@ func TestIterAllocs(t *testing.T) {
 // BenchmarkIter reports the cost of each move of a cursor, and fails when a
 // move allocates.
 func BenchmarkIter(b *testing.B) {
-	l := filled(b, iterEntries)
+	l := filled(b, iterEntries, benchKey)
 
 	b.Run("Next", func(b *testing.B) {
 		it := l.NewIter()

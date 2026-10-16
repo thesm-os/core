@@ -64,7 +64,7 @@ const (
 	heightKeyLen = 8
 
 	// nodeWords is the number of words of a node before its links.
-	nodeWords = 5
+	nodeWords = 7
 
 	// heightTolerance is the bytes by which the average may differ from its
 	// expectation. The standard deviation of the average of 20,000 nodes is
@@ -77,8 +77,27 @@ const (
 const listContract = "every call must return what a sorted model of the entries returns"
 
 // keys are the keys of the machines. "a" is a prefix of "ab", and the empty
-// key comes first.
-var keys = [][]byte{{}, []byte("a"), []byte("ab"), []byte("b"), []byte("ba"), []byte("c")}
+// key comes first. "a" and "a\x00" have equal prefixes, and so do the three
+// keys that start with "abcdefgh". The machines then compare whole keys too.
+var keys = [][]byte{
+	{},
+	[]byte("a"), []byte("a\x00"), []byte("ab"), []byte("abcdefgh"), []byte("abcdefghx"), []byte("abcdefghy"),
+	[]byte("b"), []byte("ba"), []byte("c"),
+}
+
+// benchKeySets are the keys of the benchmarks of Add and Get: random keys,
+// and keys whose first 8 bytes are 0. A search compares the keys of the
+// second set by their whole keys.
+var benchKeySets = []struct {
+	name string
+	key  func(k *[benchKeyLen]byte, i uint64)
+}{
+	{name: "random keys", key: benchKey},
+	{name: "keys that share their first 8 bytes", key: func(k *[benchKeyLen]byte, i uint64) {
+		benchKey(k, i)
+		clear(k[:8])
+	}},
+}
 
 // errInvariant is the error that check returns for a broken invariant.
 var errInvariant = errors.New("skiplist: invariant")
@@ -228,7 +247,7 @@ func TestList(t *testing.T) {
 			assert.NoError(t, err, "New returns a List")
 			assert.Pure(t, l.Size, func() { err = l.Add([]byte("key"), 1, nil) },
 				"Add whose node does not fit reserves nothing")
-			expect.ErrorIs(t, err, ErrFull, "Add refuses a node of 6 or more words for 1 word of room")
+			expect.ErrorIs(t, err, ErrFull, "Add refuses a node of 8 or more words for 1 word of room")
 			expect.Equal(t, l.Len(), 0, "the List has no entries")
 		})
 
@@ -488,6 +507,62 @@ func TestList(t *testing.T) {
 		}
 	})
 
+	t.Run("compare", func(t *testing.T) {
+		t.Parallel()
+
+		tests := []struct {
+			name     string
+			giveKey  string
+			giveSeq  uint64
+			giveNode string
+			want     int
+		}{
+			{
+				name:    "returns -1 for a key whose prefix is below the prefix of the node",
+				giveKey: "abcdefgh", giveSeq: 1, giveNode: "abcdefgi", want: -1,
+			},
+			{
+				name:    "returns +1 for a key whose prefix is above the prefix of the node",
+				giveKey: "b", giveSeq: 1, giveNode: "abcdefghx", want: 1,
+			},
+			{
+				name:    "returns -1 for a key with the prefix of the node and a lower ninth byte",
+				giveKey: "abcdefghx", giveSeq: 1, giveNode: "abcdefghy", want: -1,
+			},
+			{
+				name:    "returns +1 for a key with the prefix of the node and a higher ninth byte",
+				giveKey: "abcdefghy", giveSeq: 1, giveNode: "abcdefghx", want: 1,
+			},
+			{
+				name:    "returns -1 for a key that the key of the node extends with a zero byte",
+				giveKey: "a", giveSeq: 1, giveNode: "a\x00", want: -1,
+			},
+			{
+				name:    "returns +1 for a key that extends the key of the node with a zero byte",
+				giveKey: "a\x00", giveSeq: 1, giveNode: "a", want: 1,
+			},
+			{
+				name:    "returns 0 for the key and the sequence of the node",
+				giveKey: "abcdefghx", giveSeq: 1, giveNode: "abcdefghx", want: 0,
+			},
+			{
+				name:    "returns -1 for the key of the node with a higher sequence",
+				giveKey: "abcdefghx", giveSeq: 2, giveNode: "abcdefghx", want: -1,
+			},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				l := newList(t)
+				assert.NoError(t, l.Add([]byte(tt.giveNode), 1, nil), "Add adds the entry of the node")
+				nd := l.nodes[nodeHeader]
+				key := []byte(tt.giveKey)
+				assert.Equal(t, l.compare(key, keyPrefix(key), tt.giveSeq, nd), tt.want,
+					"compare orders the entry against the entry of the node")
+			})
+		}
+	})
+
 	t.Run("returns what a sorted model returns under any sequence of calls", func(t *testing.T) {
 		t.Parallel()
 		prop.ForAll(t, listContract, listSteps)
@@ -520,7 +595,7 @@ func TestListAllocs(t *testing.T) {
 	})
 
 	t.Run("Get", func(t *testing.T) {
-		l := filled(t, 1000)
+		l := filled(t, 1000, benchKey)
 		var k, missing [benchKeyLen]byte
 		benchKey(&k, 500)
 		benchKey(&missing, 1000)
@@ -532,21 +607,21 @@ func TestListAllocs(t *testing.T) {
 	})
 
 	t.Run("Len", func(t *testing.T) {
-		l := filled(t, 10)
+		l := filled(t, 10, benchKey)
 		var got int
 		expect.MaxAllocs(t, func() { got = l.Len() }, 0, "Len does not allocate")
 		assert.Equal(t, got, 10, "the test measures a List of 10 entries")
 	})
 
 	t.Run("Size", func(t *testing.T) {
-		l := filled(t, 10)
+		l := filled(t, 10, benchKey)
 		var got int
 		expect.MaxAllocs(t, func() { got = l.Size() }, 0, "Size does not allocate")
 		assert.NotEqual(t, got, 0, "the test measures a List of 10 entries")
 	})
 
 	t.Run("Reset", func(t *testing.T) {
-		l := filled(t, 10)
+		l := filled(t, 10, benchKey)
 		var err error
 		expect.MaxAllocs(t, func() {
 			err = l.Add([]byte("key"), 1, value)
@@ -556,7 +631,7 @@ func TestListAllocs(t *testing.T) {
 	})
 
 	t.Run("NewIter", func(t *testing.T) {
-		l := filled(t, 10)
+		l := filled(t, 10, benchKey)
 		var it *Iter
 		expect.MaxAllocs(t, func() { it = l.NewIter() }, 1, "NewIter allocates the cursor")
 		assert.True(t, it.First(), "the test measures a cursor of the List")
@@ -570,25 +645,29 @@ func BenchmarkList(b *testing.B) {
 
 	b.Run("Add", func(b *testing.B) {
 		b.Run("by one writer", func(b *testing.B) {
-			l, err := New(benchEntries*(benchKeyLen+benchValueLen), benchEntries*benchNodeBytes, 1)
-			assert.NoError(b, err, "New returns a List")
-			var k [benchKeyLen]byte
-			i := uint64(0)
+			for _, set := range benchKeySets {
+				b.Run("of "+set.name, func(b *testing.B) {
+					l, err := New(benchEntries*(benchKeyLen+benchValueLen), benchEntries*benchNodeBytes, 1)
+					assert.NoError(b, err, "New returns a List")
+					var k [benchKeyLen]byte
+					i := uint64(0)
 
-			c := bench.Start(b).MaxAllocs(0)
-			defer c.End()
+					c := bench.Start(b).MaxAllocs(0)
+					defer c.End()
 
-			for c.Loop() {
-				if i == benchEntries {
-					c.Excluding(l.Reset)
-					i = 0
-				}
-				benchKey(&k, i)
-				err = l.Add(k[:], 1, value)
-				i++
+					for c.Loop() {
+						if i == benchEntries {
+							c.Excluding(l.Reset)
+							i = 0
+						}
+						set.key(&k, i)
+						err = l.Add(k[:], 1, value)
+						i++
+					}
+
+					assert.NoError(b, err, "the benchmark measures Adds that succeed")
+				})
 			}
-
-			assert.NoError(b, err, "the benchmark measures Adds that succeed")
 		})
 
 		b.Run("by writers in parallel", func(b *testing.B) {
@@ -615,26 +694,30 @@ func BenchmarkList(b *testing.B) {
 	})
 
 	b.Run("Get", func(b *testing.B) {
-		l := filled(b, benchEntries)
-		var k [benchKeyLen]byte
-		var ok bool
-		i := uint64(0)
+		for _, set := range benchKeySets {
+			b.Run("of "+set.name, func(b *testing.B) {
+				l := filled(b, benchEntries, set.key)
+				var k [benchKeyLen]byte
+				var ok bool
+				i := uint64(0)
 
-		c := bench.Start(b).MaxAllocs(0)
-		defer c.End()
+				c := bench.Start(b).MaxAllocs(0)
+				defer c.End()
 
-		for c.Loop() {
-			benchKey(&k, (i*keyGamma)%benchEntries)
-			_, _, ok = l.Get(k[:], 1)
-			i++
+				for c.Loop() {
+					set.key(&k, (i*keyGamma)%benchEntries)
+					_, _, ok = l.Get(k[:], 1)
+					i++
+				}
+
+				assert.True(b, ok, "the benchmark measures keys of the List")
+			})
 		}
-
-		assert.True(b, ok, "the benchmark measures keys of the List")
 	})
 
 	b.Run("New", func(b *testing.B) {
 		b.Run("with 1048576 entries live during runtime.GC", func(b *testing.B) {
-			l := filled(b, benchEntries)
+			l := filled(b, benchEntries, benchKey)
 
 			c := bench.Start(b).MaxAllocs(0)
 			defer c.End()
@@ -648,7 +731,7 @@ func BenchmarkList(b *testing.B) {
 	})
 
 	b.Run("Len", func(b *testing.B) {
-		l := filled(b, 10)
+		l := filled(b, 10, benchKey)
 		var got int
 
 		c := bench.Start(b).MaxAllocs(0)
@@ -662,7 +745,7 @@ func BenchmarkList(b *testing.B) {
 	})
 
 	b.Run("Size", func(b *testing.B) {
-		l := filled(b, 10)
+		l := filled(b, 10, benchKey)
 		var got int
 
 		c := bench.Start(b).MaxAllocs(0)
@@ -826,25 +909,38 @@ func listSteps(c *prop.Case) {
 	})
 }
 
-// check returns an error when l breaks an invariant of its levels:
+// check returns an error when l breaks an invariant of its nodes and its
+// levels:
 //
+//   - The two prefix words of each node contain the first 8 bytes of its
+//     key, padded with zero bytes.
 //   - Level 0 links every entry in the order of the List.
 //   - Each higher level links the nodes whose height exceeds the level, in
 //     the order of level 0.
 //   - The height of l is the height of its tallest node, or 1 when l is
 //     empty.
 //
-// Each walk stops after one node more than the List has, so a link that
-// loops ends the walk.
+// check takes the prefix of a key from the bytes of the key, so it detects
+// prefix words that differ from those bytes. Each walk stops after one node
+// more than the List has, so a link that loops ends the walk.
 func check(l *List) error {
 	var nodes []uint32
 	tallest := 1
 	for nd := l.nodes[nodeHeader]; nd != 0 && len(nodes) <= l.Len(); nd = l.nodes[nd+nodeHeader] {
+		key := l.key(nd)
 		seq := uint64(l.nodes[nd+wordSeqHigh])<<32 | uint64(l.nodes[nd+wordSeqLow])
-		if len(nodes) != 0 && l.compare(l.key(nd), seq, nodes[len(nodes)-1]) <= 0 {
+		var want, stored [8]byte
+		copy(want[:], key)
+		binary.BigEndian.PutUint32(stored[:4], l.nodes[nd+wordPrefixHigh])
+		binary.BigEndian.PutUint32(stored[4:], l.nodes[nd+wordPrefixLow])
+		if stored != want {
+			return fmt.Errorf("%w: the node of the key %q stores the prefix %q", errInvariant, key, stored[:])
+		}
+		prefix := binary.BigEndian.Uint64(want[:])
+		if len(nodes) != 0 && l.compare(key, prefix, seq, nodes[len(nodes)-1]) <= 0 {
 			return fmt.Errorf("%w: level 0 links a node out of order", errInvariant)
 		}
-		tallest = max(tallest, l.height(l.key(nd), seq))
+		tallest = max(tallest, l.height(key, seq))
 		nodes = append(nodes, nd)
 	}
 	if len(nodes) != l.Len() {

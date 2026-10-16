@@ -6,6 +6,7 @@ package skiplist
 import (
 	"bytes"
 	"cmp"
+	"encoding/binary"
 	"math"
 	"math/bits"
 	"sync/atomic"
@@ -30,8 +31,13 @@ const (
 	wordSeqHigh = 3
 	// wordSeqLow is the word of the low 32 bits of the sequence.
 	wordSeqLow = 4
+	// wordPrefixHigh is the word of the high 32 bits of the prefix of the
+	// key, which keyPrefix returns.
+	wordPrefixHigh = 5
+	// wordPrefixLow is the word of the low 32 bits of the prefix of the key.
+	wordPrefixLow = 6
 	// nodeHeader is the number of words before the links of a node.
-	nodeHeader = 5
+	nodeHeader = 7
 	// wordBytes is the size of a word in bytes.
 	wordBytes = 4
 )
@@ -117,7 +123,7 @@ type List struct {
 // and values and a node arena of nodeBytes for its nodes. The heights of
 // its nodes derive from seed.
 //
-// A node takes 4 bytes for each of its 5 words and its links: 26.3 bytes on
+// A node takes 4 bytes for each of its 7 words and its links: 34.3 bytes on
 // average. A key and its value take their own bytes.
 //
 // Error modes:
@@ -156,10 +162,10 @@ func New(dataBytes, nodeBytes int, seed uint64) (*List, error) {
 // Add first searches the levels for the nodes around the entry. It then
 // reserves the words of the node and the bytes of its key and value, and
 // writes them. It links the node from level 0 up, each level with a
-// compare-and-swap of the link of the node before it. When another writer changed the link
-// of level 0 first, Add searches every level again. It returns ErrExists
-// when that writer linked the same entry. At a higher level, Add searches
-// the level again from the node before the entry.
+// compare-and-swap of the link of the node before it. When another writer
+// changed the link of level 0 first, Add searches every level again. It
+// returns ErrExists when that writer linked the same entry. At a higher
+// level, Add searches the level again from the node before the entry.
 //
 // Error modes:
 //
@@ -185,12 +191,13 @@ func (l *List) Add(key []byte, seq uint64, value []byte) error {
 		at         uint32
 		h          int
 	)
+	prefix := keyPrefix(key)
 
 	// Level 0 decides whether the entry joins the List. A failed
 	// compare-and-swap there searches every level again, so a writer that
 	// linked the same entry first makes the search find it.
 	for {
-		if l.findSplice(key, seq, &prev, &next) {
+		if l.findSplice(key, prefix, seq, &prev, &next) {
 			return ErrExists
 		}
 		if node == nil {
@@ -211,6 +218,8 @@ func (l *List) Add(key []byte, seq uint64, value []byte) error {
 			node[wordKeyOff], node[wordKeyLen], node[wordValueLen] = uint32(off), uint32(len(key)), uint32(len(value))
 			//nolint:gosec // G115: the conversions take the two halves of the sequence
 			node[wordSeqHigh], node[wordSeqLow] = uint32(seq>>32), uint32(seq)
+			//nolint:gosec // G115: the conversions take the two halves of the prefix
+			node[wordPrefixHigh], node[wordPrefixLow] = uint32(prefix>>32), uint32(prefix)
 			//nolint:gosec // G115: the node arena has at most 2^30 + headWords words
 			at = uint32(nd)
 			l.raise(h)
@@ -226,7 +235,7 @@ func (l *List) Add(key []byte, seq uint64, value []byte) error {
 	// key and seq, because level 0 links the entry.
 	for level := 1; level < h; level++ {
 		for {
-			prev[level], next[level], _ = l.splice(key, seq, prev[level], level)
+			prev[level], next[level], _ = l.splice(key, prefix, seq, prev[level], level)
 			node[nodeHeader+level] = next[level]
 			if atomic.CompareAndSwapUint32(&l.nodes[prev[level]+nodeHeader+uint32(level)], next[level], at) {
 				break
@@ -318,14 +327,15 @@ func (l *List) raise(h int) {
 
 // findSplice searches every level from the top for the nodes around the
 // entry (key, seq): prev[level] is the last node before it at the level,
-// and next[level] the first node after it, or 0. The levels above the top of
-// the search keep the head node and no node. findSplice reports true when
-// the List contains an entry with key and seq.
-func (l *List) findSplice(key []byte, seq uint64, prev, next *[maxHeight]uint32) bool {
+// and next[level] the first node after it, or 0. prefix is the prefix of
+// key. The levels above the top of the search keep the head node and no
+// node. findSplice reports true when the List contains an entry with key and
+// seq.
+func (l *List) findSplice(key []byte, prefix, seq uint64, prev, next *[maxHeight]uint32) bool {
 	var before uint32
 	for level := int(l.levels.Load()) - 1; level >= 0; level-- {
 		var exists bool
-		prev[level], next[level], exists = l.splice(key, seq, before, level)
+		prev[level], next[level], exists = l.splice(key, prefix, seq, before, level)
 		if exists {
 			return true
 		}
@@ -336,17 +346,17 @@ func (l *List) findSplice(key []byte, seq uint64, prev, next *[maxHeight]uint32)
 }
 
 // splice moves along the level from the node before, and returns the last
-// node before the entry (key, seq) and the node after it, or 0. It reports
-// true, with the node of the entry as the node after it, when it finds an
-// entry with key and seq.
-func (l *List) splice(key []byte, seq uint64, before uint32, level int) (prev, next uint32, exists bool) {
+// node before the entry (key, seq) and the node after it, or 0. prefix is the
+// prefix of key. It reports true, with the node of the entry as the node
+// after it, when it finds an entry with key and seq.
+func (l *List) splice(key []byte, prefix, seq uint64, before uint32, level int) (prev, next uint32, exists bool) {
 	for {
 		//nolint:gosec // G115: a level is below maxHeight
 		next = atomic.LoadUint32(&l.nodes[before+nodeHeader+uint32(level)])
 		if next == 0 {
 			return before, 0, false
 		}
-		c := l.compare(key, seq, next)
+		c := l.compare(key, prefix, seq, next)
 		if c <= 0 {
 			return before, next, c == 0
 		}
@@ -358,10 +368,11 @@ func (l *List) splice(key []byte, seq uint64, before uint32, level int) (prev, n
 // no node follows it.
 func (l *List) seekGE(key []byte, seq uint64) uint32 {
 	var before, next uint32
+	prefix := keyPrefix(key)
 	for level := l.levels.Load(); level > 0; level-- {
 		for {
 			next = atomic.LoadUint32(&l.nodes[before+nodeHeader+level-1])
-			if next == 0 || l.compare(key, seq, next) <= 0 {
+			if next == 0 || l.compare(key, prefix, seq, next) <= 0 {
 				break
 			}
 			before = next
@@ -373,8 +384,15 @@ func (l *List) seekGE(key []byte, seq uint64) uint32 {
 
 // compare returns -1, 0 or +1 for the order of the entry (key, seq) and the
 // entry of the node nd: by key, then by sequence from the highest to the
-// lowest.
-func (l *List) compare(key []byte, seq uint64, nd uint32) int {
+// lowest. prefix is the prefix of key. Keys whose prefixes differ order as
+// their prefixes order, so compare reads the key of nd only when the two
+// prefixes are equal.
+func (l *List) compare(key []byte, prefix, seq uint64, nd uint32) int {
+	np := uint64(l.nodes[nd+wordPrefixHigh])<<32 | uint64(l.nodes[nd+wordPrefixLow])
+	//dokimi:mutate-skip ror-false,sbr-delete: bytes.Compare of the whole keys returns the order of the prefixes too
+	if prefix != np {
+		return cmp.Compare(prefix, np)
+	}
 	if c := bytes.Compare(key, l.key(nd)); c != 0 {
 		return c
 	}
@@ -428,4 +446,16 @@ func splitmix64(state *uint64) uint64 {
 	z = (z ^ z>>27) * splitMul2
 
 	return z ^ z>>31
+}
+
+// keyPrefix returns the prefix of key: its first 8 bytes as a big-endian
+// integer, padded with zero bytes for a key of fewer than 8 bytes. Two keys
+// whose prefixes differ order as their prefixes order. Two keys with equal
+// prefixes can differ in a later byte or in their length. It does not
+// allocate.
+func keyPrefix(key []byte) uint64 {
+	var b [8]byte
+	copy(b[:], key)
+
+	return binary.BigEndian.Uint64(b[:])
 }

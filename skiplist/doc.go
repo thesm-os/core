@@ -16,11 +16,13 @@
 //
 // A List keeps its nodes in an [arena.Bump] of uint32 words and its keys and
 // values in an arena.Bump of bytes. Both arenas are free of pointers, so the
-// garbage collector does not scan a List of any size. A node takes 5 words
-// and one link per level, 26.3 bytes on average. The arenas have a fixed
-// capacity, and [List.Add] returns [ErrFull] for an entry that does not
-// fit. An engine then freezes the full List and adds the entry to a new
-// one.
+// garbage collector does not scan a List of any size. A node takes 7 words
+// and one link per level, 34.3 bytes on average. Two of its words contain
+// the first 8 bytes of its key, so a search reads the key from the data
+// arena only when those bytes equal the first 8 bytes of the key that it
+// searches for. The arenas have a fixed capacity, and [List.Add] returns
+// [ErrFull] for an entry that does not fit. An engine then freezes the full
+// List and adds the entry to a new one.
 //
 // # Heights
 //
@@ -49,7 +51,7 @@
 //
 // # Dependency position
 //
-// Imports bytes, cmp, errors, math, math/bits and sync/atomic from the
-// standard library, and go.thesmos.sh/core/arena, go.thesmos.sh/core/errs
-// and go.thesmos.sh/core/hash/xxh3 from this module.
+// Imports bytes, cmp, encoding/binary, errors, math, math/bits and
+// sync/atomic from the standard library, and go.thesmos.sh/core/arena,
+// go.thesmos.sh/core/errs and go.thesmos.sh/core/hash/xxh3 from this module.
 package skiplist
