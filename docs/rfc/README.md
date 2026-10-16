@@ -126,6 +126,10 @@ Start from [`docs/templates/RFC.md`](../templates/RFC.md).
 | [0056](0056-proofs-from-cached-node-tiles.md) | Proofs from Cached Node Tiles | Accepted |
 | [0057](0057-fixed-size-identifiers.md) | Fixed-Size Identifiers | Accepted |
 | [0058](0058-fast-maps-for-identifier-keys.md) | Fast Maps for Identifier Keys | Accepted |
+| [0059](0059-radix-tries-for-prefix-queries.md) | Radix Tries for Prefix Queries | Accepted |
+| [0060](0060-approximate-membership-filters.md) | Approximate-Membership Filters and XXH3 Hashing | Accepted |
+| [0061](0061-snappy-block-compression.md) | Block Compression in the Snappy Format | Accepted |
+| [0062](0062-sorted-tables-and-memtables.md) | Sorted Tables and Memtables for LSM Trees | Accepted |
 
 ## Canonical first RFC
 
