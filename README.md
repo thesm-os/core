@@ -15,7 +15,8 @@ core defines the interfaces through which a Go service reads time and
 randomness, protects and signs data, stores objects, records telemetry
 and calls other services. Each interface comes with implementations
 built on the Go standard library, and every [thesmos][thesmos] library
-builds on them.
+builds on them. core also implements the data structures of storage
+engines, such as B+ trees, filters, skip lists and sorted tables.
 
 ## Install
 
@@ -72,13 +73,13 @@ for concurrent use and its allocations in its
 | Values | [`epoch`][epoch], [`version`][version], [`tag`][tag], [`fixed`][fixed], [`page`][page] | Epochs that fence out a stale writer, opaque versions for compare-and-swap, immutable tags, decimals of eight places that refuse to overflow, and cursor pagination. |
 | Errors | [`errs`][errs] | Eight error classes, such as `Transient` and `Invalid`, and `Classify`, which also recognises the sentinels of the standard library. |
 | Concurrency | [`task`][task], [`fsm`][fsm], [`batch`][batch] | Structured concurrency, finite state machines that are validated when they are built, and batched loads of concurrent callers. |
-| Resilience | [`resilience`][resilience] | Circuit breakers, bulkheads, retries within a budget with jittered backoff, token-bucket rate limits, and failover between redundant targets. |
+| Resilience | [`resilience`][resilience] | Circuit breakers, bulkheads, retries within a budget with jittered backoff, token-bucket rate limits with priorities, and failover between redundant targets. |
 | Hashing and encryption | [`crypto`][crypto], [`crypto/sha256`][crypto/sha256], [`crypto/sha512`][crypto/sha512], [`crypto/sha3`][crypto/sha3], [`crypto/hmac/sha256`][crypto/hmac/sha256], [`crypto/hmac/sha512`][crypto/hmac/sha512], [`crypto/hmac/sha3`][crypto/hmac/sha3], [`crypto/aesgcm`][crypto/aesgcm], [`crypto/shake`][crypto/shake], [`crypto/kek`][crypto/kek], [`crypto/localkey`][crypto/localkey] | The `Hasher`, `MAC`, `AEAD`, `XOF` and `Keeper` interfaces with SHA-2, SHA-3, HMAC, AES-GCM and SHAKE, data keys wrapped under a key-encryption key, and domain-separated framing of hashed input. |
 | Stable hashing | [`hash/xxh3`][hash/xxh3] | XXH3-64, a hash that is not cryptographic and whose values are the same in every process and on every platform. |
 | Compression | [`compress/snappy`][compress/snappy] | Encoding and decoding of blocks in the Snappy format, with the same bytes as golang/snappy. |
 | Signatures | [`crypto/sign`][crypto/sign], [`crypto/sign/ed25519`][crypto/sign/ed25519], [`crypto/sign/ecdsap384`][crypto/sign/ecdsap384], [`crypto/sign/mldsa`][crypto/sign/mldsa], [`crypto/tsp`][crypto/tsp] | The `Signer` and `Verifier` interfaces with Ed25519, ECDSA P-384 and ML-DSA, threshold policies over sets of keys, and offline verification of RFC 3161 time stamps. |
 | Transparency logs | [`tlog`][tlog], [`tlog/checkpoint`][tlog/checkpoint], [`tlog/witness`][tlog/witness], [`note`][note] | Merkle trees of RFC 9162 stored as C2SP tiles with inclusion and consistency proofs, signed notes, checkpoints, cosignatures, witness policies, and both sides of the witness protocol. |
-| Storage | [`blob`][blob], [`blob/memory`][blob/memory], [`cas`][cas], [`cas/memory`][cas/memory], [`sstable`][sstable] | Named object storage with conditional writes, content-addressed storage that checks each write against its address, in-memory stores for tests, and the sorted tables of LSM trees with a merge of sorted runs. |
+| Storage | [`blob`][blob], [`blob/memory`][blob/memory], [`cas`][cas], [`cas/memory`][cas/memory], [`sstable`][sstable] | Named object storage with conditional writes, content-addressed storage that checks each write against its address, in-memory stores for tests, and the sorted tables of LSM trees with a merge of sorted runs in both directions. |
 | Data structures | [`btree`][btree], [`idmap`][idmap], [`radix`][radix], [`cache`][cache], [`filter`][filter], [`skiplist`][skiplist], [`pool`][pool], [`arena`][arena] | B+ tree maps and sets with copy-on-write clones, hash maps keyed by identifiers and by the identifier types that embed them, an adaptive radix tree for longest-prefix matches and prefix scans, a bounded S3-FIFO cache, split block Bloom filters and binary fuse filters, a lock-free skip list for memtables, typed pools, and arenas for hot paths. |
 | Telemetry | [`telemetry`][telemetry], [`telemetry/noop`][telemetry/noop], [`telemetry/w3c`][telemetry/w3c] | Metric and trace interfaces whose bound instruments record without an allocation, and W3C Trace Context propagation. |
 | HTTP | [`net/httpserver`][net/httpserver], [`net/httpclient`][net/httpclient] | A server on `net/http` with limits, telemetry, panic recovery and graceful shutdown, and a client with a circuit breaker per host and retries. |
@@ -86,9 +87,10 @@ for concurrent use and its allocations in its
 
 ## Design
 
-- Production code imports the standard library, `golang.org/x/sync` and
-  the runtime packages of kanon, which generates the binary encodings of
-  core's types. A depguard rule fails CI on any other import.
+- Production code imports the standard library and the runtime packages
+  of kanon, which generates the binary encodings of core's types. A
+  depguard rule fails CI on an import outside these packages and
+  `golang.org/x/sync`.
 - Code reads time through `clock.Clock` and randomness through
   `rand.Rand`, so a test controls both.
 - Interfaces such as `blob.Store`, `crypto.Keeper` and `sign.Signer` have
@@ -101,7 +103,8 @@ for concurrent use and its allocations in its
 - Wire formats follow their specifications: RFC 9162 and RFC 6962 for
   Merkle trees, the C2SP specifications for tiles, signed notes,
   checkpoints, cosignatures and witnesses, RFC 3161 for time stamps,
-  RFC 9562 for UUIDs, and FIPS 186-5 and FIPS 204 for ECDSA and ML-DSA.
+  RFC 9562 for UUIDs, FIPS 186-5 and FIPS 204 for ECDSA and ML-DSA, and
+  the Snappy block format for compressed blocks.
 - CI runs the tests and the race detector on Linux, macOS and Windows,
   and a nightly job runs the fuzz targets and mutation testing.
 
@@ -119,8 +122,9 @@ for concurrent use and its allocations in its
 
 Until v1.0.0, a minor release of core can change an exported API, which
 semantic versioning allows for major version zero. The changelog marks
-each such change as breaking. A byte layout that core persists or signs
-keeps its encoding from the release that first contains it.
+each such change as breaking. A byte layout or a text form that core
+persists or signs keeps its encoding from the release that first contains
+it.
 
 ## Contributing
 
