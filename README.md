@@ -74,10 +74,12 @@ for concurrent use and its allocations in its
 | Concurrency | [`task`][task], [`fsm`][fsm], [`batch`][batch] | Structured concurrency, finite state machines that are validated when they are built, and batched loads of concurrent callers. |
 | Resilience | [`resilience`][resilience] | Circuit breakers, bulkheads, retries within a budget with jittered backoff, token-bucket rate limits, and failover between redundant targets. |
 | Hashing and encryption | [`crypto`][crypto], [`crypto/sha256`][crypto/sha256], [`crypto/sha512`][crypto/sha512], [`crypto/sha3`][crypto/sha3], [`crypto/hmac/sha256`][crypto/hmac/sha256], [`crypto/hmac/sha512`][crypto/hmac/sha512], [`crypto/hmac/sha3`][crypto/hmac/sha3], [`crypto/aesgcm`][crypto/aesgcm], [`crypto/shake`][crypto/shake], [`crypto/kek`][crypto/kek], [`crypto/localkey`][crypto/localkey] | The `Hasher`, `MAC`, `AEAD`, `XOF` and `Keeper` interfaces with SHA-2, SHA-3, HMAC, AES-GCM and SHAKE, data keys wrapped under a key-encryption key, and domain-separated framing of hashed input. |
+| Stable hashing | [`hash/xxh3`][hash/xxh3] | XXH3-64, a hash that is not cryptographic and whose values are the same in every process and on every platform. |
+| Compression | [`compress/snappy`][compress/snappy] | Encoding and decoding of blocks in the Snappy format, with the same bytes as golang/snappy. |
 | Signatures | [`crypto/sign`][crypto/sign], [`crypto/sign/ed25519`][crypto/sign/ed25519], [`crypto/sign/ecdsap384`][crypto/sign/ecdsap384], [`crypto/sign/mldsa`][crypto/sign/mldsa], [`crypto/tsp`][crypto/tsp] | The `Signer` and `Verifier` interfaces with Ed25519, ECDSA P-384 and ML-DSA, threshold policies over sets of keys, and offline verification of RFC 3161 time stamps. |
 | Transparency logs | [`tlog`][tlog], [`tlog/checkpoint`][tlog/checkpoint], [`tlog/witness`][tlog/witness], [`note`][note] | Merkle trees of RFC 9162 stored as C2SP tiles with inclusion and consistency proofs, signed notes, checkpoints, cosignatures, witness policies, and both sides of the witness protocol. |
-| Storage | [`blob`][blob], [`blob/memory`][blob/memory], [`cas`][cas], [`cas/memory`][cas/memory] | Named object storage with conditional writes, content-addressed storage that checks each write against its address, and in-memory stores for tests. |
-| Data structures | [`btree`][btree], [`idmap`][idmap], [`cache`][cache], [`pool`][pool], [`arena`][arena] | B+ tree maps and sets with copy-on-write clones, hash maps keyed by identifiers and by the identifier types that embed them, a bounded S3-FIFO cache, typed pools, and arenas for hot paths. |
+| Storage | [`blob`][blob], [`blob/memory`][blob/memory], [`cas`][cas], [`cas/memory`][cas/memory], [`sstable`][sstable] | Named object storage with conditional writes, content-addressed storage that checks each write against its address, in-memory stores for tests, and the sorted tables of LSM trees with a merge of sorted runs. |
+| Data structures | [`btree`][btree], [`idmap`][idmap], [`radix`][radix], [`cache`][cache], [`filter`][filter], [`skiplist`][skiplist], [`pool`][pool], [`arena`][arena] | B+ tree maps and sets with copy-on-write clones, hash maps keyed by identifiers and by the identifier types that embed them, an adaptive radix tree for longest-prefix matches and prefix scans, a bounded S3-FIFO cache, split block Bloom filters and binary fuse filters, a lock-free skip list for memtables, typed pools, and arenas for hot paths. |
 | Telemetry | [`telemetry`][telemetry], [`telemetry/noop`][telemetry/noop], [`telemetry/w3c`][telemetry/w3c] | Metric and trace interfaces whose bound instruments record without an allocation, and W3C Trace Context propagation. |
 | HTTP | [`net/httpserver`][net/httpserver], [`net/httpclient`][net/httpclient] | A server on `net/http` with limits, telemetry, panic recovery and graceful shutdown, and a client with a circuit breaker per host and retries. |
 | Testing | [`coretest`][coretest] | Conformance suites that check an implementation against its interface, generated test doubles, recorders of telemetry and of logs, and a time-stamp authority for tests. |
@@ -150,6 +152,7 @@ and [NOTICE](NOTICE).
 [clock/fake]: https://pkg.go.dev/go.thesmos.sh/core/clock/fake
 [clock/hlc]: https://pkg.go.dev/go.thesmos.sh/core/clock/hlc
 [clock/kernel]: https://pkg.go.dev/go.thesmos.sh/core/clock/kernel
+[compress/snappy]: https://pkg.go.dev/go.thesmos.sh/core/compress/snappy
 [coretest]: https://pkg.go.dev/go.thesmos.sh/core/coretest
 [crypto]: https://pkg.go.dev/go.thesmos.sh/core/crypto
 [crypto/aesgcm]: https://pkg.go.dev/go.thesmos.sh/core/crypto/aesgcm
@@ -169,8 +172,10 @@ and [NOTICE](NOTICE).
 [crypto/tsp]: https://pkg.go.dev/go.thesmos.sh/core/crypto/tsp
 [epoch]: https://pkg.go.dev/go.thesmos.sh/core/epoch
 [errs]: https://pkg.go.dev/go.thesmos.sh/core/errs
+[filter]: https://pkg.go.dev/go.thesmos.sh/core/filter
 [fixed]: https://pkg.go.dev/go.thesmos.sh/core/fixed
 [fsm]: https://pkg.go.dev/go.thesmos.sh/core/fsm
+[hash/xxh3]: https://pkg.go.dev/go.thesmos.sh/core/hash/xxh3
 [id]: https://pkg.go.dev/go.thesmos.sh/core/id
 [id/constant]: https://pkg.go.dev/go.thesmos.sh/core/id/constant
 [id/ksuid]: https://pkg.go.dev/go.thesmos.sh/core/id/ksuid
@@ -183,12 +188,15 @@ and [NOTICE](NOTICE).
 [note]: https://pkg.go.dev/go.thesmos.sh/core/note
 [page]: https://pkg.go.dev/go.thesmos.sh/core/page
 [pool]: https://pkg.go.dev/go.thesmos.sh/core/pool
+[radix]: https://pkg.go.dev/go.thesmos.sh/core/radix
 [rand]: https://pkg.go.dev/go.thesmos.sh/core/rand
 [rand/constant]: https://pkg.go.dev/go.thesmos.sh/core/rand/constant
 [rand/crypto]: https://pkg.go.dev/go.thesmos.sh/core/rand/crypto
 [rand/pcg]: https://pkg.go.dev/go.thesmos.sh/core/rand/pcg
 [rand/seeded]: https://pkg.go.dev/go.thesmos.sh/core/rand/seeded
 [resilience]: https://pkg.go.dev/go.thesmos.sh/core/resilience
+[skiplist]: https://pkg.go.dev/go.thesmos.sh/core/skiplist
+[sstable]: https://pkg.go.dev/go.thesmos.sh/core/sstable
 [tag]: https://pkg.go.dev/go.thesmos.sh/core/tag
 [task]: https://pkg.go.dev/go.thesmos.sh/core/task
 [telemetry]: https://pkg.go.dev/go.thesmos.sh/core/telemetry
