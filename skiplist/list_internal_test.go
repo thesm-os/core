@@ -28,11 +28,23 @@ import (
 
 // The names of the calls that the machines make and record.
 const (
-	opAdd   = "Add"
-	opGet   = "Get"
-	opScan  = "Scan"
-	opSeek  = "SeekGE"
-	opReset = "Reset"
+	opAdd    = "Add"
+	opGet    = "Get"
+	opScan   = "Scan"
+	opSeek   = "SeekGE"
+	opSeekLT = "SeekLT"
+	opLast   = "Last"
+	opWalk   = "Walk"
+	opReset  = "Reset"
+)
+
+// The moves of a walk of the machine of a List.
+const (
+	// walkMoves is the largest number of moves of a walk.
+	walkMoves = 6
+
+	// listed is the number of entries that a seek of the machine reads.
+	listed = 3
 )
 
 // The workload of the machine of concurrent calls: historyKeys keys with
@@ -113,6 +125,13 @@ type lookup struct {
 	value int
 	seq   uint64
 	ok    bool
+}
+
+// walk is a SeekGE of a cursor to at, and the moves after it: true moves
+// forward with Next, and false moves back with Prev.
+type walk struct {
+	at    entry
+	moves []bool
 }
 
 func TestList(t *testing.T) {
@@ -435,6 +454,38 @@ func TestList(t *testing.T) {
 		})
 	})
 
+	t.Run("Cost", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the bytes that an Add of the entry reserves", func(t *testing.T) {
+			t.Parallel()
+			l := newList(t)
+			nodeCost, dataCost := l.Cost([]byte("key"), 1, 5)
+			assert.NoError(t, l.Add([]byte("key"), 1, []byte("value")), "Add adds the entry")
+			expect.Equal(t, dataCost, 8, "the data of an entry takes the bytes of its key and its value")
+			expect.Equal(t, l.Size(), nodeCost+dataCost, "Add takes the bytes that Cost returned")
+		})
+
+		tests := []struct {
+			name         string
+			giveValueLen int
+			wantData     int
+		}{
+			{name: "counts a negative value length as 0", giveValueLen: -1, wantData: 3},
+			{
+				name:         "counts a value length above 2^32 - 1 as 2^32 - 1",
+				giveValueLen: math.MaxUint32 + 1, wantData: 3 + math.MaxUint32,
+			},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				_, dataCost := newList(t).Cost([]byte("key"), 1, tt.giveValueLen)
+				assert.Equal(t, dataCost, tt.wantData, "Cost bounds the length of the value")
+			})
+		}
+	})
+
 	t.Run("Reset", func(t *testing.T) {
 		t.Parallel()
 
@@ -620,6 +671,15 @@ func TestListAllocs(t *testing.T) {
 		assert.NotEqual(t, got, 0, "the test measures a List of 10 entries")
 	})
 
+	t.Run("Cost", func(t *testing.T) {
+		l := filled(t, 10, benchKey)
+		var k [benchKeyLen]byte
+		benchKey(&k, 3)
+		var dataCost int
+		expect.MaxAllocs(t, func() { _, dataCost = l.Cost(k[:], 1, benchValueLen) }, 0, "Cost does not allocate")
+		assert.Equal(t, dataCost, benchKeyLen+benchValueLen, "the test measures the cost of an entry")
+	})
+
 	t.Run("Reset", func(t *testing.T) {
 		l := filled(t, 10, benchKey)
 		var err error
@@ -757,15 +817,33 @@ func BenchmarkList(b *testing.B) {
 
 		assert.NotEqual(b, got, 0, "the benchmark measures a List of 10 entries")
 	})
+
+	b.Run("Cost", func(b *testing.B) {
+		l := filled(b, 10, benchKey)
+		var k [benchKeyLen]byte
+		var nodeCost int
+		i := uint64(0)
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			benchKey(&k, i)
+			nodeCost, _ = l.Cost(k[:], 1, benchValueLen)
+			i++
+		}
+
+		assert.NotEqual(b, nodeCost, 0, "the benchmark measures the cost of a node")
+	})
 }
 
 // addInRounds runs writers goroutines that each add one entry with the key
 // keyOf(round, writer) and the sequence 0 in each of sharedEntries rounds.
 // The writers wait for each other before each round, so their Adds of one
-// round run at once. Another goroutine scans the List while they add. It
-// returns the number of Adds that succeeded and the number of pairs of
-// entries that a scan yielded out of order, and stops the test for an error
-// other than ErrExists.
+// round run at once. Another goroutine scans the List forward and backward
+// while they add. It returns the number of Adds that succeeded and the
+// number of pairs of entries that a scan yielded out of order, and stops the
+// test for an error other than ErrExists.
 func addInRounds(tb testing.TB, l *List, keyOf func(round, writer int) []byte) (added, disordered int) {
 	tb.Helper()
 
@@ -782,6 +860,13 @@ func addInRounds(tb testing.TB, l *List, keyOf func(round, writer int) []byte) (
 					if order(got[i-1], got[i]) >= 0 {
 						pairs++
 					}
+				}
+				back := l.NewIter()
+				for ok, prev := back.Last(), []byte(nil); ok; ok = back.Prev() {
+					if prev != nil && bytes.Compare(back.Key(), prev) >= 0 {
+						pairs++
+					}
+					prev = back.Key()
 				}
 				runtime.Gosched()
 			}
@@ -844,13 +929,17 @@ func listSteps(c *prop.Case) {
 				},
 				Run: func(c *prop.Case, _ int, in any) {
 					e := in.(entry)
+					nodeCost, dataCost := l.Cost(e.key, e.seq, len(e.value))
+					size := l.Size()
 					err := l.Add(e.key, e.seq, e.value)
 					if !m.add(e) {
 						assert.ErrorIs(c, err, ErrExists, "Add returns ErrExists for an entry of the List")
+						assert.Equal(c, l.Size(), size, "Add of an entry of the List reserves nothing")
 
 						return
 					}
 					assert.NoError(c, err, "Add adds a new entry")
+					assert.Equal(c, l.Size()-size, nodeCost+dataCost, "Add grows Size by the Cost of its entry")
 				},
 			},
 			{
@@ -894,10 +983,86 @@ func listSteps(c *prop.Case) {
 				},
 			},
 			{
+				Name:  opSeekLT,
+				Input: target,
+				Run: func(c *prop.Case, _ int, in any) {
+					e := in.(entry)
+					it := l.NewIter()
+					i, _ := slices.BinarySearchFunc(m, e, order)
+					var got []entry
+					for ok := it.SeekLT(e.key, e.seq); ok && len(got) < listed; ok = it.Prev() {
+						got = append(got, entry{key: it.Key(), seq: it.Seq(), value: it.Value()})
+					}
+					want := slices.Clone(m[max(i-listed, 0):i])
+					slices.Reverse(want)
+					assert.Equal(c, got, want, "SeekLT and Prev move back from the last entry before the target",
+						assert.EquateEmpty())
+				},
+			},
+			{
+				Name: opLast,
+				Run: func(c *prop.Case, _ int, _ any) {
+					it := l.NewIter()
+					var got []entry
+					for ok := it.Last(); ok && len(got) < listed; ok = it.Prev() {
+						got = append(got, entry{key: it.Key(), seq: it.Seq(), value: it.Value()})
+					}
+					want := slices.Clone(m[max(len(m)-listed, 0):])
+					slices.Reverse(want)
+					assert.Equal(c, got, want, "Last and Prev move back from the last entry", assert.EquateEmpty())
+				},
+			},
+			{
+				Name: opWalk,
+				Input: func(c *prop.Case, _ struct{}) any {
+					return walk{
+						at:    entry{key: c.Draw(key, "key"), seq: c.Draw(seq, "seq")},
+						moves: c.Draw(prop.List(prop.Boolean(), prop.MaxSize(walkMoves)), "moves"),
+					}
+				},
+				Run: func(c *prop.Case, _ int, in any) {
+					w := in.(walk)
+					it := l.NewIter()
+					// The model of the cursor is a place in m. A move off either end
+					// leaves the cursor on no entry, and every later move reports
+					// false.
+					at, _ := slices.BinarySearchFunc(m, w.at, order)
+					on := at < len(m)
+					ok := it.SeekGE(w.at.key, w.at.seq)
+					for i := 0; ; i++ {
+						assert.Equal(c, ok, on, "a move reports whether the model has an entry at its place")
+						if on {
+							assert.Equal(c, entry{key: it.Key(), seq: it.Seq(), value: it.Value()}, m[at],
+								"a move puts the cursor on the entry of the model")
+						}
+						if i == len(w.moves) {
+							return
+						}
+						if w.moves[i] {
+							ok = it.Next()
+							at++
+							on = on && at < len(m)
+						} else {
+							ok = it.Prev()
+							at--
+							on = on && at >= 0
+						}
+					}
+				},
+			},
+			{
 				Name: opReset,
 				Run: func(c *prop.Case, _ int, _ any) {
-					l.Reset()
-					m = m[:0]
+					// The bytes of the data of an entry follow from its lengths
+					// alone, and the bytes of its node from the seed of the List.
+					assert.Pure(c, func() int {
+						nodeCost, _ := l.Cost(keys[1], 1, 1)
+
+						return nodeCost
+					}, func() {
+						l.Reset()
+						m = m[:0]
+					}, "Reset keeps the bytes of the node of an entry")
 					assert.Equal(c, l.Size(), 0, "Reset frees both arenas")
 				},
 			},

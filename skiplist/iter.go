@@ -10,6 +10,10 @@ import "sync/atomic"
 // the entries that a move finds linked: every entry whose Add returned before
 // the move, and the entries that writers link while it moves.
 //
+// A cursor moves forward along the links of level 0. The nodes have no links
+// back, so [Iter.Prev] searches from the head for the last entry before the
+// current one, in O(log n) steps for n entries, as [Iter.SeekLT] does.
+//
 // The key and the value of the current entry are valid until [List.Reset],
 // also after the next move.
 //
@@ -41,6 +45,18 @@ func (it *Iter) First() bool {
 	return it.node != 0
 }
 
+// Last moves to the last entry and reports whether it exists. It follows
+// the links of each level from the top of the List.
+//
+// # Allocation contract
+//
+// Zero-alloc.
+func (it *Iter) Last() bool {
+	it.node = it.list.last()
+
+	return it.node != 0
+}
+
 // SeekGE moves to the first entry at or after the entry (key, seq) and
 // reports whether it exists. For a snapshot seq, an entry with key is the
 // newest version of key at or below seq.
@@ -49,7 +65,19 @@ func (it *Iter) First() bool {
 //
 // Zero-alloc.
 func (it *Iter) SeekGE(key []byte, seq uint64) bool {
-	it.node = it.list.seekGE(key, seq)
+	_, it.node = it.list.search(key, seq)
+
+	return it.node != 0
+}
+
+// SeekLT moves to the last entry before the entry (key, seq) and reports
+// whether it exists.
+//
+// # Allocation contract
+//
+// Zero-alloc.
+func (it *Iter) SeekLT(key []byte, seq uint64) bool {
+	it.node, _ = it.list.search(key, seq)
 
 	return it.node != 0
 }
@@ -65,6 +93,23 @@ func (it *Iter) Next() bool {
 		return false
 	}
 	it.node = atomic.LoadUint32(&it.list.nodes[it.node+nodeHeader])
+
+	return it.node != 0
+}
+
+// Prev moves to the entry before the current one and reports whether it
+// exists. It searches from the head for the last entry before the current
+// entry, so it costs O(log n) steps for n entries. Prev of a cursor on no
+// entry reports false.
+//
+// # Allocation contract
+//
+// Zero-alloc.
+func (it *Iter) Prev() bool {
+	if it.node == 0 {
+		return false
+	}
+	it.node, _ = it.list.search(it.list.key(it.node), it.Seq())
 
 	return it.node != 0
 }

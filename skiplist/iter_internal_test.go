@@ -35,15 +35,58 @@ func TestIter(t *testing.T) {
 		})
 	})
 
-	t.Run("SeekGE", func(t *testing.T) {
+	versions := []entry{
+		{key: []byte("a"), seq: 1},
+		{key: []byte("b"), seq: 5},
+		{key: []byte("b"), seq: 2},
+		{key: []byte("c"), seq: 1},
+	}
+
+	t.Run("Last", func(t *testing.T) {
 		t.Parallel()
 
-		versions := []entry{
-			{key: []byte("a"), seq: 1},
-			{key: []byte("b"), seq: 5},
-			{key: []byte("b"), seq: 2},
-			{key: []byte("c"), seq: 1},
-		}
+		t.Run("moves to the last entry", func(t *testing.T) {
+			t.Parallel()
+			it := listOf(t, entry{key: []byte("b"), seq: 1}, entry{key: []byte("c"), seq: 1},
+				entry{key: []byte("a"), seq: 1}).NewIter()
+			assert.True(t, it.Last(), "Last finds an entry")
+			assert.Equal(t, it.Key(), []byte("c"), "Last moves to the largest key")
+		})
+
+		t.Run("reports false for an empty List", func(t *testing.T) {
+			t.Parallel()
+			assert.False(t, newList(t).NewIter().Last(), "Last finds no entry")
+		})
+	})
+
+	t.Run("SeekLT", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("moves to the last entry before the key and the sequence", func(t *testing.T) {
+			t.Parallel()
+			it := listOf(t, versions...).NewIter()
+			assert.True(t, it.SeekLT([]byte("b"), 3), "SeekLT finds an entry")
+			expect.Equal(t, it.Key(), []byte("b"), "SeekLT moves to the key")
+			expect.Equal(t, it.Seq(), uint64(5), "SeekLT moves to the version above the sequence")
+		})
+
+		t.Run("moves to the last entry past the last key", func(t *testing.T) {
+			t.Parallel()
+			it := listOf(t, versions...).NewIter()
+			assert.True(t, it.SeekLT([]byte("d"), 0), "SeekLT finds an entry")
+			assert.Equal(t, it.Key(), []byte("c"), "SeekLT moves to the last entry")
+		})
+
+		t.Run("reports false before the first entry", func(t *testing.T) {
+			t.Parallel()
+			it := listOf(t, versions...).NewIter()
+			assert.False(t, it.SeekLT([]byte("a"), 2), "SeekLT finds no entry before the newest version of a")
+			assert.Nil(t, it.Key(), "the cursor has no key")
+		})
+	})
+
+	t.Run("SeekGE", func(t *testing.T) {
+		t.Parallel()
 
 		t.Run("moves to the first entry at or after the key and the sequence", func(t *testing.T) {
 			t.Parallel()
@@ -97,6 +140,40 @@ func TestIter(t *testing.T) {
 			assert.NoError(t, l.Add([]byte("b"), 1, nil), "Add adds an entry after the cursor")
 			assert.True(t, it.Next(), "Next finds the entry that Add added")
 			assert.Equal(t, it.Key(), []byte("b"), "Next moves to the new entry")
+		})
+	})
+
+	t.Run("Prev", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("moves to the entries before the current one in order", func(t *testing.T) {
+			t.Parallel()
+			it := listOf(t, versions...).NewIter()
+			assert.True(t, it.Last(), "Last finds the last entry")
+			got := []entry{{key: it.Key(), seq: it.Seq()}}
+			for it.Prev() {
+				got = append(got, entry{key: it.Key(), seq: it.Seq()})
+			}
+			assert.Equal(t, got, []entry{versions[3], versions[2], versions[1], versions[0]},
+				"Prev yields the entries in the reverse of the order of the List", assert.EquateEmpty())
+		})
+
+		t.Run("reports false for a cursor on no entry", func(t *testing.T) {
+			t.Parallel()
+			it := listOf(t, versions...).NewIter()
+			expect.False(t, it.Prev(), "Prev of a new cursor finds no entry")
+			assert.False(t, it.SeekLT([]byte("a"), 2), "SeekLT exhausts the cursor")
+			expect.False(t, it.Prev(), "Prev of an exhausted cursor finds no entry")
+		})
+
+		t.Run("moves to an entry that Add added before the current one", func(t *testing.T) {
+			t.Parallel()
+			l := listOf(t, entry{key: []byte("b"), seq: 1})
+			it := l.NewIter()
+			assert.True(t, it.First(), "First finds the entry")
+			assert.NoError(t, l.Add([]byte("a"), 1, nil), "Add adds an entry before the cursor")
+			assert.True(t, it.Prev(), "Prev finds the entry that Add added")
+			assert.Equal(t, it.Key(), []byte("a"), "Prev moves to the new entry")
 		})
 	})
 
@@ -160,7 +237,7 @@ func TestIter(t *testing.T) {
 		t.Run("returns nil after every move", func(t *testing.T) {
 			t.Parallel()
 			it := listOf(t, entry{key: []byte("a"), seq: 1}).NewIter()
-			for _, move := range []func() bool{it.First, it.Next, it.Next} {
+			for _, move := range []func() bool{it.First, it.Next, it.Next, it.Last, it.Prev, it.Prev} {
 				move()
 				expect.NoError(t, it.Err(), "a cursor over a List has no error")
 			}
@@ -179,13 +256,22 @@ func TestIterAllocs(t *testing.T) {
 	var ok bool
 	expect.MaxAllocs(t, func() { ok = it.First() }, 0, "First does not allocate")
 	expect.True(t, ok, "the test measures a cursor on an entry")
+	expect.MaxAllocs(t, func() { ok = it.Last() }, 0, "Last does not allocate")
+	expect.True(t, ok, "the test measures a Last to an entry")
 	expect.MaxAllocs(t, func() { ok = it.SeekGE(k[:], 1) }, 0, "SeekGE does not allocate")
 	expect.True(t, ok, "the test measures a SeekGE to an entry")
+	expect.MaxAllocs(t, func() { ok = it.SeekLT(k[:], 1) }, 0, "SeekLT does not allocate")
+	expect.True(t, ok, "the test measures a SeekLT to an entry")
 	expect.MaxAllocs(t, func() {
 		if !it.Next() {
 			it.First()
 		}
 	}, 0, "Next does not allocate")
+	expect.MaxAllocs(t, func() {
+		if !it.Prev() {
+			it.Last()
+		}
+	}, 0, "Prev does not allocate")
 
 	var key, value []byte
 	var seq uint64
@@ -239,6 +325,56 @@ func BenchmarkIter(b *testing.B) {
 		}
 
 		assert.True(b, ok, "the benchmark measures seeks to entries")
+	})
+
+	b.Run("Prev", func(b *testing.B) {
+		it := l.NewIter()
+		assert.True(b, it.Last(), "Last finds an entry")
+		n := 0
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			if !it.Prev() {
+				it.Last()
+			}
+			n += len(it.Key())
+		}
+
+		assert.NotEqual(b, n, 0, "the benchmark measures moves to entries")
+	})
+
+	b.Run("SeekLT", func(b *testing.B) {
+		it := l.NewIter()
+		var k [benchKeyLen]byte
+		var ok bool
+		i := uint64(0)
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			benchKey(&k, (i*keyGamma)%iterEntries)
+			ok = it.SeekLT(k[:], 0)
+			i++
+		}
+
+		assert.True(b, ok, "the benchmark measures seeks to entries")
+	})
+
+	b.Run("Last", func(b *testing.B) {
+		it := l.NewIter()
+		var ok bool
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			ok = it.Last()
+		}
+
+		assert.True(b, ok, "the benchmark measures moves to the last entry")
 	})
 }
 

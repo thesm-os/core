@@ -49,6 +49,10 @@ const (
 	maxHeight = 20
 	// headWords is the number of words of the head node.
 	headWords = nodeHeader + maxHeight
+	// maxValueLen is the largest length of a value that Cost counts: 2^32 -
+	// 1, the largest capacity of an arena, or the largest int on a platform
+	// whose int has 32 bits.
+	maxValueLen = min(math.MaxUint32, math.MaxInt)
 )
 
 // The constants of splitmix64, which derives the two secret words of the
@@ -81,10 +85,10 @@ var levelBounds = func() (bounds [maxHeight - 1]uint64) {
 //
 // # Concurrency
 //
-// [List.Add], [List.Get], [List.Len], [List.Size] and [List.NewIter] are
-// safe for concurrent use. Reset is not safe concurrently with any other
-// method. An Add that returned is visible to every Get and to every move of
-// a cursor that starts after it.
+// [List.Add], [List.Get], [List.Len], [List.Size], [List.Cost] and
+// [List.NewIter] are safe for concurrent use. Reset is not safe concurrently
+// with any other method apart from Cost. An Add that returned is visible to
+// every Get and to every move of a cursor that starts after it.
 //
 // # Allocation contract
 //
@@ -258,7 +262,7 @@ func (l *List) Add(key []byte, seq uint64, value []byte) error {
 //
 // Zero-alloc.
 func (l *List) Get(key []byte, seq uint64) ([]byte, uint64, bool) {
-	nd := l.seekGE(key, seq)
+	_, nd := l.search(key, seq)
 	if nd == 0 || !bytes.Equal(l.key(nd), key) {
 		return nil, 0, false
 	}
@@ -286,6 +290,30 @@ func (l *List) Size() int {
 	return l.dataArena.Len() + wordBytes*(l.nodeArena.Len()-headWords)
 }
 
+// Cost returns the bytes that Add of the entry (key, seq), with a value of
+// valueLen bytes, reserves in the node arena and in the data arena of l. The
+// height of the node derives from the entry and the seed of l, so Cost is
+// exact: an Add that succeeds grows [List.Size] by nodeBytes + dataBytes. An
+// Add that finds the entry before it reserves takes nothing, and one that
+// returns ErrFull for the data arena keeps the words of the node.
+//
+// nodeBytes is 4 bytes for each of the 7 words of the header of the node and
+// each of its links. dataBytes is the length of key plus valueLen. A
+// valueLen below 0 counts as 0, and one above 2^32 - 1, the largest capacity
+// of an arena, counts as 2^32 - 1.
+//
+// # Concurrency
+//
+// Safe for concurrent use with every method of l, Reset included. Cost reads
+// only the seed of l.
+//
+// # Allocation contract
+//
+// Zero-alloc.
+func (l *List) Cost(key []byte, seq uint64, valueLen int) (nodeBytes, dataBytes int) {
+	return wordBytes * (nodeHeader + l.height(key, seq)), len(key) + min(max(valueLen, 0), maxValueLen)
+}
+
 // Reset removes every entry and keeps the arenas. It zeroes the bytes and
 // the words in use, so it takes time in proportion to [List.Size]. Every key
 // and value that the List returned before is invalid after Reset.
@@ -302,7 +330,8 @@ func (l *List) Reset() {
 }
 
 // NewIter returns a cursor over the entries of the List. The cursor is on
-// no entry until [Iter.First] or [Iter.SeekGE] moves it.
+// no entry until [Iter.First], [Iter.Last], [Iter.SeekGE] or [Iter.SeekLT]
+// moves it.
 //
 // # Allocation contract
 //
@@ -364,10 +393,11 @@ func (l *List) splice(key []byte, prefix, seq uint64, before uint32, level int) 
 	}
 }
 
-// seekGE returns the first node at or after the entry (key, seq), or 0 when
+// search searches every level from the top for the entry (key, seq), and
+// returns the last node before it and the first node at or after it. before
+// is 0, the head node, when no node precedes the entry, and next is 0 when
 // no node follows it.
-func (l *List) seekGE(key []byte, seq uint64) uint32 {
-	var before, next uint32
+func (l *List) search(key []byte, seq uint64) (before, next uint32) {
 	prefix := keyPrefix(key)
 	for level := l.levels.Load(); level > 0; level-- {
 		for {
@@ -379,7 +409,24 @@ func (l *List) seekGE(key []byte, seq uint64) uint32 {
 		}
 	}
 
-	return next
+	return before, next
+}
+
+// last returns the last node of the List, or 0 for a List without entries.
+// It follows the links of each level from the top until the next node is 0.
+func (l *List) last() uint32 {
+	var nd uint32
+	for level := l.levels.Load(); level > 0; level-- {
+		for {
+			next := atomic.LoadUint32(&l.nodes[nd+nodeHeader+level-1])
+			if next == 0 {
+				break
+			}
+			nd = next
+		}
+	}
+
+	return nd
 }
 
 // compare returns -1, 0 or +1 for the order of the entry (key, seq) and the

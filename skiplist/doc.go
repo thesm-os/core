@@ -33,11 +33,24 @@
 //
 // # Concurrency
 //
-// Add, Get, [List.Len], [List.Size] and [List.NewIter] are safe for
-// concurrent use. An [Iter] is for one goroutine, and its moves are safe
+// Add, Get, [List.Len], [List.Size], [List.Cost] and [List.NewIter] are safe
+// for concurrent use. An [Iter] is for one goroutine, and its moves are safe
 // while other goroutines add. [List.Reset] is not safe concurrently with any
-// other method. An Add that returned is visible to every Get and to every
-// move of a cursor that starts after it.
+// other method apart from Cost. An Add that returned is visible to every Get
+// and to every move of a cursor that starts after it.
+//
+// # Cursors
+//
+// An Iter moves in both directions. A move forward follows a link of level
+// 0. The nodes have no links back, so [Iter.Prev] and [Iter.SeekLT] search
+// from the head, in O(log n) steps for n entries, about the time of a Get.
+//
+// # Costs
+//
+// [List.Cost] returns the bytes that an Add of an entry reserves in each
+// arena. The height of a node derives from the entry and the seed, so an
+// engine that reserves the cost of each entry before its Add knows that the
+// Add fits.
 //
 // # Errors
 //
@@ -46,8 +59,8 @@
 // # Allocation contract
 //
 // [New] allocates the List, its two arenas and their arrays. NewIter
-// allocates the cursor. Add, Get, Len, Size, Reset and the methods of an
-// Iter do not allocate.
+// allocates the cursor. Add, Get, Len, Size, Cost, Reset and the methods of
+// an Iter do not allocate.
 //
 // # Dependency position
 //
