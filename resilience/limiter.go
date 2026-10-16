@@ -6,6 +6,7 @@ package resilience
 import (
 	"context"
 	"math"
+	"slices"
 	"sync"
 	"time"
 
@@ -16,7 +17,7 @@ import (
 // nanounit is a billionth of a unit. At a Rate of 1, a bucket of maxBurst
 // units fills in 2^62 nanoseconds, about 146 years. The time that the
 // bucket owes to waiting calls grows to the largest [time.Duration] only
-// once the calls have reserved at least that long, and the Limiter then
+// once the calls have taken at least that long, and the Limiter then
 // saturates it instead of letting it wrap.
 const maxBurst = 4_611_686_018
 
@@ -25,12 +26,19 @@ const maxBurst = 4_611_686_018
 // every n up to maxBurst.
 const nanounits = 1_000_000_000
 
+// shareRun is the number of grants in a row to calls of [PriorityHigh]
+// while a call of [PriorityNormal] waits, after which a [Limiter] grants
+// the oldest call of PriorityNormal. One grant in ten then goes to a call
+// of PriorityNormal while calls of both priorities wait.
+const shareRun = 9
+
 // LimiterConfig configures a [Limiter]. Clock and Rate are required, and
 // Burst is required when Rate is positive. The zero LimiterConfig is
 // invalid, because it has no Clock.
 type LimiterConfig struct {
 	// Clock measures the time that refills the bucket, and times the wait
-	// of [Limiter.WaitN]. A test passes a fake clock and advances it.
+	// of [Limiter.WaitNPriority]. A test passes a fake clock and advances
+	// it.
 	Clock clock.Clock
 
 	// Rate is the number of units that the bucket gains per second. Zero
@@ -44,6 +52,27 @@ type LimiterConfig struct {
 	Burst int64
 }
 
+// Priority orders the calls of a [Limiter] that wait for units. A waiting
+// call of [PriorityHigh] takes its units before the waiting calls of
+// [PriorityNormal], apart from one grant in ten, which goes to the oldest
+// call of PriorityNormal while calls of both priorities wait.
+type Priority uint8
+
+const (
+	// PriorityNormal is the priority of [Limiter.WaitN], such as the
+	// priority of the chunks of a compaction.
+	PriorityNormal Priority = 0
+
+	// PriorityHigh is the priority of a call that other work waits for,
+	// such as a flush that the writers of a volume wait for.
+	PriorityHigh Priority = 1
+)
+
+// Valid reports whether p is PriorityNormal or PriorityHigh.
+func (p Priority) Valid() bool {
+	return p <= PriorityHigh
+}
+
 // Limiter admits units of work at a rate, as a token bucket. The bucket
 // gains Rate units per second up to Burst, and each call takes units from
 // it. A new Limiter starts with a full bucket.
@@ -53,16 +82,22 @@ type LimiterConfig struct {
 // unit taken so far. A call of n units moves due forward by exactly the
 // time in which the bucket gains n units. The Limiter keeps each such time
 // as whole nanoseconds and a remainder in Rate-ths of a nanosecond, so the
-// bucket never has more than Burst units, and the refund of a call returns
-// exactly the units that the call reserved. Only the timer of a
-// wait rounds, up to the next whole nanosecond, so the Limiter admits at
-// most Rate units per second. All the arithmetic is on int64.
+// bucket never has more than Burst units. Only the timer of a wait rounds,
+// up to the next whole nanosecond, so the Limiter admits at most Rate units
+// per second. All the arithmetic is on int64.
 //
-// A call that waits reserves its units when it starts, and the bucket owes
-// them to it while it waits. Calls that wait together therefore take their
-// units in the order in which they started, and a later call does not take
-// units ahead of an earlier one. A call whose context ends gives its
-// reservation back.
+// A call that the bucket covers while no call waits takes its units at
+// once. Every other call of [Limiter.WaitNPriority] joins the queue of its
+// [Priority], in the order in which the calls started, and the Limiter
+// grants one waiting call at a time. The call that it grants next, the
+// head, is the oldest call of [PriorityHigh]. It is the oldest call of
+// [PriorityNormal] when no call of PriorityHigh waits, and after nine
+// grants in a row to calls of PriorityHigh while a call of PriorityNormal
+// waited. The head waits on a timer of the Clock until the bucket covers its
+// units, and then takes them. Every other waiting call waits until it is the
+// head. A call of PriorityHigh that starts while a call of PriorityNormal is
+// the head therefore becomes the head, unless that call has the tenth
+// grant. A call whose context ends leaves its queue, and took no units.
 //
 // The Limiter reads time from its Clock. A Clock that moves back adds no
 // units until its time passes the last time that the Limiter read.
@@ -72,20 +107,31 @@ type LimiterConfig struct {
 //
 // # Concurrency
 //
-// Safe for concurrent use. One mutex guards due, and a call locks it only
-// to read the clock and to move due, never while it waits.
+// Safe for concurrent use. One mutex guards due, the queues and the count
+// of the grants to calls of PriorityHigh. A call locks it to join or leave
+// a queue, to take its units and to choose the head, and never while it
+// waits.
 //
 // # Allocation contract
 //
-// [Limiter.AllowN] and [Limiter.Burst] do not allocate. [Limiter.WaitN]
-// allocates only the timer of a call that waits, through
-// [clock.Clock.NewTimer], and nothing for a call that does not.
+// [Limiter.AllowN] and [Limiter.Burst] do not allocate, and neither does a
+// call of [Limiter.WaitN] or WaitNPriority that does not wait. A call that
+// waits allocates its place in its queue and its channel, and a timer
+// through [clock.Clock.NewTimer] each time it becomes the head.
 type Limiter struct {
 	clock clock.Clock
 
 	// start is the time of the Limiter's construction. Every other time of
 	// the Limiter is a duration since start.
 	start time.Time
+
+	// head is the waiting call that the Limiter grants next, or nil when no
+	// call waits. A write locks mu.
+	head *waiter
+
+	// queues are the waiting calls of each Priority, in the order in which
+	// they started. A write locks mu.
+	queues [2][]*waiter
 
 	mu sync.Mutex
 
@@ -103,9 +149,27 @@ type Limiter struct {
 	fill    time.Duration
 	fillRem int64
 
+	// highs is the number of grants in a row to calls of PriorityHigh while
+	// a call of PriorityNormal waited. A write locks mu.
+	highs int
+
 	// rate and burst are the Rate and Burst of the configuration. A rate
 	// of zero means no limit, and burst is then zero.
 	rate, burst int64
+}
+
+// waiter is a call of [Limiter.WaitNPriority] that waits for its units.
+type waiter struct {
+	// wake receives a value when the call becomes the head or stops being
+	// the head. It has room for one value, so a send under the mutex never
+	// blocks.
+	wake chan struct{}
+
+	// n is the number of units of the call.
+	n int64
+
+	// priority is the priority of the call.
+	priority Priority
 }
 
 // NewLimiter returns a Limiter over cfg, with a full bucket. A Rate of
@@ -141,12 +205,13 @@ func NewLimiter(cfg LimiterConfig) (*Limiter, error) {
 	return l, nil
 }
 
-// AllowN takes n units when the bucket has them, and reports whether it
-// took them. It never waits. A call that reports false takes nothing.
+// AllowN takes n units when the bucket has them and no call waits, and
+// reports whether it took them. It never waits. A call that reports false
+// takes nothing.
 //
-// Units that a waiting [Limiter.WaitN] reserved are not in the bucket, so
-// AllowN reports false while the reservations exceed what the bucket
-// gained. An n of zero always fits.
+// AllowN reports false while a call of [Limiter.WaitNPriority] waits, so a
+// caller that polls does not take units ahead of a waiting call. An n of
+// zero always fits.
 //
 // AllowN reports false for a negative n and for an n above Burst, which
 // the bucket never contains. With a Rate of zero it reports true for every
@@ -171,45 +236,47 @@ func (l *Limiter) AllowN(n int64) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	now := l.now()
-	due, rem := l.after(now, n)
-	if d := due - now; d > l.fill || d == l.fill && rem > l.fillRem {
-		return false
-	}
-
-	l.due, l.dueRem = due, rem
-
-	return true
+	return l.head == nil && l.claim(n) <= 0
 }
 
-// WaitN takes n units, and waits until the bucket has gained them. It
-// returns nil once the units are taken.
+// WaitN takes n units at [PriorityNormal], and waits until the Limiter
+// grants them. [Limiter.WaitNPriority] documents the wait, the errors and
+// the allocations.
+func (l *Limiter) WaitN(ctx context.Context, n int64) error {
+	return l.WaitNPriority(ctx, n, PriorityNormal)
+}
+
+// WaitNPriority takes n units at the priority p, and waits until the
+// Limiter grants them. It returns nil once the units are taken.
 //
-// WaitN reserves the n units when it starts, so the bucket owes them to the
-// call while it waits, and every later call waits behind the reservation.
-// It then waits on a timer of its Clock for the time in which the bucket
-// gains what it lacks. A call that the bucket covers at once starts no
-// timer. A call whose context ends while it waits gives its reservation
-// back, and a later call keeps the wait that it computed.
+// A call that the bucket covers while no call waits takes its units at
+// once and starts no timer. Every other call joins the queue of p, and
+// takes its units once it is the head and the bucket covers them, as
+// [Limiter] documents. A call whose context ends while it waits leaves its
+// queue.
 //
 // Error modes, each of which takes no units:
 //
 //   - A ctx that has ended before the call returns the context's error,
-//     unwrapped, whatever n is.
+//     unwrapped, whatever n and p are.
 //   - A negative n returns [ErrUnits], classified
 //     [go.thesmos.sh/core/errs.Invalid].
 //   - An n above Burst returns ErrUnits. The caller splits such work into
 //     calls of at most Burst units.
+//   - A p other than [PriorityNormal] and [PriorityHigh] returns
+//     [ErrPriority], classified errs.Invalid.
 //   - A ctx that ends while the call waits returns the context's error,
 //     unwrapped.
 //
-// With a Rate of zero, and for an n of zero, WaitN returns nil at once.
+// With a Rate of zero, and for an n of zero, WaitNPriority returns nil at
+// once.
 //
 // # Allocation contract
 //
-// One timer, through [clock.Clock.NewTimer], for a call that waits, and
-// nothing for a call that does not.
-func (l *Limiter) WaitN(ctx context.Context, n int64) error {
+// Zero alloc for a call that does not wait. A call that waits allocates its
+// place in its queue and its channel, and a timer through
+// [clock.Clock.NewTimer] each time it becomes the head.
+func (l *Limiter) WaitNPriority(ctx context.Context, n int64, p Priority) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -218,32 +285,31 @@ func (l *Limiter) WaitN(ctx context.Context, n int64) error {
 		return ErrUnits
 	}
 
+	if !p.Valid() {
+		return ErrPriority
+	}
+
 	if l.rate == 0 || n == 0 {
 		return nil
 	}
 
-	wait := l.reserve(n)
-	if wait <= 0 {
+	l.mu.Lock()
+	if l.head == nil && l.claim(n) <= 0 {
+		l.mu.Unlock()
+
 		return nil
 	}
+	w := &waiter{wake: make(chan struct{}, 1), n: n, priority: p}
+	l.queues[p] = append(l.queues[p], w)
+	l.choose()
+	l.mu.Unlock()
 
-	t := l.clock.NewTimer(wait)
-	//dokimi:mutate-skip sbr-delete: a timer that runs no goroutine has no effect after WaitN returns that a test can observe
-	defer t.Stop()
-
-	select {
-	case <-t.C():
-		return nil
-	case <-ctx.Done():
-		l.release(n)
-
-		return ctx.Err()
-	}
+	return l.wait(ctx, w)
 }
 
 // Burst returns the Burst of the configuration. One call of
-// [Limiter.AllowN] or [Limiter.WaitN] takes at most that many units, so a
-// caller splits work into calls of min(left, l.Burst()) units.
+// [Limiter.AllowN] or [Limiter.WaitNPriority] takes at most that many
+// units, so a caller splits work into calls of min(left, l.Burst()) units.
 //
 // A Limiter with a Rate of zero takes any number of units in one call, and
 // so does the zero Limiter. Burst returns [math.MaxInt64] for both, so the
@@ -262,45 +328,136 @@ func (l *Limiter) Burst() int64 {
 	return l.burst
 }
 
-// reserve takes n units, at most Burst, from the bucket, and returns how
-// long the caller waits until the bucket has gained them: zero or less
-// when the bucket has them. The wait rounds up to a whole nanosecond, so it
-// never ends before the bucket has gained the units. The bucket may owe
-// units to the calls that reserved them, and due is then past the time at
-// which the bucket would be full. reserve locks the mutex while it reads
-// the clock and moves due.
-func (l *Limiter) reserve(n int64) time.Duration {
-	l.mu.Lock()
-	defer l.mu.Unlock()
+// wait waits until the waiting call w takes its units or ctx ends. While w
+// is the head, it waits on a timer for the time in which the bucket gains
+// the units that it lacks, and then takes them. A timer that ends before
+// the bucket covers the units, because the Clock moved back, leads to
+// another timer. While w is not the head, it waits on its channel. The end
+// of ctx ends either wait.
+//
+// A wake reports that w became the head or stopped being the head, and a
+// grant to another call can have moved due in between. Each pass of the
+// loop therefore ends with a wake or the end of its timer, and stops its
+// timer, and the next pass computes the wait of a head again.
+func (l *Limiter) wait(ctx context.Context, w *waiter) error {
+	for {
+		l.mu.Lock()
+		// The state below is the state after every wake that arrived before
+		// the lock, so such a wake would only repeat the pass.
+		select {
+		case <-w.wake:
+		default:
+		}
+		var (
+			t    clock.Timer
+			tick <-chan time.Time
+		)
+		if l.head == w {
+			wait := l.claim(w.n)
+			if wait <= 0 {
+				l.grant(w)
+				l.mu.Unlock()
 
+				return nil
+			}
+			t = l.clock.NewTimer(wait)
+			tick = t.C()
+		}
+		l.mu.Unlock()
+
+		select {
+		case <-tick:
+		case <-w.wake:
+		case <-ctx.Done():
+			l.mu.Lock()
+			l.leave(w)
+			l.mu.Unlock()
+			if t != nil {
+				t.Stop()
+			}
+
+			return ctx.Err()
+		}
+		if t != nil {
+			t.Stop()
+		}
+	}
+}
+
+// grant records that the head w took its units. A grant to a call of
+// PriorityNormal starts the count of the grants to calls of PriorityHigh
+// again, and a grant to a call of PriorityHigh adds one to it. leave starts
+// the count again when no call of PriorityNormal waits, so the count covers
+// the grants while a call of PriorityNormal waited. grant then removes w
+// from its queue and chooses the next head. The caller has locked the mutex.
+func (l *Limiter) grant(w *waiter) {
+	if w.priority == PriorityNormal {
+		l.highs = 0
+	} else {
+		l.highs++
+	}
+	l.leave(w)
+}
+
+// leave removes the waiting call w from its queue and chooses the next
+// head. With no call of PriorityNormal left, the count of the grants to
+// calls of PriorityHigh starts again. The caller has locked the mutex.
+func (l *Limiter) leave(w *waiter) {
+	q := l.queues[w.priority]
+	i := slices.Index(q, w)
+	l.queues[w.priority] = slices.Delete(q, i, i+1)
+	if len(l.queues[PriorityNormal]) == 0 {
+		l.highs = 0
+	}
+	l.choose()
+}
+
+// choose sets the head to the call that the Limiter grants next: the oldest
+// call of PriorityHigh, or the oldest call of PriorityNormal when no call
+// of PriorityHigh waits or after shareRun grants in a row to calls of
+// PriorityHigh while it waited. The count of the grants is above zero only
+// while a call of PriorityNormal waits. A change of the head wakes the
+// former head and the new head. The caller has locked the mutex.
+func (l *Limiter) choose() {
+	high, normal := l.queues[PriorityHigh], l.queues[PriorityNormal]
+	var next *waiter
+	if len(high) != 0 && l.highs < shareRun {
+		next = high[0]
+	} else if len(normal) != 0 {
+		next = normal[0]
+	}
+	if next == l.head {
+		return
+	}
+
+	for _, w := range [...]*waiter{l.head, next} {
+		if w != nil {
+			select {
+			case w.wake <- struct{}{}:
+			default:
+			}
+		}
+	}
+	l.head = next
+}
+
+// claim takes n units when the bucket has them at the current time, and
+// returns zero or less. Otherwise it takes nothing, and returns the time in
+// which the bucket gains the units that it lacks, rounded up to a whole
+// nanosecond, so a timer of that time never ends before the bucket has
+// them. n is between 1 and Burst. The caller has locked the mutex.
+func (l *Limiter) claim(n int64) time.Duration {
 	now := l.now()
-	l.due, l.dueRem = l.after(now, n)
-
-	wait := l.due - l.fill - now
-	if l.dueRem > l.fillRem {
+	due, rem := l.after(now, n)
+	wait := due - l.fill - now
+	if rem > l.fillRem {
 		wait++
+	}
+	if wait <= 0 {
+		l.due, l.dueRem = due, rem
 	}
 
 	return wait
-}
-
-// release gives back the n units of a reservation whose call stopped
-// waiting, by moving due back by their exact cost. A call that reserved
-// after it keeps the wait that it computed, which can only be longer than
-// it needs to be. release locks the mutex while it moves due.
-func (l *Limiter) release(n int64) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
-	q, r := l.cost(n)
-	l.due -= q
-	//dokimi:mutate-skip ror-boundary: a borrow at dueRem == r leaves dueRem at rate, which every comparison and every carry count as one more nanosecond
-	if l.dueRem < r {
-		l.due--
-		l.dueRem += l.rate - r
-	} else {
-		l.dueRem -= r
-	}
 }
 
 // after returns due and dueRem as they would be once the bucket covered n

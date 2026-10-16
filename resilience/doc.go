@@ -23,7 +23,8 @@
 //     goroutine of its caller, and [Retrier.Retry] returns the same
 //     decision to a caller that schedules its own waits.
 //   - [Limiter] bounds the rate of work in units per second, with a
-//     burst, such as the bytes that background jobs read and write.
+//     burst, such as the bytes that background jobs read and write. Its
+//     waiting calls take their units in the order of their [Priority].
 //   - [Failover] calls redundant dependencies one after another under
 //     their circuits, such as the time-stamp authorities of a deployment,
 //     until one succeeds. Its error remains retryable while the error of

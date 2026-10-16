@@ -4,12 +4,14 @@
 package resilience_test
 
 import (
+	"cmp"
 	"context"
 	"math"
 	"math/big"
 	"slices"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"go.dokimi.dev/assert"
@@ -34,7 +36,16 @@ const nsPerSecond = int64(time.Second)
 
 // maxWaiting is the most calls that the machine of limiterSteps keeps
 // waiting at once.
-const maxWaiting = 3
+const maxWaiting = 4
+
+// shareRun is the number of grants in a row to calls of PriorityHigh while
+// a call of PriorityNormal waits, after which a Limiter grants the call of
+// PriorityNormal.
+const shareRun = 9
+
+// mib is the Rate, the Burst and the chunk of the limiter of a disk in the
+// case of a flush behind the chunks of compactions.
+const mib = 1 << 20
 
 // limiterRates generates the Rate of the machine of limiterSteps. A Rate of
 // whole units per nanosecond makes the cost of some sizes a whole number of
@@ -47,43 +58,90 @@ var limiterRates = prop.OneOf(
 )
 
 // limiterContract is the contract of limiterSteps.
-const limiterContract = "the units of the calls that return nil in a window must stay within " +
-	"the Rate times its length, Burst and the units of the calls that waited before it"
+const limiterContract = "every call must take its units when an exact model of the bucket, the queues and " +
+	"the share grants them"
 
-// timedClock is a fake clock that records the duration of every timer that
-// it creates, so a case observes how long a WaitN waits, and that a call
-// that does not wait starts no timer. Its methods are safe for concurrent
-// use: a mutex guards timers, and the fake clock guards itself.
+// timedClock is a fake clock that records every timer that it creates, so a
+// case observes how long a head waits, that a call that does not wait
+// starts no timer, and that the Limiter stops each timer that it no longer
+// reads. Its methods are safe for concurrent use: a mutex guards timers and
+// the stops of each timer, and the fake clock guards itself.
 type timedClock struct {
 	*fake.Clock
 
 	mu sync.Mutex
 
-	// timers contains the duration of each timer, in the order of creation.
-	timers []time.Duration
+	// timers contains each timer, in the order of creation.
+	timers []*timedTimer
 }
 
-// NewTimer records d, and returns the timer of the fake clock, which
-// expires when a case advances the clock by d.
+// timedTimer is a timer of a timedClock: a timer of the fake clock, with its
+// duration and its deadline. stopped reports that a Stop stopped it before
+// its deadline, and the mutex of the clock guards it.
+type timedTimer struct {
+	clock.Timer
+
+	c        *timedClock
+	d        time.Duration
+	deadline time.Time
+	stopped  bool
+}
+
+// Stop stops the timer of the fake clock, and records that it stopped the
+// timer before its deadline.
+func (t *timedTimer) Stop() bool {
+	ok := t.Timer.Stop()
+	t.c.mu.Lock()
+	t.stopped = t.stopped || ok
+	t.c.mu.Unlock()
+
+	return ok
+}
+
+// NewTimer records a timer of d, and returns it. The timer ends when a case
+// advances the clock by d.
 func (c *timedClock) NewTimer(d time.Duration) clock.Timer {
+	t := &timedTimer{Timer: c.Clock.NewTimer(d), c: c, d: d, deadline: c.Time().Add(d)}
 	c.mu.Lock()
-	c.timers = append(c.timers, d)
+	c.timers = append(c.timers, t)
 	c.mu.Unlock()
 
-	return c.Clock.NewTimer(d)
+	return t
 }
 
-// durations returns a copy of the durations of the timers that c created,
-// in the order of creation, and nil when it created none.
+// durations returns the durations of the timers that c created, in the
+// order of creation.
 func (c *timedClock) durations() []time.Duration {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	return slices.Clone(c.timers)
+	ds := make([]time.Duration, 0, len(c.timers))
+	for _, t := range c.timers {
+		ds = append(ds, t.d)
+	}
+
+	return ds
+}
+
+// pending returns the number of the timers of c that no Stop stopped and
+// whose deadline is after the time of the clock.
+func (c *timedClock) pending() int {
+	now := c.Time()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	n := 0
+	for _, t := range c.timers {
+		if !t.stopped && now.Before(t.deadline) {
+			n++
+		}
+	}
+
+	return n
 }
 
 // lateTimer is a timer of a lateClock. A case delivers its tick with a send
-// on c at or after its deadline.
+// on c, at a time of its choice.
 type lateTimer struct {
 	deadline time.Time
 	c        chan time.Time
@@ -107,9 +165,9 @@ func (*lateTimer) Stop() bool {
 }
 
 // lateClock is a fake clock whose timers deliver a tick only when a case
-// sends it. A case can then deliver the tick after the deadline, as a Clock
-// may. Its methods are safe for concurrent use: the fake clock guards
-// itself, and created is a channel.
+// sends it. A case can then deliver the tick while the time of the clock is
+// before the deadline, as a Clock that moved back does. Its methods are safe for
+// concurrent use: the fake clock guards itself, and created is a channel.
 type lateClock struct {
 	*fake.Clock
 
@@ -126,15 +184,70 @@ func (c *lateClock) NewTimer(d time.Duration) clock.Timer {
 	return t
 }
 
-// limiterCall is one call of a Limiter that took or reserved units. start
-// and end are nanoseconds since originUTC, and end is -1 while the call
-// waits. ok reports whether the call returned nil. A call that waits has
-// its timer, the channel of its result and the cancellation of its context.
+// grantLog starts calls of WaitNPriority on goroutines of a synctest bubble,
+// and records each call that returns, in the order of the returns.
+type grantLog struct {
+	l   *resilience.Limiter
+	clk clock.Clock
+
+	mu sync.Mutex
+
+	// started is the number of calls that start started.
+	started int
+
+	// returns are the calls that returned. mu guards them.
+	returns []returned
+}
+
+// returned is a call of a grantLog that returned: the number of the call
+// in the order of the starts, the time of the clock since originUTC when it
+// returned, and its error.
+type returned struct {
+	call int
+	at   time.Duration
+	err  error
+}
+
+// start calls WaitNPriority(ctx, n, p) on a new goroutine, and returns the
+// number of the call. It waits until every other goroutine of the bubble
+// blocks, so the call has returned or waits when start returns.
+func (g *grantLog) start(ctx context.Context, n int64, p resilience.Priority) int {
+	call := g.started
+	g.started++
+	go func() {
+		err := g.l.WaitNPriority(ctx, n, p)
+
+		g.mu.Lock()
+		defer g.mu.Unlock()
+		g.returns = append(g.returns, returned{call: call, at: g.clk.Time().Sub(originUTC), err: err})
+	}()
+	synctest.Wait()
+
+	return call
+}
+
+// calls returns the calls that returned, ordered by the time of their
+// return and then by their number. Calls that return at one time return in
+// the order in which their goroutines run.
+func (g *grantLog) calls() []returned {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+
+	return slices.SortedFunc(slices.Values(g.returns), func(a, b returned) int {
+		return cmp.Or(cmp.Compare(a.at, b.at), cmp.Compare(a.call, b.call))
+	})
+}
+
+// limiterCall is one call of a Limiter in the machine of limiterSteps.
+// start and end are nanoseconds since originUTC, and end is -1 while the
+// call waits. ok reports whether the call returned nil, and returned that
+// the machine received the result from done. A call of WaitNPriority has
+// the channel of its result and the cancellation of its context.
 type limiterCall struct {
 	n, start, end int64
-	ok            bool
+	priority      resilience.Priority
+	ok, returned  bool
 
-	timer  *lateTimer
 	done   chan error
 	cancel context.CancelFunc
 }
@@ -212,6 +325,30 @@ func TestLimiter(t *testing.T) {
 				assert.True(t, l.AllowN(tt.burst), "the bucket must have Burst units")
 			})
 		}
+	})
+
+	t.Run("Priority", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("Valid", func(t *testing.T) {
+			t.Parallel()
+
+			tests := []struct {
+				name string
+				give resilience.Priority
+				want bool
+			}{
+				{name: "reports true for PriorityNormal", give: resilience.PriorityNormal, want: true},
+				{name: "reports true for PriorityHigh", give: resilience.PriorityHigh, want: true},
+				{name: "reports false for a value above PriorityHigh", give: 2, want: false},
+			}
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					t.Parallel()
+					assert.Equal(t, tt.give.Valid(), tt.want, "Valid must accept the two priorities alone")
+				})
+			}
+		})
 	})
 
 	t.Run("AllowN", func(t *testing.T) {
@@ -306,14 +443,14 @@ func TestLimiter(t *testing.T) {
 			assert.True(t, l.AllowN(0), "an empty bucket must admit zero units")
 		})
 
-		t.Run("reports true for an n of zero while a waiting call owes the units", func(t *testing.T) {
+		t.Run("reports true for an n of zero while a call waits", func(t *testing.T) {
 			t.Parallel()
 			c := fake.New(originUTC)
 			l := drained(t, c)
 
 			got := startWait(bounded(t), l, 5)
 			c.AwaitWaiters(1)
-			assert.True(t, l.AllowN(0), "a bucket that owes units to a waiting call must admit zero units")
+			assert.True(t, l.AllowN(0), "a bucket for which a call waits must admit zero units")
 
 			c.Advance(500 * time.Millisecond)
 			assert.NoError(t, await(t, got, "WaitN must return"), "the waiting call must take its units")
@@ -331,6 +468,15 @@ func TestLimiter(t *testing.T) {
 			t.Parallel()
 			l := newLimiter(t, resilience.LimiterConfig{Clock: fake.New(originUTC), Rate: 10, Burst: 10})
 			assert.False(t, l.AllowN(11), "more units than the burst must be refused")
+			assert.True(t, l.AllowN(10), "a refused call above the burst must take nothing")
+		})
+
+		t.Run("reports false for an n above Burst whose cost wraps an int64", func(t *testing.T) {
+			t.Parallel()
+			// 18,446,744,074 units of 10^9 nanounits each wrap an int64 to
+			// 290,448,384 nanounits, the cost of 29 ms at Rate 10.
+			l := newLimiter(t, resilience.LimiterConfig{Clock: fake.New(originUTC), Rate: 10, Burst: 10})
+			assert.False(t, l.AllowN(18_446_744_074), "more units than the burst must be refused whatever they cost")
 			assert.True(t, l.AllowN(10), "a refused call above the burst must take nothing")
 		})
 
@@ -352,39 +498,34 @@ func TestLimiter(t *testing.T) {
 			assert.True(t, l.AllowN(math.MaxInt64), "the zero Limiter must admit any number of units")
 		})
 
-		t.Run("reports false while a waiting call owes the units", func(t *testing.T) {
+		t.Run("reports false while a call waits", func(t *testing.T) {
 			t.Parallel()
 			c := fake.New(originUTC)
 			l := drained(t, c)
 
 			got := startWait(bounded(t), l, 5)
 			c.AwaitWaiters(1)
-			assert.False(t, l.AllowN(1), "units that a waiting call reserved must not go to another")
+			c.Advance(100 * time.Millisecond)
+			assert.False(t, l.AllowN(1), "the unit that the bucket gained must go to the waiting call")
 
-			c.Advance(500 * time.Millisecond)
+			c.Advance(400 * time.Millisecond)
 			assert.NoError(t, await(t, got, "WaitN must return"), "the waiting call must take its units")
 			assert.False(t, l.AllowN(1), "the units must go to the waiting call")
 
 			c.Advance(100 * time.Millisecond)
-			assert.True(t, l.AllowN(1), "the bucket must add units after the waiting call took its own")
+			assert.True(t, l.AllowN(1), "the bucket must add units after the waiting call took its units")
 		})
 
-		t.Run("reports false while the reservations exceed a Duration", func(t *testing.T) {
+		t.Run("reports false for units whose time passes the largest Duration", func(t *testing.T) {
 			t.Parallel()
+			// Two costs of the largest Burst at Rate 1 fall 0.86 s short of the
+			// largest Duration, so the time of the second call passes it 1 s
+			// after the start.
 			c := fake.New(originUTC)
 			l := newLimiter(t, resilience.LimiterConfig{Clock: c, Rate: 1, Burst: maxBurst})
+			c.Advance(time.Second)
 			assert.True(t, l.AllowN(maxBurst), "the largest bucket must have Burst units")
-
-			ctx, cancel := context.WithCancel(bounded(t))
-			defer cancel()
-
-			got := startWait(ctx, l, maxBurst)
-			c.AwaitWaiters(1)
-			assert.False(t, l.AllowN(1), "a unit beyond the largest Duration must be refused")
-
-			cancel()
-			assert.ErrorIs(t, await(t, got, "WaitN must return"), context.Canceled,
-				"the waiting call must end with its context")
+			assert.False(t, l.AllowN(maxBurst), "units beyond the largest Duration must be refused")
 		})
 
 		t.Run("admits at most the units of the bucket across concurrent callers", func(t *testing.T) {
@@ -459,25 +600,52 @@ func TestLimiter(t *testing.T) {
 				"the call must take its units once the bucket added them")
 		})
 
-		t.Run("admits waiting calls in the order in which they started", func(t *testing.T) {
+		t.Run("grants waiting calls in the order in which they started", func(t *testing.T) {
 			t.Parallel()
-			c := &timedClock{Clock: fake.New(originUTC)}
-			l := drained(t, c)
+			synctest.Test(t, func(t *testing.T) {
+				c := &timedClock{Clock: fake.New(originUTC)}
+				l := drained(t, c)
+				first := startWait(t.Context(), l, 5)
+				synctest.Wait()
+				second := startWait(t.Context(), l, 5)
+				synctest.Wait()
+				assert.Equal(t, c.durations(), []time.Duration{500 * time.Millisecond},
+					"only the head must wait on a timer")
 
-			first := startWait(bounded(t), l, 5)
-			c.AwaitWaiters(1)
-			second := startWait(bounded(t), l, 5)
-			c.AwaitWaiters(2)
-			assert.Equal(t, c.durations(), []time.Duration{500 * time.Millisecond, time.Second},
-				"the second call must wait behind the first")
+				c.Advance(500 * time.Millisecond)
+				synctest.Wait()
+				assert.Length(t, first, 1, "the first call must take its units first")
+				assert.Empty(t, second, "the second call must wait behind the first")
+				assert.Equal(t, c.durations(), []time.Duration{500 * time.Millisecond, 500 * time.Millisecond},
+					"the second call must wait on a timer once it is the head")
 
-			c.Advance(500 * time.Millisecond)
-			assert.NoError(t, await(t, first, "the first WaitN must return"),
-				"the first call must take its units first")
+				c.Advance(500 * time.Millisecond)
+				synctest.Wait()
+				assert.NoError(t, <-first, "the first call must take its units")
+				assert.NoError(t, <-second, "the second call must take its units after the first")
+			})
+		})
 
-			c.Advance(500 * time.Millisecond)
-			assert.NoError(t, await(t, second, "the second WaitN must return"),
-				"the second call must take its units after the first")
+		t.Run("waits behind a call of PriorityHigh that starts after it", func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				c := fake.New(originUTC)
+				l := drained(t, c)
+				g := &grantLog{l: l, clk: c}
+				normal := startWait(t.Context(), l, 5)
+				synctest.Wait()
+				high := g.start(t.Context(), 5, resilience.PriorityHigh)
+
+				c.Advance(500 * time.Millisecond)
+				synctest.Wait()
+				assert.Equal(t, g.calls(), []returned{{call: high, at: 500 * time.Millisecond}},
+					"the call of PriorityHigh must take its units first")
+				assert.Empty(t, normal, "WaitN must wait at PriorityNormal")
+
+				c.Advance(500 * time.Millisecond)
+				synctest.Wait()
+				assert.NoError(t, <-normal, "WaitN must take its units after the call of PriorityHigh")
+			})
 		})
 
 		t.Run("returns the error of a context that ends during the wait", func(t *testing.T) {
@@ -494,7 +662,7 @@ func TestLimiter(t *testing.T) {
 				"a cancelled wait must return the error of the context")
 		})
 
-		t.Run("gives the reservation back when the context ends during the wait", func(t *testing.T) {
+		t.Run("takes no units for a call whose context ends during the wait", func(t *testing.T) {
 			t.Parallel()
 			c := fake.New(originUTC)
 			l := drained(t, c)
@@ -507,7 +675,7 @@ func TestLimiter(t *testing.T) {
 				"a cancelled wait must return the error of the context")
 
 			c.Advance(time.Second)
-			assert.True(t, l.AllowN(10), "a cancelled wait must give its 5 units back")
+			assert.True(t, l.AllowN(10), "a cancelled wait must leave the bucket its 10 units")
 		})
 
 		ended := []struct {
@@ -607,52 +775,238 @@ func TestLimiter(t *testing.T) {
 
 		t.Run("waits while the time that the bucket owes exceeds a Duration", func(t *testing.T) {
 			t.Parallel()
-			c := fake.New(originUTC)
+			// Two costs of the largest Burst at Rate 1 fall 0.86 s short of the
+			// largest Duration, so the time of the call passes it 1 s after the
+			// start, and saturates at it.
+			c := &timedClock{Clock: fake.New(originUTC)}
 			l := newLimiter(t, resilience.LimiterConfig{Clock: c, Rate: 1, Burst: maxBurst})
+			c.Advance(time.Second)
 			assert.True(t, l.AllowN(maxBurst), "the largest bucket must have Burst units")
 
 			ctx, cancel := context.WithCancel(bounded(t))
-			first := startWait(ctx, l, maxBurst)
+			got := startWait(ctx, l, maxBurst)
 			c.AwaitWaiters(1)
-			second := startWait(ctx, l, maxBurst)
-			c.AwaitWaiters(2)
+			assert.Equal(t, c.durations(),
+				[]time.Duration{time.Duration(math.MaxInt64) - maxBurst*time.Second - time.Second},
+				"the head must wait until the largest Duration less the time that fills the bucket")
 
 			cancel()
-			expect.ErrorIs(t, await(t, first, "the first WaitN must return"), context.Canceled,
-				"a call that owes about 146 years must wait until its context ends")
-			expect.ErrorIs(t, await(t, second, "the second WaitN must return"), context.Canceled,
+			assert.ErrorIs(t, await(t, got, "WaitN must return"), context.Canceled,
 				"a call past the largest Duration must wait until its context ends")
 		})
 
-		tests := []struct {
-			name      string
-			giveRate  int64
-			giveChunk int64
-		}{
-			{
-				name:      "refunds the exact units of a cancelled call at Burst 3 and 2 units per nanosecond",
-				giveRate:  2_000_000_000,
-				giveChunk: 3,
-			},
-			{
-				name:      "refunds the exact units of a cancelled call at Burst 4,096 and 3 units per nanosecond",
-				giveRate:  3_000_000_000,
-				giveChunk: 4096,
-			},
-			{
-				name:      "refunds the exact units of a cancelled call at Burst 1,048,575 and 2 units per nanosecond",
-				giveRate:  2_000_000_000,
-				giveChunk: 1<<20 - 1,
-			},
-		}
-		for _, tt := range tests {
-			t.Run(tt.name, func(t *testing.T) {
+		t.Run("waits again when its timer ends before the bucket has the units", func(t *testing.T) {
+			t.Parallel()
+			clk := &lateClock{Clock: fake.New(originUTC), created: make(chan *lateTimer, 1)}
+			l := drained(t, clk)
+
+			got := startWait(bounded(t), l, 5)
+			early := await(t, clk.created, "the head must start a timer")
+			early.c <- clk.Time()
+			timer := await(t, clk.created, "a head whose timer ended early must start another timer")
+			assert.Equal(t, timer.deadline.Sub(clk.Time()), 500*time.Millisecond,
+				"the head must wait again for the units that the bucket lacks")
+
+			clk.Advance(500 * time.Millisecond)
+			timer.c <- clk.Time()
+			assert.NoError(t, await(t, got, "WaitN must return"), "the head must take its units at the deadline")
+		})
+	})
+
+	t.Run("WaitNPriority", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns ErrPriority for a priority above PriorityHigh", func(t *testing.T) {
+			t.Parallel()
+			l := newLimiter(t, resilience.LimiterConfig{Clock: fake.New(originUTC), Rate: 10, Burst: 10})
+			prop.ErrorIs(t, func(p resilience.Priority) error {
+				return l.WaitNPriority(t.Context(), 1, p)
+			}, resilience.ErrPriority, "a priority other than the two must be refused",
+				prop.Using(prop.Integer[resilience.Priority](2, math.MaxUint8)), prop.Example(resilience.Priority(2)))
+			expect.Equal(t, errs.Classify(l.WaitNPriority(t.Context(), 1, 2)), errs.Invalid,
+				"ErrPriority must classify as Invalid")
+			expect.True(t, l.AllowN(10), "a refused call must take nothing")
+		})
+
+		t.Run("returns ErrPriority for a priority above PriorityHigh with a Rate of zero", func(t *testing.T) {
+			t.Parallel()
+			var l resilience.Limiter
+			assert.ErrorIs(t, l.WaitNPriority(t.Context(), 1, 2), resilience.ErrPriority,
+				"a priority other than the two must be refused without a limit")
+		})
+
+		t.Run("returns the error of a context that ended before the call for a priority that is not valid",
+			func(t *testing.T) {
 				t.Parallel()
-				returned, bound := refundTrace(t, tt.giveRate, tt.giveChunk)
-				assert.InRange(t, returned, 0, float64(bound),
-					"the window must admit at most the Rate times 1 ns, Burst and the open reservations")
+				l := newLimiter(t, resilience.LimiterConfig{Clock: fake.New(originUTC), Rate: 10, Burst: 10})
+				assert.HonoursCancellation(t, func(ctx context.Context) error { return l.WaitNPriority(ctx, 1, 2) },
+					"an ended context must stop the call before its priority")
 			})
-		}
+
+		t.Run("returns a flush behind the chunks of four compactions after 1 second", func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				c := fake.New(originUTC)
+				l := newLimiter(t, resilience.LimiterConfig{Clock: c, Rate: mib, Burst: mib})
+				g := &grantLog{l: l, clk: c}
+				compactions := make([]int, 0, 4)
+				for range 4 {
+					compactions = append(compactions, g.start(t.Context(), mib, resilience.PriorityNormal))
+				}
+				flush := g.start(t.Context(), mib, resilience.PriorityHigh)
+				for range 4 {
+					c.Advance(time.Second)
+					synctest.Wait()
+				}
+				assert.Equal(t, g.calls(), []returned{
+					{call: compactions[0]},
+					{call: flush, at: time.Second},
+					{call: compactions[1], at: 2 * time.Second},
+					{call: compactions[2], at: 3 * time.Second},
+					{call: compactions[3], at: 4 * time.Second},
+				}, "the flush must take its units after the first chunk, which took the full bucket at once")
+			})
+		})
+
+		t.Run("grants a call of PriorityHigh ahead of the call of PriorityNormal that is the head", func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				c := &timedClock{Clock: fake.New(originUTC)}
+				l := drained(t, c)
+				g := &grantLog{l: l, clk: c}
+				normal := g.start(t.Context(), 5, resilience.PriorityNormal)
+				c.Advance(200 * time.Millisecond)
+				synctest.Wait()
+
+				// The bucket has 2 units, so the call of PriorityHigh takes them
+				// at once, and the call of PriorityNormal waits again for its 5
+				// units.
+				high := g.start(t.Context(), 2, resilience.PriorityHigh)
+				assert.Equal(t, c.durations(), []time.Duration{500 * time.Millisecond, 500 * time.Millisecond},
+					"the head must wait on a new timer after a grant to another call")
+				assert.Equal(t, c.pending(), 1, "the head must stop the timer that it no longer reads")
+				c.Advance(500 * time.Millisecond)
+				synctest.Wait()
+				assert.Equal(t, g.calls(), []returned{
+					{call: high, at: 200 * time.Millisecond},
+					{call: normal, at: 700 * time.Millisecond},
+				}, "the call of PriorityHigh must take its units before the head of PriorityNormal")
+			})
+		})
+
+		t.Run("grants every tenth unit to a call of PriorityNormal while calls of PriorityHigh wait",
+			func(t *testing.T) {
+				t.Parallel()
+				synctest.Test(t, func(t *testing.T) {
+					c := fake.New(originUTC)
+					l := oneUnit(t, c)
+					g := &grantLog{l: l, clk: c}
+					first, second := g.start(t.Context(), 1, resilience.PriorityNormal),
+						g.start(t.Context(), 1, resilience.PriorityNormal)
+					highs := make([]int, 0, 2*shareRun+2)
+					for range 2*shareRun + 2 {
+						highs = append(highs, g.start(t.Context(), 1, resilience.PriorityHigh))
+					}
+					order := slices.Concat(highs[:shareRun], []int{first}, highs[shareRun:2*shareRun], []int{second},
+						highs[2*shareRun:])
+					want := make([]returned, 0, len(order))
+					for i, call := range order {
+						c.Advance(100 * time.Millisecond)
+						synctest.Wait()
+						want = append(want, returned{call: call, at: time.Duration(i+1) * 100 * time.Millisecond})
+					}
+					assert.Equal(t, g.calls(), want, "one grant in ten must go to the oldest call of PriorityNormal")
+				})
+			})
+
+		t.Run("keeps the tenth grant for the call of PriorityNormal when a call of PriorityHigh starts",
+			func(t *testing.T) {
+				t.Parallel()
+				synctest.Test(t, func(t *testing.T) {
+					c := fake.New(originUTC)
+					l := oneUnit(t, c)
+					g := &grantLog{l: l, clk: c}
+					normal := g.start(t.Context(), 1, resilience.PriorityNormal)
+					want := make([]returned, 0, shareRun+2)
+					for i := range shareRun {
+						high := g.start(t.Context(), 1, resilience.PriorityHigh)
+						c.Advance(100 * time.Millisecond)
+						synctest.Wait()
+						want = append(want, returned{call: high, at: time.Duration(i+1) * 100 * time.Millisecond})
+					}
+					late := g.start(t.Context(), 1, resilience.PriorityHigh)
+					for range 2 {
+						c.Advance(100 * time.Millisecond)
+						synctest.Wait()
+					}
+					want = append(want, returned{call: normal, at: time.Second},
+						returned{call: late, at: 1100 * time.Millisecond})
+					assert.Equal(t, g.calls(), want, "a call of PriorityHigh must wait behind the tenth grant")
+				})
+			})
+
+		t.Run("starts the share again when no call of PriorityNormal waits", func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				c := fake.New(originUTC)
+				l := oneUnit(t, c)
+				g := &grantLog{l: l, clk: c}
+				ctx, cancel := context.WithCancel(t.Context())
+				gone := g.start(ctx, 1, resilience.PriorityNormal)
+				highs := make([]int, 0, 15)
+				for range 15 {
+					highs = append(highs, g.start(t.Context(), 1, resilience.PriorityHigh))
+				}
+				for range 5 {
+					c.Advance(100 * time.Millisecond)
+					synctest.Wait()
+				}
+				cancel()
+				synctest.Wait()
+				want := make([]returned, 0, 17)
+				for i := range 4 {
+					want = append(want, returned{call: highs[i], at: time.Duration(i+1) * 100 * time.Millisecond})
+				}
+				// The cancelled call returns at the time of the fifth grant, and
+				// it started before the call of that grant.
+				want = append(want, returned{call: gone, at: 500 * time.Millisecond, err: context.Canceled},
+					returned{call: highs[4], at: 500 * time.Millisecond})
+
+				// The call of PriorityNormal that starts now waits for nine
+				// grants to calls of PriorityHigh, not for the four that the
+				// count of the cancelled call had left.
+				normal := g.start(t.Context(), 1, resilience.PriorityNormal)
+				order := slices.Concat(highs[5:5+shareRun], []int{normal}, highs[5+shareRun:])
+				for i, call := range order {
+					c.Advance(100 * time.Millisecond)
+					synctest.Wait()
+					want = append(want, returned{call: call, at: time.Duration(6+i) * 100 * time.Millisecond})
+				}
+				assert.Equal(t, g.calls(), want, "the count of the grants must start again without a waiting call")
+			})
+		})
+
+		t.Run("lets the next call take its units at once when the head leaves", func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				c := &timedClock{Clock: fake.New(originUTC)}
+				l := newLimiter(t, resilience.LimiterConfig{Clock: c, Rate: 10, Burst: 10})
+				assert.True(t, l.AllowN(8), "the bucket must admit 8 of its 10 units")
+				g := &grantLog{l: l, clk: c}
+				ctx, cancel := context.WithCancel(t.Context())
+				head := g.start(ctx, 5, resilience.PriorityNormal)
+				next := g.start(t.Context(), 2, resilience.PriorityNormal)
+				cancel()
+				synctest.Wait()
+				assert.Equal(t, g.calls(), []returned{
+					{call: head, err: context.Canceled},
+					{call: next},
+				}, "the call behind a head that leaves must take the 2 units of the bucket at once")
+				assert.Equal(t, c.durations(), []time.Duration{300 * time.Millisecond},
+					"the call behind the head must start no timer")
+				assert.Equal(t, c.pending(), 0, "the head that leaves must stop its timer")
+			})
+		})
 	})
 
 	t.Run("Burst", func(t *testing.T) {
@@ -693,15 +1047,19 @@ func TestLimiter(t *testing.T) {
 		})
 	})
 
-	t.Run("admits no more units in a window than the Rate, Burst and the open reservations", func(t *testing.T) {
-		t.Parallel()
-		prop.ForAll(t, limiterContract, limiterSteps)
-	})
+	t.Run("grants units by an exact model of the bucket, the queues and the share under any sequence of calls",
+		func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				prop.ForAll(t, limiterContract, limiterSteps)
+			})
+		})
 }
 
-// TestLimiterAllocs checks the allocation contract of AllowN, of a WaitN
-// that does not wait and of Burst. MaxAllocs counts the allocations of the
-// whole process, so the test does not run in parallel.
+// TestLimiterAllocs checks the allocation contract of AllowN, of the calls
+// of WaitN and WaitNPriority that do not wait and of Burst. MaxAllocs counts
+// the allocations of the whole process, so the test does not run in
+// parallel.
 func TestLimiterAllocs(t *testing.T) {
 	ctx := t.Context()
 
@@ -728,6 +1086,20 @@ func TestLimiterAllocs(t *testing.T) {
 		})
 	})
 
+	t.Run("WaitNPriority", func(t *testing.T) {
+		t.Run("of a call that does not wait", func(t *testing.T) {
+			c := fake.New(originUTC)
+			l := newLimiter(t, resilience.LimiterConfig{Clock: c, Rate: math.MaxInt32, Burst: math.MaxInt32})
+
+			var err error
+			expect.MaxAllocs(t, func() {
+				c.Advance(time.Nanosecond)
+				err = l.WaitNPriority(ctx, 1, resilience.PriorityHigh)
+			}, 0, "a WaitNPriority that does not wait must not allocate")
+			assert.NoError(t, err, "the test must measure an admitted call")
+		})
+	})
+
 	t.Run("Burst", func(t *testing.T) {
 		l := newLimiter(t, resilience.LimiterConfig{Clock: fake.New(originUTC), Rate: 10, Burst: 7})
 
@@ -737,8 +1109,9 @@ func TestLimiterAllocs(t *testing.T) {
 	})
 }
 
-// BenchmarkLimiter reports the cost of AllowN, of a WaitN that does not wait
-// and of Burst, and fails when one allocates.
+// BenchmarkLimiter reports the cost of AllowN, of the calls of WaitN and
+// WaitNPriority that do not wait and of Burst, and fails when one
+// allocates.
 func BenchmarkLimiter(b *testing.B) {
 	ctx := b.Context()
 
@@ -771,6 +1144,25 @@ func BenchmarkLimiter(b *testing.B) {
 			for c.Loop() {
 				clk.Advance(time.Nanosecond)
 				err = l.WaitN(ctx, 1)
+			}
+
+			assert.NoError(b, err, "the benchmark must measure an admitted call")
+		})
+	})
+
+	b.Run("WaitNPriority", func(b *testing.B) {
+		b.Run("of a call that does not wait", func(b *testing.B) {
+			clk := fake.New(originUTC)
+			l := newLimiter(b, resilience.LimiterConfig{Clock: clk, Rate: math.MaxInt32, Burst: math.MaxInt32})
+
+			var err error
+
+			c := bench.Start(b).MaxAllocs(0)
+			defer c.End()
+
+			for c.Loop() {
+				clk.Advance(time.Nanosecond)
+				err = l.WaitNPriority(ctx, 1, resilience.PriorityHigh)
 			}
 
 			assert.NoError(b, err, "the benchmark must measure an admitted call")
@@ -827,123 +1219,142 @@ func drained(tb testing.TB, c clock.Clock) *resilience.Limiter {
 	return l
 }
 
-// refundTrace runs a trace in which a refund rounded to whole nanoseconds
-// funds more units than it took. It drains a Limiter of Rate rate and
-// Burst chunk, starts three waiting calls of chunk units, and moves the
-// clock past their deadlines. In a window of 1 ns it delivers the tick of
-// the first call, and takes two calls with AllowN after it and after the
-// cancellation of each of the other two calls. The two calls are of sizes
-// that fit the rounding of the cost of chunk units. refundTrace returns the
-// units of the calls that succeeded in the window and the bound of the
-// window: the Rate times 1 ns, Burst and the chunks of the three calls.
-// rate is a whole number of units per nanosecond.
-func refundTrace(tb testing.TB, rate, chunk int64) (returned, bound int64) {
+// oneUnit returns a Limiter on c with Rate 10 and Burst 1 whose bucket is
+// empty at the current time of c, and fails tb when AllowN refuses the unit
+// of the new bucket. A waiting call of one unit then takes its unit every
+// 100 ms.
+func oneUnit(tb testing.TB, c clock.Clock) *resilience.Limiter {
 	tb.Helper()
 
-	perNS := rate / nsPerSecond
-	ceilNS := (chunk + perNS - 1) / perNS
-	pair := [2]int64{(ceilNS - 1) * perNS, perNS}
+	l := newLimiter(tb, resilience.LimiterConfig{Clock: c, Rate: 10, Burst: 1})
+	assert.True(tb, l.AllowN(1), "a full bucket must have its unit")
 
-	clk := &lateClock{Clock: fake.New(originUTC), created: make(chan *lateTimer, 1)}
-	l := newLimiter(tb, resilience.LimiterConfig{Clock: clk, Rate: rate, Burst: chunk})
-	assert.True(tb, l.AllowN(chunk), "a full bucket must have Burst units")
-
-	calls := make([]*limiterCall, 3)
-	for i := range calls {
-		ctx, cancel := context.WithCancel(bounded(tb))
-		tb.Cleanup(cancel)
-		call := &limiterCall{n: chunk, done: make(chan error, 1), cancel: cancel}
-		go func() { call.done <- l.WaitN(ctx, call.n) }()
-		call.timer = await(tb, clk.created, "a WaitN on an empty bucket must start a timer")
-		calls[i] = call
-	}
-
-	clk.Advance(time.Duration(4*ceilNS) + time.Nanosecond)
-	assert.False(tb, clk.Time().Before(calls[0].timer.deadline), "the timer of the first call must be due")
-	calls[0].timer.c <- clk.Time()
-	assert.NoError(tb, await(tb, calls[0].done, "the first WaitN must return"), "the first call must take its units")
-
-	returned = chunk
-	for i, call := range calls {
-		if i > 0 {
-			call.cancel()
-			assert.ErrorIs(tb, await(tb, call.done, "a cancelled WaitN must return"), context.Canceled,
-				"a cancelled call must return the error of its context")
-		}
-
-		for _, n := range pair {
-			if l.AllowN(n) {
-				returned += n
-			}
-		}
-	}
-
-	return returned, perNS + chunk + 3*chunk
+	return l
 }
 
-// limiterSteps runs the steps of a machine over a Limiter on a lateClock.
-// The actions are an AllowN, a WaitN, the late tick of the timer of a
-// waiting call, the cancellation of a waiting call, and an advance of the
-// clock by up to 3 ns. At most maxWaiting calls wait at once.
+// limiterSteps runs the steps of a machine over a Limiter on a fake clock,
+// inside the synctest bubble of its test. The actions are an AllowN, a
+// WaitNPriority at a drawn priority, the cancellation of a waiting call, and
+// an advance of the clock by a few nanoseconds, or to the end of the timer
+// of the head and a few nanoseconds past it. At most maxWaiting calls wait
+// at once. Every action ends with synctest.Wait, so each call that the
+// Limiter grants has returned.
 //
 // A model keeps the time of the generic cell rate algorithm as an exact
-// big.Rat of nanoseconds. Each AllowN must report what the model admits,
-// and each WaitN must return at once or start the timer of the model's
-// wait, rounded up to a whole nanosecond.
+// big.Rat of nanoseconds, the queue of each priority, the head, the end of
+// the timer of the head and the count of the grants to calls of
+// PriorityHigh. After every step the invariant checks that the calls that
+// returned are the calls that the model granted or cancelled, that the
+// timers of the Limiter are the timers of the heads of the model, and that
+// the head has the only timer that no Stop stopped before its deadline.
 //
-// After every step the invariant takes each window from a time s to the
-// time of the clock, both included. It checks that the units of the calls
-// that returned nil in the window stay within the Rate times the length of
-// the window, Burst and the units of the calls that waited before s. A
-// window of length 0 contains the calls of one instant, so the check also
-// bounds the units that a full bucket admits at once.
+// The invariant also takes each window from a time s to the time of the
+// clock, both included. It checks that the units of the calls that returned
+// nil in the window do not exceed the Rate times the length of the window
+// plus Burst. A window of length 0 contains the calls of one instant, so the
+// check also bounds the units that a full bucket admits at once.
 func limiterSteps(c *prop.Case) {
 	rate := c.Draw(limiterRates, "rate")
 	burst := c.Draw(prop.Integer[int64](1, 16), "burst")
-	clk := &lateClock{Clock: fake.New(originUTC), created: make(chan *lateTimer, 1)}
+	clk := &timedClock{Clock: fake.New(originUTC)}
 	l, err := resilience.NewLimiter(resilience.LimiterConfig{Clock: clk, Rate: rate, Burst: burst})
 	assert.NoError(c, err, "NewLimiter must accept the config")
 
 	ctx, cancel := context.WithCancel(c.Context())
 	c.Cleanup(cancel)
 
-	var calls, waiting []*limiterCall
+	var (
+		calls  []*limiterCall
+		queues [2][]*limiterCall
+		head   *limiterCall
+		// deadline is the time of the end of the timer of the head, in
+		// nanoseconds since originUTC.
+		deadline int64
+		// highs is the number of grants in a row to calls of PriorityHigh
+		// while a call of PriorityNormal waited.
+		highs  int
+		timers []time.Duration
+	)
 
 	// model is the time of the bucket in nanoseconds since originUTC, and
 	// fill is the time in which an empty bucket gains Burst units.
 	model := new(big.Rat)
 	fill := big.NewRat(burst*nsPerSecond, rate)
+	now := func() int64 { return int64(clk.Time().Sub(originUTC)) }
 
-	// gap returns the model's time once it covered n more units at the time
-	// of the clock, and that time minus the time of the clock.
-	gap := func(n int64) (after, ahead *big.Rat) {
-		now := new(big.Rat).SetInt64(int64(clk.Time().Sub(originUTC)))
+	// lack returns the model's time once it covered n more units at the
+	// time of the clock, and the time in which the bucket gains the units of
+	// n that it lacks: zero or less when the bucket has them.
+	lack := func(n int64) (after, wait *big.Rat) {
+		at := new(big.Rat).SetInt64(now())
 		after = new(big.Rat).Set(model)
-		if after.Cmp(now) < 0 {
-			after.Set(now)
+		if after.Cmp(at) < 0 {
+			after.Set(at)
 		}
 		after.Add(after, big.NewRat(n*nsPerSecond, rate))
+		wait = new(big.Rat).Sub(after, at)
 
-		return after, new(big.Rat).Sub(after, now)
+		return after, wait.Sub(wait, fill)
 	}
 
-	// due returns the waiting calls whose ticks a case may deliver.
-	due := func() []*limiterCall {
-		var ready []*limiterCall
-		for _, call := range waiting {
-			if !clk.Time().Before(call.timer.deadline) {
-				ready = append(ready, call)
-			}
+	// leave removes call from the queue of its priority. With no call of
+	// PriorityNormal left, the count of the grants starts again.
+	leave := func(call *limiterCall) {
+		queues[call.priority] = slices.DeleteFunc(queues[call.priority],
+			func(w *limiterCall) bool { return w == call })
+		if len(queues[resilience.PriorityNormal]) == 0 {
+			highs = 0
 		}
-
-		return ready
 	}
 
-	// end records that call returned at the time of the clock, and whether
-	// it returned nil.
-	end := func(call *limiterCall, ok bool) {
-		call.end, call.ok = int64(clk.Time().Sub(originUTC)), ok
-		waiting = slices.DeleteFunc(waiting, func(w *limiterCall) bool { return w == call })
+	// settle grants each head that the bucket covers at the time of the
+	// clock, and starts the timer of the head that it does not cover. The
+	// head is the oldest call of PriorityHigh, or the oldest call of
+	// PriorityNormal when no call of PriorityHigh waits or after shareRun
+	// grants in a row to calls of PriorityHigh while it waited. A head keeps
+	// its timer until the timer ends, and a new head starts a timer.
+	settle := func() {
+		for {
+			high, normal := queues[resilience.PriorityHigh], queues[resilience.PriorityNormal]
+			var next *limiterCall
+			if len(high) != 0 && (len(normal) == 0 || highs < shareRun) {
+				next = high[0]
+			} else if len(normal) != 0 {
+				next = normal[0]
+			}
+			if next == nil {
+				head = nil
+
+				return
+			}
+			if next == head && now() < deadline {
+				return
+			}
+
+			head = next
+			after, wait := lack(next.n)
+			if wait.Sign() > 0 {
+				// QuoRem rounds the positive wait down, and a remainder
+				// rounds it up to the next nanosecond.
+				whole, rest := new(big.Int).QuoRem(wait.Num(), wait.Denom(), new(big.Int))
+				if rest.Sign() > 0 {
+					whole.Add(whole, big.NewInt(1))
+				}
+				timers = append(timers, time.Duration(whole.Int64()))
+				deadline = now() + whole.Int64()
+
+				return
+			}
+
+			model.Set(after)
+			if next.priority == resilience.PriorityNormal {
+				highs = 0
+			} else if len(normal) != 0 {
+				highs++
+			}
+			leave(next)
+			next.end, next.ok = now(), true
+		}
 	}
 
 	stateful.Steps(c, stateful.Machine[struct{}]{
@@ -953,131 +1364,131 @@ func limiterSteps(c *prop.Case) {
 				Input: func(c *prop.Case, _ struct{}) any { return c.Draw(prop.Integer[int64](0, burst+1), "n") },
 				Run: func(c *prop.Case, _ int, in any) {
 					n := in.(int64)
-					if n == 0 {
-						assert.True(c, l.AllowN(0), "AllowN must admit zero units")
-
-						return
-					}
-
-					after, ahead := gap(n)
-					fits := n <= burst && ahead.Cmp(fill) <= 0
-					assert.Equal(c, l.AllowN(n), fits, "AllowN must admit the calls that the exact bucket covers")
-					if fits {
+					after, wait := lack(n)
+					fits := n == 0 || n <= burst && head == nil && wait.Sign() <= 0
+					assert.Equal(c, l.AllowN(n), fits,
+						"AllowN must admit the calls that the exact bucket covers while no call waits")
+					if fits && n > 0 {
 						model.Set(after)
-						at := int64(clk.Time().Sub(originUTC))
-						calls = append(calls, &limiterCall{n: n, start: at, end: at, ok: true})
+						at := now()
+						calls = append(calls, &limiterCall{n: n, start: at, end: at, ok: true, returned: true})
 					}
 				},
 			},
 			{
-				Name:    "WaitN",
-				Enabled: func(struct{}) bool { return len(waiting) < maxWaiting },
-				Input:   func(c *prop.Case, _ struct{}) any { return c.Draw(prop.Integer[int64](0, burst), "n") },
-				Run: func(c *prop.Case, _ int, in any) {
-					n := in.(int64)
-					after, ahead := gap(n)
-					wait := new(big.Rat).Sub(ahead, fill)
-
+				Name:    "WaitNPriority",
+				Enabled: func(struct{}) bool { return len(queues[0])+len(queues[1]) < maxWaiting },
+				Input: func(c *prop.Case, _ struct{}) any {
+					return limiterCall{
+						n: c.Draw(prop.Integer[int64](0, burst), "n"),
+						priority: c.Draw(prop.SampledFrom(resilience.PriorityNormal, resilience.PriorityHigh),
+							"priority"),
+					}
+				},
+				Run: func(_ *prop.Case, _ int, in any) {
+					give := in.(limiterCall)
 					callCtx, callCancel := context.WithCancel(ctx)
 					call := &limiterCall{
-						n: n, start: int64(clk.Time().Sub(originUTC)), end: -1,
+						n: give.n, priority: give.priority, start: now(), end: -1,
 						done: make(chan error, 1), cancel: callCancel,
 					}
 					calls = append(calls, call)
-					go func() { call.done <- l.WaitN(callCtx, call.n) }()
+					go func() { call.done <- l.WaitNPriority(callCtx, call.n, call.priority) }()
+					synctest.Wait()
 
-					patient := time.NewTimer(patience)
-					defer patient.Stop()
-
-					select {
-					case err := <-call.done:
-						assert.NoError(c, err, "a WaitN that the bucket covers must return nil")
-						assert.True(c, n == 0 || wait.Sign() <= 0,
-							"WaitN must return at once only when the exact bucket covers the units")
-						call.end, call.ok = call.start, true
-						callCancel()
-					case call.timer = <-clk.created:
-						// The exact wait is positive here, so QuoRem rounds it down
-						// and a remainder rounds it up to the next nanosecond.
-						whole, rest := new(big.Int).QuoRem(wait.Num(), wait.Denom(), new(big.Int))
-						if rest.Sign() > 0 {
-							whole.Add(whole, big.NewInt(1))
+					after, wait := lack(call.n)
+					if call.n == 0 || head == nil && wait.Sign() <= 0 {
+						if call.n > 0 {
+							model.Set(after)
 						}
-						assert.Equal(c, call.timer.deadline.Sub(clk.Time()), time.Duration(whole.Int64()),
-							"WaitN must wait the exact time of the bucket rounded up to a whole nanosecond")
-						waiting = append(waiting, call)
-					case <-patient.C:
-						c.Fatalf("WaitN neither returned nor started a timer within %s", patience)
-					}
+						call.end, call.ok = call.start, true
 
-					if n > 0 {
-						model.Set(after)
+						return
 					}
-				},
-			},
-			{
-				Name:    "tick",
-				Enabled: func(struct{}) bool { return len(due()) > 0 },
-				Input: func(c *prop.Case, _ struct{}) any {
-					return c.Draw(prop.Integer(0, len(due())-1), "call")
-				},
-				Run: func(c *prop.Case, _ int, in any) {
-					call := due()[in.(int)]
-					call.timer.c <- clk.Time()
-					err := await(c, call.done, "a WaitN must return once its tick arrives")
-					assert.NoError(c, err, "a call must take its units once its tick arrives")
-					end(call, true)
+					queues[call.priority] = append(queues[call.priority], call)
+					settle()
 				},
 			},
 			{
 				Name:    "cancel",
-				Enabled: func(struct{}) bool { return len(waiting) > 0 },
+				Enabled: func(struct{}) bool { return head != nil },
 				Input: func(c *prop.Case, _ struct{}) any {
-					return c.Draw(prop.Integer(0, len(waiting)-1), "call")
+					return c.Draw(prop.Integer(0, len(queues[0])+len(queues[1])-1), "call")
 				},
-				Run: func(c *prop.Case, _ int, in any) {
-					call := waiting[in.(int)]
+				Run: func(_ *prop.Case, _ int, in any) {
+					call := slices.Concat(queues[resilience.PriorityNormal], queues[resilience.PriorityHigh])[in.(int)]
 					call.cancel()
-					assert.ErrorIs(c, await(c, call.done, "a cancelled WaitN must return"), context.Canceled,
-						"a cancelled call must return the error of its context")
-					model.Sub(model, big.NewRat(call.n*nsPerSecond, rate))
-					end(call, false)
+					synctest.Wait()
+					leave(call)
+					call.end = now()
+					settle()
 				},
 			},
 			{
-				Name:  "advance",
-				Input: func(c *prop.Case, _ struct{}) any { return c.Draw(prop.Integer(0, 3), "ns") },
+				Name: "advance",
+				Input: func(c *prop.Case, _ struct{}) any {
+					d := c.Draw(prop.Integer[int64](0, 3), "ns")
+					if head != nil && c.Draw(prop.Boolean(), "to the timer") {
+						d += deadline - now()
+					}
+
+					return d
+				},
 				Run: func(_ *prop.Case, _ int, in any) {
-					clk.Advance(time.Duration(in.(int)))
+					clk.Advance(time.Duration(in.(int64)))
+					synctest.Wait()
+					settle()
 				},
 			},
 		},
 		Invariant: func(c *prop.Case, _ struct{}) {
-			now := int64(clk.Time().Sub(originUTC))
-			starts := make([]int64, 0, 2+2*len(calls))
-			starts = append(starts, 0, now)
+			assert.Equal(c, clk.durations(), timers, "the heads must wait on the exact timers of the model",
+				assert.EquateEmpty())
+			wantPending := 0
+			if head != nil {
+				wantPending = 1
+			}
+			assert.Equal(c, clk.pending(), wantPending, "the Limiter must keep one timer, the timer of its head")
 			for _, call := range calls {
-				starts = append(starts, call.start+1, call.end)
+				if call.returned {
+					continue
+				}
+				if call.end < 0 {
+					assert.Empty(c, call.done, "a call that the model does not grant must wait")
+
+					continue
+				}
+				assert.Length(c, call.done, 1, "a call must return when the model grants it or it leaves")
+				call.returned = true
+				if err := <-call.done; call.ok {
+					assert.NoError(c, err, "a call that the model grants must return nil")
+				} else {
+					assert.ErrorIs(c, err, context.Canceled, "a cancelled call must return the error of its context")
+				}
 			}
 
+			at := now()
+			starts := make([]int64, 0, 2+len(calls))
+			starts = append(starts, 0, at)
+			for _, call := range calls {
+				starts = append(starts, call.end)
+			}
 			for _, s := range starts {
-				if s < 0 || s > now {
+				if s < 0 {
 					continue
 				}
 
-				var units, open int64
+				var units int64
 				for _, call := range calls {
 					if call.ok && call.end >= s {
 						units += call.n
 					}
-					if call.start < s && (call.end < 0 || call.end >= s) {
-						open += call.n
-					}
 				}
 
 				// The values stay below 2^53, so InRange compares them exactly.
-				bound := rate*(now-s) + (burst+open)*nsPerSecond
-				assert.InRange(c, units*nsPerSecond, 0, float64(bound), limiterContract)
+				bound := rate*(at-s) + burst*nsPerSecond
+				assert.InRange(c, units*nsPerSecond, 0, float64(bound),
+					"the units of a window must not exceed the Rate times its length plus Burst")
 			}
 		},
 	})

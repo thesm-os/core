@@ -15,8 +15,9 @@ import (
 //
 // [ErrOpen] and [ErrBudget] classify as Transient under
 // [go.thesmos.sh/core/errs.Classify], so a retry wrapped around a breaker
-// backs off and tries again later. [ErrConfig] and [ErrUnits] classify as
-// Invalid, because the same call fails the same way every time.
+// backs off and tries again later. [ErrConfig], [ErrUnits] and
+// [ErrPriority] classify as Invalid, because the same call fails the same
+// way every time.
 //
 // [ErrFull] and [ErrWaitTimeout] have no class. A bulkhead bounds a
 // dependency that is slow, and a breaker acts on one that has failed.
@@ -55,9 +56,13 @@ var (
 	// may succeed later, once the budget has recovered.
 	ErrBudget = errs.WithClass(errors.New("resilience: retry budget exhausted"), errs.Transient)
 
-	// ErrUnits is returned by [Limiter.WaitN] for a negative number of
-	// units, and for a number above the limiter's burst, which its bucket
-	// never contains. A caller splits such work into calls of at most the
-	// burst. Classifies as Invalid.
+	// ErrUnits is returned by [Limiter.WaitN] and [Limiter.WaitNPriority]
+	// for a negative number of units, and for a number above the limiter's
+	// burst, which its bucket never contains. A caller splits such work into
+	// calls of at most the burst. Classifies as Invalid.
 	ErrUnits = errs.WithClass(errors.New("resilience: units outside 0 to the limiter's burst"), errs.Invalid)
+
+	// ErrPriority is returned by Limiter.WaitNPriority for a priority other
+	// than [PriorityNormal] and [PriorityHigh]. Classifies as Invalid.
+	ErrPriority = errs.WithClass(errors.New("resilience: priority other than normal and high"), errs.Invalid)
 )
