@@ -122,10 +122,11 @@ func maxEncodedLen(n int, limit uint64) (int, error) {
 // the last sequence of 4 bytes whose hash it is. A hash multiplies the 4
 // bytes by hashMul modulo 2^32 and keeps the high bits.
 func encodePart(dst, src []byte) int {
-	shift := uint64(32 - 8)
-	for size := 1 << 8; size < 1<<maxTableBits && size < len(src); size *= 2 {
-		shift--
-	}
+	// bits.Len16 returns at most 16, so the compiler proves that the shift is
+	// below 64. The shift of each hash then compiles to one instruction.
+	//nolint:gosec // G115: a part has at most blockLen bytes
+	tableBits := min(max(bits.Len16(uint16(len(src)-1)), 8), maxTableBits)
+	shift := uint64(32 - tableBits)
 	var table [1 << maxTableBits]uint16
 	const (
 		tableMask = 1<<maxTableBits - 1
@@ -138,11 +139,15 @@ func encodePart(dst, src []byte) int {
 	// refer to, so the search starts at the second byte.
 	limit := len(src) - inputMargin
 	d, emitted, s := 0, 0, 1
-	next := uint64(le.Uint32(src[s:s+4])*hashMul) >> shift
+	cur := le.Uint32(src[s : s+4])
+	next := uint64(cur*hashMul) >> shift
 search:
 	for {
 		// After 32 positions without a match, the search moves two positions
-		// at a time, after 32 more three, and so on.
+		// at a time, after 32 more three, and so on. At each comparison, cur
+		// is the sequence at s and next is the hash of the sequence at nextS.
+		// The sequence that the hash loads becomes cur when the search moves
+		// to nextS.
 		skip := 32
 		nextS := s
 		var candidate int
@@ -156,10 +161,12 @@ search:
 			}
 			candidate = int(table[next&tableMask])
 			table[next&tableMask] = uint16(s)
-			next = uint64(le.Uint32(src[nextS:nextS+4])*hashMul) >> shift
-			if le.Uint32(src[s:s+4]) == le.Uint32(src[candidate:candidate+4]) {
+			v := le.Uint32(src[nextS : nextS+4])
+			next = uint64(v*hashMul) >> shift
+			if cur == le.Uint32(src[candidate:candidate+4]) {
 				break
 			}
+			cur = v
 		}
 
 		d += emitLiteral(dst[d:], src[emitted:s])
@@ -203,7 +210,9 @@ search:
 			candidate = int(table[current&tableMask])
 			table[current&tableMask] = uint16(s)
 			if (x>>8)&mask32 != uint64(le.Uint32(src[candidate:candidate+4])) {
-				next = ((x >> 16) * hashMul & mask32) >> shift
+				//nolint:gosec // G115: the low 32 bits of x>>16 are the 4 bytes at s+1
+				cur = uint32(x >> 16)
+				next = uint64(cur*hashMul) >> shift
 				s++
 
 				break
