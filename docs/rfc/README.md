@@ -135,6 +135,8 @@ Start from [`docs/templates/RFC.md`](../templates/RFC.md).
 | [0065](0065-the-cost-of-a-skip-list-entry.md) | The Cost of a Skip List Entry | Accepted |
 | [0066](0066-cursors-that-move-backward.md) | Cursors That Move Backward | Accepted |
 | [0067](0067-priorities-for-the-waiting-calls-of-a-limiter.md) | Priorities for the Waiting Calls of a Limiter | Accepted |
+| [0068](0068-a-context-in-each-read-and-write-of-a-table.md) | A Context in Each Read and Write of a Table | Accepted |
+| [0069](0069-the-largest-cost-of-a-skip-list-entry.md) | The Largest Cost of a Skip List Entry | Accepted |
 
 ## Canonical first RFC
 

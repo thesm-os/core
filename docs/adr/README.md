@@ -122,5 +122,8 @@ Start from [`docs/templates/ADR.md`](../templates/ADR.md).
 | [0062](0062-cursors-move-in-both-directions.md) | Cursors Move in Both Directions | Accepted |
 | [0063](0063-waiting-calls-of-a-limiter-take-units-by-priority.md) | Waiting Calls of a Limiter Take Units by Priority | Accepted |
 | [0064](0064-digests-and-ids-encode-as-hexadecimal-text.md) | Digests and IDs Encode as Their Hexadecimal Text | Accepted |
+| [0065](0065-reads-and-writes-of-a-table-take-a-context.md) | Reads and Writes of a Table Take a Context | Accepted |
+| [0066](0066-a-cursor-reads-without-filling-the-cache.md) | A Cursor Reads Without Filling the Cache | Accepted |
+| [0067](0067-a-list-reports-the-largest-cost-of-an-entry.md) | A List Reports the Largest Cost of an Entry | Accepted |
 
 [nygard]: https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions
