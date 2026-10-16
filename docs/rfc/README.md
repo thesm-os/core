@@ -131,6 +131,10 @@ Start from [`docs/templates/RFC.md`](../templates/RFC.md).
 | [0061](0061-snappy-block-compression.md) | Block Compression in the Snappy Format | Accepted |
 | [0062](0062-sorted-tables-and-memtables.md) | Sorted Tables and Memtables for LSM Trees | Accepted |
 | [0063](0063-key-prefixes-in-skip-list-nodes.md) | Key Prefixes in Skip List Nodes | Accepted |
+| [0064](0064-checksums-of-table-blocks-in-their-parents.md) | Checksums of Table Blocks in Their Parents | Accepted |
+| [0065](0065-the-cost-of-a-skip-list-entry.md) | The Cost of a Skip List Entry | Accepted |
+| [0066](0066-cursors-that-move-backward.md) | Cursors That Move Backward | Accepted |
+| [0067](0067-priorities-for-the-waiting-calls-of-a-limiter.md) | Priorities for the Waiting Calls of a Limiter | Accepted |
 
 ## Canonical first RFC
 
