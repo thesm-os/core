@@ -18,29 +18,9 @@ import (
 	"go.thesmos.sh/core/errs"
 )
 
-// slabSize is the size of the slabs of most cases: room for two slices of
-// the class 512.
-const slabSize = 1024
-
 // slabsContract is the contract of slabsSteps, which TestSlabs and
 // FuzzSlabs check.
 const slabsContract = "every slice in use must keep its own bytes, and InUse must sum their classes"
-
-// sizeClasses contains the size classes of a Slabs up to 2^30 bytes in
-// ascending order. The function builds them from the definition of the
-// classes. The first class is MinClass. Above each power of two from
-// MinClass up, the classes are the power plus one to eight times an eighth
-// of the power. The class of n is the first class that is at least n.
-var sizeClasses = func() []int {
-	c := []int{arena.MinClass}
-	for p := arena.MinClass; p < 1<<30; p *= 2 {
-		for k := 1; k <= 8; k++ {
-			c = append(c, p+k*(p/8))
-		}
-	}
-
-	return c
-}()
 
 // allocated is what a case of Alloc observes of the slice that it returns.
 type allocated struct {
@@ -476,33 +456,6 @@ func BenchmarkSlabs(b *testing.B) {
 
 		assert.Equal(b, got, slabSize, "the benchmark must measure the slab")
 	})
-}
-
-// slabLens returns the length of every slab of s, in the order of All.
-func slabLens(s *arena.Slabs) []int {
-	var lens []int
-	for slab := range s.All() {
-		lens = append(lens, len(slab))
-	}
-
-	return lens
-}
-
-// slabsWith returns the positions, in the order of All, of the slabs of s
-// that contain the byte v.
-func slabsWith(s *arena.Slabs, v byte) []int {
-	var at []int
-
-	i := 0
-	for slab := range s.All() {
-		if bytes.IndexByte(slab, v) != -1 {
-			at = append(at, i)
-		}
-
-		i++
-	}
-
-	return at
 }
 
 // slabsSteps runs the steps of a machine over Alloc and Free of a Slabs.

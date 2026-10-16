@@ -5,6 +5,9 @@
 // contiguous byte buffer for variable-length binary output. [List] is an
 // append-only sequence of typed values in chunks that never move. [Slabs]
 // allocates byte slices from slabs and takes single slices back for reuse.
+// [RefSlabs] allocates as Slabs does and returns positions instead of
+// slices. [Bump] is a fixed array that goroutines reserve in ranges without
+// locks.
 //
 // # Arena
 //
@@ -47,6 +50,25 @@
 // with its free space. A test searches all the memory of the Slabs for a
 // removed value with it.
 //
+// # RefSlabs
+//
+// A record that keeps a slice from Slabs contains a pointer, so the garbage
+// collector scans every chunk of such records. [RefSlabs.Alloc] returns a
+// [Ref] instead: the number of a slab and an offset in it, in one uint64.
+// [RefSlabs.Bytes] returns the bytes of a region, and [RefSlabs.Free] takes
+// a region back. A RefSlabs has the size classes of Slabs, so a region above
+// MinClass takes less than 1.125 times its length.
+//
+// # Bump
+//
+// Arena, List, Slabs and RefSlabs are for one goroutine. A [Bump] is a fixed
+// array that goroutines reserve in ranges without locks. [Bump.Reserve]
+// moves the end of the reserved values with a compare-and-swap, and reports
+// false when fewer values remain than it needs. The array never grows or
+// moves, so a reserved range keeps its position until [Bump.Reset]. The
+// memtable of [go.thesmos.sh/core/skiplist] keeps its nodes and its bytes in
+// two Bumps.
+//
 // # Pool integration
 //
 // [Arena.Reset] satisfies [pool.Resettable], so a pool of arenas is one
@@ -78,5 +100,9 @@
 // is empty and the current slab has no room for the class. [Slabs.Free]
 // allocates only when the free list of a class grows past its capacity.
 // Once the free lists have grown to the working set, an Alloc followed by
-// a Free does not allocate.
+// a Free does not allocate. [RefSlabs.Alloc] and [RefSlabs.Free] allocate
+// as their Slabs counterparts do. [RefSlabs.Bytes] does not allocate.
+//
+// [NewBump] allocates the Bump and its array. No method of a Bump
+// allocates.
 package arena

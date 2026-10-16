@@ -17,10 +17,6 @@ import (
 	"go.thesmos.sh/core/arena"
 )
 
-// fill is the byte that a case writes into the memory of an arena or a
-// Slabs, to tell a written byte from a zero one.
-const fill = 0xa5
-
 // arenaContract is the contract of arenaSteps, which TestArena and
 // FuzzArena check.
 const arenaContract = "every call must agree with a model of the bytes of the current lifecycle"

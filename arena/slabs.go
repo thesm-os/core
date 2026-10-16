@@ -4,12 +4,9 @@
 package arena
 
 import (
-	"errors"
 	"iter"
 	"math/bits"
 	"slices"
-
-	"go.thesmos.sh/core/errs"
 )
 
 const (
@@ -37,11 +34,6 @@ const (
 	// class has the index 1 and MinClass has the index 0.
 	minIndex = (minShift+1)<<classBits - 1
 )
-
-// ErrSizeClass reports a slice that [Slabs.Free] cannot take back,
-// because its capacity is not a size class. It classifies as
-// [errs.Invalid].
-var ErrSizeClass = errs.WithClass(errors.New("arena: the capacity of the slice is not a size class"), errs.Invalid)
 
 // Slabs allocates byte slices from slabs and takes single slices back for
 // reuse in any order. A store that keeps its values in memory and removes
