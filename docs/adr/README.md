@@ -121,5 +121,6 @@ Start from [`docs/templates/ADR.md`](../templates/ADR.md).
 | [0061](0061-a-list-reports-the-cost-of-an-entry.md) | A List Reports the Cost of an Entry | Accepted |
 | [0062](0062-cursors-move-in-both-directions.md) | Cursors Move in Both Directions | Accepted |
 | [0063](0063-waiting-calls-of-a-limiter-take-units-by-priority.md) | Waiting Calls of a Limiter Take Units by Priority | Accepted |
+| [0064](0064-digests-and-ids-encode-as-hexadecimal-text.md) | Digests and IDs Encode as Their Hexadecimal Text | Accepted |
 
 [nygard]: https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions
