@@ -180,17 +180,24 @@ func (b *FuseBuilder) peel(g geometry, seed uint64) (stack, removed int) {
 		}
 	}
 
-	queue := resize(b.queue, total)[:0]
+	// The queue is a stack of n positions. A push writes the position at n
+	// and counts it only for a position of one hash. Each position enters the
+	// stack at most once, so n is below the number of positions.
+	//
+	// The first fill counts without a branch. c>>2 ^ 1 is 0 for a position
+	// of one hash, so the subtraction wraps to a value with its top bit set,
+	// and the shift adds 1 for that position and 0 for any other.
+	queue := resize(b.queue, total)
+	n := 0
 	for p, c := range count {
-		if c>>2 == 1 {
-			queue = append(queue, uint32(p))
-		}
+		queue[n] = uint32(p)
+		n += int((uint64(c>>2^1) - 1) >> 63)
 	}
 	which := resize(b.which, len(b.keys))
 	b.which = which
-	for len(queue) > 0 {
-		p := queue[len(queue)-1]
-		queue = queue[:len(queue)-1]
+	for n > 0 {
+		n--
+		p := queue[n]
 		if count[p]>>2 != 1 {
 			continue
 		}
@@ -205,12 +212,14 @@ func (b *FuseBuilder) peel(g geometry, seed uint64) (stack, removed int) {
 			if j == w {
 				continue
 			}
+			// A position of two hashes keeps one once x leaves it.
+			queue[n] = uint32(q) //nolint:gosec // G115: a position is below 2^32 fingerprints
+			if count[q]>>2 == 2 {
+				n++
+			}
 			count[q] -= 4
 			count[q] ^= j
 			xors[q] ^= x
-			if count[q]>>2 == 1 {
-				queue = append(queue, uint32(q)) //nolint:gosec // G115: a position is below 2^32 fingerprints
-			}
 		}
 	}
 	b.queue = queue
