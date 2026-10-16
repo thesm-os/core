@@ -116,5 +116,6 @@ Start from [`docs/templates/ADR.md`](../templates/ADR.md).
 | [0056](0056-refslabs-allocates-regions-by-reference.md) | RefSlabs Allocates Regions by Reference | Accepted |
 | [0057](0057-bump-reserves-values-without-locks.md) | Bump Reserves Values Without Locks | Accepted |
 | [0058](0058-skip-list-nodes-store-a-key-prefix.md) | Skip List Nodes Store a Key Prefix | Accepted |
+| [0059](0059-the-last-unpin-evicts-down-to-the-capacity.md) | The Last Unpin Evicts Down to the Capacity | Accepted |
 
 [nygard]: https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions
