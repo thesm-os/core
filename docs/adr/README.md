@@ -113,5 +113,7 @@ Start from [`docs/templates/ADR.md`](../templates/ADR.md).
 | [0053](0053-setpinned-stores-an-entry-with-a-pin.md) | SetPinned Stores an Entry With a Pin | Accepted |
 | [0054](0054-resetwritten-clears-the-bytes-that-the-caller-wrote.md) | ResetWritten Clears the Bytes That the Caller Wrote | Accepted |
 | [0055](0055-the-limiter-counts-units-exactly.md) | The Limiter Counts Units Exactly | Accepted |
+| [0056](0056-refslabs-allocates-regions-by-reference.md) | RefSlabs Allocates Regions by Reference | Accepted |
+| [0057](0057-bump-reserves-values-without-locks.md) | Bump Reserves Values Without Locks | Accepted |
 
 [nygard]: https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions
