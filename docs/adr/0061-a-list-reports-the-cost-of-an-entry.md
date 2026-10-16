@@ -29,12 +29,13 @@ entries than fit in it.
 
 ## Decision
 
-We will add `List.Cost(key []byte, seq uint64, valueLen int) (nodeBytes,
-dataBytes int)`, because an engine then reserves the exact bytes of each
+We will add `List.Cost(key []byte, seq uint64, valueLen int) (dataBytes,
+nodeBytes int)`, because an engine then reserves the exact bytes of each
 entry before its `Add`.
 
-- `nodeBytes` is 4 bytes for each of the 7 words of the header and each
-  link of the node. `dataBytes` is the length of the key plus `valueLen`.
+- `dataBytes` is the length of the key plus `valueLen`. `nodeBytes` is 4
+  bytes for each of the 7 words of the header and each link of the node.
+- The results have the order of the capacities of `skiplist.Config`.
 - An `Add` that succeeds grows `Size` by the sum.
 - A `valueLen` below 0 counts as 0, and one above 2^32 - 1 counts as
   2^32 - 1.

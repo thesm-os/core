@@ -55,9 +55,10 @@ and the value, each entry then reserves 224 bytes, so a memtable admits
 
 ```go
 // Cost returns the bytes that Add of the entry (key, seq), with a value of
-// valueLen bytes, reserves in the node arena and in the data arena of l.
-// The height of the node derives from the entry and the seed of l, so Cost
-// is exact: an Add that succeeds grows Size by nodeBytes + dataBytes.
+// valueLen bytes, reserves in the data arena and in the node arena of l.
+// The results have the order of the fields of Config. The height of the
+// node derives from the entry and the seed of l, so Cost is exact: an Add
+// that succeeds grows Size by dataBytes + nodeBytes.
 //
 // A valueLen below 0 counts as 0, and one above 2^32 - 1, the largest
 // capacity of an arena, counts as 2^32 - 1.
@@ -70,12 +71,14 @@ and the value, each entry then reserves 224 bytes, so a memtable admits
 // # Allocation contract
 //
 // Zero-alloc.
-func (l *List) Cost(key []byte, seq uint64, valueLen int) (nodeBytes, dataBytes int)
+func (l *List) Cost(key []byte, seq uint64, valueLen int) (dataBytes, nodeBytes int)
 ```
 
+- `dataBytes` is the length of the key plus `valueLen`.
 - `nodeBytes` is 4 bytes for each word of the node: its header of 7 words
   and one link for each of its levels.
-- `dataBytes` is the length of the key plus `valueLen`.
+- The results have the order of `Config.DataBytes` and `Config.NodeBytes`,
+  so a caller compares each with the capacity of the same name.
 - `Cost` computes the height as `Add` does, with one `xxh3.Hash` of the key
   and one 128-bit multiplication. A hash of a 16-byte key took 1.47-1.48 ns
   in the comparison of `hash/xxh3` with its last commit.
@@ -124,7 +127,7 @@ token for its `Add`.
 
 **Why not:** the arenas reserve from their ends without a lock, so a token
 would reserve a range that every other writer has to skip. A caller that
-budgets with `Cost` against the capacities that it gave `New` gets the same
+budgets with `Cost` against the capacities of its `Config` gets the same
 guarantee without state in the list.
 
 ## Drawbacks

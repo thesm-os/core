@@ -252,6 +252,12 @@ func (w *Writer) Add(key []byte, seq uint64, value []byte) error
 // w.
 func (w *Writer) Close() (Summary, error)
 
+// Reset discards the table that w writes, and starts a new table on dst
+// under the same options. It clears the error of an earlier write and
+// ErrClosed. Reset keeps the buffers of w, so a Writer that writes many
+// tables allocates the two keys of each summary once its buffers have grown.
+func (w *Writer) Reset(dst io.Writer)
+
 // ReaderOptions configure a Reader.
 type ReaderOptions struct {
 	Cache   BlockCache // nil reads every block from the file
@@ -303,7 +309,7 @@ func (r *Reader) NewIter() *Iter
 type Iter struct{ /* unexported */ }
 
 // Close returns the buffers of the cursor for reuse, and returns the error
-// of Err. The cursor is unusable after Close.
+// of Err. The cursor is unusable after Close. A second Close returns nil.
 func (it *Iter) Close() error
 
 // Merger is a Source over the merge of other sources. Entries that compare
@@ -311,13 +317,22 @@ func (it *Iter) Close() error
 type Merger struct{ /* unexported */ }
 
 // Reset replaces the sources of m. m keeps sources and its heap memory.
+// Reset does not close the sources that it replaces.
 func (m *Merger) Reset(sources []Source)
+
+// Close closes every source of m that implements io.Closer, and returns
+// their errors joined with errors.Join. m keeps its heap memory for the
+// next Reset.
+func (m *Merger) Close() error
 ```
 
 A `Reader` is safe for concurrent use. An `Iter` and a `Merger` are for one
-goroutine. The errors are `ErrOptions`, `ErrOrder`, `ErrClosed` and
-`ErrTooLarge`, which classify as `errs.Invalid`, and `ErrCorrupt`, which
-classifies as `errs.Integrity`.
+goroutine. `Merger.Close` closes each source that has a `Close` method, such
+as an `Iter` of a table, and a cursor of a memtable has nothing to close. A
+caller closes each such source once, either through `Merger.Close` or after
+a `Reset` replaced the source. The errors are `ErrOptions`, `ErrOrder`,
+`ErrClosed` and `ErrTooLarge`, which classify as `errs.Invalid`, and
+`ErrCorrupt`, which classifies as `errs.Integrity`.
 
 ### API of skiplist
 
@@ -333,13 +348,20 @@ classifies as `errs.Integrity`.
 // Reset is not safe concurrently with any other method.
 type List struct{ /* unexported */ }
 
-// New returns an empty List with arenas of dataBytes for keys and values
-// and nodeBytes for nodes. The heights of the nodes derive from seed.
+// Config configures a List. DataBytes and NodeBytes are required.
+type Config struct {
+	DataBytes int    // the capacity of the arena of keys and values, from 1 to 2^32 - 1 bytes
+	NodeBytes int    // the capacity of the arena of nodes, from 1 to 2^32 - 1 bytes
+	Seed      uint64 // the seed of the hash of the heights of the nodes
+}
+
+// New returns an empty List with the arenas of cfg. The heights of the
+// nodes derive from the Seed of cfg.
 //
 // Error modes:
 //
-//   - A capacity below 1 or above 2^32 - 1 bytes returns ErrSize.
-func New(dataBytes, nodeBytes int, seed uint64) (*List, error)
+//   - A DataBytes or a NodeBytes below 1 or above 2^32 - 1 returns ErrSize.
+func New(cfg Config) (*List, error)
 
 // Add inserts an entry. An Add that returned is visible to every Get and
 // every cursor move that starts after it.
@@ -372,6 +394,9 @@ func (l *List) NewIter() *Iter
 // Iter implements sstable.Source over a List. Its Err returns nil.
 type Iter struct{ /* unexported */ }
 ```
+
+`New` takes a `Config`, so a caller names each of the two capacities and
+cannot swap them, as `radix.New` and `resilience.NewLimiter` take theirs.
 
 `ErrFull` classifies as `errs.Transient`, because the engine freezes the
 full list and adds the entry to a new one. `ErrExists` and `ErrSize`
@@ -513,7 +538,7 @@ exhausts the merge, and `Merger.Err` returns that error.
 | A data block | `BlockSize` bytes plus the last entry, its restart offsets and the 5-byte trailer |
 | The entries of an index block | At most 2^32 - 1 bytes |
 | Memory of a `Reader` | The index block, the filter block and the summary |
-| Memory of a `Writer` | The current block, its restart offsets, the index entries, 8 bytes per distinct key for the filter, and at `Close` the scratch of the filter's builder, about 32 bytes per distinct key, and a buffer of the filter block and the index block |
+| Memory of a `Writer` | The current block, its restart offsets, the index entries, 8 bytes per distinct key for the filter, and at `Close` the scratch of the filter's builder, about 32 bytes per distinct key, and a buffer of the filter block and the index block. `Reset` keeps all of them for the next table |
 | Reads of a `Get` | The filter in memory, then at most one data block |
 | A step of a `Merger` | O(log k) comparisons for k sources |
 
@@ -523,12 +548,13 @@ exhausts the merge, and `Merger.Err` returns that error.
 |---|---|---|
 | An entry out of order or repeated | `Writer.Add` | `ErrOrder`, the Writer unchanged |
 | A key that could bring the index past 2^32 - 1 bytes | `Writer.Add` | `ErrTooLarge`, the Writer unchanged |
-| A write error of the `io.Writer`, or a short write without an error | `Writer.Add`, `Writer.Close` | An error that wraps it or `io.ErrShortWrite`, and the Writer refuses every later call |
+| A write error of the `io.Writer`, or a short write without an error | `Writer.Add`, `Writer.Close` | An error that wraps it or `io.ErrShortWrite`, and the Writer refuses every later call until `Reset` |
 | A checksum, a decompression or a layout that fails | `Open`, `Reader.Get`, `Iter` moves | `ErrCorrupt`. An `Iter` is exhausted, and `Err` returns the error |
 | A read error of the `io.ReaderAt`, or a short read without an error | `Open`, `Reader.Get`, `Iter` moves | An error that wraps it or `io.ErrUnexpectedEOF` |
 | An entry that does not fit the arenas | `List.Add` | `ErrFull`, and no entry added |
 | A key and a sequence that the List contains | `List.Add` | `ErrExists` |
 | A source whose `Err` is not nil | `Merger` moves | The merge is exhausted, and `Err` returns the error |
+| A source whose `Close` returns an error | `Merger.Close` | `Close` closes the other sources too, and returns the errors joined |
 
 ### Allocation contract
 
@@ -537,10 +563,12 @@ exhausts the merge, and `Merger.Err` returns that error.
 | `NewWriter` | The Writer, and with a filter the encoding of an empty filter that checks the width |
 | `Writer.Add` | 0 when the current block, the index entries and the filter's hashes have room. The first `Add` copies the smallest key |
 | `Writer.Close` | The filter encoding and its scratch, the growth of the buffer for the filter and the index, and the largest key of the summary |
+| `Writer.Reset` | 0. The next table reuses every buffer, so once the buffers have grown it allocates the copies of its smallest key and its largest key alone |
 | `Open` | The Reader, the footer, the index block, the filter block and the keys of the summary |
 | `Reader.Get`, `Reader.MayContain` | 0 without a cache once the pooled buffers have grown to the largest block, and when dst has room. With a cache, one copy of each block that the cache does not contain |
 | `Reader.NewIter` and `Iter.Close` | 0 once the pool contains a cursor |
 | `Iter` and `Merger` moves | 0, with the cache rule of `Get` for each new block |
+| `Merger.Close` | 0 when every source closes without an error and without an allocation |
 | `skiplist.New` | The List, its two `arena.Bump` values and their arrays |
 | `List.Add`, `List.Get`, `List.Len`, `List.Size`, `List.Reset` | 0 |
 | `List.NewIter` | The cursor |
@@ -562,6 +590,10 @@ exhausts the merge, and `Merger.Err` returns that error.
 | 11 | `TestWriterAllocs`, `TestReaderAllocs`, `TestIterAllocs`, `TestMergerAllocs`, `TestListAllocs` and the benchmarks state the counts of the allocation contract |
 | 12 | The benchmarks measure `List.Add` with one and four writers, `List.Get`, `runtime.GC` with 1M entries live, `Writer.Add`, `Reader.Get` with and without a cache, and iteration per entry |
 | 13 | The suites cover every statement, and dokimi-mutate-go detects every mutant of both packages that an annotation does not suppress |
+| 14 | `Writer.Reset` after any first table writes the bytes and the summary of a new Writer. `TestWriterAllocs` and the benchmark state 2 allocations for each table after `Reset` |
+| 15 | Concurrent reads of one `Reader` through one `BlockCache` return what the entries of the table return, by a check of linearizability under the race detector |
+| 16 | `Merger.Close` closes every source with a `Close` method once, skips the others and joins the errors. A second `Iter.Close` returns nil and returns the cursor to the pool once |
+| 17 | `FuzzIter` and `FuzzMerger` run the machines of the cursor and the merge on the inputs of `go test -fuzz` |
 
 ## Alternatives considered
 
@@ -648,6 +680,34 @@ node takes 26.3 bytes on average, which is 23% of the 116 bytes of a
 and an 8-byte value. Under a fixed ratio, one arena fills first for every
 workload off that ratio. The engine sizes both arenas from its entries.
 
+### L. A block of table properties
+
+A table would contain a block of named properties, as RocksDB's properties
+meta block does. RocksDB writes the sizes of the data blocks, the index and
+the filter, the raw sizes of the keys and the values, and the numbers of
+entries and data blocks. An engine adds properties of its own through a
+callback. LevelDB's table format names a stats meta block of such values as
+a TODO, and LevelDB does not write it.
+
+**Why not:** the footer states the number of entries and the lowest and the
+highest sequence, and `Open` reads the smallest and the largest key. Core
+does not read another property of a table. A block of named properties
+needs a vocabulary of names and a rule for a name that a reader does not
+know. Version 1 of the format has no such block. An engine that
+needs another property, such as a count of the deletions that only the
+engine recognizes, reverses this with a new version of the format.
+
+### M. A range loop over a Source
+
+A function `All(s Source)` would return an iterator that a `for range` loop
+reads, as `btree.Map.All` and `radix.Map.Scan` do.
+
+**Why not:** a read of a table fails with I/O and checksum errors, and a
+range loop has no result for them. The caller would check `Err` after the
+loop, as the cursor already requires. Each entry would also need a type of
+its own for its key, its sequence and its value. A caller in core that
+reads a merge in a range loop reverses this.
+
 ## Drawbacks
 
 - The module gains two packages with two cursor types, a writer, a reader,
@@ -656,6 +716,9 @@ workload off that ratio. The engine sizes both arenas from its entries.
   reads it.
 - A `List` needs two capacities, and it fails an `Add` when either arena is
   full.
+- `Merger.Close` finds the `Close` of each source by a type assertion, so
+  the compiler does not check that a source of an engine with resources to
+  release has one.
 - Cursors of both packages move forward only. Range deletions are out of
   both formats.
 - A `Writer` keeps 8 bytes per distinct key until `Close`, and the filter's
@@ -679,6 +742,9 @@ None.
 - facebook/rocksdb PR #14287, "Separate keys and values in data blocks",
   <https://github.com/facebook/rocksdb/pull/14287>, and
   `util/dynamic_bloom.h`.
+- facebook/rocksdb wiki, "Rocksdb BlockBasedTable Format", the properties
+  meta block,
+  <https://github.com/facebook/rocksdb/wiki/Rocksdb-BlockBasedTable-Format>.
 - cockroachdb/pebble, `docs/memory.md`,
   <https://github.com/cockroachdb/pebble/blob/master/docs/memory.md>.
 - CockroachDB v26.2.8, `pkg/storage/pebble.go`, the block sizes.
