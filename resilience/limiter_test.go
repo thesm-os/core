@@ -99,12 +99,15 @@ func (t *timedTimer) Stop() bool {
 }
 
 // NewTimer records a timer of d, and returns it. The timer ends when a case
-// advances the clock by d.
+// advances the clock by d. NewTimer records the timer before the fake clock
+// counts it as a waiter, so a case that AwaitWaiters lets continue finds the
+// timer in durations and pending.
 func (c *timedClock) NewTimer(d time.Duration) clock.Timer {
-	t := &timedTimer{Timer: c.Clock.NewTimer(d), c: c, d: d, deadline: c.Time().Add(d)}
+	t := &timedTimer{c: c, d: d, deadline: c.Time().Add(d)}
 	c.mu.Lock()
 	c.timers = append(c.timers, t)
 	c.mu.Unlock()
+	t.Timer = c.Clock.NewTimer(d)
 
 	return t
 }
