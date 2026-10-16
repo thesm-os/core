@@ -49,9 +49,9 @@ const (
 	maxHeight = 20
 	// headWords is the number of words of the head node.
 	headWords = nodeHeader + maxHeight
-	// maxValueLen is the largest length of a value that Cost counts: 2^32 -
-	// 1, the largest capacity of an arena, or the largest int on a platform
-	// whose int has 32 bits.
+	// maxValueLen is the largest length of a value that Cost and MaxCost
+	// count, and of a key that MaxCost counts. An arena has at most 2^32 - 1
+	// bytes, and an int is smaller on a platform whose int has 32 bits.
 	maxValueLen = min(math.MaxUint32, math.MaxInt)
 )
 
@@ -79,9 +79,10 @@ var levelBounds = func() (bounds [maxHeight - 1]uint64) {
 //
 // A node takes 4 bytes for each of its 7 words and its links. The nodes take
 // 34.3 bytes on average, and the tallest node takes 108 bytes. [List.Cost]
-// returns the bytes that the Add of an entry reserves in each arena. An
-// engine that budgets its entries with Cost against DataBytes and NodeBytes
-// does not repeat the layout of a node.
+// returns the bytes that the Add of an entry reserves in each arena, and
+// [MaxCost] returns them for the tallest node. An engine that budgets its
+// entries with Cost or MaxCost against DataBytes and NodeBytes does not
+// repeat the layout of a node.
 type Config struct {
 	// DataBytes is the capacity of the data arena in bytes, from 1 to
 	// 2^32 - 1. The data arena contains the keys and the values.
@@ -503,6 +504,29 @@ func (l *List) height(key []byte, seq uint64) int {
 	}
 
 	return h
+}
+
+// MaxCost returns the most bytes that Add of an entry with a key of keyLen
+// bytes and a value of valueLen bytes reserves in the data arena and in the
+// node arena of a [List] of any seed. It is the cost of the entry in a node
+// of the largest height. [List.Cost] of such an entry returns the same
+// dataBytes and at most nodeBytes. The results have the order of the fields
+// of [Config].
+//
+// dataBytes is keyLen plus valueLen. nodeBytes is 108, because a node of the
+// largest height has 7 words of header and 20 links of 4 bytes each. A
+// keyLen or a valueLen below 0 counts as 0. A keyLen or a valueLen above
+// 2^32 - 1 counts as 2^32 - 1, because an arena has at most 2^32 - 1 bytes.
+//
+// # Concurrency
+//
+// Safe for concurrent use. MaxCost does not read a List.
+//
+// # Allocation contract
+//
+// Zero-alloc.
+func MaxCost(keyLen, valueLen int) (dataBytes, nodeBytes int) {
+	return min(max(keyLen, 0), maxValueLen) + min(max(valueLen, 0), maxValueLen), wordBytes * (nodeHeader + maxHeight)
 }
 
 // splitmix64 advances the state of a splitmix64 generator and returns its

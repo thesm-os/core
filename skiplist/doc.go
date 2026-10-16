@@ -51,7 +51,9 @@
 // arena and in the node arena, in the order of the fields of Config. An
 // engine that reserves the cost of each entry before its Add knows that the
 // Add fits, because the height of a node derives from the entry and the
-// seed.
+// seed. [MaxCost] returns the cost of an entry in a node of the largest
+// height. That cost bounds Cost in a List of any seed, so engines whose
+// lists have other seeds compute the same bound for a batch.
 //
 // # Errors
 //
@@ -60,8 +62,8 @@
 // # Allocation contract
 //
 // [New] allocates the List, its two arenas and their arrays. NewIter
-// allocates the cursor. Add, Get, Len, Size, Cost, Reset and the methods of
-// an Iter do not allocate.
+// allocates the cursor. Add, Get, Len, Size, Cost, MaxCost, Reset and the
+// methods of an Iter do not allocate.
 //
 // # Dependency position
 //

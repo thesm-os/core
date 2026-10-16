@@ -84,6 +84,11 @@ const (
 	heightTolerance = 0.15
 )
 
+// tallestNodeBytes is the size of a node of the largest height: 4 bytes for
+// each of the 7 words of its header and each of its 20 links, as the
+// documentation of Config states.
+const tallestNodeBytes = 108
+
 // listContract is the contract of listSteps, which TestList and FuzzList
 // check.
 const listContract = "every call must return what a sorted model of the entries returns"
@@ -527,6 +532,57 @@ func TestList(t *testing.T) {
 		}
 	})
 
+	t.Run("MaxCost", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("bounds the Cost of an entry in a List of any seed", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "MaxCost must bound the Cost of an entry in a List of any seed", func(c *prop.Case) {
+				seed := c.Draw(prop.Integer[uint64](0, math.MaxUint64), "seed")
+				l, err := New(Config{DataBytes: 1, NodeBytes: 1, Seed: seed})
+				assert.NoError(c, err, "New returns a List")
+				key := c.Draw(prop.Bytes(prop.MaxSize(32)), "key")
+				seq := c.Draw(prop.Integer[uint64](0, math.MaxUint64), "seq")
+				valueLen := c.Draw(prop.Integer(-1, 1<<20), "value length")
+
+				dataCost, nodeCost := l.Cost(key, seq, valueLen)
+				maxData, maxNode := MaxCost(len(key), valueLen)
+				assert.Equal(c, maxData, dataCost, "MaxCost returns the data bytes of Cost")
+				assert.InRange(c, nodeCost, 0, float64(maxNode), "Cost takes at most the node bytes of MaxCost")
+			})
+		})
+
+		tests := []struct {
+			name         string
+			giveKeyLen   int
+			giveValueLen int
+			wantData     int
+		}{
+			{
+				name:       "returns the key length plus the value length as the data bytes",
+				giveKeyLen: 16, giveValueLen: 100, wantData: 116,
+			},
+			{name: "counts a negative key length as 0", giveKeyLen: -1, giveValueLen: 5, wantData: 5},
+			{name: "counts a negative value length as 0", giveKeyLen: 3, giveValueLen: -1, wantData: 3},
+			{
+				name:       "counts a key length above 2^32 - 1 as 2^32 - 1",
+				giveKeyLen: math.MaxUint32 + 1, wantData: math.MaxUint32,
+			},
+			{
+				name:         "counts a value length above 2^32 - 1 as 2^32 - 1",
+				giveValueLen: math.MaxUint32 + 1, wantData: math.MaxUint32,
+			},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				dataCost, nodeCost := MaxCost(tt.giveKeyLen, tt.giveValueLen)
+				expect.Equal(t, dataCost, tt.wantData, "MaxCost counts the bytes of the key and of the value")
+				expect.Equal(t, nodeCost, tallestNodeBytes, "MaxCost counts the bytes of the tallest node")
+			})
+		}
+	})
+
 	t.Run("Reset", func(t *testing.T) {
 		t.Parallel()
 
@@ -721,6 +777,13 @@ func TestListAllocs(t *testing.T) {
 		assert.Equal(t, dataCost, benchKeyLen+benchValueLen, "the test measures the cost of an entry")
 	})
 
+	t.Run("MaxCost", func(t *testing.T) {
+		var nodeCost int
+		expect.MaxAllocs(t, func() { _, nodeCost = MaxCost(benchKeyLen, benchValueLen) }, 0,
+			"MaxCost does not allocate")
+		assert.Equal(t, nodeCost, tallestNodeBytes, "the test measures the cost of the tallest node")
+	})
+
 	t.Run("Reset", func(t *testing.T) {
 		l := filled(t, 10, benchKey)
 		var err error
@@ -883,6 +946,19 @@ func BenchmarkList(b *testing.B) {
 		}
 
 		assert.NotEqual(b, nodeCost, 0, "the benchmark measures the cost of a node")
+	})
+
+	b.Run("MaxCost", func(b *testing.B) {
+		var nodeCost int
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			_, nodeCost = MaxCost(benchKeyLen, benchValueLen)
+		}
+
+		assert.Equal(b, nodeCost, tallestNodeBytes, "the benchmark measures the cost of the tallest node")
 	})
 }
 
