@@ -10,6 +10,7 @@ import (
 	"slices"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"go.dokimi.dev/assert"
@@ -53,6 +54,16 @@ func (r *resolve) fn(_ context.Context, keys []int) (map[int]int, error) {
 	}
 
 	return out, nil
+}
+
+// cancellable is the batch function fn until ctx ends. It returns the error
+// of ctx once ctx has ended, as a dependency does that stops abandoned work.
+func (r *resolve) cancellable(ctx context.Context, keys []int) (map[int]int, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
+	return r.fn(ctx, keys)
 }
 
 // calls reports how many batches were dispatched.
@@ -408,6 +419,125 @@ func TestLoader(t *testing.T) {
 					return ctx.Err()
 				}
 			}, "the batch context must be cancelled")
+		})
+
+		t.Run("starts a fresh batch for a key whose callers all left", func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				c := fake.New(originUTC)
+				var r resolve
+				l := mustLoader(t, c, 10, r.cancellable)
+
+				ctx, cancel := context.WithCancel(t.Context())
+				leaving := loadAsync(ctx, l, 1)
+				synctest.Wait()
+				cancel()
+				synctest.Wait()
+				assert.ErrorIs(t, (<-leaving).err, context.Canceled, "the caller that gave up must be released")
+
+				later := loadAsync(t.Context(), l, 1)
+				synctest.Wait()
+				c.Advance(window)
+				synctest.Wait()
+				assert.Equal(t, <-later, result{v: 2},
+					"a later caller of the key must not receive the cancellation of the abandoned batch")
+			})
+		})
+
+		t.Run("starts a fresh batch for another key after the callers of the accumulating batch left",
+			func(t *testing.T) {
+				t.Parallel()
+				synctest.Test(t, func(t *testing.T) {
+					c := fake.New(originUTC)
+					var r resolve
+					l := mustLoader(t, c, 10, r.cancellable)
+
+					ctx, cancel := context.WithCancel(t.Context())
+					leaving := loadAsync(ctx, l, 1)
+					synctest.Wait()
+					cancel()
+					synctest.Wait()
+					assert.ErrorIs(t, (<-leaving).err, context.Canceled, "the caller that gave up must be released")
+
+					later := loadAsync(t.Context(), l, 2)
+					synctest.Wait()
+					c.Advance(window)
+					synctest.Wait()
+					assert.Equal(t, <-later, result{v: 4},
+						"a later caller of another key must not join the abandoned batch")
+				})
+			})
+
+		// The abandoned batch ends its window first, while the batch of the
+		// second caller of the key still accumulates. The third caller of
+		// the key joins the second batch only when the end of the abandoned
+		// batch leaves the key of the second batch in place.
+		t.Run("keeps the key of a later batch when the abandoned batch of the key ends", func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				c := fake.New(originUTC)
+				var r resolve
+				l := mustLoader(t, c, 10, r.cancellable)
+
+				ctx, cancel := context.WithCancel(t.Context())
+				leaving := loadAsync(ctx, l, 1)
+				synctest.Wait()
+				c.Advance(window / 2)
+				cancel()
+				synctest.Wait()
+				assert.ErrorIs(t, (<-leaving).err, context.Canceled, "the caller that gave up must be released")
+
+				second := loadAsync(t.Context(), l, 1)
+				synctest.Wait()
+				c.Advance(window / 2)
+				synctest.Wait()
+				third := loadAsync(t.Context(), l, 1)
+				synctest.Wait()
+				c.Advance(window / 2)
+				synctest.Wait()
+
+				assert.Length(t, third, 1, "the third caller must be served with the batch of the second")
+				assert.Equal(t, <-second, result{v: 2}, "the second caller must be served")
+				assert.Equal(t, <-third, result{v: 2}, "the third caller must be served")
+				assert.Equal(t, r.sizes(), []int{1}, "the second and the third caller must share one call")
+			})
+		})
+
+		// The batch of the first key runs until the case releases it. The
+		// second key arrives while it runs, and the third once its caller
+		// has left.
+		t.Run("starts a fresh batch for keys that arrive while the batch before them runs", func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				c := fake.New(originUTC)
+				var r resolve
+				proceed := make(chan struct{})
+				l := mustLoader(t, c, 10, func(ctx context.Context, keys []int) (map[int]int, error) {
+					if keys[0] == 1 {
+						<-proceed
+					}
+
+					return r.fn(ctx, keys)
+				})
+
+				first := loadAsync(t.Context(), l, 1)
+				synctest.Wait()
+				c.Advance(window)
+				synctest.Wait()
+				second := loadAsync(t.Context(), l, 2)
+				synctest.Wait()
+				close(proceed)
+				synctest.Wait()
+				assert.Equal(t, <-first, result{v: 2}, "the first caller must be served")
+
+				third := loadAsync(t.Context(), l, 3)
+				synctest.Wait()
+				c.Advance(window)
+				synctest.Wait()
+				assert.Equal(t, <-second, result{v: 4}, "the second caller must be served by a fresh batch")
+				assert.Equal(t, <-third, result{v: 6}, "the third caller must be served")
+				assert.Equal(t, r.sizes(), []int{2, 1}, "the third key must join the batch of the second")
+			})
 		})
 
 		t.Run("passes no caller's values to the batch function", func(t *testing.T) {

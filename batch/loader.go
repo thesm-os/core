@@ -93,9 +93,10 @@ type batch[K comparable, V any] struct {
 	keys  []K
 	calls []*call[K, V]
 
-	// waiters is how many callers still want this batch's result.
-	// When it reaches zero there is nobody left to serve and ctx is
-	// cancelled.
+	// waiters is the number of callers that wait for the result of the
+	// batch. The caller that brings it to zero cancels ctx and detaches
+	// the batch from the Loader, so a later Load starts a fresh batch
+	// instead of joining this one.
 	waiters int
 }
 
@@ -352,9 +353,8 @@ func (l *Loader[K, V]) dispatch(ctx context.Context, b *batch[K, V]) {
 	// Retained results would make this a cache with a hidden TTL, so
 	// the keys leave as soon as the call that owned them is done.
 	l.mu.Lock()
-	for _, k := range b.keys {
-		delete(l.pending, k)
-	}
+	//dokimi:mutate-skip sbr-delete: the last caller to leave also forgets the keys. The deletion changes only the result of a Load between the delivery and that leave, and no test can schedule one
+	l.forget(b)
 	l.mu.Unlock()
 
 	for i, k := range b.keys {
@@ -373,15 +373,37 @@ func (l *Loader[K, V]) dispatch(ctx context.Context, b *batch[K, V]) {
 }
 
 // leave records that one caller has stopped waiting on b, abandoning
-// the batch once nobody is left to serve.
+// the batch once nobody is left to serve. The last caller to leave
+// detaches b from the Loader before it cancels the batch: a batch that
+// still accumulates stops taking keys, and its keys stop taking callers.
+// A later Load then starts a fresh batch instead of receiving the
+// cancellation of b.
 func (l *Loader[K, V]) leave(b *batch[K, V]) {
 	l.mu.Lock()
 	l.waiting--
 	b.waiters--
 	last := b.waiters == 0
+	if last {
+		if l.batch == b {
+			l.batch = nil
+		}
+		l.forget(b)
+	}
 	l.mu.Unlock()
 
 	if last {
 		b.cancel()
+	}
+}
+
+// forget removes each key of b from the pending keys while the key maps
+// to its call in b. A key that a later batch took over after b was
+// abandoned keeps the call of that batch. Must be called while l.mu is
+// locked.
+func (l *Loader[K, V]) forget(b *batch[K, V]) {
+	for i, k := range b.keys {
+		if l.pending[k] == b.calls[i] {
+			delete(l.pending, k)
+		}
 	}
 }
