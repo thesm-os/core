@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.25.0
+
+### Minor Changes
+
+- 98fe895: Add `filter.FuseBuilder.Footprint` to return the bytes of the scratch memory that a builder keeps between builds.
+- 912aeb9: Add `skiplist.Inserter` to add entries with searches that start from the last entry that it added.
+- fcc42b1: Add `sstable.IterOptions.ReadAhead` to read the data blocks of a scan with one read of the File for many blocks.
+- fcc42b1: Add `sstable.Writer.Footprint` to return the bytes of memory that the buffers of a Writer take.
+- fcc42b1: Add `sstable.WriterOptions.MaxRetained` to bound the memory that a `sstable.Writer` keeps between tables.
+
+### Patch Changes
+
+- 912aeb9: Change `skiplist.MaxCost` from 108 to 112 node bytes and `skiplist.List.Cost` to count 4 more bytes for each node.
+- fcc42b1: Change the moves of `sstable.Iter` and `sstable.Reader.Get` to return the error of a context that ended before each block, also for a block of the cache.
+- 912aeb9: Fix `skiplist.Iter` to be on no entry after `skiplist.List.Reset` until a First, a Last, a SeekGE or a SeekLT moves it.
+- 912aeb9: Speed up a scan back of 100,000 entries with `skiplist.Iter.Prev` from 10.6 ms to 1.06 ms.
+- 912aeb9: Speed up `skiplist.Iter.SeekGE` by 52% to 87% for a target at the next entry.
+- fcc42b1: Speed up the moves of `sstable.Merger` by 11% to 42% for 2 to 8 sources.
+- fcc42b1: Speed up the moves of `sstable.Iter` and `sstable.Reader.Get` by 3% to 25%.
+- fcc42b1: Speed up `sstable.Iter.SeekGE` by 57% to 65% for a target in the current block.
+
 ## 0.24.0
 
 ### Minor Changes
