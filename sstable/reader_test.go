@@ -159,6 +159,21 @@ func TestReader(t *testing.T) {
 				},
 			},
 			{
+				name:       "returns ErrCorrupt for a filter CRC32C of a table without a filter",
+				giveOpts:   settings[0].opts,
+				giveChange: func(l *layout) { binary.BigEndian.PutUint32(l.filter.parent, 1) },
+			},
+			{
+				name:       "returns ErrCorrupt for a CRC32C in the footer that differs from the index",
+				giveOpts:   settings[1].opts,
+				giveChange: func(l *layout) { l.index.parent[0] ^= 1 },
+			},
+			{
+				name:       "returns ErrCorrupt for a CRC32C in the footer that differs from the filter",
+				giveOpts:   settings[1].opts,
+				giveChange: func(l *layout) { l.filter.parent[0] ^= 1 },
+			},
+			{
 				name:     "returns ErrCorrupt for an index without room for its restart offsets",
 				giveOpts: settings[1].opts,
 				giveChange: func(l *layout) {
@@ -216,6 +231,54 @@ func TestReader(t *testing.T) {
 			_, err := sstable.Open(bytes.NewReader(l.data), int64(len(l.data)), sstable.ReaderOptions{})
 			assert.ErrorIs(t, err, sstable.ErrCorrupt, "Open refuses the changed table")
 		})
+
+		t.Run("returns ErrCorrupt for a data block at the place of the first data block", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "Open refuses a valid data block at the place of the first data block", func(c *prop.Case) {
+				es := c.Draw(uniform, "entries")
+				l := newLayout(c, oneEntry, es)
+				b := l.blocks[c.Draw(prop.Integer(1, len(l.blocks)-1), "block")]
+				copy(l.data[l.blocks[0].off:], l.data[b.off:b.off+b.n+trailerLen])
+				_, err := sstable.Open(bytes.NewReader(l.data), int64(len(l.data)), sstable.ReaderOptions{})
+				assert.ErrorIs(c, err, sstable.ErrCorrupt, "Open refuses the block at the place of the first")
+			})
+		})
+
+		foreign := []struct {
+			name      string
+			givePlace func(l *layout) place
+		}{
+			{
+				name:      "returns ErrCorrupt for the filter block of another table",
+				givePlace: func(l *layout) place { return l.filter },
+			},
+			{
+				name:      "returns ErrCorrupt for the index block of another table",
+				givePlace: func(l *layout) place { return l.index },
+			},
+		}
+		for _, tt := range foreign {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				prop.ForAll(t, "Open refuses a valid block of another table of the same layout", func(c *prop.Case) {
+					es := c.Draw(uniform, "entries")
+					// The keys of the other table differ in their third byte, so
+					// the two tables have one layout and different blocks.
+					others := make([]entry, 0, len(es))
+					for _, e := range es {
+						key := slices.Concat(e.key[:2], []byte{'z'}, e.key[3:])
+						others = append(others, entry{key: key, seq: e.seq, value: e.value})
+					}
+					l, other := newLayout(c, settings[1].opts, es), newLayout(c, settings[1].opts, others)
+					to, from := tt.givePlace(l), tt.givePlace(other)
+					assert.Equal(c, from.off, to.off, "the block of the other table has the same offset")
+					assert.Equal(c, from.n, to.n, "the block of the other table has the same length")
+					copy(l.data[to.off:], other.data[from.off:from.off+from.n+trailerLen])
+					_, err := sstable.Open(bytes.NewReader(l.data), int64(len(l.data)), sstable.ReaderOptions{})
+					assert.ErrorIs(c, err, sstable.ErrCorrupt, "Open refuses the block of the other table")
+				})
+			})
+		}
 
 		t.Run("returns the error of each read of the io.ReaderAt", func(t *testing.T) {
 			t.Parallel()
@@ -408,6 +471,23 @@ func TestReader(t *testing.T) {
 			assert.NoError(t, err, "Open reads the table with the reads that it needs")
 			_, _, _, err = r.Get([]byte("key 030"), 1, nil)
 			assert.ErrorIs(t, err, errRead, "Get returns the error of the read")
+		})
+
+		t.Run("returns ErrCorrupt for a key of a data block at the place of another", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "Get refuses a valid data block at the place of the block of its key", func(c *prop.Case) {
+				es := c.Draw(uniform, "entries")
+				l := newLayout(c, oneEntry, es)
+				to := c.Draw(prop.Integer(1, len(l.blocks)-1), "place")
+				from := c.Draw(prop.Integer(0, len(l.blocks)-2), "block")
+				if from >= to {
+					from++
+				}
+				b := l.blocks[from]
+				copy(l.data[l.blocks[to].off:], l.data[b.off:b.off+b.n+trailerLen])
+				_, _, _, err := openTable(c, l.data, sstable.ReaderOptions{}).Get(es[to].key, es[to].seq, nil)
+				assert.ErrorIs(c, err, sstable.ErrCorrupt, "Get refuses the block at the place of the block of its key")
+			})
 		})
 	})
 

@@ -1,0 +1,65 @@
+{
+  "store": 1,
+  "definition": "8.0.0",
+  "property": "Get refuses a valid data block at the place of the block of its key",
+  "identity": {
+    "assertion": "err-is",
+    "file": "reader_test.go",
+    "line": 474
+  },
+  "choices": "prop1:AAIAAAMAAAEAAA",
+  "counterexample": [
+    {
+      "label": "entries",
+      "value": {
+        "type": "int",
+        "value": 2
+      }
+    },
+    {
+      "label": "seq",
+      "value": {
+        "type": "int",
+        "value": 0
+      }
+    },
+    {
+      "label": "value",
+      "value": {
+        "type": "bytes",
+        "value": ""
+      }
+    },
+    {
+      "label": "entries",
+      "value": {
+        "type": "list",
+        "items": [
+          {
+            "type": "map",
+            "entries": []
+          },
+          {
+            "type": "map",
+            "entries": []
+          }
+        ]
+      }
+    },
+    {
+      "label": "place",
+      "value": {
+        "type": "int",
+        "value": 1
+      }
+    },
+    {
+      "label": "block",
+      "value": {
+        "type": "int",
+        "value": 0
+      }
+    }
+  ],
+  "found": "2026-10-16"
+}

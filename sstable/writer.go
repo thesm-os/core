@@ -23,14 +23,16 @@ const (
 	// seqLen is the size of the sequence at the end of an internal key. An
 	// internal key is the key of an entry followed by its sequence.
 	seqLen = 8
+	// crcLen is the size of a CRC32C.
+	crcLen = 4
 	// trailerLen is the size of the trailer of a block. The trailer has the
 	// compression byte and the CRC32C of the block and the compression byte.
 	trailerLen = 5
 	// footerLen is the size of the footer at the end of a table.
-	footerLen = 72
+	footerLen = 80
 	// footerChecked is the number of bytes at the start of the footer that
 	// the CRC32C of the footer covers.
-	footerChecked = 60
+	footerChecked = 68
 	// formatVersion is the version of the layout. The footer contains it.
 	formatVersion = 1
 	// magic is the number at the end of a table. It is the first 8 bytes of
@@ -48,9 +50,9 @@ const (
 
 // maxIndexOverhead is the largest number of bytes beside the key that an
 // entry of the index takes. The entry has the three varints of its header,
-// the 8 bytes of the sequence and the two varints of the place of the block.
-// A varint has at most 10 bytes.
-const maxIndexOverhead = 58
+// the 8 bytes of the sequence, the two varints of the place of the block and
+// the 4 bytes of its CRC32C. A varint has at most 10 bytes.
+const maxIndexOverhead = 62
 
 // castagnoli is the table of CRC32C. The blocks and the footer of a table
 // have CRC32C checksums.
@@ -334,18 +336,21 @@ func (w *Writer) Add(key []byte, seq uint64, value []byte) error {
 // of each distinct key. The index block has the layout of a data block with
 // a restart point at every entry. Its entry for a data block has the
 // internal key of the last entry of the block. The value of the entry is the
-// offset and the length of the stored block without its trailer, as two
-// varints. Close stores both blocks without compression.
+// offset and the length of the stored block without its trailer as two
+// varints, followed by the CRC32C in the trailer of the block as a uint32.
+// Close stores both blocks without compression.
 //
 // A trailer of 5 bytes follows every block. It has the compression byte of
 // the block, and the CRC32C of the stored block and the compression byte.
 //
-// The footer has 72 bytes:
+// The footer has 80 bytes:
 //
-//   - the offset and the length of the index block, as uint64
-//   - the offset and the length of the filter block or two zeros, as uint64
+//   - the offset and the length of the index block as uint64, and the CRC32C
+//     in its trailer as uint32
+//   - the offset and the length of the filter block as uint64, and the
+//     CRC32C in its trailer as uint32, or three zeros
 //   - the number of entries, the lowest and the highest sequence, as uint64
-//   - the version 1 and the CRC32C of the first 60 bytes, as uint32
+//   - the version 1 and the CRC32C of the first 68 bytes, as uint32
 //   - the magic number 0xf65ba2ce515d9bd3
 //
 // Error modes:
@@ -372,32 +377,41 @@ func (w *Writer) Close() (Summary, error) {
 	//nolint:gosec // G115: the size is not negative
 	size := uint64(w.size)
 	var filterOff, filterLen uint64
+	var filterCRC uint32
 	var err error
 	if w.filterBits != 0 {
 		start, off := len(w.out), size+uint64(len(w.out))
 		//dokimi:mutate-skip ror-true: the builder refuses only more hashes than fit 2^32 fingerprints and a set that no seed peels, which no test writes
 		if w.out, err = w.builder.Append(w.out, w.hashes, w.filterBits); err == nil {
-			filterOff, filterLen = off, w.seal(start, NoCompression)
+			filterOff = off
+			filterLen, filterCRC = w.seal(start, NoCompression)
 		}
 	}
 
+	be := binary.BigEndian
 	start, indexOff := len(w.out), size+uint64(len(w.out))
 	w.out = append(w.out, w.index...)
 	for _, r := range w.indexRestarts {
-		w.out = binary.BigEndian.AppendUint32(w.out, r)
+		w.out = be.AppendUint32(w.out, r)
 	}
 	//nolint:gosec // G115: the index has at most 2^32 - 1 bytes, so it has fewer entries
-	w.out = binary.BigEndian.AppendUint32(w.out, uint32(len(w.indexRestarts)))
-	indexLen := w.seal(start, NoCompression)
+	w.out = be.AppendUint32(w.out, uint32(len(w.indexRestarts)))
+	indexLen, indexCRC := w.seal(start, NoCompression)
 
 	footer := len(w.out)
+	w.out = be.AppendUint64(w.out, indexOff)
+	w.out = be.AppendUint64(w.out, indexLen)
+	w.out = be.AppendUint32(w.out, indexCRC)
+	w.out = be.AppendUint64(w.out, filterOff)
+	w.out = be.AppendUint64(w.out, filterLen)
+	w.out = be.AppendUint32(w.out, filterCRC)
 	//nolint:gosec // G115: the number of entries is not negative
-	for _, v := range [...]uint64{indexOff, indexLen, filterOff, filterLen, uint64(w.entries), w.minSeq, w.maxSeq} {
-		w.out = binary.BigEndian.AppendUint64(w.out, v)
-	}
-	w.out = binary.BigEndian.AppendUint32(w.out, formatVersion)
-	w.out = binary.BigEndian.AppendUint32(w.out, crc32.Checksum(w.out[footer:], castagnoli))
-	w.out = binary.BigEndian.AppendUint64(w.out, magic)
+	w.out = be.AppendUint64(w.out, uint64(w.entries))
+	w.out = be.AppendUint64(w.out, w.minSeq)
+	w.out = be.AppendUint64(w.out, w.maxSeq)
+	w.out = be.AppendUint32(w.out, formatVersion)
+	w.out = be.AppendUint32(w.out, crc32.Checksum(w.out[footer:], castagnoli))
+	w.out = be.AppendUint64(w.out, magic)
 
 	//dokimi:mutate-skip ror-true: the builder refuses only more hashes than fit 2^32 fingerprints and a set that no seed peels, which no test writes
 	if err == nil {
@@ -422,18 +436,20 @@ func (w *Writer) Close() (Summary, error) {
 
 // finishBlock ends the current data block, which out contains from its first
 // byte. It appends the restart offsets and their count, seals the block and
-// adds the entry of the block to the index.
+// adds the entry of the block to the index: the place of the block and its
+// CRC32C.
 func (w *Writer) finishBlock() {
 	for _, r := range w.restarts {
 		w.out = binary.BigEndian.AppendUint32(w.out, r)
 	}
 	//nolint:gosec // G115: a block has fewer restart points than bytes
 	w.out = binary.BigEndian.AppendUint32(w.out, uint32(len(w.restarts)))
-	n := w.seal(0, w.compression)
+	n, sum := w.seal(0, w.compression)
 
-	var place [2 * binary.MaxVarintLen64]byte
+	var place [2*binary.MaxVarintLen64 + crcLen]byte
 	//nolint:gosec // G115: the size is not negative
 	value := binary.AppendUvarint(binary.AppendUvarint(place[:0], uint64(w.size)), n)
+	value = binary.BigEndian.AppendUint32(value, sum)
 	//nolint:gosec // G115: Add keeps the index below 2^32 - 1 bytes
 	w.indexRestarts = append(w.indexRestarts, uint32(len(w.index)))
 	w.index = appendEntry(w.index, w.last, value, 0)
@@ -444,9 +460,9 @@ func (w *Writer) finishBlock() {
 // the block with its encoding when the encoding is shorter than seven
 // eighths of the block, as LevelDB does. The codec refuses a block above
 // 2^32 - 1 bytes, and seal stores such a block without compression. seal
-// then appends the trailer and returns the length of the stored block
-// without the trailer.
-func (w *Writer) seal(start int, c Compression) uint64 {
+// then appends the trailer. It returns the length of the stored block
+// without the trailer, and the CRC32C in the trailer.
+func (w *Writer) seal(start int, c Compression) (uint64, uint32) {
 	kind := NoCompression
 	if c == SnappyCompression {
 		raw := w.out[start:]
@@ -460,9 +476,10 @@ func (w *Writer) seal(start int, c Compression) uint64 {
 	}
 	n := uint64(len(w.out[start:]))
 	w.out = append(w.out, byte(kind))
-	w.out = binary.BigEndian.AppendUint32(w.out, crc32.Checksum(w.out[start:], castagnoli))
+	sum := crc32.Checksum(w.out[start:], castagnoli)
+	w.out = binary.BigEndian.AppendUint32(w.out, sum)
 
-	return n
+	return n, sum
 }
 
 // flush writes out to the io.Writer and empties out. It returns an error

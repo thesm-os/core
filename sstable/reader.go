@@ -17,7 +17,7 @@ import (
 
 // minTableSize is the size of the smallest table, a table of no entries. Its
 // index block contains only the count of its restart points in 4 bytes. The
-// trailer of the index block and the footer follow it.
+// trailer of the index block and the footer of 80 bytes follow it.
 const minTableSize = 4 + trailerLen + footerLen
 
 // ReaderOptions configure a [Reader].
@@ -95,18 +95,22 @@ type Reader struct {
 
 // Open reads the footer, the index block and the filter block of the table
 // of size bytes in r, and checks the checksum and the layout of each. It
-// reads the first entry of the first data block for the smallest key of the
-// summary, and the last entry of the index for the largest key. It does not
-// add the first data block to the cache.
+// compares the CRC32C of the index block and the filter block with the
+// CRC32C that the footer states for each. It reads the first entry of the
+// first data block for the smallest key of the summary, and the last entry
+// of the index for the largest key. It does not add the first data block to
+// the cache.
 //
 // Error modes:
 //
-//   - A table shorter than 81 bytes returns [ErrCorrupt].
+//   - A table shorter than 89 bytes returns [ErrCorrupt].
 //   - A footer with another magic number, a failed checksum, another version
 //     or places of the index and the filter that do not fit the table
-//     returns ErrCorrupt.
+//     returns ErrCorrupt. A footer of a table without a filter that states
+//     a filter offset or a filter CRC32C returns ErrCorrupt too.
 //   - An index block, a filter block or a first data block that fails its
-//     checksum or its layout returns ErrCorrupt.
+//     checksum or its layout returns ErrCorrupt. So does a block whose CRC32C
+//     differs from the CRC32C that the footer or its index entry states.
 //   - An error of r returns an error that wraps it. A read of fewer bytes
 //     without an error returns an error that wraps io.ErrUnexpectedEOF.
 //
@@ -123,15 +127,16 @@ func Open(r io.ReaderAt, size int64, opts ReaderOptions) (*Reader, error) {
 		return nil, err
 	}
 	be := binary.BigEndian
-	if be.Uint64(f[64:]) != magic || be.Uint32(f[footerChecked:]) != crc32.Checksum(f[:footerChecked], castagnoli) ||
-		be.Uint32(f[56:]) != formatVersion {
+	if be.Uint64(f[72:]) != magic || be.Uint32(f[footerChecked:]) != crc32.Checksum(f[:footerChecked], castagnoli) ||
+		be.Uint32(f[64:]) != formatVersion {
 
 		return nil, ErrCorrupt
 	}
 
 	// The index ends at the trailer before the footer, and a filter ends at
 	// the trailer before the index.
-	indexOff, indexLen, filterOff, filterLen := be.Uint64(f[0:]), be.Uint64(f[8:]), be.Uint64(f[16:]), be.Uint64(f[24:])
+	indexOff, indexLen, indexCRC := be.Uint64(f[0:]), be.Uint64(f[8:]), be.Uint32(f[16:])
+	filterOff, filterLen, filterCRC := be.Uint64(f[20:]), be.Uint64(f[28:]), be.Uint32(f[36:])
 	end := uint64(size) - footerLen - trailerLen
 	if indexLen > end || indexOff != end-indexLen {
 		return nil, ErrCorrupt
@@ -145,11 +150,11 @@ func Open(r io.ReaderAt, size int64, opts ReaderOptions) (*Reader, error) {
 			return nil, ErrCorrupt
 		}
 		dataEnd = filterOff
-	} else if filterOff != 0 {
+	} else if filterOff != 0 || filterCRC != 0 {
 		return nil, ErrCorrupt
 	}
 
-	index, err := readBlock(r, indexOff, indexLen)
+	index, err := readBlock(r, indexOff, indexLen, indexCRC)
 	if err != nil {
 		return nil, err
 	}
@@ -157,7 +162,7 @@ func Open(r io.ReaderAt, size int64, opts ReaderOptions) (*Reader, error) {
 		r: r, index: index, dataEnd: dataEnd,
 		summary: Summary{
 			//nolint:gosec // G115: a Writer counts its entries in an int64
-			Entries: int64(be.Uint64(f[32:])), Size: size, MinSeq: be.Uint64(f[40:]), MaxSeq: be.Uint64(f[48:]),
+			Entries: int64(be.Uint64(f[40:])), Size: size, MinSeq: be.Uint64(f[48:]), MaxSeq: be.Uint64(f[56:]),
 		},
 	}
 
@@ -174,7 +179,7 @@ func Open(r io.ReaderAt, size int64, opts ReaderOptions) (*Reader, error) {
 	}
 
 	if filterLen != 0 {
-		b, err := readBlock(r, filterOff, filterLen)
+		b, err := readBlock(r, filterOff, filterLen, filterCRC)
 		if err != nil {
 			return nil, err
 		}
@@ -264,8 +269,9 @@ func (r *Reader) Get(key []byte, seq uint64, dst []byte) ([]byte, uint64, bool, 
 }
 
 // NewIter returns a cursor over the entries of the table from the pool of
-// cursors. The cursor is on no entry until [Iter.First] or [Iter.SeekGE]
-// moves it. The caller returns the cursor to the pool with [Iter.Close].
+// cursors. The cursor is on no entry until [Iter.First], [Iter.Last],
+// [Iter.SeekGE] or [Iter.SeekLT] moves it. The caller returns the cursor to
+// the pool with [Iter.Close].
 //
 // # Allocation contract
 //
@@ -279,14 +285,15 @@ func (r *Reader) NewIter() *Iter {
 }
 
 // readBlock reads the stored block of n bytes at off and its trailer from r
-// into a new buffer. It returns the bytes of the block.
+// into a new buffer. It returns the bytes of the block. want is the CRC32C
+// that the parent of the block states.
 //
 // Error modes:
 //
-//   - A block that fails its checksum or its decompression returns
-//     [ErrCorrupt].
+//   - A block that fails its checksum, has a CRC32C other than want or fails
+//     its decompression returns [ErrCorrupt].
 //   - An error of r returns an error that wraps it.
-func readBlock(r io.ReaderAt, off, n uint64) ([]byte, error) {
+func readBlock(r io.ReaderAt, off, n uint64, want uint32) ([]byte, error) {
 	b := make([]byte, n+trailerLen)
 	//nolint:gosec // G115: Open checks that the block lies inside the table
 	if err := readAt(r, b, int64(off)); err != nil {
@@ -294,21 +301,24 @@ func readBlock(r io.ReaderAt, off, n uint64) ([]byte, error) {
 	}
 	var decoded []byte
 
-	return unseal(b, &decoded)
+	return unseal(b, want, &decoded)
 }
 
 // unseal checks the trailer at the end of b and returns the bytes of the
-// block. b is a stored block followed by its trailer. A block without
-// compression is a part of b. unseal decodes a compressed block into *buf,
-// and grows *buf when the block does not fit.
+// block. b is a stored block followed by its trailer, and want is the CRC32C
+// that the parent of the block states. A block without compression is a
+// part of b. unseal decodes a compressed block into *buf, and grows *buf when
+// the block does not fit.
 //
 // Error modes:
 //
-//   - A block that fails its checksum, a compression byte other than 0 and
-//     1, and a compressed block that does not decode return [ErrCorrupt].
-func unseal(b []byte, buf *[]byte) ([]byte, error) {
+//   - A block whose CRC32C differs from the CRC32C of its trailer or from
+//     want, a compression byte other than 0 and 1, and a compressed block
+//     that does not decode return [ErrCorrupt].
+func unseal(b []byte, want uint32, buf *[]byte) ([]byte, error) {
 	n := len(b) - trailerLen
-	if crc32.Checksum(b[:n+1], castagnoli) != binary.BigEndian.Uint32(b[n+1:]) {
+	sum := crc32.Checksum(b[:n+1], castagnoli)
+	if sum != binary.BigEndian.Uint32(b[n+1:]) || sum != want {
 		return nil, ErrCorrupt
 	}
 	if kind := Compression(b[n]); kind == NoCompression {

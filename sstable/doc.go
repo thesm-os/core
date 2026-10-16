@@ -26,22 +26,26 @@
 //     not contain reads a data block only when the filter reports a false
 //     positive.
 //   - An index block with an entry for each data block. The entry has the
-//     last key of the block and the place of the block in the table.
-//   - A footer of 72 bytes with the places of the index and the filter, the
-//     number of entries, the lowest and the highest sequence, a version and a
-//     magic number.
+//     last key of the block, the place of the block in the table and its
+//     CRC32C.
+//   - A footer of 80 bytes with the places and the CRC32C checksums of the
+//     index and the filter, the number of entries, the lowest and the highest
+//     sequence, a version and a magic number.
 //
 // A trailer of 5 bytes follows every block. It contains the codec of the
 // block and the CRC32C of the block and its codec. With the CRC32C of the
-// footer, a change of any bit of a table fails a checksum. [Writer.Close]
-// documents the layout in full, and the layout does not change between
-// releases.
+// footer, a change of any bit of a table fails a checksum. A read compares
+// the CRC32C of each block with the CRC32C that the index or the footer
+// states for it, so a valid block at the place of another block returns
+// [ErrCorrupt]. [Writer.Close] documents the layout in full, and the layout
+// does not change between releases.
 //
 // # Merges
 //
-// A [Source] is a cursor over a sorted run of entries. An [Iter] of a table
-// and the cursor of a memtable are sources. A [Merger] yields the union of
-// any number of sources in the order of Compare.
+// A [Source] is a cursor over a sorted run of entries that moves in both
+// directions. An [Iter] of a table and the cursor of a memtable are sources.
+// A [Merger] yields the union of any number of sources in the order of
+// Compare, from the first entry forward or from the last entry back.
 //
 // # Concurrency
 //

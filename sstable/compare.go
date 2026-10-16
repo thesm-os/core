@@ -15,12 +15,24 @@ type Source interface {
 	// First moves to the first entry and reports whether it exists.
 	First() bool
 
+	// Last moves to the last entry and reports whether it exists.
+	Last() bool
+
 	// SeekGE moves to the first entry at or after the entry (key, seq) and
 	// reports whether it exists.
 	SeekGE(key []byte, seq uint64) bool
 
-	// Next moves to the next entry and reports whether it exists.
+	// SeekLT moves to the last entry before the entry (key, seq) and reports
+	// whether it exists.
+	SeekLT(key []byte, seq uint64) bool
+
+	// Next moves to the next entry and reports whether it exists. Next of a
+	// cursor on no entry reports false.
 	Next() bool
+
+	// Prev moves to the entry before the current one and reports whether it
+	// exists. Prev of a cursor on no entry reports false.
+	Prev() bool
 
 	// Key returns the key of the current entry. It is valid until the next
 	// move of the cursor.

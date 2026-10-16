@@ -1,0 +1,51 @@
+{
+  "store": 1,
+  "definition": "8.0.0",
+  "property": "Open refuses a valid block of another table of the same layout",
+  "identity": {
+    "assertion": "err-is",
+    "file": "reader_test.go",
+    "line": 263
+  },
+  "choices": "prop1:AAIAAAMA",
+  "counterexample": [
+    {
+      "label": "entries",
+      "value": {
+        "type": "int",
+        "value": 2
+      }
+    },
+    {
+      "label": "seq",
+      "value": {
+        "type": "int",
+        "value": 0
+      }
+    },
+    {
+      "label": "value",
+      "value": {
+        "type": "bytes",
+        "value": ""
+      }
+    },
+    {
+      "label": "entries",
+      "value": {
+        "type": "list",
+        "items": [
+          {
+            "type": "map",
+            "entries": []
+          },
+          {
+            "type": "map",
+            "entries": []
+          }
+        ]
+      }
+    }
+  ],
+  "found": "2026-10-16"
+}

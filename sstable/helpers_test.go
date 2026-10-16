@@ -34,24 +34,43 @@ const (
 const (
 	// seqLen is the size of the sequence at the end of an internal key.
 	seqLen = 8
+	// crcLen is the size of a CRC32C.
+	crcLen = 4
 	// trailerLen is the size of the trailer of a block: its compression byte
 	// and its checksum.
 	trailerLen = 5
 	// footerLen is the size of the footer.
-	footerLen = 72
+	footerLen = 80
 	// footerChecked is the number of bytes of the footer that its checksum
 	// covers. The checksum follows them.
-	footerChecked = 60
+	footerChecked = 68
 	// The offsets of the fields of the footer.
 	footerIndexOff  = 0
 	footerIndexLen  = 8
-	footerFilterOff = 16
-	footerFilterLen = 24
-	footerVersion   = 56
+	footerIndexCRC  = 16
+	footerFilterOff = 20
+	footerFilterLen = 28
+	footerFilterCRC = 36
+	footerVersion   = 64
+)
+
+// The names of the actions of the machines of a cursor and a merge: the six
+// moves of a Source.
+const (
+	moveFirst  = "First"
+	moveLast   = "Last"
+	moveSeekGE = "SeekGE"
+	moveSeekLT = "SeekLT"
+	moveNext   = "Next"
+	movePrev   = "Prev"
 )
 
 // errRead is the error of a reader that fails.
 var errRead = errors.New("read failed")
+
+// oneEntry are the options of the tables whose data blocks a case changes at
+// their only entry: every entry ends its data block.
+var oneEntry = sstable.WriterOptions{BlockSize: 1}
 
 // castagnoli is the table of CRC32C, the checksum of the blocks and the
 // footer of a table.
@@ -124,6 +143,22 @@ var entries = prop.Composite(func(c *prop.Case) []entry {
 	return slices.CompactFunc(es, func(a, b entry) bool { return bytes.Equal(a.key, b.key) && a.seq == b.seq })
 })
 
+// uniform generates runs of 2 to 40 entries that differ only in their keys
+// "key 000", "key 001" and on. Every data block of a table of oneEntry then
+// has one length, and two data blocks differ in at most 3 bytes, so their
+// CRC32C checksums differ.
+var uniform = prop.Composite(func(c *prop.Case) []entry {
+	n := c.Draw(prop.Integer(2, 40), "entries")
+	seq := c.Draw(prop.Integer[uint64](0, 1<<63), "seq")
+	value := c.Draw(prop.Bytes(prop.MaxSize(40)), "value")
+	es := make([]entry, 0, n)
+	for i := range n {
+		es = append(es, entry{key: fmt.Appendf(nil, "key %03d", i), seq: seq, value: value})
+	}
+
+	return es
+})
+
 // entry is an entry of a table: a key, a sequence and a value.
 type entry struct {
 	key   []byte
@@ -162,9 +197,12 @@ func (c *mapCache) Add(id, offset uint64, block []byte) {
 }
 
 // place is the offset and the stored length of a block of a table, without
-// its trailer.
+// its trailer. parent contains the CRC32C that the parent of the block
+// states: the index entry of a data block, or the footer for the filter
+// block and the index block. parent is a part of the bytes of the table.
 type place struct {
 	off, n int
+	parent []byte
 }
 
 // layout is a table with the places of its blocks. A case changes the bytes
@@ -173,14 +211,14 @@ type place struct {
 type layout struct {
 	data   []byte
 	blocks []place // the data blocks, in their order
-	filter place   // the filter block, or the zero place
+	filter place   // the filter block, or a place of length 0
 	index  place   // the index block
 }
 
 // newLayout writes a table of the entries under opts, and reads the places
 // of its blocks from its footer and its index. Every entry of the index is a
-// restart point, and its value is the offset and the length of its block as
-// two varints.
+// restart point. Its value is the offset and the length of its block as two
+// varints, followed by the CRC32C of the block.
 func newLayout(tb assert.TB, opts sstable.WriterOptions, es []entry) *layout {
 	tb.Helper()
 
@@ -188,32 +226,48 @@ func newLayout(tb assert.TB, opts sstable.WriterOptions, es []entry) *layout {
 	f := data[len(data)-footerLen:]
 	be := binary.BigEndian
 	l := &layout{
-		data:   data,
-		filter: place{off: int(be.Uint64(f[footerFilterOff:])), n: int(be.Uint64(f[footerFilterLen:]))},
-		index:  place{off: int(be.Uint64(f[footerIndexOff:])), n: int(be.Uint64(f[footerIndexLen:]))},
+		data: data,
+		filter: place{
+			off: int(be.Uint64(f[footerFilterOff:])), n: int(be.Uint64(f[footerFilterLen:])),
+			parent: f[footerFilterCRC : footerFilterCRC+crcLen],
+		},
+		index: place{
+			off: int(be.Uint64(f[footerIndexOff:])), n: int(be.Uint64(f[footerIndexLen:])),
+			parent: f[footerIndexCRC : footerIndexCRC+crcLen],
+		},
 	}
 	index := data[l.index.off : l.index.off+l.index.n]
 	for _, off := range restarts(index) {
 		_, value := restartEntry(index[off:])
 		blockOff, n := binary.Uvarint(value)
 		blockLen, _ := binary.Uvarint(value[n:])
-		l.blocks = append(l.blocks, place{off: int(blockOff), n: int(blockLen)})
+		l.blocks = append(l.blocks, place{off: int(blockOff), n: int(blockLen), parent: value[len(value)-crcLen:]})
 	}
 
 	return l
 }
 
-// seal writes the CRC32C of each block into its trailer and the CRC32C of
-// the footer into the footer, at the places that newLayout read before the
-// case changed the table.
+// seal brings the checksums of the table up to date with the changes of a
+// case. A block whose CRC32C differs from the CRC32C in its trailer gets the
+// new CRC32C in its trailer and in its parent. seal then writes the CRC32C
+// of the footer. A block that the case did not change keeps its checksums,
+// so a case can change the CRC32C that a parent states and seal the table.
+// seal takes the places that newLayout read before the case changed the
+// table. It seals the data blocks first, because the index is their parent.
 func (l *layout) seal() {
-	for _, b := range append([]place{l.filter, l.index}, l.blocks...) {
-		if b.n != 0 {
-			binary.BigEndian.PutUint32(l.data[b.off+b.n+1:], crc32.Checksum(l.data[b.off:b.off+b.n+1], castagnoli))
+	be := binary.BigEndian
+	for _, b := range slices.Concat(l.blocks, []place{l.filter, l.index}) {
+		if b.n == 0 {
+			continue
+		}
+		sum := crc32.Checksum(l.data[b.off:b.off+b.n+1], castagnoli)
+		if be.Uint32(l.data[b.off+b.n+1:]) != sum {
+			be.PutUint32(l.data[b.off+b.n+1:], sum)
+			be.PutUint32(b.parent, sum)
 		}
 	}
 	f := l.data[len(l.data)-footerLen:]
-	binary.BigEndian.PutUint32(f[footerChecked:], crc32.Checksum(f[:footerChecked], castagnoli))
+	be.PutUint32(f[footerChecked:], crc32.Checksum(f[:footerChecked], castagnoli))
 }
 
 // countingReader is an io.ReaderAt over data that counts its reads.
@@ -300,6 +354,17 @@ func openTable(tb assert.TB, data []byte, opts sstable.ReaderOptions) *sstable.R
 func scanAll(s sstable.Source) ([]entry, error) {
 	var got []entry
 	for ok := s.First(); ok; ok = s.Next() {
+		got = append(got, entry{key: bytes.Clone(s.Key()), seq: s.Seq(), value: bytes.Clone(s.Value())})
+	}
+
+	return got, s.Err()
+}
+
+// scanBack returns a copy of every entry that s yields from its last entry
+// back, and the error of s.
+func scanBack(s sstable.Source) ([]entry, error) {
+	var got []entry
+	for ok := s.Last(); ok; ok = s.Prev() {
 		got = append(got, entry{key: bytes.Clone(s.Key()), seq: s.Seq(), value: bytes.Clone(s.Value())})
 	}
 

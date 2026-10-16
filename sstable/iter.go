@@ -16,9 +16,12 @@ import (
 var iters = pool.NewPool(func() *Iter { return new(Iter) })
 
 // Iter is a cursor over the entries of a table, in the order of [Compare].
-// A move positions the cursor on an entry or exhausts it. A move searches
+// A move positions the cursor on an entry or exhausts it. A seek searches
 // the index for its data block, reads the block and searches the restart
-// points of the block.
+// points of the block. [Iter.Prev] decodes the entries of the block from the
+// restart point before the current entry, so it decodes at most
+// RestartInterval entries. At the end of a block, Next and Prev read the
+// block after it or before it.
 //
 // The key and the value of the current entry are valid until the next move
 // of the cursor.
@@ -70,6 +73,26 @@ func (it *Iter) First() bool {
 	return it.forward(ok)
 }
 
+// Last moves to the last entry and reports whether it exists. It reads the
+// last data block.
+//
+// Error modes:
+//
+//   - A data block that fails its checksum, its decompression or its layout
+//     exhausts the cursor, and Err returns [ErrCorrupt].
+//   - An error of the io.ReaderAt exhausts the cursor, and Err returns an
+//     error that wraps it.
+//
+// # Allocation contract
+//
+// Zero-alloc once the buffers of the cursor have room for the block.
+func (it *Iter) Last() bool {
+	it.err, it.index.err, it.data.err, it.data.valid = nil, nil, nil, false
+	ok := it.index.last() && it.load() && it.data.last()
+
+	return it.backward(ok)
+}
+
 // SeekGE moves to the first entry at or after the entry (key, seq) and
 // reports whether it exists. For a snapshot seq, an entry with key is the
 // newest version of key at or below seq. SeekGE reads the first data block
@@ -92,6 +115,34 @@ func (it *Iter) SeekGE(key []byte, seq uint64) bool {
 	return it.forward(ok)
 }
 
+// SeekLT moves to the last entry before the entry (key, seq) and reports
+// whether it exists. SeekLT reads the first data block whose last entry is
+// at or after (key, seq), and the block before it when every entry of the
+// block is at or after (key, seq). When every entry is before (key, seq),
+// SeekLT moves to the last entry.
+//
+// Error modes:
+//
+//   - A data block that fails its checksum, its decompression or its layout
+//     exhausts the cursor, and Err returns [ErrCorrupt].
+//   - An error of the io.ReaderAt exhausts the cursor, and Err returns an
+//     error that wraps it.
+//
+// # Allocation contract
+//
+// Zero-alloc once the buffers of the cursor have room for the block.
+func (it *Iter) SeekLT(key []byte, seq uint64) bool {
+	it.err, it.index.err, it.data.err, it.data.valid = nil, nil, nil, false
+	ok := false
+	if it.index.seekGE(key, seq) {
+		ok = it.load() && it.data.seekLT(key, seq)
+	} else if it.index.err == nil {
+		ok = it.index.last() && it.load() && it.data.last()
+	}
+
+	return it.backward(ok)
+}
+
 // Next moves to the next entry and reports whether it exists. It reads the
 // next data block at the end of a block. Next of a cursor on no entry
 // reports false.
@@ -110,6 +161,27 @@ func (it *Iter) Next() bool {
 	// A cursor on no entry has an index on no entry or an error, so forward
 	// reports false for it.
 	return it.forward(it.data.next())
+}
+
+// Prev moves to the entry before the current one and reports whether it
+// exists. It reads the data block before at the first entry of a block. Prev
+// of a cursor on no entry reports false.
+//
+// Error modes:
+//
+//   - A data block that fails its checksum, its decompression or its layout
+//     exhausts the cursor, and Err returns [ErrCorrupt]. So do entries of
+//     the current block that do not end at the current entry.
+//   - An error of the io.ReaderAt exhausts the cursor, and Err returns an
+//     error that wraps it.
+//
+// # Allocation contract
+//
+// Zero-alloc once the buffers of the cursor have room for the block.
+func (it *Iter) Prev() bool {
+	// A cursor on no entry has an index on no entry or an error, so backward
+	// reports false for it.
+	return it.backward(it.data.prev())
 }
 
 // Key returns the key of the current entry, with a capacity of its length,
@@ -155,8 +227,8 @@ func (it *Iter) Value() []byte {
 	return it.data.value
 }
 
-// Err returns the error that exhausted the cursor, or nil. First and SeekGE
-// clear it.
+// Err returns the error that exhausted the cursor, or nil. First, Last,
+// SeekGE and SeekLT clear it.
 //
 // # Allocation contract
 //
@@ -197,11 +269,26 @@ func (it *Iter) forward(ok bool) bool {
 	return ok
 }
 
+// backward ends a move whose last step in the data block reported ok. When
+// the block has no entry for the move, backward moves to the last entry of
+// the data blocks before it. It exhausts the cursor at the start of the
+// index or at an error, and reports whether the cursor is on an entry.
+func (it *Iter) backward(ok bool) bool {
+	for !ok && it.err == nil && it.data.err == nil && it.index.prev() {
+		ok = it.load() && it.data.last()
+	}
+	it.err = cmp.Or(it.err, it.index.err, it.data.err)
+
+	return ok
+}
+
 // load sets the data cursor on the data block of the current entry of the
-// index. It takes the block from the cache of the Reader, or reads it and
-// adds a copy to the cache. It sets err and reports false for a place
-// outside the data blocks and for a read that fails. Every caller calls load
-// with the data cursor on no entry, and a load that fails leaves it there.
+// index. The value of the entry is the place of the block and its CRC32C.
+// load takes the block from the cache of the Reader, or reads it, compares
+// its CRC32C with the CRC32C of the entry and adds a copy to the cache. It
+// sets err and reports false for a value with other fields, a place outside
+// the data blocks and a read that fails. Every caller calls load with the
+// data cursor on no entry, and a load that fails leaves it there.
 func (it *Iter) load() bool {
 	v := it.index.value
 	off, n1 := binary.Uvarint(v)
@@ -209,7 +296,7 @@ func (it *Iter) load() bool {
 	// second and fails again, so n2 reports either failure.
 	n, n2 := binary.Uvarint(v[max(n1, 0):])
 	end := it.r.dataEnd
-	if n2 <= 0 ||
+	if n2 <= 0 || len(v) != n1+n2+crcLen ||
 		//dokimi:mutate-skip ror-boundary: a block of end bytes leaves no room for its trailer, which the next check refuses
 		n > end ||
 		end-n < trailerLen || off > end-n-trailerLen {
@@ -218,6 +305,7 @@ func (it *Iter) load() bool {
 
 		return false
 	}
+	want := binary.BigEndian.Uint32(v[n1+n2:])
 
 	c := it.r.cache
 	if c != nil {
@@ -237,7 +325,7 @@ func (it *Iter) load() bool {
 
 		return false
 	}
-	b, err := unseal(it.raw, &it.buf)
+	b, err := unseal(it.raw, want, &it.buf)
 	if err != nil {
 		it.err = err
 
@@ -276,6 +364,9 @@ type blockCursor struct {
 
 	// count is the number of restart points.
 	count int
+
+	// at is the offset of the current entry.
+	at int
 
 	// after is the offset of the entry after the current one.
 	after int
@@ -319,6 +410,18 @@ func (c *blockCursor) restart(i int) bool {
 	return c.decode(int(off))
 }
 
+// last moves to the last entry. It decodes the entries from the last restart
+// point to the end of the entries. For a block without restart points it
+// reports false and leaves err unchanged.
+func (c *blockCursor) last() bool {
+	ok := c.restart(c.count - 1)
+	for ok && c.after != c.end {
+		ok = c.next()
+	}
+
+	return ok
+}
+
 // next moves to the entry after the current one. After the last entry and
 // for a cursor on no entry, it reports false and leaves err unchanged.
 func (c *blockCursor) next() bool {
@@ -329,6 +432,42 @@ func (c *blockCursor) next() bool {
 	}
 
 	return c.decode(c.after)
+}
+
+// prev moves to the entry before the current one. It searches the restart
+// points for the last one before the current entry, and decodes the entries
+// from there to the entry that ends at the current entry. At the first entry
+// and for a cursor on no entry, it reports false and leaves err unchanged.
+// When no entry ends at the current entry, it sets err to ErrCorrupt and
+// reports false.
+func (c *blockCursor) prev() bool {
+	if !c.valid {
+		return false
+	}
+	at := c.at
+	lo, hi := 0, c.count
+	for lo < hi {
+		mid := int(uint(lo+hi) >> 1)
+		if int64(binary.BigEndian.Uint32(c.block[c.end+4*mid:])) < int64(at) {
+			lo = mid + 1
+		} else {
+			hi = mid
+		}
+	}
+
+	// At the first entry no restart point is before the current entry, and
+	// restart reports false for the restart point -1.
+	ok := c.restart(lo - 1)
+	for ok && c.after < at {
+		ok = c.next()
+	}
+	if ok && c.after != at {
+		c.valid, c.err = false, ErrCorrupt
+
+		return false
+	}
+
+	return ok
 }
 
 // seekGE moves to the first entry at or after the entry (key, seq). It
@@ -355,6 +494,21 @@ func (c *blockCursor) seekGE(key []byte, seq uint64) bool {
 	}
 
 	return ok
+}
+
+// seekLT moves to the last entry before the entry (key, seq). It moves to
+// the first entry at or after the entry and then back by one, or to the last
+// entry when every entry is before (key, seq). When every entry is at or
+// after (key, seq), it reports false and leaves err unchanged.
+func (c *blockCursor) seekLT(key []byte, seq uint64) bool {
+	if c.seekGE(key, seq) {
+		return c.prev()
+	}
+	if c.err != nil {
+		return false
+	}
+
+	return c.last()
 }
 
 // decode moves to the entry at off. The key of the entry shares its first
@@ -384,7 +538,7 @@ func (c *blockCursor) decode(off int) bool {
 	k, v := int(unshared), int(vlen)
 	c.key = append(c.key[:shared], p[:k]...)
 	c.value = p[k : k+v : k+v]
-	c.after = c.end - len(p) + k + v
+	c.at, c.after = off, c.end-len(p)+k+v
 	c.valid = true
 
 	return true
