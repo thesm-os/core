@@ -31,8 +31,9 @@ const (
 )
 
 // textPrefix is the prefix of the text that [ID.String] and the String
-// method of each fixed-size type return. No canonical encoding of an
-// identifier starts with it.
+// method of each fixed-size type return. [ID.AppendText] writes it, and
+// [ID.UnmarshalText] requires it. No canonical encoding of an identifier
+// starts with it.
 const textPrefix = "id:"
 
 // ID is an identifier of 128, 160 or 256 bits in one value type.
@@ -176,8 +177,9 @@ func (i ID) Compare(other ID) int {
 	return bytes.Compare(i.bytes[:i.size], other.bytes[:other.size])
 }
 
-// String returns "id:" followed by the active prefix in
-// hexadecimal, for diagnostic output, and "id:" for [Zero].
+// String returns "id:" followed by the active prefix in lowercase
+// hexadecimal, and "id:" for [Zero]. It is the text that [ID.AppendText]
+// appends.
 //
 // No canonical encoding of an identifier starts with "id:", so an
 // ID that fmt writes into a log line cannot pass for one. ULIDs use
@@ -212,9 +214,10 @@ func text(b []byte) string {
 
 // idSize returns the size of the ID whose binary form is n bytes long: 0
 // for the empty form of [Zero], and 16, 20 or 32 for any other ID. It
-// returns 0 and false for a length that no ID has. [FromBytes] and
-// [ID.UnmarshalBinary] share it, so the two decode paths accept the same
-// lengths, apart from the empty form, which FromBytes rejects.
+// returns 0 and false for a length that no ID has. [FromBytes],
+// [ID.UnmarshalBinary] and [ID.UnmarshalText] share it, so the three decode
+// paths accept the same lengths, apart from the empty form, which FromBytes
+// rejects.
 func idSize(n int) (uint8, bool) {
 	switch n {
 	case 0:

@@ -22,6 +22,7 @@ func TestIDSentinelErrors(t *testing.T) {
 	}
 	all := []errEntry{
 		{"ErrSize", id.ErrSize},
+		{"ErrText", id.ErrText},
 	}
 
 	t.Run("prefix", func(t *testing.T) {

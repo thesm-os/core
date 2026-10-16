@@ -92,15 +92,28 @@
 // ID as no bytes. Codecs that use a type's binary methods, such as
 // encoding/gob, encode an ID through them.
 //
+// # Text encoding
+//
+// [ID.AppendText], [ID.MarshalText] and [ID.UnmarshalText] encode an ID as
+// the text that [ID.String] returns: "id:" followed by its bytes in
+// lowercase hexadecimal, and "id:" alone for the zero ID. Codecs that use a
+// type's text methods, such as encoding/json, encode an ID through them,
+// also as the key of a map. [ID.UnmarshalText] accepts only the text that
+// [ID.AppendText] writes, so each ID has exactly one text.
+//
+// The fixed-size types have no text methods. encoding/json writes a value
+// of one of them as an array of numbers.
+//
 // # Allocation contract
 //
 // [ID] is a value type of [MaxSize] bytes and a size byte, passed by
 // value. [ID.IsZero], [ID.Size], [ID.Bytes], [ID.Compare], [ID.Equal],
-// [ID.AppendBinary] into a buffer with room and [ID.UnmarshalBinary] do
-// not allocate. [ID.String] and [ID.MarshalBinary] allocate their
-// results. [ID.As128], [ID.As160], [ID.As256] and the ID and Compare methods
-// of the fixed-size types do not allocate. The String method of each
-// fixed-size type allocates its result.
+// [ID.AppendBinary] and [ID.AppendText] into a buffer with room,
+// [ID.UnmarshalBinary] and [ID.UnmarshalText] do not allocate. [ID.String],
+// [ID.MarshalBinary] and [ID.MarshalText] allocate their results.
+// [ID.As128], [ID.As160], [ID.As256] and the ID and Compare methods of the
+// fixed-size types do not allocate. The String method of each fixed-size
+// type allocates its result.
 //
 // Each [Generator] documents its allocation contract. The generators of
 // this module do not allocate per call when the
