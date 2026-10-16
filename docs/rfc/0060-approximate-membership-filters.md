@@ -370,7 +370,7 @@ are big-endian:
 | 15 | ⌈F * bits / 8⌉ | F = (S + 2) * 2^e fingerprints, or none when S is 0 |
 | 15 + ⌈F * bits / 8⌉ | 3 | Zero bytes |
 
-Fingerprint i occupies bits i *bits to (i + 1)* bits - 1 of the
+Fingerprint i occupies bits `i * bits` to `(i + 1) * bits - 1` of the
 fingerprint bytes, counted from the most significant bit of the first byte.
 A query reads the big-endian 32-bit word at byte ⌊i * bits / 8⌋ and shifts
 the fingerprint out of it, so every width takes one load. The three zero
@@ -398,7 +398,7 @@ and no fingerprints, and its `MayContain` reports false for every hash.
 | Size of a `Bloom` | 32 bytes per block, ⌈keys * bitsPerKey / 256⌉ blocks, at most 2^32 blocks |
 | False positives of a `Bloom` | 1% at 10.5 bits per key, 0.1% at 16.9, 0.01% at 26.4 |
 | Memory reads of a `Bloom` query | One block of 32 bytes |
-| Size of a `Fuse` | (S + 2) *2^e* bits / 8 + 18 bytes. The fingerprints tend to 1.125n for large n |
+| Size of a `Fuse` | `(S + 2) * 2^e * bits / 8 + 18` bytes. The fingerprints tend to 1.125n for large n |
 | False positives of a `Fuse` | 2^-bits: 6.25% at 4 bits, 0.39% at 8, 0.098% at 10, 0.024% at 12, 0.0015% at 16 |
 | Memory reads of a `Fuse` query | Three 32-bit words, issued at once |
 | Scratch of a `FuseBuilder` | About 34 bytes per hash: a copy of the hashes, the mixed hashes in their order of removal, and per position its count, the exclusive or of its hashes, its place in the queue and its fingerprint |
