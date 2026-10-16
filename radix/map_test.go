@@ -22,6 +22,7 @@ import (
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/bench"
 	"go.dokimi.dev/assert/expect"
+	"go.dokimi.dev/assert/history"
 	"go.dokimi.dev/assert/prop"
 	"go.dokimi.dev/assert/stateful"
 
@@ -46,6 +47,24 @@ const (
 // modelContract is the contract of modelSteps, which TestMap and FuzzMap
 // check.
 const modelContract = "a map returns what a Go map returns under any sequence of calls"
+
+// The machine of concurrent reads.
+const (
+	// readContract is the contract of readSteps.
+	readContract = "concurrent reads of a map that no goroutine writes must return what a Go map returns"
+
+	// The names of the reads of the machine.
+	readGet           = "Get"
+	readLongestPrefix = "LongestPrefix"
+	readPrefixes      = "Prefixes"
+	readScan          = "Scan"
+
+	// readers is the number of clients of the machine besides the first.
+	readers = 3
+
+	// readKeys is the most keys that the machine stores before its reads.
+	readKeys = 120
+)
 
 // childEnv is set in the environment of the child process in which a case
 // runs alone.
@@ -91,6 +110,11 @@ type fill struct {
 
 func TestMap(t *testing.T) {
 	t.Parallel()
+
+	t.Run("returns what a Go map returns for concurrent reads", func(t *testing.T) {
+		t.Parallel()
+		prop.ForAll(t, readContract, readSteps)
+	})
 
 	t.Run("New", func(t *testing.T) {
 		t.Parallel()
@@ -944,6 +968,98 @@ func modelSteps(c *prop.Case, inline int) {
 				assert.EquateEmpty())
 		},
 	})
+}
+
+// readSteps stores drawn keys in a map of a drawn inline length, with a Go
+// map as its model. Clients then read the map at once: Get, LongestPrefix,
+// Prefixes and Scan of drawn keys. Each read returns what it finds as text.
+// The spec computes the text of each read from the model, so the history of
+// the reads is linearizable when every read returns what the model returns.
+// No goroutine writes the map during the reads.
+func readSteps(c *prop.Case) {
+	key := prop.Composite(func(c *prop.Case) string {
+		return c.Draw(prop.SampledFrom(stems...), "stem") + c.Draw(prop.SampledFrom(tails...), "tail")
+	})
+	m := radix.New[string, int](radix.Config{InlineKeyLen: c.Draw(prop.SampledFrom(inlineLens...), "inline")})
+	model := map[string]int{}
+	for i, k := range c.Draw(prop.List(key, prop.MaxSize(readKeys)), "keys") {
+		_, _, err := m.Set(k, i)
+		assert.NoError(c, err, "Set stores the key")
+		model[k] = i
+	}
+	sorted := slices.Sorted(maps.Keys(model))
+
+	read := func(name string) stateful.Action[struct{}] {
+		return stateful.Action[struct{}]{
+			Name:  name,
+			Input: func(c *prop.Case, _ struct{}) any { return c.Draw(key, "key") },
+			Run: func(c *prop.Case, client int, in any) {
+				k := in.(string)
+				call := c.History().Invoke(client, name, []any{k})
+				var text []byte
+				switch name {
+				case readGet:
+					v, ok := m.Get(k)
+					text = fmt.Appendf(text, "%d %t", v, ok)
+				case readLongestPrefix:
+					n, v, ok := m.LongestPrefix(k)
+					text = fmt.Appendf(text, "%d %d %t", n, v, ok)
+				case readPrefixes:
+					for n, v := range m.Prefixes(k) {
+						text = fmt.Appendf(text, "%d %d;", n, v)
+					}
+				default:
+					for sk, v := range m.Scan(k) {
+						text = fmt.Appendf(text, "%q %d;", sk, v)
+					}
+				}
+				call.OK(string(text))
+			},
+		}
+	}
+
+	stateful.Steps(c, stateful.Machine[struct{}]{
+		Spec: history.Spec[struct{}]{
+			Initial: func() struct{} { return struct{}{} },
+			Next: func(state struct{}, op history.Operation) []struct{} {
+				k := op.Args[0].(string)
+				var want []byte
+				switch op.Name {
+				case readGet:
+					v, ok := model[k]
+					want = fmt.Appendf(want, "%d %t", v, ok)
+				case readLongestPrefix:
+					var longest stored
+					ps := modelPrefixes(model, k)
+					if len(ps) != 0 {
+						longest = ps[len(ps)-1]
+					}
+					want = fmt.Appendf(want, "%d %d %t", longest.n, longest.value, len(ps) != 0)
+				case readPrefixes:
+					for _, p := range modelPrefixes(model, k) {
+						want = fmt.Appendf(want, "%d %d;", p.n, p.value)
+					}
+				default:
+					for _, sk := range sorted {
+						if strings.HasPrefix(sk, k) {
+							want = fmt.Appendf(want, "%q %d;", sk, model[sk])
+						}
+					}
+				}
+				if op.Returned(string(want)) {
+					return []struct{}{state}
+				}
+
+				return nil
+			},
+		},
+		Actions: []stateful.Action[struct{}]{
+			read(readGet),
+			read(readLongestPrefix),
+			read(readPrefixes),
+			read(readScan),
+		},
+	}, stateful.Clients(readers))
 }
 
 // modelPrefixes returns the keys of model that are prefixes of key, from the
