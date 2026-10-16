@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.23.0
+
+### Minor Changes
+
+- 898282d: Add `sstable.Merger.Close` to close every source of a merge that implements `io.Closer`.
+- 898282d: Add `sstable.Writer.Reset` to write the next table with the buffers of the table before.
+- 63b2084: **Breaking:** Encode `crypto.Digest` in JSON as the string of its lowercase hexadecimal in place of `{}`, and refuse the zero `Digest`.
+- 1cbe7c3: **Breaking:** Encode `id.ID` in JSON as the string that `ID.String` returns in place of `{}`.
+- 1829159: **Breaking:** Change `skiplist.List.Cost` to return the bytes of the data arena before the bytes of the node arena.
+- 1829159: **Breaking:** Change `skiplist.New` to take a `skiplist.Config` with the fields `DataBytes`, `NodeBytes` and `Seed`.
+
+### Patch Changes
+
+- d9b657b: Fix `batch.Loader.Load` to start a fresh batch after every caller of the batch of its key left.
+- 24a6e56: Fix the timers of `clock/fake` to drop an unreceived tick in `Stop` and `Reset`, as `time.Timer` does.
+- 898282d: Fix `sstable.Iter.Close` to return a cursor to the pool once when a caller closes it twice.
+- 3cfcefb: Speed up `filter.FuseBuilder.Append` by 13% to 23% for sets of 65,536 hashes or more, at a cost of 14% for a set of 1,000.
+
 ## 0.22.0
 
 ### Minor Changes
