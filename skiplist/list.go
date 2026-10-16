@@ -1,0 +1,431 @@
+// Copyright ThesmOS B.V. 2026
+// SPDX-License-Identifier: Apache-2.0
+
+package skiplist
+
+import (
+	"bytes"
+	"cmp"
+	"math"
+	"math/bits"
+	"sync/atomic"
+
+	"go.thesmos.sh/core/arena"
+	"go.thesmos.sh/core/hash/xxh3"
+)
+
+// The layout of a node in the node arena: nodeHeader words, then one link
+// for each level of the node. A link is the index of the first word of the
+// next node at its level, and 0 is no node. The key and the value of a node
+// are consecutive bytes of the data arena.
+const (
+	// wordKeyOff is the word of the offset of the key in the data arena.
+	wordKeyOff = 0
+	// wordKeyLen is the word of the length of the key.
+	wordKeyLen = 1
+	// wordValueLen is the word of the length of the value, which follows
+	// the key.
+	wordValueLen = 2
+	// wordSeqHigh is the word of the high 32 bits of the sequence.
+	wordSeqHigh = 3
+	// wordSeqLow is the word of the low 32 bits of the sequence.
+	wordSeqLow = 4
+	// nodeHeader is the number of words before the links of a node.
+	nodeHeader = 5
+	// wordBytes is the size of a word in bytes.
+	wordBytes = 4
+)
+
+// The bounds of a List.
+const (
+	// maxHeight is the largest number of levels of a node. The head node,
+	// at index 0 of the node arena, has links at every level.
+	maxHeight = 20
+	// headWords is the number of words of the head node.
+	headWords = nodeHeader + maxHeight
+)
+
+// The constants of splitmix64, which derives the two secret words of the
+// hash of the heights from the seed of a List.
+const (
+	splitGamma = 0x9e3779b97f4a7c15
+	splitMul1  = 0xbf58476d1ce4e5b9
+	splitMul2  = 0x94d049bb133111eb
+)
+
+// levelBounds[k-1] is the bound of level k, e^-k times 2^64. The hash of an
+// entry passes level k when it is below the bound, so a node has level k
+// with a probability of e^-k.
+var levelBounds = func() (bounds [maxHeight - 1]uint64) {
+	for k := range bounds {
+		bounds[k] = uint64(math.Ldexp(math.Exp(-float64(k+1)), 64))
+	}
+
+	return bounds
+}()
+
+// List is an insert-only ordered map of entries: a skip list whose nodes
+// link without locks. It orders the entries by key, as bytes.Compare orders
+// keys, and for one key from the highest sequence to the lowest.
+//
+// A List keeps its node words in an [arena.Bump] of uint32 and its keys and
+// values in an arena.Bump of bytes. The arenas never grow or move, and both
+// are free of pointers. Every key and value that a List returns is valid for
+// the life of the List, or until [List.Reset].
+//
+// # Concurrency
+//
+// [List.Add], [List.Get], [List.Len], [List.Size] and [List.NewIter] are
+// safe for concurrent use. Reset is not safe concurrently with any other
+// method. An Add that returned is visible to every Get and to every move of
+// a cursor that starts after it.
+//
+// # Allocation contract
+//
+// [New] allocates the List, its two arenas and their arrays. NewIter
+// allocates the cursor. The other methods do not allocate.
+type List struct {
+	// dataArena reserves the bytes of the keys and the values.
+	dataArena *arena.Bump[byte]
+
+	// nodeArena reserves the words of the nodes. Its first headWords words
+	// are the head node.
+	nodeArena *arena.Bump[uint32]
+
+	// data is the array of dataArena.
+	data []byte
+
+	// nodes is the array of nodeArena. A writer writes the words of a node
+	// before it links the node, and every link is read and written with
+	// sync/atomic, so a goroutine that loads a link sees the words of the
+	// node that it links.
+	nodes []uint32
+
+	// levels is the height of the tallest node, at least 1. A search starts
+	// at its top level.
+	levels atomic.Uint32
+
+	// count is the number of entries.
+	count atomic.Int64
+
+	// secret0 and secret1 are the secret words of the hash of the heights,
+	// one for each factor of its product.
+	secret0, secret1 uint64
+}
+
+// New returns an empty [List] with a data arena of dataBytes for its keys
+// and values and a node arena of nodeBytes for its nodes. The heights of
+// its nodes derive from seed.
+//
+// A node takes 4 bytes for each of its 5 words and its links: 26.3 bytes on
+// average. A key and its value take their own bytes.
+//
+// Error modes:
+//
+//   - A capacity below 1 or above 2^32 - 1 bytes returns [ErrSize].
+//
+// # Allocation contract
+//
+// Allocates the List, its two [arena.Bump] values and their arrays.
+func New(dataBytes, nodeBytes int, seed uint64) (*List, error) {
+	// A capacity of 2^32 - 1 bytes or less has no bit set above its 32
+	// bits, so every offset and every length fits a word.
+	if dataBytes < 1 || nodeBytes < 1 || uint64(dataBytes)>>32 != 0 || uint64(nodeBytes)>>32 != 0 {
+		return nil, ErrSize
+	}
+
+	secret0 := splitmix64(&seed)
+	secret1 := splitmix64(&seed)
+	l := &List{
+		dataArena: arena.NewBump[byte](dataBytes),
+		nodeArena: arena.NewBump[uint32](headWords + nodeBytes/wordBytes),
+		secret0:   secret0,
+		secret1:   secret1,
+	}
+	l.data, l.nodes = l.dataArena.Values(), l.nodeArena.Values()
+	l.nodeArena.Reserve(headWords)
+	l.levels.Store(1)
+
+	return l, nil
+}
+
+// Add inserts the entry of key, seq and value. It copies key and value into
+// the data arena. An Add that returned is visible to every Get and to every
+// move of a cursor that starts after it.
+//
+// Add first searches the levels for the nodes around the entry. It then
+// reserves the words of the node and the bytes of its key and value, and
+// writes them. It links the node from level 0 up, each level with a
+// compare-and-swap of the link of the node before it. When another writer changed the link
+// of level 0 first, Add searches every level again. It returns ErrExists
+// when that writer linked the same entry. At a higher level, Add searches
+// the level again from the node before the entry.
+//
+// Error modes:
+//
+//   - An entry with the key and the sequence of an entry of the List
+//     returns [ErrExists], and Add reserves nothing when its search finds
+//     the entry.
+//   - A node that does not fit the node arena returns [ErrFull], and Add
+//     reserves nothing.
+//   - Bytes that do not fit the data arena return ErrFull. The words of the
+//     node remain reserved until [List.Reset].
+//
+// A writer that adds the entry at the same moment can make Add return
+// ErrExists after it reserved its node and its bytes. They remain reserved
+// until Reset too.
+//
+// # Allocation contract
+//
+// Zero-alloc.
+func (l *List) Add(key []byte, seq uint64, value []byte) error {
+	var (
+		prev, next [maxHeight]uint32
+		node       []uint32
+		at         uint32
+		h          int
+	)
+
+	// Level 0 decides whether the entry joins the List. A failed
+	// compare-and-swap there searches every level again, so a writer that
+	// linked the same entry first makes the search find it.
+	for {
+		if l.findSplice(key, seq, &prev, &next) {
+			return ErrExists
+		}
+		if node == nil {
+			h = l.height(key, seq)
+			nd, ok := l.nodeArena.Reserve(nodeHeader + h)
+			if !ok {
+				return ErrFull
+			}
+			off, ok := l.dataArena.Reserve(len(key) + len(value))
+			if !ok {
+				return ErrFull
+			}
+
+			copy(l.data[off:], key)
+			copy(l.data[off+len(key):], value)
+			node = l.nodes[nd : nd+nodeHeader+h]
+			//nolint:gosec // G115: the data arena has at most 2^32 - 1 bytes
+			node[wordKeyOff], node[wordKeyLen], node[wordValueLen] = uint32(off), uint32(len(key)), uint32(len(value))
+			//nolint:gosec // G115: the conversions take the two halves of the sequence
+			node[wordSeqHigh], node[wordSeqLow] = uint32(seq>>32), uint32(seq)
+			//nolint:gosec // G115: the node arena has at most 2^30 + headWords words
+			at = uint32(nd)
+			l.raise(h)
+		}
+		node[nodeHeader] = next[0]
+		if atomic.CompareAndSwapUint32(&l.nodes[prev[0]+nodeHeader], next[0], at) {
+			break
+		}
+	}
+
+	// A higher level searches its splice again from the node before the
+	// entry before each compare-and-swap. The List has no other node with
+	// key and seq, because level 0 links the entry.
+	for level := 1; level < h; level++ {
+		for {
+			prev[level], next[level], _ = l.splice(key, seq, prev[level], level)
+			node[nodeHeader+level] = next[level]
+			if atomic.CompareAndSwapUint32(&l.nodes[prev[level]+nodeHeader+uint32(level)], next[level], at) {
+				break
+			}
+		}
+	}
+	l.count.Add(1)
+
+	return nil
+}
+
+// Get returns the value and the sequence of the first entry at or after
+// the entry (key, seq) when that entry has key. For a snapshot seq, it is
+// the newest version of key at or below seq. It reports false when the
+// first entry at or after (key, seq) has another key, or when no entry
+// follows. The value is valid until [List.Reset], and its capacity is its
+// length.
+//
+// # Allocation contract
+//
+// Zero-alloc.
+func (l *List) Get(key []byte, seq uint64) ([]byte, uint64, bool) {
+	nd := l.seekGE(key, seq)
+	if nd == 0 || !bytes.Equal(l.key(nd), key) {
+		return nil, 0, false
+	}
+
+	return l.value(nd), uint64(l.nodes[nd+wordSeqHigh])<<32 | uint64(l.nodes[nd+wordSeqLow]), true
+}
+
+// Len returns the number of entries.
+//
+// # Allocation contract
+//
+// Zero-alloc.
+func (l *List) Len() int {
+	return int(l.count.Load())
+}
+
+// Size returns the bytes of both arenas in use: the bytes of the keys and
+// the values, and 4 bytes for each word of a node. It counts the words and
+// the bytes that an Add reserved before it returned an error.
+//
+// # Allocation contract
+//
+// Zero-alloc.
+func (l *List) Size() int {
+	return l.dataArena.Len() + wordBytes*(l.nodeArena.Len()-headWords)
+}
+
+// Reset removes every entry and keeps the arenas. It zeroes the bytes and
+// the words in use, so it takes time in proportion to [List.Size]. Every key
+// and value that the List returned before is invalid after Reset.
+//
+// # Allocation contract
+//
+// Zero-alloc.
+func (l *List) Reset() {
+	l.dataArena.Reset()
+	l.nodeArena.Reset()
+	l.nodeArena.Reserve(headWords)
+	l.levels.Store(1)
+	l.count.Store(0)
+}
+
+// NewIter returns a cursor over the entries of the List. The cursor is on
+// no entry until [Iter.First] or [Iter.SeekGE] moves it.
+//
+// # Allocation contract
+//
+// Allocates the cursor.
+func (l *List) NewIter() *Iter {
+	return &Iter{list: l}
+}
+
+// raise raises the height of the List to h when h is above it. When another
+// writer raised it first, raise compares h with the height that the other
+// writer set.
+func (l *List) raise(h int) {
+	for {
+		top := l.levels.Load()
+		//nolint:gosec // G115: a height is at most maxHeight
+		//dokimi:mutate-skip ror-boundary: a compare-and-swap of the height with itself changes nothing
+		if uint32(h) <= top || l.levels.CompareAndSwap(top, uint32(h)) {
+			return
+		}
+	}
+}
+
+// findSplice searches every level from the top for the nodes around the
+// entry (key, seq): prev[level] is the last node before it at the level,
+// and next[level] the first node after it, or 0. The levels above the top of
+// the search keep the head node and no node. findSplice reports true when
+// the List contains an entry with key and seq.
+func (l *List) findSplice(key []byte, seq uint64, prev, next *[maxHeight]uint32) bool {
+	var before uint32
+	for level := int(l.levels.Load()) - 1; level >= 0; level-- {
+		var exists bool
+		prev[level], next[level], exists = l.splice(key, seq, before, level)
+		if exists {
+			return true
+		}
+		before = prev[level]
+	}
+
+	return false
+}
+
+// splice moves along the level from the node before, and returns the last
+// node before the entry (key, seq) and the node after it, or 0. It reports
+// true, with the node of the entry as the node after it, when it finds an
+// entry with key and seq.
+func (l *List) splice(key []byte, seq uint64, before uint32, level int) (prev, next uint32, exists bool) {
+	for {
+		//nolint:gosec // G115: a level is below maxHeight
+		next = atomic.LoadUint32(&l.nodes[before+nodeHeader+uint32(level)])
+		if next == 0 {
+			return before, 0, false
+		}
+		c := l.compare(key, seq, next)
+		if c <= 0 {
+			return before, next, c == 0
+		}
+		before = next
+	}
+}
+
+// seekGE returns the first node at or after the entry (key, seq), or 0 when
+// no node follows it.
+func (l *List) seekGE(key []byte, seq uint64) uint32 {
+	var before, next uint32
+	for level := l.levels.Load(); level > 0; level-- {
+		for {
+			next = atomic.LoadUint32(&l.nodes[before+nodeHeader+level-1])
+			if next == 0 || l.compare(key, seq, next) <= 0 {
+				break
+			}
+			before = next
+		}
+	}
+
+	return next
+}
+
+// compare returns -1, 0 or +1 for the order of the entry (key, seq) and the
+// entry of the node nd: by key, then by sequence from the highest to the
+// lowest.
+func (l *List) compare(key []byte, seq uint64, nd uint32) int {
+	if c := bytes.Compare(key, l.key(nd)); c != 0 {
+		return c
+	}
+
+	return cmp.Compare(uint64(l.nodes[nd+wordSeqHigh])<<32|uint64(l.nodes[nd+wordSeqLow]), seq)
+}
+
+// key returns the key of the node nd, with a capacity of its length.
+func (l *List) key(nd uint32) []byte {
+	//dokimi:mutate-skip aor: wordKeyOff is 0, so nd-wordKeyOff equals nd+wordKeyOff
+	off := l.nodes[nd+wordKeyOff]
+	end := off + l.nodes[nd+wordKeyLen]
+
+	return l.data[off:end:end]
+}
+
+// value returns the value of the node nd, with a capacity of its length.
+func (l *List) value(nd uint32) []byte {
+	//dokimi:mutate-skip aor: wordKeyOff is 0, so nd-wordKeyOff equals nd+wordKeyOff
+	keyOff := l.nodes[nd+wordKeyOff]
+	off := keyOff + l.nodes[nd+wordKeyLen]
+	end := off + l.nodes[nd+wordValueLen]
+
+	return l.data[off:end:end]
+}
+
+// height returns the number of levels of the node of the entry (key, seq):
+// 1, plus 1 for each level k from 1 to maxHeight-1 whose bound the hash of
+// the entry is below. The hash multiplies two factors into 128 bits and
+// folds the halves with an exclusive or. Each factor combines a part of the
+// entry with a secret word of its own, so a caller that does not know the
+// seed cannot make a factor 0 or choose entries of one height.
+func (l *List) height(key []byte, seq uint64) int {
+	hi, lo := bits.Mul64(xxh3.Hash(key)^l.secret0, seq^l.secret1)
+	x := hi ^ lo
+	h := 1
+	for h < maxHeight && x < levelBounds[h-1] {
+		h++
+	}
+
+	return h
+}
+
+// splitmix64 advances the state of a splitmix64 generator and returns its
+// next output. New takes the secret words of the hash of the heights from
+// the first two outputs for the seed.
+func splitmix64(state *uint64) uint64 {
+	*state += splitGamma
+	z := *state
+	z = (z ^ z>>30) * splitMul1
+	z = (z ^ z>>27) * splitMul2
+
+	return z ^ z>>31
+}
