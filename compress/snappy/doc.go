@@ -37,7 +37,9 @@
 //
 // [AppendDecode] checks every element against the block and against the
 // decoded length that the preamble states, and returns [ErrCorrupt] for a
-// block that the format does not allow. [DecodedLen] reads the preamble
+// block that the format does not allow. A block decodes to at most 64 bytes
+// for each 3 bytes after its preamble, and AppendDecode refuses a preamble
+// that states more before it allocates. [DecodedLen] reads the preamble
 // alone, so a caller can refuse a length before AppendDecode allocates it.
 //
 // # Concurrency
@@ -50,7 +52,7 @@
 //   - AppendEncode does not allocate when dst has room for
 //     MaxEncodedLen(len(src)) more bytes.
 //   - AppendDecode does not allocate when dst has room for the decoded
-//     bytes.
+//     bytes, or when it refuses the length that the preamble states.
 //   - DecodedLen and MaxEncodedLen do not allocate.
 //
 // # Dependency position

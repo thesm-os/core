@@ -21,6 +21,14 @@ const (
 	tagCopy4   = 0x03
 )
 
+// The densest element of the format, a copy of maxCopyLen bytes with an
+// offset of 2 bytes, takes copy2Len bytes. The elements of a block decode to
+// at most maxCopyLen bytes for each copy2Len of their bytes.
+const (
+	maxCopyLen = 64
+	copy2Len   = 3
+)
+
 // The sizes of the fixed moves of the decoder.
 const (
 	// chunkLen is the size of the move of a short literal or a short copy.
@@ -53,25 +61,34 @@ func DecodedLen(src []byte) (int, error) {
 // AppendDecode appends the bytes that the block src decodes to, to dst, and
 // returns the extended slice. dst and src must not overlap.
 //
-// AppendDecode grows dst once, by the length that the preamble states, and
-// then checks each element against src and against that length before it
-// copies the element. A caller that decodes untrusted blocks checks
-// [DecodedLen] first, because a preamble of 5 bytes states up to 4 GiB.
+// The densest element of the format is a copy of 64 bytes in 3 bytes, so a
+// block decodes to at most 64 bytes for each 3 bytes after its preamble.
+// AppendDecode refuses a preamble that states more. It then grows dst once,
+// by the length that the preamble states, and checks each element against
+// src and against that length before it copies the element. So a block of n
+// bytes grows dst by at most 64n/3 bytes.
 //
 // Error modes:
 //
-//   - A malformed block returns [ErrCorrupt], and dst unchanged.
+//   - A malformed block returns [ErrCorrupt], and dst unchanged. A preamble
+//     that states more bytes than the elements can decode to is malformed.
 //   - A length above the largest int returns [ErrTooLarge], and dst
 //     unchanged, on a platform whose int has 32 bits.
 //
 // # Allocation contract
 //
-// AppendDecode does not allocate when dst has room for the decoded bytes.
-// Otherwise it allocates the growth of dst.
+// AppendDecode does not allocate when dst has room for the decoded bytes, or
+// when it refuses the length that the preamble states. Otherwise it
+// allocates the growth of dst.
 func AppendDecode(dst, src []byte) ([]byte, error) {
 	n, preamble, err := decodedLen(src, math.MaxInt)
 	if err != nil {
 		return dst, err
+	}
+	//nolint:gosec // G115: n is at most MaxBlockLen, and the preamble is at most len(src)
+	//dokimi:mutate-skip ror-boundary: a block that decodes starts with a literal, so it decodes to fewer bytes than the bound
+	if uint64(n)*copy2Len > uint64(len(src)-preamble)*maxCopyLen {
+		return dst, ErrCorrupt
 	}
 	out := slices.Grow(dst, n)
 	start := len(out)

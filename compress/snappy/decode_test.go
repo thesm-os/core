@@ -34,6 +34,10 @@ const (
 	longLiteralTag = 59
 )
 
+// overstated is a block whose preamble states 43 bytes. Its elements, a
+// literal of one byte, take 2 bytes, which decode to at most 42 bytes.
+var overstated = []byte{43, 0x00, 'a'}
+
 // block is a Snappy block and the bytes that it decodes to.
 type block struct {
 	enc  []byte
@@ -315,7 +319,7 @@ func TestDecode(t *testing.T) {
 				give: []byte{0x01, 0x04, 'a', 'b'},
 			},
 			{name: "returns ErrCorrupt for a literal past the end of the block", give: []byte{0x03, 0x08, 'a'}},
-			{name: "returns ErrCorrupt for a truncated length of a literal", give: []byte{0x3d, 0xf0}},
+			{name: "returns ErrCorrupt for a truncated length of a literal", give: []byte{0x01, 0xf0}},
 			{name: "returns ErrCorrupt for a copy with offset 0", give: []byte{0x05, 0x00, 'a', 0x01, 0x00}},
 			{name: "returns ErrCorrupt for a copy before the first byte", give: []byte{0x05, 0x00, 'a', 0x01, 0x02}},
 			{
@@ -338,6 +342,10 @@ func TestDecode(t *testing.T) {
 			{
 				name: "returns ErrCorrupt for a preamble above MaxBlockLen",
 				give: []byte{0x80, 0x80, 0x80, 0x80, 0x10, 0x00, 'a'},
+			},
+			{
+				name: "returns ErrCorrupt for a stated length above what the elements can decode to",
+				give: overstated,
 			},
 		}
 		for _, tt := range tests {
@@ -375,13 +383,21 @@ func TestDecodeAllocs(t *testing.T) {
 	assert.NoError(t, err, "AppendEncode encodes the block")
 
 	t.Run("AppendDecode", func(t *testing.T) {
-		dst := make([]byte, 0, len(src))
+		t.Run("does not allocate into a dst with room for the decoded bytes", func(t *testing.T) {
+			dst := make([]byte, 0, len(src))
 
-		var got []byte
-		expect.MaxAllocs(t, func() { got, err = snappy.AppendDecode(dst, enc) }, 0,
-			"AppendDecode does not allocate into a dst with room for the decoded bytes")
-		assert.NoError(t, err, "the test measures a block that decodes")
-		assert.Equal(t, got, src, "the test measures the decoding of the block")
+			var got []byte
+			expect.MaxAllocs(t, func() { got, err = snappy.AppendDecode(dst, enc) }, 0,
+				"AppendDecode does not allocate into a dst with room for the decoded bytes")
+			assert.NoError(t, err, "the test measures a block that decodes")
+			assert.Equal(t, got, src, "the test measures the decoding of the block")
+		})
+
+		t.Run("does not allocate for a stated length above what the elements can decode to", func(t *testing.T) {
+			expect.MaxAllocs(t, func() { _, err = snappy.AppendDecode(nil, overstated) }, 0,
+				"AppendDecode refuses the stated length before it grows dst")
+			assert.ErrorIs(t, err, snappy.ErrCorrupt, "the test measures a block that AppendDecode refuses")
+		})
 	})
 
 	t.Run("DecodedLen", func(t *testing.T) {
