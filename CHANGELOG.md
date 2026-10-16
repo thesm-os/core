@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.24.0
+
+### Minor Changes
+
+- db8b2e0: Add `skiplist.MaxCost` to return the largest cost of an entry in the two arenas of any `skiplist.List`.
+- 49cdf7b: Add `sstable.IterOptions.NoFill` to read the blocks of a table without adding them to the block cache.
+- 49cdf7b: **Breaking:** Change the moves of `skiplist.Iter` to take a `context.Context`, as the moves of `sstable.Source` do.
+- 49cdf7b: **Breaking:** Change `sstable.Open`, `sstable.Reader.Get`, the moves of `sstable.Source`, the methods of `sstable.BlockCache`, `sstable.Writer.Add` and `sstable.Writer.Close` to take a `context.Context`.
+- 49cdf7b: **Breaking:** Change `sstable.Reader.NewIter` to take an `sstable.IterOptions`.
+- 49cdf7b: **Breaking:** Change `sstable.Open` to read an `sstable.File` in place of an `io.ReaderAt`.
+- 49cdf7b: **Breaking:** Change `sstable.NewWriter` and `sstable.Writer.Reset` to write an `sstable.Sink` in place of an `io.Writer`.
+
 ## 0.23.0
 
 ### Minor Changes
