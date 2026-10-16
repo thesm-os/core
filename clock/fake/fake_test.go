@@ -4,10 +4,12 @@
 package fake_test
 
 import (
+	"context"
 	"sync"
 	"testing"
 	"time"
 
+	"go.dokimi.dev/assert"
 	"go.thesmos.sh/testkit"
 	"go.thesmos.sh/testkit/bench"
 
@@ -164,9 +166,30 @@ func TestSet(t *testing.T) {
 	t.Parallel()
 
 	target := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
-	c := fake.New(origin)
-	c.Set(target)
-	testkit.True(t, c.Time().Equal(target), "Time() must equal the Set target")
+
+	t.Run("moves Time to the target", func(t *testing.T) {
+		t.Parallel()
+		c := fake.New(origin)
+		c.Set(target)
+		testkit.True(t, c.Time().Equal(target), "Time() must equal the Set target")
+	})
+
+	t.Run("restarts the logical counter", func(t *testing.T) {
+		t.Parallel()
+		c := fake.New(origin)
+		c.Now()
+		c.Now()
+		c.Set(target)
+		assert.Equal(t, c.Now().Logical, uint32(1), "the first Now after Set must have the logical 1")
+	})
+
+	t.Run("sends the tick of a timer whose deadline the target passes", func(t *testing.T) {
+		t.Parallel()
+		c := fake.New(origin)
+		tm := c.NewTimer(time.Hour)
+		c.Set(origin.Add(2 * time.Hour))
+		assert.Length(t, tm.C(), 1, "Set must send the tick of the timer whose deadline it passes")
+	})
 }
 
 func TestUpdate(t *testing.T) {
@@ -214,6 +237,17 @@ func TestUpdate(t *testing.T) {
 		// Logical is one more than the larger of the local 10 and the observed 3.
 		testkit.Equal(t, got.Logical, uint32(11),
 			"Logical must equal max(local=10, observed=3)+1")
+	})
+
+	t.Run("releases the clock for the call after it", func(t *testing.T) {
+		t.Parallel()
+		c := fake.New(origin)
+		c.Update(clock.Instant{Wall: 1, Logical: 1, Node: 7})
+		assert.CompletesWithin(t, time.Second, func(context.Context) error {
+			c.Now()
+
+			return nil
+		}, "Now after Update must not wait for the mutex of the clock")
 	})
 }
 

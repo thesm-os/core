@@ -48,40 +48,46 @@ func (w *waiter) fire(at time.Time) {
 	w.once.Do(func() { w.ch <- at })
 }
 
-// fakeTimer implements [clock.Timer] for [Clock].
+// fakeTimer implements [clock.Timer] for [Clock]. mu serialises Stop
+// and Reset, which replaces waiter.
 type fakeTimer struct {
-	clock   *Clock
-	waiter  *waiter
-	mu      sync.Mutex
-	stopped bool
+	clock  *Clock
+	waiter *waiter
+	mu     sync.Mutex
 }
 
 // C returns the timer's tick channel.
 func (t *fakeTimer) C() <-chan time.Time { return t.waiter.ch }
 
-// Stop prevents the timer from firing. Returns true if the timer
-// was active (still pending), false if it had already fired or
-// been stopped.
+// Stop cancels the tick of a pending timer and drops an unreceived tick
+// from the channel. A [time.Timer] of Go 1.23 and later does the same. A
+// receive from the channel after Stop returns then blocks. Stop returns
+// true if the timer was pending or its tick was unreceived, and false if
+// its tick was received or the timer was stopped. A stopped timer has
+// neither a pending waiter nor a tick, so a second Stop returns false.
 func (t *fakeTimer) Stop() bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.stopped {
-		return false
-	}
 	t.clock.mu.Lock()
-	removed := t.clock.removeWaiter(t.waiter)
+	active := t.clock.removeWaiter(t.waiter)
+	// The clock sends the tick of a waiter while its mutex is locked, so
+	// no tick can arrive after the drop.
+	select {
+	case <-t.waiter.ch:
+		active = true
+	default:
+	}
 	t.clock.mu.Unlock()
-	t.stopped = true
-	return removed
+	return active
 }
 
-// Reset reschedules the timer to fire d virtual nanoseconds from
-// the current virtual time. Returns true if the timer was active
-// at the time of the call.
+// Reset schedules the tick of the timer for d virtual nanoseconds after
+// the current virtual time. Like Stop, it drops an unreceived tick from
+// the channel. Reset returns true if the timer was pending or its tick
+// was unreceived at the time of the call.
 //
-// The timer's channel is reused so callers holding the channel
-// from a prior C() call still receive on the right channel after
-// the reset.
+// Reset keeps the channel of the timer, so a caller that took the channel
+// from an earlier call of C receives the tick of the reset timer on it.
 func (t *fakeTimer) Reset(d time.Duration) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -89,19 +95,18 @@ func (t *fakeTimer) Reset(d time.Duration) bool {
 	t.clock.mu.Lock()
 	wasActive := t.clock.removeWaiter(t.waiter)
 
-	// Drain any leftover buffered value from a prior fire. Without
-	// this, Reset on a fired-but-undrained timer would block when
-	// the new waiter's fire() tries to send on a full channel
-	// while holding the clock mutex.
+	// Drop an unreceived tick of the earlier deadline. A full channel
+	// would otherwise block the send of the new waiter while the clock
+	// mutex is locked.
 	select {
 	case <-t.waiter.ch:
+		wasActive = true
 	default:
 	}
 
 	deadline := t.clock.now.Add(d)
 	w := &waiter{deadline: deadline, ch: t.waiter.ch}
 	t.waiter = w
-	t.stopped = false
 
 	if !t.clock.now.Before(deadline) {
 		w.fire(deadline)

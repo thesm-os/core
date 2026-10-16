@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"go.dokimi.dev/assert"
+
 	"go.thesmos.sh/core/clock"
 	"go.thesmos.sh/core/clock/fake"
 	"go.thesmos.sh/core/coretest/clocktest"
@@ -97,6 +99,50 @@ func TestNewTimer(t *testing.T) {
 		case <-time.After(time.Second):
 			t.Fatal("Reset+Advance timer did not fire on new deadline")
 		}
+	})
+
+	t.Run("Reset reports true for a tick that nobody received", func(t *testing.T) {
+		t.Parallel()
+		c := fake.New(origin)
+		tm := c.NewTimer(time.Second)
+		c.Advance(2 * time.Second)
+		assert.True(t, tm.Reset(time.Hour),
+			"Reset of a timer whose tick nobody received must report true, as on a time.Timer")
+	})
+
+	t.Run("Stop drops a tick that nobody received", func(t *testing.T) {
+		t.Parallel()
+		c := fake.New(origin)
+		tm := c.NewTimer(time.Second)
+		c.Advance(2 * time.Second)
+		assert.True(t, tm.Stop(), "Stop of a timer whose tick nobody received must report true, as on a time.Timer")
+		assert.Empty(t, tm.C(), "a receive after Stop must find no tick from before Stop")
+	})
+
+	t.Run("Stop reports false for a tick that was received", func(t *testing.T) {
+		t.Parallel()
+		c := fake.New(origin)
+		tm := c.NewTimer(time.Second)
+		c.Advance(2 * time.Second)
+		<-tm.C()
+		assert.False(t, tm.Stop(), "Stop of a timer whose tick was received must report false")
+	})
+
+	t.Run("Stop reports false for a second call", func(t *testing.T) {
+		t.Parallel()
+		tm := fake.New(origin).NewTimer(time.Hour)
+		assert.True(t, tm.Stop(), "the first Stop of a pending timer must report true")
+		assert.False(t, tm.Stop(), "the second Stop must report false")
+	})
+
+	t.Run("Stop cancels the tick at the deadline of a Reset", func(t *testing.T) {
+		t.Parallel()
+		c := fake.New(origin)
+		tm := c.NewTimer(time.Hour)
+		tm.Reset(2 * time.Hour)
+		assert.True(t, tm.Stop(), "Stop of a timer that Reset rescheduled must report true")
+		c.Advance(3 * time.Hour)
+		assert.Empty(t, tm.C(), "the stopped timer must not send a tick at the deadline of the Reset")
 	})
 }
 

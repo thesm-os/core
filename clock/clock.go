@@ -76,21 +76,19 @@ type Clock interface {
 //
 // # Standard-library parity
 //
-// Every method mirrors [time.Timer] semantics so production
-// implementations are a thin wrapper over the standard library:
+// Every method mirrors the semantics of a [time.Timer] of Go 1.23 and
+// later, so production implementations are a thin wrapper over the
+// standard library:
 //
-//   - [Timer.C] returns the tick channel. The channel has capacity
-//     1; a fired-but-not-drained timer that fires again does not
-//     block.
-//   - [Timer.Reset] reschedules the timer to fire after d. Returns
-//     true if the timer was active (running but not yet fired) at
-//     the time of the call, false if it had already fired or been
-//     stopped. Per stdlib convention, callers should drain
-//     [Timer.C] before invoking [Timer.Reset] on a stopped or
-//     expired timer.
-//   - [Timer.Stop] prevents the timer from firing. Returns true if
-//     the call cancelled an active timer, false if the timer had
-//     already fired or been stopped.
+//   - [Timer.C] returns the tick channel. A receive after Reset or
+//     Stop returns never yields a tick from before that call.
+//   - [Timer.Reset] schedules the tick for d after the call and drops
+//     an unreceived tick. It returns true if the timer was active at
+//     the time of the call. An active timer is pending, or it has sent
+//     a tick that nobody received.
+//   - [Timer.Stop] cancels a pending tick and drops an unreceived tick.
+//     It returns true if the timer was active, and false if its tick
+//     was received or the timer was stopped.
 //
 // # Concurrency
 //
@@ -107,7 +105,7 @@ type Timer interface {
 	// if the timer was active at the time of the call.
 	Reset(d time.Duration) bool
 
-	// Stop prevents the timer from firing. Returns true if the
-	// call cancelled an active timer.
+	// Stop cancels a pending tick and drops an unreceived tick. Returns
+	// true if the timer was active.
 	Stop() bool
 }
