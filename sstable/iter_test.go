@@ -490,6 +490,22 @@ func TestIterAllocs(t *testing.T) {
 	expect.NotEmpty(t, key, "the test measures the key of an entry")
 	expect.NotEmpty(t, value, "the test measures the value of an entry")
 	expect.NoError(t, err, "the test measures a cursor without an error")
+
+	// The second block of the table is a Snappy block whose preamble states
+	// 1 MiB and whose elements decode to 1 byte.
+	l := newLayout(t, oneEntry, goldenTable())
+	replaceBlock(l, 1, append(binary.AppendUvarint(nil, 1<<20), 0x00, 'a'))
+	l.data[l.blocks[1].off+l.blocks[1].n] = byte(sstable.SnappyCompression)
+	l.seal()
+	bad := openTable(t, l.data, sstable.ReaderOptions{}).NewIter()
+	defer bad.Close()
+	expect.MaxAllocs(t, func() {
+		ok := bad.First()
+		for ok {
+			ok = bad.Next()
+		}
+	}, 0, "a cursor does not allocate the length that the preamble of a corrupt block states")
+	expect.ErrorIs(t, bad.Err(), sstable.ErrCorrupt, "the test measures a cursor that refuses the second block")
 }
 
 // BenchmarkIter reports the cost of the moves of a cursor, and fails when a
