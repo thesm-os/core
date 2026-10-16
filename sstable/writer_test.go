@@ -1,0 +1,455 @@
+// Copyright ThesmOS B.V. 2026
+// SPDX-License-Identifier: Apache-2.0
+
+package sstable_test
+
+import (
+	"bytes"
+	"encoding/binary"
+	"errors"
+	"flag"
+	"io"
+	"math"
+	"os"
+	"os/exec"
+	"regexp"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/bench"
+	"go.dokimi.dev/assert/expect"
+	"go.dokimi.dev/assert/golden"
+
+	"go.thesmos.sh/core/compress/snappy"
+	"go.thesmos.sh/core/sstable"
+)
+
+// warmEntries is the number of entries that the allocation test of Add adds
+// before it counts. They grow the index and the hashes so far that a growth
+// during a count leaves room for every call of the next count.
+const warmEntries = 4096
+
+// childEnv is set in the environment of the child process in which a case
+// runs alone.
+const childEnv = "CORE_TEST_CHILD"
+
+// errWrite is the error of a writer that fails.
+var errWrite = errors.New("write failed")
+
+// goldenFiles are the golden tables: the entries of goldenTable under the
+// zero options and under each setting of settings.
+var goldenFiles = []struct {
+	name string
+	file string
+	opts sstable.WriterOptions
+}{
+	{name: "the zero options", file: "default.sst"},
+	{name: settings[0].name, file: "uncompressed.sst", opts: settings[0].opts},
+	{name: settings[1].name, file: "uncompressed-filter.sst", opts: settings[1].opts},
+	{name: settings[2].name, file: "compressed.sst", opts: settings[2].opts},
+	{name: settings[3].name, file: "compressed-filter.sst", opts: settings[3].opts},
+}
+
+// failingWriter accepts the first n bytes of its writes and fails every
+// write after them with errWrite.
+type failingWriter struct {
+	n int
+}
+
+var _ io.Writer = (*failingWriter)(nil)
+
+// Write accepts p, or fails once the writer has accepted n bytes.
+func (w *failingWriter) Write(p []byte) (int, error) {
+	if len(p) > w.n {
+		return 0, errWrite
+	}
+	w.n -= len(p)
+
+	return len(p), nil
+}
+
+// shortWriter accepts one byte less than each write, without an error.
+type shortWriter struct{}
+
+var _ io.Writer = shortWriter{}
+
+// Write reports one byte less than p and no error.
+func (shortWriter) Write(p []byte) (int, error) {
+	return max(len(p)-1, 0), nil
+}
+
+func TestWriter(t *testing.T) {
+	t.Parallel()
+
+	t.Run("Compression", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("Valid", func(t *testing.T) {
+			t.Parallel()
+
+			tests := []struct {
+				name string
+				give sstable.Compression
+				want bool
+			}{
+				{name: "reports true for NoCompression", give: sstable.NoCompression, want: true},
+				{name: "reports true for SnappyCompression", give: sstable.SnappyCompression, want: true},
+				{name: "reports false for a value above SnappyCompression", give: 2, want: false},
+			}
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					t.Parallel()
+					assert.Equal(t, tt.give.Valid(), tt.want, "Valid accepts the two codecs alone")
+				})
+			}
+		})
+
+		t.Run("String", func(t *testing.T) {
+			t.Parallel()
+
+			tests := []struct {
+				name string
+				give sstable.Compression
+				want string
+			}{
+				{name: "returns none for NoCompression", give: sstable.NoCompression, want: "none"},
+				{name: "returns snappy for SnappyCompression", give: sstable.SnappyCompression, want: "snappy"},
+				{name: "returns the number of a value that is not valid", give: 7, want: "Compression(7)"},
+			}
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					t.Parallel()
+					assert.Equal(t, tt.give.String(), tt.want, "String names the codec")
+				})
+			}
+		})
+	})
+
+	t.Run("NewWriter", func(t *testing.T) {
+		t.Parallel()
+
+		tests := []struct {
+			name string
+			give sstable.WriterOptions
+		}{
+			{name: "returns ErrOptions for a negative BlockSize", give: sstable.WriterOptions{BlockSize: -1}},
+			{
+				name: "returns ErrOptions for a BlockSize above 2^32 - 1",
+				give: sstable.WriterOptions{BlockSize: math.MaxUint32 + 1},
+			},
+			{
+				name: "returns ErrOptions for a negative RestartInterval",
+				give: sstable.WriterOptions{RestartInterval: -1},
+			},
+			{name: "returns ErrOptions for an unknown Compression", give: sstable.WriterOptions{Compression: 2}},
+			{name: "returns ErrOptions for 3 bits of filter", give: sstable.WriterOptions{FilterBits: 3}},
+			{name: "returns ErrOptions for 17 bits of filter", give: sstable.WriterOptions{FilterBits: 17}},
+			{name: "returns ErrOptions for negative bits of filter", give: sstable.WriterOptions{FilterBits: -8}},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				w, err := sstable.NewWriter(io.Discard, tt.give)
+				assert.ErrorIs(t, err, sstable.ErrOptions, "NewWriter refuses the options")
+				assert.Nil(t, w, "NewWriter returns no Writer")
+			})
+		}
+
+		t.Run("returns a Writer for a BlockSize of 2^32 - 1", func(t *testing.T) {
+			t.Parallel()
+			data := writeTable(t, sstable.WriterOptions{BlockSize: math.MaxUint32}, goldenTable())
+			got, err := scanAll(openTable(t, data, sstable.ReaderOptions{}).NewIter())
+			assert.NoError(t, err, "the table of one block reads")
+			assert.Equal(t, got, goldenTable(), "the table contains every entry")
+		})
+
+		for _, bits := range []int{4, 8, 10, 12, 16} {
+			t.Run("returns a Writer for a filter of "+strconv.Itoa(bits)+" bits", func(t *testing.T) {
+				t.Parallel()
+				data := writeTable(t, sstable.WriterOptions{FilterBits: bits}, goldenTable())
+				r := openTable(t, data, sstable.ReaderOptions{})
+				assert.True(t, r.MayContain([]byte("key 000")), "the filter contains the keys of the table")
+			})
+		}
+	})
+
+	t.Run("Add", func(t *testing.T) {
+		t.Parallel()
+
+		tests := []struct {
+			name string
+			give entry
+		}{
+			{name: "returns ErrOrder for a smaller key", give: entry{key: []byte("a"), seq: 1}},
+			{name: "returns ErrOrder for the key with a higher sequence", give: entry{key: []byte("b"), seq: 6}},
+			{name: "returns ErrOrder for a repeat of the previous entry", give: entry{key: []byte("b"), seq: 5}},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				var buf bytes.Buffer
+				w, err := sstable.NewWriter(&buf, sstable.WriterOptions{})
+				assert.NoError(t, err, "NewWriter accepts the zero options")
+				assert.NoError(t, w.Add([]byte("b"), 5, []byte("first")), "Add adds the first entry")
+				assert.ErrorIs(t, w.Add(tt.give.key, tt.give.seq, nil), sstable.ErrOrder, "Add refuses the entry")
+				assert.NoError(t, w.Add([]byte("c"), 1, []byte("next")), "Add adds an entry in order after the refusal")
+				_, err = w.Close()
+				assert.NoError(t, err, "Close writes the table")
+				got, err := scanAll(openTable(t, buf.Bytes(), sstable.ReaderOptions{}).NewIter())
+				assert.NoError(t, err, "the table reads")
+				assert.Equal(t, got, []entry{
+					{key: []byte("b"), seq: 5, value: []byte("first")},
+					{key: []byte("c"), seq: 1, value: []byte("next")},
+				}, "the table contains the entries that Add accepted")
+			})
+		}
+
+		t.Run("returns ErrTooLarge for a key that does not fit the index", func(t *testing.T) {
+			t.Parallel()
+			// The key takes 4 GiB of address space. The runtime zeroes a large
+			// allocation that reuses pages that a collection freed, and so
+			// touches every page. The case therefore runs alone in a child
+			// process of the test binary, whose heap has freed no pages yet.
+			if os.Getenv(childEnv) == "" {
+				exe, err := os.Executable()
+				assert.NoError(t, err, "the test binary has a path")
+				levels := strings.Split(t.Name(), "/")
+				for i, level := range levels {
+					levels[i] = "^" + regexp.QuoteMeta(level) + "$"
+				}
+				args := []string{"-test.run=" + strings.Join(levels, "/"), "-test.count=1"}
+				if dir := flag.Lookup("test.gocoverdir"); dir != nil && dir.Value.String() != "" {
+					args = append(args, "-test.gocoverdir="+dir.Value.String())
+				}
+				if deadline, ok := t.Deadline(); ok {
+					args = append(args, "-test.timeout="+time.Until(deadline).String())
+				}
+				cmd := exec.CommandContext(t.Context(), exe, args...)
+				cmd.Env = append(os.Environ(), childEnv+"=1")
+				out, err := cmd.CombinedOutput()
+				assert.NoError(t, err, "the case passes in a child process, whose output is:\n"+string(out))
+
+				return
+			}
+			key := make([]byte, math.MaxUint32)
+			w, err := sstable.NewWriter(io.Discard, sstable.WriterOptions{})
+			assert.NoError(t, err, "NewWriter accepts the zero options")
+			assert.ErrorIs(t, w.Add(key, 1, nil), sstable.ErrTooLarge, "Add refuses the key")
+			assert.NoError(t, w.Add([]byte("a"), 1, nil), "Add adds an entry after the refusal")
+			sum, err := w.Close()
+			assert.NoError(t, err, "Close writes the table")
+			assert.Equal(t, sum.Entries, int64(1), "the table contains the entry that Add accepted")
+		})
+
+		t.Run("ends a block at the entry that brings it to BlockSize bytes", func(t *testing.T) {
+			t.Parallel()
+			// An entry of a key of one byte without a value has three varints
+			// of one byte and an internal key of 9 bytes.
+			const entryLen = 3 + 1 + seqLen
+			es := []entry{{key: []byte("a"), seq: 1}, {key: []byte("b"), seq: 1}, {key: []byte("c"), seq: 1}}
+			l := newLayout(t, sstable.WriterOptions{BlockSize: entryLen}, es)
+			assert.Length(t, l.blocks, len(es), "every entry ends its block")
+		})
+
+		t.Run("returns ErrClosed after Close", func(t *testing.T) {
+			t.Parallel()
+			w, err := sstable.NewWriter(io.Discard, sstable.WriterOptions{})
+			assert.NoError(t, err, "NewWriter accepts the zero options")
+			assert.FailsAfterClose(t, func() error {
+				_, err := w.Close()
+
+				return err
+			}, func() error {
+				return w.Add([]byte("a"), 1, nil)
+			}, sstable.ErrClosed, "Add refuses an entry after Close")
+		})
+
+		t.Run("returns the error of the io.Writer for every later call", func(t *testing.T) {
+			t.Parallel()
+			w, err := sstable.NewWriter(&failingWriter{}, sstable.WriterOptions{BlockSize: 1})
+			assert.NoError(t, err, "NewWriter accepts the options")
+			expect.ErrorIs(t, w.Add([]byte("a"), 1, nil), errWrite, "Add returns the error of the block that it writes")
+			expect.ErrorIs(t, w.Add([]byte("b"), 1, nil), errWrite, "Add returns the error again")
+			_, err = w.Close()
+			expect.ErrorIs(t, err, errWrite, "Close returns the error too")
+		})
+	})
+
+	t.Run("Close", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the summary of the table", func(t *testing.T) {
+			t.Parallel()
+			var buf bytes.Buffer
+			w, err := sstable.NewWriter(&buf, sstable.WriterOptions{})
+			assert.NoError(t, err, "NewWriter accepts the zero options")
+			es := []entry{{key: []byte("a"), seq: 7}, {key: []byte("a"), seq: 3}, {key: []byte("b"), seq: 9}}
+			for _, e := range es {
+				assert.NoError(t, w.Add(e.key, e.seq, e.value), "Add adds the entry")
+			}
+			sum, err := w.Close()
+			assert.NoError(t, err, "Close writes the table")
+			assert.Equal(t, sum, sstable.Summary{
+				Entries: 3, Size: int64(buf.Len()), MinSeq: 3, MaxSeq: 9,
+				SmallestKey: []byte("a"), SmallestSeq: 7, LargestKey: []byte("b"), LargestSeq: 9,
+			}, "the summary describes the entries and the bytes of the table")
+		})
+
+		t.Run("writes a table of no entries", func(t *testing.T) {
+			t.Parallel()
+			r := openTable(t, writeTable(t, sstable.WriterOptions{FilterBits: 8}, nil), sstable.ReaderOptions{})
+			got, err := scanAll(r.NewIter())
+			assert.NoError(t, err, "the empty table reads")
+			expect.Empty(t, got, "a cursor yields no entry")
+			expect.Equal(t, r.Summary().Entries, int64(0), "the summary counts no entry")
+		})
+
+		t.Run("returns ErrClosed for a second Close", func(t *testing.T) {
+			t.Parallel()
+			w, err := sstable.NewWriter(io.Discard, sstable.WriterOptions{})
+			assert.NoError(t, err, "NewWriter accepts the zero options")
+			closeWriter := func() error {
+				_, err := w.Close()
+
+				return err
+			}
+			assert.FailsAfterClose(t, closeWriter, closeWriter, sstable.ErrClosed, "the second Close refuses")
+		})
+
+		t.Run("returns the error of the io.Writer for the blocks after the data", func(t *testing.T) {
+			t.Parallel()
+			w, err := sstable.NewWriter(&failingWriter{}, sstable.WriterOptions{})
+			assert.NoError(t, err, "NewWriter accepts the zero options")
+			assert.NoError(t, w.Add([]byte("a"), 1, nil), "Add keeps the entry in its block")
+			_, err = w.Close()
+			assert.ErrorIs(t, err, errWrite, "Close returns the error of the writes of the table")
+		})
+
+		t.Run("returns io.ErrShortWrite for a write of fewer bytes without an error", func(t *testing.T) {
+			t.Parallel()
+			w, err := sstable.NewWriter(shortWriter{}, sstable.WriterOptions{})
+			assert.NoError(t, err, "NewWriter accepts the zero options")
+			assert.NoError(t, w.Add([]byte("a"), 1, nil), "Add keeps the entry in its block")
+			_, err = w.Close()
+			assert.ErrorIs(t, err, io.ErrShortWrite, "Close refuses the short write")
+		})
+
+		t.Run("stores a block that compression shrinks by exactly an eighth as it is", func(t *testing.T) {
+			t.Parallel()
+			// The block of one entry with a value of zeros zero bytes has 32
+			// bytes, and its encoding has 28.
+			const zeros = 12
+			es := []entry{{key: []byte("k"), seq: 1, value: make([]byte, zeros)}}
+			l := newLayout(t, sstable.WriterOptions{}, es)
+			raw := l.data[l.blocks[0].off : l.blocks[0].off+l.blocks[0].n]
+			enc, err := snappy.AppendEncode(nil, raw)
+			assert.NoError(t, err, "the codec encodes the block")
+			assert.Length(t, enc, len(raw)-len(raw)/8, "the encoding has seven eighths of the bytes of the block")
+			compressed := writeTable(t, sstable.WriterOptions{Compression: sstable.SnappyCompression}, es)
+			assert.Equal(t, compressed, l.data, "the block is stored as it is")
+		})
+
+		t.Run("stores the blocks that compression shrinks by more than an eighth compressed", func(t *testing.T) {
+			t.Parallel()
+			uncompressed := writeTable(t, sstable.WriterOptions{}, goldenTable())
+			compressed := writeTable(t, sstable.WriterOptions{Compression: sstable.SnappyCompression}, goldenTable())
+			assert.InRange(t, len(compressed), 0, float64(len(uncompressed))*7/8, "the repeated values compress")
+		})
+
+		for _, tt := range goldenFiles {
+			t.Run("writes the bytes of the golden table for "+tt.name, func(t *testing.T) {
+				t.Parallel()
+				golden.Match(t, tt.file, writeTable(t, tt.opts, goldenTable()), golden.ShouldUpdate())
+			})
+		}
+	})
+}
+
+// TestWriterAllocs checks the allocation contract of Add. MaxAllocs counts
+// the allocations of the whole process, so the test does not run in
+// parallel.
+func TestWriterAllocs(t *testing.T) {
+	value := make([]byte, 100)
+
+	t.Run("Add", func(t *testing.T) {
+		for _, tt := range settings {
+			t.Run("does not allocate once its buffers have room in a table "+tt.name, func(t *testing.T) {
+				w, err := sstable.NewWriter(io.Discard, tt.opts)
+				assert.NoError(t, err, "NewWriter accepts the options")
+				key := make([]byte, 16)
+				i := uint64(0)
+				add := func() {
+					binary.BigEndian.PutUint64(key[8:], i)
+					err = w.Add(key, 1, value)
+					i++
+				}
+				for range warmEntries {
+					add()
+				}
+				expect.MaxAllocs(t, add, 0, "Add does not allocate once its buffers have room")
+				assert.NoError(t, err, "the test measures Adds that succeed")
+			})
+		}
+
+		// The first Add copies its key for the summary and grows the empty
+		// buffers of the entry and the block. With a filter it also grows
+		// the hashes.
+		tests := []struct {
+			name     string
+			giveOpts sstable.WriterOptions
+			want     uint64
+		}{
+			{name: "allocates six times for the first entry without a filter", want: 6},
+			{
+				name:     "allocates seven times for the first entry with a filter",
+				giveOpts: sstable.WriterOptions{FilterBits: 8},
+				want:     7,
+			},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				key, firstValue := []byte("a"), []byte("v")
+				var err error
+				expect.MaxAllocsWithSetup(t, func() *sstable.Writer {
+					w, newErr := sstable.NewWriter(io.Discard, tt.giveOpts)
+					assert.NoError(t, newErr, "NewWriter accepts the options")
+
+					return w
+				}, func(w *sstable.Writer) { err = w.Add(key, 1, firstValue) }, tt.want,
+					"the first Add allocates the copy of its key and the first growth of its buffers")
+				assert.NoError(t, err, "the test measures Adds that succeed")
+			})
+		}
+	})
+}
+
+// BenchmarkWriter reports the cost of Add for each setting, and fails when
+// Add allocates.
+func BenchmarkWriter(b *testing.B) {
+	value := make([]byte, 100)
+
+	b.Run("Add", func(b *testing.B) {
+		for _, tt := range settings {
+			b.Run(tt.name, func(b *testing.B) {
+				w, err := sstable.NewWriter(io.Discard, tt.opts)
+				assert.NoError(b, err, "NewWriter accepts the options")
+				key := make([]byte, 16)
+				i := uint64(0)
+
+				c := bench.Start(b).MaxAllocs(0)
+				defer c.End()
+
+				for c.Loop() {
+					binary.BigEndian.PutUint64(key[8:], i)
+					err = w.Add(key, 1, value)
+					i++
+				}
+
+				assert.NoError(b, err, "the benchmark measures Adds that succeed")
+			})
+		}
+	})
+}
