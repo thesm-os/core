@@ -117,5 +117,9 @@ Start from [`docs/templates/ADR.md`](../templates/ADR.md).
 | [0057](0057-bump-reserves-values-without-locks.md) | Bump Reserves Values Without Locks | Accepted |
 | [0058](0058-skip-list-nodes-store-a-key-prefix.md) | Skip List Nodes Store a Key Prefix | Accepted |
 | [0059](0059-the-last-unpin-evicts-down-to-the-capacity.md) | The Last Unpin Evicts Down to the Capacity | Accepted |
+| [0060](0060-table-blocks-have-their-checksums-in-their-parents.md) | Table Blocks Have Their Checksums in Their Parents | Accepted |
+| [0061](0061-a-list-reports-the-cost-of-an-entry.md) | A List Reports the Cost of an Entry | Accepted |
+| [0062](0062-cursors-move-in-both-directions.md) | Cursors Move in Both Directions | Accepted |
+| [0063](0063-waiting-calls-of-a-limiter-take-units-by-priority.md) | Waiting Calls of a Limiter Take Units by Priority | Accepted |
 
 [nygard]: https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions
