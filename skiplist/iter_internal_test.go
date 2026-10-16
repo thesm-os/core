@@ -111,6 +111,74 @@ func TestIter(t *testing.T) {
 			assert.False(t, it.SeekGE(t.Context(), []byte("d"), 0), "SeekGE finds no entry")
 			assert.Nil(t, it.Key(), "the cursor has no key")
 		})
+
+		t.Run("moves forward from the current entry to a later entry", func(t *testing.T) {
+			t.Parallel()
+			it := listOf(t, versions...).NewIter()
+			assert.True(t, it.First(t.Context()), "First moves to the first entry")
+			assert.True(t, it.SeekGE(t.Context(), []byte("c"), 1), "SeekGE finds an entry")
+			assert.Equal(t, it.Key(), []byte("c"), "SeekGE moves forward to the key")
+		})
+
+		t.Run("remains on the current entry for its key and sequence", func(t *testing.T) {
+			t.Parallel()
+			it := listOf(t, versions...).NewIter()
+			assert.True(t, it.SeekGE(t.Context(), []byte("b"), 5), "SeekGE moves to b at 5")
+			assert.True(t, it.SeekGE(t.Context(), []byte("b"), 5), "SeekGE finds the entry again")
+			expect.Equal(t, it.Key(), []byte("b"), "SeekGE remains on the key")
+			expect.Equal(t, it.Seq(), uint64(5), "SeekGE remains on the sequence")
+		})
+
+		t.Run("moves to the next entry without a search from the head", func(t *testing.T) {
+			t.Parallel()
+			l := listOf(t, versions...)
+			it := l.NewIter()
+			assert.True(t, it.First(t.Context()), "First moves to the first entry")
+			// A search from the head finds no entry once the head links no node.
+			clear(l.nodes[nodeHeader : nodeHeader+maxHeight])
+			assert.True(t, it.SeekGE(t.Context(), []byte("b"), 5), "SeekGE finds an entry")
+			expect.Equal(t, it.Key(), []byte("b"), "SeekGE moves to the key of the next entry")
+			expect.Equal(t, it.Seq(), uint64(5), "SeekGE moves to the sequence of the next entry")
+		})
+
+		t.Run("moves to an entry before the current one", func(t *testing.T) {
+			t.Parallel()
+			it := listOf(t, versions...).NewIter()
+			assert.True(t, it.Last(t.Context()), "Last moves to the last entry")
+			assert.True(t, it.SeekGE(t.Context(), []byte("a"), 1), "SeekGE finds an entry")
+			assert.Equal(t, it.Key(), []byte("a"), "SeekGE moves back to the key")
+		})
+
+		t.Run("reports false past the last entry for a cursor on an entry", func(t *testing.T) {
+			t.Parallel()
+			it := listOf(t, versions...).NewIter()
+			assert.True(t, it.Last(t.Context()), "Last moves to the last entry")
+			assert.False(t, it.SeekGE(t.Context(), []byte("d"), 0), "SeekGE finds no entry")
+			assert.Nil(t, it.Key(), "the cursor has no key")
+		})
+
+		t.Run("reports false past the last version of the empty key for a cursor on it", func(t *testing.T) {
+			t.Parallel()
+			// The head has the words of the empty key at the sequence 0, so the
+			// target compares before it.
+			it := listOf(t, entry{key: nil, seq: 5}).NewIter()
+			assert.True(t, it.First(t.Context()), "First moves to the only entry")
+			assert.False(t, it.SeekGE(t.Context(), nil, 3), "SeekGE finds no entry")
+			assert.Nil(t, it.Key(), "the cursor has no key")
+		})
+
+		t.Run("searches from the head after Reset of the List", func(t *testing.T) {
+			t.Parallel()
+			l := listOf(t, versions...)
+			it := l.NewIter()
+			// The node of the last entry lies past the node of the one entry
+			// that the List has after Reset, in words that Reset zeroed.
+			assert.True(t, it.Last(t.Context()), "Last moves to the last entry")
+			l.Reset()
+			assert.NoError(t, l.Add([]byte("z"), 1, nil), "Add adds an entry after Reset")
+			assert.True(t, it.SeekGE(t.Context(), []byte("x"), 1), "SeekGE finds an entry")
+			assert.Equal(t, it.Key(), []byte("z"), "SeekGE moves to the entry after Reset")
+		})
 	})
 
 	t.Run("Next", func(t *testing.T) {
@@ -142,6 +210,13 @@ func TestIter(t *testing.T) {
 			assert.NoError(t, l.Add([]byte("b"), 1, nil), "Add adds an entry after the cursor")
 			assert.True(t, it.Next(t.Context()), "Next finds the entry that Add added")
 			assert.Equal(t, it.Key(), []byte("b"), "Next moves to the new entry")
+		})
+
+		t.Run("reports false for a cursor from before Reset of the List", func(t *testing.T) {
+			t.Parallel()
+			it := afterReset(t)
+			expect.False(t, it.Next(t.Context()), "Next finds no entry")
+			expect.Nil(t, it.Key(), "the cursor is on no entry")
 		})
 	})
 
@@ -177,6 +252,29 @@ func TestIter(t *testing.T) {
 			assert.True(t, it.Prev(t.Context()), "Prev finds the entry that Add added")
 			assert.Equal(t, it.Key(), []byte("a"), "Prev moves to the new entry")
 		})
+
+		t.Run("walks forward from a stale link back to the entry before", func(t *testing.T) {
+			t.Parallel()
+			l := listOf(t, entry{key: []byte("a"), seq: 1}, entry{key: []byte("b"), seq: 1},
+				entry{key: []byte("c"), seq: 1})
+			it := l.NewIter()
+			assert.True(t, it.Last(t.Context()), "Last moves to c")
+			c := it.node
+			// A writer that linked b between a and c left the link back of c on
+			// a.
+			l.nodes[c+wordBack] = l.nodes[nodeHeader]
+			assert.True(t, it.Prev(t.Context()), "Prev finds an entry")
+			expect.Equal(t, it.Key(), []byte("b"), "Prev moves to the entry before c")
+			expect.Equal(t, l.nodes[c+wordBack], it.node, "Prev repairs the link back of c")
+		})
+
+		t.Run("reports false for a cursor from before Reset of the List", func(t *testing.T) {
+			t.Parallel()
+			it := afterReset(t)
+			it.node = it.list.nodes[it.node+nodeHeader]
+			expect.False(t, it.Prev(t.Context()), "Prev finds no entry")
+			expect.Nil(t, it.Key(), "the cursor is on no entry")
+		})
 	})
 
 	t.Run("Key", func(t *testing.T) {
@@ -194,6 +292,11 @@ func TestIter(t *testing.T) {
 			it := listOf(t, entry{key: []byte("a"), seq: 1}).NewIter()
 			assert.False(t, it.SeekGE(t.Context(), []byte("b"), 0), "SeekGE finds no entry")
 			assert.Nil(t, it.Key(), "the cursor has no key")
+		})
+
+		t.Run("returns nil for a cursor from before Reset of the List", func(t *testing.T) {
+			t.Parallel()
+			assert.Nil(t, afterReset(t).Key(), "the cursor has no key")
 		})
 	})
 
@@ -213,6 +316,11 @@ func TestIter(t *testing.T) {
 			assert.False(t, it.SeekGE(t.Context(), []byte("b"), 0), "SeekGE finds no entry")
 			assert.Equal(t, it.Seq(), uint64(0), "the cursor has no sequence")
 		})
+
+		t.Run("returns 0 for a cursor from before Reset of the List", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, afterReset(t).Seq(), uint64(0), "the cursor has no sequence")
+		})
 	})
 
 	t.Run("Value", func(t *testing.T) {
@@ -230,6 +338,11 @@ func TestIter(t *testing.T) {
 			it := listOf(t, entry{key: []byte("a"), seq: 1, value: []byte("value")}).NewIter()
 			assert.False(t, it.SeekGE(t.Context(), []byte("b"), 0), "SeekGE finds no entry")
 			assert.Nil(t, it.Value(), "the cursor has no value")
+		})
+
+		t.Run("returns nil for a cursor from before Reset of the List", func(t *testing.T) {
+			t.Parallel()
+			assert.Nil(t, afterReset(t).Value(), "the cursor has no value")
 		})
 	})
 
@@ -312,21 +425,41 @@ func BenchmarkIter(b *testing.B) {
 	})
 
 	b.Run("SeekGE", func(b *testing.B) {
-		it := l.NewIter()
-		var k [benchKeyLen]byte
-		var ok bool
-		i := uint64(0)
+		b.Run("of random keys", func(b *testing.B) {
+			it := l.NewIter()
+			var k [benchKeyLen]byte
+			var ok bool
+			i := uint64(0)
 
-		c := bench.Start(b).MaxAllocs(0)
-		defer c.End()
+			c := bench.Start(b).MaxAllocs(0)
+			defer c.End()
 
-		for c.Loop() {
-			benchKey(&k, (i*keyGamma)%iterEntries)
-			ok = it.SeekGE(b.Context(), k[:], 1)
-			i++
-		}
+			for c.Loop() {
+				benchKey(&k, (i*keyGamma)%iterEntries)
+				ok = it.SeekGE(b.Context(), k[:], 1)
+				i++
+			}
 
-		assert.True(b, ok, "the benchmark measures seeks to entries")
+			assert.True(b, ok, "the benchmark measures seeks to entries")
+		})
+
+		b.Run("of the entry after the current one", func(b *testing.B) {
+			ordered := scan(b.Context(), l.NewIter())
+			it := l.NewIter()
+			var ok bool
+			i := 0
+
+			c := bench.Start(b).MaxAllocs(0)
+			defer c.End()
+
+			for c.Loop() {
+				e := ordered[i%len(ordered)]
+				ok = it.SeekGE(b.Context(), e.key, e.seq)
+				i++
+			}
+
+			assert.True(b, ok, "the benchmark measures seeks to entries")
+		})
 	})
 
 	b.Run("Prev", func(b *testing.B) {
@@ -390,4 +523,22 @@ func listOf(tb testing.TB, entries ...entry) *List {
 	}
 
 	return l
+}
+
+// afterReset returns a cursor that First moved on a List of a and b before
+// Reset of the List. Add then filled the List with y and z, and the node of
+// the cursor is the node of y, as a node of the new fill can be.
+func afterReset(tb testing.TB) *Iter {
+	tb.Helper()
+
+	l := listOf(tb, entry{key: []byte("a"), seq: 1}, entry{key: []byte("b"), seq: 1})
+	it := l.NewIter()
+	assert.True(tb, it.First(tb.Context()), "First moves to the first entry")
+	l.Reset()
+	for _, k := range []string{"y", "z"} {
+		assert.NoError(tb, l.Add([]byte(k), 1, nil), "Add adds an entry after Reset")
+	}
+	it.node = l.nodes[nodeHeader]
+
+	return it
 }

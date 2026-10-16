@@ -28,9 +28,9 @@ const (
 	benchValueLen = 100
 	benchEntries  = 1 << 20
 
-	// benchNodeBytes is the room of a node of the benchmarks: the 27 words
+	// benchNodeBytes is the room of a node of the benchmarks: the 28 words
 	// of the tallest node.
-	benchNodeBytes = 108
+	benchNodeBytes = 112
 )
 
 // keyMix and keyGamma are the multiplier and the increment of the mix that
@@ -78,6 +78,17 @@ func order(a, b entry) int {
 func scan(ctx context.Context, it *Iter) []entry {
 	var got []entry
 	for ok := it.First(ctx); ok; ok = it.Next(ctx) {
+		got = append(got, entry{key: it.Key(), seq: it.Seq(), value: it.Value()})
+	}
+
+	return got
+}
+
+// scanBack returns every entry that a cursor yields from its last entry
+// back. It passes ctx to each move.
+func scanBack(ctx context.Context, it *Iter) []entry {
+	var got []entry
+	for ok := it.Last(ctx); ok; ok = it.Prev(ctx) {
 		got = append(got, entry{key: it.Key(), seq: it.Seq(), value: it.Value()})
 	}
 

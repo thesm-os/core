@@ -17,8 +17,9 @@ import (
 
 // The layout of a node in the node arena: nodeHeader words, then one link
 // for each level of the node. A link is the index of the first word of the
-// next node at its level, and 0 is no node. The key and the value of a node
-// are consecutive bytes of the data arena.
+// next node at its level, and 0 is no node. The link back is the index of
+// the node before the node at level 0, and 0 is the head. The key and the
+// value of a node are consecutive bytes of the data arena.
 const (
 	// wordKeyOff is the word of the offset of the key in the data arena.
 	wordKeyOff = 0
@@ -36,8 +37,12 @@ const (
 	wordPrefixHigh = 5
 	// wordPrefixLow is the word of the low 32 bits of the prefix of the key.
 	wordPrefixLow = 6
+	// wordBack is the word of the link back. Writers set it with
+	// compare-and-swap, and it can be a node before the node before. A
+	// cursor that moves back walks forward from it.
+	wordBack = 7
 	// nodeHeader is the number of words before the links of a node.
-	nodeHeader = 7
+	nodeHeader = 8
 	// wordBytes is the size of a word in bytes.
 	wordBytes = 4
 )
@@ -77,8 +82,8 @@ var levelBounds = func() (bounds [maxHeight - 1]uint64) {
 // Config configures a [List]. DataBytes and NodeBytes are required. The
 // zero Config is invalid, because its arenas have no bytes.
 //
-// A node takes 4 bytes for each of its 7 words and its links. The nodes take
-// 34.3 bytes on average, and the tallest node takes 108 bytes. [List.Cost]
+// A node takes 4 bytes for each of its 8 words and its links. The nodes take
+// 38.3 bytes on average, and the tallest node takes 112 bytes. [List.Cost]
 // returns the bytes that the Add of an entry reserves in each arena, and
 // [MaxCost] returns them for the tallest node. An engine that budgets its
 // entries with Cost or MaxCost against DataBytes and NodeBytes does not
@@ -144,6 +149,10 @@ type List struct {
 	// secret0 and secret1 are the secret words of the hash of the heights,
 	// one for each factor of its product.
 	secret0, secret1 uint64
+
+	// resets counts the calls of Reset. An Inserter and a cursor keep the
+	// count of their last call, and use no node of an earlier fill.
+	resets uint64
 }
 
 // New returns an empty [List] with the arenas of cfg. The heights of its
@@ -192,6 +201,12 @@ func New(cfg Config) (*List, error) {
 // returns ErrExists when that writer linked the same entry. At a higher
 // level, Add searches the level again from the node before the entry.
 //
+// At level 0 Add also moves the link back of the node after the entry to
+// the new node, with a compare-and-swap whose result it does not check. A
+// writer that links another node between them at the same moment can leave
+// that link on an earlier node, and a cursor that moves back repairs it. An
+// [Inserter] adds entries in order with shorter searches.
+//
 // Error modes:
 //
 //   - An entry with the key and the sequence of an entry of the List
@@ -210,66 +225,10 @@ func New(cfg Config) (*List, error) {
 //
 // Zero-alloc.
 func (l *List) Add(key []byte, seq uint64, value []byte) error {
-	var (
-		prev, next [maxHeight]uint32
-		node       []uint32
-		at         uint32
-		h          int
-	)
-	prefix := keyPrefix(key)
+	var prev [maxHeight]uint32
+	_, _, err := l.insert(key, keyPrefix(key), seq, value, nil, &prev)
 
-	// Level 0 decides whether the entry joins the List. A failed
-	// compare-and-swap there searches every level again, so a writer that
-	// linked the same entry first makes the search find it.
-	for {
-		if l.findSplice(key, prefix, seq, &prev, &next) {
-			return ErrExists
-		}
-		if node == nil {
-			h = l.height(key, seq)
-			nd, ok := l.nodeArena.Reserve(nodeHeader + h)
-			if !ok {
-				return ErrFull
-			}
-			off, ok := l.dataArena.Reserve(len(key) + len(value))
-			if !ok {
-				return ErrFull
-			}
-
-			copy(l.data[off:], key)
-			copy(l.data[off+len(key):], value)
-			node = l.nodes[nd : nd+nodeHeader+h]
-			//nolint:gosec // G115: the data arena has at most 2^32 - 1 bytes
-			node[wordKeyOff], node[wordKeyLen], node[wordValueLen] = uint32(off), uint32(len(key)), uint32(len(value))
-			//nolint:gosec // G115: the conversions take the two halves of the sequence
-			node[wordSeqHigh], node[wordSeqLow] = uint32(seq>>32), uint32(seq)
-			//nolint:gosec // G115: the conversions take the two halves of the prefix
-			node[wordPrefixHigh], node[wordPrefixLow] = uint32(prefix>>32), uint32(prefix)
-			//nolint:gosec // G115: the node arena has at most 2^30 + headWords words
-			at = uint32(nd)
-			l.raise(h)
-		}
-		node[nodeHeader] = next[0]
-		if atomic.CompareAndSwapUint32(&l.nodes[prev[0]+nodeHeader], next[0], at) {
-			break
-		}
-	}
-
-	// A higher level searches its splice again from the node before the
-	// entry before each compare-and-swap. The List has no other node with
-	// key and seq, because level 0 links the entry.
-	for level := 1; level < h; level++ {
-		for {
-			prev[level], next[level], _ = l.splice(key, prefix, seq, prev[level], level)
-			node[nodeHeader+level] = next[level]
-			if atomic.CompareAndSwapUint32(&l.nodes[prev[level]+nodeHeader+uint32(level)], next[level], at) {
-				break
-			}
-		}
-	}
-	l.count.Add(1)
-
-	return nil
+	return err
 }
 
 // Get returns the value and the sequence of the first entry at or after
@@ -283,7 +242,7 @@ func (l *List) Add(key []byte, seq uint64, value []byte) error {
 //
 // Zero-alloc.
 func (l *List) Get(key []byte, seq uint64) ([]byte, uint64, bool) {
-	_, nd := l.search(key, seq)
+	_, nd := l.search(key, keyPrefix(key), seq)
 	if nd == 0 || !bytes.Equal(l.key(nd), key) {
 		return nil, 0, false
 	}
@@ -320,7 +279,7 @@ func (l *List) Size() int {
 // the data arena keeps the words of the node.
 //
 // dataBytes is the length of key plus valueLen. nodeBytes is 4 bytes for
-// each of the 7 words of the header of the node and each of its links. A
+// each of the 8 words of the header of the node and each of its links. A
 // valueLen below 0 counts as 0, and one above 2^32 - 1, the largest capacity
 // of an arena, counts as 2^32 - 1.
 //
@@ -338,7 +297,9 @@ func (l *List) Cost(key []byte, seq uint64, valueLen int) (dataBytes, nodeBytes 
 
 // Reset removes every entry and keeps the arenas. It zeroes the bytes and
 // the words in use, so it takes time in proportion to [List.Size]. Every key
-// and value that the List returned before is invalid after Reset.
+// and value that the List returned before is invalid after Reset. A cursor
+// of the List is on no entry until a First, a Last, a SeekGE or a SeekLT
+// moves it, and an [Inserter] searches its next Add from the head.
 //
 // # Allocation contract
 //
@@ -349,6 +310,8 @@ func (l *List) Reset() {
 	l.nodeArena.Reserve(headWords)
 	l.levels.Store(1)
 	l.count.Store(0)
+	//dokimi:mutate-skip uoi-incdec: a cursor and an Inserter compare the count for equality alone, and a decrement changes it as an increment does
+	l.resets++
 }
 
 // NewIter returns a cursor over the entries of the List. The cursor is on
@@ -360,6 +323,89 @@ func (l *List) Reset() {
 // Allocates the cursor.
 func (l *List) NewIter() *Iter {
 	return &Iter{list: l}
+}
+
+// insert inserts the entry of key, seq and value, with the contract and the
+// errors of Add, and returns its node and the height of its node. prefix is
+// the prefix of key. from is nil or the nodes of the hint of an Inserter,
+// as findSplice takes them. prev contains 0, the head, at each level on the
+// call. insert leaves in it the last node before the entry at each level of
+// its search.
+func (l *List) insert(
+	key []byte,
+	prefix, seq uint64,
+	value []byte,
+	from, prev *[maxHeight]uint32,
+) (uint32, int, error) {
+	var (
+		next [maxHeight]uint32
+		node []uint32
+		at   uint32
+		h    int
+	)
+
+	// Level 0 decides whether the entry joins the List. A failed
+	// compare-and-swap there searches every level again, so a writer that
+	// linked the same entry first makes the search find it.
+	for {
+		if l.findSplice(key, prefix, seq, from, prev, &next) {
+			return 0, 0, ErrExists
+		}
+		if node == nil {
+			h = l.height(key, seq)
+			nd, ok := l.nodeArena.Reserve(nodeHeader + h)
+			if !ok {
+				return 0, 0, ErrFull
+			}
+			off, ok := l.dataArena.Reserve(len(key) + len(value))
+			if !ok {
+				return 0, 0, ErrFull
+			}
+
+			copy(l.data[off:], key)
+			copy(l.data[off+len(key):], value)
+			node = l.nodes[nd : nd+nodeHeader+h]
+			//nolint:gosec // G115: the data arena has at most 2^32 - 1 bytes
+			node[wordKeyOff], node[wordKeyLen], node[wordValueLen] = uint32(off), uint32(len(key)), uint32(len(value))
+			//nolint:gosec // G115: the conversions take the two halves of the sequence
+			node[wordSeqHigh], node[wordSeqLow] = uint32(seq>>32), uint32(seq)
+			//nolint:gosec // G115: the conversions take the two halves of the prefix
+			node[wordPrefixHigh], node[wordPrefixLow] = uint32(prefix>>32), uint32(prefix)
+			//nolint:gosec // G115: the node arena has at most 2^30 + headWords words
+			at = uint32(nd)
+			l.raise(h)
+		}
+		node[nodeHeader], node[wordBack] = next[0], prev[0]
+		after := next[0]
+		if atomic.CompareAndSwapUint32(&l.nodes[prev[0]+nodeHeader], after, at) {
+			// The link back of the node after moves from the node before to
+			// the new node. A writer that moved it first leaves it on another
+			// node before the node after, which a cursor that moves back
+			// walks forward from.
+			//dokimi:mutate-skip ror-true: no move reads the link back of the head, node 0, so a compare-and-swap of it changes no result
+			if after != 0 {
+				atomic.CompareAndSwapUint32(&l.nodes[after+wordBack], prev[0], at)
+			}
+
+			break
+		}
+	}
+
+	// A higher level searches its splice again from the node before the
+	// entry before each compare-and-swap. The List has no other node with
+	// key and seq, because level 0 links the entry.
+	for level := 1; level < h; level++ {
+		for {
+			prev[level], next[level], _ = l.splice(key, prefix, seq, prev[level], 0, level)
+			node[nodeHeader+level] = next[level]
+			if atomic.CompareAndSwapUint32(&l.nodes[prev[level]+nodeHeader+uint32(level)], next[level], at) {
+				break
+			}
+		}
+	}
+	l.count.Add(1)
+
+	return at, h, nil
 }
 
 // raise raises the height of the List to h when h is above it. When another
@@ -382,16 +428,31 @@ func (l *List) raise(h int) {
 // key. The levels above the top of the search keep the head node and no
 // node. findSplice reports true when the List contains an entry with key and
 // seq.
-func (l *List) findSplice(key []byte, prefix, seq uint64, prev, next *[maxHeight]uint32) bool {
-	var before uint32
+//
+// from is nil or the nodes of the hint of an Inserter. Each of them is a node
+// before the entry, and the node of a level is at or after the nodes of the
+// levels above it. The head is therefore the node of from at the levels above
+// the last one that has another node. While the search of every level above
+// ends where it started, findSplice searches each level from the node of from,
+// which is at or after that end. A search that moves past its start can end
+// past the nodes of from below it, so findSplice searches the levels below
+// from the nodes that it finds, as a search from the head does.
+func (l *List) findSplice(key []byte, prefix, seq uint64, from, prev, next *[maxHeight]uint32) bool {
+	var before, stop uint32
 	for level := int(l.levels.Load()) - 1; level >= 0; level-- {
+		if from != nil {
+			before = from[level]
+		}
 		var exists bool
-		prev[level], next[level], exists = l.splice(key, prefix, seq, before, level)
+		prev[level], next[level], exists = l.splice(key, prefix, seq, before, stop, level)
 		if exists {
 			return true
 		}
+		if prev[level] != before {
+			from = nil
+		}
 		//dokimi:mutate-skip sbr-delete: a search of each level from the head finds the same splice, so only the time of a search changes
-		before = prev[level]
+		before, stop = prev[level], next[level]
 	}
 
 	return false
@@ -401,12 +462,17 @@ func (l *List) findSplice(key []byte, prefix, seq uint64, prev, next *[maxHeight
 // node before the entry (key, seq) and the node after it, or 0. prefix is the
 // prefix of key. It reports true, with the node of the entry as the node
 // after it, when it finds an entry with key and seq.
-func (l *List) splice(key []byte, prefix, seq uint64, before uint32, level int) (prev, next uint32, exists bool) {
+//
+// stop is a node after the entry, which the search of the level above
+// compared, or 0, the end of the level. splice stops at stop without a
+// comparison. Every node of the level above is a node of the level too, and
+// stop is after before, so the walk from before ends at stop at the latest.
+func (l *List) splice(key []byte, prefix, seq uint64, before, stop uint32, level int) (prev, next uint32, exists bool) {
 	for {
 		//nolint:gosec // G115: a level is below maxHeight
 		next = atomic.LoadUint32(&l.nodes[before+nodeHeader+uint32(level)])
-		if next == 0 {
-			return before, 0, false
+		if next == stop {
+			return before, next, false
 		}
 		c := l.compare(key, prefix, seq, next)
 		if c <= 0 {
@@ -419,17 +485,22 @@ func (l *List) splice(key []byte, prefix, seq uint64, before uint32, level int) 
 // search searches every level from the top for the entry (key, seq), and
 // returns the last node before it and the first node at or after it. before
 // is 0, the head node, when no node precedes the entry, and next is 0 when
-// no node follows it.
-func (l *List) search(key []byte, seq uint64) (before, next uint32) {
-	prefix := keyPrefix(key)
+// no node follows it. prefix is the prefix of key. A level stops without a
+// comparison at the node at which the level above stopped, or at 0, the end
+// of the top level. The walk of a level ends there at the latest, as the
+// walk of splice does.
+func (l *List) search(key []byte, prefix, seq uint64) (before, next uint32) {
+	var stop uint32
 	for level := l.levels.Load(); level > 0; level-- {
 		for {
 			next = atomic.LoadUint32(&l.nodes[before+nodeHeader+level-1])
-			if next == 0 || l.compare(key, prefix, seq, next) <= 0 {
+			if next == stop || l.compare(key, prefix, seq, next) <= 0 {
 				break
 			}
 			before = next
 		}
+		//dokimi:mutate-skip sbr-delete: a level that compares the node at which the level above stopped finds the same node
+		stop = next
 	}
 
 	return before, next
@@ -513,8 +584,8 @@ func (l *List) height(key []byte, seq uint64) int {
 // dataBytes and at most nodeBytes. The results have the order of the fields
 // of [Config].
 //
-// dataBytes is keyLen plus valueLen. nodeBytes is 108, because a node of the
-// largest height has 7 words of header and 20 links of 4 bytes each. A
+// dataBytes is keyLen plus valueLen. nodeBytes is 112, because a node of the
+// largest height has 8 words of header and 20 links of 4 bytes each. A
 // keyLen or a valueLen below 0 counts as 0. A keyLen or a valueLen above
 // 2^32 - 1 counts as 2^32 - 1, because an arena has at most 2^32 - 1 bytes.
 //

@@ -28,14 +28,15 @@ import (
 
 // The names of the calls that the machines make and record.
 const (
-	opAdd    = "Add"
-	opGet    = "Get"
-	opScan   = "Scan"
-	opSeek   = "SeekGE"
-	opSeekLT = "SeekLT"
-	opLast   = "Last"
-	opWalk   = "Walk"
-	opReset  = "Reset"
+	opAdd       = "Add"
+	opGet       = "Get"
+	opScan      = "Scan"
+	opSeek      = "SeekGE"
+	opSeekAgain = "SeekAgain"
+	opSeekLT    = "SeekLT"
+	opLast      = "Last"
+	opWalk      = "Walk"
+	opReset     = "Reset"
 )
 
 // The moves of a walk of the machine of a List.
@@ -76,7 +77,7 @@ const (
 	heightKeyLen = 8
 
 	// nodeWords is the number of words of a node before its links.
-	nodeWords = 7
+	nodeWords = 8
 
 	// heightTolerance is the bytes by which the average may differ from its
 	// expectation. The standard deviation of the average of 20,000 nodes is
@@ -85,9 +86,9 @@ const (
 )
 
 // tallestNodeBytes is the size of a node of the largest height: 4 bytes for
-// each of the 7 words of its header and each of its 20 links, as the
+// each of the 8 words of its header and each of its 20 links, as the
 // documentation of Config states.
-const tallestNodeBytes = 108
+const tallestNodeBytes = 112
 
 // listContract is the contract of listSteps, which TestList and FuzzList
 // check.
@@ -103,8 +104,8 @@ var keys = [][]byte{
 }
 
 // benchKeySets are the keys of the benchmarks of Add and Get: random keys,
-// and keys whose first 8 bytes are 0. A search compares the keys of the
-// second set by their whole keys.
+// keys whose first 8 bytes are 0, and keys in the order of their numbers. A
+// search compares the keys of the second set by their whole keys.
 var benchKeySets = []struct {
 	name string
 	key  func(k *[benchKeyLen]byte, i uint64)
@@ -113,6 +114,10 @@ var benchKeySets = []struct {
 	{name: "keys that share their first 8 bytes", key: func(k *[benchKeyLen]byte, i uint64) {
 		benchKey(k, i)
 		clear(k[:8])
+	}},
+	{name: "keys in order", key: func(k *[benchKeyLen]byte, i uint64) {
+		binary.BigEndian.PutUint64(k[:8], i)
+		clear(k[8:])
 	}},
 }
 
@@ -130,6 +135,13 @@ type lookup struct {
 	value int
 	seq   uint64
 	ok    bool
+}
+
+// addition is an Add of the machine of a List: the entry, and whether the
+// machine adds it through its Inserter instead of List.Add.
+type addition struct {
+	entry
+	hinted bool
 }
 
 // walk is a SeekGE of a cursor to at, and the moves after it: true moves
@@ -277,7 +289,7 @@ func TestList(t *testing.T) {
 			assert.NoError(t, err, "New returns a List")
 			assert.Pure(t, l.Size, func() { err = l.Add([]byte("key"), 1, nil) },
 				"Add whose node does not fit reserves nothing")
-			expect.ErrorIs(t, err, ErrFull, "Add refuses a node of 8 or more words for 1 word of room")
+			expect.ErrorIs(t, err, ErrFull, "Add refuses a node of 9 or more words for 1 word of room")
 			expect.Equal(t, l.Len(), 0, "the List has no entries")
 		})
 
@@ -322,13 +334,15 @@ func TestList(t *testing.T) {
 				Seed:      1,
 			})
 			assert.NoError(t, err, "New returns a List")
-			added, disordered := addInRounds(t, l, func(round, _ int) []byte {
+			added, disordered, missed := addInRounds(t, l, func(round, _ int) []byte {
 				return binary.BigEndian.AppendUint64(nil, uint64(round))
 			})
 			expect.Equal(t, added, sharedEntries, "exactly one Add of each entry succeeds")
 			expect.Equal(t, l.Len(), sharedEntries, "the List has every entry once")
 			expect.Length(t, scan(t.Context(), l.NewIter()), sharedEntries, "a cursor yields every entry once")
+			expect.Length(t, scanBack(t.Context(), l.NewIter()), sharedEntries, "a cursor yields every entry back once")
 			expect.Equal(t, disordered, 0, "a cursor yields the entries in order while writers add")
+			expect.Equal(t, missed, 0, "a cursor yields every entry whose Add returned before the scan")
 		})
 
 		t.Run("links every entry while writers add neighbouring entries at once", func(t *testing.T) {
@@ -339,12 +353,15 @@ func TestList(t *testing.T) {
 				Seed:      1,
 			})
 			assert.NoError(t, err, "New returns a List")
-			added, disordered := addInRounds(t, l, func(round, writer int) []byte {
+			added, disordered, missed := addInRounds(t, l, func(round, writer int) []byte {
 				return binary.BigEndian.AppendUint64(nil, uint64(round*writers+writer))
 			})
 			expect.Equal(t, added, writers*sharedEntries, "every Add of a new entry succeeds")
 			expect.Length(t, scan(t.Context(), l.NewIter()), writers*sharedEntries, "a cursor yields every entry")
+			expect.Length(t, scanBack(t.Context(), l.NewIter()), writers*sharedEntries,
+				"a cursor yields every entry back")
 			expect.Equal(t, disordered, 0, "a cursor yields the entries in order while writers add")
+			expect.Equal(t, missed, 0, "a cursor yields every entry whose Add returned before the scan")
 		})
 
 		t.Run("links nodes of every level while writers add neighbouring entries at once", func(t *testing.T) {
@@ -361,12 +378,15 @@ func TestList(t *testing.T) {
 			// writers of a round link into the splice after the head at every
 			// level at once, and a search finds that splice in one step.
 			l.secret1 = 0
-			added, disordered := addInRounds(t, l, func(round, writer int) []byte {
+			added, disordered, missed := addInRounds(t, l, func(round, writer int) []byte {
 				return binary.BigEndian.AppendUint64(nil, math.MaxUint64-uint64(round*writers+writer))
 			})
 			expect.Equal(t, added, writers*sharedEntries, "every Add of a new entry succeeds")
 			expect.Equal(t, disordered, 0, "a cursor yields the entries in order while writers add")
+			expect.Equal(t, missed, 0, "a cursor yields every entry whose Add returned before the scan")
 			expect.Equal(t, l.levels.Load(), uint32(maxHeight), "the nodes have every level")
+			expect.Length(t, scanBack(t.Context(), l.NewIter()), writers*sharedEntries,
+				"a cursor yields every entry back")
 			assert.NoError(t, check(l), "every level links every node in order")
 		})
 
@@ -966,37 +986,52 @@ func BenchmarkList(b *testing.B) {
 // keyOf(round, writer) and the sequence 0 in each of sharedEntries rounds.
 // The writers wait for each other before each round, so their Adds of one
 // round run at once. Another goroutine scans the List forward and backward
-// while they add. It returns the number of Adds that succeeded and the
-// number of pairs of entries that a scan yielded out of order, and stops the
-// test for an error other than ErrExists.
-func addInRounds(tb testing.TB, l *List, keyOf func(round, writer int) []byte) (added, disordered int) {
+// while they add. addInRounds returns the number of Adds that succeeded and
+// the number of pairs of entries that a scan yielded out of order. It also
+// returns the number of entries that a scan did not yield although their Add
+// returned before the scan. It stops the test for an error other than
+// ErrExists.
+func addInRounds(tb testing.TB, l *List, keyOf func(round, writer int) []byte) (added, disordered, missed int) {
 	tb.Helper()
 
 	var arrived, running atomic.Int64
+	// done[w] is the number of rounds of writer w whose Add returned.
+	var done [writers]atomic.Int64
 	running.Store(writers)
 	outcomes := history.Concurrently(writers+1, time.Minute, func(client int) (any, error) {
 		if client == writers {
-			// The scanner yields after each scan, so the writers progress on
-			// one processor too.
-			pairs := 0
+			// faults counts the pairs out of order and the missed entries. The
+			// scanner yields after each scan, so the writers progress on one
+			// processor too.
+			var faults [2]int
 			for running.Load() > 0 {
-				got := scan(tb.Context(), l.NewIter())
-				for i := 1; i < len(got); i++ {
-					if order(got[i-1], got[i]) >= 0 {
-						pairs++
-					}
+				var returned [writers]int64
+				for w := range returned {
+					returned[w] = done[w].Load()
 				}
-				back := l.NewIter()
-				for ok, prev := back.Last(tb.Context()), []byte(nil); ok; ok = back.Prev(tb.Context()) {
-					if prev != nil && bytes.Compare(back.Key(), prev) >= 0 {
-						pairs++
+				forward := scan(tb.Context(), l.NewIter())
+				back := scanBack(tb.Context(), l.NewIter())
+				slices.Reverse(back)
+				for _, got := range [][]entry{forward, back} {
+					yielded := make(map[string]bool, len(got))
+					for i, e := range got {
+						if i > 0 && order(got[i-1], e) >= 0 {
+							faults[0]++
+						}
+						yielded[string(e.key)] = true
 					}
-					prev = back.Key()
+					for w, rounds := range returned {
+						for round := range rounds {
+							if !yielded[string(keyOf(int(round), w))] {
+								faults[1]++
+							}
+						}
+					}
 				}
 				runtime.Gosched()
 			}
 
-			return pairs, nil
+			return faults, nil
 		}
 
 		defer running.Add(-1)
@@ -1012,6 +1047,7 @@ func addInRounds(tb testing.TB, l *List, keyOf func(round, writer int) []byte) (
 			} else if !errors.Is(err, ErrExists) {
 				return n, err
 			}
+			done[client].Store(int64(round + 1))
 		}
 
 		return n, nil
@@ -1021,13 +1057,14 @@ func addInRounds(tb testing.TB, l *List, keyOf func(round, writer int) []byte) (
 		assert.True(tb, o.Finished, "every goroutine finishes")
 		assert.NoError(tb, o.Error, "Add fails only with ErrExists")
 		if o.Client == writers {
-			disordered = o.Output.(int)
+			faults := o.Output.([2]int)
+			disordered, missed = faults[0], faults[1]
 		} else {
 			added += o.Output.(int)
 		}
 	}
 
-	return added, disordered
+	return added, disordered, missed
 }
 
 // listSteps runs the steps of a machine over the methods of a List on one
@@ -1041,6 +1078,8 @@ func listSteps(c *prop.Case) {
 	assert.NoError(c, err, "New returns a List")
 
 	var m model
+	var ins Inserter
+	again := l.NewIter()
 	written := 0
 	key := prop.SampledFrom(keys...)
 	seq := prop.Integer[uint64](0, 3)
@@ -1053,14 +1092,21 @@ func listSteps(c *prop.Case) {
 				Weight: 4,
 				Input: func(c *prop.Case, _ struct{}) any {
 					written++
+					e := entry{key: c.Draw(key, "key"), seq: c.Draw(seq, "seq"), value: []byte(strconv.Itoa(written))}
 
-					return entry{key: c.Draw(key, "key"), seq: c.Draw(seq, "seq"), value: []byte(strconv.Itoa(written))}
+					return addition{entry: e, hinted: c.Draw(prop.Boolean(), "through the Inserter")}
 				},
 				Run: func(c *prop.Case, _ int, in any) {
-					e := in.(entry)
+					a := in.(addition)
+					e := a.entry
 					dataCost, nodeCost := l.Cost(e.key, e.seq, len(e.value))
 					size := l.Size()
-					err := l.Add(e.key, e.seq, e.value)
+					var err error
+					if a.hinted {
+						err = ins.Add(l, e.key, e.seq, e.value)
+					} else {
+						err = l.Add(e.key, e.seq, e.value)
+					}
 					if !m.add(e) {
 						assert.ErrorIs(c, err, ErrExists, "Add returns ErrExists for an entry of the List")
 						assert.Equal(c, l.Size(), size, "Add of an entry of the List reserves nothing")
@@ -1109,6 +1155,23 @@ func listSteps(c *prop.Case) {
 					}
 					assert.Equal(c, got, []entry(m[i:min(i+3, len(m))]),
 						"SeekGE moves to the first entry at or after its key and sequence", assert.EquateEmpty())
+				},
+			},
+			{
+				// The cursor of SeekAgain remains where its last step left it,
+				// so a seek starts from an entry before or after its target.
+				Name:  opSeekAgain,
+				Input: target,
+				Run: func(c *prop.Case, _ int, in any) {
+					e := in.(entry)
+					i, _ := slices.BinarySearchFunc(m, e, order)
+					var got []entry
+					for ok := again.SeekGE(c.Context(), e.key, e.seq); ok && len(got) < listed; ok = again.Next(c.Context()) {
+						got = append(got, entry{key: again.Key(), seq: again.Seq(), value: again.Value()})
+					}
+					assert.Equal(c, got, []entry(m[i:min(i+listed, len(m))]),
+						"SeekGE of a cursor that moved before moves to the first entry at or after its target",
+						assert.EquateEmpty())
 				},
 			},
 			{
@@ -1199,6 +1262,11 @@ func listSteps(c *prop.Case) {
 		Invariant: func(c *prop.Case, _ struct{}) {
 			assert.Equal(c, l.Len(), len(m), "Len counts the entries")
 			assert.NoError(c, check(l), "the List keeps the invariants of its levels")
+			// One goroutine adds every entry, so every link back is the node
+			// before its node.
+			for before, nd := uint32(0), l.nodes[nodeHeader]; nd != 0; before, nd = nd, l.nodes[nd+nodeHeader] {
+				assert.Equal(c, l.nodes[nd+wordBack], before, "the link back of a node is the node before it")
+			}
 		},
 	})
 }
@@ -1211,6 +1279,9 @@ func listSteps(c *prop.Case) {
 //   - Level 0 links every entry in the order of the List.
 //   - Each higher level links the nodes whose height exceeds the level, in
 //     the order of level 0.
+//   - The link back of each node is the head or a node before it at level
+//     0. Writers that add at once can leave it on an earlier node than the
+//     node before it.
 //   - The height of l is the height of its tallest node, or 1 when l is
 //     empty.
 //
@@ -1239,6 +1310,15 @@ func check(l *List) error {
 	}
 	if len(nodes) != l.Len() {
 		return fmt.Errorf("%w: level 0 links %d nodes for %d entries", errInvariant, len(nodes), l.Len())
+	}
+	// before contains the head and the nodes of level 0 before the node that
+	// the loop checks.
+	before := map[uint32]bool{0: true}
+	for i, nd := range nodes {
+		if !before[l.nodes[nd+wordBack]] {
+			return fmt.Errorf("%w: the link back of node %d of level 0 is not a node before it", errInvariant, i)
+		}
+		before[nd] = true
 	}
 	if levels := int(l.levels.Load()); levels != tallest {
 		return fmt.Errorf("%w: a height of %d for a tallest node of %d levels", errInvariant, levels, tallest)
