@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.22.0
+
+### Minor Changes
+
+- bbf82b5: Add `arena.Bump` for fixed arrays that goroutines reserve in ranges without locks.
+- bbf82b5: Add `arena.RefSlabs` to allocate regions of the size classes of `Slabs` by `Ref` instead of by slice.
+- 4942f52: Add `compress/snappy` with `AppendEncode` and `AppendDecode` for blocks in the Snappy format.
+- 3c02be0: Add `filter` with the split block Bloom filter `Bloom` and the binary fuse filter `Fuse`.
+- c033432: Add `hash/xxh3` with `Hash` and `HashString` for XXH3-64 with seed 0.
+- 9e24d86: Add `radix` with the adaptive radix tree `Map` for longest-prefix matches and prefix scans.
+- eb1de69: Add `resilience.Limiter.WaitNPriority` to wait for units at `PriorityNormal` or `PriorityHigh`.
+- 9982b9c: Add `skiplist` with the lock-free memtable `List` and its cursor `Iter`.
+- 241f105: Add `sstable` with the table `Writer` and `Reader`, the cursor `Iter` and the `Merger` of sorted runs.
+
+### Patch Changes
+
+- eb1de69: Change `resilience.Limiter.WaitN` to take the units of a waiting call at its grant, so a cancelled call takes none.
+- 454d6db: Fix `cache.Pinned.Unpin` to evict down to the capacity at the last Unpin of an entry past it.
+- 94962c8: Require `go.dokimi.dev/assert` v0.3.0.
+
 ## 0.21.1
 
 ### Patch Changes
