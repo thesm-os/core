@@ -304,14 +304,14 @@
   8032 §5.1.6, backed by `crypto/ed25519`. Signer / Verifier;
   no streaming (the algorithm cannot stream — RFC 8032 §5.1.6
   needs the message in two SHA-512 computations). Zero-alloc
-  Verify. `KeyIDFromPub` derives SHA-256[pub](:16);
+  Verify. `KeyIDFromPub` derives SHA-256\[pub\](:16);
   `TestKeyIDStability` locks the encoding via a hardcoded
   vector.
 - `crypto/sign/ecdsap384` package: ECDSA over NIST P-384 with
   SHA-384 hashing per FIPS 186-5, ASN.1 DER signatures, backed
   by `crypto/ecdsa`. Implements both Signer + StreamingSigner
   and Verifier + StreamingVerifier. `KeyIDFromPub` derives
-  SHA-256[SEC 1 uncompressed point](:16); `TestKeyIDStability`
+  SHA-256\[SEC 1 uncompressed point\](:16); `TestKeyIDStability`
   locks the encoding (X=1, Y=2 vector).
 - `crypto.AlgEd25519`, `crypto.AlgECDSAP384` Algorithm
   constants.
@@ -322,7 +322,6 @@
   streaming on Ed25519 (PureEdDSA cannot stream), EU
   compliance posture, and what's deferred to future rounds (PQ
   signatures, threshold, KEM).
-
 - `crypto.Stream.Close()` method on the [crypto.Stream]
   interface. One-shot consumers ([crypto.HashDomain],
   [crypto.HashReader]) Close after Sum to release the stream
@@ -348,7 +347,6 @@
     sub-benches (typed `Pool[*resettable]`).
 - RFC 8032 §7.1 known-answer test vectors for Ed25519 (TEST 1,
   2, 3) — locks in interoperability with the published RFC.
-
 - `errs` package: the error-classification seam. `Class` — a
   closed eight-value enumeration of what a caller should *do*
   about a failure, orthogonal to what went wrong. `Classify`
@@ -512,7 +510,6 @@
   determinism preserved (the construction is part of the
   public contract, fixture test unchanged); zero-alloc contract
   preserved.
-
 - `crypto.Combine` now admits the zero `Digest` as a valid chain
   genesis rather than rejecting it. A hash chain has to start
   somewhere, and refusing the zero value forced every caller to
