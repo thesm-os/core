@@ -64,6 +64,8 @@
 //     do not allocate.
 //   - FuseBuilder.Append allocates nothing when dst has room for the
 //     encoding and the builder built at least as many hashes before.
+//     [FuseBuilder.Footprint] returns the bytes of its scratch and does not
+//     allocate.
 //   - ParseFuse and the methods of a Fuse do not allocate.
 //
 // # Dependency position

@@ -117,6 +117,20 @@ func (b *FuseBuilder) Append(dst []byte, hashes []uint64, bits int) ([]byte, err
 	return dst, ErrBuild
 }
 
+// Footprint returns the bytes of the scratch memory that b keeps between
+// builds: the capacity of each of its arrays. A builder that built n hashes
+// keeps about 34 bytes for each of them, and a new builder keeps none.
+//
+// # Allocation contract
+//
+// Zero-alloc.
+func (b *FuseBuilder) Footprint() int {
+	n := 8 * (cap(b.keys) + cap(b.order) + cap(b.xors))
+	n += 4 * (cap(b.queue) + cap(b.starts))
+
+	return n + 2*cap(b.fps) + cap(b.which) + cap(b.count)
+}
+
 // peel orders the hashes of b.keys by their first segment under the geometry
 // g and the seed, counts the hashes of each position, and removes the hashes
 // one position at a time. It returns the number of removed hashes, which are

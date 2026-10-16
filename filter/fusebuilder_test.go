@@ -174,6 +174,37 @@ func TestFuseBuilder(t *testing.T) {
 			}
 		})
 	})
+
+	t.Run("Footprint", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns 0 for a new builder", func(t *testing.T) {
+			t.Parallel()
+
+			var b filter.FuseBuilder
+			assert.Equal(t, b.Footprint(), 0, "a new builder has no scratch")
+		})
+
+		t.Run("returns about 34 bytes for each hash of the largest build", func(t *testing.T) {
+			t.Parallel()
+
+			var b filter.FuseBuilder
+			_, err := b.Append(nil, hashes(10_000, 19), 8)
+			assert.NoError(t, err, "Append builds the filter")
+			assert.InRange(t, b.Footprint(), 30*10_000, 40*10_000, "the scratch takes about 34 bytes for each hash")
+		})
+
+		t.Run("returns the same bytes after a build of fewer hashes", func(t *testing.T) {
+			t.Parallel()
+
+			var b filter.FuseBuilder
+			_, err := b.Append(nil, hashes(10_000, 19), 8)
+			assert.NoError(t, err, "Append builds the first filter")
+			assert.Pure(t, b.Footprint, func() { _, err = b.Append(nil, hashes(5000, 19), 8) },
+				"the second build reuses the scratch of the first")
+			assert.NoError(t, err, "Append builds the second filter")
+		})
+	})
 }
 
 func TestFuseBuilderAllocs(t *testing.T) {
@@ -192,6 +223,15 @@ func TestFuseBuilderAllocs(t *testing.T) {
 		expect.MaxAllocs(t, func() { got, err = b.Append(nil, hs[:5000], 8) }, 1,
 			"Append grows a nil dst once")
 		assert.NoError(t, err, "the test measures a build that succeeds")
+	})
+
+	t.Run("Footprint", func(t *testing.T) {
+		var b filter.FuseBuilder
+		_, err := b.Append(nil, hashes(1000, 19), 8)
+		assert.NoError(t, err, "Append builds the filter that sizes the scratch")
+		n := 0
+		expect.MaxAllocs(t, func() { n = b.Footprint() }, 0, "Footprint does not allocate")
+		assert.NotEqual(t, n, 0, "the test measures the footprint of a scratch")
 	})
 }
 
