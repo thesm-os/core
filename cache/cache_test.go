@@ -412,17 +412,18 @@ func TestCache(t *testing.T) {
 			expect.Empty(t, r.got(), "no pinned entry may leave")
 		})
 
-		t.Run("evicts down to the capacity once the pins are gone", func(t *testing.T) {
+		t.Run("evicts an entry that a Set kept past the capacity", func(t *testing.T) {
 			t.Parallel()
-			c, _, _ := newCache(t, 2, nil)
+			c, _, r := newCache(t, 2, nil)
 			setAll(c, "a", "b")
 			a, _ := c.Pin("a")
+			defer a.Unpin()
 			b, _ := c.Pin("b")
+			defer b.Unpin()
 			c.Set("c", 1, time.Time{})
-			a.Unpin()
-			b.Unpin()
 			c.Set("d", 1, time.Time{})
-			assert.Equal(t, c.Len(), 2, "the next Set must evict down to the capacity")
+			expect.Equal(t, c.Len(), 3, "a Set into a pinned cache must keep its own entry")
+			expect.Equal(t, r.got(), []string{"c"}, "the Set must evict the unpinned entry that the last Set kept")
 		})
 
 		t.Run("stores an entry whose expiry time has passed as a miss", func(t *testing.T) {

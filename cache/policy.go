@@ -172,9 +172,10 @@ func (g *ghost) contains(h uint64) bool {
 // entries of c is at most its capacity, or only pinned entries and keep
 // remain, and adds to gone each removed entry without a pin. keep is the
 // entry that the calling Set added, so a Set that finds every other entry
-// pinned stores its entry past the capacity, and the next Set evicts it
-// like any other. The caller has locked the mutex, and reads now from the
-// cache's clock once for the call.
+// pinned stores its entry past the capacity. The next Set, or the last
+// Unpin of an entry, evicts it like any other. The last Unpin passes a nil
+// keep. The caller has locked the mutex, and reads now from the cache's
+// clock once for the call.
 //
 // Each step examines one entry. A step moves an entry from the small queue
 // to the main queue, takes a hit from an entry of the main queue, or

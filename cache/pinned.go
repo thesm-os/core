@@ -18,7 +18,8 @@ package cache
 // # Allocation contract
 //
 // A Pinned is two pointers, passed by value, so Pin, Value and Unpin do
-// not allocate.
+// not allocate. Unpin allocates only the list of the callbacks of more than
+// eight entries that it evicts.
 type Pinned[K comparable, V any] struct {
 	c *Cache[K, V]
 	e *entry[K, V]
@@ -43,11 +44,26 @@ func (p Pinned[K, V]) Value() V {
 // pin removes another holder's pin, so the cache can then evict an entry
 // that is still in use.
 //
+// When this was the last pin of the entry and the sum of the costs exceeds
+// the capacity, Unpin evicts down to the capacity as a Set does. It locks
+// the cache for the eviction, and passes the entries that it evicts to
+// Evicted after it releases the lock. An Unpin while the sum is at most the
+// capacity takes no lock.
+//
 // # Allocation contract
 //
-// Zero alloc, apart from what Evicted allocates.
+// Zero alloc, apart from what Evicted allocates. An Unpin that evicts more
+// than eight entries allocates the list of their callbacks.
 func (p Pinned[K, V]) Unpin() {
-	if p.e != nil && p.e.unpin() {
+	if p.e == nil {
+		return
+	}
+
+	last, left := p.e.unpin()
+	if last && left {
 		p.c.notify(p.e)
+	}
+	if last && p.c.total.Load() > p.c.capacity {
+		p.c.shrink()
 	}
 }

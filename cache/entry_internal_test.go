@@ -39,21 +39,45 @@ func TestEntryState(t *testing.T) {
 	t.Run("unpin", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("reports false while a pin remains", func(t *testing.T) {
+		t.Run("reports no last pin while a pin remains", func(t *testing.T) {
 			t.Parallel()
 			e := &entry[string, int]{}
 			e.pin()
 			e.pin()
-			expect.False(t, e.unpin(), "the first unpin must leave a pin")
+			last, left := e.unpin()
+			expect.False(t, last, "the first unpin must leave a pin")
+			expect.False(t, left, "the entry must still be in the cache")
 			expect.Equal(t, e.state.Load(), int64(1), "one pin must remain")
 		})
 
-		t.Run("reports true at the last unpin of an entry that left", func(t *testing.T) {
+		t.Run("reports the last pin of an entry in the cache", func(t *testing.T) {
+			t.Parallel()
+			e := &entry[string, int]{}
+			e.pin()
+			last, left := e.unpin()
+			expect.True(t, last, "the unpin must remove the last pin")
+			expect.False(t, left, "the entry must still be in the cache")
+		})
+
+		t.Run("reports the last pin of an entry that left", func(t *testing.T) {
 			t.Parallel()
 			e := &entry[string, int]{}
 			e.pin()
 			e.leave()
-			assert.True(t, e.unpin(), "the last unpin must report the callback")
+			last, left := e.unpin()
+			expect.True(t, last, "the unpin must remove the last pin")
+			expect.True(t, left, "the entry must have left the cache")
+		})
+
+		t.Run("reports an entry that left while a pin remains", func(t *testing.T) {
+			t.Parallel()
+			e := &entry[string, int]{}
+			e.pin()
+			e.pin()
+			e.leave()
+			last, left := e.unpin()
+			expect.False(t, last, "the first unpin must leave a pin")
+			expect.True(t, left, "the entry must have left the cache")
 		})
 	})
 

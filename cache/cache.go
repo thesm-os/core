@@ -41,8 +41,9 @@ type Config[K comparable, V any] struct {
 
 	// Capacity bounds the sum of the costs of the entries. It must be
 	// positive. The sum exceeds it only when pinned entries fill the
-	// cache: a Set then keeps its new entry, and the next Set that finds
-	// unpinned entries evicts down to the capacity again.
+	// cache: a Set then keeps its new entry. The last Unpin of an entry,
+	// and the next Set that finds unpinned entries, evict down to the
+	// capacity again.
 	Capacity int64
 }
 
@@ -66,8 +67,10 @@ type Config[K comparable, V any] struct {
 //
 // Safe for concurrent use. Get and Pin take no lock, and a hit on an entry
 // that already counts three hits writes nothing. One mutex per Cache
-// serializes Set, SetPinned, Delete, Expire, and a Get or Pin that finds an
-// expired entry. Len and Cost read atomic counters, and take no lock.
+// serializes Set, SetPinned, Delete, Expire, a Get or Pin that finds an
+// expired entry, and the last [Pinned.Unpin] of an entry while the sum of
+// the costs exceeds the capacity. Len and Cost read atomic counters, and
+// take no lock.
 //
 // # Allocation contract
 //
@@ -75,9 +78,9 @@ type Config[K comparable, V any] struct {
 // whose hash [maphash.Comparable] computes without an allocation: a string,
 // or a value without pointers. Set and SetPinned allocate the entry, and
 // the memory of the index, the ghost and the heap when they grow, so a
-// cache in a steady state allocates once per Set or SetPinned. A Set or
-// SetPinned that evicts more than eight entries allocates the list of their
-// callbacks. Expire does not allocate.
+// cache in a steady state allocates once per Set or SetPinned. A Set,
+// SetPinned or Unpin that evicts more than eight entries allocates the list
+// of their callbacks. Expire does not allocate.
 type Cache[K comparable, V any] struct {
 	// index is the current index. A writer replaces it when it grows.
 	index atomic.Pointer[index[K, V]]
@@ -462,6 +465,27 @@ func (c *Cache[K, V]) store(e *entry[K, V], now time.Time) {
 		c.evict(now, e, &gone)
 	}
 
+	c.mu.Unlock()
+
+	gone.notify(c.evicted)
+}
+
+// shrink evicts down to the capacity as a Set does, and passes the entries
+// that it evicts to Evicted after it releases the lock. The last Unpin of
+// an entry calls it while the sum of the costs exceeds the capacity, so the
+// sum exceeds the capacity only while pinned entries fill the cache. shrink
+// reads the clock once, so the evictor removes an expired entry whatever
+// its hits.
+func (c *Cache[K, V]) shrink() {
+	var now time.Time
+	if c.clock != nil {
+		now = c.clock.Time()
+	}
+
+	var gone victims[K, V]
+
+	c.mu.Lock()
+	c.evict(now, nil, &gone)
 	c.mu.Unlock()
 
 	gone.notify(c.evicted)

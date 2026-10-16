@@ -31,7 +31,7 @@ const removed = 1 << 62
 // # Allocation contract
 //
 // [Cache.Set] allocates one entry per call. No code reuses an entry, so a
-// lookup that holds a pointer to an entry that has left reads its own key
+// lookup that has a pointer to an entry that has left reads its own key
 // and value, never those of another entry.
 type entry[K comparable, V any] struct {
 	key     K
@@ -98,11 +98,14 @@ func (e *entry[K, V]) pin() bool {
 	}
 }
 
-// unpin removes a pin from e, which has one, and reports whether e has
-// left the cache and has no pin left, so that the caller passes it to the
-// callback. Exactly one of leave, evict and unpin reports an entry.
-func (e *entry[K, V]) unpin() bool {
-	return e.state.Add(-1) == removed
+// unpin removes a pin from e, which has one. It reports whether that was
+// the last pin, and whether e has left the cache. The caller passes e to
+// the callback when both are true, and exactly one of leave, evict and
+// unpin reports such an entry.
+func (e *entry[K, V]) unpin() (last, left bool) {
+	s := e.state.Add(-1)
+
+	return s&^removed == 0, s&removed != 0
 }
 
 // leave marks e as having left the cache, and reports whether e had no
