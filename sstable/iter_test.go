@@ -27,6 +27,10 @@ const (
 	valueLenAt = 2
 )
 
+// iterContract is the contract of iterSteps, which TestIter and FuzzIter
+// check.
+const iterContract = "every move must put the cursor on the entry of a sorted model of the table"
+
 // everyEntry are the options of the tables whose data blocks a case changes:
 // small blocks with a restart point at every entry, so the restart offsets
 // of a block are the offsets of all its entries. The data blocks end at the
@@ -38,7 +42,7 @@ func TestIter(t *testing.T) {
 
 	t.Run("returns what a sorted model returns under any sequence of moves", func(t *testing.T) {
 		t.Parallel()
-		prop.ForAll(t, "every move must put the cursor on the entry of a sorted model of the table", iterSteps)
+		prop.ForAll(t, iterContract, iterSteps)
 	})
 
 	// The second block of a table of everyEntry has four restart points. The
@@ -776,7 +780,36 @@ func TestIter(t *testing.T) {
 			assert.ErrorIs(t, err, sstable.ErrCorrupt, "the cursor refuses the changed block")
 			assert.ErrorIs(t, it.Close(), sstable.ErrCorrupt, "Close returns the error of the cursor")
 		})
+
+		t.Run("returns nil for a second Close", func(t *testing.T) {
+			t.Parallel()
+			data := writeTable(t, settings[0].opts, goldenTable())
+			data[len(data)/3] ^= 1
+			it := openTable(t, data, sstable.ReaderOptions{}).NewIter()
+			_, err := scanAll(it)
+			assert.ErrorIs(t, err, sstable.ErrCorrupt, "the cursor refuses the changed block")
+			assert.ErrorIs(t, it.Close(), sstable.ErrCorrupt, "the first Close returns the error of the cursor")
+			assert.NoError(t, it.Close(), "the second Close finds no cursor to return")
+		})
+
+		t.Run("returns the cursor to the pool once for a second Close", func(t *testing.T) {
+			t.Parallel()
+			r := openTable(t, writeTable(t, settings[0].opts, goldenTable()), sstable.ReaderOptions{})
+			it := r.NewIter()
+			assert.NoError(t, it.Close(), "the first Close returns the cursor to the pool")
+			assert.NoError(t, it.Close(), "the second Close returns nil")
+			first, second := r.NewIter(), r.NewIter()
+			defer first.Close()
+			defer second.Close()
+			assert.NotEqual(t, first, second, "the pool hands out the closed cursor once", assert.ByIdentity())
+		})
 	})
+}
+
+// FuzzIter checks the machine of iterSteps on the move sequences that a
+// fuzzer finds.
+func FuzzIter(f *testing.F) {
+	prop.Fuzz(f, iterContract, iterSteps)
 }
 
 // TestIterAllocs checks the allocation contract of the moves of a cursor.

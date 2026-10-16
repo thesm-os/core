@@ -162,7 +162,9 @@ type Summary struct {
 // block, the index and the hashes of the filter, so it does not allocate once
 // they have room. Close allocates the encoding of the filter, the scratch of
 // its builder, the growth of the buffer of the table for the filter and the
-// index, and the largest key of the summary.
+// index, and the largest key of the summary. [Writer.Reset] keeps every
+// buffer for the next table, so a Writer that writes many tables allocates
+// the two keys of each summary once its buffers have grown.
 type Writer struct {
 	// w receives the bytes of the table.
 	w io.Writer
@@ -432,6 +434,40 @@ func (w *Writer) Close() (Summary, error) {
 	}
 
 	return sum, nil
+}
+
+// Reset discards the table that w writes, and starts a new table on dst
+// under the options of [NewWriter]. It clears the error of an earlier write
+// and [ErrClosed]. A Writer whose write failed or that Close closed then
+// writes the next table.
+//
+// Reset keeps the buffers of w and the scratch of its filter builder. A
+// Writer that wrote a table then writes a table of no more entries and no
+// longer keys and values without growing them. The [Summary] that Close
+// returned before remains valid, because its keys are copies.
+//
+// # Allocation contract
+//
+// Zero-alloc. A table that a Writer writes after Reset allocates the copies
+// of its smallest key and its largest key, and the growth of a buffer that
+// the table needs.
+func (w *Writer) Reset(dst io.Writer) {
+	*w = Writer{
+		w:               dst,
+		builder:         w.builder,
+		out:             w.out[:0],
+		restarts:        w.restarts[:0],
+		last:            w.last[:0],
+		cur:             w.cur[:0],
+		scratch:         w.scratch[:0],
+		index:           w.index[:0],
+		indexRestarts:   w.indexRestarts[:0],
+		hashes:          w.hashes[:0],
+		blockSize:       w.blockSize,
+		restartInterval: w.restartInterval,
+		filterBits:      w.filterBits,
+		compression:     w.compression,
+	}
 }
 
 // finishBlock ends the current data block, which out contains from its first

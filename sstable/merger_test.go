@@ -6,6 +6,7 @@ package sstable_test
 import (
 	"bytes"
 	"errors"
+	"io"
 	"math"
 	"slices"
 	"testing"
@@ -30,6 +31,10 @@ const (
 // room for the entries of a run.
 const listBytes = 1 << 16
 
+// mergeContract is the contract of mergeSteps, which TestMerger and
+// FuzzMerger check.
+const mergeContract = "every move must put the merge on the entry of the sorted union of its runs"
+
 // The kinds of the sources of the machine of a merge.
 const (
 	sliceKind = 0
@@ -37,8 +42,12 @@ const (
 	listKind  = 2
 )
 
-// errSource is the error of a source that fails.
-var errSource = errors.New("source failed")
+// errSource is the error of a source that fails, and errOther the error of
+// another source.
+var (
+	errSource = errors.New("source failed")
+	errOther  = errors.New("other source failed")
+)
 
 // mergeMoves generates the moves of a merge, each with the probe of a seek.
 var mergeMoves = prop.Composite(func(c *prop.Case) mergeMove {
@@ -67,17 +76,28 @@ type mergeMove struct {
 // sliceSource is a Source over entries in the order of Compare. It is on no
 // entry when i is outside the entries or after an error. The move of the
 // number failAt fails with errSource, and a failAt of 0 never fails. A seek
-// clears the error, as the seeks of an Iter do, and a step keeps it.
+// clears the error, as the seeks of an Iter do, and a step keeps it. closes
+// counts the calls of Close.
 type sliceSource struct {
 	es     []entry
 	i      int
 	moves  int
 	failAt int
+	closes int
 	on     bool
 	err    error
 }
 
-var _ sstable.Source = (*sliceSource)(nil)
+var (
+	_ sstable.Source = (*sliceSource)(nil)
+	_ io.Closer      = (*sliceSource)(nil)
+)
+
+// openSource is a Source without a Close method, such as the cursor of a
+// memtable. Its embedded Source has the moves of a sliceSource alone.
+type openSource struct {
+	sstable.Source
+}
 
 // First moves to the first entry.
 func (s *sliceSource) First() bool {
@@ -153,6 +173,13 @@ func (s *sliceSource) Err() error {
 	return s.err
 }
 
+// Close counts the call and returns the error of Err.
+func (s *sliceSource) Close() error {
+	s.closes++
+
+	return s.err
+}
+
 // moved counts a move and reports whether the source is on an entry. The
 // move of the number failAt fails the source.
 func (s *sliceSource) moved() bool {
@@ -170,7 +197,7 @@ func TestMerger(t *testing.T) {
 
 	t.Run("returns what the sorted union returns under any sequence of moves", func(t *testing.T) {
 		t.Parallel()
-		prop.ForAll(t, "every move must put the merge on the entry of the sorted union of its runs", mergeSteps)
+		prop.ForAll(t, mergeContract, mergeSteps)
 	})
 
 	t.Run("Reset", func(t *testing.T) {
@@ -187,6 +214,86 @@ func TestMerger(t *testing.T) {
 			got, err := scanAll(&m)
 			assert.NoError(t, err, "the second merge reads its source")
 			assert.Equal(t, got, want, "the merge yields the entries of the new sources", assert.EquateEmpty())
+		})
+
+		t.Run("does not close the sources that it replaces", func(t *testing.T) {
+			t.Parallel()
+			s := &sliceSource{es: goldenTable()}
+			var m sstable.Merger
+			m.Reset([]sstable.Source{s})
+			m.Reset(nil)
+			assert.Equal(t, s.closes, 0, "the caller closes a source that Reset replaced")
+		})
+	})
+
+	t.Run("Close", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("closes every source once", func(t *testing.T) {
+			t.Parallel()
+			sources := []*sliceSource{{es: goldenTable()}, {es: goldenTable()}, {}}
+			var m sstable.Merger
+			m.Reset([]sstable.Source{sources[0], sources[1], sources[2]})
+			assert.True(t, m.First(), "the merge has an entry")
+			assert.NoError(t, m.Close(), "Close closes the sources")
+			for _, s := range sources {
+				expect.Equal(t, s.closes, 1, "Close closes the source once")
+			}
+		})
+
+		t.Run("returns the errors of every source", func(t *testing.T) {
+			t.Parallel()
+			var m sstable.Merger
+			m.Reset([]sstable.Source{&sliceSource{err: errSource}, &sliceSource{}, &sliceSource{err: errOther}})
+			expect.That(t, m.Close()).
+				ErrorIs(errSource, "Close returns the error of the first source").
+				ErrorIs(errOther, "Close returns the error of the last source")
+		})
+
+		t.Run("skips a source without a Close method", func(t *testing.T) {
+			t.Parallel()
+			hidden := &sliceSource{es: goldenTable()}
+			closer := &sliceSource{es: goldenTable()}
+			var m sstable.Merger
+			m.Reset([]sstable.Source{openSource{hidden}, closer})
+			assert.NoError(t, m.Close(), "Close closes the source that has a Close method")
+			expect.Equal(t, hidden.closes, 0, "Close does not close the source inside a Source without a Close method")
+			expect.Equal(t, closer.closes, 1, "Close closes the other source")
+		})
+
+		t.Run("returns the error of a source of a table", func(t *testing.T) {
+			t.Parallel()
+			data := writeTable(t, settings[0].opts, goldenTable())
+			data[len(data)/3] ^= 1
+			it := openTable(t, data, sstable.ReaderOptions{}).NewIter()
+			var m sstable.Merger
+			m.Reset([]sstable.Source{&sliceSource{es: goldenTable()}, it})
+			_, err := scanAll(&m)
+			assert.ErrorIs(t, err, sstable.ErrCorrupt, "the merge stops at the changed block")
+			assert.ErrorIs(t, m.Close(), sstable.ErrCorrupt, "Close returns the error of the cursor of the table")
+		})
+
+		t.Run("leaves the merge on no entry", func(t *testing.T) {
+			t.Parallel()
+			var m sstable.Merger
+			m.Reset([]sstable.Source{&sliceSource{es: goldenTable()}})
+			assert.True(t, m.First(), "the merge has an entry")
+			assert.NoError(t, m.Close(), "Close closes the source")
+			expect.Nil(t, m.Key(), "the closed merge has no key")
+			expect.False(t, m.Next(), "the closed merge has no next entry")
+			expect.False(t, m.First(), "the closed merge has no sources")
+		})
+
+		t.Run("lets Reset give the merge new sources", func(t *testing.T) {
+			t.Parallel()
+			var m sstable.Merger
+			m.Reset([]sstable.Source{&sliceSource{es: goldenTable()}})
+			assert.NoError(t, m.Close(), "Close closes the source")
+			want := []entry{{key: []byte("z"), seq: 1}}
+			m.Reset([]sstable.Source{&sliceSource{es: want}})
+			got, err := scanAll(&m)
+			assert.NoError(t, err, "the merge reads the new source")
+			assert.Equal(t, got, want, "the merge yields the entries of the new source")
 		})
 	})
 
@@ -363,7 +470,6 @@ func TestMerger(t *testing.T) {
 				assert.NoError(t, l.Add(e.key, e.seq, e.value), "Add adds the entry")
 			}
 			it := openTable(t, writeTable(t, settings[3].opts, es), sstable.ReaderOptions{}).NewIter()
-			defer it.Close()
 			var m sstable.Merger
 			m.Reset([]sstable.Source{l.NewIter(), it})
 			got, err := scanAll(&m)
@@ -373,6 +479,7 @@ func TestMerger(t *testing.T) {
 				want = append(want, e, e)
 			}
 			assert.Equal(t, got, want, "the List and the table yield each entry in the same place")
+			assert.NoError(t, m.Close(), "the merge closes the cursors of the List and the table")
 		})
 
 		t.Run("returns the error of a source that fails during the merge", func(t *testing.T) {
@@ -382,6 +489,19 @@ func TestMerger(t *testing.T) {
 			_, err := scanAll(&m)
 			assert.ErrorIs(t, err, errSource, "the merge stops with the error of the source")
 			expect.False(t, m.Next(), "the merge is exhausted")
+			expect.Nil(t, m.Key(), "the exhausted merge has no key")
+		})
+
+		// After Last the second source is at the top, because of equal entries
+		// the higher source comes first back. The first source fails at its
+		// second move, the seek of the turn.
+		t.Run("returns the error of a source that fails when the merge turns", func(t *testing.T) {
+			t.Parallel()
+			var m sstable.Merger
+			m.Reset([]sstable.Source{&sliceSource{es: goldenTable(), failAt: 2}, &sliceSource{es: goldenTable()}})
+			assert.True(t, m.Last(), "Last finds an entry")
+			expect.False(t, m.Next(), "the merge is exhausted")
+			expect.ErrorIs(t, m.Err(), errSource, "the merge returns the error of the seek of its turn")
 			expect.Nil(t, m.Key(), "the exhausted merge has no key")
 		})
 	})
@@ -414,7 +534,6 @@ func TestMerger(t *testing.T) {
 				assert.NoError(t, l.Add(e.key, e.seq, e.value), "Add adds the entry")
 			}
 			it := openTable(t, writeTable(t, settings[3].opts, es), sstable.ReaderOptions{}).NewIter()
-			defer it.Close()
 			var m sstable.Merger
 			m.Reset([]sstable.Source{l.NewIter(), it})
 			got, err := scanBack(&m)
@@ -424,6 +543,7 @@ func TestMerger(t *testing.T) {
 				want = append(want, e, e)
 			}
 			assert.Equal(t, got, want, "the List and the table yield each entry back in the same place")
+			assert.NoError(t, m.Close(), "the merge closes the cursors of the List and the table")
 		})
 
 		t.Run("returns the error of a source that fails during the merge", func(t *testing.T) {
@@ -433,6 +553,19 @@ func TestMerger(t *testing.T) {
 			_, err := scanBack(&m)
 			assert.ErrorIs(t, err, errSource, "the merge stops with the error of the source")
 			expect.False(t, m.Prev(), "the merge is exhausted")
+			expect.Nil(t, m.Key(), "the exhausted merge has no key")
+		})
+
+		// After First the first source is at the top, because of equal entries
+		// the lower source comes first. The second source fails at its second
+		// move, the seek of the turn.
+		t.Run("returns the error of a source that fails when the merge turns", func(t *testing.T) {
+			t.Parallel()
+			var m sstable.Merger
+			m.Reset([]sstable.Source{&sliceSource{es: goldenTable()}, &sliceSource{es: goldenTable(), failAt: 2}})
+			assert.True(t, m.First(), "First finds an entry")
+			expect.False(t, m.Prev(), "the merge is exhausted")
+			expect.ErrorIs(t, m.Err(), errSource, "the merge returns the error of the seek of its turn")
 			expect.Nil(t, m.Key(), "the exhausted merge has no key")
 		})
 	})
@@ -478,6 +611,12 @@ func TestMerger(t *testing.T) {
 	})
 }
 
+// FuzzMerger checks the machine of mergeSteps on the move sequences that a
+// fuzzer finds.
+func FuzzMerger(f *testing.F) {
+	prop.Fuzz(f, mergeContract, mergeSteps)
+}
+
 // TestMergerAllocs checks the allocation contract of the moves of a Merger.
 // MaxAllocs counts the allocations of the whole process, so the test does
 // not run in parallel.
@@ -516,6 +655,13 @@ func TestMergerAllocs(t *testing.T) {
 			m.Last()
 		}
 	}, 0, "a move against the direction of the last move does not allocate")
+
+	var err error
+	expect.MaxAllocs(t, func() {
+		m.Reset(sources)
+		err = m.Close()
+	}, 0, "Close of sources that close without an error does not allocate")
+	expect.NoError(t, err, "the test measures a Close without an error")
 }
 
 // BenchmarkMerger reports the cost of a move of a Merger of mergeSources
@@ -578,14 +724,11 @@ func BenchmarkMerger(b *testing.B) {
 func mergeSteps(c *prop.Case) {
 	runs, union := drawRuns(c, 0)
 	sources := make([]sstable.Source, 0, len(runs))
-	var iters []*sstable.Iter
 	for _, es := range runs {
 		switch c.Draw(prop.SampledFrom(sliceKind, tableKind, listKind), "kind") {
 		case tableKind:
 			opts := settings[c.Draw(prop.Integer(0, len(settings)-1), "setting")].opts
-			it := openTable(c, writeTable(c, opts, es), sstable.ReaderOptions{}).NewIter()
-			iters = append(iters, it)
-			sources = append(sources, it)
+			sources = append(sources, openTable(c, writeTable(c, opts, es), sstable.ReaderOptions{}).NewIter())
 		case listKind:
 			l, err := skiplist.New(skiplist.Config{
 				DataBytes: listBytes,
@@ -681,9 +824,7 @@ func mergeSteps(c *prop.Case) {
 		},
 	})
 
-	for _, it := range iters {
-		assert.NoError(c, it.Close(), "a cursor of a table closes without an error")
-	}
+	assert.NoError(c, m.Close(), "the merge closes its sources without an error")
 }
 
 // mergeFails runs a drawn script of moves on a merge of drawn runs twice:

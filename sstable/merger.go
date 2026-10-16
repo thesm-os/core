@@ -3,7 +3,11 @@
 
 package sstable
 
-import "slices"
+import (
+	"errors"
+	"io"
+	"slices"
+)
 
 // seekKind is a move of a [Merger] that moves every source of the merge.
 type seekKind uint8
@@ -34,6 +38,11 @@ const (
 // returns an error from Err, the merge is exhausted and [Merger.Err] returns
 // that error.
 //
+// [Merger.Close] closes every source of the merge that implements
+// io.Closer, such as an [Iter] of a table. [Merger.Reset] replaces the
+// sources and does not close them. A caller closes each such source once,
+// either through Close or after a Reset replaced the source.
+//
 // # Concurrency
 //
 // A Merger is for one goroutine, and so are its sources while it moves them.
@@ -59,14 +68,39 @@ type Merger struct {
 	reverse bool
 }
 
+var _ Source = (*Merger)(nil)
+
 // Reset replaces the sources of m with sources and leaves m on no entry. m
-// keeps sources and the memory of its heap.
+// keeps sources and the memory of its heap. Reset does not close the sources
+// that it replaces.
 //
 // # Allocation contract
 //
 // Zero-alloc.
 func (m *Merger) Reset(sources []Source) {
 	m.sources, m.heap, m.err = sources, m.heap[:0], nil
+}
+
+// Close closes every source of m that implements io.Closer, in the order of
+// the sources, and returns their errors joined with errors.Join. A source
+// without a Close method has nothing to release, such as the cursor of a
+// memtable. Close then removes the sources from m and leaves m on no entry.
+// m keeps the memory of its heap, so a Reset gives it new sources.
+//
+// # Allocation contract
+//
+// Zero-alloc when every source closes without an error and without an
+// allocation. Each error allocates the error that joins it.
+func (m *Merger) Close() error {
+	var err error
+	for _, s := range m.sources {
+		if c, ok := s.(io.Closer); ok {
+			err = errors.Join(err, c.Close())
+		}
+	}
+	m.sources, m.heap, m.err = nil, m.heap[:0], nil
+
+	return err
 }
 
 // First moves every source to its first entry, and moves the merge to the

@@ -5,6 +5,7 @@ package sstable_test
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/binary"
 	"errors"
 	"flag"
@@ -22,6 +23,7 @@ import (
 	"go.dokimi.dev/assert/bench"
 	"go.dokimi.dev/assert/expect"
 	"go.dokimi.dev/assert/golden"
+	"go.dokimi.dev/assert/prop"
 
 	"go.thesmos.sh/core/compress/snappy"
 	"go.thesmos.sh/core/sstable"
@@ -366,6 +368,90 @@ func TestWriter(t *testing.T) {
 			})
 		}
 	})
+
+	t.Run("Reset", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("writes the table and the summary of a new Writer after any first table", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "a Writer after Reset writes what a new Writer writes", func(c *prop.Case) {
+				opts := c.Draw(prop.SampledFrom(settings...), "setting").opts
+				first, second := c.Draw(entries, "first entries"), c.Draw(entries, "second entries")
+				w, err := sstable.NewWriter(io.Discard, opts)
+				assert.NoError(c, err, "NewWriter accepts the options")
+				for _, e := range first[:c.Draw(prop.Integer(0, len(first)), "first added")] {
+					assert.NoError(c, w.Add(e.key, e.seq, e.value), "Add adds the entry of the first table")
+				}
+				if c.Draw(prop.Boolean(), "first closed") {
+					_, err = w.Close()
+					assert.NoError(c, err, "Close writes the first table")
+				}
+
+				var buf bytes.Buffer
+				w.Reset(&buf)
+				for _, e := range second {
+					assert.NoError(c, w.Add(e.key, e.seq, e.value), "Add adds the entry of the second table")
+				}
+				sum, err := w.Close()
+				assert.NoError(c, err, "Close writes the second table")
+				assert.Equal(c, buf.Bytes(), writeTable(c, opts, second), "the Writer writes the bytes of a new Writer")
+				assert.Equal(c, sum, openTable(c, buf.Bytes(), sstable.ReaderOptions{}).Summary(),
+					"Close returns the summary of the second table")
+			})
+		})
+
+		t.Run("keeps the keys of the summary of the table before", func(t *testing.T) {
+			t.Parallel()
+			var buf bytes.Buffer
+			w, err := sstable.NewWriter(&buf, settings[1].opts)
+			assert.NoError(t, err, "NewWriter accepts the options")
+			for _, e := range goldenTable() {
+				assert.NoError(t, w.Add(e.key, e.seq, e.value), "Add adds the entry of the first table")
+			}
+			sum, err := w.Close()
+			assert.NoError(t, err, "Close writes the first table")
+			want := sum
+			want.SmallestKey, want.LargestKey = bytes.Clone(sum.SmallestKey), bytes.Clone(sum.LargestKey)
+			w.Reset(io.Discard)
+			for _, key := range []string{"other a", "other b"} {
+				assert.NoError(t, w.Add([]byte(key), 1, nil), "Add adds the entry of the second table")
+			}
+			_, err = w.Close()
+			assert.NoError(t, err, "Close writes the second table")
+			assert.Equal(t, sum, want, "the second table leaves the summary of the first table unchanged")
+		})
+
+		t.Run("clears the error of the io.Writer of the table before", func(t *testing.T) {
+			t.Parallel()
+			w, err := sstable.NewWriter(&failingWriter{}, sstable.WriterOptions{BlockSize: 1})
+			assert.NoError(t, err, "NewWriter accepts the options")
+			assert.ErrorIs(t, w.Add([]byte("a"), 1, nil), errWrite, "Add returns the error of the io.Writer")
+			var buf bytes.Buffer
+			w.Reset(&buf)
+			for _, e := range goldenTable() {
+				assert.NoError(t, w.Add(e.key, e.seq, e.value), "Add adds the entry after Reset")
+			}
+			_, err = w.Close()
+			assert.NoError(t, err, "Close writes the table after Reset")
+			got, err := scanAll(openTable(t, buf.Bytes(), sstable.ReaderOptions{}).NewIter())
+			assert.NoError(t, err, "the table reads")
+			assert.Equal(t, got, goldenTable(), "the table contains the entries after Reset")
+		})
+
+		t.Run("clears ErrClosed", func(t *testing.T) {
+			t.Parallel()
+			w, err := sstable.NewWriter(io.Discard, sstable.WriterOptions{})
+			assert.NoError(t, err, "NewWriter accepts the zero options")
+			_, err = w.Close()
+			assert.NoError(t, err, "Close writes the first table")
+			var buf bytes.Buffer
+			w.Reset(&buf)
+			assert.NoError(t, w.Add([]byte("a"), 1, []byte("v")), "Add adds an entry after Reset")
+			sum, err := w.Close()
+			assert.NoError(t, err, "Close writes the second table")
+			assert.Equal(t, sum.Entries, int64(1), "the second table contains the entry")
+		})
+	})
 }
 
 // TestWriterAllocs checks the allocation contract of Add. MaxAllocs counts
@@ -424,6 +510,36 @@ func TestWriterAllocs(t *testing.T) {
 			})
 		}
 	})
+
+	t.Run("Reset", func(t *testing.T) {
+		t.Run("does not allocate", func(t *testing.T) {
+			w, err := sstable.NewWriter(io.Discard, settings[3].opts)
+			assert.NoError(t, err, "NewWriter accepts the options")
+			expect.MaxAllocs(t, func() { w.Reset(io.Discard) }, 0, "Reset does not allocate")
+		})
+
+		for _, tt := range settings {
+			t.Run("reuses the buffers for a table "+tt.name, func(t *testing.T) {
+				var buf bytes.Buffer
+				w, err := sstable.NewWriter(&buf, tt.opts)
+				assert.NoError(t, err, "NewWriter accepts the options")
+				es := goldenTable()
+				var sum sstable.Summary
+				expect.MaxAllocs(t, func() {
+					buf.Reset()
+					w.Reset(&buf)
+					for _, e := range es {
+						err = cmp.Or(err, w.Add(e.key, e.seq, e.value))
+					}
+					var closeErr error
+					sum, closeErr = w.Close()
+					err = cmp.Or(err, closeErr)
+				}, 2, "a table after Reset allocates the copies of its smallest key and its largest key")
+				assert.NoError(t, err, "the test measures tables that the Writer writes")
+				assert.Equal(t, sum.Entries, int64(goldenEntries), "the test measures tables of every entry")
+			})
+		}
+	})
 }
 
 // BenchmarkWriter reports the cost of Add for each setting, and fails when
@@ -449,6 +565,37 @@ func BenchmarkWriter(b *testing.B) {
 				}
 
 				assert.NoError(b, err, "the benchmark measures Adds that succeed")
+			})
+		}
+	})
+
+	// A Writer that Reset reuses allocates the copies of the smallest key and
+	// the largest key of each table.
+	b.Run("Reset", func(b *testing.B) {
+		for _, tt := range settings {
+			b.Run(tt.name, func(b *testing.B) {
+				var buf bytes.Buffer
+				w, err := sstable.NewWriter(&buf, tt.opts)
+				assert.NoError(b, err, "NewWriter accepts the options")
+				es := goldenTable()
+				var sum sstable.Summary
+
+				c := bench.Start(b).MaxAllocs(2)
+				defer c.End()
+
+				for c.Loop() {
+					buf.Reset()
+					w.Reset(&buf)
+					for _, e := range es {
+						err = cmp.Or(err, w.Add(e.key, e.seq, e.value))
+					}
+					var closeErr error
+					sum, closeErr = w.Close()
+					err = cmp.Or(err, closeErr)
+				}
+
+				assert.NoError(b, err, "the benchmark measures tables that the Writer writes")
+				assert.Equal(b, sum.Entries, int64(goldenEntries), "the benchmark measures tables of every entry")
 			})
 		}
 	})

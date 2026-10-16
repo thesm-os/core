@@ -6,6 +6,7 @@ package sstable_test
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"math"
 	"slices"
@@ -15,7 +16,9 @@ import (
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/bench"
 	"go.dokimi.dev/assert/expect"
+	"go.dokimi.dev/assert/history"
 	"go.dokimi.dev/assert/prop"
+	"go.dokimi.dev/assert/stateful"
 
 	"go.thesmos.sh/core/sstable"
 )
@@ -33,6 +36,23 @@ const (
 // changeContract is the contract of openChanged, which TestReader and
 // FuzzOpen check.
 const changeContract = "Open and every read of a changed table return the entries or ErrCorrupt, and never panic"
+
+// The machine of concurrent reads.
+const (
+	// readContract is the contract of readSteps.
+	readContract = "concurrent reads of one Reader must return what one sequence of reads returns"
+
+	// readGet is the name of the read of the machine that calls Get. The
+	// reads that seek have the names of their moves.
+	readGet = "Get"
+
+	// seekReads is the number of entries that a read of the machine reads
+	// after its seek.
+	seekReads = 3
+
+	// readers is the number of clients of the machine besides the first.
+	readers = 3
+)
 
 // absentKey is a key that the golden table does not contain. It sorts
 // between two keys of the table. A filter of 16 bits refuses it, and a
@@ -56,6 +76,11 @@ func (r shortReader) ReadAt(p []byte, off int64) (int, error) {
 
 func TestReader(t *testing.T) {
 	t.Parallel()
+
+	t.Run("returns what one sequence of reads returns for concurrent reads through one cache", func(t *testing.T) {
+		t.Parallel()
+		prop.ForAll(t, readContract, readSteps)
+	})
 
 	t.Run("Open", func(t *testing.T) {
 		t.Parallel()
@@ -598,6 +623,94 @@ func BenchmarkReader(b *testing.B) {
 
 		assert.True(b, ok, "the benchmark measures a key of the table")
 	})
+}
+
+// readSteps writes drawn entries into a table under a drawn setting, and
+// opens the table with a cache. Clients read the table through the one Reader
+// at once: Get, and the entries after a SeekGE or before a SeekLT of a
+// cursor. Each read returns the entries that it finds as text, and an error
+// returns its own text. The spec computes the text of each read from the
+// entries, so the history of the reads is linearizable when every read
+// returns what the entries return.
+func readSteps(c *prop.Case) {
+	es := c.Draw(entries, "entries")
+	opts := c.Draw(prop.SampledFrom(settings...), "setting").opts
+	r := openTable(c, writeTable(c, opts, es), sstable.ReaderOptions{Cache: &mapCache{}, CacheID: 1})
+
+	read := func(name string) stateful.Action[struct{}] {
+		return stateful.Action[struct{}]{
+			Name: name,
+			Input: func(c *prop.Case, _ struct{}) any {
+				return entry{
+					key: c.Draw(prop.SampledFrom(keys...), "key"),
+					seq: c.Draw(prop.Integer[uint64](0, 6), "seq"),
+				}
+			},
+			Run: func(c *prop.Case, client int, in any) {
+				p := in.(entry)
+				call := c.History().Invoke(client, name, []any{p.key, p.seq})
+				var text []byte
+				if name == readGet {
+					value, seq, ok, err := r.Get(p.key, p.seq, nil)
+					if err != nil {
+						text = fmt.Append(text, err)
+					} else if ok {
+						text = fmt.Appendf(text, "%q %d %q;", p.key, seq, value)
+					}
+					call.OK(string(text))
+
+					return
+				}
+				it := r.NewIter()
+				ok := name == moveSeekGE && it.SeekGE(p.key, p.seq) || name == moveSeekLT && it.SeekLT(p.key, p.seq)
+				for n := 0; ok && n < seekReads; n++ {
+					text = fmt.Appendf(text, "%q %d %q;", it.Key(), it.Seq(), it.Value())
+					if name == moveSeekGE {
+						ok = it.Next()
+					} else {
+						ok = it.Prev()
+					}
+				}
+				if err := it.Close(); err != nil {
+					text = fmt.Append(text, err)
+				}
+				call.OK(string(text))
+			},
+		}
+	}
+
+	stateful.Steps(c, stateful.Machine[struct{}]{
+		Spec: history.Spec[struct{}]{
+			Initial: func() struct{} { return struct{}{} },
+			Next: func(state struct{}, op history.Operation) []struct{} {
+				p := entry{key: op.Args[0].([]byte), seq: op.Args[1].(uint64)}
+				i, _ := slices.BinarySearchFunc(es, p, func(a, b entry) int {
+					return sstable.Compare(a.key, a.seq, b.key, b.seq)
+				})
+				var want []byte
+				switch op.Name {
+				case readGet:
+					if i < len(es) && bytes.Equal(es[i].key, p.key) {
+						want = fmt.Appendf(want, "%q %d %q;", p.key, es[i].seq, es[i].value)
+					}
+				case moveSeekGE:
+					for _, e := range es[i:min(i+seekReads, len(es))] {
+						want = fmt.Appendf(want, "%q %d %q;", e.key, e.seq, e.value)
+					}
+				default:
+					for _, e := range slices.Backward(es[max(i-seekReads, 0):i]) {
+						want = fmt.Appendf(want, "%q %d %q;", e.key, e.seq, e.value)
+					}
+				}
+				if op.Returned(string(want)) {
+					return []struct{}{state}
+				}
+
+				return nil
+			},
+		},
+		Actions: []stateful.Action[struct{}]{read(readGet), read(moveSeekGE), read(moveSeekLT)},
+	}, stateful.Clients(readers))
 }
 
 // openChanged writes a golden table under a drawn setting and sets up to

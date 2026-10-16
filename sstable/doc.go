@@ -46,6 +46,8 @@
 // directions. An [Iter] of a table and the cursor of a memtable are sources.
 // A [Merger] yields the union of any number of sources in the order of
 // Compare, from the first entry forward or from the last entry back.
+// [Merger.Close] closes every source of the merge that implements io.Closer,
+// so an engine releases the cursors of a read with one call.
 //
 // # Concurrency
 //
@@ -61,7 +63,9 @@
 // # Allocation contract
 //
 //   - Writer.Add does not allocate once the buffers of the current block,
-//     the index and the hashes of the filter have room.
+//     the index and the hashes of the filter have room. [Writer.Reset] keeps
+//     the buffers for the next table, so a table after Reset allocates the
+//     two keys of its summary once the buffers have grown.
 //   - Reader.Get, Reader.MayContain, Reader.NewIter, Iter.Close and the moves
 //     of an Iter and a Merger do not allocate once the pooled cursors have
 //     grown to the largest block. A read through a [BlockCache] allocates a

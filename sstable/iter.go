@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"cmp"
 	"encoding/binary"
+	"io"
 	"slices"
 
 	"go.thesmos.sh/core/pool"
@@ -53,6 +54,11 @@ type Iter struct {
 	// data is on the current entry, or on no entry.
 	data blockCursor
 }
+
+var (
+	_ Source    = (*Iter)(nil)
+	_ io.Closer = (*Iter)(nil)
+)
 
 // First moves to the first entry and reports whether it exists.
 //
@@ -238,12 +244,17 @@ func (it *Iter) Err() error {
 }
 
 // Close returns the cursor and its buffers to the pool of cursors, and
-// returns the error of Err. The cursor is unusable after Close.
+// returns the error of Err. The cursor is unusable after Close, because a
+// later [Reader.NewIter] can take it from the pool. A second Close before
+// such a NewIter returns nil and leaves the pool unchanged.
 //
 // # Allocation contract
 //
 // Zero-alloc.
 func (it *Iter) Close() error {
+	if it.r == nil {
+		return nil
+	}
 	err := it.err
 	*it = Iter{
 		index: blockCursor{key: it.index.key[:0]},
