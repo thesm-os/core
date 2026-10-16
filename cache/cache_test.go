@@ -60,6 +60,21 @@ const (
 	opExpire  = "expire"
 )
 
+// The machine of pins: keys of cost 1 in a Cache whose open pins fill it.
+const (
+	// opUnpin is the action that ends one of the open pins.
+	opUnpin = "unpin"
+
+	// pinCapacity is the capacity of the cache of the machine.
+	pinCapacity = 3
+
+	// pinKeys is the number of keys that the calls choose from.
+	pinKeys = 6
+
+	// pinDraws bounds the draw of the open pin that an Unpin ends.
+	pinDraws = 8
+)
+
 // origin is the time of the fake clock of every case.
 var origin = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
@@ -866,6 +881,11 @@ func TestCache(t *testing.T) {
 		})
 	})
 
+	t.Run("exceeds the capacity only while pinned entries fill it under any sequence of calls", func(t *testing.T) {
+		t.Parallel()
+		prop.ForAll(t, "the cost must exceed the capacity only while pinned entries fill the cache", pinSteps)
+	})
+
 	t.Run("passes each value that leaves the cache to Evicted once", func(t *testing.T) {
 		t.Parallel()
 		prop.ForAll(t, "Evicted must receive once each stored value that leaves the cache", func(pc *prop.Case) {
@@ -1322,6 +1342,114 @@ func cacheActions(c *cache.Cache[int, int], sets *atomic.Int64) []stateful.Actio
 			},
 		},
 	}
+}
+
+// openPin is a pin that no Unpin of the machine of pins has ended, with the
+// key and the version of its entry.
+type openPin struct {
+	p       cache.Pinned[int, int]
+	key     int
+	version int
+}
+
+// pinSteps runs a machine of Set, SetPinned, Pin, Unpin, Get and Delete on a
+// Cache of pinCapacity, whose pins remain open across steps until an Unpin
+// ends them. After every step it checks that the cost exceeds the capacity
+// only while pinned entries fill the cache: past the capacity at most one
+// entry lacks a pin, the entry of the last Set, and without an open pin the
+// cost fits the capacity.
+//
+// The machine counts the entries of each key in version. An entry with an
+// open pin is in the cache while its version is the version of its key,
+// because the evictor keeps it and only a Set or a Delete of the key removes
+// it.
+func pinSteps(pc *prop.Case) {
+	c, err := cache.New(cache.Config[int, int]{Capacity: pinCapacity})
+	assert.NoError(pc, err, "New must accept the configuration")
+
+	var open []openPin
+	var version [pinKeys]int
+	pinned := map[[2]int]int{}
+	key := func(pc *prop.Case, _ struct{}) any { return pc.Draw(prop.Integer(0, pinKeys-1), "key") }
+
+	stateful.Steps(pc, stateful.Machine[struct{}]{
+		Actions: []stateful.Action[struct{}]{
+			{
+				Name:  opSet,
+				Input: key,
+				Run: func(_ *prop.Case, _ int, in any) {
+					k := in.(int)
+					c.Set(k, k, time.Time{})
+					version[k]++
+				},
+			},
+			{
+				Name:  opSetPinned,
+				Input: key,
+				Run: func(_ *prop.Case, _ int, in any) {
+					k := in.(int)
+					version[k]++
+					open = append(open, openPin{p: c.SetPinned(k, k, time.Time{}), key: k, version: version[k]})
+					pinned[[2]int{k, version[k]}]++
+				},
+			},
+			{
+				Name:  opPin,
+				Input: key,
+				Run: func(_ *prop.Case, _ int, in any) {
+					k := in.(int)
+					if p, ok := c.Pin(k); ok {
+						open = append(open, openPin{p: p, key: k, version: version[k]})
+						pinned[[2]int{k, version[k]}]++
+					}
+				},
+			},
+			{
+				Name:   opUnpin,
+				Weight: 2,
+				Input:  func(pc *prop.Case, _ struct{}) any { return pc.Draw(prop.Integer(0, pinDraws-1), "pin") },
+				Run: func(_ *prop.Case, _ int, in any) {
+					if len(open) == 0 {
+						return
+					}
+					i := in.(int) % len(open)
+					o := open[i]
+					open = slices.Delete(open, i, i+1)
+					pinned[[2]int{o.key, o.version}]--
+					o.p.Unpin()
+				},
+			},
+			{
+				Name:  opGet,
+				Input: key,
+				Run:   func(_ *prop.Case, _ int, in any) { c.Get(in.(int)) },
+			},
+			{
+				Name:  opDelete,
+				Input: key,
+				Run: func(_ *prop.Case, _ int, in any) {
+					k := in.(int)
+					c.Delete(k)
+					version[k]++
+				},
+			},
+		},
+		Invariant: func(pc *prop.Case, _ struct{}) {
+			withPins := 0
+			for k, v := range version {
+				if pinned[[2]int{k, v}] > 0 {
+					withPins++
+				}
+			}
+			if c.Cost() > pinCapacity {
+				assert.InRange(pc, c.Len()-withPins, 0, 1,
+					"past the capacity at most the entry of the last Set may lack a pin")
+			}
+			if len(open) == 0 {
+				assert.InRange(pc, c.Cost(), 0, pinCapacity, "the cost must fit the capacity once every pin has ended")
+			}
+		},
+	})
 }
 
 // stepCache returns the state of a Cache of the workload after op. The
