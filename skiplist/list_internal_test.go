@@ -153,7 +153,7 @@ func TestList(t *testing.T) {
 			expect.Equal(t, l.Len(), 0, "the List has no entries")
 			expect.Equal(t, l.Size(), 0, "the List uses no bytes of its arenas")
 			expect.False(t, ok, "Get finds no entry")
-			expect.Empty(t, scan(l.NewIter()), "a cursor yields no entry")
+			expect.Empty(t, scan(t.Context(), l.NewIter()), "a cursor yields no entry")
 		})
 
 		t.Run("returns a List for arenas of one byte", func(t *testing.T) {
@@ -327,7 +327,7 @@ func TestList(t *testing.T) {
 			})
 			expect.Equal(t, added, sharedEntries, "exactly one Add of each entry succeeds")
 			expect.Equal(t, l.Len(), sharedEntries, "the List has every entry once")
-			expect.Length(t, scan(l.NewIter()), sharedEntries, "a cursor yields every entry once")
+			expect.Length(t, scan(t.Context(), l.NewIter()), sharedEntries, "a cursor yields every entry once")
 			expect.Equal(t, disordered, 0, "a cursor yields the entries in order while writers add")
 		})
 
@@ -343,7 +343,7 @@ func TestList(t *testing.T) {
 				return binary.BigEndian.AppendUint64(nil, uint64(round*writers+writer))
 			})
 			expect.Equal(t, added, writers*sharedEntries, "every Add of a new entry succeeds")
-			expect.Length(t, scan(l.NewIter()), writers*sharedEntries, "a cursor yields every entry")
+			expect.Length(t, scan(t.Context(), l.NewIter()), writers*sharedEntries, "a cursor yields every entry")
 			expect.Equal(t, disordered, 0, "a cursor yields the entries in order while writers add")
 		})
 
@@ -597,7 +597,7 @@ func TestList(t *testing.T) {
 			expect.Equal(t, l.Len(), 0, "the List has no entries")
 			expect.Equal(t, l.Size(), 0, "the List uses no bytes of its arenas")
 			expect.False(t, ok, "Get finds no entry")
-			expect.Empty(t, scan(l.NewIter()), "a cursor yields no entry")
+			expect.Empty(t, scan(t.Context(), l.NewIter()), "a cursor yields no entry")
 		})
 
 		t.Run("lets a full List take entries again", func(t *testing.T) {
@@ -608,7 +608,7 @@ func TestList(t *testing.T) {
 			assert.ErrorIs(t, l.Add([]byte("e"), 1, nil), ErrFull, "the data arena is full")
 			l.Reset()
 			assert.NoError(t, l.Add([]byte("ef"), 1, []byte("gh")), "Add adds an entry after Reset")
-			assert.Equal(t, scan(l.NewIter()), []entry{{key: []byte("ef"), seq: 1, value: []byte("gh")}},
+			assert.Equal(t, scan(t.Context(), l.NewIter()), []entry{{key: []byte("ef"), seq: 1, value: []byte("gh")}},
 				"the List has the entry of the second fill alone")
 		})
 	})
@@ -622,7 +622,7 @@ func TestList(t *testing.T) {
 			assert.NoError(t, l.Add([]byte("a"), 1, nil), "Add adds the entry")
 			it := l.NewIter()
 			expect.Nil(t, it.Key(), "the new cursor has no key")
-			expect.False(t, it.Next(), "the new cursor has no next entry")
+			expect.False(t, it.Next(t.Context()), "the new cursor has no next entry")
 		})
 	})
 
@@ -798,7 +798,7 @@ func TestListAllocs(t *testing.T) {
 		l := filled(t, 10, benchKey)
 		var it *Iter
 		expect.MaxAllocs(t, func() { it = l.NewIter() }, 1, "NewIter allocates the cursor")
-		assert.True(t, it.First(), "the test measures a cursor of the List")
+		assert.True(t, it.First(t.Context()), "the test measures a cursor of the List")
 	})
 }
 
@@ -980,14 +980,14 @@ func addInRounds(tb testing.TB, l *List, keyOf func(round, writer int) []byte) (
 			// one processor too.
 			pairs := 0
 			for running.Load() > 0 {
-				got := scan(l.NewIter())
+				got := scan(tb.Context(), l.NewIter())
 				for i := 1; i < len(got); i++ {
 					if order(got[i-1], got[i]) >= 0 {
 						pairs++
 					}
 				}
 				back := l.NewIter()
-				for ok, prev := back.Last(), []byte(nil); ok; ok = back.Prev() {
+				for ok, prev := back.Last(tb.Context()), []byte(nil); ok; ok = back.Prev(tb.Context()) {
 					if prev != nil && bytes.Compare(back.Key(), prev) >= 0 {
 						pairs++
 					}
@@ -1092,7 +1092,7 @@ func listSteps(c *prop.Case) {
 			{
 				Name: opScan,
 				Run: func(c *prop.Case, _ int, _ any) {
-					assert.Equal(c, scan(l.NewIter()), []entry(m), "a cursor yields the entries in order",
+					assert.Equal(c, scan(c.Context(), l.NewIter()), []entry(m), "a cursor yields the entries in order",
 						assert.EquateEmpty())
 				},
 			},
@@ -1104,7 +1104,7 @@ func listSteps(c *prop.Case) {
 					it := l.NewIter()
 					i, _ := slices.BinarySearchFunc(m, e, order)
 					var got []entry
-					for ok := it.SeekGE(e.key, e.seq); ok && len(got) < 3; ok = it.Next() {
+					for ok := it.SeekGE(c.Context(), e.key, e.seq); ok && len(got) < 3; ok = it.Next(c.Context()) {
 						got = append(got, entry{key: it.Key(), seq: it.Seq(), value: it.Value()})
 					}
 					assert.Equal(c, got, []entry(m[i:min(i+3, len(m))]),
@@ -1119,7 +1119,7 @@ func listSteps(c *prop.Case) {
 					it := l.NewIter()
 					i, _ := slices.BinarySearchFunc(m, e, order)
 					var got []entry
-					for ok := it.SeekLT(e.key, e.seq); ok && len(got) < listed; ok = it.Prev() {
+					for ok := it.SeekLT(c.Context(), e.key, e.seq); ok && len(got) < listed; ok = it.Prev(c.Context()) {
 						got = append(got, entry{key: it.Key(), seq: it.Seq(), value: it.Value()})
 					}
 					want := slices.Clone(m[max(i-listed, 0):i])
@@ -1133,7 +1133,7 @@ func listSteps(c *prop.Case) {
 				Run: func(c *prop.Case, _ int, _ any) {
 					it := l.NewIter()
 					var got []entry
-					for ok := it.Last(); ok && len(got) < listed; ok = it.Prev() {
+					for ok := it.Last(c.Context()); ok && len(got) < listed; ok = it.Prev(c.Context()) {
 						got = append(got, entry{key: it.Key(), seq: it.Seq(), value: it.Value()})
 					}
 					want := slices.Clone(m[max(len(m)-listed, 0):])
@@ -1157,7 +1157,7 @@ func listSteps(c *prop.Case) {
 					// false.
 					at, _ := slices.BinarySearchFunc(m, w.at, order)
 					on := at < len(m)
-					ok := it.SeekGE(w.at.key, w.at.seq)
+					ok := it.SeekGE(c.Context(), w.at.key, w.at.seq)
 					for i := 0; ; i++ {
 						assert.Equal(c, ok, on, "a move reports whether the model has an entry at its place")
 						if on {
@@ -1168,11 +1168,11 @@ func listSteps(c *prop.Case) {
 							return
 						}
 						if w.moves[i] {
-							ok = it.Next()
+							ok = it.Next(c.Context())
 							at++
 							on = on && at < len(m)
 						} else {
-							ok = it.Prev()
+							ok = it.Prev(c.Context())
 							at--
 							on = on && at >= 0
 						}

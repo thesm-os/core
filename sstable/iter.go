@@ -6,6 +6,7 @@ package sstable
 import (
 	"bytes"
 	"cmp"
+	"context"
 	"encoding/binary"
 	"io"
 	"slices"
@@ -16,6 +17,16 @@ import (
 // iters are the cursors that [Iter.Close] returned, with their buffers.
 var iters = pool.NewPool(func() *Iter { return new(Iter) })
 
+// IterOptions configure a cursor of [Reader.NewIter]. The zero value adds
+// each block that the cursor reads to the cache of the Reader.
+type IterOptions struct {
+	// NoFill makes the cursor take the blocks that the cache contains, and
+	// read every other block into a buffer of the cursor without adding it,
+	// as a scan of a compaction needs. The scan then keeps the blocks of the
+	// reads in the cache.
+	NoFill bool
+}
+
 // Iter is a cursor over the entries of a table, in the order of [Compare].
 // A move positions the cursor on an entry or exhausts it. A seek searches
 // the index for its data block, reads the block and searches the restart
@@ -23,6 +34,10 @@ var iters = pool.NewPool(func() *Iter { return new(Iter) })
 // restart point before the current entry, so it decodes at most
 // RestartInterval entries. At the end of a block, Next and Prev read the
 // block after it or before it.
+//
+// A move reads a block under its context, and looks the block up in the
+// cache of the Reader under the same context. Next and Prev ignore the
+// context when the next entry is in the current block.
 //
 // The key and the value of the current entry are valid until the next move
 // of the cursor.
@@ -35,8 +50,8 @@ var iters = pool.NewPool(func() *Iter { return new(Iter) })
 //
 // The moves of a cursor do not allocate once its buffers have grown to the
 // largest block. A move through the cache of the Reader allocates the copy
-// of each block that it adds. Key, Seq, Value, Err and Close do not
-// allocate.
+// of each block that it adds, and a cursor with NoFill does not add a block.
+// Key, Seq, Value, Err and Close do not allocate.
 type Iter struct {
 	// err is the error that exhausted the cursor.
 	err error
@@ -53,6 +68,10 @@ type Iter struct {
 
 	// data is on the current entry, or on no entry.
 	data blockCursor
+
+	// noFill reports whether the cursor reads blocks without adding them to
+	// the cache, as [IterOptions] states.
+	noFill bool
 }
 
 var (
@@ -60,134 +79,135 @@ var (
 	_ io.Closer = (*Iter)(nil)
 )
 
-// First moves to the first entry and reports whether it exists.
+// First moves to the first entry and reports whether it exists. It reads the
+// first data block under ctx.
 //
 // Error modes:
 //
 //   - A data block that fails its checksum, its decompression or its layout
 //     exhausts the cursor, and Err returns [ErrCorrupt].
-//   - An error of the io.ReaderAt exhausts the cursor, and Err returns an
-//     error that wraps it.
+//   - An error of the File, such as the error of ctx at the end of a wait,
+//     exhausts the cursor, and Err returns an error that wraps it.
 //
 // # Allocation contract
 //
 // Zero-alloc once the buffers of the cursor have room for the block.
-func (it *Iter) First() bool {
+func (it *Iter) First(ctx context.Context) bool {
 	it.err, it.index.err, it.data.err, it.data.valid = nil, nil, nil, false
-	ok := it.index.restart(0) && it.load() && it.data.restart(0)
+	ok := it.index.restart(0) && it.load(ctx) && it.data.restart(0)
 
-	return it.forward(ok)
+	return it.forward(ctx, ok)
 }
 
 // Last moves to the last entry and reports whether it exists. It reads the
-// last data block.
+// last data block under ctx.
 //
 // Error modes:
 //
 //   - A data block that fails its checksum, its decompression or its layout
 //     exhausts the cursor, and Err returns [ErrCorrupt].
-//   - An error of the io.ReaderAt exhausts the cursor, and Err returns an
-//     error that wraps it.
+//   - An error of the File, such as the error of ctx at the end of a wait,
+//     exhausts the cursor, and Err returns an error that wraps it.
 //
 // # Allocation contract
 //
 // Zero-alloc once the buffers of the cursor have room for the block.
-func (it *Iter) Last() bool {
+func (it *Iter) Last(ctx context.Context) bool {
 	it.err, it.index.err, it.data.err, it.data.valid = nil, nil, nil, false
-	ok := it.index.last() && it.load() && it.data.last()
+	ok := it.index.last() && it.load(ctx) && it.data.last()
 
-	return it.backward(ok)
+	return it.backward(ctx, ok)
 }
 
 // SeekGE moves to the first entry at or after the entry (key, seq) and
 // reports whether it exists. For a snapshot seq, an entry with key is the
 // newest version of key at or below seq. SeekGE reads the first data block
-// whose last entry is at or after (key, seq).
+// whose last entry is at or after (key, seq), under ctx.
 //
 // Error modes:
 //
 //   - A data block that fails its checksum, its decompression or its layout
 //     exhausts the cursor, and Err returns [ErrCorrupt].
-//   - An error of the io.ReaderAt exhausts the cursor, and Err returns an
-//     error that wraps it.
+//   - An error of the File, such as the error of ctx at the end of a wait,
+//     exhausts the cursor, and Err returns an error that wraps it.
 //
 // # Allocation contract
 //
 // Zero-alloc once the buffers of the cursor have room for the block.
-func (it *Iter) SeekGE(key []byte, seq uint64) bool {
+func (it *Iter) SeekGE(ctx context.Context, key []byte, seq uint64) bool {
 	it.err, it.index.err, it.data.err, it.data.valid = nil, nil, nil, false
-	ok := it.index.seekGE(key, seq) && it.load() && it.data.seekGE(key, seq)
+	ok := it.index.seekGE(key, seq) && it.load(ctx) && it.data.seekGE(key, seq)
 
-	return it.forward(ok)
+	return it.forward(ctx, ok)
 }
 
 // SeekLT moves to the last entry before the entry (key, seq) and reports
 // whether it exists. SeekLT reads the first data block whose last entry is
 // at or after (key, seq), and the block before it when every entry of the
 // block is at or after (key, seq). When every entry is before (key, seq),
-// SeekLT moves to the last entry.
+// SeekLT moves to the last entry. It reads each block under ctx.
 //
 // Error modes:
 //
 //   - A data block that fails its checksum, its decompression or its layout
 //     exhausts the cursor, and Err returns [ErrCorrupt].
-//   - An error of the io.ReaderAt exhausts the cursor, and Err returns an
-//     error that wraps it.
+//   - An error of the File, such as the error of ctx at the end of a wait,
+//     exhausts the cursor, and Err returns an error that wraps it.
 //
 // # Allocation contract
 //
 // Zero-alloc once the buffers of the cursor have room for the block.
-func (it *Iter) SeekLT(key []byte, seq uint64) bool {
+func (it *Iter) SeekLT(ctx context.Context, key []byte, seq uint64) bool {
 	it.err, it.index.err, it.data.err, it.data.valid = nil, nil, nil, false
 	ok := false
 	if it.index.seekGE(key, seq) {
-		ok = it.load() && it.data.seekLT(key, seq)
+		ok = it.load(ctx) && it.data.seekLT(key, seq)
 	} else if it.index.err == nil {
-		ok = it.index.last() && it.load() && it.data.last()
+		ok = it.index.last() && it.load(ctx) && it.data.last()
 	}
 
-	return it.backward(ok)
+	return it.backward(ctx, ok)
 }
 
 // Next moves to the next entry and reports whether it exists. It reads the
-// next data block at the end of a block. Next of a cursor on no entry
-// reports false.
+// next data block under ctx at the end of a block. Next of a cursor on no
+// entry reports false.
 //
 // Error modes:
 //
 //   - A data block that fails its checksum, its decompression or its layout
 //     exhausts the cursor, and Err returns [ErrCorrupt].
-//   - An error of the io.ReaderAt exhausts the cursor, and Err returns an
-//     error that wraps it.
+//   - An error of the File, such as the error of ctx at the end of a wait,
+//     exhausts the cursor, and Err returns an error that wraps it.
 //
 // # Allocation contract
 //
 // Zero-alloc once the buffers of the cursor have room for the block.
-func (it *Iter) Next() bool {
+func (it *Iter) Next(ctx context.Context) bool {
 	// A cursor on no entry has an index on no entry or an error, so forward
 	// reports false for it.
-	return it.forward(it.data.next())
+	return it.forward(ctx, it.data.next())
 }
 
 // Prev moves to the entry before the current one and reports whether it
-// exists. It reads the data block before at the first entry of a block. Prev
-// of a cursor on no entry reports false.
+// exists. It reads the data block before under ctx at the first entry of a
+// block. Prev of a cursor on no entry reports false.
 //
 // Error modes:
 //
 //   - A data block that fails its checksum, its decompression or its layout
 //     exhausts the cursor, and Err returns [ErrCorrupt]. So do entries of
 //     the current block that do not end at the current entry.
-//   - An error of the io.ReaderAt exhausts the cursor, and Err returns an
-//     error that wraps it.
+//   - An error of the File, such as the error of ctx at the end of a wait,
+//     exhausts the cursor, and Err returns an error that wraps it.
 //
 // # Allocation contract
 //
 // Zero-alloc once the buffers of the cursor have room for the block.
-func (it *Iter) Prev() bool {
+func (it *Iter) Prev(ctx context.Context) bool {
 	// A cursor on no entry has an index on no entry or an error, so backward
 	// reports false for it.
-	return it.backward(it.data.prev())
+	return it.backward(ctx, it.data.prev())
 }
 
 // Key returns the key of the current entry, with a capacity of its length,
@@ -269,11 +289,12 @@ func (it *Iter) Close() error {
 
 // forward ends a move whose last step in the data block reported ok. When
 // the block has no entry for the move, forward moves to the first entry of
-// the next data blocks. It exhausts the cursor at the end of the index or at
-// an error, and reports whether the cursor is on an entry.
-func (it *Iter) forward(ok bool) bool {
+// the next data blocks, which it reads under ctx. It exhausts the cursor at
+// the end of the index or at an error, and reports whether the cursor is on
+// an entry.
+func (it *Iter) forward(ctx context.Context, ok bool) bool {
 	for !ok && it.err == nil && it.data.err == nil && it.index.next() {
-		ok = it.load() && it.data.restart(0)
+		ok = it.load(ctx) && it.data.restart(0)
 	}
 	it.err = cmp.Or(it.err, it.index.err, it.data.err)
 
@@ -282,11 +303,12 @@ func (it *Iter) forward(ok bool) bool {
 
 // backward ends a move whose last step in the data block reported ok. When
 // the block has no entry for the move, backward moves to the last entry of
-// the data blocks before it. It exhausts the cursor at the start of the
-// index or at an error, and reports whether the cursor is on an entry.
-func (it *Iter) backward(ok bool) bool {
+// the data blocks before it, which it reads under ctx. It exhausts the
+// cursor at the start of the index or at an error, and reports whether the
+// cursor is on an entry.
+func (it *Iter) backward(ctx context.Context, ok bool) bool {
 	for !ok && it.err == nil && it.data.err == nil && it.index.prev() {
-		ok = it.load() && it.data.last()
+		ok = it.load(ctx) && it.data.last()
 	}
 	it.err = cmp.Or(it.err, it.index.err, it.data.err)
 
@@ -295,12 +317,14 @@ func (it *Iter) backward(ok bool) bool {
 
 // load sets the data cursor on the data block of the current entry of the
 // index. The value of the entry is the place of the block and its CRC32C.
-// load takes the block from the cache of the Reader, or reads it, compares
-// its CRC32C with the CRC32C of the entry and adds a copy to the cache. It
-// sets err and reports false for a value with other fields, a place outside
-// the data blocks and a read that fails. Every caller calls load with the
-// data cursor on no entry, and a load that fails leaves it there.
-func (it *Iter) load() bool {
+// load takes the block from the cache of the Reader, or reads it under ctx,
+// compares its CRC32C with the CRC32C of the entry and adds a copy to the
+// cache. A cursor with noFill leaves the block in raw or buf and adds
+// nothing to the cache. load sets err and reports false for a value with
+// other fields, a place outside the data blocks and a read that fails. Every
+// caller calls load with the data cursor on no entry, and a load that fails
+// leaves it there.
+func (it *Iter) load(ctx context.Context) bool {
 	v := it.index.value
 	off, n1 := binary.Uvarint(v)
 	// When the first varint fails, Uvarint decodes the same bytes for the
@@ -320,7 +344,7 @@ func (it *Iter) load() bool {
 
 	c := it.r.cache
 	if c != nil {
-		if b, ok := c.Get(it.r.cacheID, off); ok {
+		if b, ok := c.Get(ctx, it.r.cacheID, off); ok {
 			it.data.init(b)
 
 			return true
@@ -331,7 +355,7 @@ func (it *Iter) load() bool {
 	size := int(n) + trailerLen
 	it.raw = slices.Grow(it.raw[:0], size)[:size]
 	//nolint:gosec // G115: the block lies before dataEnd, inside the table
-	if err := readAt(it.r.r, it.raw, int64(off)); err != nil {
+	if err := readAt(ctx, it.r.f, it.raw, int64(off)); err != nil {
 		it.err = err
 
 		return false
@@ -342,9 +366,9 @@ func (it *Iter) load() bool {
 
 		return false
 	}
-	if c != nil {
+	if c != nil && !it.noFill {
 		b = bytes.Clone(b)
-		c.Add(it.r.cacheID, off, b)
+		c.Add(ctx, it.r.cacheID, off, b)
 	}
 	it.data.init(b)
 

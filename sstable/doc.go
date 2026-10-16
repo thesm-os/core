@@ -13,9 +13,9 @@
 //
 // # Tables
 //
-// A [Writer] writes the entries of a table to an io.Writer in the order of
-// Compare, and a [Reader] reads the table through an io.ReaderAt. A table has
-// four parts:
+// A [Writer] writes the entries of a table to a [Sink] in the order of
+// Compare, and a [Reader] reads the table through a [File]. A table has four
+// parts:
 //
 //   - Data blocks, whose size the BlockSize of [WriterOptions] sets. At a
 //     restart point of a block the Writer stores the whole key. For every
@@ -40,6 +40,18 @@
 // [ErrCorrupt]. [Writer.Close] documents the layout in full, and the layout
 // does not change between releases.
 //
+// # Contexts
+//
+// Every call that can read or write a table takes the context of its
+// caller: [Open], [Reader.Get], each move of a [Source], the methods of a
+// [BlockCache], [Writer.Add] and [Writer.Close]. The package passes the
+// context to the File, the Sink and the cache. A File or a Sink that waits
+// ends its wait with the error of the context. Next and Prev of an [Iter]
+// ignore the context when the next entry is in the current block. A cursor
+// of [IterOptions] with NoFill takes the blocks that the cache contains and
+// does not add the blocks that it reads, so a scan of a compaction keeps the
+// blocks of the reads in the cache.
+//
 // # Merges
 //
 // A [Source] is a cursor over a sorted run of entries that moves in both
@@ -57,8 +69,9 @@
 // # Errors
 //
 // The functions return [ErrOptions], [ErrOrder], [ErrClosed], [ErrTooLarge]
-// and [ErrCorrupt], and errors that wrap the errors of the io.Writer and the
-// io.ReaderAt.
+// and [ErrCorrupt], and errors that wrap the errors of the Sink and the File.
+// A read or a write that ends with its context returns an error that wraps
+// the error of the context.
 //
 // # Allocation contract
 //
@@ -69,14 +82,15 @@
 //   - Reader.Get, Reader.MayContain, Reader.NewIter, Iter.Close and the moves
 //     of an Iter and a Merger do not allocate once the pooled cursors have
 //     grown to the largest block. A read through a [BlockCache] allocates a
-//     copy of each block that the cache does not contain.
+//     copy of each block that the cache does not contain, apart from the
+//     reads of a cursor with NoFill.
 //   - [NewWriter], Writer.Close and [Open] allocate the Writer or the Reader
 //     and their buffers.
 //
 // # Dependency position
 //
-// Imports bytes, cmp, encoding/binary, errors, fmt, hash/crc32, io, math,
-// slices and strconv from the standard library, and
+// Imports bytes, cmp, context, encoding/binary, errors, fmt, hash/crc32, io,
+// math, slices and strconv from the standard library, and
 // go.thesmos.sh/core/compress/snappy, go.thesmos.sh/core/errs,
 // go.thesmos.sh/core/filter, go.thesmos.sh/core/hash/xxh3 and
 // go.thesmos.sh/core/pool from this module.

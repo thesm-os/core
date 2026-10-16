@@ -6,6 +6,7 @@ package sstable_test
 import (
 	"bytes"
 	"cmp"
+	"context"
 	"encoding/binary"
 	"errors"
 	"flag"
@@ -38,7 +39,7 @@ const warmEntries = 4096
 // runs alone.
 const childEnv = "CORE_TEST_CHILD"
 
-// errWrite is the error of a writer that fails.
+// errWrite is the error of a Sink that fails.
 var errWrite = errors.New("write failed")
 
 // goldenFiles are the golden tables: the entries of goldenTable under the
@@ -55,16 +56,16 @@ var goldenFiles = []struct {
 	{name: settings[3].name, file: "compressed-filter.sst", opts: settings[3].opts},
 }
 
-// failingWriter accepts the first n bytes of its writes and fails every
-// write after them with errWrite.
-type failingWriter struct {
+// failingSink is a Sink that accepts the first n bytes of its writes and
+// fails every write after them with errWrite.
+type failingSink struct {
 	n int
 }
 
-var _ io.Writer = (*failingWriter)(nil)
+var _ sstable.Sink = (*failingSink)(nil)
 
-// Write accepts p, or fails once the writer has accepted n bytes.
-func (w *failingWriter) Write(p []byte) (int, error) {
+// Write accepts p, or fails once the Sink has accepted n bytes.
+func (w *failingSink) Write(_ context.Context, p []byte) (int, error) {
 	if len(p) > w.n {
 		return 0, errWrite
 	}
@@ -73,13 +74,14 @@ func (w *failingWriter) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// shortWriter accepts one byte less than each write, without an error.
-type shortWriter struct{}
+// shortSink is a Sink that accepts one byte less than each write, without
+// an error.
+type shortSink struct{}
 
-var _ io.Writer = shortWriter{}
+var _ sstable.Sink = shortSink{}
 
 // Write reports one byte less than p and no error.
-func (shortWriter) Write(p []byte) (int, error) {
+func (shortSink) Write(_ context.Context, p []byte) (int, error) {
 	return max(len(p)-1, 0), nil
 }
 
@@ -154,7 +156,7 @@ func TestWriter(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-				w, err := sstable.NewWriter(io.Discard, tt.give)
+				w, err := sstable.NewWriter(discardSink{}, tt.give)
 				assert.ErrorIs(t, err, sstable.ErrOptions, "NewWriter refuses the options")
 				assert.Nil(t, w, "NewWriter returns no Writer")
 			})
@@ -163,7 +165,7 @@ func TestWriter(t *testing.T) {
 		t.Run("returns a Writer for a BlockSize of 2^32 - 1", func(t *testing.T) {
 			t.Parallel()
 			data := writeTable(t, sstable.WriterOptions{BlockSize: math.MaxUint32}, goldenTable())
-			got, err := scanAll(openTable(t, data, sstable.ReaderOptions{}).NewIter())
+			got, err := scanAll(t.Context(), openTable(t, data, sstable.ReaderOptions{}).NewIter(sstable.IterOptions{}))
 			assert.NoError(t, err, "the table of one block reads")
 			assert.Equal(t, got, goldenTable(), "the table contains every entry")
 		})
@@ -192,15 +194,18 @@ func TestWriter(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-				var buf bytes.Buffer
+				var buf bufferSink
 				w, err := sstable.NewWriter(&buf, sstable.WriterOptions{})
 				assert.NoError(t, err, "NewWriter accepts the zero options")
-				assert.NoError(t, w.Add([]byte("b"), 5, []byte("first")), "Add adds the first entry")
-				assert.ErrorIs(t, w.Add(tt.give.key, tt.give.seq, nil), sstable.ErrOrder, "Add refuses the entry")
-				assert.NoError(t, w.Add([]byte("c"), 1, []byte("next")), "Add adds an entry in order after the refusal")
-				_, err = w.Close()
+				assert.NoError(t, w.Add(t.Context(), []byte("b"), 5, []byte("first")), "Add adds the first entry")
+				assert.ErrorIs(t, w.Add(t.Context(), tt.give.key, tt.give.seq, nil), sstable.ErrOrder,
+					"Add refuses the entry")
+				assert.NoError(t, w.Add(t.Context(), []byte("c"), 1, []byte("next")),
+					"Add adds an entry in order after the refusal")
+				_, err = w.Close(t.Context())
 				assert.NoError(t, err, "Close writes the table")
-				got, err := scanAll(openTable(t, buf.Bytes(), sstable.ReaderOptions{}).NewIter())
+				r := openTable(t, buf.Bytes(), sstable.ReaderOptions{})
+				got, err := scanAll(t.Context(), r.NewIter(sstable.IterOptions{}))
 				assert.NoError(t, err, "the table reads")
 				assert.Equal(t, got, []entry{
 					{key: []byte("b"), seq: 5, value: []byte("first")},
@@ -237,11 +242,11 @@ func TestWriter(t *testing.T) {
 				return
 			}
 			key := make([]byte, math.MaxUint32)
-			w, err := sstable.NewWriter(io.Discard, sstable.WriterOptions{})
+			w, err := sstable.NewWriter(discardSink{}, sstable.WriterOptions{})
 			assert.NoError(t, err, "NewWriter accepts the zero options")
-			assert.ErrorIs(t, w.Add(key, 1, nil), sstable.ErrTooLarge, "Add refuses the key")
-			assert.NoError(t, w.Add([]byte("a"), 1, nil), "Add adds an entry after the refusal")
-			sum, err := w.Close()
+			assert.ErrorIs(t, w.Add(t.Context(), key, 1, nil), sstable.ErrTooLarge, "Add refuses the key")
+			assert.NoError(t, w.Add(t.Context(), []byte("a"), 1, nil), "Add adds an entry after the refusal")
+			sum, err := w.Close(t.Context())
 			assert.NoError(t, err, "Close writes the table")
 			assert.Equal(t, sum.Entries, int64(1), "the table contains the entry that Add accepted")
 		})
@@ -258,25 +263,35 @@ func TestWriter(t *testing.T) {
 
 		t.Run("returns ErrClosed after Close", func(t *testing.T) {
 			t.Parallel()
-			w, err := sstable.NewWriter(io.Discard, sstable.WriterOptions{})
+			w, err := sstable.NewWriter(discardSink{}, sstable.WriterOptions{})
 			assert.NoError(t, err, "NewWriter accepts the zero options")
 			assert.FailsAfterClose(t, func() error {
-				_, err := w.Close()
+				_, err := w.Close(t.Context())
 
 				return err
 			}, func() error {
-				return w.Add([]byte("a"), 1, nil)
+				return w.Add(t.Context(), []byte("a"), 1, nil)
 			}, sstable.ErrClosed, "Add refuses an entry after Close")
 		})
 
-		t.Run("returns the error of the io.Writer for every later call", func(t *testing.T) {
+		t.Run("returns the error of the Sink for every later call", func(t *testing.T) {
 			t.Parallel()
-			w, err := sstable.NewWriter(&failingWriter{}, sstable.WriterOptions{BlockSize: 1})
+			w, err := sstable.NewWriter(&failingSink{}, sstable.WriterOptions{BlockSize: 1})
 			assert.NoError(t, err, "NewWriter accepts the options")
-			expect.ErrorIs(t, w.Add([]byte("a"), 1, nil), errWrite, "Add returns the error of the block that it writes")
-			expect.ErrorIs(t, w.Add([]byte("b"), 1, nil), errWrite, "Add returns the error again")
-			_, err = w.Close()
+			expect.ErrorIs(t, w.Add(t.Context(), []byte("a"), 1, nil), errWrite,
+				"Add returns the error of the block that it writes")
+			expect.ErrorIs(t, w.Add(t.Context(), []byte("b"), 1, nil), errWrite, "Add returns the error again")
+			_, err = w.Close(t.Context())
 			expect.ErrorIs(t, err, errWrite, "Close returns the error too")
+		})
+
+		t.Run("returns the error of the context of the write of its block", func(t *testing.T) {
+			t.Parallel()
+			w, err := sstable.NewWriter(&bufferSink{}, oneEntry)
+			assert.NoError(t, err, "NewWriter accepts the options")
+			assert.HonoursCancellation(t, func(ctx context.Context) error {
+				return w.Add(ctx, []byte("a"), 1, nil)
+			}, "Add returns the error that the Sink returns for a context that ended")
 		})
 	})
 
@@ -285,14 +300,14 @@ func TestWriter(t *testing.T) {
 
 		t.Run("returns the summary of the table", func(t *testing.T) {
 			t.Parallel()
-			var buf bytes.Buffer
+			var buf bufferSink
 			w, err := sstable.NewWriter(&buf, sstable.WriterOptions{})
 			assert.NoError(t, err, "NewWriter accepts the zero options")
 			es := []entry{{key: []byte("a"), seq: 7}, {key: []byte("a"), seq: 3}, {key: []byte("b"), seq: 9}}
 			for _, e := range es {
-				assert.NoError(t, w.Add(e.key, e.seq, e.value), "Add adds the entry")
+				assert.NoError(t, w.Add(t.Context(), e.key, e.seq, e.value), "Add adds the entry")
 			}
-			sum, err := w.Close()
+			sum, err := w.Close(t.Context())
 			assert.NoError(t, err, "Close writes the table")
 			assert.Equal(t, sum, sstable.Summary{
 				Entries: 3, Size: int64(buf.Len()), MinSeq: 3, MaxSeq: 9,
@@ -303,7 +318,7 @@ func TestWriter(t *testing.T) {
 		t.Run("writes a table of no entries", func(t *testing.T) {
 			t.Parallel()
 			r := openTable(t, writeTable(t, sstable.WriterOptions{FilterBits: 8}, nil), sstable.ReaderOptions{})
-			got, err := scanAll(r.NewIter())
+			got, err := scanAll(t.Context(), r.NewIter(sstable.IterOptions{}))
 			assert.NoError(t, err, "the empty table reads")
 			expect.Empty(t, got, "a cursor yields no entry")
 			expect.Equal(t, r.Summary().Entries, int64(0), "the summary counts no entry")
@@ -311,31 +326,43 @@ func TestWriter(t *testing.T) {
 
 		t.Run("returns ErrClosed for a second Close", func(t *testing.T) {
 			t.Parallel()
-			w, err := sstable.NewWriter(io.Discard, sstable.WriterOptions{})
+			w, err := sstable.NewWriter(discardSink{}, sstable.WriterOptions{})
 			assert.NoError(t, err, "NewWriter accepts the zero options")
 			closeWriter := func() error {
-				_, err := w.Close()
+				_, err := w.Close(t.Context())
 
 				return err
 			}
 			assert.FailsAfterClose(t, closeWriter, closeWriter, sstable.ErrClosed, "the second Close refuses")
 		})
 
-		t.Run("returns the error of the io.Writer for the blocks after the data", func(t *testing.T) {
+		t.Run("returns the error of the Sink for the blocks after the data", func(t *testing.T) {
 			t.Parallel()
-			w, err := sstable.NewWriter(&failingWriter{}, sstable.WriterOptions{})
+			w, err := sstable.NewWriter(&failingSink{}, sstable.WriterOptions{})
 			assert.NoError(t, err, "NewWriter accepts the zero options")
-			assert.NoError(t, w.Add([]byte("a"), 1, nil), "Add keeps the entry in its block")
-			_, err = w.Close()
+			assert.NoError(t, w.Add(t.Context(), []byte("a"), 1, nil), "Add keeps the entry in its block")
+			_, err = w.Close(t.Context())
 			assert.ErrorIs(t, err, errWrite, "Close returns the error of the writes of the table")
+		})
+
+		t.Run("returns the error of the context of its write", func(t *testing.T) {
+			t.Parallel()
+			w, err := sstable.NewWriter(&bufferSink{}, sstable.WriterOptions{})
+			assert.NoError(t, err, "NewWriter accepts the zero options")
+			assert.NoError(t, w.Add(t.Context(), []byte("a"), 1, nil), "Add keeps the entry in its block")
+			assert.HonoursCancellation(t, func(ctx context.Context) error {
+				_, err := w.Close(ctx)
+
+				return err
+			}, "Close returns the error that the Sink returns for a context that ended")
 		})
 
 		t.Run("returns io.ErrShortWrite for a write of fewer bytes without an error", func(t *testing.T) {
 			t.Parallel()
-			w, err := sstable.NewWriter(shortWriter{}, sstable.WriterOptions{})
+			w, err := sstable.NewWriter(shortSink{}, sstable.WriterOptions{})
 			assert.NoError(t, err, "NewWriter accepts the zero options")
-			assert.NoError(t, w.Add([]byte("a"), 1, nil), "Add keeps the entry in its block")
-			_, err = w.Close()
+			assert.NoError(t, w.Add(t.Context(), []byte("a"), 1, nil), "Add keeps the entry in its block")
+			_, err = w.Close(t.Context())
 			assert.ErrorIs(t, err, io.ErrShortWrite, "Close refuses the short write")
 		})
 
@@ -377,22 +404,24 @@ func TestWriter(t *testing.T) {
 			prop.ForAll(t, "a Writer after Reset writes what a new Writer writes", func(c *prop.Case) {
 				opts := c.Draw(prop.SampledFrom(settings...), "setting").opts
 				first, second := c.Draw(entries, "first entries"), c.Draw(entries, "second entries")
-				w, err := sstable.NewWriter(io.Discard, opts)
+				w, err := sstable.NewWriter(discardSink{}, opts)
 				assert.NoError(c, err, "NewWriter accepts the options")
 				for _, e := range first[:c.Draw(prop.Integer(0, len(first)), "first added")] {
-					assert.NoError(c, w.Add(e.key, e.seq, e.value), "Add adds the entry of the first table")
+					assert.NoError(c, w.Add(c.Context(), e.key, e.seq, e.value),
+						"Add adds the entry of the first table")
 				}
 				if c.Draw(prop.Boolean(), "first closed") {
-					_, err = w.Close()
+					_, err = w.Close(c.Context())
 					assert.NoError(c, err, "Close writes the first table")
 				}
 
-				var buf bytes.Buffer
+				var buf bufferSink
 				w.Reset(&buf)
 				for _, e := range second {
-					assert.NoError(c, w.Add(e.key, e.seq, e.value), "Add adds the entry of the second table")
+					assert.NoError(c, w.Add(c.Context(), e.key, e.seq, e.value),
+						"Add adds the entry of the second table")
 				}
-				sum, err := w.Close()
+				sum, err := w.Close(c.Context())
 				assert.NoError(c, err, "Close writes the second table")
 				assert.Equal(c, buf.Bytes(), writeTable(c, opts, second), "the Writer writes the bytes of a new Writer")
 				assert.Equal(c, sum, openTable(c, buf.Bytes(), sstable.ReaderOptions{}).Summary(),
@@ -402,52 +431,53 @@ func TestWriter(t *testing.T) {
 
 		t.Run("keeps the keys of the summary of the table before", func(t *testing.T) {
 			t.Parallel()
-			var buf bytes.Buffer
+			var buf bufferSink
 			w, err := sstable.NewWriter(&buf, settings[1].opts)
 			assert.NoError(t, err, "NewWriter accepts the options")
 			for _, e := range goldenTable() {
-				assert.NoError(t, w.Add(e.key, e.seq, e.value), "Add adds the entry of the first table")
+				assert.NoError(t, w.Add(t.Context(), e.key, e.seq, e.value), "Add adds the entry of the first table")
 			}
-			sum, err := w.Close()
+			sum, err := w.Close(t.Context())
 			assert.NoError(t, err, "Close writes the first table")
 			want := sum
 			want.SmallestKey, want.LargestKey = bytes.Clone(sum.SmallestKey), bytes.Clone(sum.LargestKey)
-			w.Reset(io.Discard)
+			w.Reset(discardSink{})
 			for _, key := range []string{"other a", "other b"} {
-				assert.NoError(t, w.Add([]byte(key), 1, nil), "Add adds the entry of the second table")
+				assert.NoError(t, w.Add(t.Context(), []byte(key), 1, nil), "Add adds the entry of the second table")
 			}
-			_, err = w.Close()
+			_, err = w.Close(t.Context())
 			assert.NoError(t, err, "Close writes the second table")
 			assert.Equal(t, sum, want, "the second table leaves the summary of the first table unchanged")
 		})
 
-		t.Run("clears the error of the io.Writer of the table before", func(t *testing.T) {
+		t.Run("clears the error of the Sink of the table before", func(t *testing.T) {
 			t.Parallel()
-			w, err := sstable.NewWriter(&failingWriter{}, sstable.WriterOptions{BlockSize: 1})
+			w, err := sstable.NewWriter(&failingSink{}, sstable.WriterOptions{BlockSize: 1})
 			assert.NoError(t, err, "NewWriter accepts the options")
-			assert.ErrorIs(t, w.Add([]byte("a"), 1, nil), errWrite, "Add returns the error of the io.Writer")
-			var buf bytes.Buffer
+			assert.ErrorIs(t, w.Add(t.Context(), []byte("a"), 1, nil), errWrite, "Add returns the error of the Sink")
+			var buf bufferSink
 			w.Reset(&buf)
 			for _, e := range goldenTable() {
-				assert.NoError(t, w.Add(e.key, e.seq, e.value), "Add adds the entry after Reset")
+				assert.NoError(t, w.Add(t.Context(), e.key, e.seq, e.value), "Add adds the entry after Reset")
 			}
-			_, err = w.Close()
+			_, err = w.Close(t.Context())
 			assert.NoError(t, err, "Close writes the table after Reset")
-			got, err := scanAll(openTable(t, buf.Bytes(), sstable.ReaderOptions{}).NewIter())
+			r := openTable(t, buf.Bytes(), sstable.ReaderOptions{})
+			got, err := scanAll(t.Context(), r.NewIter(sstable.IterOptions{}))
 			assert.NoError(t, err, "the table reads")
 			assert.Equal(t, got, goldenTable(), "the table contains the entries after Reset")
 		})
 
 		t.Run("clears ErrClosed", func(t *testing.T) {
 			t.Parallel()
-			w, err := sstable.NewWriter(io.Discard, sstable.WriterOptions{})
+			w, err := sstable.NewWriter(discardSink{}, sstable.WriterOptions{})
 			assert.NoError(t, err, "NewWriter accepts the zero options")
-			_, err = w.Close()
+			_, err = w.Close(t.Context())
 			assert.NoError(t, err, "Close writes the first table")
-			var buf bytes.Buffer
+			var buf bufferSink
 			w.Reset(&buf)
-			assert.NoError(t, w.Add([]byte("a"), 1, []byte("v")), "Add adds an entry after Reset")
-			sum, err := w.Close()
+			assert.NoError(t, w.Add(t.Context(), []byte("a"), 1, []byte("v")), "Add adds an entry after Reset")
+			sum, err := w.Close(t.Context())
 			assert.NoError(t, err, "Close writes the second table")
 			assert.Equal(t, sum.Entries, int64(1), "the second table contains the entry")
 		})
@@ -463,13 +493,13 @@ func TestWriterAllocs(t *testing.T) {
 	t.Run("Add", func(t *testing.T) {
 		for _, tt := range settings {
 			t.Run("does not allocate once its buffers have room in a table "+tt.name, func(t *testing.T) {
-				w, err := sstable.NewWriter(io.Discard, tt.opts)
+				w, err := sstable.NewWriter(discardSink{}, tt.opts)
 				assert.NoError(t, err, "NewWriter accepts the options")
 				key := make([]byte, 16)
 				i := uint64(0)
 				add := func() {
 					binary.BigEndian.PutUint64(key[8:], i)
-					err = w.Add(key, 1, value)
+					err = w.Add(t.Context(), key, 1, value)
 					i++
 				}
 				for range warmEntries {
@@ -500,11 +530,11 @@ func TestWriterAllocs(t *testing.T) {
 				key, firstValue := []byte("a"), []byte("v")
 				var err error
 				expect.MaxAllocsWithSetup(t, func() *sstable.Writer {
-					w, newErr := sstable.NewWriter(io.Discard, tt.giveOpts)
+					w, newErr := sstable.NewWriter(discardSink{}, tt.giveOpts)
 					assert.NoError(t, newErr, "NewWriter accepts the options")
 
 					return w
-				}, func(w *sstable.Writer) { err = w.Add(key, 1, firstValue) }, tt.want,
+				}, func(w *sstable.Writer) { err = w.Add(t.Context(), key, 1, firstValue) }, tt.want,
 					"the first Add allocates the copy of its key and the first growth of its buffers")
 				assert.NoError(t, err, "the test measures Adds that succeed")
 			})
@@ -513,14 +543,14 @@ func TestWriterAllocs(t *testing.T) {
 
 	t.Run("Reset", func(t *testing.T) {
 		t.Run("does not allocate", func(t *testing.T) {
-			w, err := sstable.NewWriter(io.Discard, settings[3].opts)
+			w, err := sstable.NewWriter(discardSink{}, settings[3].opts)
 			assert.NoError(t, err, "NewWriter accepts the options")
-			expect.MaxAllocs(t, func() { w.Reset(io.Discard) }, 0, "Reset does not allocate")
+			expect.MaxAllocs(t, func() { w.Reset(discardSink{}) }, 0, "Reset does not allocate")
 		})
 
 		for _, tt := range settings {
 			t.Run("reuses the buffers for a table "+tt.name, func(t *testing.T) {
-				var buf bytes.Buffer
+				var buf bufferSink
 				w, err := sstable.NewWriter(&buf, tt.opts)
 				assert.NoError(t, err, "NewWriter accepts the options")
 				es := goldenTable()
@@ -529,10 +559,10 @@ func TestWriterAllocs(t *testing.T) {
 					buf.Reset()
 					w.Reset(&buf)
 					for _, e := range es {
-						err = cmp.Or(err, w.Add(e.key, e.seq, e.value))
+						err = cmp.Or(err, w.Add(t.Context(), e.key, e.seq, e.value))
 					}
 					var closeErr error
-					sum, closeErr = w.Close()
+					sum, closeErr = w.Close(t.Context())
 					err = cmp.Or(err, closeErr)
 				}, 2, "a table after Reset allocates the copies of its smallest key and its largest key")
 				assert.NoError(t, err, "the test measures tables that the Writer writes")
@@ -550,7 +580,7 @@ func BenchmarkWriter(b *testing.B) {
 	b.Run("Add", func(b *testing.B) {
 		for _, tt := range settings {
 			b.Run(tt.name, func(b *testing.B) {
-				w, err := sstable.NewWriter(io.Discard, tt.opts)
+				w, err := sstable.NewWriter(discardSink{}, tt.opts)
 				assert.NoError(b, err, "NewWriter accepts the options")
 				key := make([]byte, 16)
 				i := uint64(0)
@@ -560,7 +590,7 @@ func BenchmarkWriter(b *testing.B) {
 
 				for c.Loop() {
 					binary.BigEndian.PutUint64(key[8:], i)
-					err = w.Add(key, 1, value)
+					err = w.Add(b.Context(), key, 1, value)
 					i++
 				}
 
@@ -574,7 +604,7 @@ func BenchmarkWriter(b *testing.B) {
 	b.Run("Reset", func(b *testing.B) {
 		for _, tt := range settings {
 			b.Run(tt.name, func(b *testing.B) {
-				var buf bytes.Buffer
+				var buf bufferSink
 				w, err := sstable.NewWriter(&buf, tt.opts)
 				assert.NoError(b, err, "NewWriter accepts the options")
 				es := goldenTable()
@@ -587,10 +617,10 @@ func BenchmarkWriter(b *testing.B) {
 					buf.Reset()
 					w.Reset(&buf)
 					for _, e := range es {
-						err = cmp.Or(err, w.Add(e.key, e.seq, e.value))
+						err = cmp.Or(err, w.Add(b.Context(), e.key, e.seq, e.value))
 					}
 					var closeErr error
-					sum, closeErr = w.Close()
+					sum, closeErr = w.Close(b.Context())
 					err = cmp.Or(err, closeErr)
 				}
 

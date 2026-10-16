@@ -5,6 +5,7 @@ package sstable
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"hash/crc32"
@@ -20,10 +21,25 @@ import (
 // trailer of the index block and the footer of 80 bytes follow it.
 const minTableSize = 4 + trailerLen + footerLen
 
+// File is the storage of a table that a [Reader] reads. ReadAt has the
+// contract of io.ReaderAt. A ReadAt that waits, such as for a permit of a
+// table of open files or for a budget of disk I/O, ends its wait with the
+// error of ctx. An *os.File or a bytes.Reader becomes a File through a type
+// whose ReadAt drops ctx.
+//
+// # Concurrency
+//
+// The methods of a File must be safe for concurrent use, because the cursors
+// of a Reader read at once.
+type File interface {
+	// ReadAt reads len(p) bytes at off into p, as io.ReaderAt reads them.
+	ReadAt(ctx context.Context, p []byte, off int64) (int, error)
+}
+
 // ReaderOptions configure a [Reader].
 type ReaderOptions struct {
 	// Cache keeps the decoded data blocks of the Reader. Without a Cache the
-	// Reader reads every block from the io.ReaderAt.
+	// Reader reads every block from the File.
 	Cache BlockCache
 
 	// CacheID is the identity of the table in Cache. The readers of
@@ -33,6 +49,8 @@ type ReaderOptions struct {
 
 // BlockCache keeps the decoded data blocks of the readers that share it. Its
 // key is the identity of the table and the offset of the block in the table.
+// Each call takes the context of the read that looks the block up, so a
+// cache counts and traces its lookups under that context.
 //
 // A Reader never writes a block that it adds to the cache or that Get
 // returns, and the cache must not change a block either. The capacity and
@@ -44,17 +62,18 @@ type ReaderOptions struct {
 type BlockCache interface {
 	// Get returns the block of the table id at offset, and reports whether
 	// the cache contains it.
-	Get(id, offset uint64) ([]byte, bool)
+	Get(ctx context.Context, id, offset uint64) ([]byte, bool)
 
 	// Add adds the block of the table id at offset. A Reader does not write
 	// block again, so the cache may keep it.
-	Add(id, offset uint64, block []byte)
+	Add(ctx context.Context, id, offset uint64, block []byte)
 }
 
-// Reader reads a table through an io.ReaderAt. [Reader.Get] looks up one
-// key, and [Reader.NewIter] returns a cursor over the entries. The Reader
-// keeps the index block, the filter block and the summary of the table in
-// memory, and reads a data block for each lookup or move that needs it.
+// Reader reads a table through a [File]. [Reader.Get] looks up one key, and
+// [Reader.NewIter] returns a cursor over the entries. The Reader keeps the
+// index block, the filter block and the summary of the table in memory, and
+// reads a data block for each lookup or move that needs it, under the
+// context of that call.
 //
 // # Concurrency
 //
@@ -68,8 +87,8 @@ type BlockCache interface {
 // largest block. A read through the cache allocates the copy of each block
 // that it adds.
 type Reader struct {
-	// r reads the data blocks.
-	r io.ReaderAt
+	// f contains the table.
+	f File
 
 	// cache keeps the decoded data blocks under cacheID, or is nil.
 	cache BlockCache
@@ -94,12 +113,12 @@ type Reader struct {
 }
 
 // Open reads the footer, the index block and the filter block of the table
-// of size bytes in r, and checks the checksum and the layout of each. It
-// compares the CRC32C of the index block and the filter block with the
-// CRC32C that the footer states for each. It reads the first entry of the
-// first data block for the smallest key of the summary, and the last entry
-// of the index for the largest key. It does not add the first data block to
-// the cache.
+// of size bytes in file under ctx, and checks the checksum and the layout of
+// each. It compares the CRC32C of the index block and the filter block with
+// the CRC32C that the footer states for each. It reads the first entry of
+// the first data block for the smallest key of the summary, and the last
+// entry of the index for the largest key. It does not add the first data
+// block to the cache.
 //
 // Error modes:
 //
@@ -111,19 +130,20 @@ type Reader struct {
 //   - An index block, a filter block or a first data block that fails its
 //     checksum or its layout returns ErrCorrupt. So does a block whose CRC32C
 //     differs from the CRC32C that the footer or its index entry states.
-//   - An error of r returns an error that wraps it. A read of fewer bytes
-//     without an error returns an error that wraps io.ErrUnexpectedEOF.
+//   - An error of file, such as the error of ctx at the end of a wait,
+//     returns an error that wraps it. A read of fewer bytes without an error
+//     returns an error that wraps io.ErrUnexpectedEOF.
 //
 // # Allocation contract
 //
 // Allocates the Reader, the footer, the index block, the filter block and
 // the keys of the summary, and a cursor when the pool has none.
-func Open(r io.ReaderAt, size int64, opts ReaderOptions) (*Reader, error) {
+func Open(ctx context.Context, file File, size int64, opts ReaderOptions) (*Reader, error) {
 	if size < minTableSize {
 		return nil, ErrCorrupt
 	}
 	f := make([]byte, footerLen)
-	if err := readAt(r, f, size-footerLen); err != nil {
+	if err := readAt(ctx, file, f, size-footerLen); err != nil {
 		return nil, err
 	}
 	be := binary.BigEndian
@@ -154,12 +174,12 @@ func Open(r io.ReaderAt, size int64, opts ReaderOptions) (*Reader, error) {
 		return nil, ErrCorrupt
 	}
 
-	index, err := readBlock(r, indexOff, indexLen, indexCRC)
+	index, err := readBlock(ctx, file, indexOff, indexLen, indexCRC)
 	if err != nil {
 		return nil, err
 	}
 	rd := &Reader{
-		r: r, index: index, dataEnd: dataEnd,
+		f: file, index: index, dataEnd: dataEnd,
 		summary: Summary{
 			//nolint:gosec // G115: a Writer counts its entries in an int64
 			Entries: int64(be.Uint64(f[40:])), Size: size, MinSeq: be.Uint64(f[48:]), MaxSeq: be.Uint64(f[56:]),
@@ -179,7 +199,7 @@ func Open(r io.ReaderAt, size int64, opts ReaderOptions) (*Reader, error) {
 	}
 
 	if filterLen != 0 {
-		b, err := readBlock(r, filterOff, filterLen, filterCRC)
+		b, err := readBlock(ctx, file, filterOff, filterLen, filterCRC)
 		if err != nil {
 			return nil, err
 		}
@@ -191,8 +211,8 @@ func Open(r io.ReaderAt, size int64, opts ReaderOptions) (*Reader, error) {
 
 	// Open sets the cache after it reads the first block, so the read does
 	// not add the block to the cache.
-	it := rd.NewIter()
-	if it.First() {
+	it := rd.NewIter(IterOptions{})
+	if it.First(ctx) {
 		rd.summary.SmallestKey, rd.summary.SmallestSeq = append([]byte{}, it.Key()...), it.Seq()
 	}
 	if err := it.Close(); err != nil {
@@ -235,14 +255,15 @@ func (r *Reader) MayContain(key []byte) bool {
 //
 // Get asks the filter first. A lookup of a key that the table does not
 // contain reads a data block only when the filter reports a false positive.
-// Get reads at most one data block, through the cache when the Reader has
-// one.
+// Get reads at most one data block under ctx, through the cache when the
+// Reader has one, and adds the block that it reads to the cache.
 //
 // Error modes:
 //
 //   - A data block that fails its checksum, its decompression or its layout
 //     returns [ErrCorrupt].
-//   - An error of the io.ReaderAt returns an error that wraps it.
+//   - An error of the File, such as the error of ctx at the end of a wait,
+//     returns an error that wraps it.
 //
 // # Allocation contract
 //
@@ -250,13 +271,13 @@ func (r *Reader) MayContain(key []byte) bool {
 // cursor whose buffers have grown to the block, and the cache contains the
 // block or the Reader has no cache. A block that the cache does not contain
 // allocates its copy for the cache.
-func (r *Reader) Get(key []byte, seq uint64, dst []byte) ([]byte, uint64, bool, error) {
+func (r *Reader) Get(ctx context.Context, key []byte, seq uint64, dst []byte) ([]byte, uint64, bool, error) {
 	if !r.MayContain(key) {
 		return dst, 0, false, nil
 	}
 
-	it := r.NewIter()
-	ok := it.SeekGE(key, seq) && bytes.Equal(it.Key(), key)
+	it := r.NewIter(IterOptions{})
+	ok := it.SeekGE(ctx, key, seq) && bytes.Equal(it.Key(), key)
 	var found uint64
 	if ok {
 		dst, found = append(dst, it.Value()...), it.Seq()
@@ -269,34 +290,34 @@ func (r *Reader) Get(key []byte, seq uint64, dst []byte) ([]byte, uint64, bool, 
 }
 
 // NewIter returns a cursor over the entries of the table from the pool of
-// cursors. The cursor is on no entry until [Iter.First], [Iter.Last],
-// [Iter.SeekGE] or [Iter.SeekLT] moves it. The caller returns the cursor to
-// the pool with [Iter.Close].
+// cursors, under opts. The cursor is on no entry until [Iter.First],
+// [Iter.Last], [Iter.SeekGE] or [Iter.SeekLT] moves it. The caller returns
+// the cursor to the pool with [Iter.Close].
 //
 // # Allocation contract
 //
 // Zero-alloc when the pool has a cursor. Otherwise NewIter allocates one.
-func (r *Reader) NewIter() *Iter {
+func (r *Reader) NewIter(opts IterOptions) *Iter {
 	it := iters.Get()
-	it.r = r
+	it.r, it.noFill = r, opts.NoFill
 	it.index.init(r.index)
 
 	return it
 }
 
-// readBlock reads the stored block of n bytes at off and its trailer from r
-// into a new buffer. It returns the bytes of the block. want is the CRC32C
-// that the parent of the block states.
+// readBlock reads the stored block of n bytes at off and its trailer from f
+// under ctx into a new buffer. It returns the bytes of the block. want is the
+// CRC32C that the parent of the block states.
 //
 // Error modes:
 //
 //   - A block that fails its checksum, has a CRC32C other than want or fails
 //     its decompression returns [ErrCorrupt].
-//   - An error of r returns an error that wraps it.
-func readBlock(r io.ReaderAt, off, n uint64, want uint32) ([]byte, error) {
+//   - An error of f returns an error that wraps it.
+func readBlock(ctx context.Context, f File, off, n uint64, want uint32) ([]byte, error) {
 	b := make([]byte, n+trailerLen)
 	//nolint:gosec // G115: Open checks that the block lies inside the table
-	if err := readAt(r, b, int64(off)); err != nil {
+	if err := readAt(ctx, f, b, int64(off)); err != nil {
 		return nil, err
 	}
 	var decoded []byte
@@ -335,12 +356,12 @@ func unseal(b []byte, want uint32, buf *[]byte) ([]byte, error) {
 	return decoded, nil
 }
 
-// readAt reads len(p) bytes of r at off. It returns nil once r returned
-// them all, also with an error such as io.EOF. For fewer bytes it returns an
-// error that wraps the error of r, or io.ErrUnexpectedEOF when r returned no
-// error.
-func readAt(r io.ReaderAt, p []byte, off int64) error {
-	n, err := r.ReadAt(p, off)
+// readAt reads len(p) bytes of f at off under ctx. It returns nil once f
+// returned them all, also with an error such as io.EOF. For fewer bytes it
+// returns an error that wraps the error of f, or io.ErrUnexpectedEOF when f
+// returned no error.
+func readAt(ctx context.Context, f File, p []byte, off int64) error {
+	n, err := f.ReadAt(ctx, p, off)
 	if n == len(p) {
 		return nil
 	}

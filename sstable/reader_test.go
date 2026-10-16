@@ -5,6 +5,7 @@ package sstable_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -59,16 +60,16 @@ const (
 // lookup that skips the filter reads the block of the keys around it.
 const absentKey = "key 030a"
 
-// shortReader is an io.ReaderAt that returns one byte less than each read,
-// without an error.
-type shortReader struct {
+// shortFile is a File that returns one byte less than each read, without
+// an error.
+type shortFile struct {
 	data []byte
 }
 
-var _ io.ReaderAt = shortReader{}
+var _ sstable.File = shortFile{}
 
 // ReadAt reads one byte less than p at off and returns a nil error.
-func (r shortReader) ReadAt(p []byte, off int64) (int, error) {
+func (r shortFile) ReadAt(_ context.Context, p []byte, off int64) (int, error) {
 	n, _ := bytes.NewReader(r.data).ReadAt(p[:len(p)-1], off)
 
 	return n, nil
@@ -90,7 +91,7 @@ func TestReader(t *testing.T) {
 				t.Parallel()
 				data := writeTable(t, tt.opts, goldenTable())
 				for n := range len(data) {
-					_, err := sstable.Open(bytes.NewReader(data[:n]), int64(n), sstable.ReaderOptions{})
+					_, err := sstable.Open(t.Context(), bytesFile(data[:n]), int64(n), sstable.ReaderOptions{})
 					expect.ErrorIs(t, err, sstable.ErrCorrupt, "Open refuses the first "+strconv.Itoa(n)+" bytes")
 				}
 			})
@@ -103,9 +104,10 @@ func TestReader(t *testing.T) {
 				for bit := range 8 * len(data) {
 					copy(changed, data)
 					changed[bit/8] ^= 1 << (bit % 8)
-					r, err := sstable.Open(bytes.NewReader(changed), int64(len(changed)), sstable.ReaderOptions{})
+					r, err := sstable.Open(t.Context(), bytesFile(changed), int64(len(changed)),
+						sstable.ReaderOptions{})
 					if err == nil {
-						err = readAll(r, es)
+						err = readAll(t.Context(), r, es)
 					}
 					expect.ErrorIs(t, err, sstable.ErrCorrupt,
 						"Open or a read detects the flip of bit "+strconv.Itoa(bit))
@@ -238,7 +240,7 @@ func TestReader(t *testing.T) {
 				l := newLayout(t, tt.giveOpts, goldenTable())
 				tt.giveChange(l)
 				l.seal()
-				_, err := sstable.Open(bytes.NewReader(l.data), int64(len(l.data)), sstable.ReaderOptions{})
+				_, err := sstable.Open(t.Context(), bytesFile(l.data), int64(len(l.data)), sstable.ReaderOptions{})
 				assert.ErrorIs(t, err, sstable.ErrCorrupt, "Open refuses the changed table")
 			})
 		}
@@ -253,7 +255,7 @@ func TestReader(t *testing.T) {
 			binary.BigEndian.PutUint64(f[footerFilterLen:], 1)
 			binary.BigEndian.PutUint64(f[footerFilterOff:], math.MaxUint64-trailerLen)
 			l.seal()
-			_, err := sstable.Open(bytes.NewReader(l.data), int64(len(l.data)), sstable.ReaderOptions{})
+			_, err := sstable.Open(t.Context(), bytesFile(l.data), int64(len(l.data)), sstable.ReaderOptions{})
 			assert.ErrorIs(t, err, sstable.ErrCorrupt, "Open refuses the changed table")
 		})
 
@@ -264,7 +266,7 @@ func TestReader(t *testing.T) {
 				l := newLayout(c, oneEntry, es)
 				b := l.blocks[c.Draw(prop.Integer(1, len(l.blocks)-1), "block")]
 				copy(l.data[l.blocks[0].off:], l.data[b.off:b.off+b.n+trailerLen])
-				_, err := sstable.Open(bytes.NewReader(l.data), int64(len(l.data)), sstable.ReaderOptions{})
+				_, err := sstable.Open(c.Context(), bytesFile(l.data), int64(len(l.data)), sstable.ReaderOptions{})
 				assert.ErrorIs(c, err, sstable.ErrCorrupt, "Open refuses the block at the place of the first")
 			})
 		})
@@ -299,20 +301,21 @@ func TestReader(t *testing.T) {
 					assert.Equal(c, from.off, to.off, "the block of the other table has the same offset")
 					assert.Equal(c, from.n, to.n, "the block of the other table has the same length")
 					copy(l.data[to.off:], other.data[from.off:from.off+from.n+trailerLen])
-					_, err := sstable.Open(bytes.NewReader(l.data), int64(len(l.data)), sstable.ReaderOptions{})
+					_, err := sstable.Open(c.Context(), bytesFile(l.data), int64(len(l.data)), sstable.ReaderOptions{})
 					assert.ErrorIs(c, err, sstable.ErrCorrupt, "Open refuses the block of the other table")
 				})
 			})
 		}
 
-		t.Run("returns the error of each read of the io.ReaderAt", func(t *testing.T) {
+		t.Run("returns the error of each read of the File", func(t *testing.T) {
 			t.Parallel()
 			data := writeTable(t, settings[1].opts, goldenTable())
-			counter := &countingReader{data: data}
-			_, err := sstable.Open(counter, int64(len(data)), sstable.ReaderOptions{})
+			counter := &countingFile{data: data}
+			_, err := sstable.Open(t.Context(), counter, int64(len(data)), sstable.ReaderOptions{})
 			assert.NoError(t, err, "Open reads the table")
 			for ok := range counter.reads {
-				_, err := sstable.Open(&failingReader{data: data, ok: ok}, int64(len(data)), sstable.ReaderOptions{})
+				_, err := sstable.Open(t.Context(), &failingFile{data: data, ok: ok}, int64(len(data)),
+					sstable.ReaderOptions{})
 				expect.ErrorIs(t, err, errRead, "Open returns the error of its read "+strconv.Itoa(ok+1))
 			}
 		})
@@ -320,8 +323,18 @@ func TestReader(t *testing.T) {
 		t.Run("returns io.ErrUnexpectedEOF for a read of fewer bytes without an error", func(t *testing.T) {
 			t.Parallel()
 			data := writeTable(t, sstable.WriterOptions{}, goldenTable())
-			_, err := sstable.Open(shortReader{data: data}, int64(len(data)), sstable.ReaderOptions{})
+			_, err := sstable.Open(t.Context(), shortFile{data: data}, int64(len(data)), sstable.ReaderOptions{})
 			assert.ErrorIs(t, err, io.ErrUnexpectedEOF, "Open refuses the short read")
+		})
+
+		t.Run("returns the error of the context of its reads", func(t *testing.T) {
+			t.Parallel()
+			data := writeTable(t, settings[1].opts, goldenTable())
+			assert.HonoursCancellation(t, func(ctx context.Context) error {
+				_, err := sstable.Open(ctx, bytesFile(data), int64(len(data)), sstable.ReaderOptions{})
+
+				return err
+			}, "Open returns the error that the File returns for a context that ended")
 		})
 
 		t.Run("returns only ErrCorrupt for a table with changed bytes", func(t *testing.T) {
@@ -335,13 +348,13 @@ func TestReader(t *testing.T) {
 
 		t.Run("returns the summary that Close returned", func(t *testing.T) {
 			t.Parallel()
-			var buf bytes.Buffer
+			var buf bufferSink
 			w, err := sstable.NewWriter(&buf, settings[3].opts)
 			assert.NoError(t, err, "NewWriter accepts the options")
 			for _, e := range goldenTable() {
-				assert.NoError(t, w.Add(e.key, e.seq, e.value), "Add adds the entry")
+				assert.NoError(t, w.Add(t.Context(), e.key, e.seq, e.value), "Add adds the entry")
 			}
-			want, err := w.Close()
+			want, err := w.Close(t.Context())
 			assert.NoError(t, err, "Close writes the table")
 			assert.Equal(t, openTable(t, buf.Bytes(), sstable.ReaderOptions{}).Summary(), want,
 				"the Reader returns the summary of the Writer")
@@ -397,7 +410,7 @@ func TestReader(t *testing.T) {
 								key: c.Draw(prop.SampledFrom(keys...), "key"),
 								seq: c.Draw(prop.Integer[uint64](0, 6), "seq"),
 							}
-							value, seq, ok, err := r.Get(probe.key, probe.seq, nil)
+							value, seq, ok, err := r.Get(c.Context(), probe.key, probe.seq, nil)
 							assert.NoError(c, err, "Get reads the table")
 							i, _ := slices.BinarySearchFunc(es, probe, func(a, b entry) int {
 								return sstable.Compare(a.key, a.seq, b.key, b.seq)
@@ -420,7 +433,7 @@ func TestReader(t *testing.T) {
 		t.Run("appends the value to dst", func(t *testing.T) {
 			t.Parallel()
 			r := openTable(t, writeTable(t, settings[2].opts, goldenTable()), sstable.ReaderOptions{})
-			got, _, ok, err := r.Get([]byte("key 000"), 2, []byte("prefix "))
+			got, _, ok, err := r.Get(t.Context(), []byte("key 000"), 2, []byte("prefix "))
 			assert.NoError(t, err, "Get reads the table")
 			assert.True(t, ok, "Get finds the entry")
 			assert.Equal(t, got, []byte("prefix value of key 000 at 2. "), "Get keeps the bytes of dst")
@@ -430,7 +443,7 @@ func TestReader(t *testing.T) {
 			t.Parallel()
 			r := openTable(t, writeTable(t, settings[0].opts, goldenTable()), sstable.ReaderOptions{})
 			dst := []byte("prefix")
-			got, _, ok, err := r.Get([]byte("missing"), 1, dst)
+			got, _, ok, err := r.Get(t.Context(), []byte("missing"), 1, dst)
 			assert.NoError(t, err, "Get reads the table")
 			expect.False(t, ok, "Get finds no entry")
 			expect.Equal(t, got, dst, "Get returns dst unchanged", assert.ByIdentity())
@@ -442,7 +455,7 @@ func TestReader(t *testing.T) {
 				sstable.ReaderOptions{})
 			assert.False(t, r.MayContain([]byte(absentKey)), "the filter refuses the key")
 			dst := []byte("prefix")
-			got, _, ok, err := r.Get([]byte(absentKey), 1, dst)
+			got, _, ok, err := r.Get(t.Context(), []byte(absentKey), 1, dst)
 			assert.NoError(t, err, "Get reads no block")
 			expect.False(t, ok, "Get finds no entry")
 			expect.Equal(t, got, dst, "Get returns dst unchanged", assert.ByIdentity())
@@ -451,50 +464,87 @@ func TestReader(t *testing.T) {
 		t.Run("reports false without a read for a key that the filter refuses", func(t *testing.T) {
 			t.Parallel()
 			data := writeTable(t, sstable.WriterOptions{FilterBits: 16}, goldenTable())
-			counter := &countingReader{data: data}
-			_, err := sstable.Open(counter, int64(len(data)), sstable.ReaderOptions{})
+			counter := &countingFile{data: data}
+			_, err := sstable.Open(t.Context(), counter, int64(len(data)), sstable.ReaderOptions{})
 			assert.NoError(t, err, "Open reads the table")
-			failing := &failingReader{data: data, ok: counter.reads}
-			r, err := sstable.Open(failing, int64(len(data)), sstable.ReaderOptions{})
+			failing := &failingFile{data: data, ok: counter.reads}
+			r, err := sstable.Open(t.Context(), failing, int64(len(data)), sstable.ReaderOptions{})
 			assert.NoError(t, err, "Open reads the table with the reads that it needs")
 			assert.False(t, r.MayContain([]byte(absentKey)), "the filter refuses the key")
-			_, _, ok, err := r.Get([]byte(absentKey), 1, nil)
+			_, _, ok, err := r.Get(t.Context(), []byte(absentKey), 1, nil)
 			expect.NoError(t, err, "Get reads no block for a key that the filter refuses")
 			expect.False(t, ok, "Get finds no entry")
-			_, _, _, err = r.Get([]byte("key 001"), 2, nil)
+			_, _, _, err = r.Get(t.Context(), []byte("key 001"), 2, nil)
 			expect.ErrorIs(t, err, errRead, "Get of a key of the table reads its block")
 		})
 
 		t.Run("returns a block of the cache without a read", func(t *testing.T) {
 			t.Parallel()
 			data := writeTable(t, settings[2].opts, goldenTable())
-			counter := &countingReader{data: data}
-			_, err := sstable.Open(counter, int64(len(data)), sstable.ReaderOptions{})
+			counter := &countingFile{data: data}
+			_, err := sstable.Open(t.Context(), counter, int64(len(data)), sstable.ReaderOptions{})
 			assert.NoError(t, err, "Open reads the table")
 			cache := &mapCache{}
-			r, err := sstable.Open(&failingReader{data: data, ok: counter.reads + 1}, int64(len(data)),
+			r, err := sstable.Open(t.Context(), &failingFile{data: data, ok: counter.reads + 1}, int64(len(data)),
 				sstable.ReaderOptions{Cache: cache, CacheID: 7})
 			assert.NoError(t, err, "Open reads the table with the reads that it needs")
 			for range 2 {
-				_, _, ok, getErr := r.Get([]byte("key 059"), 1, nil)
+				_, _, ok, getErr := r.Get(t.Context(), []byte("key 059"), 1, nil)
 				assert.NoError(t, getErr, "Get reads the block once and then takes it from the cache")
 				assert.True(t, ok, "Get finds the entry")
 			}
 			expect.Equal(t, cache.adds, 1, "Get adds the block that it read to the cache")
-			_, _, _, err = r.Get([]byte("key 000"), 2, nil)
+			_, _, _, err = r.Get(t.Context(), []byte("key 000"), 2, nil)
 			expect.ErrorIs(t, err, errRead, "Get of a block that the cache does not contain reads it")
 		})
 
-		t.Run("returns the error of the io.ReaderAt", func(t *testing.T) {
+		t.Run("adds the block that it reads to the cache under its context", func(t *testing.T) {
+			t.Parallel()
+			cache := &mapCache{}
+			data := writeTable(t, settings[0].opts, goldenTable())
+			r := openTable(t, data, sstable.ReaderOptions{Cache: cache, CacheID: 1})
+			_, _, ok, err := r.Get(context.WithValue(t.Context(), callKey{}, readGet), []byte("key 030"), 1, nil)
+			assert.NoError(t, err, "Get reads the block")
+			assert.True(t, ok, "Get finds the entry")
+			assert.Equal(t, cache.adds, 1, "Get adds the block to the cache")
+			assert.Equal(t, cache.call, any(readGet), "the cache receives the context of Get")
+		})
+
+		t.Run("looks its block up in the cache under its context", func(t *testing.T) {
+			t.Parallel()
+			cache := &mapCache{}
+			data := writeTable(t, settings[0].opts, goldenTable())
+			r := openTable(t, data, sstable.ReaderOptions{Cache: cache, CacheID: 1})
+			_, _, ok, err := r.Get(t.Context(), []byte("key 030"), 1, nil)
+			assert.NoError(t, err, "the first Get adds the block to the cache")
+			assert.True(t, ok, "the first Get finds the entry")
+			_, _, ok, err = r.Get(context.WithValue(t.Context(), callKey{}, readGet), []byte("key 030"), 1, nil)
+			assert.NoError(t, err, "the second Get takes the block from the cache")
+			assert.True(t, ok, "the second Get finds the entry")
+			assert.Equal(t, cache.adds, 1, "the second Get does not add a block")
+			assert.Equal(t, cache.call, any(readGet), "the cache receives the context of the second Get")
+		})
+
+		t.Run("returns the error of the context of its read", func(t *testing.T) {
+			t.Parallel()
+			r := openTable(t, writeTable(t, settings[0].opts, goldenTable()), sstable.ReaderOptions{})
+			assert.HonoursCancellation(t, func(ctx context.Context) error {
+				_, _, _, err := r.Get(ctx, []byte("key 030"), 1, nil)
+
+				return err
+			}, "Get returns the error that the File returns for a context that ended")
+		})
+
+		t.Run("returns the error of the File", func(t *testing.T) {
 			t.Parallel()
 			data := writeTable(t, settings[0].opts, goldenTable())
-			counter := &countingReader{data: data}
-			_, err := sstable.Open(counter, int64(len(data)), sstable.ReaderOptions{})
+			counter := &countingFile{data: data}
+			_, err := sstable.Open(t.Context(), counter, int64(len(data)), sstable.ReaderOptions{})
 			assert.NoError(t, err, "Open reads the table")
-			failing := &failingReader{data: data, ok: counter.reads}
-			r, err := sstable.Open(failing, int64(len(data)), sstable.ReaderOptions{})
+			failing := &failingFile{data: data, ok: counter.reads}
+			r, err := sstable.Open(t.Context(), failing, int64(len(data)), sstable.ReaderOptions{})
 			assert.NoError(t, err, "Open reads the table with the reads that it needs")
-			_, _, _, err = r.Get([]byte("key 030"), 1, nil)
+			_, _, _, err = r.Get(t.Context(), []byte("key 030"), 1, nil)
 			assert.ErrorIs(t, err, errRead, "Get returns the error of the read")
 		})
 
@@ -510,7 +560,8 @@ func TestReader(t *testing.T) {
 				}
 				b := l.blocks[from]
 				copy(l.data[l.blocks[to].off:], l.data[b.off:b.off+b.n+trailerLen])
-				_, _, _, err := openTable(c, l.data, sstable.ReaderOptions{}).Get(es[to].key, es[to].seq, nil)
+				r := openTable(c, l.data, sstable.ReaderOptions{})
+				_, _, _, err := r.Get(c.Context(), es[to].key, es[to].seq, nil)
 				assert.ErrorIs(c, err, sstable.ErrCorrupt, "Get refuses the block at the place of the block of its key")
 			})
 		})
@@ -521,10 +572,11 @@ func TestReader(t *testing.T) {
 
 		t.Run("returns a cursor on no entry", func(t *testing.T) {
 			t.Parallel()
-			it := openTable(t, writeTable(t, settings[0].opts, goldenTable()), sstable.ReaderOptions{}).NewIter()
+			it := openTable(t, writeTable(t, settings[0].opts, goldenTable()), sstable.ReaderOptions{}).
+				NewIter(sstable.IterOptions{})
 			defer it.Close()
 			expect.Nil(t, it.Key(), "the new cursor has no key")
-			expect.False(t, it.Next(), "the new cursor has no next entry")
+			expect.False(t, it.Next(t.Context()), "the new cursor has no next entry")
 		})
 	})
 }
@@ -553,7 +605,7 @@ func TestReaderAllocs(t *testing.T) {
 				r := openTable(t, data, sstable.ReaderOptions{Cache: tt.cache, CacheID: 1})
 				var ok bool
 				var err error
-				expect.MaxAllocs(t, func() { _, _, ok, err = r.Get([]byte("key 030"), 1, dst) }, 0,
+				expect.MaxAllocs(t, func() { _, _, ok, err = r.Get(t.Context(), []byte("key 030"), 1, dst) }, 0,
 					"Get does not allocate once its pooled cursor has grown and its block is in the cache")
 				expect.NoError(t, err, "the test measures a Get that reads")
 				expect.True(t, ok, "the test measures a Get of an entry")
@@ -571,7 +623,8 @@ func TestReaderAllocs(t *testing.T) {
 	t.Run("NewIter", func(t *testing.T) {
 		r := openTable(t, data, sstable.ReaderOptions{})
 		var err error
-		expect.MaxAllocs(t, func() { err = r.NewIter().Close() }, 0, "NewIter takes a cursor of the pool")
+		expect.MaxAllocs(t, func() { err = r.NewIter(sstable.IterOptions{}).Close() }, 0,
+			"NewIter takes a cursor of the pool")
 		expect.NoError(t, err, "the test measures a Close that succeeds")
 	})
 }
@@ -600,7 +653,7 @@ func BenchmarkReader(b *testing.B) {
 				defer c.End()
 
 				for c.Loop() {
-					_, _, ok, err = r.Get(goldenKeys[i%len(goldenKeys)], 1, dst)
+					_, _, ok, err = r.Get(b.Context(), goldenKeys[i%len(goldenKeys)], 1, dst)
 					i++
 				}
 
@@ -651,7 +704,7 @@ func readSteps(c *prop.Case) {
 				call := c.History().Invoke(client, name, []any{p.key, p.seq})
 				var text []byte
 				if name == readGet {
-					value, seq, ok, err := r.Get(p.key, p.seq, nil)
+					value, seq, ok, err := r.Get(c.Context(), p.key, p.seq, nil)
 					if err != nil {
 						text = fmt.Append(text, err)
 					} else if ok {
@@ -661,14 +714,15 @@ func readSteps(c *prop.Case) {
 
 					return
 				}
-				it := r.NewIter()
-				ok := name == moveSeekGE && it.SeekGE(p.key, p.seq) || name == moveSeekLT && it.SeekLT(p.key, p.seq)
+				it := r.NewIter(sstable.IterOptions{})
+				ok := name == moveSeekGE && it.SeekGE(c.Context(), p.key, p.seq) ||
+					name == moveSeekLT && it.SeekLT(c.Context(), p.key, p.seq)
 				for n := 0; ok && n < seekReads; n++ {
 					text = fmt.Appendf(text, "%q %d %q;", it.Key(), it.Seq(), it.Value())
 					if name == moveSeekGE {
-						ok = it.Next()
+						ok = it.Next(c.Context())
 					} else {
-						ok = it.Prev()
+						ok = it.Prev(c.Context())
 					}
 				}
 				if err := it.Close(); err != nil {
@@ -724,13 +778,13 @@ func openChanged(c *prop.Case) {
 	}
 	data = data[:c.Draw(prop.Integer(0, len(data)), "length")]
 
-	r, err := sstable.Open(bytes.NewReader(data), int64(len(data)), sstable.ReaderOptions{})
+	r, err := sstable.Open(c.Context(), bytesFile(data), int64(len(data)), sstable.ReaderOptions{})
 	if err != nil {
 		assert.ErrorIs(c, err, sstable.ErrCorrupt, "Open refuses a changed table with ErrCorrupt")
 
 		return
 	}
-	if err := readAll(r, es); err != nil {
+	if err := readAll(c.Context(), r, es); err != nil {
 		assert.ErrorIs(c, err, sstable.ErrCorrupt, "a read refuses a changed block with ErrCorrupt")
 	}
 }

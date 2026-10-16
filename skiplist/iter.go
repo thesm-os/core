@@ -3,7 +3,10 @@
 
 package skiplist
 
-import "sync/atomic"
+import (
+	"context"
+	"sync/atomic"
+)
 
 // Iter is a cursor over the entries of a [List], in the order of the List.
 // A move positions the cursor on an entry or exhausts it. A cursor yields
@@ -13,6 +16,9 @@ import "sync/atomic"
 // A cursor moves forward along the links of level 0. The nodes have no links
 // back, so [Iter.Prev] searches from the head for the last entry before the
 // current one, in O(log n) steps for n entries, as [Iter.SeekLT] does.
+//
+// Each move takes a context and ignores it, because a memtable does not
+// wait. The moves then match those of the cursor of a table.
 //
 // The key and the value of the current entry are valid until [List.Reset],
 // also after the next move.
@@ -39,7 +45,7 @@ type Iter struct {
 // # Allocation contract
 //
 // Zero-alloc.
-func (it *Iter) First() bool {
+func (it *Iter) First(context.Context) bool {
 	it.node = atomic.LoadUint32(&it.list.nodes[nodeHeader])
 
 	return it.node != 0
@@ -51,7 +57,7 @@ func (it *Iter) First() bool {
 // # Allocation contract
 //
 // Zero-alloc.
-func (it *Iter) Last() bool {
+func (it *Iter) Last(context.Context) bool {
 	it.node = it.list.last()
 
 	return it.node != 0
@@ -64,7 +70,7 @@ func (it *Iter) Last() bool {
 // # Allocation contract
 //
 // Zero-alloc.
-func (it *Iter) SeekGE(key []byte, seq uint64) bool {
+func (it *Iter) SeekGE(_ context.Context, key []byte, seq uint64) bool {
 	_, it.node = it.list.search(key, seq)
 
 	return it.node != 0
@@ -76,7 +82,7 @@ func (it *Iter) SeekGE(key []byte, seq uint64) bool {
 // # Allocation contract
 //
 // Zero-alloc.
-func (it *Iter) SeekLT(key []byte, seq uint64) bool {
+func (it *Iter) SeekLT(_ context.Context, key []byte, seq uint64) bool {
 	it.node, _ = it.list.search(key, seq)
 
 	return it.node != 0
@@ -88,7 +94,7 @@ func (it *Iter) SeekLT(key []byte, seq uint64) bool {
 // # Allocation contract
 //
 // Zero-alloc.
-func (it *Iter) Next() bool {
+func (it *Iter) Next(context.Context) bool {
 	if it.node == 0 {
 		return false
 	}
@@ -105,7 +111,7 @@ func (it *Iter) Next() bool {
 // # Allocation contract
 //
 // Zero-alloc.
-func (it *Iter) Prev() bool {
+func (it *Iter) Prev(context.Context) bool {
 	if it.node == 0 {
 		return false
 	}

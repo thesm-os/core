@@ -6,33 +6,36 @@ package sstable
 import (
 	"bytes"
 	"cmp"
+	"context"
 )
 
 // Source is a cursor over a run of entries in the order of [Compare]. A move
-// positions the cursor on an entry or exhausts it. An [Iter] of a table, a
-// [Merger] and the cursor of a memtable are Sources.
+// positions the cursor on an entry or exhausts it. Each move takes the
+// context of the read that it can make, and a read that ends with its
+// context exhausts the cursor. An [Iter] of a table, a [Merger] and the
+// cursor of a memtable are Sources.
 type Source interface {
 	// First moves to the first entry and reports whether it exists.
-	First() bool
+	First(ctx context.Context) bool
 
 	// Last moves to the last entry and reports whether it exists.
-	Last() bool
+	Last(ctx context.Context) bool
 
 	// SeekGE moves to the first entry at or after the entry (key, seq) and
 	// reports whether it exists.
-	SeekGE(key []byte, seq uint64) bool
+	SeekGE(ctx context.Context, key []byte, seq uint64) bool
 
 	// SeekLT moves to the last entry before the entry (key, seq) and reports
 	// whether it exists.
-	SeekLT(key []byte, seq uint64) bool
+	SeekLT(ctx context.Context, key []byte, seq uint64) bool
 
 	// Next moves to the next entry and reports whether it exists. Next of a
 	// cursor on no entry reports false.
-	Next() bool
+	Next(ctx context.Context) bool
 
 	// Prev moves to the entry before the current one and reports whether it
 	// exists. Prev of a cursor on no entry reports false.
-	Prev() bool
+	Prev(ctx context.Context) bool
 
 	// Key returns the key of the current entry. It is valid until the next
 	// move of the cursor.

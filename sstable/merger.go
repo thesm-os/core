@@ -4,6 +4,7 @@
 package sstable
 
 import (
+	"context"
 	"errors"
 	"io"
 	"slices"
@@ -36,7 +37,7 @@ const (
 // other source to the current entry, moves each one to its side of the
 // current entry, and builds the heap in the new direction. When a source
 // returns an error from Err, the merge is exhausted and [Merger.Err] returns
-// that error.
+// that error. Each move passes its context to the moves of the sources.
 //
 // [Merger.Close] closes every source of the merge that implements
 // io.Closer, such as an [Iter] of a table. [Merger.Reset] replaces the
@@ -114,8 +115,8 @@ func (m *Merger) Close() error {
 // # Allocation contract
 //
 // Zero-alloc once the heap has grown to the number of sources.
-func (m *Merger) First() bool {
-	return m.seek(seekFirst, nil, 0)
+func (m *Merger) First(ctx context.Context) bool {
+	return m.seek(ctx, seekFirst, nil, 0)
 }
 
 // Last moves every source to its last entry, and moves the merge to the
@@ -129,8 +130,8 @@ func (m *Merger) First() bool {
 // # Allocation contract
 //
 // Zero-alloc once the heap has grown to the number of sources.
-func (m *Merger) Last() bool {
-	return m.seek(seekLast, nil, 0)
+func (m *Merger) Last(ctx context.Context) bool {
+	return m.seek(ctx, seekLast, nil, 0)
 }
 
 // SeekGE moves every source to its first entry at or after the entry (key,
@@ -145,8 +146,8 @@ func (m *Merger) Last() bool {
 // # Allocation contract
 //
 // Zero-alloc once the heap has grown to the number of sources.
-func (m *Merger) SeekGE(key []byte, seq uint64) bool {
-	return m.seek(seekGE, key, seq)
+func (m *Merger) SeekGE(ctx context.Context, key []byte, seq uint64) bool {
+	return m.seek(ctx, seekGE, key, seq)
 }
 
 // SeekLT moves every source to its last entry before the entry (key, seq),
@@ -161,8 +162,8 @@ func (m *Merger) SeekGE(key []byte, seq uint64) bool {
 // # Allocation contract
 //
 // Zero-alloc once the heap has grown to the number of sources.
-func (m *Merger) SeekLT(key []byte, seq uint64) bool {
-	return m.seek(seekLT, key, seq)
+func (m *Merger) SeekLT(ctx context.Context, key []byte, seq uint64) bool {
+	return m.seek(ctx, seekLT, key, seq)
 }
 
 // Next moves the merge to the next entry of the union and reports whether it
@@ -179,8 +180,8 @@ func (m *Merger) SeekLT(key []byte, seq uint64) bool {
 // # Allocation contract
 //
 // Zero-alloc.
-func (m *Merger) Next() bool {
-	return m.move(false)
+func (m *Merger) Next(ctx context.Context) bool {
+	return m.move(ctx, false)
 }
 
 // Prev moves the merge to the entry of the union before the current one and
@@ -197,8 +198,8 @@ func (m *Merger) Next() bool {
 // # Allocation contract
 //
 // Zero-alloc.
-func (m *Merger) Prev() bool {
-	return m.move(true)
+func (m *Merger) Prev(ctx context.Context) bool {
+	return m.move(ctx, true)
 }
 
 // Key returns the key of the current entry, or nil for a merge on no entry.
@@ -253,23 +254,23 @@ func (m *Merger) Err() error {
 	return m.err
 }
 
-// seek moves every source with the move kind, and builds the heap in the
-// direction of the move: forward for seekFirst and seekGE, back for seekLast
-// and seekLT. It reports whether the merge is on an entry. A source whose
-// Err is not nil after its move exhausts the merge.
-func (m *Merger) seek(kind seekKind, key []byte, seq uint64) bool {
+// seek moves every source with the move kind under ctx, and builds the heap
+// in the direction of the move: forward for seekFirst and seekGE, back for
+// seekLast and seekLT. It reports whether the merge is on an entry. A source
+// whose Err is not nil after its move exhausts the merge.
+func (m *Merger) seek(ctx context.Context, kind seekKind, key []byte, seq uint64) bool {
 	m.heap, m.err, m.reverse = slices.Grow(m.heap[:0], len(m.sources)), nil, kind == seekLast || kind == seekLT
 	for i, s := range m.sources {
 		var ok bool
 		switch kind {
 		case seekFirst:
-			ok = s.First()
+			ok = s.First(ctx)
 		case seekLast:
-			ok = s.Last()
+			ok = s.Last(ctx)
 		case seekGE:
-			ok = s.SeekGE(key, seq)
+			ok = s.SeekGE(ctx, key, seq)
 		default:
-			ok = s.SeekLT(key, seq)
+			ok = s.SeekLT(ctx, key, seq)
 		}
 		if ok {
 			m.heap = append(m.heap, i)
@@ -283,24 +284,24 @@ func (m *Merger) seek(kind seekKind, key []byte, seq uint64) bool {
 	return m.heapify()
 }
 
-// move moves the merge back when back is true, and forward otherwise. A move
-// against the direction of the last move turns the merge first. The source
-// at the top of the heap then moves, and the heap is restored. It reports
-// whether the merge is on an entry.
-func (m *Merger) move(back bool) bool {
+// move moves the merge back when back is true, and forward otherwise, under
+// ctx. A move against the direction of the last move turns the merge first.
+// The source at the top of the heap then moves, and the heap is restored. It
+// reports whether the merge is on an entry.
+func (m *Merger) move(ctx context.Context, back bool) bool {
 	if len(m.heap) == 0 {
 		return false
 	}
-	if back != m.reverse && !m.turn() {
+	if back != m.reverse && !m.turn(ctx) {
 		return false
 	}
 
 	s := m.sources[m.heap[0]]
 	var ok bool
 	if back {
-		ok = s.Prev()
+		ok = s.Prev(ctx)
 	} else {
-		ok = s.Next()
+		ok = s.Next(ctx)
 	}
 	if !ok {
 		if m.err = s.Err(); m.err != nil {
@@ -325,9 +326,9 @@ func (m *Merger) move(back bool) bool {
 // before (e, i), and otherwise moves to its previous entry, or to its last
 // entry when the seek exhausted it. Before a move forward, j moves past an
 // entry before (e, i), and otherwise keeps its place. turn then builds the
-// heap in the new direction, with i at its top. A source whose Err is not
-// nil exhausts the merge, and turn reports false.
-func (m *Merger) turn() bool {
+// heap in the new direction, with i at its top. The sources move under ctx.
+// A source whose Err is not nil exhausts the merge, and turn reports false.
+func (m *Merger) turn(ctx context.Context) bool {
 	top := m.heap[0]
 	key, seq := m.sources[top].Key(), m.sources[top].Seq()
 	m.heap = append(m.heap[:0], top)
@@ -335,16 +336,16 @@ func (m *Merger) turn() bool {
 		if j == top {
 			continue
 		}
-		ok := s.SeekGE(key, seq)
+		ok := s.SeekGE(ctx, key, seq)
 		//dokimi:mutate-skip ror-boundary: the loop skips the top, so j never equals top
 		before := ok && j < top && Compare(s.Key(), s.Seq(), key, seq) == 0
 		if m.reverse && before {
-			ok = s.Next()
+			ok = s.Next(ctx)
 		} else if !m.reverse && !before {
 			if ok {
-				ok = s.Prev()
+				ok = s.Prev(ctx)
 			} else if s.Err() == nil {
-				ok = s.Last()
+				ok = s.Last(ctx)
 			}
 		}
 		if ok {

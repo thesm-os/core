@@ -5,6 +5,7 @@ package sstable_test
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"math"
@@ -100,21 +101,21 @@ type openSource struct {
 }
 
 // First moves to the first entry.
-func (s *sliceSource) First() bool {
+func (s *sliceSource) First(context.Context) bool {
 	s.i, s.err = 0, nil
 
 	return s.moved()
 }
 
 // Last moves to the last entry.
-func (s *sliceSource) Last() bool {
+func (s *sliceSource) Last(context.Context) bool {
 	s.i, s.err = len(s.es)-1, nil
 
 	return s.moved()
 }
 
 // SeekGE moves to the first entry at or after (key, seq).
-func (s *sliceSource) SeekGE(key []byte, seq uint64) bool {
+func (s *sliceSource) SeekGE(_ context.Context, key []byte, seq uint64) bool {
 	s.i, _ = slices.BinarySearchFunc(s.es, entry{key: key, seq: seq}, func(a, b entry) int {
 		return sstable.Compare(a.key, a.seq, b.key, b.seq)
 	})
@@ -124,7 +125,7 @@ func (s *sliceSource) SeekGE(key []byte, seq uint64) bool {
 }
 
 // SeekLT moves to the last entry before (key, seq).
-func (s *sliceSource) SeekLT(key []byte, seq uint64) bool {
+func (s *sliceSource) SeekLT(_ context.Context, key []byte, seq uint64) bool {
 	i, _ := slices.BinarySearchFunc(s.es, entry{key: key, seq: seq}, func(a, b entry) int {
 		return sstable.Compare(a.key, a.seq, b.key, b.seq)
 	})
@@ -135,7 +136,7 @@ func (s *sliceSource) SeekLT(key []byte, seq uint64) bool {
 
 // Next moves to the next entry. Next of a source on no entry reports false
 // and leaves it there.
-func (s *sliceSource) Next() bool {
+func (s *sliceSource) Next(context.Context) bool {
 	if s.on {
 		s.i++
 	}
@@ -145,7 +146,7 @@ func (s *sliceSource) Next() bool {
 
 // Prev moves to the entry before the current one. Prev of a source on no
 // entry reports false and leaves it there.
-func (s *sliceSource) Prev() bool {
+func (s *sliceSource) Prev(context.Context) bool {
 	if s.on {
 		s.i--
 	}
@@ -192,6 +193,59 @@ func (s *sliceSource) moved() bool {
 	return s.on
 }
 
+// recordingSource is a sliceSource whose moves record the value of callKey
+// in their context as call. The machine of a merge checks with it which
+// context reached each source that a move of the merge moved.
+type recordingSource struct {
+	*sliceSource
+	call any
+}
+
+var _ sstable.Source = (*recordingSource)(nil)
+
+// First records the context and moves to the first entry.
+func (s *recordingSource) First(ctx context.Context) bool {
+	s.call = ctx.Value(callKey{})
+
+	return s.sliceSource.First(ctx)
+}
+
+// Last records the context and moves to the last entry.
+func (s *recordingSource) Last(ctx context.Context) bool {
+	s.call = ctx.Value(callKey{})
+
+	return s.sliceSource.Last(ctx)
+}
+
+// SeekGE records the context and moves to the first entry at or after
+// (key, seq).
+func (s *recordingSource) SeekGE(ctx context.Context, key []byte, seq uint64) bool {
+	s.call = ctx.Value(callKey{})
+
+	return s.sliceSource.SeekGE(ctx, key, seq)
+}
+
+// SeekLT records the context and moves to the last entry before (key, seq).
+func (s *recordingSource) SeekLT(ctx context.Context, key []byte, seq uint64) bool {
+	s.call = ctx.Value(callKey{})
+
+	return s.sliceSource.SeekLT(ctx, key, seq)
+}
+
+// Next records the context and moves to the next entry.
+func (s *recordingSource) Next(ctx context.Context) bool {
+	s.call = ctx.Value(callKey{})
+
+	return s.sliceSource.Next(ctx)
+}
+
+// Prev records the context and moves to the entry before the current one.
+func (s *recordingSource) Prev(ctx context.Context) bool {
+	s.call = ctx.Value(callKey{})
+
+	return s.sliceSource.Prev(ctx)
+}
+
 func TestMerger(t *testing.T) {
 	t.Parallel()
 
@@ -207,11 +261,11 @@ func TestMerger(t *testing.T) {
 			t.Parallel()
 			var m sstable.Merger
 			m.Reset([]sstable.Source{&sliceSource{es: goldenTable()}})
-			_, err := scanAll(&m)
+			_, err := scanAll(t.Context(), &m)
 			assert.NoError(t, err, "the first merge reads its source")
 			want := []entry{{key: []byte("z"), seq: 1}}
 			m.Reset([]sstable.Source{&sliceSource{es: want}})
-			got, err := scanAll(&m)
+			got, err := scanAll(t.Context(), &m)
 			assert.NoError(t, err, "the second merge reads its source")
 			assert.Equal(t, got, want, "the merge yields the entries of the new sources", assert.EquateEmpty())
 		})
@@ -234,7 +288,7 @@ func TestMerger(t *testing.T) {
 			sources := []*sliceSource{{es: goldenTable()}, {es: goldenTable()}, {}}
 			var m sstable.Merger
 			m.Reset([]sstable.Source{sources[0], sources[1], sources[2]})
-			assert.True(t, m.First(), "the merge has an entry")
+			assert.True(t, m.First(t.Context()), "the merge has an entry")
 			assert.NoError(t, m.Close(), "Close closes the sources")
 			for _, s := range sources {
 				expect.Equal(t, s.closes, 1, "Close closes the source once")
@@ -265,10 +319,10 @@ func TestMerger(t *testing.T) {
 			t.Parallel()
 			data := writeTable(t, settings[0].opts, goldenTable())
 			data[len(data)/3] ^= 1
-			it := openTable(t, data, sstable.ReaderOptions{}).NewIter()
+			it := openTable(t, data, sstable.ReaderOptions{}).NewIter(sstable.IterOptions{})
 			var m sstable.Merger
 			m.Reset([]sstable.Source{&sliceSource{es: goldenTable()}, it})
-			_, err := scanAll(&m)
+			_, err := scanAll(t.Context(), &m)
 			assert.ErrorIs(t, err, sstable.ErrCorrupt, "the merge stops at the changed block")
 			assert.ErrorIs(t, m.Close(), sstable.ErrCorrupt, "Close returns the error of the cursor of the table")
 		})
@@ -277,11 +331,11 @@ func TestMerger(t *testing.T) {
 			t.Parallel()
 			var m sstable.Merger
 			m.Reset([]sstable.Source{&sliceSource{es: goldenTable()}})
-			assert.True(t, m.First(), "the merge has an entry")
+			assert.True(t, m.First(t.Context()), "the merge has an entry")
 			assert.NoError(t, m.Close(), "Close closes the source")
 			expect.Nil(t, m.Key(), "the closed merge has no key")
-			expect.False(t, m.Next(), "the closed merge has no next entry")
-			expect.False(t, m.First(), "the closed merge has no sources")
+			expect.False(t, m.Next(t.Context()), "the closed merge has no next entry")
+			expect.False(t, m.First(t.Context()), "the closed merge has no sources")
 		})
 
 		t.Run("lets Reset give the merge new sources", func(t *testing.T) {
@@ -291,7 +345,7 @@ func TestMerger(t *testing.T) {
 			assert.NoError(t, m.Close(), "Close closes the source")
 			want := []entry{{key: []byte("z"), seq: 1}}
 			m.Reset([]sstable.Source{&sliceSource{es: want}})
-			got, err := scanAll(&m)
+			got, err := scanAll(t.Context(), &m)
 			assert.NoError(t, err, "the merge reads the new source")
 			assert.Equal(t, got, want, "the merge yields the entries of the new source")
 		})
@@ -303,14 +357,14 @@ func TestMerger(t *testing.T) {
 		t.Run("reports false for the zero Merger", func(t *testing.T) {
 			t.Parallel()
 			var m sstable.Merger
-			assert.False(t, m.First(), "a merge of no sources has no entry")
+			assert.False(t, m.First(t.Context()), "a merge of no sources has no entry")
 		})
 
 		t.Run("returns the error of a source that fails", func(t *testing.T) {
 			t.Parallel()
 			var m sstable.Merger
 			m.Reset([]sstable.Source{&sliceSource{es: goldenTable()}, &sliceSource{es: goldenTable(), failAt: 1}})
-			expect.False(t, m.First(), "the merge is exhausted")
+			expect.False(t, m.First(t.Context()), "the merge is exhausted")
 			expect.ErrorIs(t, m.Err(), errSource, "the merge returns the error of the source")
 			expect.Nil(t, m.Key(), "the exhausted merge has no key")
 		})
@@ -320,9 +374,9 @@ func TestMerger(t *testing.T) {
 			es := goldenTable()
 			var m sstable.Merger
 			m.Reset([]sstable.Source{&sliceSource{es: es[:goldenEntries/2]}, &sliceSource{es: es[goldenEntries/2:]}})
-			assert.True(t, m.First(), "First finds an entry")
-			assert.True(t, m.Next(), "Next finds an entry")
-			got, err := scanAll(&m)
+			assert.True(t, m.First(t.Context()), "First finds an entry")
+			assert.True(t, m.Next(t.Context()), "Next finds an entry")
+			got, err := scanAll(t.Context(), &m)
 			assert.NoError(t, err, "the merge reads its sources")
 			assert.Equal(t, got, es, "the second First yields the union from its first entry")
 		})
@@ -334,14 +388,14 @@ func TestMerger(t *testing.T) {
 		t.Run("reports false for the zero Merger", func(t *testing.T) {
 			t.Parallel()
 			var m sstable.Merger
-			assert.False(t, m.Last(), "a merge of no sources has no entry")
+			assert.False(t, m.Last(t.Context()), "a merge of no sources has no entry")
 		})
 
 		t.Run("returns the error of a source that fails", func(t *testing.T) {
 			t.Parallel()
 			var m sstable.Merger
 			m.Reset([]sstable.Source{&sliceSource{es: goldenTable()}, &sliceSource{es: goldenTable(), failAt: 1}})
-			expect.False(t, m.Last(), "the merge is exhausted")
+			expect.False(t, m.Last(t.Context()), "the merge is exhausted")
 			expect.ErrorIs(t, m.Err(), errSource, "the merge returns the error of the source")
 			expect.Nil(t, m.Key(), "the exhausted merge has no key")
 		})
@@ -351,9 +405,9 @@ func TestMerger(t *testing.T) {
 			es := goldenTable()
 			var m sstable.Merger
 			m.Reset([]sstable.Source{&sliceSource{es: es[:goldenEntries/2]}, &sliceSource{es: es[goldenEntries/2:]}})
-			assert.True(t, m.Last(), "Last finds an entry")
-			assert.True(t, m.Prev(), "Prev finds an entry")
-			got, err := scanBack(&m)
+			assert.True(t, m.Last(t.Context()), "Last finds an entry")
+			assert.True(t, m.Prev(t.Context()), "Prev finds an entry")
+			got, err := scanBack(t.Context(), &m)
 			assert.NoError(t, err, "the merge reads its sources")
 			want := slices.Clone(es)
 			slices.Reverse(want)
@@ -377,7 +431,7 @@ func TestMerger(t *testing.T) {
 				i, _ := slices.BinarySearchFunc(want, probe, func(a sourced, b entry) int {
 					return sstable.Compare(a.key, a.seq, b.key, b.seq)
 				})
-				ok := m.SeekGE(probe.key, probe.seq)
+				ok := m.SeekGE(c.Context(), probe.key, probe.seq)
 				assert.NoError(c, m.Err(), "the merge reads its sources")
 				if i == len(want) {
 					assert.False(c, ok, "SeekGE finds no entry past the union")
@@ -395,7 +449,7 @@ func TestMerger(t *testing.T) {
 			t.Parallel()
 			var m sstable.Merger
 			m.Reset([]sstable.Source{&sliceSource{es: goldenTable()}, &sliceSource{es: goldenTable(), failAt: 1}})
-			expect.False(t, m.SeekGE(goldenKeys[30], 1), "the merge is exhausted")
+			expect.False(t, m.SeekGE(t.Context(), goldenKeys[30], 1), "the merge is exhausted")
 			expect.ErrorIs(t, m.Err(), errSource, "the merge returns the error of the source")
 			expect.Nil(t, m.Key(), "the exhausted merge has no key")
 		})
@@ -417,7 +471,7 @@ func TestMerger(t *testing.T) {
 				i, _ := slices.BinarySearchFunc(want, probe, func(a sourced, b entry) int {
 					return sstable.Compare(a.key, a.seq, b.key, b.seq)
 				})
-				ok := m.SeekLT(probe.key, probe.seq)
+				ok := m.SeekLT(c.Context(), probe.key, probe.seq)
 				assert.NoError(c, m.Err(), "the merge reads its sources")
 				if i == 0 {
 					assert.False(c, ok, "SeekLT finds no entry before the union")
@@ -435,7 +489,7 @@ func TestMerger(t *testing.T) {
 			t.Parallel()
 			var m sstable.Merger
 			m.Reset([]sstable.Source{&sliceSource{es: goldenTable()}, &sliceSource{es: goldenTable(), failAt: 1}})
-			expect.False(t, m.SeekLT(goldenKeys[30], 1), "the merge is exhausted")
+			expect.False(t, m.SeekLT(t.Context(), goldenKeys[30], 1), "the merge is exhausted")
 			expect.ErrorIs(t, m.Err(), errSource, "the merge returns the error of the source")
 			expect.Nil(t, m.Key(), "the exhausted merge has no key")
 		})
@@ -451,7 +505,7 @@ func TestMerger(t *testing.T) {
 					runs, want := drawRuns(c, 0)
 					var m sstable.Merger
 					m.Reset(sliceSources(runs))
-					got, err := scanAll(&m)
+					got, err := scanAll(c.Context(), &m)
 					assert.NoError(c, err, "the merge reads its sources")
 					wantEntries := make([]entry, 0, len(want))
 					for _, s := range want {
@@ -469,10 +523,11 @@ func TestMerger(t *testing.T) {
 			for _, e := range es {
 				assert.NoError(t, l.Add(e.key, e.seq, e.value), "Add adds the entry")
 			}
-			it := openTable(t, writeTable(t, settings[3].opts, es), sstable.ReaderOptions{}).NewIter()
+			it := openTable(t, writeTable(t, settings[3].opts, es), sstable.ReaderOptions{}).
+				NewIter(sstable.IterOptions{})
 			var m sstable.Merger
 			m.Reset([]sstable.Source{l.NewIter(), it})
-			got, err := scanAll(&m)
+			got, err := scanAll(t.Context(), &m)
 			assert.NoError(t, err, "the merge reads both sources")
 			want := make([]entry, 0, 2*len(es))
 			for _, e := range es {
@@ -486,9 +541,9 @@ func TestMerger(t *testing.T) {
 			t.Parallel()
 			var m sstable.Merger
 			m.Reset([]sstable.Source{&sliceSource{es: goldenTable()}, &sliceSource{es: goldenTable(), failAt: 6}})
-			_, err := scanAll(&m)
+			_, err := scanAll(t.Context(), &m)
 			assert.ErrorIs(t, err, errSource, "the merge stops with the error of the source")
-			expect.False(t, m.Next(), "the merge is exhausted")
+			expect.False(t, m.Next(t.Context()), "the merge is exhausted")
 			expect.Nil(t, m.Key(), "the exhausted merge has no key")
 		})
 
@@ -499,8 +554,8 @@ func TestMerger(t *testing.T) {
 			t.Parallel()
 			var m sstable.Merger
 			m.Reset([]sstable.Source{&sliceSource{es: goldenTable(), failAt: 2}, &sliceSource{es: goldenTable()}})
-			assert.True(t, m.Last(), "Last finds an entry")
-			expect.False(t, m.Next(), "the merge is exhausted")
+			assert.True(t, m.Last(t.Context()), "Last finds an entry")
+			expect.False(t, m.Next(t.Context()), "the merge is exhausted")
 			expect.ErrorIs(t, m.Err(), errSource, "the merge returns the error of the seek of its turn")
 			expect.Nil(t, m.Key(), "the exhausted merge has no key")
 		})
@@ -515,7 +570,7 @@ func TestMerger(t *testing.T) {
 				runs, want := drawRuns(c, 0)
 				var m sstable.Merger
 				m.Reset(sliceSources(runs))
-				got, err := scanBack(&m)
+				got, err := scanBack(c.Context(), &m)
 				assert.NoError(c, err, "the merge reads its sources")
 				wantEntries := make([]entry, 0, len(want))
 				for _, s := range slices.Backward(want) {
@@ -533,10 +588,11 @@ func TestMerger(t *testing.T) {
 			for _, e := range es {
 				assert.NoError(t, l.Add(e.key, e.seq, e.value), "Add adds the entry")
 			}
-			it := openTable(t, writeTable(t, settings[3].opts, es), sstable.ReaderOptions{}).NewIter()
+			it := openTable(t, writeTable(t, settings[3].opts, es), sstable.ReaderOptions{}).
+				NewIter(sstable.IterOptions{})
 			var m sstable.Merger
 			m.Reset([]sstable.Source{l.NewIter(), it})
-			got, err := scanBack(&m)
+			got, err := scanBack(t.Context(), &m)
 			assert.NoError(t, err, "the merge reads both sources")
 			want := make([]entry, 0, 2*len(es))
 			for _, e := range slices.Backward(es) {
@@ -550,9 +606,9 @@ func TestMerger(t *testing.T) {
 			t.Parallel()
 			var m sstable.Merger
 			m.Reset([]sstable.Source{&sliceSource{es: goldenTable()}, &sliceSource{es: goldenTable(), failAt: 6}})
-			_, err := scanBack(&m)
+			_, err := scanBack(t.Context(), &m)
 			assert.ErrorIs(t, err, errSource, "the merge stops with the error of the source")
-			expect.False(t, m.Prev(), "the merge is exhausted")
+			expect.False(t, m.Prev(t.Context()), "the merge is exhausted")
 			expect.Nil(t, m.Key(), "the exhausted merge has no key")
 		})
 
@@ -563,8 +619,8 @@ func TestMerger(t *testing.T) {
 			t.Parallel()
 			var m sstable.Merger
 			m.Reset([]sstable.Source{&sliceSource{es: goldenTable()}, &sliceSource{es: goldenTable(), failAt: 2}})
-			assert.True(t, m.First(), "First finds an entry")
-			expect.False(t, m.Prev(), "the merge is exhausted")
+			assert.True(t, m.First(t.Context()), "First finds an entry")
+			expect.False(t, m.Prev(t.Context()), "the merge is exhausted")
 			expect.ErrorIs(t, m.Err(), errSource, "the merge returns the error of the seek of its turn")
 			expect.Nil(t, m.Key(), "the exhausted merge has no key")
 		})
@@ -629,30 +685,30 @@ func TestMergerAllocs(t *testing.T) {
 	m.Reset(sources)
 
 	var ok bool
-	expect.MaxAllocs(t, func() { ok = m.First() }, 0, "First does not allocate once its heap has grown")
+	expect.MaxAllocs(t, func() { ok = m.First(t.Context()) }, 0, "First does not allocate once its heap has grown")
 	expect.True(t, ok, "the test measures a merge on an entry")
-	expect.MaxAllocs(t, func() { ok = m.Last() }, 0, "Last does not allocate")
+	expect.MaxAllocs(t, func() { ok = m.Last(t.Context()) }, 0, "Last does not allocate")
 	expect.True(t, ok, "the test measures a merge on the last entry")
-	expect.MaxAllocs(t, func() { ok = m.SeekGE(goldenKeys[30], 1) }, 0, "SeekGE does not allocate")
+	expect.MaxAllocs(t, func() { ok = m.SeekGE(t.Context(), goldenKeys[30], 1) }, 0, "SeekGE does not allocate")
 	expect.True(t, ok, "the test measures a seek to an entry")
-	expect.MaxAllocs(t, func() { ok = m.SeekLT(goldenKeys[30], 1) }, 0, "SeekLT does not allocate")
+	expect.MaxAllocs(t, func() { ok = m.SeekLT(t.Context(), goldenKeys[30], 1) }, 0, "SeekLT does not allocate")
 	expect.True(t, ok, "the test measures a seek back to an entry")
 	expect.MaxAllocs(t, func() {
-		if !m.Next() {
-			m.First()
+		if !m.Next(t.Context()) {
+			m.First(t.Context())
 		}
 	}, 0, "Next does not allocate")
 	expect.MaxAllocs(t, func() {
-		if !m.Prev() {
-			m.Last()
+		if !m.Prev(t.Context()) {
+			m.Last(t.Context())
 		}
 	}, 0, "Prev does not allocate")
 	expect.MaxAllocs(t, func() {
-		if !m.Next() {
-			m.First()
+		if !m.Next(t.Context()) {
+			m.First(t.Context())
 		}
-		if !m.Prev() {
-			m.Last()
+		if !m.Prev(t.Context()) {
+			m.Last(t.Context())
 		}
 	}, 0, "a move against the direction of the last move does not allocate")
 
@@ -679,15 +735,15 @@ func BenchmarkMerger(b *testing.B) {
 	b.Run("Next", func(b *testing.B) {
 		var m sstable.Merger
 		m.Reset(sources)
-		assert.True(b, m.First(), "the merge has an entry")
+		assert.True(b, m.First(b.Context()), "the merge has an entry")
 		n := 0
 
 		c := bench.Start(b).MaxAllocs(0)
 		defer c.End()
 
 		for c.Loop() {
-			if !m.Next() {
-				m.First()
+			if !m.Next(b.Context()) {
+				m.First(b.Context())
 			}
 			n += len(m.Key())
 		}
@@ -698,15 +754,15 @@ func BenchmarkMerger(b *testing.B) {
 	b.Run("Prev", func(b *testing.B) {
 		var m sstable.Merger
 		m.Reset(sources)
-		assert.True(b, m.Last(), "the merge has an entry")
+		assert.True(b, m.Last(b.Context()), "the merge has an entry")
 		n := 0
 
 		c := bench.Start(b).MaxAllocs(0)
 		defer c.End()
 
 		for c.Loop() {
-			if !m.Prev() {
-				m.Last()
+			if !m.Prev(b.Context()) {
+				m.Last(b.Context())
 			}
 			n += len(m.Key())
 		}
@@ -715,12 +771,13 @@ func BenchmarkMerger(b *testing.B) {
 	})
 }
 
-// mergeSteps draws up to four runs as sources of drawn kinds: a sliceSource,
-// a cursor of a table or a cursor of a List. It moves one Merger of them
-// through a machine of its six moves. The model of the merge is a place in
-// the sorted union of the runs. The value of each entry starts with the
-// number of its run, so the model also checks the order of entries that
-// compare equal.
+// mergeSteps draws up to four runs as sources of drawn kinds: a
+// recordingSource, a cursor of a table or a cursor of a List. It moves one
+// Merger of them through a machine of its six moves. The model of the merge
+// is a place in the sorted union of the runs. The value of each entry starts
+// with the number of its run, so the model also checks the order of entries
+// that compare equal. Each move passes a context with the name of the move,
+// and each recordingSource that the move moves must receive that context.
 func mergeSteps(c *prop.Case) {
 	runs, union := drawRuns(c, 0)
 	sources := make([]sstable.Source, 0, len(runs))
@@ -728,7 +785,8 @@ func mergeSteps(c *prop.Case) {
 		switch c.Draw(prop.SampledFrom(sliceKind, tableKind, listKind), "kind") {
 		case tableKind:
 			opts := settings[c.Draw(prop.Integer(0, len(settings)-1), "setting")].opts
-			sources = append(sources, openTable(c, writeTable(c, opts, es), sstable.ReaderOptions{}).NewIter())
+			r := openTable(c, writeTable(c, opts, es), sstable.ReaderOptions{})
+			sources = append(sources, r.NewIter(sstable.IterOptions{}))
 		case listKind:
 			l, err := skiplist.New(skiplist.Config{
 				DataBytes: listBytes,
@@ -741,7 +799,7 @@ func mergeSteps(c *prop.Case) {
 			}
 			sources = append(sources, l.NewIter())
 		default:
-			sources = append(sources, &sliceSource{es: es})
+			sources = append(sources, &recordingSource{sliceSource: &sliceSource{es: es}})
 		}
 	}
 	var m sstable.Merger
@@ -752,19 +810,35 @@ func mergeSteps(c *prop.Case) {
 		return entry{key: c.Draw(prop.SampledFrom(keys...), "key"), seq: c.Draw(prop.Integer[uint64](0, 6), "seq")}
 	}
 
+	// move is the name of the last move, and moved the moves of each
+	// recordingSource before it. under returns the context of the move of
+	// the name.
+	var move string
+	moved := make([]int, len(sources))
+	under := func(name string) context.Context {
+		move = name
+		for i, s := range sources {
+			if r, isRecording := s.(*recordingSource); isRecording {
+				moved[i] = r.moves
+			}
+		}
+
+		return context.WithValue(c.Context(), callKey{}, name)
+	}
+
 	stateful.Steps(c, stateful.Machine[struct{}]{
 		Actions: []stateful.Action[struct{}]{
 			{
 				Name: moveFirst,
 				Run: func(*prop.Case, int, any) {
-					ok = m.First()
+					ok = m.First(under(moveFirst))
 					at, on = 0, len(union) != 0
 				},
 			},
 			{
 				Name: moveLast,
 				Run: func(*prop.Case, int, any) {
-					ok = m.Last()
+					ok = m.Last(under(moveLast))
 					at, on = len(union)-1, len(union) != 0
 				},
 			},
@@ -773,7 +847,7 @@ func mergeSteps(c *prop.Case) {
 				Input: probe,
 				Run: func(_ *prop.Case, _ int, in any) {
 					p := in.(entry)
-					ok = m.SeekGE(p.key, p.seq)
+					ok = m.SeekGE(under(moveSeekGE), p.key, p.seq)
 					at, _ = slices.BinarySearchFunc(union, p, func(a sourced, b entry) int {
 						return sstable.Compare(a.key, a.seq, b.key, b.seq)
 					})
@@ -785,7 +859,7 @@ func mergeSteps(c *prop.Case) {
 				Input: probe,
 				Run: func(_ *prop.Case, _ int, in any) {
 					p := in.(entry)
-					ok = m.SeekLT(p.key, p.seq)
+					ok = m.SeekLT(under(moveSeekLT), p.key, p.seq)
 					i, _ := slices.BinarySearchFunc(union, p, func(a sourced, b entry) int {
 						return sstable.Compare(a.key, a.seq, b.key, b.seq)
 					})
@@ -796,7 +870,7 @@ func mergeSteps(c *prop.Case) {
 				Name:   moveNext,
 				Weight: 3,
 				Run: func(*prop.Case, int, any) {
-					ok = m.Next()
+					ok = m.Next(under(moveNext))
 					at++
 					on = on && at < len(union)
 				},
@@ -805,7 +879,7 @@ func mergeSteps(c *prop.Case) {
 				Name:   movePrev,
 				Weight: 3,
 				Run: func(*prop.Case, int, any) {
-					ok = m.Prev()
+					ok = m.Prev(under(movePrev))
 					at--
 					on = on && at >= 0
 				},
@@ -813,6 +887,11 @@ func mergeSteps(c *prop.Case) {
 		},
 		Invariant: func(c *prop.Case, _ struct{}) {
 			assert.NoError(c, m.Err(), "the merge reads its sources")
+			for i, s := range sources {
+				if r, isRecording := s.(*recordingSource); isRecording && r.moves != moved[i] {
+					assert.Equal(c, r.call, any(move), "a source moves under the context of the move of the merge")
+				}
+			}
 			assert.Equal(c, ok, on, "a move reports whether the model has an entry at its place")
 			if !on {
 				assert.Nil(c, m.Key(), "a merge on no entry has no key")
@@ -840,17 +919,17 @@ func mergeFails(c *prop.Case) {
 	apply := func(m *sstable.Merger, mv mergeMove) bool {
 		switch mv.name {
 		case moveFirst:
-			return m.First()
+			return m.First(c.Context())
 		case moveLast:
-			return m.Last()
+			return m.Last(c.Context())
 		case moveSeekGE:
-			return m.SeekGE(mv.key, mv.seq)
+			return m.SeekGE(c.Context(), mv.key, mv.seq)
 		case moveSeekLT:
-			return m.SeekLT(mv.key, mv.seq)
+			return m.SeekLT(c.Context(), mv.key, mv.seq)
 		case moveNext:
-			return m.Next()
+			return m.Next(c.Context())
 		default:
-			return m.Prev()
+			return m.Prev(c.Context())
 		}
 	}
 

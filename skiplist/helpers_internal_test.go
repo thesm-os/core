@@ -6,6 +6,7 @@ package skiplist
 import (
 	"bytes"
 	"cmp"
+	"context"
 	"encoding/binary"
 	"slices"
 	"testing"
@@ -72,10 +73,11 @@ func order(a, b entry) int {
 	return cmp.Compare(b.seq, a.seq)
 }
 
-// scan returns every entry that a cursor yields from its first entry.
-func scan(it *Iter) []entry {
+// scan returns every entry that a cursor yields from its first entry. It
+// passes ctx to each move.
+func scan(ctx context.Context, it *Iter) []entry {
 	var got []entry
-	for ok := it.First(); ok; ok = it.Next() {
+	for ok := it.First(ctx); ok; ok = it.Next(ctx) {
 		got = append(got, entry{key: it.Key(), seq: it.Seq(), value: it.Value()})
 	}
 

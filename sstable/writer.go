@@ -6,6 +6,7 @@ package sstable
 import (
 	"bytes"
 	"cmp"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"hash/crc32"
@@ -133,9 +134,19 @@ type Summary struct {
 	LargestSeq  uint64 // the sequence of the last entry
 }
 
-// Writer writes a table to an io.Writer from entries in the order of
-// [Compare]. It writes each data block when the block ends, and the last
-// data block, the filter, the index and the footer at [Writer.Close].
+// Sink receives the bytes of the table that a [Writer] writes. Write has the
+// contract of io.Writer. A Write that waits, such as for a budget of disk
+// I/O, ends its wait with the error of ctx. A bytes.Buffer or an *os.File
+// becomes a Sink through a type whose Write drops ctx.
+type Sink interface {
+	// Write writes the bytes of p, as io.Writer writes them.
+	Write(ctx context.Context, p []byte) (int, error)
+}
+
+// Writer writes a table to a [Sink] from entries in the order of [Compare].
+// It writes each data block when the block ends, and the last data block,
+// the filter, the index and the footer at [Writer.Close]. Each write takes
+// the context of the call that makes it.
 //
 // The data blocks follow one another from the start of the table. A block
 // contains its entries, then the offset of each restart point as a uint32,
@@ -167,7 +178,7 @@ type Summary struct {
 // the two keys of each summary once its buffers have grown.
 type Writer struct {
 	// w receives the bytes of the table.
-	w io.Writer
+	w Sink
 
 	// err is the error of w, or ErrClosed once Close wrote the table. Every
 	// later call returns it.
@@ -236,7 +247,7 @@ type Writer struct {
 //
 // Allocates the Writer, and with a filter the encoding of an empty filter
 // that checks the width.
-func NewWriter(w io.Writer, opts WriterOptions) (*Writer, error) {
+func NewWriter(w Sink, opts WriterOptions) (*Writer, error) {
 	if opts.BlockSize < 0 || int64(opts.BlockSize) > math.MaxUint32 || opts.RestartInterval < 0 ||
 		!opts.Compression.Valid() {
 
@@ -261,8 +272,8 @@ func NewWriter(w io.Writer, opts WriterOptions) (*Writer, error) {
 
 // Add appends the entry of key, seq and value to the table. The entry must
 // follow the previous entry in the order of [Compare]. Add copies key and
-// value. It writes the current data block to the io.Writer when the entry
-// ends the block.
+// value. It writes the current data block to the Sink under ctx when the
+// entry ends the block.
 //
 // Error modes:
 //
@@ -270,9 +281,10 @@ func NewWriter(w io.Writer, opts WriterOptions) (*Writer, error) {
 //     bytes returns [ErrTooLarge], and the Writer is unchanged.
 //   - An entry at or before the previous entry returns [ErrOrder], and the
 //     Writer is unchanged.
-//   - An error of the io.Writer returns an error that wraps it, and every
-//     later call returns the same error. A write of fewer bytes without an
-//     error returns an error that wraps io.ErrShortWrite.
+//   - An error of the Sink, such as the error of ctx at the end of a wait,
+//     returns an error that wraps it, and every later call returns the same
+//     error. A write of fewer bytes without an error returns an error that
+//     wraps io.ErrShortWrite.
 //   - A call after Close returns [ErrClosed].
 //
 // # Allocation contract
@@ -280,7 +292,7 @@ func NewWriter(w io.Writer, opts WriterOptions) (*Writer, error) {
 // Zero-alloc when the buffers of the current block, the index and the
 // hashes of the filter have room. Otherwise Add allocates their growth. The
 // first Add also allocates a copy of its key for the summary.
-func (w *Writer) Add(key []byte, seq uint64, value []byte) error {
+func (w *Writer) Add(ctx context.Context, key []byte, seq uint64, value []byte) error {
 	if w.err != nil {
 		return w.err
 	}
@@ -325,14 +337,13 @@ func (w *Writer) Add(key []byte, seq uint64, value []byte) error {
 		return nil
 	}
 	w.finishBlock()
-	w.err = w.flush()
+	w.err = w.flush(ctx)
 
 	return w.err
 }
 
 // Close writes the last data block, the filter, the index and the footer
-// with one write, and returns the summary of the table. It does not close
-// the io.Writer.
+// with one write under ctx, and returns the summary of the table.
 //
 // The filter block is the encoding of a [filter.Fuse] over the [xxh3.Hash]
 // of each distinct key. The index block has the layout of a data block with
@@ -357,8 +368,9 @@ func (w *Writer) Add(key []byte, seq uint64, value []byte) error {
 //
 // Error modes:
 //
-//   - An error of the io.Writer returns an error that wraps it, and every
-//     later call returns the same error.
+//   - An error of the Sink, such as the error of ctx at the end of a wait,
+//     returns an error that wraps it, and every later call returns the same
+//     error.
 //   - A set of hashes that the builder of the filter refuses returns the
 //     error of the builder, and every later call returns it too.
 //   - A call after Close returned a summary returns [ErrClosed].
@@ -368,7 +380,7 @@ func (w *Writer) Add(key []byte, seq uint64, value []byte) error {
 // Allocates the encoding of the filter, the scratch of its builder, the
 // growth of the buffer of the table for the filter and the index, and the
 // largest key of the summary.
-func (w *Writer) Close() (Summary, error) {
+func (w *Writer) Close(ctx context.Context) (Summary, error) {
 	if w.err != nil {
 		return Summary{}, w.err
 	}
@@ -417,7 +429,7 @@ func (w *Writer) Close() (Summary, error) {
 
 	//dokimi:mutate-skip ror-true: the builder refuses only more hashes than fit 2^32 fingerprints and a set that no seed peels, which no test writes
 	if err == nil {
-		err = w.flush()
+		err = w.flush(ctx)
 	}
 	w.err = cmp.Or(err, ErrClosed)
 	if err != nil {
@@ -451,7 +463,7 @@ func (w *Writer) Close() (Summary, error) {
 // Zero-alloc. A table that a Writer writes after Reset allocates the copies
 // of its smallest key and its largest key, and the growth of a buffer that
 // the table needs.
-func (w *Writer) Reset(dst io.Writer) {
+func (w *Writer) Reset(dst Sink) {
 	*w = Writer{
 		w:               dst,
 		builder:         w.builder,
@@ -518,12 +530,12 @@ func (w *Writer) seal(start int, c Compression) (uint64, uint32) {
 	return n, sum
 }
 
-// flush writes out to the io.Writer and empties out. It returns an error
-// that wraps the error of the io.Writer, or io.ErrShortWrite for a write of
+// flush writes out to the Sink under ctx and empties out. It returns an
+// error that wraps the error of the Sink, or io.ErrShortWrite for a write of
 // fewer bytes without an error.
-func (w *Writer) flush() error {
+func (w *Writer) flush(ctx context.Context) error {
 	off := w.size
-	n, err := w.w.Write(w.out)
+	n, err := w.w.Write(ctx, w.out)
 	w.size += int64(n)
 	if err == nil && n < len(w.out) {
 		err = io.ErrShortWrite

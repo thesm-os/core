@@ -5,6 +5,7 @@ package sstable_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"math"
 	"slices"
@@ -37,6 +38,20 @@ const iterContract = "every move must put the cursor on the entry of a sorted mo
 // filter block.
 var everyEntry = sstable.WriterOptions{BlockSize: smallBlocks, RestartInterval: 1, FilterBits: 8}
 
+// emptyCache is a BlockCache that does not keep a block. Get reports false
+// for every block, and Add drops the block.
+type emptyCache struct{}
+
+var _ sstable.BlockCache = emptyCache{}
+
+// Get reports false.
+func (emptyCache) Get(context.Context, uint64, uint64) ([]byte, bool) {
+	return nil, false
+}
+
+// Add drops the block.
+func (emptyCache) Add(context.Context, uint64, uint64, []byte) {}
+
 func TestIter(t *testing.T) {
 	t.Parallel()
 
@@ -63,26 +78,40 @@ func TestIter(t *testing.T) {
 
 		t.Run("moves to the first entry", func(t *testing.T) {
 			t.Parallel()
-			it := openTable(t, writeTable(t, settings[2].opts, goldenTable()), sstable.ReaderOptions{}).NewIter()
+			it := openTable(t, writeTable(t, settings[2].opts, goldenTable()), sstable.ReaderOptions{}).
+				NewIter(sstable.IterOptions{})
 			defer it.Close()
-			assert.True(t, it.First(), "First finds an entry")
+			assert.True(t, it.First(t.Context()), "First finds an entry")
 			expect.Equal(t, it.Key(), []byte("key 000"), "First moves to the smallest key")
 			expect.Equal(t, it.Seq(), uint64(2), "First moves to the newest version of the key")
 		})
 
 		t.Run("reports false for a table of no entries", func(t *testing.T) {
 			t.Parallel()
-			it := openTable(t, writeTable(t, settings[0].opts, nil), sstable.ReaderOptions{}).NewIter()
+			it := openTable(t, writeTable(t, settings[0].opts, nil), sstable.ReaderOptions{}).
+				NewIter(sstable.IterOptions{})
 			defer it.Close()
-			assert.False(t, it.First(), "First finds no entry")
+			assert.False(t, it.First(t.Context()), "First finds no entry")
 		})
 
 		t.Run("clears the error that exhausted the cursor", func(t *testing.T) {
 			t.Parallel()
 			it := exhaustedIter(t)
 			defer it.Close()
-			assert.True(t, it.First(), "First finds the first entry")
+			assert.True(t, it.First(t.Context()), "First finds the first entry")
 			assert.NoError(t, it.Err(), "First clears the error")
+		})
+
+		t.Run("returns the error of the context of its read", func(t *testing.T) {
+			t.Parallel()
+			it := openTable(t, writeTable(t, settings[0].opts, goldenTable()), sstable.ReaderOptions{}).
+				NewIter(sstable.IterOptions{})
+			defer it.Close()
+			assert.HonoursCancellation(t, func(ctx context.Context) error {
+				assert.False(t, it.First(ctx), "First finds no entry")
+
+				return it.Err()
+			}, "First returns the error that the File returns for a context that ended")
 		})
 	})
 
@@ -91,26 +120,40 @@ func TestIter(t *testing.T) {
 
 		t.Run("moves to the last entry", func(t *testing.T) {
 			t.Parallel()
-			it := openTable(t, writeTable(t, settings[2].opts, goldenTable()), sstable.ReaderOptions{}).NewIter()
+			it := openTable(t, writeTable(t, settings[2].opts, goldenTable()), sstable.ReaderOptions{}).
+				NewIter(sstable.IterOptions{})
 			defer it.Close()
-			assert.True(t, it.Last(), "Last finds an entry")
+			assert.True(t, it.Last(t.Context()), "Last finds an entry")
 			expect.Equal(t, it.Key(), goldenKeys[len(goldenKeys)-1], "Last moves to the largest key")
 			expect.Equal(t, it.Seq(), uint64(1), "Last moves to the oldest version of the key")
 		})
 
 		t.Run("reports false for a table of no entries", func(t *testing.T) {
 			t.Parallel()
-			it := openTable(t, writeTable(t, settings[0].opts, nil), sstable.ReaderOptions{}).NewIter()
+			it := openTable(t, writeTable(t, settings[0].opts, nil), sstable.ReaderOptions{}).
+				NewIter(sstable.IterOptions{})
 			defer it.Close()
-			assert.False(t, it.Last(), "Last finds no entry")
+			assert.False(t, it.Last(t.Context()), "Last finds no entry")
 		})
 
 		t.Run("clears the error that exhausted the cursor", func(t *testing.T) {
 			t.Parallel()
 			it := exhaustedIter(t)
 			defer it.Close()
-			assert.True(t, it.Last(), "Last finds the last entry")
+			assert.True(t, it.Last(t.Context()), "Last finds the last entry")
 			assert.NoError(t, it.Err(), "Last clears the error")
+		})
+
+		t.Run("returns the error of the context of its read", func(t *testing.T) {
+			t.Parallel()
+			it := openTable(t, writeTable(t, settings[0].opts, goldenTable()), sstable.ReaderOptions{}).
+				NewIter(sstable.IterOptions{})
+			defer it.Close()
+			assert.HonoursCancellation(t, func(ctx context.Context) error {
+				assert.False(t, it.Last(ctx), "Last finds no entry")
+
+				return it.Err()
+			}, "Last returns the error that the File returns for a context that ended")
 		})
 	})
 
@@ -123,8 +166,10 @@ func TestIter(t *testing.T) {
 				prop.ForAll(t, "SeekGE and the moves after it yield the entries of the model from the probe",
 					func(c *prop.Case) {
 						es := c.Draw(entries, "entries")
-						it := openTable(c, writeTable(c, tt.opts, es), sstable.ReaderOptions{}).NewIter()
+						it := openTable(c, writeTable(c, tt.opts, es), sstable.ReaderOptions{}).
+							NewIter(sstable.IterOptions{})
 						defer it.Close()
+						ctx := c.Context()
 						for range 10 {
 							probe := entry{
 								key: c.Draw(prop.SampledFrom(keys...), "key"),
@@ -134,7 +179,7 @@ func TestIter(t *testing.T) {
 								return sstable.Compare(a.key, a.seq, b.key, b.seq)
 							})
 							var got []entry
-							for ok := it.SeekGE(probe.key, probe.seq); ok && len(got) < 3; ok = it.Next() {
+							for ok := it.SeekGE(ctx, probe.key, probe.seq); ok && len(got) < 3; ok = it.Next(ctx) {
 								got = append(got, entry{
 									key: bytes.Clone(it.Key()), seq: it.Seq(), value: bytes.Clone(it.Value()),
 								})
@@ -150,9 +195,10 @@ func TestIter(t *testing.T) {
 
 		t.Run("reports false past the last entry", func(t *testing.T) {
 			t.Parallel()
-			it := openTable(t, writeTable(t, settings[0].opts, goldenTable()), sstable.ReaderOptions{}).NewIter()
+			it := openTable(t, writeTable(t, settings[0].opts, goldenTable()), sstable.ReaderOptions{}).
+				NewIter(sstable.IterOptions{})
 			defer it.Close()
-			assert.False(t, it.SeekGE([]byte("zz"), 0), "SeekGE finds no entry")
+			assert.False(t, it.SeekGE(t.Context(), []byte("zz"), 0), "SeekGE finds no entry")
 			assert.Nil(t, it.Key(), "the cursor has no key")
 		})
 
@@ -160,8 +206,20 @@ func TestIter(t *testing.T) {
 			t.Parallel()
 			it := exhaustedIter(t)
 			defer it.Close()
-			assert.True(t, it.SeekGE(goldenKeys[0], 2), "SeekGE finds the first entry")
+			assert.True(t, it.SeekGE(t.Context(), goldenKeys[0], 2), "SeekGE finds the first entry")
 			assert.NoError(t, it.Err(), "SeekGE clears the error")
+		})
+
+		t.Run("returns the error of the context of its read", func(t *testing.T) {
+			t.Parallel()
+			it := openTable(t, writeTable(t, settings[0].opts, goldenTable()), sstable.ReaderOptions{}).
+				NewIter(sstable.IterOptions{})
+			defer it.Close()
+			assert.HonoursCancellation(t, func(ctx context.Context) error {
+				assert.False(t, it.SeekGE(ctx, goldenKeys[30], 1), "SeekGE finds no entry")
+
+				return it.Err()
+			}, "SeekGE returns the error that the File returns for a context that ended")
 		})
 
 		for _, tt := range brokenRestarts {
@@ -169,7 +227,7 @@ func TestIter(t *testing.T) {
 				t.Parallel()
 				it, key, seq := brokenRestart(t, tt.giveRestart, tt.giveEntry)
 				defer it.Close()
-				expect.False(t, it.SeekGE(key, seq), "SeekGE finds no entry")
+				expect.False(t, it.SeekGE(t.Context(), key, seq), "SeekGE finds no entry")
 				expect.ErrorIs(t, it.Err(), sstable.ErrCorrupt, "SeekGE refuses the restart offset that it decodes")
 				expect.Nil(t, it.Key(), "the exhausted cursor has no key")
 			})
@@ -185,8 +243,10 @@ func TestIter(t *testing.T) {
 				prop.ForAll(t, "SeekLT and the moves back after it yield the entries of the model before the probe",
 					func(c *prop.Case) {
 						es := c.Draw(entries, "entries")
-						it := openTable(c, writeTable(c, tt.opts, es), sstable.ReaderOptions{}).NewIter()
+						it := openTable(c, writeTable(c, tt.opts, es), sstable.ReaderOptions{}).
+							NewIter(sstable.IterOptions{})
 						defer it.Close()
+						ctx := c.Context()
 						for range 10 {
 							probe := entry{
 								key: c.Draw(prop.SampledFrom(keys...), "key"),
@@ -196,7 +256,7 @@ func TestIter(t *testing.T) {
 								return sstable.Compare(a.key, a.seq, b.key, b.seq)
 							})
 							var got []entry
-							for ok := it.SeekLT(probe.key, probe.seq); ok && len(got) < 3; ok = it.Prev() {
+							for ok := it.SeekLT(ctx, probe.key, probe.seq); ok && len(got) < 3; ok = it.Prev(ctx) {
 								got = append(got, entry{
 									key: bytes.Clone(it.Key()), seq: it.Seq(), value: bytes.Clone(it.Value()),
 								})
@@ -213,17 +273,19 @@ func TestIter(t *testing.T) {
 
 		t.Run("reports false before the first entry", func(t *testing.T) {
 			t.Parallel()
-			it := openTable(t, writeTable(t, settings[0].opts, goldenTable()), sstable.ReaderOptions{}).NewIter()
+			it := openTable(t, writeTable(t, settings[0].opts, goldenTable()), sstable.ReaderOptions{}).
+				NewIter(sstable.IterOptions{})
 			defer it.Close()
-			assert.False(t, it.SeekLT(goldenKeys[0], 2), "SeekLT finds no entry")
+			assert.False(t, it.SeekLT(t.Context(), goldenKeys[0], 2), "SeekLT finds no entry")
 			assert.Nil(t, it.Key(), "the cursor has no key")
 		})
 
 		t.Run("moves to the last entry for a probe past the last entry", func(t *testing.T) {
 			t.Parallel()
-			it := openTable(t, writeTable(t, settings[0].opts, goldenTable()), sstable.ReaderOptions{}).NewIter()
+			it := openTable(t, writeTable(t, settings[0].opts, goldenTable()), sstable.ReaderOptions{}).
+				NewIter(sstable.IterOptions{})
 			defer it.Close()
-			assert.True(t, it.SeekLT([]byte("zz"), 0), "SeekLT finds an entry")
+			assert.True(t, it.SeekLT(t.Context(), []byte("zz"), 0), "SeekLT finds an entry")
 			expect.Equal(t, it.Key(), goldenKeys[len(goldenKeys)-1], "SeekLT moves to the largest key")
 			expect.Equal(t, it.Seq(), uint64(1), "SeekLT moves to the oldest version of the key")
 		})
@@ -232,8 +294,20 @@ func TestIter(t *testing.T) {
 			t.Parallel()
 			it := exhaustedIter(t)
 			defer it.Close()
-			assert.True(t, it.SeekLT([]byte("zz"), 0), "SeekLT finds the last entry")
+			assert.True(t, it.SeekLT(t.Context(), []byte("zz"), 0), "SeekLT finds the last entry")
 			assert.NoError(t, it.Err(), "SeekLT clears the error")
+		})
+
+		t.Run("returns the error of the context of its read", func(t *testing.T) {
+			t.Parallel()
+			it := openTable(t, writeTable(t, settings[0].opts, goldenTable()), sstable.ReaderOptions{}).
+				NewIter(sstable.IterOptions{})
+			defer it.Close()
+			assert.HonoursCancellation(t, func(ctx context.Context) error {
+				assert.False(t, it.SeekLT(ctx, goldenKeys[30], 1), "SeekLT finds no entry")
+
+				return it.Err()
+			}, "SeekLT returns the error that the File returns for a context that ended")
 		})
 
 		t.Run("moves to the last entry of a block whose entries are before the probe", func(t *testing.T) {
@@ -245,9 +319,9 @@ func TestIter(t *testing.T) {
 				binary.BigEndian.AppendUint64(nil, 3), []byte("x"), []byte{0, 0, 0, 0, 0, 0, 0, 1})
 			replaceBlock(l, 1, block)
 			l.seal()
-			it := openTable(t, l.data, sstable.ReaderOptions{}).NewIter()
+			it := openTable(t, l.data, sstable.ReaderOptions{}).NewIter(sstable.IterOptions{})
 			defer it.Close()
-			assert.True(t, it.SeekLT(goldenKeys[0], 1), "SeekLT finds an entry")
+			assert.True(t, it.SeekLT(t.Context(), goldenKeys[0], 1), "SeekLT finds an entry")
 			expect.Equal(t, it.Seq(), uint64(3), "SeekLT moves to the entry of the second block")
 			expect.Equal(t, it.Value(), []byte("x"), "SeekLT moves to the value of the entry")
 		})
@@ -257,7 +331,7 @@ func TestIter(t *testing.T) {
 				t.Parallel()
 				it, key, seq := brokenRestart(t, tt.giveRestart, tt.giveEntry)
 				defer it.Close()
-				expect.False(t, it.SeekLT(key, seq), "SeekLT finds no entry")
+				expect.False(t, it.SeekLT(t.Context(), key, seq), "SeekLT finds no entry")
 				expect.ErrorIs(t, it.Err(), sstable.ErrCorrupt, "SeekLT refuses the restart offset that it decodes")
 				expect.Nil(t, it.Key(), "the exhausted cursor has no key")
 			})
@@ -272,9 +346,9 @@ func TestIter(t *testing.T) {
 			count := len(restarts(index))
 			binary.BigEndian.PutUint32(index[len(index)-4-4*count+4*(count/2):], math.MaxUint32)
 			l.seal()
-			it := openTable(t, l.data, sstable.ReaderOptions{}).NewIter()
+			it := openTable(t, l.data, sstable.ReaderOptions{}).NewIter(sstable.IterOptions{})
 			defer it.Close()
-			expect.False(t, it.SeekLT(goldenKeys[30], 1), "SeekLT finds no entry")
+			expect.False(t, it.SeekLT(t.Context(), goldenKeys[30], 1), "SeekLT finds no entry")
 			expect.ErrorIs(t, it.Err(), sstable.ErrCorrupt, "SeekLT refuses the restart offset of the index")
 		})
 	})
@@ -287,9 +361,10 @@ func TestIter(t *testing.T) {
 				t.Parallel()
 				prop.ForAll(t, "a cursor yields the entries that the Writer added", func(c *prop.Case) {
 					es := c.Draw(entries, "entries")
-					it := openTable(c, writeTable(c, tt.opts, es), sstable.ReaderOptions{}).NewIter()
+					it := openTable(c, writeTable(c, tt.opts, es), sstable.ReaderOptions{}).
+						NewIter(sstable.IterOptions{})
 					defer it.Close()
-					got, err := scanAll(it)
+					got, err := scanAll(c.Context(), it)
 					assert.NoError(c, err, "the cursor reads the table")
 					assert.Equal(c, got, es, "the cursor yields every entry in order", assert.EquateEmpty())
 				})
@@ -298,11 +373,12 @@ func TestIter(t *testing.T) {
 
 		t.Run("reports false after the last entry", func(t *testing.T) {
 			t.Parallel()
-			it := openTable(t, writeTable(t, settings[0].opts, goldenTable()[:1]), sstable.ReaderOptions{}).NewIter()
+			it := openTable(t, writeTable(t, settings[0].opts, goldenTable()[:1]), sstable.ReaderOptions{}).
+				NewIter(sstable.IterOptions{})
 			defer it.Close()
-			assert.True(t, it.First(), "First finds the entry")
-			expect.False(t, it.Next(), "Next finds no entry after the last")
-			expect.False(t, it.Next(), "Next of an exhausted cursor finds no entry")
+			assert.True(t, it.First(t.Context()), "First finds the entry")
+			expect.False(t, it.Next(t.Context()), "Next finds no entry after the last")
+			expect.False(t, it.Next(t.Context()), "Next of an exhausted cursor finds no entry")
 			expect.Nil(t, it.Key(), "the exhausted cursor has no key")
 			expect.Equal(t, it.Seq(), uint64(0), "the exhausted cursor has no sequence")
 			expect.Nil(t, it.Value(), "the exhausted cursor has no value")
@@ -310,28 +386,90 @@ func TestIter(t *testing.T) {
 
 		t.Run("reports false for a cursor that moved before the first entry", func(t *testing.T) {
 			t.Parallel()
-			it := openTable(t, writeTable(t, settings[0].opts, goldenTable()), sstable.ReaderOptions{}).NewIter()
+			it := openTable(t, writeTable(t, settings[0].opts, goldenTable()), sstable.ReaderOptions{}).
+				NewIter(sstable.IterOptions{})
 			defer it.Close()
-			assert.False(t, it.SeekLT(goldenKeys[0], 2), "SeekLT finds no entry before the first")
-			assert.False(t, it.Next(), "Next of the exhausted cursor finds no entry")
+			assert.False(t, it.SeekLT(t.Context(), goldenKeys[0], 2), "SeekLT finds no entry before the first")
+			assert.False(t, it.Next(t.Context()), "Next of the exhausted cursor finds no entry")
 		})
 
 		t.Run("yields every entry of a table from the cache", func(t *testing.T) {
 			t.Parallel()
 			es := goldenTable()
 			data := writeTable(t, settings[0].opts, es)
-			counter := &countingReader{data: data}
-			r, err := sstable.Open(counter, int64(len(data)), sstable.ReaderOptions{Cache: &mapCache{}, CacheID: 1})
+			counter := &countingFile{data: data}
+			r, err := sstable.Open(t.Context(), counter, int64(len(data)),
+				sstable.ReaderOptions{Cache: &mapCache{}, CacheID: 1})
 			assert.NoError(t, err, "Open reads the table")
-			it := r.NewIter()
+			it := r.NewIter(sstable.IterOptions{})
 			defer it.Close()
-			_, err = scanAll(it)
+			_, err = scanAll(t.Context(), it)
 			assert.NoError(t, err, "the first scan adds every block to the cache")
 			reads := counter.reads
-			got, err := scanAll(it)
+			got, err := scanAll(t.Context(), it)
 			assert.NoError(t, err, "the second scan takes every block from the cache")
 			expect.Equal(t, got, es, "the second scan yields every entry")
 			expect.Equal(t, counter.reads, reads, "the second scan reads no block")
+		})
+
+		t.Run("reads every block without adding it to the cache under NoFill", func(t *testing.T) {
+			t.Parallel()
+			es := goldenTable()
+			cache := &mapCache{}
+			it := openTable(t, writeTable(t, settings[0].opts, es), sstable.ReaderOptions{Cache: cache, CacheID: 1}).
+				NewIter(sstable.IterOptions{NoFill: true})
+			defer it.Close()
+			got, err := scanAll(t.Context(), it)
+			assert.NoError(t, err, "the cursor reads the table")
+			expect.Equal(t, got, es, "the cursor yields every entry")
+			expect.Equal(t, cache.adds, 0, "the cursor does not add a block to the cache")
+		})
+
+		t.Run("takes the blocks of the cache under NoFill", func(t *testing.T) {
+			t.Parallel()
+			es := goldenTable()
+			data := writeTable(t, settings[0].opts, es)
+			counter := &countingFile{data: data}
+			r, err := sstable.Open(t.Context(), counter, int64(len(data)),
+				sstable.ReaderOptions{Cache: &mapCache{}, CacheID: 1})
+			assert.NoError(t, err, "Open reads the table")
+			warm := r.NewIter(sstable.IterOptions{})
+			defer warm.Close()
+			_, err = scanAll(t.Context(), warm)
+			assert.NoError(t, err, "a scan without NoFill adds every block to the cache")
+			reads := counter.reads
+			it := r.NewIter(sstable.IterOptions{NoFill: true})
+			defer it.Close()
+			got, err := scanAll(t.Context(), it)
+			assert.NoError(t, err, "the scan under NoFill takes every block from the cache")
+			expect.Equal(t, got, es, "the scan under NoFill yields every entry")
+			expect.Equal(t, counter.reads, reads, "the scan under NoFill does not read a block")
+		})
+
+		t.Run("returns the error of the context of the read of the next block", func(t *testing.T) {
+			t.Parallel()
+			it := openTable(t, writeTable(t, oneEntry, goldenTable()), sstable.ReaderOptions{}).
+				NewIter(sstable.IterOptions{})
+			defer it.Close()
+			assert.True(t, it.First(t.Context()), "First finds the entry of the first block")
+			assert.HonoursCancellation(t, func(ctx context.Context) error {
+				assert.False(t, it.Next(ctx), "Next finds no entry")
+
+				return it.Err()
+			}, "Next returns the error that the File returns for a context that ended")
+		})
+
+		t.Run("moves within a block under a context that ended", func(t *testing.T) {
+			t.Parallel()
+			it := openTable(t, writeTable(t, settings[0].opts, goldenTable()), sstable.ReaderOptions{}).
+				NewIter(sstable.IterOptions{})
+			defer it.Close()
+			assert.True(t, it.First(t.Context()), "First finds the first entry")
+			ctx, cancel := context.WithCancel(t.Context())
+			cancel()
+			assert.True(t, it.Next(ctx), "Next does not read a block for the second entry of the block")
+			expect.Equal(t, it.Key(), goldenKeys[0], "Next moves to the second version of the first key")
+			expect.Equal(t, it.Seq(), uint64(1), "Next moves to the older version")
 		})
 
 		tests := []struct {
@@ -363,11 +501,12 @@ func TestIter(t *testing.T) {
 				l := newLayout(t, oneEntry, goldenTable())
 				tt.giveChange(l)
 				cache := &mapCache{}
-				it := openTable(t, l.data, sstable.ReaderOptions{Cache: cache, CacheID: 1}).NewIter()
+				it := openTable(t, l.data, sstable.ReaderOptions{Cache: cache, CacheID: 1}).
+					NewIter(sstable.IterOptions{})
 				defer it.Close()
-				_, err := scanAll(it)
+				_, err := scanAll(t.Context(), it)
 				assert.ErrorIs(t, err, sstable.ErrCorrupt, "the cursor refuses the second block")
-				_, ok := cache.Get(1, uint64(l.blocks[1].off))
+				_, ok := cache.Get(t.Context(), 1, uint64(l.blocks[1].off))
 				expect.False(t, ok, "the cache has no block at the place of the second block")
 				expect.Equal(t, cache.adds, 1, "the cursor adds the first block alone")
 			})
@@ -383,9 +522,10 @@ func TestIter(t *testing.T) {
 				prop.ForAll(t, "a cursor yields the entries that the Writer added from the last back",
 					func(c *prop.Case) {
 						es := c.Draw(entries, "entries")
-						it := openTable(c, writeTable(c, tt.opts, es), sstable.ReaderOptions{}).NewIter()
+						it := openTable(c, writeTable(c, tt.opts, es), sstable.ReaderOptions{}).
+							NewIter(sstable.IterOptions{})
 						defer it.Close()
-						got, err := scanBack(it)
+						got, err := scanBack(c.Context(), it)
 						assert.NoError(c, err, "the cursor reads the table")
 						want := slices.Clone(es)
 						slices.Reverse(want)
@@ -397,40 +537,56 @@ func TestIter(t *testing.T) {
 
 		t.Run("reports false before the first entry", func(t *testing.T) {
 			t.Parallel()
-			it := openTable(t, writeTable(t, settings[0].opts, goldenTable()[:1]), sstable.ReaderOptions{}).NewIter()
+			it := openTable(t, writeTable(t, settings[0].opts, goldenTable()[:1]), sstable.ReaderOptions{}).
+				NewIter(sstable.IterOptions{})
 			defer it.Close()
-			assert.True(t, it.Last(), "Last finds the entry")
-			expect.False(t, it.Prev(), "Prev finds no entry before the first")
-			expect.False(t, it.Prev(), "Prev of an exhausted cursor finds no entry")
+			assert.True(t, it.Last(t.Context()), "Last finds the entry")
+			expect.False(t, it.Prev(t.Context()), "Prev finds no entry before the first")
+			expect.False(t, it.Prev(t.Context()), "Prev of an exhausted cursor finds no entry")
 			expect.Nil(t, it.Key(), "the exhausted cursor has no key")
 		})
 
 		t.Run("reports false for a cursor that moved past the last entry", func(t *testing.T) {
 			t.Parallel()
-			it := openTable(t, writeTable(t, settings[0].opts, goldenTable()), sstable.ReaderOptions{}).NewIter()
+			it := openTable(t, writeTable(t, settings[0].opts, goldenTable()), sstable.ReaderOptions{}).
+				NewIter(sstable.IterOptions{})
 			defer it.Close()
-			assert.False(t, it.SeekGE([]byte("zz"), 0), "SeekGE finds no entry past the last")
-			assert.False(t, it.Prev(), "Prev of the exhausted cursor finds no entry")
+			assert.False(t, it.SeekGE(t.Context(), []byte("zz"), 0), "SeekGE finds no entry past the last")
+			assert.False(t, it.Prev(t.Context()), "Prev of the exhausted cursor finds no entry")
 		})
 
 		t.Run("yields every entry of a table from the cache", func(t *testing.T) {
 			t.Parallel()
 			es := goldenTable()
 			data := writeTable(t, settings[0].opts, es)
-			counter := &countingReader{data: data}
-			r, err := sstable.Open(counter, int64(len(data)), sstable.ReaderOptions{Cache: &mapCache{}, CacheID: 1})
+			counter := &countingFile{data: data}
+			r, err := sstable.Open(t.Context(), counter, int64(len(data)),
+				sstable.ReaderOptions{Cache: &mapCache{}, CacheID: 1})
 			assert.NoError(t, err, "Open reads the table")
-			it := r.NewIter()
+			it := r.NewIter(sstable.IterOptions{})
 			defer it.Close()
-			_, err = scanBack(it)
+			_, err = scanBack(t.Context(), it)
 			assert.NoError(t, err, "the first scan adds every block to the cache")
 			reads := counter.reads
-			got, err := scanBack(it)
+			got, err := scanBack(t.Context(), it)
 			assert.NoError(t, err, "the second scan takes every block from the cache")
 			want := slices.Clone(es)
 			slices.Reverse(want)
 			expect.Equal(t, got, want, "the second scan yields every entry")
 			expect.Equal(t, counter.reads, reads, "the second scan reads no block")
+		})
+
+		t.Run("returns the error of the context of the read of the block before", func(t *testing.T) {
+			t.Parallel()
+			it := openTable(t, writeTable(t, oneEntry, goldenTable()), sstable.ReaderOptions{}).
+				NewIter(sstable.IterOptions{})
+			defer it.Close()
+			assert.True(t, it.Last(t.Context()), "Last finds the entry of the last block")
+			assert.HonoursCancellation(t, func(ctx context.Context) error {
+				assert.False(t, it.Prev(ctx), "Prev finds no entry")
+
+				return it.Err()
+			}, "Prev returns the error that the File returns for a context that ended")
 		})
 
 		t.Run("returns ErrCorrupt for entries that do not end at the current entry", func(t *testing.T) {
@@ -447,11 +603,11 @@ func TestIter(t *testing.T) {
 			restartPoints := []byte{0, 0, 0, 0, 0, 0, 0, byte(len(first) - 10), 0, 0, 0, 2}
 			replaceBlock(l, 0, slices.Concat(first, second, restartPoints))
 			l.seal()
-			it := openTable(t, l.data, sstable.ReaderOptions{}).NewIter()
+			it := openTable(t, l.data, sstable.ReaderOptions{}).NewIter(sstable.IterOptions{})
 			defer it.Close()
-			assert.True(t, it.First(), "First finds the entry of the key a")
-			assert.True(t, it.Next(), "Next finds the entry of the key b")
-			expect.False(t, it.Prev(), "Prev finds no entry")
+			assert.True(t, it.First(t.Context()), "First finds the entry of the key a")
+			assert.True(t, it.Next(t.Context()), "Next finds the entry of the key b")
+			expect.False(t, it.Prev(t.Context()), "Prev finds no entry")
 			expect.ErrorIs(t, it.Err(), sstable.ErrCorrupt, "Prev refuses entries that do not end at the current entry")
 		})
 
@@ -468,9 +624,9 @@ func TestIter(t *testing.T) {
 			restartPoints := []byte{0, 0, 0, 0, 0, 0, 0, byte(len(first) + len(second)), 0, 0, 0, 2}
 			replaceBlock(l, 1, slices.Concat(first, second, third, restartPoints))
 			l.seal()
-			it := openTable(t, l.data, sstable.ReaderOptions{}).NewIter()
+			it := openTable(t, l.data, sstable.ReaderOptions{}).NewIter(sstable.IterOptions{})
 			defer it.Close()
-			got, err := scanBack(it)
+			got, err := scanBack(t.Context(), it)
 			expect.ErrorIs(t, err, sstable.ErrCorrupt, "Prev refuses the second entry of the second block")
 			assert.NotEmpty(t, got, "the cursor yields the entries after the second block")
 			expect.Equal(t, got[len(got)-1].key, []byte("c"), "the cursor yields the third entry before the error")
@@ -484,11 +640,11 @@ func TestIter(t *testing.T) {
 			t.Parallel()
 			data := writeTable(t, settings[0].opts, goldenTable())
 			data[len(data)/3] ^= 1
-			it := openTable(t, data, sstable.ReaderOptions{}).NewIter()
+			it := openTable(t, data, sstable.ReaderOptions{}).NewIter(sstable.IterOptions{})
 			defer it.Close()
-			_, err := scanAll(it)
+			_, err := scanAll(t.Context(), it)
 			expect.ErrorIs(t, err, sstable.ErrCorrupt, "the cursor refuses the changed block")
-			expect.False(t, it.Next(), "the cursor is exhausted after the error")
+			expect.False(t, it.Next(t.Context()), "the cursor is exhausted after the error")
 		})
 
 		t.Run("returns ErrCorrupt for a data block at the place of another", func(t *testing.T) {
@@ -504,9 +660,9 @@ func TestIter(t *testing.T) {
 					}
 					b := l.blocks[from]
 					copy(l.data[l.blocks[to].off:], l.data[b.off:b.off+b.n+trailerLen])
-					it := openTable(c, l.data, sstable.ReaderOptions{}).NewIter()
+					it := openTable(c, l.data, sstable.ReaderOptions{}).NewIter(sstable.IterOptions{})
 					defer it.Close()
-					got, err := scanAll(it)
+					got, err := scanAll(c.Context(), it)
 					assert.ErrorIs(c, err, sstable.ErrCorrupt, "the cursor refuses the block at the place")
 					assert.Equal(c, got, es[:to], "the cursor yields the entries before the place")
 				})
@@ -716,46 +872,47 @@ func TestIter(t *testing.T) {
 				opts := sstable.ReaderOptions{}
 				if tt.giveCached {
 					opts = sstable.ReaderOptions{Cache: &mapCache{}, CacheID: 1}
-					warm := openTable(t, l.data, opts).NewIter()
+					warm := openTable(t, l.data, opts).NewIter(sstable.IterOptions{})
 					defer warm.Close()
-					_, err := scanAll(warm)
+					_, err := scanAll(t.Context(), warm)
 					assert.NoError(t, err, "the cursor adds every block of the table to the cache")
 				}
 				tt.giveChange(l, l.data[second.off:second.off+second.n])
 				l.seal()
-				it := openTable(t, l.data, opts).NewIter()
+				it := openTable(t, l.data, opts).NewIter(sstable.IterOptions{})
 				defer it.Close()
-				got, err := scanAll(it)
+				got, err := scanAll(t.Context(), it)
 				expect.ErrorIs(t, err, sstable.ErrCorrupt, "the cursor refuses the second block")
 				expect.Equal(t, got, want, "the cursor yields the entries of the first block")
-				back, err := scanBack(it)
+				back, err := scanBack(t.Context(), it)
 				expect.ErrorIs(t, err, sstable.ErrCorrupt, "the cursor refuses the second block from the last entry")
 				expect.Equal(t, back, wantBack, "the cursor yields the entries after the second block back")
 			})
 		}
 
-		t.Run("returns the error of the io.ReaderAt", func(t *testing.T) {
+		t.Run("returns the error of the File", func(t *testing.T) {
 			t.Parallel()
 			data := writeTable(t, settings[0].opts, goldenTable())
-			counter := &countingReader{data: data}
-			_, err := sstable.Open(counter, int64(len(data)), sstable.ReaderOptions{})
+			counter := &countingFile{data: data}
+			_, err := sstable.Open(t.Context(), counter, int64(len(data)), sstable.ReaderOptions{})
 			assert.NoError(t, err, "Open reads the table")
-			r, err := sstable.Open(&failingReader{data: data, ok: counter.reads + 1}, int64(len(data)),
+			r, err := sstable.Open(t.Context(), &failingFile{data: data, ok: counter.reads + 1}, int64(len(data)),
 				sstable.ReaderOptions{})
 			assert.NoError(t, err, "Open reads the table with the reads that it needs")
-			it := r.NewIter()
+			it := r.NewIter(sstable.IterOptions{})
 			defer it.Close()
-			_, err = scanAll(it)
+			_, err = scanAll(t.Context(), it)
 			expect.ErrorIs(t, err, errRead, "the cursor returns the error of the read of its second block")
-			_, err = scanBack(it)
+			_, err = scanBack(t.Context(), it)
 			expect.ErrorIs(t, err, errRead, "the cursor returns the error of the read of its last block")
 		})
 
 		t.Run("returns nil after every entry", func(t *testing.T) {
 			t.Parallel()
-			it := openTable(t, writeTable(t, settings[3].opts, goldenTable()), sstable.ReaderOptions{}).NewIter()
+			it := openTable(t, writeTable(t, settings[3].opts, goldenTable()), sstable.ReaderOptions{}).
+				NewIter(sstable.IterOptions{})
 			defer it.Close()
-			got, err := scanAll(it)
+			got, err := scanAll(t.Context(), it)
 			expect.NoError(t, err, "the cursor reads the table")
 			expect.Length(t, got, goldenEntries, "the cursor yields every entry")
 		})
@@ -766,8 +923,9 @@ func TestIter(t *testing.T) {
 
 		t.Run("returns nil for a cursor without an error", func(t *testing.T) {
 			t.Parallel()
-			it := openTable(t, writeTable(t, settings[0].opts, goldenTable()), sstable.ReaderOptions{}).NewIter()
-			assert.True(t, it.First(), "First finds an entry")
+			it := openTable(t, writeTable(t, settings[0].opts, goldenTable()), sstable.ReaderOptions{}).
+				NewIter(sstable.IterOptions{})
+			assert.True(t, it.First(t.Context()), "First finds an entry")
 			assert.NoError(t, it.Close(), "Close returns the cursor to the pool")
 		})
 
@@ -775,8 +933,8 @@ func TestIter(t *testing.T) {
 			t.Parallel()
 			data := writeTable(t, settings[0].opts, goldenTable())
 			data[len(data)/3] ^= 1
-			it := openTable(t, data, sstable.ReaderOptions{}).NewIter()
-			_, err := scanAll(it)
+			it := openTable(t, data, sstable.ReaderOptions{}).NewIter(sstable.IterOptions{})
+			_, err := scanAll(t.Context(), it)
 			assert.ErrorIs(t, err, sstable.ErrCorrupt, "the cursor refuses the changed block")
 			assert.ErrorIs(t, it.Close(), sstable.ErrCorrupt, "Close returns the error of the cursor")
 		})
@@ -785,8 +943,8 @@ func TestIter(t *testing.T) {
 			t.Parallel()
 			data := writeTable(t, settings[0].opts, goldenTable())
 			data[len(data)/3] ^= 1
-			it := openTable(t, data, sstable.ReaderOptions{}).NewIter()
-			_, err := scanAll(it)
+			it := openTable(t, data, sstable.ReaderOptions{}).NewIter(sstable.IterOptions{})
+			_, err := scanAll(t.Context(), it)
 			assert.ErrorIs(t, err, sstable.ErrCorrupt, "the cursor refuses the changed block")
 			assert.ErrorIs(t, it.Close(), sstable.ErrCorrupt, "the first Close returns the error of the cursor")
 			assert.NoError(t, it.Close(), "the second Close finds no cursor to return")
@@ -795,10 +953,10 @@ func TestIter(t *testing.T) {
 		t.Run("returns the cursor to the pool once for a second Close", func(t *testing.T) {
 			t.Parallel()
 			r := openTable(t, writeTable(t, settings[0].opts, goldenTable()), sstable.ReaderOptions{})
-			it := r.NewIter()
+			it := r.NewIter(sstable.IterOptions{})
 			assert.NoError(t, it.Close(), "the first Close returns the cursor to the pool")
 			assert.NoError(t, it.Close(), "the second Close returns nil")
-			first, second := r.NewIter(), r.NewIter()
+			first, second := r.NewIter(sstable.IterOptions{}), r.NewIter(sstable.IterOptions{})
 			defer first.Close()
 			defer second.Close()
 			assert.NotEqual(t, first, second, "the pool hands out the closed cursor once", assert.ByIdentity())
@@ -817,26 +975,26 @@ func FuzzIter(f *testing.F) {
 // not run in parallel.
 func TestIterAllocs(t *testing.T) {
 	r := openTable(t, writeTable(t, settings[3].opts, goldenTable()), sstable.ReaderOptions{})
-	it := r.NewIter()
+	it := r.NewIter(sstable.IterOptions{})
 	defer it.Close()
 
 	var ok bool
-	expect.MaxAllocs(t, func() { ok = it.First() }, 0, "First does not allocate")
+	expect.MaxAllocs(t, func() { ok = it.First(t.Context()) }, 0, "First does not allocate")
 	expect.True(t, ok, "the test measures a cursor on an entry")
-	expect.MaxAllocs(t, func() { ok = it.Last() }, 0, "Last does not allocate")
+	expect.MaxAllocs(t, func() { ok = it.Last(t.Context()) }, 0, "Last does not allocate")
 	expect.True(t, ok, "the test measures a cursor on the last entry")
-	expect.MaxAllocs(t, func() { ok = it.SeekGE(goldenKeys[30], 1) }, 0, "SeekGE does not allocate")
+	expect.MaxAllocs(t, func() { ok = it.SeekGE(t.Context(), goldenKeys[30], 1) }, 0, "SeekGE does not allocate")
 	expect.True(t, ok, "the test measures a seek to an entry")
-	expect.MaxAllocs(t, func() { ok = it.SeekLT(goldenKeys[30], 1) }, 0, "SeekLT does not allocate")
+	expect.MaxAllocs(t, func() { ok = it.SeekLT(t.Context(), goldenKeys[30], 1) }, 0, "SeekLT does not allocate")
 	expect.True(t, ok, "the test measures a seek back to an entry")
 	expect.MaxAllocs(t, func() {
-		if !it.Next() {
-			it.First()
+		if !it.Next(t.Context()) {
+			it.First(t.Context())
 		}
 	}, 0, "Next does not allocate within a block or across blocks")
 	expect.MaxAllocs(t, func() {
-		if !it.Prev() {
-			it.Last()
+		if !it.Prev(t.Context()) {
+			it.Last(t.Context())
 		}
 	}, 0, "Prev does not allocate within a block or across blocks")
 
@@ -855,53 +1013,82 @@ func TestIterAllocs(t *testing.T) {
 	replaceBlock(l, 1, append(binary.AppendUvarint(nil, 1<<20), 0x00, 'a'))
 	l.data[l.blocks[1].off+l.blocks[1].n] = byte(sstable.SnappyCompression)
 	l.seal()
-	bad := openTable(t, l.data, sstable.ReaderOptions{}).NewIter()
+	bad := openTable(t, l.data, sstable.ReaderOptions{}).NewIter(sstable.IterOptions{})
 	defer bad.Close()
 	expect.MaxAllocs(t, func() {
-		ok := bad.First()
+		ok := bad.First(t.Context())
 		for ok {
-			ok = bad.Next()
+			ok = bad.Next(t.Context())
 		}
 	}, 0, "a cursor does not allocate the length that the preamble of a corrupt block states")
 	expect.ErrorIs(t, bad.Err(), sstable.ErrCorrupt, "the test measures a cursor that refuses the second block")
+
+	// The cache does not keep a block, so a cursor without NoFill would copy
+	// every block that it reads for the cache.
+	cold := openTable(t, writeTable(t, settings[3].opts, goldenTable()),
+		sstable.ReaderOptions{Cache: emptyCache{}, CacheID: 1}).NewIter(sstable.IterOptions{NoFill: true})
+	defer cold.Close()
+	n := 0
+	expect.MaxAllocs(t, func() {
+		n = 0
+		for ok := cold.First(t.Context()); ok; ok = cold.Next(t.Context()) {
+			n++
+		}
+	}, 0, "a scan under NoFill does not copy a block")
+	expect.Equal(t, n, goldenEntries, "the test measures a scan of every entry")
 }
 
 // BenchmarkIter reports the cost of the moves of a cursor, and fails when a
 // move allocates.
 func BenchmarkIter(b *testing.B) {
-	r := openTable(b, writeTable(b, settings[3].opts, goldenTable()), sstable.ReaderOptions{})
+	data := writeTable(b, settings[3].opts, goldenTable())
+	r := openTable(b, data, sstable.ReaderOptions{})
 
 	b.Run("Next", func(b *testing.B) {
-		it := r.NewIter()
-		defer it.Close()
-		assert.True(b, it.First(), "First finds an entry")
-		n := 0
+		for _, tt := range []struct {
+			name  string
+			cache sstable.BlockCache
+			opts  sstable.IterOptions
+		}{
+			{name: "without a cache"},
+			{
+				name:  "under NoFill through an empty cache",
+				cache: emptyCache{}, opts: sstable.IterOptions{NoFill: true},
+			},
+		} {
+			b.Run(tt.name, func(b *testing.B) {
+				it := openTable(b, data, sstable.ReaderOptions{Cache: tt.cache, CacheID: 1}).NewIter(tt.opts)
+				defer it.Close()
+				assert.True(b, it.First(b.Context()), "First finds an entry")
+				n := 0
 
-		c := bench.Start(b).MaxAllocs(0)
-		defer c.End()
+				c := bench.Start(b).MaxAllocs(0)
+				defer c.End()
 
-		for c.Loop() {
-			if !it.Next() {
-				it.First()
-			}
-			n += len(it.Key())
+				for c.Loop() {
+					if !it.Next(b.Context()) {
+						it.First(b.Context())
+					}
+					n += len(it.Key())
+				}
+
+				assert.NotEqual(b, n, 0, "the benchmark measures moves to entries")
+			})
 		}
-
-		assert.NotEqual(b, n, 0, "the benchmark measures moves to entries")
 	})
 
 	b.Run("Prev", func(b *testing.B) {
-		it := r.NewIter()
+		it := r.NewIter(sstable.IterOptions{})
 		defer it.Close()
-		assert.True(b, it.Last(), "Last finds an entry")
+		assert.True(b, it.Last(b.Context()), "Last finds an entry")
 		n := 0
 
 		c := bench.Start(b).MaxAllocs(0)
 		defer c.End()
 
 		for c.Loop() {
-			if !it.Prev() {
-				it.Last()
+			if !it.Prev(b.Context()) {
+				it.Last(b.Context())
 			}
 			n += len(it.Key())
 		}
@@ -910,7 +1097,7 @@ func BenchmarkIter(b *testing.B) {
 	})
 
 	b.Run("Last", func(b *testing.B) {
-		it := r.NewIter()
+		it := r.NewIter(sstable.IterOptions{})
 		defer it.Close()
 		var ok bool
 
@@ -918,14 +1105,14 @@ func BenchmarkIter(b *testing.B) {
 		defer c.End()
 
 		for c.Loop() {
-			ok = it.Last()
+			ok = it.Last(b.Context())
 		}
 
 		assert.True(b, ok, "the benchmark measures moves to the last entry")
 	})
 
 	b.Run("SeekGE", func(b *testing.B) {
-		it := r.NewIter()
+		it := r.NewIter(sstable.IterOptions{})
 		defer it.Close()
 		var ok bool
 		i := 0
@@ -934,7 +1121,7 @@ func BenchmarkIter(b *testing.B) {
 		defer c.End()
 
 		for c.Loop() {
-			ok = it.SeekGE(goldenKeys[i%len(goldenKeys)], 1)
+			ok = it.SeekGE(b.Context(), goldenKeys[i%len(goldenKeys)], 1)
 			i++
 		}
 
@@ -942,7 +1129,7 @@ func BenchmarkIter(b *testing.B) {
 	})
 
 	b.Run("SeekLT", func(b *testing.B) {
-		it := r.NewIter()
+		it := r.NewIter(sstable.IterOptions{})
 		defer it.Close()
 		var ok bool
 		i := 0
@@ -952,7 +1139,7 @@ func BenchmarkIter(b *testing.B) {
 
 		for c.Loop() {
 			// The keys after the first have an entry before them.
-			ok = it.SeekLT(goldenKeys[1+i%(len(goldenKeys)-1)], 1)
+			ok = it.SeekLT(b.Context(), goldenKeys[1+i%(len(goldenKeys)-1)], 1)
 			i++
 		}
 
@@ -964,6 +1151,11 @@ func BenchmarkIter(b *testing.B) {
 // one cursor of the table through a machine of its six moves. The model of
 // the cursor is a place in the entries. A move off either end leaves the
 // cursor on no entry, and Next and Prev report false there.
+//
+// The cursor reads through a cache when the case draws one, under NoFill
+// when the case draws it. Each move passes a context with the name of the
+// move, and the cache must receive that context. A cursor under NoFill must
+// not add a block to the cache.
 func iterSteps(c *prop.Case) {
 	es := c.Draw(entries, "entries")
 	opts := sstable.WriterOptions{
@@ -972,11 +1164,13 @@ func iterSteps(c *prop.Case) {
 		Compression:     c.Draw(prop.SampledFrom(sstable.NoCompression, sstable.SnappyCompression), "compression"),
 		FilterBits:      c.Draw(prop.SampledFrom(0, 8), "filter bits"),
 	}
-	var cache sstable.BlockCache
+	cache := &mapCache{}
+	readerOpts := sstable.ReaderOptions{CacheID: 1}
 	if c.Draw(prop.Boolean(), "cache") {
-		cache = &mapCache{}
+		readerOpts.Cache = cache
 	}
-	it := openTable(c, writeTable(c, opts, es), sstable.ReaderOptions{Cache: cache, CacheID: 1}).NewIter()
+	noFill := c.Draw(prop.Boolean(), "no fill")
+	it := openTable(c, writeTable(c, opts, es), readerOpts).NewIter(sstable.IterOptions{NoFill: noFill})
 	defer it.Close()
 
 	at, on, ok := 0, false, false
@@ -984,19 +1178,29 @@ func iterSteps(c *prop.Case) {
 		return entry{key: c.Draw(prop.SampledFrom(keys...), "key"), seq: c.Draw(prop.Integer[uint64](0, 6), "seq")}
 	}
 
+	// move is the name of the last move, and calls the calls of the cache
+	// before it. under returns the context of the move of the name.
+	var move string
+	calls := 0
+	under := func(name string) context.Context {
+		move, calls = name, cache.calls
+
+		return context.WithValue(c.Context(), callKey{}, name)
+	}
+
 	stateful.Steps(c, stateful.Machine[struct{}]{
 		Actions: []stateful.Action[struct{}]{
 			{
 				Name: moveFirst,
 				Run: func(*prop.Case, int, any) {
-					ok = it.First()
+					ok = it.First(under(moveFirst))
 					at, on = 0, len(es) != 0
 				},
 			},
 			{
 				Name: moveLast,
 				Run: func(*prop.Case, int, any) {
-					ok = it.Last()
+					ok = it.Last(under(moveLast))
 					at, on = len(es)-1, len(es) != 0
 				},
 			},
@@ -1005,7 +1209,7 @@ func iterSteps(c *prop.Case) {
 				Input: probe,
 				Run: func(_ *prop.Case, _ int, in any) {
 					p := in.(entry)
-					ok = it.SeekGE(p.key, p.seq)
+					ok = it.SeekGE(under(moveSeekGE), p.key, p.seq)
 					at, _ = slices.BinarySearchFunc(es, p, func(a, b entry) int {
 						return sstable.Compare(a.key, a.seq, b.key, b.seq)
 					})
@@ -1017,7 +1221,7 @@ func iterSteps(c *prop.Case) {
 				Input: probe,
 				Run: func(_ *prop.Case, _ int, in any) {
 					p := in.(entry)
-					ok = it.SeekLT(p.key, p.seq)
+					ok = it.SeekLT(under(moveSeekLT), p.key, p.seq)
 					i, _ := slices.BinarySearchFunc(es, p, func(a, b entry) int {
 						return sstable.Compare(a.key, a.seq, b.key, b.seq)
 					})
@@ -1028,7 +1232,7 @@ func iterSteps(c *prop.Case) {
 				Name:   moveNext,
 				Weight: 3,
 				Run: func(*prop.Case, int, any) {
-					ok = it.Next()
+					ok = it.Next(under(moveNext))
 					at++
 					on = on && at < len(es)
 				},
@@ -1037,7 +1241,7 @@ func iterSteps(c *prop.Case) {
 				Name:   movePrev,
 				Weight: 3,
 				Run: func(*prop.Case, int, any) {
-					ok = it.Prev()
+					ok = it.Prev(under(movePrev))
 					at--
 					on = on && at >= 0
 				},
@@ -1045,6 +1249,12 @@ func iterSteps(c *prop.Case) {
 		},
 		Invariant: func(c *prop.Case, _ struct{}) {
 			assert.NoError(c, it.Err(), "the cursor reads the table")
+			if cache.calls != calls {
+				assert.Equal(c, cache.call, any(move), "the cache receives the context of the move")
+			}
+			if noFill {
+				assert.Equal(c, cache.adds, 0, "a cursor under NoFill does not add a block to the cache")
+			}
 			assert.Equal(c, ok, on, "a move reports whether the model has an entry at its place")
 			if !on {
 				assert.Nil(c, it.Key(), "a cursor on no entry has no key")
@@ -1075,7 +1285,7 @@ func brokenRestart(tb assert.TB, restart, e int) (*sstable.Iter, []byte, uint64)
 	binary.BigEndian.PutUint32(block[len(block)-4-4*len(offsets)+4*restart:], math.MaxUint32)
 	l.seal()
 
-	return openTable(tb, l.data, sstable.ReaderOptions{}).NewIter(), key, seq
+	return openTable(tb, l.data, sstable.ReaderOptions{}).NewIter(sstable.IterOptions{}), key, seq
 }
 
 // exhaustedIter returns a cursor that ErrCorrupt exhausted at the second
@@ -1086,8 +1296,8 @@ func exhaustedIter(tb assert.TB) *sstable.Iter {
 
 	l := newLayout(tb, oneEntry, goldenTable())
 	l.data[l.blocks[1].off] ^= 1
-	it := openTable(tb, l.data, sstable.ReaderOptions{}).NewIter()
-	_, err := scanAll(it)
+	it := openTable(tb, l.data, sstable.ReaderOptions{}).NewIter(sstable.IterOptions{})
+	_, err := scanAll(assert.Context(tb), it)
 	assert.ErrorIs(tb, err, sstable.ErrCorrupt, "the cursor refuses the second block")
 
 	return it

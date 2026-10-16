@@ -44,6 +44,9 @@
 // An Iter moves in both directions. A move forward follows a link of level
 // 0. The nodes have no links back, so [Iter.Prev] and [Iter.SeekLT] search
 // from the head, in O(log n) steps for n entries, about the time of a Get.
+// Each move takes a context and ignores it, because a memtable does not
+// wait. With these moves an Iter implements
+// [go.thesmos.sh/core/sstable.Source].
 //
 // # Costs
 //
@@ -67,7 +70,7 @@
 //
 // # Dependency position
 //
-// Imports bytes, cmp, encoding/binary, errors, math, math/bits and
+// Imports bytes, cmp, context, encoding/binary, errors, math, math/bits and
 // sync/atomic from the standard library, and go.thesmos.sh/core/arena,
 // go.thesmos.sh/core/errs and go.thesmos.sh/core/hash/xxh3 from this module.
 package skiplist

@@ -5,11 +5,11 @@ package sstable_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"hash/crc32"
-	"io"
 	"slices"
 	"strings"
 	"sync"
@@ -65,8 +65,13 @@ const (
 	movePrev   = "Prev"
 )
 
-// errRead is the error of a reader that fails.
+// errRead is the error of a File that fails.
 var errRead = errors.New("read failed")
+
+// callKey is the key of the context value that a case sets to the name of a
+// call. A double records the value of each context that it receives, so a
+// case checks which context the double received.
+type callKey struct{}
 
 // oneEntry are the options of the tables whose data blocks a case changes at
 // their only entry: every entry ends its data block.
@@ -166,29 +171,36 @@ type entry struct {
 	value []byte
 }
 
-// mapCache is a BlockCache over a map. It counts the blocks that Add
-// received.
+// mapCache is a BlockCache over a map. It counts the calls of Get and Add,
+// and the blocks that Add received. call is the value of callKey in the
+// context of the last call.
 type mapCache struct {
+	call   any
 	mu     sync.Mutex
 	blocks map[[2]uint64][]byte
+	calls  int
 	adds   int
 }
 
-// Get returns the block of the table id at offset.
-func (c *mapCache) Get(id, offset uint64) ([]byte, bool) {
+// Get returns the block of the table id at offset, and records the call
+// under ctx.
+func (c *mapCache) Get(ctx context.Context, id, offset uint64) ([]byte, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	c.call, c.calls = ctx.Value(callKey{}), c.calls+1
 	b, ok := c.blocks[[2]uint64{id, offset}]
 
 	return b, ok
 }
 
-// Add keeps the block of the table id at offset.
-func (c *mapCache) Add(id, offset uint64, block []byte) {
+// Add keeps the block of the table id at offset, and records the call under
+// ctx.
+func (c *mapCache) Add(ctx context.Context, id, offset uint64, block []byte) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
+	c.call, c.calls = ctx.Value(callKey{}), c.calls+1
 	if c.blocks == nil {
 		c.blocks = map[[2]uint64][]byte{}
 	}
@@ -270,33 +282,78 @@ func (l *layout) seal() {
 	be.PutUint32(f[footerChecked:], crc32.Checksum(f[:footerChecked], castagnoli))
 }
 
-// countingReader is an io.ReaderAt over data that counts its reads.
-type countingReader struct {
+// bytesFile is a File over the bytes of a table. A read under a context that
+// ended returns the error of the context, as a read that waits for a permit
+// returns it.
+type bytesFile []byte
+
+var _ sstable.File = bytesFile(nil)
+
+// ReadAt reads the bytes of f at off, or returns the error of ctx once ctx
+// ended.
+func (f bytesFile) ReadAt(ctx context.Context, p []byte, off int64) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+
+	return bytes.NewReader(f).ReadAt(p, off)
+}
+
+// discardSink is a Sink that accepts the bytes of a table and drops them.
+type discardSink struct{}
+
+var _ sstable.Sink = discardSink{}
+
+// Write accepts every byte of p.
+func (discardSink) Write(_ context.Context, p []byte) (int, error) {
+	return len(p), nil
+}
+
+// bufferSink is a Sink that appends the bytes of a table to its buffer. A
+// write under a context that ended returns the error of the context, as a
+// write that waits for a budget of disk I/O returns it.
+type bufferSink struct {
+	bytes.Buffer
+}
+
+var _ sstable.Sink = (*bufferSink)(nil)
+
+// Write appends p to the buffer, or returns the error of ctx once ctx ended.
+func (s *bufferSink) Write(ctx context.Context, p []byte) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+
+	return s.Buffer.Write(p)
+}
+
+// countingFile is a File over data that counts its reads.
+type countingFile struct {
 	data  []byte
 	reads int
 }
 
-var _ io.ReaderAt = (*countingReader)(nil)
+var _ sstable.File = (*countingFile)(nil)
 
 // ReadAt reads data at off and counts the read.
-func (r *countingReader) ReadAt(p []byte, off int64) (int, error) {
+func (r *countingFile) ReadAt(_ context.Context, p []byte, off int64) (int, error) {
 	r.reads++
 
 	return bytes.NewReader(r.data).ReadAt(p, off)
 }
 
-// failingReader is an io.ReaderAt over data that fails every read after
-// its first ok reads with errRead.
-type failingReader struct {
+// failingFile is a File over data that fails every read after its first
+// ok reads with errRead.
+type failingFile struct {
 	data  []byte
 	ok    int
 	reads int
 }
 
-var _ io.ReaderAt = (*failingReader)(nil)
+var _ sstable.File = (*failingFile)(nil)
 
-// ReadAt reads data at off, or fails once the reader has made ok reads.
-func (r *failingReader) ReadAt(p []byte, off int64) (int, error) {
+// ReadAt reads data at off, or fails once the File has made ok reads.
+func (r *failingFile) ReadAt(_ context.Context, p []byte, off int64) (int, error) {
 	r.reads++
 	if r.reads > r.ok {
 		return 0, errRead
@@ -327,33 +384,34 @@ func goldenTable() []entry {
 func writeTable(tb assert.TB, opts sstable.WriterOptions, es []entry) []byte {
 	tb.Helper()
 
-	var buf bytes.Buffer
-	w, err := sstable.NewWriter(&buf, opts)
+	ctx := assert.Context(tb)
+	var sink bufferSink
+	w, err := sstable.NewWriter(&sink, opts)
 	assert.NoError(tb, err, "NewWriter accepts the options")
 	for _, e := range es {
-		assert.NoError(tb, w.Add(e.key, e.seq, e.value), "Add adds each entry in order")
+		assert.NoError(tb, w.Add(ctx, e.key, e.seq, e.value), "Add adds each entry in order")
 	}
-	_, err = w.Close()
+	_, err = w.Close(ctx)
 	assert.NoError(tb, err, "Close writes the table")
 
-	return buf.Bytes()
+	return sink.Bytes()
 }
 
 // openTable opens the table of data.
 func openTable(tb assert.TB, data []byte, opts sstable.ReaderOptions) *sstable.Reader {
 	tb.Helper()
 
-	r, err := sstable.Open(bytes.NewReader(data), int64(len(data)), opts)
+	r, err := sstable.Open(assert.Context(tb), bytesFile(data), int64(len(data)), opts)
 	assert.NoError(tb, err, "Open reads the table")
 
 	return r
 }
 
-// scanAll returns a copy of every entry that s yields from its first entry,
-// and the error of s.
-func scanAll(s sstable.Source) ([]entry, error) {
+// scanAll returns a copy of every entry that s yields from its first entry
+// under ctx, and the error of s.
+func scanAll(ctx context.Context, s sstable.Source) ([]entry, error) {
 	var got []entry
-	for ok := s.First(); ok; ok = s.Next() {
+	for ok := s.First(ctx); ok; ok = s.Next(ctx) {
 		got = append(got, entry{key: bytes.Clone(s.Key()), seq: s.Seq(), value: bytes.Clone(s.Value())})
 	}
 
@@ -361,10 +419,10 @@ func scanAll(s sstable.Source) ([]entry, error) {
 }
 
 // scanBack returns a copy of every entry that s yields from its last entry
-// back, and the error of s.
-func scanBack(s sstable.Source) ([]entry, error) {
+// back under ctx, and the error of s.
+func scanBack(ctx context.Context, s sstable.Source) ([]entry, error) {
 	var got []entry
-	for ok := s.Last(); ok; ok = s.Prev() {
+	for ok := s.Last(ctx); ok; ok = s.Prev(ctx) {
 		got = append(got, entry{key: bytes.Clone(s.Key()), seq: s.Seq(), value: bytes.Clone(s.Value())})
 	}
 
@@ -397,15 +455,15 @@ func restartEntry(p []byte) (ikey, value []byte) {
 }
 
 // readAll reads every block of a table through a cursor and every key
-// through Get, and returns the first error.
-func readAll(r *sstable.Reader, es []entry) error {
-	it := r.NewIter()
+// through Get under ctx, and returns the first error.
+func readAll(ctx context.Context, r *sstable.Reader, es []entry) error {
+	it := r.NewIter(sstable.IterOptions{})
 	defer it.Close()
-	if _, err := scanAll(it); err != nil {
+	if _, err := scanAll(ctx, it); err != nil {
 		return err
 	}
 	for _, e := range es {
-		if _, _, _, err := r.Get(e.key, e.seq, nil); err != nil {
+		if _, _, _, err := r.Get(ctx, e.key, e.seq, nil); err != nil {
 			return err
 		}
 	}
