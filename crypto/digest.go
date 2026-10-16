@@ -33,6 +33,10 @@ const (
 	MaxDigestSize = DigestSize512
 )
 
+// upperHexLetters are the letters that [encoding/hex] decodes and that the
+// text of a [Digest] does not contain.
+const upperHexLetters = "ABCDEF"
+
 // Digest is a hash output of [DigestSize256], [DigestSize384] or
 // [DigestSize512] bytes in one value type. [Digest.Size] returns the
 // length of the active prefix, and [Digest.Bytes] returns the prefix.
@@ -40,12 +44,19 @@ const (
 // Digest is comparable, so it can be a map key or a field of a
 // comparable struct, and == compares two digests. Its fields are
 // unexported, so a stored Digest changes only when another Digest is
-// assigned to it or [Digest.UnmarshalBinary] decodes into it.
+// assigned to it or [Digest.UnmarshalBinary] or [Digest.UnmarshalText]
+// decodes into it.
+//
+// [Digest.AppendBinary] encodes a Digest as its active bytes.
+// [Digest.AppendText] encodes it as the lowercase hexadecimal of these
+// bytes, which [encoding/json] writes as a JSON string. The zero Digest has
+// neither encoding.
 //
 // # Allocation contract
 //
 // Construction, comparison and storage do not allocate.
-// [Digest.String] allocates the returned string.
+// [Digest.String], [Digest.MarshalBinary] and [Digest.MarshalText]
+// allocate their results.
 type Digest struct {
 	bytes [MaxDigestSize]byte
 	size  uint8
@@ -184,6 +195,77 @@ func (d *Digest) UnmarshalBinary(data []byte) error {
 	return nil
 }
 
+// AppendText appends the active bytes of d to dst in lowercase
+// hexadecimal, the text that [Digest.String] returns, and returns the
+// extended slice. [encoding/json] writes a Digest as a JSON string of this
+// text, and the key of a map as the name of an object member. Implements
+// [encoding.TextAppender].
+//
+// Returns dst unchanged and [ErrDigestZero] for the zero [Digest], which
+// has no text.
+//
+// # Allocation contract
+//
+// Zero alloc when dst has capacity for 2*d.Size() more bytes.
+func (d Digest) AppendText(dst []byte) ([]byte, error) {
+	if d.IsZero() {
+		return dst, ErrDigestZero
+	}
+
+	return hex.AppendEncode(dst, d.bytes[:d.size]), nil
+}
+
+// MarshalText returns the text that [Digest.AppendText] appends, in a new
+// slice of 2*d.Size() bytes. Implements [encoding.TextMarshaler].
+//
+// Returns nil and [ErrDigestZero] for the zero [Digest].
+//
+// # Allocation contract
+//
+// One allocation for the returned slice.
+func (d Digest) MarshalText() ([]byte, error) {
+	out, err := d.AppendText(make([]byte, 0, 2*int(d.size)))
+	if err != nil {
+		return nil, err
+	}
+
+	return out, nil
+}
+
+// UnmarshalText sets d to the digest whose text is text, the lowercase
+// hexadecimal that [Digest.AppendText] appends. It decodes the digits into
+// an array on its stack, and then decodes the bytes as
+// [Digest.UnmarshalBinary] does. The decoded d equals, under ==, the Digest
+// of the same bytes, whatever d contained before. On an error d is
+// unchanged. Implements [encoding.TextUnmarshaler].
+//
+// Returns [ErrDigestSize] unless len(text) is 64, 96 or 128. The empty
+// text is an error as well, so no text decodes to the zero [Digest].
+// Returns [ErrDigestText] for a byte other than the digits 0 to 9 and the
+// lowercase letters a to f. The uppercase letters are an error too, so
+// each digest has exactly one text.
+//
+// # Allocation contract
+//
+// Zero alloc. It decodes into the receiver.
+func (d *Digest) UnmarshalText(text []byte) error {
+	if len(text)%2 != 0 {
+		return ErrDigestSize
+	}
+
+	size, ok := digestSize(len(text) / 2)
+	if !ok {
+		return ErrDigestSize
+	}
+
+	var buf [MaxDigestSize]byte
+	if _, err := hex.Decode(buf[:size], text); err != nil || bytes.ContainsAny(text, upperHexLetters) {
+		return ErrDigestText
+	}
+
+	return d.UnmarshalBinary(buf[:size])
+}
+
 // SizeKanon returns the length of the binary form of d, the bytes that
 // [Digest.AppendBinary] appends: [Digest.Size], and 0 for the zero
 // [Digest]. kanon's generated code sizes a digest with it and writes
@@ -235,11 +317,14 @@ func (d Digest) Bytes() []byte {
 // together with the bytes. No Digest other than the zero value has size
 // 0.
 //
-// The zero Digest has no binary encoding. [Digest.AppendBinary] and
-// [Digest.MarshalBinary] return [ErrDigestZero] for it, and every
-// decode path rejects empty input, so a truncated read or an absent
-// field cannot decode to a digest. Encoding absence is the containing
-// format's job, as it is for any other optional field.
+// The zero Digest has no encoding. [Digest.AppendBinary],
+// [Digest.MarshalBinary], [Digest.AppendText] and [Digest.MarshalText]
+// return [ErrDigestZero] for it, and every decode path rejects empty
+// input, so a truncated read or an absent field cannot decode to a
+// digest. Encoding absence is the containing format's job, as it is for
+// any other optional field. In JSON, the field option omitzero leaves out
+// a field that contains the zero Digest, because [encoding/json] calls
+// IsZero for that option.
 //
 // # Allocation contract
 //
@@ -281,9 +366,9 @@ func (d Digest) Compare(other Digest) int {
 	return bytes.Compare(d.bytes[:d.size], other.bytes[:other.size])
 }
 
-// String returns the active prefix in hexadecimal, for diagnostic
-// output, and the empty string for the zero [Digest]. It allocates the
-// returned string.
+// String returns the active prefix in lowercase hexadecimal, the text
+// that [Digest.AppendText] appends. It returns the empty string for the
+// zero [Digest], which has no text. It allocates the returned string.
 func (d Digest) String() string {
 	// The hex digits go into a stack buffer sized for the largest
 	// digest, so the conversion to string is the only allocation.
@@ -293,9 +378,9 @@ func (d Digest) String() string {
 }
 
 // digestSize returns the size of the Digest whose binary form is n bytes
-// long, and false for a length that no Digest has. [DigestFromBytes] and
-// [Digest.UnmarshalBinary] share it, so the two decode paths accept the
-// same lengths.
+// long, and false for a length that no Digest has. [DigestFromBytes],
+// [Digest.UnmarshalBinary] and [Digest.UnmarshalText] share it, so the
+// three decode paths accept the same lengths.
 func digestSize(n int) (uint8, bool) {
 	switch n {
 	case DigestSize256:

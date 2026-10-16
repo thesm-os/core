@@ -27,6 +27,7 @@ func TestCryptoSentinelErrors(t *testing.T) {
 		{"ErrChunkSize", crypto.ErrChunkSize},
 		{"ErrCiphertextShort", crypto.ErrCiphertextShort},
 		{"ErrDigestSize", crypto.ErrDigestSize},
+		{"ErrDigestText", crypto.ErrDigestText},
 		{"ErrDigestZero", crypto.ErrDigestZero},
 		{"ErrEnvelopeVersion", crypto.ErrEnvelopeVersion},
 		{"ErrKeyDestroyed", crypto.ErrKeyDestroyed},

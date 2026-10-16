@@ -5,7 +5,10 @@ package crypto_test
 
 import (
 	"bytes"
+	"encoding"
 	"encoding/hex"
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"go.dokimi.dev/assert"
@@ -18,6 +21,14 @@ import (
 	"go.thesmos.sh/core/errs"
 )
 
+// The text interfaces that Digest satisfies. A missing method is a build
+// failure.
+var (
+	_ encoding.TextAppender    = crypto.Digest{}
+	_ encoding.TextMarshaler   = crypto.Digest{}
+	_ encoding.TextUnmarshaler = (*crypto.Digest)(nil)
+)
+
 // The digests of the allocation tests and the benchmarks.
 var (
 	// digest42 is a digest of DigestSize256 whose bytes are all 0x42.
@@ -28,6 +39,12 @@ var (
 
 	// digestDst is a buffer with capacity for the encoding of digest42.
 	digestDst = make([]byte, 0, crypto.DigestSize256)
+
+	// digestTextDst is a buffer with capacity for the text of digest42.
+	digestTextDst = make([]byte, 0, 2*crypto.DigestSize256)
+
+	// digest43Text is the text of digest43, the hexadecimal of its bytes.
+	digest43Text = []byte(hex.EncodeToString(digest43.Bytes()))
 
 	// digestDecoded is the Digest that the decode of a measured call
 	// writes.
@@ -67,6 +84,24 @@ var badLengths = prop.Integer(0, 2*crypto.MaxDigestSize).Filter(func(n int) bool
 	return n != crypto.DigestSize256 && n != crypto.DigestSize384 && n != crypto.DigestSize512
 })
 
+// badTextLengths generates the lengths up to twice the longest text of a
+// digest that the text of no digest has.
+var badTextLengths = prop.Integer(0, 4*crypto.MaxDigestSize).Filter(func(n int) bool {
+	return n != 2*crypto.DigestSize256 && n != 2*crypto.DigestSize384 && n != 2*crypto.DigestSize512
+})
+
+// upperHexLetters generates the uppercase letters A to F, which
+// encoding/hex decodes and which the text of a digest does not contain.
+var upperHexLetters = prop.Integer(byte('A'), byte('F'))
+
+// nonHexBytes generates the bytes that encoding/hex refuses as a
+// hexadecimal digit.
+var nonHexBytes = prop.Integer(byte(0), byte(255)).Filter(func(b byte) bool {
+	_, err := hex.DecodeString(string([]byte{b, b}))
+
+	return err != nil
+})
+
 // digestCalls are the calls on the hot path of a Digest, each with its
 // allocation ceiling. Each call reports whether it returned the result
 // that its fixtures determine, so the measurement keeps the result alive.
@@ -97,6 +132,19 @@ var digestCalls = []struct {
 	{name: "UnmarshalBinary", call: func() bool {
 		return digestDecoded.UnmarshalBinary(digest43.Bytes()) == nil
 	}},
+	{name: "AppendText", call: func() bool {
+		b, err := digest42.AppendText(digestTextDst[:0])
+
+		return err == nil && len(b) == 2*crypto.DigestSize256
+	}},
+	{name: "MarshalText", allocs: 1, call: func() bool {
+		b, err := digest42.MarshalText()
+
+		return err == nil && len(b) == 2*crypto.DigestSize256
+	}},
+	{name: "UnmarshalText", call: func() bool {
+		return digestDecoded.UnmarshalText(digest43Text) == nil && digestDecoded == digest43
+	}},
 	{name: "SizeKanon", call: func() bool { return digest42.SizeKanon() == crypto.DigestSize256 }},
 	{name: "Size", call: func() bool { return digest42.Size() == crypto.DigestSize256 }},
 	{name: "Bytes", call: func() bool { return len(digest42.Bytes()) == crypto.DigestSize256 }},
@@ -104,6 +152,11 @@ var digestCalls = []struct {
 	{name: "Equal", call: func() bool { return !digest42.Equal(digest43) }},
 	{name: "ConstantTimeEqual", call: func() bool { return !digest42.ConstantTimeEqual(digest43) }},
 	{name: "Compare", call: func() bool { return digest42.Compare(digest43) < 0 }},
+}
+
+// digestDocument is a JSON document with a field of Digest.
+type digestDocument struct {
+	Digest crypto.Digest `json:"digest"`
 }
 
 func TestDigest(t *testing.T) {
@@ -303,6 +356,198 @@ func TestDigest(t *testing.T) {
 		})
 	})
 
+	t.Run("AppendText", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("appends the hexadecimal of the bytes of d to dst", func(t *testing.T) {
+			t.Parallel()
+			// An error leaves dst unchanged, which the comparison refuses.
+			prop.Equal(t, func(d crypto.Digest) []byte {
+				out, _ := d.AppendText([]byte{0xAA})
+
+				return out
+			}, func(d crypto.Digest) []byte {
+				return append([]byte{0xAA}, hex.EncodeToString(d.Bytes())...)
+			}, "AppendText must keep dst and append the hexadecimal of d", prop.Using(digests))
+		})
+
+		t.Run("returns ErrDigestZero for the zero Digest", func(t *testing.T) {
+			t.Parallel()
+			_, err := crypto.Digest{}.AppendText(nil)
+			assert.ErrorIs(t, err, crypto.ErrDigestZero, "the zero Digest must have no text")
+		})
+
+		t.Run("returns dst unchanged for the zero Digest", func(t *testing.T) {
+			t.Parallel()
+			got, _ := crypto.Digest{}.AppendText([]byte{0xAA})
+			assert.Equal(t, got, []byte{0xAA}, "AppendText must leave dst unchanged on error")
+		})
+	})
+
+	t.Run("MarshalText", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the text that AppendText appends", func(t *testing.T) {
+			t.Parallel()
+			// No generated digest is zero, so neither call returns an error.
+			prop.Equal(t, func(d crypto.Digest) []byte {
+				out, _ := d.MarshalText()
+
+				return out
+			}, func(d crypto.Digest) []byte {
+				out, _ := d.AppendText(nil)
+
+				return out
+			}, "MarshalText must return the text of AppendText", prop.Using(digests))
+		})
+
+		t.Run("returns the bytes in lowercase hexadecimal", func(t *testing.T) {
+			t.Parallel()
+			var b [crypto.DigestSize256]byte
+			b[0], b[1], b[2] = 0x01, 0x23, 0x45
+			b[29], b[30], b[31] = 0xab, 0xcd, 0xef
+			got, err := crypto.NewDigest256(b).MarshalText()
+			assert.NoError(t, err, "MarshalText must encode a digest")
+			assert.Equal(t, string(got), "012345"+"0000000000000000000000000000000000000000000000000000"+"abcdef",
+				"MarshalText must encode the bytes in order")
+		})
+
+		t.Run("returns ErrDigestZero for the zero Digest", func(t *testing.T) {
+			t.Parallel()
+			_, err := crypto.Digest{}.MarshalText()
+			assert.ErrorIs(t, err, crypto.ErrDigestZero, "the zero Digest must have no text")
+		})
+
+		t.Run("returns nil for the zero Digest", func(t *testing.T) {
+			t.Parallel()
+			got, _ := crypto.Digest{}.MarshalText()
+			assert.Nil(t, got, "MarshalText must return no text with its error")
+		})
+
+		t.Run("makes json.Marshal write d as a JSON string of its text", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "json.Marshal must write a Digest as the JSON string of its text", func(c *prop.Case) {
+				d := c.Draw(digests, "digest")
+				got, err := json.Marshal(digestDocument{Digest: d})
+				assert.NoError(c, err, "json.Marshal must encode a digest")
+				assert.Equal(c, string(got), `{"digest":"`+hex.EncodeToString(d.Bytes())+`"}`,
+					"the field must be the JSON string of the text of the digest")
+			})
+		})
+
+		t.Run("returns ErrDigestZero through json.Marshal for the zero Digest", func(t *testing.T) {
+			t.Parallel()
+			_, err := json.Marshal(digestDocument{})
+			assert.ErrorIs(t, err, crypto.ErrDigestZero, "json.Marshal must return the error of MarshalText")
+		})
+	})
+
+	t.Run("UnmarshalText", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("decodes the text that MarshalText returns", func(t *testing.T) {
+			t.Parallel()
+			prop.RoundTrip(t, crypto.Digest.MarshalText, func(text []byte) (crypto.Digest, error) {
+				var d crypto.Digest
+				err := d.UnmarshalText(text)
+
+				return d, err
+			}, "UnmarshalText must invert MarshalText", prop.Using(digests))
+		})
+
+		t.Run("returns the digest of text whatever d contained before", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "UnmarshalText must overwrite every byte of the digest in d",
+				func(c *prop.Case) {
+					got := c.Draw(digests, "before")
+					want := c.Draw(digests, "decoded")
+					text := []byte(hex.EncodeToString(want.Bytes()))
+					assert.NoError(c, got.UnmarshalText(text), "UnmarshalText must accept the text of a digest")
+					assert.Equal(c, got, want, "the decoded digest must equal the digest of the same text")
+				})
+		})
+
+		t.Run("returns ErrDigestSize for a length that the text of no digest has", func(t *testing.T) {
+			t.Parallel()
+			prop.ErrorIs(t, func(n int) error {
+				var d crypto.Digest
+
+				return d.UnmarshalText(bytes.Repeat([]byte{'0'}, n))
+			}, crypto.ErrDigestSize, "UnmarshalText must refuse the length",
+				prop.Using(badTextLengths), prop.Example(0), prop.Example(2*crypto.DigestSize256-1),
+				prop.Example(2*crypto.DigestSize256+1), prop.Example(2*crypto.DigestSize512+1))
+		})
+
+		t.Run("returns ErrDigestText for an uppercase letter", func(t *testing.T) {
+			t.Parallel()
+			prop.ErrorIs(t, func(text []byte) error {
+				var d crypto.Digest
+
+				return d.UnmarshalText(text)
+			}, crypto.ErrDigestText, "UnmarshalText must refuse a text that AppendText does not write",
+				prop.Using(digestTextWith(upperHexLetters)))
+		})
+
+		t.Run("returns ErrDigestText for a byte that is not a hexadecimal digit", func(t *testing.T) {
+			t.Parallel()
+			prop.ErrorIs(t, func(text []byte) error {
+				var d crypto.Digest
+
+				return d.UnmarshalText(text)
+			}, crypto.ErrDigestText, "UnmarshalText must refuse a byte that is not a digit",
+				prop.Using(digestTextWith(nonHexBytes)))
+		})
+
+		t.Run("returns an error of class Invalid for a byte that is not a hexadecimal digit", func(t *testing.T) {
+			t.Parallel()
+			var d crypto.Digest
+			err := d.UnmarshalText(bytes.Repeat([]byte{'g'}, 2*crypto.DigestSize256))
+			assert.Equal(t, errs.Classify(err), errs.Invalid, "ErrDigestText must classify as Invalid")
+		})
+
+		t.Run("leaves d unchanged for a text that it refuses", func(t *testing.T) {
+			t.Parallel()
+			d := crypto.NewDigest384([crypto.DigestSize384]byte(bytes.Repeat([]byte{0x22}, crypto.DigestSize384)))
+			refused := prop.OneOf(digestTextWith(nonHexBytes), digestTextWith(upperHexLetters),
+				badTextLengths.Map(func(n int) []byte { return bytes.Repeat([]byte{'0'}, n) }))
+			prop.Pure(t, func() crypto.Digest { return d }, func(text []byte) {
+				_ = d.UnmarshalText(text)
+			}, "a refused decode must leave d unchanged", prop.Using(refused))
+		})
+
+		t.Run("decodes a JSON field that json.Marshal writes", func(t *testing.T) {
+			t.Parallel()
+			prop.RoundTrip(t, func(d crypto.Digest) ([]byte, error) {
+				return json.Marshal(digestDocument{Digest: d})
+			}, func(document []byte) (crypto.Digest, error) {
+				var v digestDocument
+				err := json.Unmarshal(document, &v)
+
+				return v.Digest, err
+			}, "json.Unmarshal must undo json.Marshal of a field", prop.Using(digests))
+		})
+
+		t.Run("decodes the JSON object that json.Marshal writes for a map", func(t *testing.T) {
+			t.Parallel()
+			prop.RoundTrip(t, func(m map[crypto.Digest]int) ([]byte, error) {
+				return json.Marshal(m)
+			}, func(document []byte) (map[crypto.Digest]int, error) {
+				var m map[crypto.Digest]int
+				err := json.Unmarshal(document, &m)
+
+				return m, err
+			}, "json.Unmarshal must undo json.Marshal of a map keyed by digests",
+				prop.Using(prop.Dict(digests, prop.Integer(0, 9), prop.MaxSize(4))))
+		})
+
+		t.Run("returns ErrDigestText through json.Unmarshal", func(t *testing.T) {
+			t.Parallel()
+			var got crypto.Digest
+			err := json.Unmarshal([]byte(`"`+strings.Repeat("A", 2*crypto.DigestSize256)+`"`), &got)
+			assert.ErrorIs(t, err, crypto.ErrDigestText, "json.Unmarshal must return the error of UnmarshalText")
+		})
+	})
+
 	t.Run("SizeKanon", func(t *testing.T) {
 		t.Parallel()
 
@@ -372,6 +617,15 @@ func TestDigest(t *testing.T) {
 			t.Parallel()
 			assert.False(t, crypto.NewDigest256([crypto.DigestSize256]byte{}).IsZero(),
 				"IsZero must read the size and not the bytes")
+		})
+
+		t.Run("makes json.Marshal omit the zero Digest from a field with omitzero", func(t *testing.T) {
+			t.Parallel()
+			got, err := json.Marshal(struct {
+				D crypto.Digest `json:",omitzero"`
+			}{})
+			assert.NoError(t, err, "json.Marshal must omit the zero Digest")
+			assert.Equal(t, string(got), "{}", "the field with omitzero must not appear")
 		})
 	})
 
@@ -519,4 +773,15 @@ func newDigest(b []byte) crypto.Digest {
 	}
 
 	return crypto.NewDigest512([crypto.DigestSize512]byte(b))
+}
+
+// digestTextWith returns a generator of the text of a digest of each size
+// in which a byte of bad replaces the digit at one position.
+func digestTextWith(bad prop.Generator[byte]) prop.Generator[[]byte] {
+	return prop.Composite(func(c *prop.Case) []byte {
+		text := []byte(hex.EncodeToString(c.Draw(digests, "digest").Bytes()))
+		text[c.Draw(prop.Integer(0, len(text)-1), "position")] = c.Draw(bad, "byte")
+
+		return text
+	})
 }

@@ -18,16 +18,25 @@ import (
 var (
 	// ErrDigestSize is returned when a byte slice decoded as a [Digest]
 	// is not exactly [DigestSize256], [DigestSize384], or
-	// [DigestSize512] bytes long. A truncated input returns this error
-	// instead of a panic or a truncated digest. Classifies as Invalid.
+	// [DigestSize512] bytes long. [Digest.UnmarshalText] returns it for a
+	// text without two hexadecimal digits for each byte of one of these
+	// sizes. A truncated input returns this error instead of a panic or a
+	// truncated digest. Classifies as Invalid.
 	ErrDigestSize = errs.WithClass(errors.New("crypto: digest length must be 32, 48, or 64 bytes"), errs.Invalid)
 
-	// ErrDigestZero is returned when the zero [Digest] is marshalled,
-	// and classifies as Invalid. The zero Digest is the uninitialised
-	// value and has no wire form. As zero bytes, it would make every
-	// truncated read decode back into a digest the caller never wrote,
-	// so the format that contains a digest encodes its absence.
-	ErrDigestZero = errs.WithClass(errors.New("crypto: the zero digest has no binary encoding"), errs.Invalid)
+	// ErrDigestZero is returned when the zero [Digest] is marshalled to
+	// its binary form or to its text, and classifies as Invalid. The zero
+	// Digest is the uninitialised value and has no wire form. As zero
+	// bytes, it would make every truncated read decode back into a digest
+	// the caller never wrote, so the format that contains a digest encodes
+	// its absence.
+	ErrDigestZero = errs.WithClass(errors.New("crypto: the zero digest has no encoding"), errs.Invalid)
+
+	// ErrDigestText is returned by [Digest.UnmarshalText] for a text with a
+	// byte other than the digits 0 to 9 and the lowercase letters a to f.
+	// [Digest.AppendText] writes only these bytes, so each digest has
+	// exactly one text. Classifies as Invalid.
+	ErrDigestText = errs.WithClass(errors.New("crypto: digest text must be lowercase hexadecimal"), errs.Invalid)
 
 	// ErrKeySize is returned when a key's length does not match any
 	// size the algorithm accepts, and when a requested key size is not
