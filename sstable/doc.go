@@ -46,11 +46,15 @@
 // caller: [Open], [Reader.Get], each move of a [Source], the methods of a
 // [BlockCache], [Writer.Add] and [Writer.Close]. The package passes the
 // context to the File, the Sink and the cache. A File or a Sink that waits
-// ends its wait with the error of the context. Next and Prev of an [Iter]
-// ignore the context when the next entry is in the current block. A cursor
-// of [IterOptions] with NoFill takes the blocks that the cache contains and
-// does not add the blocks that it reads, so a scan of a compaction keeps the
-// blocks of the reads in the cache.
+// ends its wait with the error of the context. A move of an [Iter] that
+// needs a block checks the context first, so a scan stops at the next block
+// after its context ended, also when the cache contains the block. Next,
+// Prev and SeekGE ignore the context when they move within the current
+// block. A cursor of [IterOptions] with NoFill takes the blocks that the
+// cache contains and does not add the blocks that it reads, so a scan of a
+// compaction keeps the blocks of the reads in the cache. A cursor with
+// ReadAhead reads the data blocks of ReadAhead bytes with one read of the
+// File, so a scan makes one read for many blocks.
 //
 // # Merges
 //
@@ -78,7 +82,9 @@
 //   - Writer.Add does not allocate once the buffers of the current block,
 //     the index and the hashes of the filter have room. [Writer.Reset] keeps
 //     the buffers for the next table, so a table after Reset allocates the
-//     two keys of its summary once the buffers have grown.
+//     two keys of its summary once the buffers have grown. A Writer releases
+//     its buffers once [Writer.Footprint] exceeds the MaxRetained of
+//     [WriterOptions], and the next table grows them again.
 //   - Reader.Get, Reader.MayContain, Reader.NewIter, Iter.Close and the moves
 //     of an Iter and a Merger do not allocate once the pooled cursors have
 //     grown to the largest block. A read through a [BlockCache] allocates a

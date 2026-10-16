@@ -262,6 +262,8 @@ func (r *Reader) MayContain(key []byte) bool {
 //
 //   - A data block that fails its checksum, its decompression or its layout
 //     returns [ErrCorrupt].
+//   - A ctx that ended returns the error of ctx when Get needs a block, also
+//     when the cache contains the block.
 //   - An error of the File, such as the error of ctx at the end of a wait,
 //     returns an error that wraps it.
 //
@@ -299,7 +301,7 @@ func (r *Reader) Get(ctx context.Context, key []byte, seq uint64, dst []byte) ([
 // Zero-alloc when the pool has a cursor. Otherwise NewIter allocates one.
 func (r *Reader) NewIter(opts IterOptions) *Iter {
 	it := iters.Get()
-	it.r, it.noFill = r, opts.NoFill
+	it.r, it.noFill, it.readAhead = r, opts.NoFill, opts.ReadAhead
 	it.index.init(r.index)
 
 	return it

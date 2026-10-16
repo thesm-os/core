@@ -18,26 +18,43 @@ import (
 var iters = pool.NewPool(func() *Iter { return new(Iter) })
 
 // IterOptions configure a cursor of [Reader.NewIter]. The zero value adds
-// each block that the cursor reads to the cache of the Reader.
+// each block that the cursor reads to the cache of the Reader, and reads
+// each block with a read of its own.
 type IterOptions struct {
 	// NoFill makes the cursor take the blocks that the cache contains, and
 	// read every other block into a buffer of the cursor without adding it,
 	// as a scan of a compaction needs. The scan then keeps the blocks of the
 	// reads in the cache.
 	NoFill bool
+
+	// ReadAhead is the number of bytes of a read of the cursor from the
+	// File. A read of a data block that the cache does not contain reads
+	// ReadAhead bytes from the start of the block, or up to the end of the
+	// block when the block is before the bytes of the last read. A later
+	// move takes a block inside those bytes without a read. A ReadAhead of
+	// the size of a block or less reads the block alone, and so does 0. A
+	// seek outside the bytes of the last read reads ReadAhead bytes again,
+	// so ReadAhead suits a scan.
+	ReadAhead int
 }
 
 // Iter is a cursor over the entries of a table, in the order of [Compare].
 // A move positions the cursor on an entry or exhausts it. A seek searches
 // the index for its data block, reads the block and searches the restart
-// points of the block. [Iter.Prev] decodes the entries of the block from the
-// restart point before the current entry, so it decodes at most
-// RestartInterval entries. At the end of a block, Next and Prev read the
-// block after it or before it.
+// points of the block. [Iter.SeekGE] of a cursor on an entry at or before
+// its target searches the current block alone when the target is at or
+// before the last entry of the block. [Iter.Prev] decodes the entries of the
+// block from the restart point before the current entry, so it decodes at
+// most RestartInterval entries. At the end of a block, Next and Prev read
+// the block after it or before it. A cursor with the ReadAhead of
+// [IterOptions] reads the blocks of ReadAhead bytes with one read of the
+// File.
 //
-// A move reads a block under its context, and looks the block up in the
-// cache of the Reader under the same context. Next and Prev ignore the
-// context when the next entry is in the current block.
+// A move that needs a block first checks its context. A context that ended
+// exhausts the cursor, also when the cache of the Reader contains the block.
+// The move then looks the block up in the cache and reads it under the same
+// context. Next, Prev and SeekGE ignore the context when they move within
+// the current block.
 //
 // The key and the value of the current entry are valid until the next move
 // of the cursor.
@@ -51,7 +68,9 @@ type IterOptions struct {
 // The moves of a cursor do not allocate once its buffers have grown to the
 // largest block. A move through the cache of the Reader allocates the copy
 // of each block that it adds, and a cursor with NoFill does not add a block.
-// Key, Seq, Value, Err and Close do not allocate.
+// A cursor with ReadAhead allocates the buffer of its reads ahead at its
+// first read of more than one block, and Close releases it. Key, Seq, Value,
+// Err and Close do not allocate.
 type Iter struct {
 	// err is the error that exhausted the cursor.
 	err error
@@ -63,11 +82,21 @@ type Iter struct {
 	// of a compressed block.
 	raw, buf []byte
 
+	// ahead contains the bytes of the last read ahead, from the offset
+	// aheadOff of the table on. It is empty before the first one.
+	ahead []byte
+
 	// index is on the entry of the index for the block of data.
 	index blockCursor
 
 	// data is on the current entry, or on no entry.
 	data blockCursor
+
+	// aheadOff is the offset of the bytes of ahead in the table.
+	aheadOff uint64
+
+	// readAhead is the ReadAhead of [IterOptions].
+	readAhead int
 
 	// noFill reports whether the cursor reads blocks without adding them to
 	// the cache, as [IterOptions] states.
@@ -86,6 +115,7 @@ var (
 //
 //   - A data block that fails its checksum, its decompression or its layout
 //     exhausts the cursor, and Err returns [ErrCorrupt].
+//   - A ctx that ended exhausts the cursor, and Err returns the error of ctx.
 //   - An error of the File, such as the error of ctx at the end of a wait,
 //     exhausts the cursor, and Err returns an error that wraps it.
 //
@@ -106,6 +136,7 @@ func (it *Iter) First(ctx context.Context) bool {
 //
 //   - A data block that fails its checksum, its decompression or its layout
 //     exhausts the cursor, and Err returns [ErrCorrupt].
+//   - A ctx that ended exhausts the cursor, and Err returns the error of ctx.
 //   - An error of the File, such as the error of ctx at the end of a wait,
 //     exhausts the cursor, and Err returns an error that wraps it.
 //
@@ -122,12 +153,16 @@ func (it *Iter) Last(ctx context.Context) bool {
 // SeekGE moves to the first entry at or after the entry (key, seq) and
 // reports whether it exists. For a snapshot seq, an entry with key is the
 // newest version of key at or below seq. SeekGE reads the first data block
-// whose last entry is at or after (key, seq), under ctx.
+// whose last entry is at or after (key, seq), under ctx. A cursor on an
+// entry at or before (key, seq), in a block whose last entry is at or after
+// (key, seq), searches the restart points of that block and reads no block.
 //
 // Error modes:
 //
 //   - A data block that fails its checksum, its decompression or its layout
 //     exhausts the cursor, and Err returns [ErrCorrupt].
+//   - A ctx that ended exhausts the cursor when SeekGE needs a block, and Err
+//     returns the error of ctx.
 //   - An error of the File, such as the error of ctx at the end of a wait,
 //     exhausts the cursor, and Err returns an error that wraps it.
 //
@@ -135,6 +170,11 @@ func (it *Iter) Last(ctx context.Context) bool {
 //
 // Zero-alloc once the buffers of the cursor have room for the block.
 func (it *Iter) SeekGE(ctx context.Context, key []byte, seq uint64) bool {
+	// The key of the entry of the index is the last key of its block, so an
+	// entry from the current one to that key is in the block.
+	if it.data.valid && it.data.compare(key, seq) <= 0 && it.index.compare(key, seq) >= 0 {
+		return it.forward(ctx, it.data.seekGE(key, seq))
+	}
 	it.err, it.index.err, it.data.err, it.data.valid = nil, nil, nil, false
 	ok := it.index.seekGE(key, seq) && it.load(ctx) && it.data.seekGE(key, seq)
 
@@ -151,6 +191,7 @@ func (it *Iter) SeekGE(ctx context.Context, key []byte, seq uint64) bool {
 //
 //   - A data block that fails its checksum, its decompression or its layout
 //     exhausts the cursor, and Err returns [ErrCorrupt].
+//   - A ctx that ended exhausts the cursor, and Err returns the error of ctx.
 //   - An error of the File, such as the error of ctx at the end of a wait,
 //     exhausts the cursor, and Err returns an error that wraps it.
 //
@@ -177,6 +218,8 @@ func (it *Iter) SeekLT(ctx context.Context, key []byte, seq uint64) bool {
 //
 //   - A data block that fails its checksum, its decompression or its layout
 //     exhausts the cursor, and Err returns [ErrCorrupt].
+//   - A ctx that ended exhausts the cursor at the end of a block, and Err
+//     returns the error of ctx.
 //   - An error of the File, such as the error of ctx at the end of a wait,
 //     exhausts the cursor, and Err returns an error that wraps it.
 //
@@ -198,6 +241,8 @@ func (it *Iter) Next(ctx context.Context) bool {
 //   - A data block that fails its checksum, its decompression or its layout
 //     exhausts the cursor, and Err returns [ErrCorrupt]. So do entries of
 //     the current block that do not end at the current entry.
+//   - A ctx that ended exhausts the cursor at the first entry of a block, and
+//     Err returns the error of ctx.
 //   - An error of the File, such as the error of ctx at the end of a wait,
 //     exhausts the cursor, and Err returns an error that wraps it.
 //
@@ -291,12 +336,15 @@ func (it *Iter) Close() error {
 // the block has no entry for the move, forward moves to the first entry of
 // the next data blocks, which it reads under ctx. It exhausts the cursor at
 // the end of the index or at an error, and reports whether the cursor is on
-// an entry.
+// an entry. A step that reports ok leaves every error nil, so forward joins
+// the errors only after a step that failed.
 func (it *Iter) forward(ctx context.Context, ok bool) bool {
 	for !ok && it.err == nil && it.data.err == nil && it.index.next() {
 		ok = it.load(ctx) && it.data.restart(0)
 	}
-	it.err = cmp.Or(it.err, it.index.err, it.data.err)
+	if !ok {
+		it.err = cmp.Or(it.err, it.index.err, it.data.err)
+	}
 
 	return ok
 }
@@ -305,12 +353,15 @@ func (it *Iter) forward(ctx context.Context, ok bool) bool {
 // the block has no entry for the move, backward moves to the last entry of
 // the data blocks before it, which it reads under ctx. It exhausts the
 // cursor at the start of the index or at an error, and reports whether the
-// cursor is on an entry.
+// cursor is on an entry. It joins the errors only after a step that failed,
+// as forward does.
 func (it *Iter) backward(ctx context.Context, ok bool) bool {
 	for !ok && it.err == nil && it.data.err == nil && it.index.prev() {
 		ok = it.load(ctx) && it.data.last()
 	}
-	it.err = cmp.Or(it.err, it.index.err, it.data.err)
+	if !ok {
+		it.err = cmp.Or(it.err, it.index.err, it.data.err)
+	}
 
 	return ok
 }
@@ -320,11 +371,16 @@ func (it *Iter) backward(ctx context.Context, ok bool) bool {
 // load takes the block from the cache of the Reader, or reads it under ctx,
 // compares its CRC32C with the CRC32C of the entry and adds a copy to the
 // cache. A cursor with noFill leaves the block in raw or buf and adds
-// nothing to the cache. load sets err and reports false for a value with
-// other fields, a place outside the data blocks and a read that fails. Every
-// caller calls load with the data cursor on no entry, and a load that fails
-// leaves it there.
+// nothing to the cache. load sets err and reports false for a ctx that
+// ended, a value with other fields, a place outside the data blocks and a
+// read that fails. Every caller calls load with the data cursor on no entry,
+// and a load that fails leaves it there.
 func (it *Iter) load(ctx context.Context) bool {
+	if err := ctx.Err(); err != nil {
+		it.err = err
+
+		return false
+	}
 	v := it.index.value
 	off, n1 := binary.Uvarint(v)
 	// When the first varint fails, Uvarint decodes the same bytes for the
@@ -353,14 +409,13 @@ func (it *Iter) load(ctx context.Context) bool {
 
 	//nolint:gosec // G115: the block lies before dataEnd, inside a table whose size is an int64
 	size := int(n) + trailerLen
-	it.raw = slices.Grow(it.raw[:0], size)[:size]
-	//nolint:gosec // G115: the block lies before dataEnd, inside the table
-	if err := readAt(ctx, it.r.f, it.raw, int64(off)); err != nil {
+	raw, err := it.read(ctx, off, size)
+	if err != nil {
 		it.err = err
 
 		return false
 	}
-	b, err := unseal(it.raw, want, &it.buf)
+	b, err := unseal(raw, want, &it.buf)
 	if err != nil {
 		it.err = err
 
@@ -373,6 +428,47 @@ func (it *Iter) load(ctx context.Context) bool {
 	it.data.init(b)
 
 	return true
+}
+
+// read returns the stored block of size bytes at off and its trailer, which
+// it reads from the File under ctx. A block inside the bytes of the last read
+// ahead is a part of them, and read does not read. With readAhead above size
+// read reads readAhead bytes from off into ahead, or up to the end of the
+// block when the block is before the bytes of the last read, within the data
+// blocks. Otherwise it reads the block alone into raw. A read that fails
+// returns the error of readAt and leaves ahead empty.
+func (it *Iter) read(ctx context.Context, off uint64, size int) ([]byte, error) {
+	//nolint:gosec // G115: size is the positive length of a block and its trailer
+	end := off + uint64(size)
+	if off >= it.aheadOff && end <= it.aheadOff+uint64(len(it.ahead)) {
+		return it.ahead[off-it.aheadOff : end-it.aheadOff], nil
+	}
+	//dokimi:mutate-skip ror-boundary: a read ahead of the size of the block reads the bytes of the block alone
+	if it.readAhead <= size {
+		it.raw = slices.Grow(it.raw[:0], size)[:size]
+
+		//nolint:gosec // G115: the block lies before dataEnd, inside the table
+		return it.raw, readAt(ctx, it.r.f, it.raw, int64(off))
+	}
+
+	//nolint:gosec // G115: readAhead is above size, which is positive
+	n := uint64(it.readAhead)
+	start := off
+	if off < it.aheadOff {
+		start = end - min(end, n)
+	}
+	//nolint:gosec // G115: the bytes are at most readAhead, an int
+	w := int(min(start+n, it.r.dataEnd) - start)
+	it.ahead = slices.Grow(it.ahead[:0], w)[:w]
+	//nolint:gosec // G115: the bytes lie before dataEnd, inside the table
+	if err := readAt(ctx, it.r.f, it.ahead, int64(start)); err != nil {
+		it.ahead = it.ahead[:0]
+
+		return nil, err
+	}
+	it.aheadOff = start
+
+	return it.ahead[off-start : end-start], nil
 }
 
 // blockCursor is a cursor over the entries of a decoded block. The block
@@ -513,10 +609,11 @@ func (c *blockCursor) seekGE(key []byte, seq uint64) bool {
 	lo, hi := 0, c.count
 	for lo < hi {
 		mid := int(uint(lo+hi) >> 1)
-		if !c.restart(mid) {
+		order, ok := c.restartCompare(mid, key, seq)
+		if !ok {
 			return false
 		}
-		if c.compare(key, seq) < 0 {
+		if order < 0 {
 			lo = mid + 1
 		} else {
 			hi = mid
@@ -546,6 +643,42 @@ func (c *blockCursor) seekLT(key []byte, seq uint64) bool {
 	return c.last()
 }
 
+// restartCompare returns the order of the entry at the restart point i and
+// the entry (key, seq) under Compare. It compares the whole key of the
+// restart point where the block stores it, without a copy into c.key. It
+// sets err to ErrCorrupt and reports false for a restart offset outside the
+// entries, and for an entry at the offset whose header does not decode,
+// whose internal key does not fit the entries or is shorter than a sequence,
+// or that shares a prefix with a key before it.
+func (c *blockCursor) restartCompare(i int, key []byte, seq uint64) (int, bool) {
+	off := binary.BigEndian.Uint32(c.block[c.end+4*i:])
+	//dokimi:mutate-skip ror-boundary: an entry at the end of the entries has no bytes, which uvarints refuses
+	if int64(off) >= int64(c.end) {
+		c.valid, c.err = false, ErrCorrupt
+
+		return 0, false
+	}
+	p := c.block[off:c.end]
+	shared, unshared, _, short := shortHeader(p)
+	n := 3
+	if !short {
+		shared, unshared, _, n = uvarints(p)
+	}
+	// A header that does not decode has a key of no bytes, which is shorter
+	// than a sequence. The search reads the key alone, so it does not check
+	// the length of the value.
+	p = p[n:]
+	if shared != 0 || unshared > uint64(len(p)) || unshared < seqLen {
+		c.valid, c.err = false, ErrCorrupt
+
+		return 0, false
+	}
+	//nolint:gosec // G115: unshared is at most len(p)
+	k := int(unshared) - seqLen
+
+	return Compare(p[:k], binary.BigEndian.Uint64(p[k:]), key, seq), true
+}
+
 // decode moves to the entry at off. The key of the entry shares its first
 // bytes with c.key. decode sets err to ErrCorrupt and reports false for a
 // varint that does not end, a shared prefix longer than the key before it,
@@ -553,15 +686,15 @@ func (c *blockCursor) seekLT(key []byte, seq uint64) bool {
 // sequence.
 func (c *blockCursor) decode(off int) bool {
 	p := c.block[off:c.end]
-	shared, n1 := binary.Uvarint(p)
-	p = p[max(n1, 0):]
-	unshared, n2 := binary.Uvarint(p)
-	p = p[max(n2, 0):]
-	vlen, n3 := binary.Uvarint(p)
-	p = p[max(n3, 0):]
-	// p does not advance past a varint that fails, so every varint after it
-	// fails too. n3 reports a failure of any of the three.
-	if n3 <= 0 || shared > uint64(len(c.key)) || unshared > uint64(len(p)) ||
+	shared, unshared, vlen, short := shortHeader(p)
+	n := 3
+	if !short {
+		shared, unshared, vlen, n = uvarints(p)
+	}
+	// A header that does not decode has an internal key of no bytes, which
+	// is shorter than a sequence.
+	p = p[n:]
+	if shared > uint64(len(c.key)) || unshared > uint64(len(p)) ||
 		vlen > uint64(len(p))-unshared || shared+unshared < seqLen {
 
 		c.valid, c.err = false, ErrCorrupt
@@ -585,4 +718,37 @@ func (c *blockCursor) compare(key []byte, seq uint64) int {
 	n := len(c.key) - seqLen
 
 	return Compare(c.key[:n], binary.BigEndian.Uint64(c.key[n:]), key, seq)
+}
+
+// shortHeader decodes the header of the entry at the start of p when the
+// header has three bytes: the length of the prefix that the key shares with
+// the key before it, the length of the rest of the key and the length of the
+// value, each a varint of one byte below 0x80. It reports false for a longer
+// header, which uvarints decodes. shortHeader has no loop and no call, so
+// the compiler inlines it into the decode of each entry.
+func shortHeader(p []byte) (shared, unshared, vlen uint64, ok bool) {
+	//dokimi:mutate-skip ror-boundary,ror-true,lcr-true: uvarints decodes a header of three bytes below 0x80 to the same lengths, so the long path changes only the time
+	if len(p) < 3 || (p[0]|p[1]|p[2])&0x80 != 0 {
+		return 0, 0, 0, false
+	}
+
+	//dokimi:mutate-skip sbr-zero: uvarints decodes the header to the same lengths, so the long path changes only the time
+	return uint64(p[0]), uint64(p[1]), uint64(p[2]), true
+}
+
+// uvarints decodes the header of the entry at the start of p as three
+// varints of any length. It returns the three lengths that shortHeader
+// returns, and the length of the header, or 0 for a varint that does not end.
+func uvarints(p []byte) (shared, unshared, vlen uint64, n int) {
+	shared, n1 := binary.Uvarint(p)
+	// The second varint starts at the first one when the first one fails,
+	// and fails too, and so does the third. n3 reports a failure of any of
+	// the three.
+	unshared, n2 := binary.Uvarint(p[max(n1, 0):])
+	vlen, n3 := binary.Uvarint(p[max(n1, 0)+max(n2, 0):])
+	if n3 <= 0 {
+		return 0, 0, 0, 0
+	}
+
+	return shared, unshared, vlen, n1 + n2 + n3
 }

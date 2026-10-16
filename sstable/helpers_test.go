@@ -29,6 +29,22 @@ const (
 	goldenEntries = 120
 )
 
+// The long entries of longTable: longKeys keys of longKeyLen bytes that share
+// their first longKeyLen-3 bytes, each in two versions with a value of
+// longValueLen bytes. Each length in the header of such an entry takes a
+// varint of two bytes, except the shared length 0 of a restart point. A
+// restart point has an internal key of 140 bytes, and an entry after it
+// shares at least 130 bytes.
+const (
+	longKeys     = 20
+	longKeyLen   = 132
+	longValueLen = 200
+
+	// largeBlocks is the block size of the tables of long entries, so a
+	// block has several of them.
+	largeBlocks = 4096
+)
+
 // The layout of a table, which the cases that change a table and seal it
 // again rely on.
 const (
@@ -76,6 +92,10 @@ type callKey struct{}
 // oneEntry are the options of the tables whose data blocks a case changes at
 // their only entry: every entry ends its data block.
 var oneEntry = sstable.WriterOptions{BlockSize: 1}
+
+// longEntries are the options of the tables of long entries: blocks of
+// several entries with a restart point every 4 entries.
+var longEntries = sstable.WriterOptions{BlockSize: largeBlocks, RestartInterval: everyFourth}
 
 // castagnoli is the table of CRC32C, the checksum of the blocks and the
 // footer of a table.
@@ -377,6 +397,33 @@ func goldenTable() []entry {
 	}
 
 	return es
+}
+
+// longTable returns the long entries in the order of Compare.
+func longTable() []entry {
+	prefix := strings.Repeat("k", longKeyLen-3)
+	es := make([]entry, 0, 2*longKeys)
+	for i := range longKeys {
+		key := fmt.Appendf(nil, "%s%03d", prefix, i)
+		value := bytes.Repeat([]byte{byte('a' + i)}, longValueLen)
+		es = append(es, entry{key: key, seq: 2, value: value}, entry{key: key, seq: 1, value: value})
+	}
+
+	return es
+}
+
+// warmReader opens the table of data through a cache and scans it once under
+// the context of tb, so the cache contains every data block of the table.
+func warmReader(tb assert.TB, data []byte) *sstable.Reader {
+	tb.Helper()
+
+	r := openTable(tb, data, sstable.ReaderOptions{Cache: &mapCache{}, CacheID: 1})
+	it := r.NewIter(sstable.IterOptions{})
+	defer it.Close()
+	_, err := scanAll(assert.Context(tb), it)
+	assert.NoError(tb, err, "a scan adds every block of the table to the cache")
+
+	return r
 }
 
 // writeTable writes the entries into a table under opts and returns the

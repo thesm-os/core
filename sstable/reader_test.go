@@ -535,6 +535,16 @@ func TestReader(t *testing.T) {
 			}, "Get returns the error that the File returns for a context that ended")
 		})
 
+		t.Run("returns the error of the context for a block of the cache", func(t *testing.T) {
+			t.Parallel()
+			r := warmReader(t, writeTable(t, settings[0].opts, goldenTable()))
+			assert.HonoursCancellation(t, func(ctx context.Context) error {
+				_, _, _, err := r.Get(ctx, []byte("key 030"), 1, nil)
+
+				return err
+			}, "Get returns the error of a context that ended for a block that the cache contains")
+		})
+
 		t.Run("returns the error of the File", func(t *testing.T) {
 			t.Parallel()
 			data := writeTable(t, settings[0].opts, goldenTable())

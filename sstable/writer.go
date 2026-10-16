@@ -118,6 +118,13 @@ type WriterOptions struct {
 	// table in bits: 4, 8, 10, 12 or 16. With 0 the Writer does not write a
 	// filter.
 	FilterBits int
+
+	// MaxRetained bounds the memory that a Writer keeps for its next table,
+	// in bytes. When [Writer.Footprint] exceeds MaxRetained after Close
+	// writes a table, or at Reset, the Writer releases its buffers and the
+	// scratch of its filter builder, and the next table grows them again. 0
+	// keeps every buffer.
+	MaxRetained int
 }
 
 // Summary describes the entries, the size and the range of keys and
@@ -174,8 +181,10 @@ type Sink interface {
 // they have room. Close allocates the encoding of the filter, the scratch of
 // its builder, the growth of the buffer of the table for the filter and the
 // index, and the largest key of the summary. [Writer.Reset] keeps every
-// buffer for the next table, so a Writer that writes many tables allocates
-// the two keys of each summary once its buffers have grown.
+// buffer for the next table while [Writer.Footprint] is within the
+// MaxRetained of [WriterOptions], so a Writer that writes many tables of one
+// size allocates the two keys of each summary once its buffers have grown. A
+// table after a release of the buffers allocates their growth again.
 type Writer struct {
 	// w receives the bytes of the table.
 	w Sink
@@ -213,11 +222,12 @@ type Writer struct {
 	smallest    []byte
 	smallestSeq uint64
 
-	// blockSize, restartInterval and filterBits are options of the Writer
-	// after NewWriter applied the defaults.
+	// blockSize, restartInterval, filterBits and maxRetained are options of
+	// the Writer after NewWriter applied the defaults.
 	blockSize       int
 	restartInterval int
 	filterBits      int
+	maxRetained     int
 
 	// blockEntries is the number of entries of the current block.
 	blockEntries int
@@ -240,8 +250,9 @@ type Writer struct {
 // Error modes:
 //
 //   - A negative BlockSize, a BlockSize above 2^32 - 1, a negative
-//     RestartInterval, an invalid Compression or a FilterBits that is
-//     neither 0 nor a width of fingerprints returns [ErrOptions].
+//     RestartInterval, an invalid Compression, a FilterBits that is neither
+//     0 nor a width of fingerprints or a negative MaxRetained returns
+//     [ErrOptions].
 //
 // # Allocation contract
 //
@@ -249,7 +260,7 @@ type Writer struct {
 // that checks the width.
 func NewWriter(w Sink, opts WriterOptions) (*Writer, error) {
 	if opts.BlockSize < 0 || int64(opts.BlockSize) > math.MaxUint32 || opts.RestartInterval < 0 ||
-		!opts.Compression.Valid() {
+		!opts.Compression.Valid() || opts.MaxRetained < 0 {
 
 		return nil, ErrOptions
 	}
@@ -260,6 +271,7 @@ func NewWriter(w Sink, opts WriterOptions) (*Writer, error) {
 		restartInterval: cmp.Or(opts.RestartInterval, defaultRestartInterval),
 		compression:     opts.Compression,
 		filterBits:      opts.FilterBits,
+		maxRetained:     opts.MaxRetained,
 	}
 	if opts.FilterBits != 0 {
 		if _, err := wr.builder.Append(nil, nil, opts.FilterBits); err != nil {
@@ -343,7 +355,9 @@ func (w *Writer) Add(ctx context.Context, key []byte, seq uint64, value []byte) 
 }
 
 // Close writes the last data block, the filter, the index and the footer
-// with one write under ctx, and returns the summary of the table.
+// with one write under ctx, and returns the summary of the table. After the
+// write it releases the buffers of w when [Writer.Footprint] exceeds the
+// MaxRetained of [WriterOptions]. A Close that fails keeps them.
 //
 // The filter block is the encoding of a [filter.Fuse] over the [xxh3.Hash]
 // of each distinct key. The index block has the layout of a data block with
@@ -444,6 +458,7 @@ func (w *Writer) Close(ctx context.Context) (Summary, error) {
 		n := len(w.last) - seqLen
 		sum.LargestKey, sum.LargestSeq = append([]byte{}, w.last[:n]...), binary.BigEndian.Uint64(w.last[n:])
 	}
+	w.retain()
 
 	return sum, nil
 }
@@ -453,10 +468,12 @@ func (w *Writer) Close(ctx context.Context) (Summary, error) {
 // and [ErrClosed]. A Writer whose write failed or that Close closed then
 // writes the next table.
 //
-// Reset keeps the buffers of w and the scratch of its filter builder. A
-// Writer that wrote a table then writes a table of no more entries and no
-// longer keys and values without growing them. The [Summary] that Close
-// returned before remains valid, because its keys are copies.
+// Reset keeps the buffers of w and the scratch of its filter builder while
+// [Writer.Footprint] is within MaxRetained of [WriterOptions], or for a
+// MaxRetained of 0, and releases them otherwise. A Writer that kept its
+// buffers after a table writes a table of no more entries and no longer keys
+// and values without growing them. The [Summary] that Close returned before
+// remains valid, because its keys are copies.
 //
 // # Allocation contract
 //
@@ -464,6 +481,7 @@ func (w *Writer) Close(ctx context.Context) (Summary, error) {
 // of its smallest key and its largest key, and the growth of a buffer that
 // the table needs.
 func (w *Writer) Reset(dst Sink) {
+	w.retain()
 	*w = Writer{
 		w:               dst,
 		builder:         w.builder,
@@ -478,8 +496,38 @@ func (w *Writer) Reset(dst Sink) {
 		blockSize:       w.blockSize,
 		restartInterval: w.restartInterval,
 		filterBits:      w.filterBits,
+		maxRetained:     w.maxRetained,
 		compression:     w.compression,
 	}
+}
+
+// Footprint returns the bytes of memory that the buffers of w take: the
+// capacity of the buffers of the current block, of its keys, of the
+// compressed block, of the index and of the hashes of the filter, and the
+// scratch of the filter builder that [filter.FuseBuilder.Footprint] returns.
+// It does not count the keys of a [Summary], because Close returns copies of
+// them. A new Writer and a Writer that released its buffers return 0.
+//
+// # Allocation contract
+//
+// Zero-alloc.
+func (w *Writer) Footprint() int {
+	n := cap(w.out) + cap(w.last) + cap(w.cur) + cap(w.scratch) + cap(w.index)
+	n += 4 * (cap(w.restarts) + cap(w.indexRestarts))
+
+	return n + 8*cap(w.hashes) + w.builder.Footprint()
+}
+
+// retain releases the buffers of w and the scratch of its filter builder
+// when Footprint exceeds maxRetained, and keeps them for a maxRetained of 0.
+// The next table grows the buffers again.
+func (w *Writer) retain() {
+	if w.maxRetained == 0 || w.Footprint() <= w.maxRetained {
+		return
+	}
+	w.out, w.restarts, w.last, w.cur, w.scratch = nil, nil, nil, nil, nil
+	w.index, w.indexRestarts, w.hashes = nil, nil, nil
+	w.builder = filter.FuseBuilder{}
 }
 
 // finishBlock ends the current data block, which out contains from its first

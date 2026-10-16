@@ -152,6 +152,7 @@ func TestWriter(t *testing.T) {
 			{name: "returns ErrOptions for 3 bits of filter", give: sstable.WriterOptions{FilterBits: 3}},
 			{name: "returns ErrOptions for 17 bits of filter", give: sstable.WriterOptions{FilterBits: 17}},
 			{name: "returns ErrOptions for negative bits of filter", give: sstable.WriterOptions{FilterBits: -8}},
+			{name: "returns ErrOptions for a negative MaxRetained", give: sstable.WriterOptions{MaxRetained: -1}},
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
@@ -394,6 +395,80 @@ func TestWriter(t *testing.T) {
 				golden.Match(t, tt.file, writeTable(t, tt.opts, goldenTable()), golden.ShouldUpdate())
 			})
 		}
+
+		t.Run("releases the buffers of a Writer above MaxRetained", func(t *testing.T) {
+			t.Parallel()
+			opts := settings[3].opts
+			opts.MaxRetained = 1
+			w := filledWriter(t, discardSink{}, opts)
+			_, err := w.Close(t.Context())
+			assert.NoError(t, err, "Close writes the table")
+			assert.Equal(t, w.Footprint(), 0, "Close releases every buffer")
+		})
+
+		t.Run("keeps the buffers of a Writer within MaxRetained", func(t *testing.T) {
+			t.Parallel()
+			opts := settings[3].opts
+			opts.MaxRetained = 1 << 30
+			w := filledWriter(t, discardSink{}, opts)
+			_, err := w.Close(t.Context())
+			assert.NoError(t, err, "Close writes the table")
+			assert.NotEqual(t, w.Footprint(), 0, "Close keeps the buffers")
+		})
+
+		t.Run("keeps the buffers of a Writer whose footprint equals MaxRetained", func(t *testing.T) {
+			t.Parallel()
+			// A Writer without a bound grows its buffers as the Writer with the
+			// bound does.
+			free := filledWriter(t, discardSink{}, settings[3].opts)
+			_, err := free.Close(t.Context())
+			assert.NoError(t, err, "Close writes the table of the Writer without a bound")
+			opts := settings[3].opts
+			opts.MaxRetained = free.Footprint()
+			w := filledWriter(t, discardSink{}, opts)
+			_, err = w.Close(t.Context())
+			assert.NoError(t, err, "Close writes the table")
+			assert.Equal(t, w.Footprint(), opts.MaxRetained, "Close keeps the buffers at the bound")
+		})
+
+		t.Run("keeps the buffers after an error of the Sink", func(t *testing.T) {
+			t.Parallel()
+			// The one block of the table ends at Close, so Close makes the first
+			// write.
+			opts := sstable.WriterOptions{BlockSize: math.MaxUint32, FilterBits: 8, MaxRetained: 1}
+			w := filledWriter(t, &failingSink{}, opts)
+			_, err := w.Close(t.Context())
+			assert.ErrorIs(t, err, errWrite, "Close returns the error of the Sink")
+			assert.NotEqual(t, w.Footprint(), 0, "a Close that fails keeps the buffers")
+		})
+	})
+
+	t.Run("Footprint", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns 0 for a new Writer", func(t *testing.T) {
+			t.Parallel()
+			w, err := sstable.NewWriter(discardSink{}, settings[3].opts)
+			assert.NoError(t, err, "NewWriter accepts the options")
+			assert.Equal(t, w.Footprint(), 0, "a new Writer has no buffers")
+		})
+
+		t.Run("grows with the entries of a table", func(t *testing.T) {
+			t.Parallel()
+			w, err := sstable.NewWriter(discardSink{}, settings[3].opts)
+			assert.NoError(t, err, "NewWriter accepts the options")
+			es := goldenTable()
+			i := 0
+			assert.Monotonic(t, w.Footprint, func() error {
+				addErr := w.Add(t.Context(), es[i].key, es[i].seq, es[i].value)
+				i++
+
+				return addErr
+			}, len(es), "Footprint does not fall while a table grows")
+			_, err = w.Close(t.Context())
+			assert.NoError(t, err, "Close writes the table")
+			assert.NotEqual(t, w.Footprint(), 0, "the buffers of the table take memory")
+		})
 	})
 
 	t.Run("Reset", func(t *testing.T) {
@@ -403,6 +478,7 @@ func TestWriter(t *testing.T) {
 			t.Parallel()
 			prop.ForAll(t, "a Writer after Reset writes what a new Writer writes", func(c *prop.Case) {
 				opts := c.Draw(prop.SampledFrom(settings...), "setting").opts
+				opts.MaxRetained = c.Draw(prop.SampledFrom(0, 1, 1<<30), "max retained")
 				first, second := c.Draw(entries, "first entries"), c.Draw(entries, "second entries")
 				w, err := sstable.NewWriter(discardSink{}, opts)
 				assert.NoError(c, err, "NewWriter accepts the options")
@@ -481,6 +557,24 @@ func TestWriter(t *testing.T) {
 			assert.NoError(t, err, "Close writes the second table")
 			assert.Equal(t, sum.Entries, int64(1), "the second table contains the entry")
 		})
+
+		t.Run("releases the buffers of a Writer above MaxRetained", func(t *testing.T) {
+			t.Parallel()
+			opts := settings[3].opts
+			opts.MaxRetained = 1
+			w := filledWriter(t, discardSink{}, opts)
+			w.Reset(discardSink{})
+			assert.Equal(t, w.Footprint(), 0, "Reset releases every buffer")
+		})
+
+		t.Run("keeps every buffer for a MaxRetained of 0", func(t *testing.T) {
+			t.Parallel()
+			w := filledWriter(t, discardSink{}, settings[3].opts)
+			_, err := w.Close(t.Context())
+			assert.NoError(t, err, "Close writes the table")
+			assert.NotEqual(t, w.Footprint(), 0, "the table grows the buffers")
+			assert.Pure(t, w.Footprint, func() { w.Reset(discardSink{}) }, "Reset keeps every buffer")
+		})
 	})
 }
 
@@ -539,6 +633,13 @@ func TestWriterAllocs(t *testing.T) {
 				assert.NoError(t, err, "the test measures Adds that succeed")
 			})
 		}
+	})
+
+	t.Run("Footprint", func(t *testing.T) {
+		w := filledWriter(t, discardSink{}, settings[3].opts)
+		n := 0
+		expect.MaxAllocs(t, func() { n = w.Footprint() }, 0, "Footprint does not allocate")
+		assert.NotEqual(t, n, 0, "the test measures the footprint of a table")
 	})
 
 	t.Run("Reset", func(t *testing.T) {
@@ -629,4 +730,18 @@ func BenchmarkWriter(b *testing.B) {
 			})
 		}
 	})
+}
+
+// filledWriter returns a Writer onto sink under opts, after an Add of every
+// entry of the golden table.
+func filledWriter(tb testing.TB, sink sstable.Sink, opts sstable.WriterOptions) *sstable.Writer {
+	tb.Helper()
+
+	w, err := sstable.NewWriter(sink, opts)
+	assert.NoError(tb, err, "NewWriter accepts the options")
+	for _, e := range goldenTable() {
+		assert.NoError(tb, w.Add(tb.Context(), e.key, e.seq, e.value), "Add adds the entry")
+	}
+
+	return w
 }

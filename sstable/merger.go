@@ -29,11 +29,13 @@ const (
 // in the order of their sources. A move back yields them in the reverse
 // order. The zero Merger has no sources.
 //
-// A Merger keeps the sources that are on an entry in a binary heap. The heap
-// orders them by their entries, and sources on equal entries by their index,
-// in the direction of the last move. A move in that direction moves the
-// source at the top of the heap and restores the heap with O(log k)
-// comparisons for k sources. A move in the other direction first seeks every
+// A Merger keeps the sources that are on an entry in a binary heap, with the
+// key and the sequence of the entry of each source. The heap orders them by
+// their entries, and sources on equal entries by their index, in the
+// direction of the last move. A move in that direction moves the source at
+// the top of the heap and restores the heap with O(log k) comparisons for k
+// sources. A comparison reads the keys of the heap and does not call a
+// source. A move in the other direction first seeks every
 // other source to the current entry, moves each one to its side of the
 // current entry, and builds the heap in the new direction. When a source
 // returns an error from Err, the merge is exhausted and [Merger.Err] returns
@@ -60,9 +62,9 @@ type Merger struct {
 	// sources are the sources of the merge.
 	sources []Source
 
-	// heap is a binary heap of the indexes of the sources that are on an
-	// entry. Its top is the source of the current entry.
-	heap []int
+	// heap is a binary heap of the sources that are on an entry. Its top is
+	// the source of the current entry.
+	heap []mergeItem
 
 	// reverse reports whether the last move went back. The heap then orders
 	// the sources from the last entry of the union.
@@ -70,6 +72,20 @@ type Merger struct {
 }
 
 var _ Source = (*Merger)(nil)
+
+// mergeItem is a source of a Merger in its heap, with the key and the
+// sequence of the entry of the source. key is valid until the source moves,
+// and the Merger reads it only before the next move of the source.
+type mergeItem struct {
+	// key is the key of the entry of the source.
+	key []byte
+
+	// seq is the sequence of the entry of the source.
+	seq uint64
+
+	// src is the index of the source in the sources of the Merger.
+	src int
+}
 
 // Reset replaces the sources of m with sources and leaves m on no entry. m
 // keeps sources and the memory of its heap. Reset does not close the sources
@@ -203,31 +219,33 @@ func (m *Merger) Prev(ctx context.Context) bool {
 }
 
 // Key returns the key of the current entry, or nil for a merge on no entry.
-// It is valid until the next move of the merge.
+// It is the key that the source of the entry returned after its last move,
+// and it is valid until the next move of the merge.
 //
 // # Allocation contract
 //
-// Zero-alloc when the Key of the source does not allocate.
+// Zero-alloc.
 func (m *Merger) Key() []byte {
 	if len(m.heap) == 0 {
 		return nil
 	}
 
-	return m.sources[m.heap[0]].Key()
+	return m.heap[0].key
 }
 
 // Seq returns the sequence of the current entry, or 0 for a merge on no
-// entry.
+// entry. It is the sequence that the source of the entry returned after its
+// last move.
 //
 // # Allocation contract
 //
-// Zero-alloc when the Seq of the source does not allocate.
+// Zero-alloc.
 func (m *Merger) Seq() uint64 {
 	if len(m.heap) == 0 {
 		return 0
 	}
 
-	return m.sources[m.heap[0]].Seq()
+	return m.heap[0].seq
 }
 
 // Value returns the value of the current entry, or nil for a merge on no
@@ -241,7 +259,7 @@ func (m *Merger) Value() []byte {
 		return nil
 	}
 
-	return m.sources[m.heap[0]].Value()
+	return m.sources[m.heap[0].src].Value()
 }
 
 // Err returns the error of the source that exhausted the merge, or nil.
@@ -273,7 +291,7 @@ func (m *Merger) seek(ctx context.Context, kind seekKind, key []byte, seq uint64
 			ok = s.SeekLT(ctx, key, seq)
 		}
 		if ok {
-			m.heap = append(m.heap, i)
+			m.heap = append(m.heap, mergeItem{key: s.Key(), seq: s.Seq(), src: i})
 		} else if m.err = s.Err(); m.err != nil {
 			m.heap = m.heap[:0]
 
@@ -286,8 +304,9 @@ func (m *Merger) seek(ctx context.Context, kind seekKind, key []byte, seq uint64
 
 // move moves the merge back when back is true, and forward otherwise, under
 // ctx. A move against the direction of the last move turns the merge first.
-// The source at the top of the heap then moves, and the heap is restored. It
-// reports whether the merge is on an entry.
+// The source at the top of the heap then moves, the top takes the key and the
+// sequence of its new entry, and the heap is restored. It reports whether the
+// merge is on an entry.
 func (m *Merger) move(ctx context.Context, back bool) bool {
 	if len(m.heap) == 0 {
 		return false
@@ -296,14 +315,17 @@ func (m *Merger) move(ctx context.Context, back bool) bool {
 		return false
 	}
 
-	s := m.sources[m.heap[0]]
+	top := &m.heap[0]
+	s := m.sources[top.src]
 	var ok bool
 	if back {
 		ok = s.Prev(ctx)
 	} else {
 		ok = s.Next(ctx)
 	}
-	if !ok {
+	if ok {
+		top.key, top.seq = s.Key(), s.Seq()
+	} else {
 		if m.err = s.Err(); m.err != nil {
 			m.heap = m.heap[:0]
 
@@ -330,15 +352,15 @@ func (m *Merger) move(ctx context.Context, back bool) bool {
 // A source whose Err is not nil exhausts the merge, and turn reports false.
 func (m *Merger) turn(ctx context.Context) bool {
 	top := m.heap[0]
-	key, seq := m.sources[top].Key(), m.sources[top].Seq()
+	key, seq := top.key, top.seq
 	m.heap = append(m.heap[:0], top)
 	for j, s := range m.sources {
-		if j == top {
+		if j == top.src {
 			continue
 		}
 		ok := s.SeekGE(ctx, key, seq)
 		//dokimi:mutate-skip ror-boundary: the loop skips the top, so j never equals top
-		before := ok && j < top && Compare(s.Key(), s.Seq(), key, seq) == 0
+		before := ok && j < top.src && Compare(s.Key(), s.Seq(), key, seq) == 0
 		if m.reverse && before {
 			ok = s.Next(ctx)
 		} else if !m.reverse && !before {
@@ -349,7 +371,7 @@ func (m *Merger) turn(ctx context.Context) bool {
 			}
 		}
 		if ok {
-			m.heap = append(m.heap, j)
+			m.heap = append(m.heap, mergeItem{key: s.Key(), seq: s.Seq(), src: j})
 		} else if m.err = s.Err(); m.err != nil {
 			m.heap = m.heap[:0]
 
@@ -382,10 +404,10 @@ func (m *Merger) down(i int) {
 		if j >= len(h) {
 			return
 		}
-		if r := j + 1; r < len(h) && m.less(h[r], h[j]) {
+		if r := j + 1; r < len(h) && m.less(&h[r], &h[j]) {
 			j = r
 		}
-		if !m.less(h[j], h[i]) {
+		if !m.less(&h[j], &h[i]) {
 			return
 		}
 		h[i], h[j] = h[j], h[i]
@@ -393,19 +415,20 @@ func (m *Merger) down(i int) {
 	}
 }
 
-// less reports whether the source a is before the source b in the order of
-// the heap. Forward, a is before b when its entry is before the entry of b
-// by Compare, or equal to it with a below b. Back, the order is the reverse.
-func (m *Merger) less(a, b int) bool {
+// less reports whether the source of a is before the source of b in the
+// order of the heap. Forward, a is before b when its entry is before the
+// entry of b by Compare, or equal to it with the source of a below the source
+// of b. Back, the order is the reverse. less compares the keys and the
+// sequences of the heap.
+func (m *Merger) less(a, b *mergeItem) bool {
 	if m.reverse {
 		a, b = b, a
 	}
-	sa, sb := m.sources[a], m.sources[b]
-	if c := Compare(sa.Key(), sa.Seq(), sb.Key(), sb.Seq()); c != 0 {
+	if c := Compare(a.key, a.seq, b.key, b.seq); c != 0 {
 		//dokimi:mutate-skip ror-boundary: c is not 0 inside the branch
 		return c < 0
 	}
 
 	//dokimi:mutate-skip ror-boundary: the heap never compares a source with itself
-	return a < b
+	return a.src < b.src
 }
