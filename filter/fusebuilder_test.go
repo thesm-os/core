@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"math/bits"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strconv"
 	"testing"
@@ -192,6 +193,21 @@ func TestFuseBuilder(t *testing.T) {
 			_, err := b.Append(nil, hashes(10_000, 19), 8)
 			assert.NoError(t, err, "Append builds the filter")
 			assert.InRange(t, b.Footprint(), 30*10_000, 40*10_000, "the scratch takes about 34 bytes for each hash")
+		})
+
+		t.Run("returns the capacity of every array of its scratch in bytes", func(t *testing.T) {
+			t.Parallel()
+
+			var b filter.FuseBuilder
+			_, err := b.Append(nil, hashes(10_000, 19), 8)
+			assert.NoError(t, err, "Append builds the filter")
+			want := 0
+			for _, f := range reflect.ValueOf(&b).Elem().Fields() {
+				if f.Kind() == reflect.Slice {
+					want += f.Cap() * int(f.Type().Elem().Size())
+				}
+			}
+			assert.Equal(t, b.Footprint(), want, "Footprint returns the bytes of the slices of the builder")
 		})
 
 		t.Run("returns the same bytes after a build of fewer hashes", func(t *testing.T) {

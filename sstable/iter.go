@@ -436,7 +436,8 @@ func (it *Iter) load(ctx context.Context) bool {
 // read reads readAhead bytes from off into ahead, or up to the end of the
 // block when the block is before the bytes of the last read, within the data
 // blocks. Otherwise it reads the block alone into raw. A read that fails
-// returns the error of readAt and leaves ahead empty.
+// returns the error of readAt, and leaves ahead empty at the offset 0, as a
+// cursor without a read ahead has it.
 func (it *Iter) read(ctx context.Context, off uint64, size int) ([]byte, error) {
 	//nolint:gosec // G115: size is the positive length of a block and its trailer
 	end := off + uint64(size)
@@ -454,6 +455,9 @@ func (it *Iter) read(ctx context.Context, off uint64, size int) ([]byte, error) 
 	//nolint:gosec // G115: readAhead is above size, which is positive
 	n := uint64(it.readAhead)
 	start := off
+	// A block at aheadOff reaches this check only with ahead empty at the
+	// offset 0, where a read in either direction starts at 0.
+	//dokimi:mutate-skip ror-boundary: a block at aheadOff outside the bytes ahead is at the offset 0, where both reads start
 	if off < it.aheadOff {
 		start = end - min(end, n)
 	}
@@ -462,7 +466,7 @@ func (it *Iter) read(ctx context.Context, off uint64, size int) ([]byte, error) 
 	it.ahead = slices.Grow(it.ahead[:0], w)[:w]
 	//nolint:gosec // G115: the bytes lie before dataEnd, inside the table
 	if err := readAt(ctx, it.r.f, it.ahead, int64(start)); err != nil {
-		it.ahead = it.ahead[:0]
+		it.ahead, it.aheadOff = it.ahead[:0], 0
 
 		return nil, err
 	}

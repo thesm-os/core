@@ -44,6 +44,28 @@ const aheadBytes = 1024
 // filter block.
 var everyEntry = sstable.WriterOptions{BlockSize: smallBlocks, RestartInterval: 1, FilterBits: 8}
 
+// shortOnceFile is a File over data whose read number short copies the bytes
+// that it asks for, and returns one byte less with errRead. Its other reads
+// return every byte.
+type shortOnceFile struct {
+	data  []byte
+	short int
+	reads int
+}
+
+var _ sstable.File = (*shortOnceFile)(nil)
+
+// ReadAt reads the bytes of data at off, and fails the read number short.
+func (r *shortOnceFile) ReadAt(_ context.Context, p []byte, off int64) (int, error) {
+	r.reads++
+	n, err := bytes.NewReader(r.data).ReadAt(p, off)
+	if r.reads == r.short {
+		return n - 1, errRead
+	}
+
+	return n, err
+}
+
 // emptyCache is a BlockCache that does not keep a block. Get reports false
 // for every block, and Add drops the block.
 type emptyCache struct{}
@@ -643,6 +665,27 @@ func TestIter(t *testing.T) {
 			defer it.Close()
 			_, err = scanAll(t.Context(), it)
 			assert.ErrorIs(t, err, errRead, "the cursor returns the error of its second read ahead")
+		})
+
+		t.Run("reads the blocks again after a short read ahead", func(t *testing.T) {
+			t.Parallel()
+			es := goldenTable()
+			data := writeTable(t, settings[0].opts, es)
+			counter := &countingFile{data: data}
+			_, err := sstable.Open(t.Context(), counter, int64(len(data)), sstable.ReaderOptions{})
+			assert.NoError(t, err, "Open reads the table")
+			// The second read of the scan writes the bytes at its own offset into
+			// the buffer of the reads ahead before it fails.
+			r, err := sstable.Open(t.Context(), &shortOnceFile{data: data, short: counter.reads + 2}, int64(len(data)),
+				sstable.ReaderOptions{})
+			assert.NoError(t, err, "Open reads the table")
+			it := r.NewIter(sstable.IterOptions{ReadAhead: aheadBytes})
+			defer it.Close()
+			_, err = scanAll(t.Context(), it)
+			assert.ErrorIs(t, err, errRead, "the first scan returns the error of the short read")
+			got, err := scanAll(t.Context(), it)
+			assert.NoError(t, err, "the second scan reads the table")
+			assert.Equal(t, got, es, "the second scan yields every entry")
 		})
 
 		t.Run("yields every entry of a table of long entries in order", func(t *testing.T) {

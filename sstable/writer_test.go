@@ -14,6 +14,7 @@ import (
 	"math"
 	"os"
 	"os/exec"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -451,6 +452,30 @@ func TestWriter(t *testing.T) {
 			w, err := sstable.NewWriter(discardSink{}, settings[3].opts)
 			assert.NoError(t, err, "NewWriter accepts the options")
 			assert.Equal(t, w.Footprint(), 0, "a new Writer has no buffers")
+		})
+
+		t.Run("returns the capacity of every buffer in bytes", func(t *testing.T) {
+			t.Parallel()
+			w := filledWriter(t, discardSink{}, settings[3].opts)
+			_, err := w.Close(t.Context())
+			assert.NoError(t, err, "Close writes the table")
+			// capacities sums the bytes of the slices of a struct and of the
+			// structs in it. The smallest key is a copy for the Summary.
+			var capacities func(v reflect.Value) int
+			capacities = func(v reflect.Value) int {
+				n := 0
+				for field, f := range v.Fields() {
+					if f.Kind() == reflect.Struct {
+						n += capacities(f)
+					} else if f.Kind() == reflect.Slice && field.Name != "smallest" {
+						n += f.Cap() * int(f.Type().Elem().Size())
+					}
+				}
+
+				return n
+			}
+			assert.Equal(t, w.Footprint(), capacities(reflect.ValueOf(w).Elem()),
+				"Footprint returns the bytes of the slices of the Writer and of its filter builder")
 		})
 
 		t.Run("grows with the entries of a table", func(t *testing.T) {
