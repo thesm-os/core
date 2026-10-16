@@ -20,9 +20,9 @@
 // and one link per level, 34.3 bytes on average. Two of its words contain
 // the first 8 bytes of its key, so a search reads the key from the data
 // arena only when those bytes equal the first 8 bytes of the key that it
-// searches for. The arenas have a fixed capacity, and [List.Add] returns
-// [ErrFull] for an entry that does not fit. An engine then freezes the full
-// List and adds the entry to a new one.
+// searches for. [Config] sets the capacity of each arena. The capacities
+// are fixed, and [List.Add] returns [ErrFull] for an entry that does not
+// fit. An engine then freezes the full List and adds the entry to a new one.
 //
 // # Heights
 //
@@ -47,10 +47,11 @@
 //
 // # Costs
 //
-// [List.Cost] returns the bytes that an Add of an entry reserves in each
-// arena. The height of a node derives from the entry and the seed, so an
+// [List.Cost] returns the bytes that an Add of an entry reserves in the data
+// arena and in the node arena, in the order of the fields of Config. An
 // engine that reserves the cost of each entry before its Add knows that the
-// Add fits.
+// Add fits, because the height of a node derives from the entry and the
+// seed.
 //
 // # Errors
 //

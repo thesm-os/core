@@ -86,7 +86,7 @@ func scan(it *Iter) []entry {
 func newList(tb testing.TB) *List {
 	tb.Helper()
 
-	l, err := New(dataBytes, nodeBytes, 1)
+	l, err := New(Config{DataBytes: dataBytes, NodeBytes: nodeBytes, Seed: 1})
 	assert.NoError(tb, err, "New returns a List")
 
 	return l
@@ -105,7 +105,7 @@ func benchKey(k *[benchKeyLen]byte, i uint64) {
 func filled(tb testing.TB, n int, key func(k *[benchKeyLen]byte, i uint64)) *List {
 	tb.Helper()
 
-	l, err := New(n*(benchKeyLen+benchValueLen), n*benchNodeBytes, 1)
+	l, err := New(Config{DataBytes: n * (benchKeyLen + benchValueLen), NodeBytes: n * benchNodeBytes, Seed: 1})
 	assert.NoError(tb, err, "New returns a List with room for the entries")
 	value := make([]byte, benchValueLen)
 	var k [benchKeyLen]byte

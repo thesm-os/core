@@ -74,6 +74,28 @@ var levelBounds = func() (bounds [maxHeight - 1]uint64) {
 	return bounds
 }()
 
+// Config configures a [List]. DataBytes and NodeBytes are required. The
+// zero Config is invalid, because its arenas have no bytes.
+//
+// A node takes 4 bytes for each of its 7 words and its links. The nodes take
+// 34.3 bytes on average, and the tallest node takes 108 bytes. [List.Cost]
+// returns the bytes that the Add of an entry reserves in each arena. An
+// engine that budgets its entries with Cost against DataBytes and NodeBytes
+// does not repeat the layout of a node.
+type Config struct {
+	// DataBytes is the capacity of the data arena in bytes, from 1 to
+	// 2^32 - 1. The data arena contains the keys and the values.
+	DataBytes int
+
+	// NodeBytes is the capacity of the node arena in bytes, from 1 to
+	// 2^32 - 1. The node arena contains the nodes.
+	NodeBytes int
+
+	// Seed is the seed of the hash of the heights of the nodes. A caller
+	// that does not know the seed cannot choose entries of one height.
+	Seed uint64
+}
+
 // List is an insert-only ordered map of entries: a skip list whose nodes
 // link without locks. It orders the entries by key, as bytes.Compare orders
 // keys, and for one key from the highest sequence to the lowest.
@@ -123,32 +145,30 @@ type List struct {
 	secret0, secret1 uint64
 }
 
-// New returns an empty [List] with a data arena of dataBytes for its keys
-// and values and a node arena of nodeBytes for its nodes. The heights of
-// its nodes derive from seed.
-//
-// A node takes 4 bytes for each of its 7 words and its links: 34.3 bytes on
-// average. A key and its value take their own bytes.
+// New returns an empty [List] with the arenas of cfg. The heights of its
+// nodes derive from the Seed of cfg.
 //
 // Error modes:
 //
-//   - A capacity below 1 or above 2^32 - 1 bytes returns [ErrSize].
+//   - A DataBytes or a NodeBytes below 1 or above 2^32 - 1 returns
+//     [ErrSize].
 //
 // # Allocation contract
 //
 // Allocates the List, its two [arena.Bump] values and their arrays.
-func New(dataBytes, nodeBytes int, seed uint64) (*List, error) {
+func New(cfg Config) (*List, error) {
 	// A capacity of 2^32 - 1 bytes or less has no bit set above its 32
 	// bits, so every offset and every length fits a word.
-	if dataBytes < 1 || nodeBytes < 1 || uint64(dataBytes)>>32 != 0 || uint64(nodeBytes)>>32 != 0 {
+	if cfg.DataBytes < 1 || cfg.NodeBytes < 1 || uint64(cfg.DataBytes)>>32 != 0 || uint64(cfg.NodeBytes)>>32 != 0 {
 		return nil, ErrSize
 	}
 
+	seed := cfg.Seed
 	secret0 := splitmix64(&seed)
 	secret1 := splitmix64(&seed)
 	l := &List{
-		dataArena: arena.NewBump[byte](dataBytes),
-		nodeArena: arena.NewBump[uint32](headWords + nodeBytes/wordBytes),
+		dataArena: arena.NewBump[byte](cfg.DataBytes),
+		nodeArena: arena.NewBump[uint32](headWords + cfg.NodeBytes/wordBytes),
 		secret0:   secret0,
 		secret1:   secret1,
 	}
@@ -291,14 +311,15 @@ func (l *List) Size() int {
 }
 
 // Cost returns the bytes that Add of the entry (key, seq), with a value of
-// valueLen bytes, reserves in the node arena and in the data arena of l. The
-// height of the node derives from the entry and the seed of l, so Cost is
-// exact: an Add that succeeds grows [List.Size] by nodeBytes + dataBytes. An
-// Add that finds the entry before it reserves takes nothing, and one that
-// returns ErrFull for the data arena keeps the words of the node.
+// valueLen bytes, reserves in the data arena and in the node arena of l. The
+// results have the order of the fields of [Config]. The height of the node
+// derives from the entry and the seed of l, so Cost is exact: an Add that
+// succeeds grows [List.Size] by dataBytes + nodeBytes. An Add that finds the
+// entry before it reserves takes nothing, and one that returns ErrFull for
+// the data arena keeps the words of the node.
 //
-// nodeBytes is 4 bytes for each of the 7 words of the header of the node and
-// each of its links. dataBytes is the length of key plus valueLen. A
+// dataBytes is the length of key plus valueLen. nodeBytes is 4 bytes for
+// each of the 7 words of the header of the node and each of its links. A
 // valueLen below 0 counts as 0, and one above 2^32 - 1, the largest capacity
 // of an arena, counts as 2^32 - 1.
 //
@@ -310,8 +331,8 @@ func (l *List) Size() int {
 // # Allocation contract
 //
 // Zero-alloc.
-func (l *List) Cost(key []byte, seq uint64, valueLen int) (nodeBytes, dataBytes int) {
-	return wordBytes * (nodeHeader + l.height(key, seq)), len(key) + min(max(valueLen, 0), maxValueLen)
+func (l *List) Cost(key []byte, seq uint64, valueLen int) (dataBytes, nodeBytes int) {
+	return len(key) + min(max(valueLen, 0), maxValueLen), wordBytes * (nodeHeader + l.height(key, seq))
 }
 
 // Reset removes every entry and keeps the arenas. It zeroes the bytes and
@@ -368,6 +389,7 @@ func (l *List) findSplice(key []byte, prefix, seq uint64, prev, next *[maxHeight
 		if exists {
 			return true
 		}
+		//dokimi:mutate-skip sbr-delete: a search of each level from the head finds the same splice, so only the time of a search changes
 		before = prev[level]
 	}
 

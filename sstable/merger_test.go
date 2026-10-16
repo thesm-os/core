@@ -357,7 +357,7 @@ func TestMerger(t *testing.T) {
 		t.Run("interleaves a List with a table of the same entries", func(t *testing.T) {
 			t.Parallel()
 			es := goldenTable()
-			l, err := skiplist.New(listBytes, listBytes, 1)
+			l, err := skiplist.New(skiplist.Config{DataBytes: listBytes, NodeBytes: listBytes, Seed: 1})
 			assert.NoError(t, err, "New returns a List")
 			for _, e := range es {
 				assert.NoError(t, l.Add(e.key, e.seq, e.value), "Add adds the entry")
@@ -408,7 +408,7 @@ func TestMerger(t *testing.T) {
 		t.Run("interleaves a List with a table of the same entries", func(t *testing.T) {
 			t.Parallel()
 			es := goldenTable()
-			l, err := skiplist.New(listBytes, listBytes, 1)
+			l, err := skiplist.New(skiplist.Config{DataBytes: listBytes, NodeBytes: listBytes, Seed: 1})
 			assert.NoError(t, err, "New returns a List")
 			for _, e := range es {
 				assert.NoError(t, l.Add(e.key, e.seq, e.value), "Add adds the entry")
@@ -587,7 +587,11 @@ func mergeSteps(c *prop.Case) {
 			iters = append(iters, it)
 			sources = append(sources, it)
 		case listKind:
-			l, err := skiplist.New(listBytes, listBytes, c.Draw(prop.Integer[uint64](0, math.MaxUint64), "seed"))
+			l, err := skiplist.New(skiplist.Config{
+				DataBytes: listBytes,
+				NodeBytes: listBytes,
+				Seed:      c.Draw(prop.Integer[uint64](0, math.MaxUint64), "seed"),
+			})
 			assert.NoError(c, err, "New returns a List")
 			for _, e := range es {
 				assert.NoError(c, l.Add(e.key, e.seq, e.value), "Add adds the entry of the run")

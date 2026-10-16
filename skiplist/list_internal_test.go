@@ -142,7 +142,7 @@ func TestList(t *testing.T) {
 
 		t.Run("returns an empty List", func(t *testing.T) {
 			t.Parallel()
-			l, err := New(dataBytes, nodeBytes, 1)
+			l, err := New(Config{DataBytes: dataBytes, NodeBytes: nodeBytes, Seed: 1})
 			assert.NoError(t, err, "New returns a List")
 			_, _, ok := l.Get(nil, math.MaxUint64)
 			expect.Equal(t, l.Len(), 0, "the List has no entries")
@@ -153,7 +153,7 @@ func TestList(t *testing.T) {
 
 		t.Run("returns a List for arenas of one byte", func(t *testing.T) {
 			t.Parallel()
-			l, err := New(1, 1, 1)
+			l, err := New(Config{DataBytes: 1, NodeBytes: 1, Seed: 1})
 			assert.NoError(t, err, "New accepts the smallest arenas")
 			assert.ErrorIs(t, l.Add([]byte("a"), 1, nil), ErrFull, "a node does not fit one byte")
 		})
@@ -187,7 +187,7 @@ func TestList(t *testing.T) {
 		for _, tt := range secrets {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-				l, err := New(dataBytes, nodeBytes, tt.giveSeed)
+				l, err := New(Config{DataBytes: dataBytes, NodeBytes: nodeBytes, Seed: tt.giveSeed})
 				assert.NoError(t, err, "New returns a List")
 				expect.Equal(t, l.secret0, tt.wantSecret0, "the first secret is the first output for the seed")
 				expect.Equal(t, l.secret1, tt.wantSecret1, "the second secret is the second output for the seed")
@@ -195,20 +195,26 @@ func TestList(t *testing.T) {
 		}
 
 		tests := []struct {
-			name     string
-			giveData int
-			giveNode int
+			name       string
+			giveConfig Config
 		}{
-			{name: "returns ErrSize for a data arena of no bytes", giveData: 0, giveNode: nodeBytes},
-			{name: "returns ErrSize for a node arena of no bytes", giveData: dataBytes, giveNode: 0},
-			{name: "returns ErrSize for a negative capacity", giveData: -1, giveNode: nodeBytes},
-			{name: "returns ErrSize for a data arena of 2^32 bytes", giveData: math.MaxUint32 + 1, giveNode: nodeBytes},
-			{name: "returns ErrSize for a node arena of 2^32 bytes", giveData: dataBytes, giveNode: math.MaxUint32 + 1},
+			{name: "returns ErrSize for the zero Config", giveConfig: Config{}},
+			{name: "returns ErrSize for a data arena of no bytes", giveConfig: Config{NodeBytes: nodeBytes}},
+			{name: "returns ErrSize for a node arena of no bytes", giveConfig: Config{DataBytes: dataBytes}},
+			{name: "returns ErrSize for a negative capacity", giveConfig: Config{DataBytes: -1, NodeBytes: nodeBytes}},
+			{
+				name:       "returns ErrSize for a data arena of 2^32 bytes",
+				giveConfig: Config{DataBytes: math.MaxUint32 + 1, NodeBytes: nodeBytes},
+			},
+			{
+				name:       "returns ErrSize for a node arena of 2^32 bytes",
+				giveConfig: Config{DataBytes: dataBytes, NodeBytes: math.MaxUint32 + 1},
+			},
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-				l, err := New(tt.giveData, tt.giveNode, 1)
+				l, err := New(tt.giveConfig)
 				assert.ErrorIs(t, err, ErrSize, "New refuses the capacity")
 				assert.Nil(t, l, "New returns no List")
 			})
@@ -251,7 +257,7 @@ func TestList(t *testing.T) {
 
 		t.Run("returns ErrFull for an entry whose bytes do not fit the data arena", func(t *testing.T) {
 			t.Parallel()
-			l, err := New(8, nodeBytes, 1)
+			l, err := New(Config{DataBytes: 8, NodeBytes: nodeBytes, Seed: 1})
 			assert.NoError(t, err, "New returns a List")
 			err = l.Add([]byte("key"), 1, []byte("value6"))
 			_, _, ok := l.Get([]byte("key"), 1)
@@ -262,7 +268,7 @@ func TestList(t *testing.T) {
 
 		t.Run("returns ErrFull for an entry whose node does not fit the node arena", func(t *testing.T) {
 			t.Parallel()
-			l, err := New(dataBytes, 4, 1)
+			l, err := New(Config{DataBytes: dataBytes, NodeBytes: 4, Seed: 1})
 			assert.NoError(t, err, "New returns a List")
 			assert.Pure(t, l.Size, func() { err = l.Add([]byte("key"), 1, nil) },
 				"Add whose node does not fit reserves nothing")
@@ -272,7 +278,7 @@ func TestList(t *testing.T) {
 
 		t.Run("adds an entry into the room that remains after ErrFull", func(t *testing.T) {
 			t.Parallel()
-			l, err := New(10, nodeBytes, 1)
+			l, err := New(Config{DataBytes: 10, NodeBytes: nodeBytes, Seed: 1})
 			assert.NoError(t, err, "New returns a List")
 			assert.NoError(t, l.Add([]byte("a"), 1, []byte("1234567")), "Add adds 8 bytes")
 			assert.ErrorIs(t, l.Add([]byte("b"), 1, []byte("cdef")), ErrFull, "Add refuses 5 bytes")
@@ -305,7 +311,11 @@ func TestList(t *testing.T) {
 		// its bytes, so the arenas have room for the entry of every writer.
 		t.Run("adds each entry once while writers add the same entry at once", func(t *testing.T) {
 			t.Parallel()
-			l, err := New(writers*sharedEntries*heightKeyLen, writers*sharedEntries*benchNodeBytes, 1)
+			l, err := New(Config{
+				DataBytes: writers * sharedEntries * heightKeyLen,
+				NodeBytes: writers * sharedEntries * benchNodeBytes,
+				Seed:      1,
+			})
 			assert.NoError(t, err, "New returns a List")
 			added, disordered := addInRounds(t, l, func(round, _ int) []byte {
 				return binary.BigEndian.AppendUint64(nil, uint64(round))
@@ -318,7 +328,11 @@ func TestList(t *testing.T) {
 
 		t.Run("links every entry while writers add neighbouring entries at once", func(t *testing.T) {
 			t.Parallel()
-			l, err := New(writers*sharedEntries*heightKeyLen, writers*sharedEntries*benchNodeBytes, 1)
+			l, err := New(Config{
+				DataBytes: writers * sharedEntries * heightKeyLen,
+				NodeBytes: writers * sharedEntries * benchNodeBytes,
+				Seed:      1,
+			})
 			assert.NoError(t, err, "New returns a List")
 			added, disordered := addInRounds(t, l, func(round, writer int) []byte {
 				return binary.BigEndian.AppendUint64(nil, uint64(round*writers+writer))
@@ -326,6 +340,29 @@ func TestList(t *testing.T) {
 			expect.Equal(t, added, writers*sharedEntries, "every Add of a new entry succeeds")
 			expect.Length(t, scan(l.NewIter()), writers*sharedEntries, "a cursor yields every entry")
 			expect.Equal(t, disordered, 0, "a cursor yields the entries in order while writers add")
+		})
+
+		t.Run("links nodes of every level while writers add neighbouring entries at once", func(t *testing.T) {
+			t.Parallel()
+			l, err := New(Config{
+				DataBytes: writers * sharedEntries * heightKeyLen,
+				NodeBytes: writers * sharedEntries * benchNodeBytes,
+				Seed:      1,
+			})
+			assert.NoError(t, err, "New returns a List")
+			// The writers add their entries with the sequence 0, so the second
+			// factor of the hash of each entry is 0 and every node has every
+			// level. The keys of a round are below every key before them, so the
+			// writers of a round link into the splice after the head at every
+			// level at once, and a search finds that splice in one step.
+			l.secret1 = 0
+			added, disordered := addInRounds(t, l, func(round, writer int) []byte {
+				return binary.BigEndian.AppendUint64(nil, math.MaxUint64-uint64(round*writers+writer))
+			})
+			expect.Equal(t, added, writers*sharedEntries, "every Add of a new entry succeeds")
+			expect.Equal(t, disordered, 0, "a cursor yields the entries in order while writers add")
+			expect.Equal(t, l.levels.Load(), uint32(maxHeight), "the nodes have every level")
+			assert.NoError(t, check(l), "every level links every node in order")
 		})
 
 		t.Run("links an entry below a node of every level", func(t *testing.T) {
@@ -420,7 +457,11 @@ func TestList(t *testing.T) {
 
 		t.Run("spends the nodes of the heights of e^-k on average", func(t *testing.T) {
 			t.Parallel()
-			l, err := New(heightEntries*heightKeyLen, heightEntries*benchNodeBytes, 1)
+			l, err := New(Config{
+				DataBytes: heightEntries * heightKeyLen,
+				NodeBytes: heightEntries * benchNodeBytes,
+				Seed:      1,
+			})
 			assert.NoError(t, err, "New returns a List")
 			for i := range uint64(heightEntries) {
 				assert.NoError(t, l.Add(binary.BigEndian.AppendUint64(nil, i), 0, nil), "Add adds the entry")
@@ -442,7 +483,7 @@ func TestList(t *testing.T) {
 			t.Parallel()
 			sizes := make([]int, 0, 3)
 			for _, seed := range []uint64{1, 1, 2} {
-				l, err := New(dataBytes, nodeBytes, seed)
+				l, err := New(Config{DataBytes: dataBytes, NodeBytes: nodeBytes, Seed: seed})
 				assert.NoError(t, err, "New returns a List")
 				for i := range uint64(1000) {
 					assert.NoError(t, l.Add(binary.BigEndian.AppendUint64(nil, i), 0, nil), "Add adds the entry")
@@ -460,10 +501,10 @@ func TestList(t *testing.T) {
 		t.Run("returns the bytes that an Add of the entry reserves", func(t *testing.T) {
 			t.Parallel()
 			l := newList(t)
-			nodeCost, dataCost := l.Cost([]byte("key"), 1, 5)
+			dataCost, nodeCost := l.Cost([]byte("key"), 1, 5)
 			assert.NoError(t, l.Add([]byte("key"), 1, []byte("value")), "Add adds the entry")
 			expect.Equal(t, dataCost, 8, "the data of an entry takes the bytes of its key and its value")
-			expect.Equal(t, l.Size(), nodeCost+dataCost, "Add takes the bytes that Cost returned")
+			expect.Equal(t, l.Size(), dataCost+nodeCost, "Add takes the bytes that Cost returned")
 		})
 
 		tests := []struct {
@@ -480,7 +521,7 @@ func TestList(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-				_, dataCost := newList(t).Cost([]byte("key"), 1, tt.giveValueLen)
+				dataCost, _ := newList(t).Cost([]byte("key"), 1, tt.giveValueLen)
 				assert.Equal(t, dataCost, tt.wantData, "Cost bounds the length of the value")
 			})
 		}
@@ -505,7 +546,7 @@ func TestList(t *testing.T) {
 
 		t.Run("lets a full List take entries again", func(t *testing.T) {
 			t.Parallel()
-			l, err := New(4, nodeBytes, 1)
+			l, err := New(Config{DataBytes: 4, NodeBytes: nodeBytes, Seed: 1})
 			assert.NoError(t, err, "New returns a List")
 			assert.NoError(t, l.Add([]byte("ab"), 1, []byte("cd")), "Add fills the data arena")
 			assert.ErrorIs(t, l.Add([]byte("e"), 1, nil), ErrFull, "the data arena is full")
@@ -633,7 +674,7 @@ func TestListAllocs(t *testing.T) {
 	value := make([]byte, benchValueLen)
 
 	t.Run("Add", func(t *testing.T) {
-		l, err := New(1<<20, 1<<20, 1)
+		l, err := New(Config{DataBytes: 1 << 20, NodeBytes: 1 << 20, Seed: 1})
 		assert.NoError(t, err, "New returns a List")
 		var k [benchKeyLen]byte
 		i := uint64(0)
@@ -676,7 +717,7 @@ func TestListAllocs(t *testing.T) {
 		var k [benchKeyLen]byte
 		benchKey(&k, 3)
 		var dataCost int
-		expect.MaxAllocs(t, func() { _, dataCost = l.Cost(k[:], 1, benchValueLen) }, 0, "Cost does not allocate")
+		expect.MaxAllocs(t, func() { dataCost, _ = l.Cost(k[:], 1, benchValueLen) }, 0, "Cost does not allocate")
 		assert.Equal(t, dataCost, benchKeyLen+benchValueLen, "the test measures the cost of an entry")
 	})
 
@@ -707,7 +748,11 @@ func BenchmarkList(b *testing.B) {
 		b.Run("by one writer", func(b *testing.B) {
 			for _, set := range benchKeySets {
 				b.Run("of "+set.name, func(b *testing.B) {
-					l, err := New(benchEntries*(benchKeyLen+benchValueLen), benchEntries*benchNodeBytes, 1)
+					l, err := New(Config{
+						DataBytes: benchEntries * (benchKeyLen + benchValueLen),
+						NodeBytes: benchEntries * benchNodeBytes,
+						Seed:      1,
+					})
 					assert.NoError(b, err, "New returns a List")
 					var k [benchKeyLen]byte
 					i := uint64(0)
@@ -731,7 +776,11 @@ func BenchmarkList(b *testing.B) {
 		})
 
 		b.Run("by writers in parallel", func(b *testing.B) {
-			l, err := New(b.N*(benchKeyLen+benchValueLen), b.N*benchNodeBytes, 1)
+			l, err := New(Config{
+				DataBytes: b.N * (benchKeyLen + benchValueLen),
+				NodeBytes: b.N * benchNodeBytes,
+				Seed:      1,
+			})
 			assert.NoError(b, err, "New returns a List")
 			var next atomic.Uint64
 			var failed atomic.Int64
@@ -829,7 +878,7 @@ func BenchmarkList(b *testing.B) {
 
 		for c.Loop() {
 			benchKey(&k, i)
-			nodeCost, _ = l.Cost(k[:], 1, benchValueLen)
+			_, nodeCost = l.Cost(k[:], 1, benchValueLen)
 			i++
 		}
 
@@ -908,7 +957,11 @@ func addInRounds(tb testing.TB, l *List, keyOf func(round, writer int) []byte) (
 // listSteps runs the steps of a machine over the methods of a List on one
 // goroutine, and checks every call against a sorted model of the entries.
 func listSteps(c *prop.Case) {
-	l, err := New(dataBytes, nodeBytes, c.Draw(prop.Integer[uint64](0, math.MaxUint64), "seed"))
+	l, err := New(Config{
+		DataBytes: dataBytes,
+		NodeBytes: nodeBytes,
+		Seed:      c.Draw(prop.Integer[uint64](0, math.MaxUint64), "seed"),
+	})
 	assert.NoError(c, err, "New returns a List")
 
 	var m model
@@ -929,7 +982,7 @@ func listSteps(c *prop.Case) {
 				},
 				Run: func(c *prop.Case, _ int, in any) {
 					e := in.(entry)
-					nodeCost, dataCost := l.Cost(e.key, e.seq, len(e.value))
+					dataCost, nodeCost := l.Cost(e.key, e.seq, len(e.value))
 					size := l.Size()
 					err := l.Add(e.key, e.seq, e.value)
 					if !m.add(e) {
@@ -939,7 +992,7 @@ func listSteps(c *prop.Case) {
 						return
 					}
 					assert.NoError(c, err, "Add adds a new entry")
-					assert.Equal(c, l.Size()-size, nodeCost+dataCost, "Add grows Size by the Cost of its entry")
+					assert.Equal(c, l.Size()-size, dataCost+nodeCost, "Add grows Size by the Cost of its entry")
 				},
 			},
 			{
@@ -1056,7 +1109,7 @@ func listSteps(c *prop.Case) {
 					// The bytes of the data of an entry follow from its lengths
 					// alone, and the bytes of its node from the seed of the List.
 					assert.Pure(c, func() int {
-						nodeCost, _ := l.Cost(keys[1], 1, 1)
+						_, nodeCost := l.Cost(keys[1], 1, 1)
 
 						return nodeCost
 					}, func() {
@@ -1141,7 +1194,11 @@ func check(l *List) error {
 // historyKeys keys with historySeqs sequences each. The key of number k is
 // the byte 'a' plus k, and a value encodes its number in 8 bytes.
 func historySteps(c *prop.Case) {
-	l, err := New(dataBytes, nodeBytes, c.Draw(prop.Integer[uint64](0, math.MaxUint64), "seed"))
+	l, err := New(Config{
+		DataBytes: dataBytes,
+		NodeBytes: nodeBytes,
+		Seed:      c.Draw(prop.Integer[uint64](0, math.MaxUint64), "seed"),
+	})
 	assert.NoError(c, err, "New returns a List")
 
 	written := 0
