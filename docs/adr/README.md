@@ -119,11 +119,16 @@ Start from [`docs/templates/ADR.md`](../templates/ADR.md).
 | [0059](0059-the-last-unpin-evicts-down-to-the-capacity.md) | The Last Unpin Evicts Down to the Capacity | Accepted |
 | [0060](0060-table-blocks-have-their-checksums-in-their-parents.md) | Table Blocks Have Their Checksums in Their Parents | Accepted |
 | [0061](0061-a-list-reports-the-cost-of-an-entry.md) | A List Reports the Cost of an Entry | Accepted |
-| [0062](0062-cursors-move-in-both-directions.md) | Cursors Move in Both Directions | Accepted |
+| [0062](0062-cursors-move-in-both-directions.md) | Cursors Move in Both Directions | Accepted, the memtable cursor superseded by [0068](0068-a-memtable-cursor-moves-back-by-a-link.md) |
 | [0063](0063-waiting-calls-of-a-limiter-take-units-by-priority.md) | Waiting Calls of a Limiter Take Units by Priority | Accepted |
 | [0064](0064-digests-and-ids-encode-as-hexadecimal-text.md) | Digests and IDs Encode as Their Hexadecimal Text | Accepted |
-| [0065](0065-reads-and-writes-of-a-table-take-a-context.md) | Reads and Writes of a Table Take a Context | Accepted |
+| [0065](0065-reads-and-writes-of-a-table-take-a-context.md) | Reads and Writes of a Table Take a Context | Accepted, the context of a move without a read superseded by [0070](0070-a-cursor-checks-its-context-before-each-block.md) |
 | [0066](0066-a-cursor-reads-without-filling-the-cache.md) | A Cursor Reads Without Filling the Cache | Accepted |
 | [0067](0067-a-list-reports-the-largest-cost-of-an-entry.md) | A List Reports the Largest Cost of an Entry | Accepted |
+| [0068](0068-a-memtable-cursor-moves-back-by-a-link.md) | A Memtable Cursor Moves Back by a Link | Accepted |
+| [0069](0069-an-inserter-searches-from-its-last-entry.md) | An Inserter Searches from Its Last Entry | Accepted |
+| [0070](0070-a-cursor-checks-its-context-before-each-block.md) | A Cursor Checks Its Context Before Each Block | Accepted |
+| [0071](0071-a-writer-keeps-a-bounded-workspace.md) | A Writer Keeps a Bounded Workspace | Accepted |
+| [0072](0072-a-cursor-reads-ahead-on-request.md) | A Cursor Reads Ahead on Request | Accepted |
 
 [nygard]: https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions

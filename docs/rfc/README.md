@@ -137,6 +137,9 @@ Start from [`docs/templates/RFC.md`](../templates/RFC.md).
 | [0067](0067-priorities-for-the-waiting-calls-of-a-limiter.md) | Priorities for the Waiting Calls of a Limiter | Accepted |
 | [0068](0068-a-context-in-each-read-and-write-of-a-table.md) | A Context in Each Read and Write of a Table | Accepted |
 | [0069](0069-the-largest-cost-of-a-skip-list-entry.md) | The Largest Cost of a Skip List Entry | Accepted |
+| [0070](0070-links-back-and-insert-hints-in-a-skip-list.md) | Links Back and Insert Hints in a Skip List | Accepted |
+| [0071](0071-a-bounded-workspace-for-a-table-writer.md) | A Bounded Workspace for a Table Writer | Accepted |
+| [0072](0072-read-ahead-of-a-table-cursor.md) | Read-Ahead of a Table Cursor | Accepted |
 
 ## Canonical first RFC
 

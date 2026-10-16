@@ -4,7 +4,7 @@ title: Cursors Move in Both Directions
 status: Accepted
 date: 2026-10-16
 supersedes: none
-superseded-by: none
+superseded-by: ADR-0068
 ---
 
 <!--
@@ -17,6 +17,10 @@ superseded-by: none
 ## Status
 
 Accepted
+
+[ADR-0068](0068-a-memtable-cursor-moves-back-by-a-link.md) supersedes the
+decision on the memtable cursor. The decisions on the cursor of a table and
+on the `Merger` remain in force.
 
 ## Context
 

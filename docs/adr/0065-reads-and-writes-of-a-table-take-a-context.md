@@ -4,7 +4,7 @@ title: Reads and Writes of a Table Take a Context
 status: Accepted
 date: 2026-10-16
 supersedes: none
-superseded-by: none
+superseded-by: ADR-0070
 ---
 
 <!--
@@ -17,6 +17,11 @@ superseded-by: none
 ## Status
 
 Accepted
+
+[ADR-0070](0070-a-cursor-checks-its-context-before-each-block.md)
+supersedes the consequence that a move that does not read a block ignores
+its context. The decision to pass the context of the caller to every call
+that can read or write a table remains in force.
 
 ## Context
 
