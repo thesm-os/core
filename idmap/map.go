@@ -10,6 +10,10 @@ import (
 	"slices"
 
 	"go.thesmos.sh/core/id"
+	"go.thesmos.sh/core/id/ksuid"
+	"go.thesmos.sh/core/id/ulid"
+	"go.thesmos.sh/core/id/uuidv4"
+	"go.thesmos.sh/core/id/uuidv7"
 )
 
 // minSlots is the number of slots of the smallest table of a [Map].
@@ -17,15 +21,20 @@ const minSlots = 8
 
 // Map is a hash map from identifiers to values, for one goroutine.
 //
-// K is a fixed-size identifier of [Key], or a struct type of the caller
-// whose one field embeds one, such as
+// K is a fixed-size identifier of [Key], an array type of 16, 20 or 32
+// bytes, or a struct type of the caller whose one field embeds an identifier
+// or a value type of an identifier package, such as
 //
 //	type ShardID struct{ id.ID128 }
+//	type StreamID struct{ ulid.ULID }
 //
-// [New] returns a map of the identifiers of Key. [NewTyped128],
-// [NewTyped160] and [NewTyped256] return a map of the struct types. A key of
-// a struct type converts to its identifier for the hash, so its map hashes
-// and compares the same bytes as a map of the identifier.
+// [New] returns a map of the identifiers of Key. [New128], [New160] and
+// [New256] return a map of an array type, such as [ulid.ULID] or
+// [ksuid.KSUID]. [NewTyped128], [NewTyped160] and [NewTyped256] return a map
+// of a struct type over an identifier. [NewTypedULID], [NewTypedKSUID],
+// [NewTypedUUIDv4] and [NewTypedUUIDv7] return a map of a struct type over a
+// value type. Each map hashes the bytes of a key in place, so it hashes and
+// compares the same bytes as a map of the identifier of those bytes.
 //
 // A Map keeps its keys in a table of a power of two of slots, with open
 // addressing and linear probing. A slot has a tag byte, a key and a value,
@@ -37,8 +46,7 @@ const minSlots = 8
 // never rehashes. The table is at most five eighths full. A Set of a new key
 // into a full table doubles the slots and moves every key.
 //
-// The zero Map is not usable. New, NewTyped128, NewTyped160 and NewTyped256
-// return an empty map.
+// The zero Map is not usable. Each constructor returns an empty map.
 //
 // # Concurrency
 //
@@ -47,10 +55,10 @@ const minSlots = 8
 //
 // # Allocation contract
 //
-// [New] and [Map.Clone] allocate the map and its three arrays. NewTyped128,
-// NewTyped160 and NewTyped256 also allocate the hash function of the struct
-// type. Get, Delete, Len, Clear and a range over All do not allocate. Set
-// allocates the three arrays of a growth, and nothing otherwise.
+// [New] and [Map.Clone] allocate the map and its three arrays. The other
+// constructors also allocate the hash function of K. Get, Delete, Len, Clear
+// and a range over All do not allocate. Set allocates the three arrays of a
+// growth, and nothing otherwise.
 type Map[K comparable, V any] struct {
 	// hash is the hash function of K.
 	hash func(seed, K) (uint64, words)
@@ -144,6 +152,141 @@ func NewTyped256[K ~struct{ id.ID256 }, V any](capacity int) *Map[K, V] {
 		c := struct{ id.ID256 }(k)
 
 		return hash256(s, &c.ID256)
+	})
+}
+
+// New128 returns an empty map of the array type K of 16 bytes, such as
+// [ulid.ULID], [uuidv4.UUID], [uuidv7.UUID], [go.thesmos.sh/core/crypto.ID]
+// and [go.thesmos.sh/core/crypto/sign.KeyID]. The map hashes the bytes of
+// each key in place. A key has the hash of the [id.ID128] of the same bytes.
+// Its table is the table that [New] allocates for capacity.
+//
+// New128 panics as make does when the slots for capacity exceed the memory
+// that make can allocate.
+//
+// # Allocation contract
+//
+// New128 allocates the map, its arrays of tags, keys and values, and the
+// hash function of K.
+func New128[K ~[id.Size128]byte, V any](capacity int) *Map[K, V] {
+	return newMap[K, V](capacity, func(s seed, k K) (uint64, words) {
+		return hash128(s, (*id.ID128)(k[:]))
+	})
+}
+
+// New160 returns an empty map of the array type K of 20 bytes, such as
+// [ksuid.KSUID]. The map hashes the bytes of each key in place. A key has the
+// hash of the [id.ID160] of the same bytes. Its table is the table that [New]
+// allocates for capacity.
+//
+// New160 panics as make does when the slots for capacity exceed the memory
+// that make can allocate.
+//
+// # Allocation contract
+//
+// New160 allocates the map, its arrays of tags, keys and values, and the
+// hash function of K.
+func New160[K ~[id.Size160]byte, V any](capacity int) *Map[K, V] {
+	return newMap[K, V](capacity, func(s seed, k K) (uint64, words) {
+		return hash160(s, (*id.ID160)(k[:]))
+	})
+}
+
+// New256 returns an empty map of the array type K of 32 bytes, such as a type
+// of the caller for a SHA-256 digest. The map hashes the bytes of each key in
+// place. A key has the hash of the [id.ID256] of the same bytes. Its table is
+// the table that [New] allocates for capacity.
+//
+// New256 panics as make does when the slots for capacity exceed the memory
+// that make can allocate.
+//
+// # Allocation contract
+//
+// New256 allocates the map, its arrays of tags, keys and values, and the
+// hash function of K.
+func New256[K ~[id.Size256]byte, V any](capacity int) *Map[K, V] {
+	return newMap[K, V](capacity, func(s seed, k K) (uint64, words) {
+		return hash256(s, (*id.ID256)(k[:]))
+	})
+}
+
+// NewTypedULID returns an empty map of the struct type K, whose one field
+// embeds a [ulid.ULID]. The map hashes the ULID of each key in place. A key
+// has the hash of the [id.ID128] of the same bytes. Its table is the table
+// that [New] allocates for capacity.
+//
+// NewTypedULID panics as make does when the slots for capacity exceed the
+// memory that make can allocate.
+//
+// # Allocation contract
+//
+// NewTypedULID allocates the map, its arrays of tags, keys and values, and
+// the hash function of K.
+func NewTypedULID[K ~struct{ ulid.ULID }, V any](capacity int) *Map[K, V] {
+	return newMap[K, V](capacity, func(s seed, k K) (uint64, words) {
+		c := struct{ ulid.ULID }(k)
+
+		return hash128(s, (*id.ID128)(&c.ULID))
+	})
+}
+
+// NewTypedKSUID returns an empty map of the struct type K, whose one field
+// embeds a [ksuid.KSUID]. The map hashes the KSUID of each key in place. A
+// key has the hash of the [id.ID160] of the same bytes. Its table is the
+// table that [New] allocates for capacity.
+//
+// NewTypedKSUID panics as make does when the slots for capacity exceed the
+// memory that make can allocate.
+//
+// # Allocation contract
+//
+// NewTypedKSUID allocates the map, its arrays of tags, keys and values, and
+// the hash function of K.
+func NewTypedKSUID[K ~struct{ ksuid.KSUID }, V any](capacity int) *Map[K, V] {
+	return newMap[K, V](capacity, func(s seed, k K) (uint64, words) {
+		c := struct{ ksuid.KSUID }(k)
+
+		return hash160(s, (*id.ID160)(&c.KSUID))
+	})
+}
+
+// NewTypedUUIDv4 returns an empty map of the struct type K, whose one field
+// embeds a [uuidv4.UUID]. The map hashes the UUID of each key in place. A key
+// has the hash of the [id.ID128] of the same bytes. Its table is the table
+// that [New] allocates for capacity.
+//
+// NewTypedUUIDv4 panics as make does when the slots for capacity exceed the
+// memory that make can allocate.
+//
+// # Allocation contract
+//
+// NewTypedUUIDv4 allocates the map, its arrays of tags, keys and values, and
+// the hash function of K.
+func NewTypedUUIDv4[K ~struct{ uuidv4.UUID }, V any](capacity int) *Map[K, V] {
+	return newMap[K, V](capacity, func(s seed, k K) (uint64, words) {
+		c := struct{ uuidv4.UUID }(k)
+
+		return hash128(s, (*id.ID128)(&c.UUID))
+	})
+}
+
+// NewTypedUUIDv7 returns an empty map of the struct type K, whose one field
+// embeds a [uuidv7.UUID]. The map hashes the UUID of each key in place. A key
+// has the hash of the [id.ID128] of the same bytes. Its table is the table
+// that [New] allocates for capacity.
+//
+// NewTypedUUIDv7 panics as make does when the slots for capacity exceed the
+// memory that make can allocate.
+//
+// # Allocation contract
+//
+// NewTypedUUIDv7 allocates the map, its arrays of tags, keys and values, and
+// the hash function of K.
+func NewTypedUUIDv7[K ~struct{ uuidv7.UUID }, V any](capacity int) *Map[K, V] {
+	return newMap[K, V](capacity, func(s seed, k K) (uint64, words) {
+		c := struct{ uuidv7.UUID }(k)
+
+		return hash128(s, (*id.ID128)(&c.UUID))
 	})
 }
 

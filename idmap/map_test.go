@@ -15,6 +15,10 @@ import (
 	"go.dokimi.dev/assert/prop"
 
 	"go.thesmos.sh/core/id"
+	"go.thesmos.sh/core/id/ksuid"
+	"go.thesmos.sh/core/id/ulid"
+	"go.thesmos.sh/core/id/uuidv4"
+	"go.thesmos.sh/core/id/uuidv7"
 	"go.thesmos.sh/core/idmap"
 )
 
@@ -29,6 +33,19 @@ type (
 	typed160 struct{ id.ID160 }
 	typed256 struct{ id.ID256 }
 )
+
+// typedULID, typedKSUID, typedUUIDv4 and typedUUIDv7 are key types of a
+// caller whose one field embeds a value type of an identifier package.
+type (
+	typedULID   struct{ ulid.ULID }
+	typedKSUID  struct{ ksuid.KSUID }
+	typedUUIDv4 struct{ uuidv4.UUID }
+	typedUUIDv7 struct{ uuidv7.UUID }
+)
+
+// digest is an array type of 32 bytes that a caller declares for a SHA-256
+// digest.
+type digest [id.Size256]byte
 
 func TestMap(t *testing.T) {
 	t.Parallel()
@@ -69,6 +86,79 @@ func TestMap(t *testing.T) {
 		t.Run("returns a map that returns what a Go map returns for random calls", func(t *testing.T) {
 			t.Parallel()
 			checkMap(t, idmap.NewTyped256[typed256, int], func(i int) typed256 { return typed256{keyOf[id.ID256](i)} })
+		})
+	})
+
+	t.Run("New128", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns a map that returns what a Go map returns for random calls", func(t *testing.T) {
+			t.Parallel()
+			checkMap(t, idmap.New128[ulid.ULID, int], func(i int) ulid.ULID { return ulid.ULID(keyOf[id.ID128](i)) })
+		})
+	})
+
+	t.Run("New160", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns a map that returns what a Go map returns for random calls", func(t *testing.T) {
+			t.Parallel()
+			checkMap(t, idmap.New160[ksuid.KSUID, int], func(i int) ksuid.KSUID {
+				return ksuid.KSUID(keyOf[id.ID160](i))
+			})
+		})
+	})
+
+	t.Run("New256", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns a map that returns what a Go map returns for random calls", func(t *testing.T) {
+			t.Parallel()
+			checkMap(t, idmap.New256[digest, int], func(i int) digest { return digest(keyOf[id.ID256](i)) })
+		})
+	})
+
+	t.Run("NewTypedULID", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns a map that returns what a Go map returns for random calls", func(t *testing.T) {
+			t.Parallel()
+			checkMap(t, idmap.NewTypedULID[typedULID, int], func(i int) typedULID {
+				return typedULID{ulid.ULID(keyOf[id.ID128](i))}
+			})
+		})
+	})
+
+	t.Run("NewTypedKSUID", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns a map that returns what a Go map returns for random calls", func(t *testing.T) {
+			t.Parallel()
+			checkMap(t, idmap.NewTypedKSUID[typedKSUID, int], func(i int) typedKSUID {
+				return typedKSUID{ksuid.KSUID(keyOf[id.ID160](i))}
+			})
+		})
+	})
+
+	t.Run("NewTypedUUIDv4", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns a map that returns what a Go map returns for random calls", func(t *testing.T) {
+			t.Parallel()
+			checkMap(t, idmap.NewTypedUUIDv4[typedUUIDv4, int], func(i int) typedUUIDv4 {
+				return typedUUIDv4{uuidv4.UUID(keyOf[id.ID128](i))}
+			})
+		})
+	})
+
+	t.Run("NewTypedUUIDv7", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns a map that returns what a Go map returns for random calls", func(t *testing.T) {
+			t.Parallel()
+			checkMap(t, idmap.NewTypedUUIDv7[typedUUIDv7, int], func(i int) typedUUIDv7 {
+				return typedUUIDv7{uuidv7.UUID(keyOf[id.ID128](i))}
+			})
 		})
 	})
 
@@ -352,8 +442,41 @@ func TestMapAllocs(t *testing.T) {
 		expect.Equal(t, m.Len(), 0, "the test must measure an empty map")
 	})
 
+	t.Run("New128", func(t *testing.T) {
+		checkNewAllocs(t, idmap.New128[ulid.ULID, int], keysOf(func(k id.ID128) ulid.ULID { return ulid.ULID(k) }))
+	})
+
+	t.Run("New160", func(t *testing.T) {
+		checkNewAllocs(t, idmap.New160[ksuid.KSUID, int],
+			keysOf(func(k id.ID160) ksuid.KSUID { return ksuid.KSUID(k) }))
+	})
+
+	t.Run("New256", func(t *testing.T) {
+		checkNewAllocs(t, idmap.New256[digest, int], keysOf(func(k id.ID256) digest { return digest(k) }))
+	})
+
+	t.Run("NewTypedULID", func(t *testing.T) {
+		checkNewAllocs(t, idmap.NewTypedULID[typedULID, int],
+			keysOf(func(k id.ID128) typedULID { return typedULID{ulid.ULID(k)} }))
+	})
+
+	t.Run("NewTypedKSUID", func(t *testing.T) {
+		checkNewAllocs(t, idmap.NewTypedKSUID[typedKSUID, int],
+			keysOf(func(k id.ID160) typedKSUID { return typedKSUID{ksuid.KSUID(k)} }))
+	})
+
+	t.Run("NewTypedUUIDv4", func(t *testing.T) {
+		checkNewAllocs(t, idmap.NewTypedUUIDv4[typedUUIDv4, int],
+			keysOf(func(k id.ID128) typedUUIDv4 { return typedUUIDv4{uuidv4.UUID(k)} }))
+	})
+
+	t.Run("NewTypedUUIDv7", func(t *testing.T) {
+		checkNewAllocs(t, idmap.NewTypedUUIDv7[typedUUIDv7, int],
+			keysOf(func(k id.ID128) typedUUIDv7 { return typedUUIDv7{uuidv7.UUID(k)} }))
+	})
+
 	t.Run("Get", func(t *testing.T) {
-		m := filledMap(keys[:benchKeys])
+		m := filledMap(idmap.New[id.ID128, int], keys[:benchKeys])
 		var hit, miss bool
 		expect.MaxAllocs(t, func() { _, hit = m.Get(keys[500]) }, 0, "a Get of a present key must not allocate")
 		expect.MaxAllocs(t, func() { _, miss = m.Get(keys[benchKeys]) }, 0, "a Get of a missing key must not allocate")
@@ -362,7 +485,7 @@ func TestMapAllocs(t *testing.T) {
 	})
 
 	t.Run("Set", func(t *testing.T) {
-		m := filledMap(keys[:benchKeys/2])
+		m := filledMap(idmap.New[id.ID128, int], keys[:benchKeys/2])
 		var present bool
 		expect.MaxAllocs(t, func() { _, present = m.Set(keys[500], 1) }, 0,
 			"a Set of a present key must not allocate")
@@ -375,13 +498,14 @@ func TestMapAllocs(t *testing.T) {
 		}, 0, "a Set of a new key into a map with room must not allocate")
 		expect.Equal(t, m.Len(), next, "the test must measure new keys")
 
-		expect.MaxAllocsWithSetup(t, func() *idmap.Map[id.ID128, int] { return filledMap(keys[:5]) },
+		expect.MaxAllocsWithSetup(t,
+			func() *idmap.Map[id.ID128, int] { return filledMap(idmap.New[id.ID128, int], keys[:5]) },
 			func(m *idmap.Map[id.ID128, int]) { m.Set(keys[5], 5) }, 3,
 			"a Set that grows the map must allocate its three arrays")
 	})
 
 	t.Run("Delete", func(t *testing.T) {
-		m := filledMap(keys[:benchKeys])
+		m := filledMap(idmap.New[id.ID128, int], keys[:benchKeys])
 		var ok bool
 		expect.MaxAllocs(t, func() {
 			_, ok = m.Delete(keys[500])
@@ -391,27 +515,27 @@ func TestMapAllocs(t *testing.T) {
 	})
 
 	t.Run("Len", func(t *testing.T) {
-		m := filledMap(keys[:benchKeys])
+		m := filledMap(idmap.New[id.ID128, int], keys[:benchKeys])
 		var n int
 		expect.MaxAllocs(t, func() { n = m.Len() }, 0, "Len must not allocate")
 		expect.Equal(t, n, benchKeys, "the test must measure a full map")
 	})
 
 	t.Run("Clear", func(t *testing.T) {
-		m := filledMap(keys[:benchKeys])
+		m := filledMap(idmap.New[id.ID128, int], keys[:benchKeys])
 		expect.MaxAllocs(t, m.Clear, 0, "Clear must not allocate")
 		expect.Equal(t, m.Len(), 0, "the test must measure a cleared map")
 	})
 
 	t.Run("Clone", func(t *testing.T) {
-		m := filledMap(keys[:benchKeys])
+		m := filledMap(idmap.New[id.ID128, int], keys[:benchKeys])
 		var c *idmap.Map[id.ID128, int]
 		expect.MaxAllocs(t, func() { c = m.Clone() }, 4, "Clone must allocate the copy and its three arrays")
 		expect.Equal(t, c.Len(), benchKeys, "the test must measure a copy of a full map")
 	})
 
 	t.Run("All", func(t *testing.T) {
-		m := filledMap(keys[:benchKeys])
+		m := filledMap(idmap.New[id.ID128, int], keys[:benchKeys])
 		var sum int
 		expect.MaxAllocs(t, func() {
 			sum = 0
@@ -430,19 +554,41 @@ func BenchmarkMap(b *testing.B) {
 	}
 
 	b.Run("Get", func(b *testing.B) {
-		m := filledMap(keys)
+		b.Run("New", func(b *testing.B) {
+			benchGet(b, idmap.New[id.ID128, int], keys)
+		})
 
-		c := bench.Start(b).MaxAllocs(0)
-		defer c.End()
+		b.Run("New128", func(b *testing.B) {
+			benchGet(b, idmap.New128[ulid.ULID, int], keysOf(func(k id.ID128) ulid.ULID { return ulid.ULID(k) }))
+		})
 
-		var ok bool
-		i := 0
-		for c.Loop() {
-			_, ok = m.Get(keys[i&(benchKeys-1)])
-			i++
-		}
+		b.Run("New160", func(b *testing.B) {
+			benchGet(b, idmap.New160[ksuid.KSUID, int], keysOf(func(k id.ID160) ksuid.KSUID { return ksuid.KSUID(k) }))
+		})
 
-		assert.True(b, ok, "the benchmark must measure present keys")
+		b.Run("New256", func(b *testing.B) {
+			benchGet(b, idmap.New256[digest, int], keysOf(func(k id.ID256) digest { return digest(k) }))
+		})
+
+		b.Run("NewTypedULID", func(b *testing.B) {
+			benchGet(b, idmap.NewTypedULID[typedULID, int],
+				keysOf(func(k id.ID128) typedULID { return typedULID{ulid.ULID(k)} }))
+		})
+
+		b.Run("NewTypedKSUID", func(b *testing.B) {
+			benchGet(b, idmap.NewTypedKSUID[typedKSUID, int],
+				keysOf(func(k id.ID160) typedKSUID { return typedKSUID{ksuid.KSUID(k)} }))
+		})
+
+		b.Run("NewTypedUUIDv4", func(b *testing.B) {
+			benchGet(b, idmap.NewTypedUUIDv4[typedUUIDv4, int],
+				keysOf(func(k id.ID128) typedUUIDv4 { return typedUUIDv4{uuidv4.UUID(k)} }))
+		})
+
+		b.Run("NewTypedUUIDv7", func(b *testing.B) {
+			benchGet(b, idmap.NewTypedUUIDv7[typedUUIDv7, int],
+				keysOf(func(k id.ID128) typedUUIDv7 { return typedUUIDv7{uuidv7.UUID(k)} }))
+		})
 	})
 
 	b.Run("Set", func(b *testing.B) {
@@ -465,7 +611,7 @@ func BenchmarkMap(b *testing.B) {
 	})
 
 	b.Run("Delete", func(b *testing.B) {
-		m := filledMap(keys)
+		m := filledMap(idmap.New[id.ID128, int], keys)
 
 		c := bench.Start(b).MaxAllocs(0)
 		defer c.End()
@@ -483,7 +629,7 @@ func BenchmarkMap(b *testing.B) {
 	})
 
 	b.Run("Clone", func(b *testing.B) {
-		m := filledMap(keys)
+		m := filledMap(idmap.New[id.ID128, int], keys)
 
 		c := bench.Start(b).MaxAllocs(4)
 		defer c.End()
@@ -497,7 +643,7 @@ func BenchmarkMap(b *testing.B) {
 	})
 
 	b.Run("All", func(b *testing.B) {
-		m := filledMap(keys)
+		m := filledMap(idmap.New[id.ID128, int], keys)
 
 		c := bench.Start(b).MaxAllocs(0)
 		defer c.End()
@@ -514,13 +660,62 @@ func BenchmarkMap(b *testing.B) {
 	})
 }
 
-// filledMap returns a map of the keys, presized for them, with the index of
-// each key as its value.
-func filledMap(keys []id.ID128) *idmap.Map[id.ID128, int] {
-	m := idmap.New[id.ID128, int](len(keys))
+// filledMap returns a map that newMap returns for the number of the keys. The
+// value of each key is its index in keys.
+func filledMap[K comparable](newMap func(capacity int) *idmap.Map[K, int], keys []K) *idmap.Map[K, int] {
+	m := newMap(len(keys))
 	for i, k := range keys {
 		m.Set(k, i)
 	}
 
 	return m
+}
+
+// keysOf converts the first benchKeys keys of keyOf with convert and returns
+// them in order.
+func keysOf[I idmap.Key, K comparable](convert func(I) K) []K {
+	keys := make([]K, 0, benchKeys)
+	for i := range benchKeys {
+		keys = append(keys, convert(keyOf[I](i)))
+	}
+
+	return keys
+}
+
+// checkNewAllocs checks that newMap allocates the map, its three arrays and
+// its hash function. It also checks that a Get in a map of the keys does not
+// allocate.
+func checkNewAllocs[K comparable](t *testing.T, newMap func(capacity int) *idmap.Map[K, int], keys []K) {
+	t.Helper()
+
+	var empty *idmap.Map[K, int]
+	expect.MaxAllocs(t, func() { empty = newMap(benchKeys) }, 5,
+		"the constructor must allocate the map, its three arrays and its hash function")
+	expect.Equal(t, empty.Len(), 0, "the test must measure an empty map")
+
+	m := filledMap(newMap, keys)
+	var ok bool
+	expect.MaxAllocs(t, func() { _, ok = m.Get(keys[500]) }, 0, "a Get of a present key must not allocate")
+	expect.True(t, ok, "the test must measure a present key")
+}
+
+// benchGet fills a map that newMap returns with the keys and measures a Get
+// of each key in the order of keys. It fails when a Get allocates. The
+// number of the keys is a power of two.
+func benchGet[K comparable](b *testing.B, newMap func(capacity int) *idmap.Map[K, int], keys []K) {
+	b.Helper()
+
+	m := filledMap(newMap, keys)
+
+	c := bench.Start(b).MaxAllocs(0)
+	defer c.End()
+
+	var ok bool
+	i := 0
+	for c.Loop() {
+		_, ok = m.Get(keys[i&(len(keys)-1)])
+		i++
+	}
+
+	assert.True(b, ok, "the benchmark must measure present keys")
 }

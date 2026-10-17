@@ -12,6 +12,10 @@ import (
 	"go.dokimi.dev/assert/prop"
 
 	"go.thesmos.sh/core/id"
+	"go.thesmos.sh/core/id/ksuid"
+	"go.thesmos.sh/core/id/ulid"
+	"go.thesmos.sh/core/id/uuidv4"
+	"go.thesmos.sh/core/id/uuidv7"
 )
 
 // TestMapTable checks the table of a Map: the slots that New allocates, the
@@ -88,6 +92,104 @@ func TestMapTable(t *testing.T) {
 			got, _ := m.hash(m.seed, struct{ id.ID256 }{k})
 			want, _ := hash256(m.seed, &k)
 			assert.Equal(t, got, want, "the hash of a key must be the hash of its identifier")
+		})
+	})
+
+	t.Run("New128", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns a map that hashes a key as hash128 hashes the identifier of its bytes", func(t *testing.T) {
+			t.Parallel()
+			m := New128[ulid.ULID, int](1)
+			k := counting[id.ID128]()
+			got, gotWords := m.hash(m.seed, ulid.ULID(k))
+			want, wantWords := hash128(m.seed, &k)
+			expect.Equal(t, got, want, "the hash of a key must be the hash of its identifier")
+			expect.Equal(t, gotWords, wantWords, "the words of a key must be the words of its identifier")
+		})
+	})
+
+	t.Run("New160", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns a map that hashes a key as hash160 hashes the identifier of its bytes", func(t *testing.T) {
+			t.Parallel()
+			m := New160[ksuid.KSUID, int](1)
+			k := counting[id.ID160]()
+			got, gotWords := m.hash(m.seed, ksuid.KSUID(k))
+			want, wantWords := hash160(m.seed, &k)
+			expect.Equal(t, got, want, "the hash of a key must be the hash of its identifier")
+			expect.Equal(t, gotWords, wantWords, "the words of a key must be the words of its identifier")
+		})
+	})
+
+	t.Run("New256", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns a map that hashes a key as hash256 hashes the identifier of its bytes", func(t *testing.T) {
+			t.Parallel()
+			m := New256[[id.Size256]byte, int](1)
+			k := counting[id.ID256]()
+			got, gotWords := m.hash(m.seed, [id.Size256]byte(k))
+			want, wantWords := hash256(m.seed, &k)
+			expect.Equal(t, got, want, "the hash of a key must be the hash of its identifier")
+			expect.Equal(t, gotWords, wantWords, "the words of a key must be the words of its identifier")
+		})
+	})
+
+	t.Run("NewTypedULID", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns a map that hashes a key as hash128 hashes the identifier of its ULID", func(t *testing.T) {
+			t.Parallel()
+			m := NewTypedULID[struct{ ulid.ULID }, int](1)
+			k := counting[id.ID128]()
+			got, gotWords := m.hash(m.seed, struct{ ulid.ULID }{ulid.ULID(k)})
+			want, wantWords := hash128(m.seed, &k)
+			expect.Equal(t, got, want, "the hash of a key must be the hash of its identifier")
+			expect.Equal(t, gotWords, wantWords, "the words of a key must be the words of its identifier")
+		})
+	})
+
+	t.Run("NewTypedKSUID", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns a map that hashes a key as hash160 hashes the identifier of its KSUID", func(t *testing.T) {
+			t.Parallel()
+			m := NewTypedKSUID[struct{ ksuid.KSUID }, int](1)
+			k := counting[id.ID160]()
+			got, gotWords := m.hash(m.seed, struct{ ksuid.KSUID }{ksuid.KSUID(k)})
+			want, wantWords := hash160(m.seed, &k)
+			expect.Equal(t, got, want, "the hash of a key must be the hash of its identifier")
+			expect.Equal(t, gotWords, wantWords, "the words of a key must be the words of its identifier")
+		})
+	})
+
+	t.Run("NewTypedUUIDv4", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns a map that hashes a key as hash128 hashes the identifier of its UUID", func(t *testing.T) {
+			t.Parallel()
+			m := NewTypedUUIDv4[struct{ uuidv4.UUID }, int](1)
+			k := counting[id.ID128]()
+			got, gotWords := m.hash(m.seed, struct{ uuidv4.UUID }{uuidv4.UUID(k)})
+			want, wantWords := hash128(m.seed, &k)
+			expect.Equal(t, got, want, "the hash of a key must be the hash of its identifier")
+			expect.Equal(t, gotWords, wantWords, "the words of a key must be the words of its identifier")
+		})
+	})
+
+	t.Run("NewTypedUUIDv7", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns a map that hashes a key as hash128 hashes the identifier of its UUID", func(t *testing.T) {
+			t.Parallel()
+			m := NewTypedUUIDv7[struct{ uuidv7.UUID }, int](1)
+			k := counting[id.ID128]()
+			got, gotWords := m.hash(m.seed, struct{ uuidv7.UUID }{uuidv7.UUID(k)})
+			want, wantWords := hash128(m.seed, &k)
+			expect.Equal(t, got, want, "the hash of a key must be the hash of its identifier")
+			expect.Equal(t, gotWords, wantWords, "the words of a key must be the words of its identifier")
 		})
 	})
 

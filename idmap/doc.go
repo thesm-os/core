@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package idmap implements hash maps keyed by the fixed-size identifiers of
-// package [go.thesmos.sh/core/id], and by the identifier types that a caller
-// declares over them.
+// package [go.thesmos.sh/core/id], by array types of the same sizes, and by
+// the identifier types that a caller declares over them.
 //
 // A Go map hashes every byte of a key with the general hash of the runtime.
 // The maps of this package hash the 64-bit words of an identifier with one
@@ -16,9 +16,9 @@
 //
 //   - [Key] is the type set of the fixed-size identifiers: [id.ID128],
 //     [id.ID160] and [id.ID256].
-//   - [Map] is a hash map for one goroutine, from identifiers to values of
-//     any type. It grows by doubling. [Map.Clone] copies its arrays, so a
-//     copy takes no rehash.
+//   - [Map] is a hash map for one goroutine, from keys of 16, 20 or 32 bytes
+//     to values of any type. It grows by doubling. [Map.Clone] copies its
+//     arrays, so a copy takes no rehash.
 //   - [Typed] is a hash map for one goroutine whose keys are of an
 //     identifier type over [id.ID]. It keeps the keys of each size in a Map
 //     of that size.
@@ -29,17 +29,27 @@
 // # Identifier types
 //
 // A caller declares an identifier type as a struct whose one field embeds
-// an identifier of package id. The compiler keeps two such types apart:
+// an identifier of package id or a value type of an identifier package, such
+// as [ulid.ULID]. The compiler keeps two such types apart:
 //
 //	type ShardID struct{ id.ID128 }
 //	type StreamID struct{ id.ID }
+//	type OrderID struct{ ulid.ULID }
 //
-// [New] returns a Map of the identifiers of Key. [NewTyped128],
-// [NewTyped160] and [NewTyped256] return a Map of an identifier type over
-// ID128, ID160 or ID256. [NewTyped] returns a Typed of an identifier type
-// over [id.ID]. Each map converts a key to its identifier for the hash, so it
-// hashes and compares the bytes of the identifier. Its All yields keys of the
-// identifier type. A Concurrent takes the identifiers of Key alone.
+// Each constructor of a Map takes one kind of key:
+//
+//   - [New] takes the identifiers of Key.
+//   - [New128], [New160] and [New256] take an array type of 16, 20 or 32
+//     bytes, such as [ulid.ULID] or [ksuid.KSUID].
+//   - [NewTyped128], [NewTyped160] and [NewTyped256] take an identifier type
+//     over ID128, ID160 or ID256.
+//   - [NewTypedULID], [NewTypedKSUID], [NewTypedUUIDv4] and [NewTypedUUIDv7]
+//     take an identifier type over a [ulid.ULID], a [ksuid.KSUID], a
+//     [uuidv4.UUID] or a [uuidv7.UUID].
+//
+// [NewTyped] returns a Typed of an identifier type over [id.ID]. Each map
+// hashes a key as it hashes the identifier of the same bytes. Its All yields
+// keys of its key type. A Concurrent takes the identifiers of Key alone.
 //
 // # Hashing
 //
@@ -58,12 +68,11 @@
 //
 // # Allocation contract
 //
-//   - [New] and [Map.Clone] allocate the map and its three arrays.
-//     NewTyped128, NewTyped160 and NewTyped256 also allocate the hash
-//     function of the identifier type. [Map.Set] allocates three arrays when
-//     it grows the map, and nothing otherwise. The other methods of a Map do
-//     not allocate, and neither does a range loop over [Map.All] that the
-//     compiler inlines the iterator into.
+//   - [New] and [Map.Clone] allocate the map and its three arrays. The other
+//     constructors of a Map also allocate the hash function of the key type.
+//     [Map.Set] allocates three arrays when it grows the map, and nothing
+//     otherwise. The other methods of a Map do not allocate, and neither does
+//     a range loop over [Map.All] that the compiler inlines the iterator into.
 //   - [NewTyped] allocates the map. [Typed.Set] allocates a Map and its three
 //     arrays for the first key of each size, and three arrays when it grows a
 //     Map. [Typed.Clone] allocates the copy and a copy of each of its Maps.
@@ -82,5 +91,8 @@
 //
 // Imports encoding/binary, errors, hash/maphash, iter, math/bits, runtime,
 // slices and sync/atomic from the standard library, and
-// go.thesmos.sh/core/errs and go.thesmos.sh/core/id from this module.
+// go.thesmos.sh/core/errs, go.thesmos.sh/core/id,
+// go.thesmos.sh/core/id/ksuid, go.thesmos.sh/core/id/ulid,
+// go.thesmos.sh/core/id/uuidv4 and go.thesmos.sh/core/id/uuidv7 from this
+// module.
 package idmap
