@@ -60,6 +60,37 @@ const (
 // lookup that skips the filter reads the block of the keys around it.
 const absentKey = "key 030a"
 
+// The entries that the cases of Span change in the index of the golden table
+// under oneEntry. The table has a data block for each of its 120 entries.
+// The search for the lower "key 000" compares the entries 60, 30, 15, 7, 3, 1
+// and 0. The search for an upper after every key starts at the first block.
+// It compares the entries 0, 1, 3, 7, 15, 31 and 63, then searches the
+// entries 64 to 119.
+const (
+	// lowerSearchEntry is an entry that the search for the lower "key 000"
+	// compares, and the search for an upper after every key does not.
+	lowerSearchEntry = 30
+
+	// upperSearchEntry is an entry that the search for an upper after every
+	// key compares, and the search for the lower "key 000" does not.
+	upperSearchEntry = 63
+
+	// key058Entry and key059Entry are the entries of the blocks of key 058
+	// and key 059 at the sequence 2. The value of each ends less than 127
+	// bytes before the end of the entries of the index.
+	key058Entry = 116
+	key059Entry = 118
+)
+
+// The table of the benchmark of Span.
+const (
+	// spanEntries is the number of its entries.
+	spanEntries = 100_000
+
+	// spanKey is the format of the key of its entry i.
+	spanKey = "key %08d"
+)
+
 // shortFile is a File that returns one byte less than each read, without
 // an error.
 type shortFile struct {
@@ -378,6 +409,231 @@ func TestReader(t *testing.T) {
 		})
 	})
 
+	t.Run("Span", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the blocks that the index states for the range", func(t *testing.T) {
+			t.Parallel()
+			bound := prop.Optional(prop.OneOf(prop.SampledFrom(keys...), prop.Bytes(prop.MaxSize(20))))
+			// The long entries have index entries whose headers take more than
+			// three bytes.
+			tables := prop.OneOf(entries, prop.Just(longTable()))
+			prop.ForAll(t, "Span counts from the block of lower to the block of upper", func(c *prop.Case) {
+				opts := c.Draw(prop.SampledFrom(oneEntry, settings[1].opts, settings[3].opts), "options")
+				l := newLayout(c, opts, c.Draw(tables, "entries"))
+				var lower, upper []byte
+				if p := c.Draw(bound, "lower"); p != nil {
+					lower = *p
+				}
+				if p := c.Draw(bound, "upper"); p != nil {
+					upper = *p
+				}
+				// The first block is the first whose last key is at or after
+				// lower. The last block is the first whose last key is at or
+				// after upper, or the last block of the table.
+				first := slices.IndexFunc(l.blocks, func(b place) bool { return bytes.Compare(b.last, lower) >= 0 })
+				last := slices.IndexFunc(l.blocks, func(b place) bool {
+					return upper != nil && bytes.Compare(b.last, upper) >= 0
+				})
+				if last < 0 {
+					last = len(l.blocks) - 1
+				}
+				var want sstable.Span
+				if first >= 0 && (upper == nil || bytes.Compare(lower, upper) < 0) {
+					end := l.blocks[last].off + l.blocks[last].n + trailerLen
+					want = sstable.Span{Blocks: last - first + 1, Bytes: int64(end - l.blocks[first].off)}
+				}
+				got, err := openTable(c, l.data, sstable.ReaderOptions{}).Span(lower, upper)
+				assert.NoError(c, err, "Span searches a valid index")
+				assert.Equal(c, got, want, "Span counts the blocks from the block of lower to the block of upper")
+			})
+		})
+
+		tests := []struct {
+			name      string
+			giveLower []byte
+			giveUpper []byte
+		}{
+			{
+				name:      "returns the zero Span for an upper equal to lower",
+				giveLower: []byte("key 010"),
+				giveUpper: []byte("key 010"),
+			},
+			{
+				name:      "returns the zero Span for an upper before lower",
+				giveLower: []byte("key 010"),
+				giveUpper: []byte("key 005"),
+			},
+			{
+				name:      "returns the zero Span for a lower after the last key",
+				giveLower: []byte("zzz"),
+			},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				r := openTable(t, writeTable(t, settings[1].opts, goldenTable()), sstable.ReaderOptions{})
+				got, err := r.Span(tt.giveLower, tt.giveUpper)
+				assert.NoError(t, err, "Span searches a valid index")
+				assert.Equal(t, got, sstable.Span{}, "an empty range has no blocks")
+			})
+		}
+
+		// The first block of the table ends with key a at the highest
+		// sequence, which equals the entry that each search looks for.
+		highest := []struct {
+			name       string
+			giveLower  []byte
+			giveUpper  []byte
+			wantBlocks int
+		}{
+			{
+				name:       "counts the block whose last entry is lower at the highest sequence",
+				giveLower:  []byte("a"),
+				wantBlocks: 2,
+			},
+			{
+				name:       "counts the block whose last entry is upper at the highest sequence",
+				giveUpper:  []byte("a"),
+				wantBlocks: 1,
+			},
+		}
+		for _, tt := range highest {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				l := newLayout(t, oneEntry, []entry{
+					{key: []byte("a"), seq: math.MaxUint64, value: []byte("v")},
+					{key: []byte("b"), seq: 1, value: []byte("v")},
+				})
+				last := l.blocks[tt.wantBlocks-1]
+				got, err := openTable(t, l.data, sstable.ReaderOptions{}).Span(tt.giveLower, tt.giveUpper)
+				assert.NoError(t, err, "Span searches a valid index")
+				assert.Equal(t, got, sstable.Span{Blocks: tt.wantBlocks, Bytes: int64(last.off + last.n + trailerLen)},
+					"Span counts from the first block")
+			})
+		}
+
+		corrupt := []struct {
+			name       string
+			giveEntry  int
+			giveChange func(l *layout, entry []byte)
+			giveLower  []byte
+			giveUpper  []byte
+		}{
+			{
+				name:      "returns ErrCorrupt for a malformed index key on the search for lower",
+				giveEntry: lowerSearchEntry,
+				// A restart point does not share a prefix with the key before it.
+				giveChange: func(_ *layout, entry []byte) { entry[0] = 1 },
+				giveLower:  []byte("key 000"),
+				giveUpper:  []byte("zzz"),
+			},
+			{
+				name:       "returns ErrCorrupt for a malformed index key on the search for upper",
+				giveEntry:  upperSearchEntry,
+				giveChange: func(_ *layout, entry []byte) { entry[0] = 1 },
+				giveUpper:  []byte("zzz"),
+			},
+			{
+				name:      "returns ErrCorrupt for a malformed place of the first block",
+				giveEntry: key058Entry,
+				// A value of 127 bytes passes the end of the entries.
+				giveChange: func(_ *layout, entry []byte) { entry[2] = 0x7f },
+				giveLower:  []byte("key 058"),
+				giveUpper:  []byte("key 059"),
+			},
+			{
+				name:       "returns ErrCorrupt for a malformed place of the last block",
+				giveEntry:  key059Entry,
+				giveChange: func(_ *layout, entry []byte) { entry[2] = 0x7f },
+				giveUpper:  []byte("key 059"),
+			},
+			{
+				name:      "returns ErrCorrupt for a last block that ends at the start of the first block",
+				giveEntry: key059Entry,
+				// The value follows the header of 3 bytes and the internal key.
+				// Both offsets have a varint of two bytes.
+				giveChange: func(l *layout, entry []byte) {
+					first, last := l.blocks[key058Entry], l.blocks[key059Entry]
+					binary.PutUvarint(entry[3+int(entry[1]):], uint64(first.off-last.n-trailerLen))
+				},
+				giveLower: []byte("key 058"),
+				giveUpper: []byte("key 059"),
+			},
+		}
+		for _, tt := range corrupt {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				l := newLayout(t, oneEntry, goldenTable())
+				index := l.data[l.index.off : l.index.off+l.index.n]
+				tt.giveChange(l, index[restarts(index)[tt.giveEntry]:])
+				l.seal()
+				_, err := openTable(t, l.data, sstable.ReaderOptions{}).Span(tt.giveLower, tt.giveUpper)
+				assert.ErrorIs(t, err, sstable.ErrCorrupt, "Span refuses the changed index")
+			})
+		}
+
+		// The cases change the index entry of the middle block of a table of
+		// three blocks of one entry each. The entry has a header of 3 bytes,
+		// an internal key of 9 bytes and a value of 6 bytes. The value
+		// contains the offset and the length of the block as varints of one
+		// byte, then its CRC32C. The restart offsets of the index follow its
+		// entries in 16 bytes, so a value of 127 bytes passes the end of the
+		// index block.
+		places := []struct {
+			name       string
+			giveChange func(l *layout, header, value []byte)
+		}{
+			{
+				name:       "returns ErrCorrupt for an index value past the end of the index block",
+				giveChange: func(_ *layout, header, _ []byte) { header[2] = 0x7f },
+			},
+			{
+				name:       "returns ErrCorrupt for an index value with a byte after its CRC32C",
+				giveChange: func(_ *layout, header, _ []byte) { header[2]++ },
+			},
+			{
+				name: "returns ErrCorrupt for an index value whose length varint does not end",
+				giveChange: func(_ *layout, header, value []byte) {
+					header[2] = 5
+					copy(value[1:5], []byte{0x80, 0x80, 0x80, 0x80})
+				},
+			},
+			{
+				name:       "returns ErrCorrupt for a block longer than the data blocks",
+				giveChange: func(_ *layout, _, value []byte) { value[1] = 0x7f },
+			},
+			{
+				name: "returns ErrCorrupt for a block whose trailer passes the end of the data blocks",
+				giveChange: func(l *layout, _, value []byte) {
+					value[1] = byte(l.index.off - trailerLen + 1)
+				},
+			},
+			{
+				name: "returns ErrCorrupt for a block that ends after the data blocks",
+				giveChange: func(l *layout, _, value []byte) {
+					value[0] = byte(l.index.off - l.blocks[1].n - trailerLen + 1)
+				},
+			},
+		}
+		for _, tt := range places {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				l := newLayout(t, oneEntry, []entry{
+					{key: []byte("a"), seq: 1, value: []byte("v")},
+					{key: []byte("b"), seq: 1, value: []byte("v")},
+					{key: []byte("c"), seq: 1, value: []byte("v")},
+				})
+				index := l.data[l.index.off : l.index.off+l.index.n]
+				entry := index[restarts(index)[1]:]
+				tt.giveChange(l, entry[:3], entry[3+int(entry[1]):])
+				l.seal()
+				_, err := openTable(t, l.data, sstable.ReaderOptions{}).Span(nil, []byte("b"))
+				assert.ErrorIs(t, err, sstable.ErrCorrupt, "Span refuses the place of the block of b")
+			})
+		}
+	})
+
 	t.Run("MayContain", func(t *testing.T) {
 		t.Parallel()
 
@@ -627,6 +883,16 @@ func TestReaderAllocs(t *testing.T) {
 		assert.NotEqual(t, n, 0, "the test measures the footprint of a table")
 	})
 
+	t.Run("Span", func(t *testing.T) {
+		r := openTable(t, data, sstable.ReaderOptions{})
+		lower, upper := []byte("key 010"), []byte("key 050")
+		var got sstable.Span
+		var err error
+		expect.MaxAllocs(t, func() { got, err = r.Span(lower, upper) }, 0, "Span does not allocate")
+		expect.NoError(t, err, "the test measures a Span of a valid index")
+		expect.NotEqual(t, got.Blocks, 0, "the test measures the blocks of a range")
+	})
+
 	t.Run("Get", func(t *testing.T) {
 		for _, tt := range []struct {
 			name  string
@@ -709,6 +975,61 @@ func BenchmarkReader(b *testing.B) {
 		}
 
 		assert.True(b, ok, "the benchmark measures a key of the table")
+	})
+
+	b.Run("Span", func(b *testing.B) {
+		// A table of spanEntries values of 100 bytes in blocks of 4 KiB has
+		// about 35 entries in each of its 2,703 blocks.
+		value := bytes.Repeat([]byte{'v'}, 100)
+		es := make([]entry, 0, spanEntries)
+		for i := range spanEntries {
+			es = append(es, entry{key: fmt.Appendf(nil, spanKey, i), seq: 1, value: value})
+		}
+		r := openTable(b, writeTable(b, sstable.WriterOptions{BlockSize: 4096, FilterBits: 8}, es),
+			sstable.ReaderOptions{})
+
+		tests := []struct {
+			name       string
+			giveLower  []byte
+			giveUpper  []byte
+			wantBlocks int
+		}{
+			{
+				name:       "one block",
+				giveLower:  fmt.Appendf(nil, spanKey, 50_000),
+				giveUpper:  fmt.Appendf(nil, spanKey, 50_010),
+				wantBlocks: 1,
+			},
+			{
+				name:       "ten blocks",
+				giveLower:  fmt.Appendf(nil, spanKey, 50_000),
+				giveUpper:  fmt.Appendf(nil, spanKey, 50_340),
+				wantBlocks: 10,
+			},
+			{
+				name:       "a quarter",
+				giveLower:  fmt.Appendf(nil, spanKey, 25_000),
+				giveUpper:  fmt.Appendf(nil, spanKey, 50_000),
+				wantBlocks: 677,
+			},
+			{name: "every block", wantBlocks: 2703},
+		}
+		for _, tt := range tests {
+			b.Run(tt.name, func(b *testing.B) {
+				var got sstable.Span
+				var err error
+
+				c := bench.Start(b).MaxAllocs(0)
+				defer c.End()
+
+				for c.Loop() {
+					got, err = r.Span(tt.giveLower, tt.giveUpper)
+				}
+
+				assert.NoError(b, err, "the benchmark measures a Span of a valid index")
+				assert.Equal(b, got.Blocks, tt.wantBlocks, "the benchmark measures the blocks of the range")
+			})
+		}
 	})
 }
 

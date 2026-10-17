@@ -647,6 +647,53 @@ func (c *blockCursor) seekLT(key []byte, seq uint64) bool {
 	return c.last()
 }
 
+// search returns the number of the first restart point at or after the
+// entry (key, seq) among the restart points lo to hi-1, or hi when each of
+// them is before the entry. It does not move the cursor. It reports false
+// for a restart point that restartCompare refuses. restartCompare sets err
+// for that restart point.
+func (c *blockCursor) search(lo, hi int, key []byte, seq uint64) (int, bool) {
+	for lo < hi {
+		mid := int(uint(lo+hi) >> 1)
+		order, ok := c.restartCompare(mid, key, seq)
+		if !ok {
+			return 0, false
+		}
+		if order < 0 {
+			lo = mid + 1
+		} else {
+			hi = mid
+		}
+	}
+
+	return lo, true
+}
+
+// gallop returns what search returns for the restart points from lo to the
+// last one. It compares the restart points lo, lo+1, lo+3, lo+7 and on, with
+// a step that doubles, until one is at or after the entry (key, seq). It then
+// searches the gap before that restart point. A result d places after lo
+// takes about 2·log2(d+2) comparisons.
+func (c *blockCursor) gallop(lo int, key []byte, seq uint64) (int, bool) {
+	hi, step := lo, 1
+	for hi < c.count {
+		order, ok := c.restartCompare(hi, key, seq)
+		if !ok {
+			return 0, false
+		}
+		if order >= 0 {
+			return c.search(lo, hi, key, seq)
+		}
+		//dokimi:mutate-skip aor,sbr-delete: a gap that starts lower adds comparisons and keeps the result
+		lo = hi + 1
+		hi += step
+		//dokimi:mutate-skip aor,sbr-delete: another growth of the step moves the comparisons and keeps the result
+		step *= 2
+	}
+
+	return c.search(lo, c.count, key, seq)
+}
+
 // restartCompare returns the order of the entry at the restart point i and
 // the entry (key, seq) under Compare. It compares the whole key of the
 // restart point where the block stores it, without a copy into c.key. It
@@ -681,6 +728,26 @@ func (c *blockCursor) restartCompare(i int, key []byte, seq uint64) (int, bool) 
 	k := int(unshared) - seqLen
 
 	return Compare(p[:k], binary.BigEndian.Uint64(p[k:]), key, seq), true
+}
+
+// restartValue returns the value of the entry at the restart point i as a
+// part of the block, or nil for a value that does not fit the entries. The
+// caller calls it for an entry that restartCompare accepted, so the offset
+// and the key of the entry fit the entries.
+func (c *blockCursor) restartValue(i int) []byte {
+	p := c.block[binary.BigEndian.Uint32(c.block[c.end+4*i:]):c.end]
+	_, unshared, vlen, short := shortHeader(p)
+	n := 3
+	if !short {
+		_, unshared, vlen, n = uvarints(p)
+	}
+	//nolint:gosec // G115: restartCompare accepted the key, so it ends inside p
+	p = p[n+int(unshared):]
+	if vlen > uint64(len(p)) {
+		return nil
+	}
+
+	return p[:vlen:vlen]
 }
 
 // decode moves to the entry at off. The key of the entry shares its first

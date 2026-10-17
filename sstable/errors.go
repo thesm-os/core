@@ -30,8 +30,8 @@ var (
 	// index of the table past 2^32 - 1 bytes. It classifies as errs.Invalid.
 	ErrTooLarge = errs.WithClass(errors.New("sstable: the key does not fit the index of the table"), errs.Invalid)
 
-	// ErrCorrupt is returned by [Open], [Reader.Get] and the moves of an
-	// [Iter] for a table that fails a checksum, a decompression or its
-	// layout. It classifies as [errs.Integrity].
+	// ErrCorrupt is returned by [Open], [Reader.Get], [Reader.Span] and the
+	// moves of an [Iter] for a table that fails a checksum, a decompression
+	// or its layout. It classifies as [errs.Integrity].
 	ErrCorrupt = errs.WithClass(errors.New("sstable: corrupt table"), errs.Integrity)
 )

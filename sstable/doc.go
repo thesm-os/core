@@ -27,7 +27,8 @@
 //     positive.
 //   - An index block with an entry for each data block. The entry has the
 //     last key of the block, the place of the block in the table and its
-//     CRC32C.
+//     CRC32C. [Reader.Span] searches the index for the data blocks of a key
+//     range.
 //   - A footer of 80 bytes with the places and the CRC32C checksums of the
 //     index and the filter, the number of entries, the lowest and the highest
 //     sequence, a version and a magic number.
@@ -87,7 +88,8 @@
 //     [WriterOptions], and the next table grows them again.
 //   - Reader.Get, Reader.MayContain, Reader.NewIter, Iter.Close and the moves
 //     of an Iter and a Merger do not allocate once the pooled cursors have
-//     grown to the largest block. A read through a [BlockCache] allocates a
+//     grown to the largest block. Reader.Span does not allocate. A read
+//     through a [BlockCache] allocates a
 //     copy of each block that the cache does not contain, apart from the
 //     reads of a cursor with NoFill.
 //   - [NewWriter], Writer.Close and [Open] allocate the Writer or the Reader

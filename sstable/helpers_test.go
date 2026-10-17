@@ -232,9 +232,12 @@ func (c *mapCache) Add(ctx context.Context, id, offset uint64, block []byte) {
 // its trailer. parent contains the CRC32C that the parent of the block
 // states: the index entry of a data block, or the footer for the filter
 // block and the index block. parent is a part of the bytes of the table.
+// last is the key of the last entry of a data block, as its index entry
+// states it, and nil for the filter block and the index block.
 type place struct {
 	off, n int
 	parent []byte
+	last   []byte
 }
 
 // layout is a table with the places of its blocks. A case changes the bytes
@@ -270,10 +273,12 @@ func newLayout(tb assert.TB, opts sstable.WriterOptions, es []entry) *layout {
 	}
 	index := data[l.index.off : l.index.off+l.index.n]
 	for _, off := range restarts(index) {
-		_, value := restartEntry(index[off:])
+		ikey, value := restartEntry(index[off:])
 		blockOff, n := binary.Uvarint(value)
 		blockLen, _ := binary.Uvarint(value[n:])
-		l.blocks = append(l.blocks, place{off: int(blockOff), n: int(blockLen), parent: value[len(value)-crcLen:]})
+		l.blocks = append(l.blocks, place{
+			off: int(blockOff), n: int(blockLen), parent: value[len(value)-crcLen:], last: ikey[:len(ikey)-seqLen],
+		})
 	}
 
 	return l

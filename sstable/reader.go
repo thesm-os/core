@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
+	"math"
 
 	"go.thesmos.sh/core/compress/snappy"
 	"go.thesmos.sh/core/filter"
@@ -69,8 +70,21 @@ type BlockCache interface {
 	Add(ctx context.Context, id, offset uint64, block []byte)
 }
 
+// Span is the part of a table that the entries of a key range can occupy.
+// [Reader.Span] returns it.
+type Span struct {
+	// Blocks is the number of the data blocks that can contain an entry of
+	// the range.
+	Blocks int
+
+	// Bytes is the stored size of those blocks and their trailers in the
+	// table.
+	Bytes int64
+}
+
 // Reader reads a table through a [File]. [Reader.Get] looks up one key, and
-// [Reader.NewIter] returns a cursor over the entries. The Reader keeps the
+// [Reader.NewIter] returns a cursor over the entries. [Reader.Span] returns
+// the data blocks of a key range from the index. The Reader keeps the
 // index block, the filter block and the summary of the table in memory, and
 // reads a data block for each lookup or move that needs it, under the
 // context of that call. [Reader.Footprint] returns the bytes of the buffers
@@ -85,8 +99,8 @@ type BlockCache interface {
 // [Open] allocates the Reader, the index block, the filter block and the
 // keys of the summary. Get, [Reader.MayContain] and NewIter do not allocate
 // once the pool of cursors has a cursor whose buffers have grown to the
-// largest block. A read through the cache allocates the copy of each block
-// that it adds.
+// largest block. Span does not allocate. A read through the cache allocates
+// the copy of each block that it adds.
 type Reader struct {
 	// f contains the table.
 	f File
@@ -252,6 +266,73 @@ func (r *Reader) Footprint() int {
 	return cap(r.index) + r.filterSize + cap(r.summary.SmallestKey) + cap(r.summary.LargestKey)
 }
 
+// Span returns the data blocks of the table that can contain an entry whose
+// key is at or after lower and before upper. A nil lower starts the range
+// at the first key of the table, and a nil upper ends it after the last key.
+// Span searches the index in memory and does not read a data block.
+//
+// The first block of the range is the first block whose last key is at or
+// after lower. The last block is the first block whose last key is at or
+// after upper, or the last block of the table. That block can start at or
+// after upper, so Span can count one block without an entry of the range.
+// Span returns the zero Span for a range whose upper is at or before lower
+// and for a range whose lower is after the last key.
+//
+// Span searches the index in halves for lower, and does not search for an
+// empty lower. It searches for upper from the block of lower in steps that
+// double, so a range of d blocks takes about 2·log2(d+2) more comparisons.
+//
+// Error modes:
+//
+//   - An entry of the index that does not decode returns [ErrCorrupt]. So do
+//     a place of a block outside the data blocks and a last block that does
+//     not end after the start of the first block.
+//
+// # Allocation contract
+//
+// Zero-alloc.
+func (r *Reader) Span(lower, upper []byte) (Span, error) {
+	if upper != nil && bytes.Compare(lower, upper) >= 0 {
+		return Span{}, nil
+	}
+
+	// Every entry of the index is a restart point, so the number of a restart
+	// point is the number of its block. search and gallop compare the entry
+	// of each number that they return, so restartValue reads an entry whose
+	// key fits. Every block ends at or after an empty lower.
+	var c blockCursor
+	c.init(r.index)
+	first, ok := 0, true
+	//dokimi:mutate-skip ror-true: a search for an empty lower returns the first block, so the search changes only the time
+	if len(lower) != 0 {
+		first, ok = c.search(0, c.count, lower, math.MaxUint64)
+	}
+	after := c.count
+	if ok && upper != nil {
+		after, ok = c.gallop(first, upper, math.MaxUint64)
+	}
+	if !ok {
+		return Span{}, ErrCorrupt
+	}
+	if first == c.count {
+		return Span{}, nil
+	}
+
+	start, _, ok := r.place(c.restartValue(first))
+	last, end := c.count-1, r.dataEnd
+	if ok && after < c.count {
+		var off, n uint64
+		off, n, ok = r.place(c.restartValue(after))
+		last, end = after, off+n+trailerLen
+	}
+	if !ok || end <= start {
+		return Span{}, ErrCorrupt
+	}
+
+	//nolint:gosec // G115: end is at most dataEnd, inside a table whose size is an int64
+	return Span{Blocks: last - first + 1, Bytes: int64(end - start)}, nil
+}
+
 // MayContain reports whether the table may contain an entry with key. It
 // reports true for every key of the table, and true for every key when the
 // table has no filter. For a key that the table does not contain, a filter
@@ -323,6 +404,27 @@ func (r *Reader) NewIter(opts IterOptions) *Iter {
 	it.index.init(r.index)
 
 	return it
+}
+
+// place returns the offset and the stored length of the data block of the
+// index value v. It reports false for a value with other fields and for a
+// block whose trailer does not end at or before dataEnd. [Iter] refuses the
+// same values when it loads a block.
+func (r *Reader) place(v []byte) (uint64, uint64, bool) {
+	off, n1 := binary.Uvarint(v)
+	// When the first varint fails, Uvarint decodes the same bytes for the
+	// second and fails again, so n2 reports either failure.
+	n, n2 := binary.Uvarint(v[max(n1, 0):])
+	end := r.dataEnd
+	if n2 <= 0 || len(v) != n1+n2+crcLen ||
+		//dokimi:mutate-skip ror-boundary: the next check refuses a block of end bytes, because its trailer does not fit
+		n > end ||
+		end-n < trailerLen || off > end-n-trailerLen {
+
+		return 0, 0, false
+	}
+
+	return off, n, true
 }
 
 // readBlock reads the stored block of n bytes at off and its trailer from f
