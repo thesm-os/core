@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.28.0
+
+### Minor Changes
+
+- cf363b8: Add `idmap.New128`, `New160`, `New256`, `NewTypedULID`, `NewTypedKSUID`, `NewTypedUUIDv4` and `NewTypedUUIDv7` to key a `Map` by an array type or by a struct type over a value type of the identifier packages.
+- f808492: Add `sstable.Reader.Footprint` to report the bytes of the index block, the filter block and the summary keys that a `Reader` keeps.
+
 ## 0.27.0
 
 ### Minor Changes
