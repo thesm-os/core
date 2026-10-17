@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.27.0
+
+### Minor Changes
+
+- 542156d: Add the value types `ulid.ULID`, `ksuid.KSUID`, `uuidv4.UUID` and `uuidv7.UUID` with the text, binary and kanon forms of their scheme.
+
+### Patch Changes
+
+- 8cba252: Require `go.thesmos.sh/kanon` v0.3.0.
+
 ## 0.26.0
 
 ### Minor Changes
