@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.26.0
+
+### Minor Changes
+
+- 604d66f: Add `ulid.AppendFormat`, `ksuid.AppendFormat`, `uuidv4.AppendFormat` and `uuidv7.AppendFormat` to append the text of an ID to a buffer without an allocation.
+
 ## 0.25.0
 
 ### Minor Changes
