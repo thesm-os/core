@@ -5,6 +5,7 @@ package cache_test
 
 import (
 	"context"
+	"math"
 	"slices"
 	"strconv"
 	"sync"
@@ -858,6 +859,20 @@ func TestCache(t *testing.T) {
 		})
 	})
 
+	t.Run("Capacity", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the Capacity of its Config", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "Capacity must return the Capacity of the Config", func(pc *prop.Case) {
+				capacity := pc.Draw(prop.Integer[int64](1, math.MaxInt64), "capacity")
+				c, err := cache.New(cache.Config[string, int]{Capacity: capacity})
+				assert.NoError(pc, err, "New must accept a positive Capacity")
+				assert.Equal(pc, c.Capacity(), capacity, "Capacity must return the Capacity of the Config")
+			})
+		})
+	})
+
 	t.Run("orders concurrent calls as one sequence of calls", func(t *testing.T) {
 		t.Parallel()
 		prop.ForAll(t, "concurrent calls must linearize against the last Set of each key", func(pc *prop.Case) {
@@ -1011,6 +1026,13 @@ func TestCacheAllocs(t *testing.T) {
 		var cost int64
 		expect.MaxAllocs(t, func() { cost = c.Cost() }, 0, "Cost must not allocate")
 		assert.Equal(t, cost, int64(benchCapacity), "the test must measure a full cache")
+	})
+
+	t.Run("Capacity", func(t *testing.T) {
+		c := benchCache(t, keys[:benchCapacity])
+		var capacity int64
+		expect.MaxAllocs(t, func() { capacity = c.Capacity() }, 0, "Capacity must not allocate")
+		assert.Equal(t, capacity, int64(benchCapacity), "the test must measure the Capacity of the Config")
 	})
 }
 

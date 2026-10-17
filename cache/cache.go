@@ -70,15 +70,16 @@ type Config[K comparable, V any] struct {
 // serializes Set, SetPinned, Delete, Expire, a Get or Pin that finds an
 // expired entry, and the last [Pinned.Unpin] of an entry while the sum of
 // the costs exceeds the capacity. Len and Cost read atomic counters, and
-// take no lock.
+// take no lock. Capacity reads a field that New sets, and takes no lock
+// either.
 //
 // # Allocation contract
 //
-// Get, Pin, [Pinned.Unpin], Delete, Len and Cost do not allocate, for a key
-// whose hash [maphash.Comparable] computes without an allocation: a string,
-// or a value without pointers. Set and SetPinned allocate the entry, and
-// the memory of the index, the ghost and the heap when they grow, so a
-// cache in a steady state allocates once per Set or SetPinned. A Set,
+// Get, Pin, [Pinned.Unpin], Delete, Len, Cost and Capacity do not allocate,
+// for a key whose hash [maphash.Comparable] computes without an allocation:
+// a string, or a value without pointers. Set and SetPinned allocate the
+// entry, and the memory of the index, the ghost and the heap when they grow,
+// so a cache in a steady state allocates once per Set or SetPinned. A Set,
 // SetPinned or Unpin that evicts more than eight entries allocates the list
 // of their callbacks. Expire does not allocate.
 type Cache[K comparable, V any] struct {
@@ -376,6 +377,18 @@ func (c *Cache[K, V]) Len() int {
 // Zero alloc.
 func (c *Cache[K, V]) Cost() int64 {
 	return c.total.Load()
+}
+
+// Capacity returns the Capacity of the Config of the cache. The sum that
+// [Cache.Cost] returns is at most the capacity, unless pinned entries take
+// it past. The capacity does not change after [New], so Capacity reads it
+// without a lock.
+//
+// # Allocation contract
+//
+// Zero alloc.
+func (c *Cache[K, V]) Capacity() int64 {
+	return c.capacity
 }
 
 // find returns the entry of k, or nil when the cache has none. When the

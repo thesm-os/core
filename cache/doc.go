@@ -78,9 +78,9 @@
 //
 // # Allocation contract
 //
-// Get, Pin, [Pinned.Unpin], Delete, Len and Cost do not allocate for a key
-// whose hash [hash/maphash.Comparable] computes without an allocation,
-// such as a string or a value without pointers. Set and SetPinned allocate
+// Get, Pin, [Pinned.Unpin], Delete, Len, Cost and Capacity do not allocate
+// for a key whose hash [hash/maphash.Comparable] computes without an
+// allocation, such as a string or a value without pointers. Set and SetPinned allocate
 // the entry, and the memory of the index, the ghost and the expiry heap
 // when they grow. A Set, SetPinned or Unpin that evicts more than eight
 // entries allocates the list of their callbacks. Expire does not allocate.
