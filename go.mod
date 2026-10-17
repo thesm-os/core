@@ -7,7 +7,7 @@ go 1.27.2
 
 require (
 	go.dokimi.dev/assert v0.3.0
-	go.thesmos.sh/kanon v0.2.0
+	go.thesmos.sh/kanon v0.3.0
 	go.thesmos.sh/testkit v0.10.0
 )
 
