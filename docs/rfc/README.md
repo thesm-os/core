@@ -140,6 +140,7 @@ Start from [`docs/templates/RFC.md`](../templates/RFC.md).
 | [0070](0070-links-back-and-insert-hints-in-a-skip-list.md) | Links Back and Insert Hints in a Skip List | Accepted |
 | [0071](0071-a-bounded-workspace-for-a-table-writer.md) | A Bounded Workspace for a Table Writer | Accepted |
 | [0072](0072-read-ahead-of-a-table-cursor.md) | Read-Ahead of a Table Cursor | Accepted |
+| [0073](0073-ulid-ksuid-and-uuid-value-types.md) | ULID, KSUID and UUID Value Types | Accepted |
 
 ## Canonical first RFC
 
