@@ -91,7 +91,8 @@
 //     copy of each block that the cache does not contain, apart from the
 //     reads of a cursor with NoFill.
 //   - [NewWriter], Writer.Close and [Open] allocate the Writer or the Reader
-//     and their buffers.
+//     and their buffers. [Reader.Footprint] returns the bytes of the buffers
+//     that a Reader keeps.
 //
 // # Dependency position
 //

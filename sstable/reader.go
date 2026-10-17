@@ -73,7 +73,8 @@ type BlockCache interface {
 // [Reader.NewIter] returns a cursor over the entries. The Reader keeps the
 // index block, the filter block and the summary of the table in memory, and
 // reads a data block for each lookup or move that needs it, under the
-// context of that call.
+// context of that call. [Reader.Footprint] returns the bytes of the buffers
+// that it keeps.
 //
 // # Concurrency
 //
@@ -107,6 +108,10 @@ type Reader struct {
 
 	// dataEnd is the offset after the trailer of the last data block.
 	dataEnd uint64
+
+	// filterSize is the capacity of the filter block that filter reads, or 0
+	// when the table has no filter.
+	filterSize int
 
 	// hasFilter reports whether the table has a filter.
 	hasFilter bool
@@ -206,7 +211,7 @@ func Open(ctx context.Context, file File, size int64, opts ReaderOptions) (*Read
 		if rd.filter, err = filter.ParseFuse(b); err != nil {
 			return nil, ErrCorrupt
 		}
-		rd.hasFilter = true
+		rd.hasFilter, rd.filterSize = true, cap(b)
 	}
 
 	// Open sets the cache after it reads the first block, so the read does
@@ -232,6 +237,19 @@ func Open(ctx context.Context, file File, size int64, opts ReaderOptions) (*Read
 // the caller must not change them.
 func (r *Reader) Summary() Summary {
 	return r.summary
+}
+
+// Footprint returns the bytes of memory that the buffers of r take. It adds
+// the capacity of the index block, of the filter block and of the two keys
+// of the summary. The buffers do not change after [Open], so every call
+// returns the same value. Footprint does not count the blocks of a
+// [BlockCache] or the cursors of the pool that every Reader shares.
+//
+// # Allocation contract
+//
+// Zero-alloc.
+func (r *Reader) Footprint() int {
+	return cap(r.index) + r.filterSize + cap(r.summary.SmallestKey) + cap(r.summary.LargestKey)
 }
 
 // MayContain reports whether the table may contain an entry with key. It

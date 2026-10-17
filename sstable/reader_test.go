@@ -361,6 +361,23 @@ func TestReader(t *testing.T) {
 		})
 	})
 
+	t.Run("Footprint", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the capacity of every buffer in bytes", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "Footprint returns the bytes of the index block, the filter block and the summary keys",
+				func(c *prop.Case) {
+					opts := c.Draw(prop.SampledFrom(settings...), "setting").opts
+					l := newLayout(c, opts, c.Draw(entries, "entries"))
+					r := openTable(c, l.data, sstable.ReaderOptions{})
+					s := r.Summary()
+					assert.Equal(c, r.Footprint(), l.index.n+l.filter.n+cap(s.SmallestKey)+cap(s.LargestKey),
+						"Footprint adds the stored lengths of the two blocks to the capacity of the two keys")
+				})
+		})
+	})
+
 	t.Run("MayContain", func(t *testing.T) {
 		t.Parallel()
 
@@ -602,6 +619,13 @@ func FuzzOpen(f *testing.F) {
 func TestReaderAllocs(t *testing.T) {
 	data := writeTable(t, settings[3].opts, goldenTable())
 	dst := make([]byte, 0, 256)
+
+	t.Run("Footprint", func(t *testing.T) {
+		r := openTable(t, data, sstable.ReaderOptions{})
+		n := 0
+		expect.MaxAllocs(t, func() { n = r.Footprint() }, 0, "Footprint does not allocate")
+		assert.NotEqual(t, n, 0, "the test measures the footprint of a table")
+	})
 
 	t.Run("Get", func(t *testing.T) {
 		for _, tt := range []struct {
