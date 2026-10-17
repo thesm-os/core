@@ -32,16 +32,6 @@ const canonical = `[0-7][0-9A-HJKMNP-TV-Z]{25}`
 // tests.
 const dstText = "ids/"
 
-// specText is the example ULID of the ULID specification, and specBytes
-// its bytes, whose timestamp is 1469922850259 milliseconds, as
-// github.com/oklog/ulid/v2 decodes them.
-var (
-	specText  = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
-	specBytes = [id.Size128]byte{
-		0x01, 0x56, 0x3e, 0x3a, 0xb5, 0xd3, 0xd6, 0x76, 0x4c, 0x61, 0xef, 0xb9, 0x93, 0x02, 0xbd, 0x5b,
-	}
-)
-
 // asymmetric is an ID whose 5-bit groups map to distinct characters, and
 // asymmetricText its encoding, as github.com/oklog/ulid/v2 encodes it.
 var (
@@ -50,11 +40,6 @@ var (
 	})
 	asymmetricText = "014D2PF2DB04HMASW9NF6YZZPW"
 )
-
-// ulids generates IDs of 128 bits.
-var ulids = prop.Bytes(prop.MinSize(id.Size128), prop.MaxSize(id.Size128)).Map(func(b []byte) id.ID {
-	return id.New128([id.Size128]byte(b))
-})
 
 func TestParse(t *testing.T) {
 	t.Parallel()
@@ -332,6 +317,15 @@ func TestParse(t *testing.T) {
 				assert.Equal(t, errs.Classify(err), errs.Invalid, "the refusal must classify as Invalid")
 			})
 		}
+
+		t.Run("returns Zero for a text that it refuses", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "ParseULID must return Zero with an error", func(c *prop.Case) {
+				got, err := ulid.ParseULID(string(c.Draw(refusedTexts, "text")))
+				assert.HasError(c, err, "ParseULID must refuse the text")
+				assert.Equal(c, got, id.Zero, "ParseULID must return Zero with the error")
+			})
+		})
 
 		t.Run("returns an ID that Format encodes again for every text that it accepts", func(t *testing.T) {
 			t.Parallel()

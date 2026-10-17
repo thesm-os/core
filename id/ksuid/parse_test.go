@@ -28,29 +28,6 @@ const (
 // tests.
 const dstText = "ids/"
 
-// The reference KSUID of segmentio/ksuid: its bytes, a timestamp of
-// 2017-10-09T21:46:47Z and 16 random bytes, and its encoding.
-var (
-	referenceBytes = [id.Size160]byte{
-		0x06, 0x69, 0xf7, 0xef,
-		0xb5, 0xa1, 0xcd, 0x34, 0xb5, 0xf9, 0x9d, 0x12,
-		0x14, 0xe5, 0xb9, 0x16, 0x9d, 0xa6, 0x9c, 0x32,
-	}
-	referenceText = "0ujtsYcgvSTl8PAuR7PHXnl95SE"
-)
-
-// largestText is the encoding of the largest KSUID, whose 160 bits are
-// all set. An encoding above it in the order of the alphabet overflows.
-var largestText = ksuid.Format(id.New160([id.Size160]byte{
-	0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-	0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-}))
-
-// ksuids generates IDs of 160 bits.
-var ksuids = prop.Bytes(prop.MinSize(id.Size160), prop.MaxSize(id.Size160)).Map(func(b []byte) id.ID {
-	return id.New160([id.Size160]byte(b))
-})
-
 func TestParse(t *testing.T) {
 	t.Parallel()
 
@@ -230,6 +207,15 @@ func TestParse(t *testing.T) {
 				assert.Equal(t, errs.Classify(err), errs.Invalid, "the refusal must classify as Invalid")
 			})
 		}
+
+		t.Run("returns Zero for a text that it refuses", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "Parse must return Zero with an error", func(c *prop.Case) {
+				got, err := ksuid.Parse(string(c.Draw(refusedTexts, "text")))
+				assert.HasError(c, err, "Parse must refuse the text")
+				assert.Equal(c, got, id.Zero, "Parse must return Zero with the error")
+			})
+		})
 
 		t.Run("returns an ID for every KSUID of a real-world corpus", func(t *testing.T) {
 			t.Parallel()

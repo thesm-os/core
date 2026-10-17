@@ -21,6 +21,7 @@ func TestKsuidSentinelErrors(t *testing.T) {
 		err  error
 	}
 	all := []errEntry{
+		{"ErrInvalidBytes", ksuid.ErrInvalidBytes},
 		{"ErrInvalidChar", ksuid.ErrInvalidChar},
 		{"ErrInvalidLength", ksuid.ErrInvalidLength},
 		{"ErrOverflow", ksuid.ErrOverflow},

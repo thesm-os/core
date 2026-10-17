@@ -8,11 +8,13 @@ import (
 	"go.thesmos.sh/core/id/internal/uuidtext"
 )
 
-// parseErrors are the sentinel errors that [Parse] returns.
-var parseErrors = uuidtext.Errors{
+// decodeErrors are the sentinel errors that [Parse], [UUID.UnmarshalText] and
+// [UUID.UnmarshalBinary] return.
+var decodeErrors = uuidtext.Errors{
 	Length: ErrInvalidLength,
 	Format: ErrInvalidFormat,
 	Char:   ErrInvalidChar,
+	Bytes:  ErrInvalidBytes,
 }
 
 // Format returns the text form of u, "xxxxxxxx-xxxx-7xxx-yxxx-xxxxxxxxxxxx",
@@ -52,5 +54,5 @@ func AppendFormat(dst []byte, u id.ID) []byte {
 //
 // Zero alloc.
 func Parse(s string) (id.ID, error) {
-	return uuidtext.Parse(s, parseErrors)
+	return uuidtext.Parse(s, decodeErrors)
 }

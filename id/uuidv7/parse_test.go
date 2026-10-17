@@ -69,9 +69,6 @@ func TestParse(t *testing.T) {
 
 		t.Run("returns the ID that Format encodes", func(t *testing.T) {
 			t.Parallel()
-			uuids := prop.Bytes(prop.MinSize(id.Size128), prop.MaxSize(id.Size128)).Map(func(b []byte) id.ID {
-				return id.New128([id.Size128]byte(b))
-			})
 			prop.RoundTrip(t, func(u id.ID) (string, error) { return uuidv7.Format(u), nil }, uuidv7.Parse,
 				"Parse must return the ID whose text form Format returns", prop.Using(uuids))
 		})

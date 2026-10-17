@@ -1,67 +1,54 @@
 // Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
-// Package ksuid provides an [id.Generator] producing K-Sortable
-// Unique Identifiers — 160-bit time-sortable identifiers with a
-// 4-byte Unix-second timestamp prefix and a 16-byte random
-// payload.
+// Package ksuid provides an [id.Generator] of K-Sortable Unique Identifiers
+// and [KSUID], their value type. A KSUID has 160 bits: a 32-bit timestamp in
+// seconds since [Epoch], followed by 128 random bits.
 //
-// # Wire format
+// # Layout
 //
-// 160 bits = 20 bytes:
+//	bytes 0-3:  the seconds since Epoch, big-endian
+//	bytes 4-19: 128 random bits
 //
-//	bytes  0..3: 32-bit Unix-second timestamp (big-endian) since
-//	             the KSUID epoch (1400000000 = 2014-05-13Z UTC).
-//	             Provides ~136 years of valid range from epoch.
-//	bytes  4..19: 128 random bits.
+// The bytes of KSUIDs sort in the order of their seconds. [Epoch] is the Unix
+// second 1400000000, 2014-05-13T16:53:20Z, and the 32-bit timestamp ends in
+// 2150. Two KSUIDs of the same second have unrelated random bits and sort in
+// either order. [TimestampSeconds] returns the Unix seconds.
 //
-// The big-endian timestamp prefix means bytewise lexicographic
-// order matches generation order at second granularity. Two
-// KSUIDs minted within the same second sort by their random
-// suffix (effectively random order); KSUID does NOT guarantee
-// strict monotonicity within a second.
+// # When to use
 //
-// # Encoding
-//
-// [Format] returns the canonical 27-character base62 encoding
-// using the alphabet "0..9A..Za..z". [AppendFormat] appends the
-// same text to a caller's buffer and does not allocate when the
-// buffer has room for it. The raw [id.ID] bytes are
-// the underlying 20-byte KSUID; consumers that store the bytes
-// directly need no conversion.
-//
-// # Comparison with ULID
-//
-// KSUID and ULID are both time-sortable 160-/128-bit identifiers
-// with random suffixes. Differences:
-//
-//   - **Range**: KSUID's 4-byte Unix-second timestamp covers
-//     ~136 years; ULID's 6-byte millisecond timestamp covers
-//     ~10889 years. ULID rolls over later but uses 2 more bytes
-//     for the timestamp.
-//   - **Granularity**: KSUID sorts at second granularity; ULID
-//     sorts at millisecond granularity. ULID's intra-second
-//     sub-sort is also random, so the practical difference is
-//     a higher chance of "ties" in sort order under ULID for
-//     bursts of inserts within a single millisecond — but ULID
-//     wins on event ordering at sub-second granularity.
-//   - **Entropy**: KSUID has 128 random bits; ULID has 80. KSUID
-//     is more collision-resistant within a single second.
-//   - **Encoding**: KSUID is 27-char base62 (alphanumeric);
-//     ULID is 26-char Crockford base32 (no I, L, O, U).
-//
-// Use KSUID when consumers want a longer entropy field (high-
-// throughput producers minting many IDs per second) or when
-// alphanumeric encoding is desirable for URL paths and database
-// keys. Use ULID ([id/ulid]) when sub-second sort granularity
-// matters or when humans transcribe identifiers manually
-// (Crockford base32 is more typo-resistant).
+// A KSUID and a ULID both sort by their time of creation. A KSUID sorts by
+// the second and has 128 random bits. A ULID of [go.thesmos.sh/core/id/ulid]
+// sorts by the millisecond and has 80 random bits. Use a KSUID for a producer
+// that creates many identifiers per second, or for an alphanumeric text in
+// URL paths and keys. Use a ULID for an order within a second, or for a text
+// that people transcribe, because its decoder accepts the common misreadings
+// of Crockford's base32.
 //
 // # Construction
 //
-// [Generator] depends on a [clock.Clock] (for the timestamp)
-// and a [rand.Rand] (for the entropy). Production callers wire
-// the real clock and a CSPRNG-grade [rand/crypto.Rand]; tests
-// wire [clock/fake.Clock] and [rand/constant.Rand] /
-// [rand/seeded.Rand] for deterministic identifier streams.
+// [Generator] reads the time from a [clock.Clock] and entropy from a
+// [rand.Rand]. Production callers pass a real clock and
+// [go.thesmos.sh/core/rand/crypto.Rand]. Tests pass
+// [go.thesmos.sh/core/clock/fake.Clock] and
+// [go.thesmos.sh/core/rand/constant.Rand] or
+// [go.thesmos.sh/core/rand/seeded.Rand] for a deterministic stream of
+// identifiers.
+//
+// # Encoding
+//
+// [Format] returns the canonical text: 27 characters of the base62 alphabet
+// "0..9A..Za..z". [Parse] reads it back and is case-sensitive.
+// [AppendFormat] appends the same text to a caller's buffer and does not
+// allocate when the buffer has room for it. The bytes of the [id.ID] are the
+// 20 bytes of the KSUID, so a caller that stores the bytes does not convert
+// them.
+//
+// # Value type
+//
+// [KSUID] is a KSUID as an array of its 20 bytes. [FromID] converts an
+// [id.ID] of 160 bits to a KSUID, and [KSUID.ID] converts the KSUID back. A
+// struct that embeds KSUID encodes as the KSUID in kanon, JSON and gob. A map
+// keyed by such a struct hashes and compares 20 bytes. The zero KSUID means
+// no KSUID. Its binary form is no bytes, and its text is 27 zeros.
 package ksuid

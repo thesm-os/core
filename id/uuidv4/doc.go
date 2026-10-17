@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package uuidv4 provides an [id.Generator] of the version-4 UUIDs of
-// RFC 9562: 122 random bits, 4 version bits and 2 variant bits.
+// RFC 9562 and [UUID], their value type. A UUIDv4 has 122 random bits, 4
+// version bits and 2 variant bits.
 //
 // # When to use
 //
@@ -31,4 +32,15 @@
 // caller's buffer and does not allocate when the buffer has room for it.
 // The bytes of the [id.ID] are the 16 bytes of the UUID, so a caller that
 // stores the bytes does not convert them.
+//
+// # Value type
+//
+// [UUID] is a UUID as an array of its 16 bytes. [FromID] converts an [id.ID]
+// of 128 bits to a UUID, and [UUID.ID] converts the UUID back. A struct that
+// embeds UUID encodes as the UUID in kanon, JSON and gob. A map keyed by such
+// a struct hashes and compares 16 bytes. The zero UUID means no UUID. Its
+// binary form is no bytes, and its text is the text of the Nil UUID.
+//
+// The codecs of UUID accept a UUID of any version, as [Parse] does.
+// [UUID.Valid] reports whether a UUID is a UUIDv4.
 package uuidv4

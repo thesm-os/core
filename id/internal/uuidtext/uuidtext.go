@@ -19,8 +19,9 @@ const Len = 36
 // hyphen separates the groups of hexadecimal digits of the text form.
 const hyphen = '-'
 
-// Errors are the errors that [Parse] returns. A package passes its own
-// sentinel errors, so that its callers match them with errors.Is.
+// Errors are the errors that [Parse] and [DecodeBinary] return. A package
+// passes its own sentinel errors, so that its callers match them with
+// errors.Is.
 type Errors struct {
 	// Length is the error for a text that is not [Len] bytes long.
 	Length error
@@ -32,6 +33,11 @@ type Errors struct {
 	// Char is the error for a group that contains a byte other than a
 	// hexadecimal digit.
 	Char error
+
+	// Bytes is the error for data that is not the binary form of a UUID
+	// value: data whose length is not 0 or [id.Size128], and [id.Size128]
+	// zero bytes.
+	Bytes error
 }
 
 // Format returns the text form of u, in lowercase, or the empty string
@@ -73,9 +79,10 @@ func AppendFormat(dst []byte, u id.ID) []byte {
 	return dst
 }
 
-// Parse returns the 128-bit ID whose text form is s. It accepts uppercase,
-// lowercase and mixed-case hexadecimal digits, as the grammar of RFC 9562
-// allows, and does not check the version or the variant.
+// Parse returns the 128-bit ID whose text form is s, a string or a byte
+// slice. It accepts uppercase, lowercase and mixed-case hexadecimal digits,
+// as the grammar of RFC 9562 allows, and does not check the version or the
+// variant.
 //
 // It returns [id.Zero] and e.Length when s is not [Len] bytes long,
 // e.Format when a hyphen is missing, and e.Char when a group contains a
@@ -83,8 +90,9 @@ func AppendFormat(dst []byte, u id.ID) []byte {
 //
 // # Allocation contract
 //
-// Zero alloc.
-func Parse(s string, e Errors) (id.ID, error) {
+// Zero alloc. Parse reads a byte slice in place and does not convert it to a
+// string.
+func Parse[T ~string | ~[]byte](s T, e Errors) (id.ID, error) {
 	if len(s) != Len {
 		return id.Zero, e.Length
 	}

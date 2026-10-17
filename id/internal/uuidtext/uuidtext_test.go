@@ -4,7 +4,6 @@
 package uuidtext_test
 
 import (
-	"errors"
 	"strings"
 	"testing"
 
@@ -37,15 +36,6 @@ var exampleBytes = [id.Size128]byte{
 	0xf8, 0x1d, 0x4f, 0xae, 0x7d, 0xec, 0x11, 0xd0,
 	0xa7, 0x65, 0x00, 0xa0, 0xc9, 0x1e, 0x6b, 0xf6,
 }
-
-var (
-	errLength = errors.New("the text is not 36 bytes")
-	errFormat = errors.New("a hyphen is missing")
-	errChar   = errors.New("a group has a byte other than a hex digit")
-
-	// sentinels are the errors that the tests pass to Parse.
-	sentinels = uuidtext.Errors{Length: errLength, Format: errFormat, Char: errChar}
-)
 
 // texts generates text forms of UUIDs, with digits in either case.
 var texts = prop.StringMatching(
@@ -200,6 +190,42 @@ func TestUUIDText(t *testing.T) {
 				assert.True(c, got.IsZero(), "Parse must return the zero ID with an error")
 			}, prop.Cases(200))
 		})
+
+		t.Run("returns for the bytes of a text the ID that it returns for the text", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "Parse must decode the bytes of a text as it decodes the text", func(c *prop.Case) {
+				s := c.Draw(texts, "text")
+
+				want, err := uuidtext.Parse(s, sentinels)
+				assert.NoError(c, err, "Parse must accept the text form")
+				got, err := uuidtext.Parse([]byte(s), sentinels)
+				assert.NoError(c, err, "Parse must accept the bytes of the text form")
+				assert.Equal(c, got, want, "Parse must return the ID of the text for its bytes")
+			})
+		})
+
+		t.Run("returns for the bytes of a text the error that it returns for the text", func(t *testing.T) {
+			t.Parallel()
+			refused := prop.OneOf(prop.Bytes(prop.MaxSize(2*uuidtext.Len)),
+				prop.Integer(0, uuidtext.Len-1).Map(func(at int) []byte {
+					text := []byte(exampleText)
+					text[at] = 'g'
+
+					return text
+				})).Filter(func(text []byte) bool {
+				_, err := uuidtext.Parse(string(text), sentinels)
+
+				return err != nil
+			})
+			prop.ForAll(t, "Parse must refuse the bytes of every text that it refuses", func(c *prop.Case) {
+				text := c.Draw(refused, "text")
+
+				_, want := uuidtext.Parse(string(text), sentinels)
+				got, err := uuidtext.Parse(text, sentinels)
+				assert.Equal(c, err, want, "Parse must return the error of the text for its bytes")
+				assert.Equal(c, got, id.Zero, "Parse must return the zero ID with an error")
+			})
+		})
 	})
 }
 
@@ -225,13 +251,29 @@ func TestUUIDTextAllocs(t *testing.T) {
 	})
 
 	t.Run("Parse", func(t *testing.T) {
-		var (
-			got id.ID
-			err error
-		)
-		expect.MaxAllocs(t, func() { got, err = uuidtext.Parse(exampleText, sentinels) }, 0, "Parse must not allocate")
-		assert.NoError(t, err, "the test must measure a text that Parse accepts")
-		assert.Equal(t, got, u, "the test must measure the ID of the text")
+		t.Run("does not allocate for a string", func(t *testing.T) {
+			var (
+				got id.ID
+				err error
+			)
+			expect.MaxAllocs(t, func() { got, err = uuidtext.Parse(exampleText, sentinels) }, 0,
+				"Parse must not allocate for a string")
+			assert.NoError(t, err, "the test must measure a text that Parse accepts")
+			assert.Equal(t, got, u, "the test must measure the ID of the text")
+		})
+
+		t.Run("does not allocate for a byte slice", func(t *testing.T) {
+			text := []byte(exampleText)
+
+			var (
+				got id.ID
+				err error
+			)
+			expect.MaxAllocs(t, func() { got, err = uuidtext.Parse(text, sentinels) }, 0,
+				"Parse must not allocate for a byte slice")
+			assert.NoError(t, err, "the test must measure a text that Parse accepts")
+			assert.Equal(t, got, u, "the test must measure the ID of the text")
+		})
 	})
 }
 
@@ -268,20 +310,41 @@ func BenchmarkUUIDText(b *testing.B) {
 	})
 
 	b.Run("Parse", func(b *testing.B) {
-		var (
-			got id.ID
-			err error
-		)
+		b.Run("string", func(b *testing.B) {
+			var (
+				got id.ID
+				err error
+			)
 
-		c := bench.Start(b).MaxAllocs(0)
-		defer c.End()
+			c := bench.Start(b).MaxAllocs(0)
+			defer c.End()
 
-		for c.Loop() {
-			got, err = uuidtext.Parse(exampleText, sentinels)
-		}
+			for c.Loop() {
+				got, err = uuidtext.Parse(exampleText, sentinels)
+			}
 
-		assert.NoError(b, err, "the benchmark must measure a text that Parse accepts")
-		assert.Equal(b, got, u, "the benchmark must measure the ID of the text")
+			assert.NoError(b, err, "the benchmark must measure a text that Parse accepts")
+			assert.Equal(b, got, u, "the benchmark must measure the ID of the text")
+		})
+
+		b.Run("bytes", func(b *testing.B) {
+			text := []byte(exampleText)
+
+			var (
+				got id.ID
+				err error
+			)
+
+			c := bench.Start(b).MaxAllocs(0)
+			defer c.End()
+
+			for c.Loop() {
+				got, err = uuidtext.Parse(text, sentinels)
+			}
+
+			assert.NoError(b, err, "the benchmark must measure a text that Parse accepts")
+			assert.Equal(b, got, u, "the benchmark must measure the ID of the text")
+		})
 	})
 }
 

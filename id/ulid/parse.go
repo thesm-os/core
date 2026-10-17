@@ -17,26 +17,19 @@ const alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 // of 5 bits each for the 128 bits of the ULID and 2 leading zero bits.
 const encodedLen = 26
 
-// Format returns the canonical 26-character Crockford base32
-// encoding of the first 128 bits of u, as the ULID specification
-// defines it. [AppendFormat] appends the same text to a buffer.
+// Format returns the canonical text of the first 128 bits of u: 26
+// characters of Crockford's base32 in uppercase, as the ULID specification
+// defines it. It returns the empty string when u is shorter than
+// [id.Size128], as [id.Zero] is. [AppendFormat] appends the same text to a
+// buffer.
 //
-// Layout:
-//
-//	chars  0..9 : 48-bit timestamp prefix
-//	chars 10..25: 80-bit random suffix
-//
-// The timestamp half encodes the 48-bit timestamp in the low 48 of
-// its 50 bits, so its leading 2 bits are zero and its first character
-// is in the range '0'..'7'. The random half encodes 80 bits of base-32
-// over an 80-bit payload exactly.
-//
-// Returns the empty string if u is shorter than [id.Size128]
-// (for example [id.Zero]).
+// The first 10 characters encode the 48-bit timestamp in 50 bits, so the
+// first character is 0 to 7. The last 16 characters encode the 80 random
+// bits.
 //
 // # Allocation contract
 //
-// Format allocates the 26-byte result string.
+// Allocates the 26-byte result string.
 func Format(u id.ID) string {
 	b := u.Bytes()
 	if len(b) < id.Size128 {
@@ -75,13 +68,9 @@ func AppendFormat(dst []byte, u id.ID) []byte {
 // The caller passes at least [id.Size128] bytes. encode does not
 // allocate.
 func encode(out *[encodedLen]byte, b []byte) {
-	// 50 bits for the 48-bit timestamp half, 80 bits for the
-	// 80-bit random half: 130 bits total = 26 base-32 chars.
-
-	// Timestamp half: bytes 0..5 → chars 0..9.
-	// Pack the 48 timestamp bits into a uint64 (high 16 bits
-	// zero), then emit 10 base-32 chars from the high end down.
-	// The first character encodes the top 3 timestamp bits.
+	// The 10 characters of the timestamp half encode 50 bits: 2 zero bits
+	// and the 48 bits of bytes 0 to 5. The loop writes them from the high
+	// end down, so the first character encodes the top 3 timestamp bits.
 	var ts uint64
 	for _, x := range b[0:6] {
 		ts = (ts << 8) | uint64(x)
@@ -91,15 +80,11 @@ func encode(out *[encodedLen]byte, b []byte) {
 		out[i] = alphabet[(ts>>shift)&0x1F]
 	}
 
-	// Random half: bytes 6..15 → chars 10..25.
-	// 16 chars × 5 bits = 80 bits, exactly the 80 random bits.
-	// Encode in two uint64s: high 64 bits cover bytes 6..13, low
-	// 16 bits in another uint16 cover bytes 14..15.
+	// The 16 characters of the random half encode the 80 bits of bytes 6 to
+	// 15. The first 12 characters encode the high 60 bits of hi. The last 4
+	// encode the low 4 bits of hi and the 16 bits of lo.
 	hi := binary.BigEndian.Uint64(b[6:14])
 	lo := binary.BigEndian.Uint16(b[14:16])
-
-	// First 12 chars from hi (60 bits, top-down), last 4 from
-	// (hi & 0x0F) || lo (4 + 16 = 20 bits).
 	for i := range 12 {
 		shift := uint(64 - 5 - i*5)
 		out[10+i] = alphabet[(hi>>shift)&0x1F]
@@ -111,40 +96,44 @@ func encode(out *[encodedLen]byte, b []byte) {
 	}
 }
 
-// ParseULID parses the canonical 26-character Crockford base32
-// encoding of a ULID into an [id.ID] of size [id.Size128].
+// ParseULID returns the [id.ID] of size [id.Size128] whose canonical text is
+// s. It accepts both cases of a letter, and the substitutions of the ULID
+// specification: I and L for 1, and O for 0.
 //
-// Returns [ErrInvalidLength] if s is not exactly 26 characters,
-// or [ErrInvalidChar] if s contains a character outside the
-// Crockford base32 alphabet. Both cases of a letter are accepted,
-// and so are the Crockford substitutions I and L for 1 and O for 0.
-//
-// The first character must be in the range '0'..'7', because the
-// 50-bit timestamp half encodes 48 bits of payload and its top 2 bits
-// are zero. A leading character '8'..'Z' encodes a value beyond the
-// 48-bit timestamp range, and ParseULID returns
-// [ErrInvalidTimestamp].
+// It returns [id.Zero] with each error:
+//   - [ErrInvalidLength] when s is not 26 bytes long.
+//   - [ErrInvalidTimestamp] when the first character is above 7, because the
+//     50 bits of the timestamp half then encode more than 48 bits.
+//   - [ErrInvalidChar] when s contains a byte outside Crockford's base32
+//     alphabet.
 //
 // # Allocation contract
 //
-// ParseULID does not allocate. It returns the [id.ID] by value.
+// Zero alloc.
 func ParseULID(s string) (id.ID, error) {
-	if len(s) != 26 {
+	return decode(s)
+}
+
+// decode returns the ID of the ULID whose canonical text is s, a string or a
+// byte slice. It accepts the texts that [ParseULID] accepts and returns what
+// ParseULID returns. It reads a byte slice in place and does not allocate.
+func decode[T ~string | ~[]byte](s T) (id.ID, error) {
+	if len(s) != encodedLen {
 		return id.Zero, ErrInvalidLength
 	}
-	// The first char encodes the top 2 bits of the 50, which must be
-	// zero, and the top 3 timestamp bits. The table gives -1 for a char
-	// outside the alphabet, which the loop below refuses.
+
+	// The first character encodes the top 2 of the 50 bits, which must be
+	// zero, and the top 3 bits of the timestamp. The table gives -1 for a
+	// byte outside the alphabet, which the loop below refuses.
 	if crockfordTable[s[0]] > 7 {
 		return id.Zero, ErrInvalidTimestamp
 	}
 
 	var raw [id.Size128]byte
 
-	// Decode the 10-char timestamp half into bits 49..0 of a
-	// uint64, whose top 2 bits are zero, as checked above. Its low
-	// 48 bits are the timestamp, which goes big-endian into bytes
-	// 0..5.
+	// The 10 characters of the timestamp half decode into the low 50 bits
+	// of ts, whose top 2 bits are zero. The low 48 bits of ts go big-endian
+	// into bytes 0 to 5.
 	var ts uint64
 	for i := range 10 {
 		v := crockfordTable[s[i]]
@@ -158,13 +147,13 @@ func ParseULID(s string) (id.ID, error) {
 		ts >>= 8
 	}
 
-	// Decode the 16-char random half into 80 bits = 10 bytes.
-	// Process 5 bits at a time into a rolling 64-bit register;
-	// emit bytes from the high end.
+	// The 16 characters of the random half decode into the 80 bits of bytes
+	// 6 to 15. Each character shifts 5 bits into bits, and each full byte
+	// moves from the high end of bits into raw.
 	var bits uint64
 	bitCount := 0
 	out := 6
-	for i := 10; i < 26; i++ {
+	for i := 10; i < encodedLen; i++ {
 		v := crockfordTable[s[i]]
 		if v < 0 {
 			return id.Zero, ErrInvalidChar
@@ -181,13 +170,10 @@ func ParseULID(s string) (id.ID, error) {
 	return id.New128(raw), nil
 }
 
-// crockfordTable maps each byte to its Crockford base32 value
-// (0..31), or -1 for non-Crockford bytes. Both cases of a letter map
-// to the same value, and the table contains the substitutions of the
-// ULID specification: I and L for 1, and O for 0.
-//
-// The lookup-table form is faster than a branching switch and
-// removes per-character conditional code from the hot path.
+// crockfordTable maps each byte to its value in Crockford's base32, 0 to 31,
+// and every other byte to -1. Both cases of a letter map to one value. The
+// table maps the substitutions of the ULID specification too: I and L to 1,
+// and O to 0.
 var crockfordTable = func() (t [256]int8) {
 	for i := range t {
 		t[i] = -1

@@ -11,7 +11,7 @@ import (
 	"go.thesmos.sh/core/errs"
 )
 
-// [Parse] returns these errors. Each classifies as
+// [Parse] and [UUID.UnmarshalText] return these errors. Each classifies as
 // [go.thesmos.sh/core/errs.Invalid]: a text that is not the text form of a
 // UUID never parses, so a retry of the same call fails the same way.
 var (
@@ -28,4 +28,12 @@ var (
 	// ErrInvalidChar reports a text with a byte other than a hexadecimal
 	// digit in one of its groups.
 	ErrInvalidChar = errs.WithClass(errors.New("uuidv4: invalid hex character"), errs.Invalid)
+)
+
+// ErrInvalidBytes reports data that is not the binary form of a [UUID]. The
+// binary form is 16 bytes that are not all zero, and no bytes for the zero
+// UUID. [UUID.UnmarshalBinary] returns ErrInvalidBytes for any other data.
+// It classifies as [go.thesmos.sh/core/errs.Invalid].
+var ErrInvalidBytes = errs.WithClass(
+	errors.New("uuidv4: invalid bytes, want none or 16 that are not all zero"), errs.Invalid,
 )

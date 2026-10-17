@@ -21,6 +21,7 @@ func TestUuidv4SentinelErrors(t *testing.T) {
 		err  error
 	}
 	all := []errEntry{
+		{"ErrInvalidBytes", uuidv4.ErrInvalidBytes},
 		{"ErrInvalidChar", uuidv4.ErrInvalidChar},
 		{"ErrInvalidFormat", uuidv4.ErrInvalidFormat},
 		{"ErrInvalidLength", uuidv4.ErrInvalidLength},

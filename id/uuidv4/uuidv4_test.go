@@ -5,7 +5,6 @@ package uuidv4_test
 
 import (
 	"encoding/binary"
-	"math"
 	"testing"
 	"time"
 
@@ -28,9 +27,6 @@ const (
 	goroutines = 8
 	rounds     = 20
 )
-
-// seeds generates the seeds of the sources of the generators.
-var seeds = prop.Integer[rand.Seed](math.MinInt64, math.MaxInt64)
 
 // TestUUIDv4GeneratorContract runs the contract suite of id.Generator with
 // a seeded source.

@@ -24,22 +24,9 @@ const (
 	roundTripContract = "Parse must return the ID whose text form Format returns"
 )
 
-// exampleText is the text form of exampleID.
-const exampleText = "12345678-9abc-4def-8012-3456789abcde"
-
 // dstText is the text of the buffer that AppendFormat appends to in the
 // tests.
 const dstText = "ids/"
-
-// exampleID is a UUIDv4 whose bytes each differ.
-var exampleID = id.New128([id.Size128]byte{
-	0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0x4d, 0xef, 0x80, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde,
-})
-
-// uuids generates IDs of 128 bits.
-var uuids = prop.Bytes(prop.MinSize(id.Size128), prop.MaxSize(id.Size128)).Map(func(b []byte) id.ID {
-	return id.New128([id.Size128]byte(b))
-})
 
 func TestParse(t *testing.T) {
 	t.Parallel()

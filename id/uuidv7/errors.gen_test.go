@@ -21,6 +21,7 @@ func TestUuidv7SentinelErrors(t *testing.T) {
 		err  error
 	}
 	all := []errEntry{
+		{"ErrInvalidBytes", uuidv7.ErrInvalidBytes},
 		{"ErrInvalidChar", uuidv7.ErrInvalidChar},
 		{"ErrInvalidFormat", uuidv7.ErrInvalidFormat},
 		{"ErrInvalidLength", uuidv7.ErrInvalidLength},

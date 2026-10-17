@@ -11,26 +11,30 @@ import (
 	"go.thesmos.sh/core/errs"
 )
 
-// Sentinel errors returned by [ParseULID]. Each classifies as
-// [go.thesmos.sh/core/errs.Invalid]: the input is not a ULID, so the
-// same call never succeeds.
+// [ParseULID] and [ULID.UnmarshalText] return these errors. Each classifies
+// as [go.thesmos.sh/core/errs.Invalid]: a text that is not the text of a ULID
+// never parses, so a retry of the same call fails the same way.
 var (
-	// ErrInvalidLength is returned when the input is not exactly
-	// 26 characters long.
+	// ErrInvalidLength reports a text that is not 26 bytes long.
 	ErrInvalidLength = errs.WithClass(errors.New("ulid: invalid length, want 26 characters"), errs.Invalid)
 
-	// ErrInvalidChar is returned when the input contains a
-	// character outside the Crockford base32 alphabet (after
-	// case folding and I/L/O substitution).
+	// ErrInvalidChar reports a text with a byte that is not a character of
+	// Crockford's base32 alphabet. The alphabet includes the lowercase
+	// letters and the substitutions I, L and O of the ULID specification.
 	ErrInvalidChar = errs.WithClass(errors.New("ulid: invalid character"), errs.Invalid)
 
-	// ErrInvalidTimestamp is returned when the leading character
-	// of the 10-char timestamp half encodes more than the 48
-	// bits the ULID format reserves for the timestamp — the
-	// first character must be in the range '0'..'7' (Crockford
-	// indices 0..7), since the 50-bit timestamp slot's top 2
-	// bits are required to be zero.
+	// ErrInvalidTimestamp reports a text whose first character is above 7.
+	// The first character encodes the top 2 of the 50 bits of the timestamp
+	// half, and a 48-bit timestamp leaves both bits zero.
 	ErrInvalidTimestamp = errs.WithClass(
 		errors.New("ulid: timestamp overflow, first char must be 0-7"), errs.Invalid,
 	)
+)
+
+// ErrInvalidBytes reports data that is not the binary form of a [ULID]. The
+// binary form is 16 bytes that are not all zero, and no bytes for the zero
+// ULID. [ULID.UnmarshalBinary] returns ErrInvalidBytes for any other data.
+// It classifies as [go.thesmos.sh/core/errs.Invalid].
+var ErrInvalidBytes = errs.WithClass(
+	errors.New("ulid: invalid bytes, want none or 16 that are not all zero"), errs.Invalid,
 )

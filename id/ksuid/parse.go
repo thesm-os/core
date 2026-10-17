@@ -14,27 +14,23 @@ import (
 // and a..z, in the order of their values.
 const alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
-// encodedLen is the canonical KSUID encoded length:
-// 62^27 > 2^160 > 62^26, so 27 base62 chars cover every 160-bit
-// value with leading-zero padding for shorter values.
+// encodedLen is the length of the canonical text of a KSUID. 62^26 is less
+// than 2^160 and 62^27 is more, so 27 characters encode every 160-bit value,
+// with leading zeros for the smaller values.
 const encodedLen = 27
 
-// chunks splits the 20-byte 160-bit value into 5 big-endian
-// uint32 chunks, halving the per-iteration work versus
-// byte-level long division (5 vs 20 inner iterations per
-// extracted base62 digit).
+// chunks is the number of big-endian 32-bit words of a 160-bit value, which
+// the encoder and the decoder compute with.
 const chunks = 5
 
-// Format returns the canonical 27-character base62 encoding of the
-// first 160 bits of u, for diagnostics and serialization.
-// [AppendFormat] appends the same text to a buffer.
-//
-// Returns the empty string if u is shorter than [id.Size160]
-// (for example [id.Zero]).
+// Format returns the canonical text of the first 160 bits of u: 27
+// characters of base62. It returns the empty string when u is shorter than
+// [id.Size160], as [id.Zero] is. [AppendFormat] appends the same text to a
+// buffer.
 //
 // # Allocation contract
 //
-// Format allocates the 27-byte result string.
+// Allocates the 27-byte result string.
 func Format(u id.ID) string {
 	b := u.Bytes()
 	if len(b) < id.Size160 {
@@ -73,19 +69,17 @@ func AppendFormat(dst []byte, u id.ID) []byte {
 // out. The caller passes at least [id.Size160] bytes. encode does not
 // allocate.
 func encode(out *[encodedLen]byte, b []byte) {
-	// Pack the 20 bytes as 5 big-endian uint32 chunks, then
-	// divide-by-62 across the chunks. 62^27 > 2^160, so 27
-	// extracted digits cover every 160-bit value with
-	// leading-zero padding.
+	// The 20 bytes go into 5 big-endian 32-bit words. Each of the 27 rounds
+	// divides the words by 62 and writes the remainder as the next digit
+	// from the end.
 	var num [chunks]uint32
 	for i := range chunks {
 		num[i] = binary.BigEndian.Uint32(b[i*4:])
 	}
 
 	for i := encodedLen - 1; i >= 0; i-- {
-		// Long division across the 5 chunks: walk MSB→LSB,
-		// folding the running remainder into the next chunk's
-		// 32-bit value before dividing by 62.
+		// The long division walks the words from the most significant,
+		// and carries the remainder of each word into the next.
 		var rem uint64
 		for j := range chunks {
 			x := rem<<32 | uint64(num[j])
@@ -96,26 +90,32 @@ func encode(out *[encodedLen]byte, b []byte) {
 	}
 }
 
-// Parse parses the canonical 27-character base62 encoding of a
-// KSUID into an [id.ID] of size [id.Size160].
+// Parse returns the [id.ID] of size [id.Size160] whose canonical text is s.
+// The text is case-sensitive.
 //
-// Returns [ErrInvalidLength] if s is not exactly 27 characters,
-// [ErrInvalidChar] if s contains a character outside the base62
-// alphabet, or [ErrOverflow] if the encoded value exceeds 2^160.
+// It returns [id.Zero] with each error:
+//   - [ErrInvalidLength] when s is not 27 bytes long.
+//   - [ErrInvalidChar] when s contains a byte outside the base62 alphabet.
+//   - [ErrOverflow] when the value of s is 2^160 or more.
 //
 // # Allocation contract
 //
-// Parse does not allocate. It returns the [id.ID] by value.
+// Zero alloc.
 func Parse(s string) (id.ID, error) {
+	return decode(s)
+}
+
+// decode returns the ID of the KSUID whose canonical text is s, a string or
+// a byte slice. It accepts the texts that [Parse] accepts and returns what
+// Parse returns. It reads a byte slice in place and does not allocate.
+func decode[T ~string | ~[]byte](s T) (id.ID, error) {
 	if len(s) != encodedLen {
 		return id.Zero, ErrInvalidLength
 	}
 
-	// Multiply-and-add across 5 uint32 chunks: for each input
-	// digit, num = num*62 + digit, propagating carry across
-	// chunks. After 27 digits, num contains the decoded 160-bit
-	// value; a non-zero carry past chunk 0 means the input
-	// encoded a value > 2^160.
+	// Each digit multiplies the 5 words by 62 and adds the digit, with the
+	// carry moving from the least significant word to the most. A carry out
+	// of the most significant word means a value of 2^160 or more.
 	var num [chunks]uint32
 	for i := range encodedLen {
 		v := base62Table[s[i]]
@@ -136,17 +136,16 @@ func Parse(s string) (id.ID, error) {
 		}
 	}
 
-	var dst [id.Size160]byte
+	var raw [id.Size160]byte
 	for i := range chunks {
-		binary.BigEndian.PutUint32(dst[i*4:], num[i])
+		binary.BigEndian.PutUint32(raw[i*4:], num[i])
 	}
-	return id.New160(dst), nil
+
+	return id.New160(raw), nil
 }
 
-// base62Table maps each byte to its base62 value (0..61), or -1
-// for non-base62 bytes. The lookup-table form is faster than a
-// branching switch and removes per-character conditional code
-// from the hot path.
+// base62Table maps each byte to its value in base62, 0 to 61, and every
+// other byte to -1.
 var base62Table = func() (t [256]int8) {
 	for i := range t {
 		t[i] = -1

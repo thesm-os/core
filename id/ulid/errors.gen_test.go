@@ -21,6 +21,7 @@ func TestUlidSentinelErrors(t *testing.T) {
 		err  error
 	}
 	all := []errEntry{
+		{"ErrInvalidBytes", ulid.ErrInvalidBytes},
 		{"ErrInvalidChar", ulid.ErrInvalidChar},
 		{"ErrInvalidLength", ulid.ErrInvalidLength},
 		{"ErrInvalidTimestamp", ulid.ErrInvalidTimestamp},
