@@ -5,6 +5,7 @@ package uuidtext
 
 import (
 	"encoding/hex"
+	"slices"
 
 	"go.thesmos.sh/core/id"
 )
@@ -34,7 +35,8 @@ type Errors struct {
 }
 
 // Format returns the text form of u, in lowercase, or the empty string
-// when u is not 128 bits.
+// when u is not 128 bits. [AppendFormat] appends the same text to a
+// buffer.
 //
 // # Allocation contract
 //
@@ -48,6 +50,27 @@ func Format(u id.ID) string {
 	encode(&text, u.Bytes())
 
 	return string(text[:])
+}
+
+// AppendFormat appends the text that [Format] returns for u to dst and
+// returns the extended slice. It returns dst unchanged when u is not 128
+// bits.
+//
+// # Allocation contract
+//
+// AppendFormat does not allocate when dst has room for [Len] more bytes.
+// Otherwise it allocates once to grow dst.
+func AppendFormat(dst []byte, u id.ID) []byte {
+	if u.Size() != id.Size128 {
+		return dst
+	}
+
+	// The text goes into the Len bytes after the end of dst.
+	n := len(dst)
+	dst = slices.Grow(dst, Len)[:n+Len]
+	encode((*[Len]byte)(dst[n:]), u.Bytes())
+
+	return dst
 }
 
 // Parse returns the 128-bit ID whose text form is s. It accepts uppercase,

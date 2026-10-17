@@ -5,6 +5,7 @@ package ulid
 
 import (
 	"encoding/binary"
+	"slices"
 
 	"go.thesmos.sh/core/id"
 )
@@ -12,9 +13,13 @@ import (
 // alphabet is Crockford's base32 alphabet, without I, L, O and U.
 const alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 
+// encodedLen is the length of the canonical text of a ULID: 26 characters
+// of 5 bits each for the 128 bits of the ULID and 2 leading zero bits.
+const encodedLen = 26
+
 // Format returns the canonical 26-character Crockford base32
 // encoding of the first 128 bits of u, as the ULID specification
-// defines it.
+// defines it. [AppendFormat] appends the same text to a buffer.
 //
 // Layout:
 //
@@ -38,9 +43,40 @@ func Format(u id.ID) string {
 		return ""
 	}
 
+	var out [encodedLen]byte
+	encode(&out, b)
+
+	return string(out[:])
+}
+
+// AppendFormat appends the text that [Format] returns for u to dst and
+// returns the extended slice. It returns dst unchanged when u is shorter
+// than [id.Size128].
+//
+// # Allocation contract
+//
+// AppendFormat does not allocate when dst has room for 26 more bytes.
+// Otherwise it allocates once to grow dst.
+func AppendFormat(dst []byte, u id.ID) []byte {
+	b := u.Bytes()
+	if len(b) < id.Size128 {
+		return dst
+	}
+
+	// The text goes into the 26 bytes after the end of dst.
+	n := len(dst)
+	dst = slices.Grow(dst, encodedLen)[:n+encodedLen]
+	encode((*[encodedLen]byte)(dst[n:]), b)
+
+	return dst
+}
+
+// encode writes the canonical text of the first 128 bits of b into out.
+// The caller passes at least [id.Size128] bytes. encode does not
+// allocate.
+func encode(out *[encodedLen]byte, b []byte) {
 	// 50 bits for the 48-bit timestamp half, 80 bits for the
 	// 80-bit random half: 130 bits total = 26 base-32 chars.
-	var out [26]byte
 
 	// Timestamp half: bytes 0..5 → chars 0..9.
 	// Pack the 48 timestamp bits into a uint64 (high 16 bits
@@ -73,8 +109,6 @@ func Format(u id.ID) string {
 		shift := uint(20 - 5 - i*5)
 		out[22+i] = alphabet[(tail>>shift)&0x1F]
 	}
-
-	return string(out[:])
 }
 
 // ParseULID parses the canonical 26-character Crockford base32

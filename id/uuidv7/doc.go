@@ -39,6 +39,8 @@
 //
 // [Format] returns the text form of RFC 9562,
 // "xxxxxxxx-xxxx-7xxx-yxxx-xxxxxxxxxxxx", where y is 8, 9, a or b, and
-// [Parse] reads it back. The bytes of the [id.ID] are the 16 bytes of the
-// UUID, so a caller that stores the bytes does not convert them.
+// [Parse] reads it back. [AppendFormat] appends the same text to a
+// caller's buffer and does not allocate when the buffer has room for it.
+// The bytes of the [id.ID] are the 16 bytes of the UUID, so a caller that
+// stores the bytes does not convert them.
 package uuidv7

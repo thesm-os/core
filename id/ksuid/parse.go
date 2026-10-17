@@ -5,6 +5,7 @@ package ksuid
 
 import (
 	"encoding/binary"
+	"slices"
 
 	"go.thesmos.sh/core/id"
 )
@@ -26,6 +27,7 @@ const chunks = 5
 
 // Format returns the canonical 27-character base62 encoding of the
 // first 160 bits of u, for diagnostics and serialization.
+// [AppendFormat] appends the same text to a buffer.
 //
 // Returns the empty string if u is shorter than [id.Size160]
 // (for example [id.Zero]).
@@ -39,6 +41,38 @@ func Format(u id.ID) string {
 		return ""
 	}
 
+	var out [encodedLen]byte
+	encode(&out, b)
+
+	return string(out[:])
+}
+
+// AppendFormat appends the text that [Format] returns for u to dst and
+// returns the extended slice. It returns dst unchanged when u is shorter
+// than [id.Size160].
+//
+// # Allocation contract
+//
+// AppendFormat does not allocate when dst has room for 27 more bytes.
+// Otherwise it allocates once to grow dst.
+func AppendFormat(dst []byte, u id.ID) []byte {
+	b := u.Bytes()
+	if len(b) < id.Size160 {
+		return dst
+	}
+
+	// The text goes into the 27 bytes after the end of dst.
+	n := len(dst)
+	dst = slices.Grow(dst, encodedLen)[:n+encodedLen]
+	encode((*[encodedLen]byte)(dst[n:]), b)
+
+	return dst
+}
+
+// encode writes the canonical base62 text of the first 160 bits of b into
+// out. The caller passes at least [id.Size160] bytes. encode does not
+// allocate.
+func encode(out *[encodedLen]byte, b []byte) {
 	// Pack the 20 bytes as 5 big-endian uint32 chunks, then
 	// divide-by-62 across the chunks. 62^27 > 2^160, so 27
 	// extracted digits cover every 160-bit value with
@@ -48,7 +82,6 @@ func Format(u id.ID) string {
 		num[i] = binary.BigEndian.Uint32(b[i*4:])
 	}
 
-	var out [encodedLen]byte
 	for i := encodedLen - 1; i >= 0; i-- {
 		// Long division across the 5 chunks: walk MSB→LSB,
 		// folding the running remainder into the next chunk's
@@ -61,7 +94,6 @@ func Format(u id.ID) string {
 		}
 		out[i] = alphabet[rem]
 	}
-	return string(out[:])
 }
 
 // Parse parses the canonical 27-character base62 encoding of a

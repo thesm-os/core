@@ -27,6 +27,10 @@ const (
 // exampleText is the text form of exampleID.
 const exampleText = "12345678-9abc-4def-8012-3456789abcde"
 
+// dstText is the text of the buffer that AppendFormat appends to in the
+// tests.
+const dstText = "ids/"
+
 // exampleID is a UUIDv4 whose bytes each differ.
 var exampleID = id.New128([id.Size128]byte{
 	0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0x4d, 0xef, 0x80, 0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde,
@@ -70,6 +74,40 @@ func TestParse(t *testing.T) {
 			form := `^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`
 			prop.ForAll(t, "Format must return the lowercase text form", func(c *prop.Case) {
 				assert.Matches(c, uuidv4.Format(c.Draw(uuids, "id")), form, "Format must return the text form")
+			})
+		})
+	})
+
+	t.Run("AppendFormat", func(t *testing.T) {
+		t.Parallel()
+
+		tests := []struct {
+			name string
+			give id.ID
+			want string
+		}{
+			{name: "returns dst unchanged for the zero ID", give: id.Zero, want: dstText},
+			{name: "returns dst unchanged for a 160-bit ID", give: id.New160([id.Size160]byte{1}), want: dstText},
+			{name: "returns dst unchanged for a 256-bit ID", give: id.New256([id.Size256]byte{1}), want: dstText},
+			{name: "appends the hyphenated form of the bytes to dst", give: exampleID, want: dstText + exampleText},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				got := uuidv4.AppendFormat([]byte(dstText), tt.give)
+				assert.Equal(t, string(got), tt.want, "AppendFormat must append the text form to dst")
+			})
+		}
+
+		t.Run("appends the text that Format returns to the bytes of dst", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "AppendFormat must append the text that Format returns", func(c *prop.Case) {
+				dst := c.Draw(prop.Bytes(prop.MaxSize(8)), "dst")
+				u := c.Draw(uuids, "id")
+
+				want := string(dst) + uuidv4.Format(u)
+				got := uuidv4.AppendFormat(dst, u)
+				assert.Equal(c, string(got), want, "the result must be dst followed by the text of Format")
 			})
 		})
 	})
@@ -151,14 +189,23 @@ func TestParse(t *testing.T) {
 	})
 }
 
-// TestParseAllocs checks the allocation contracts of Format and Parse.
-// MaxAllocs counts the allocations of the whole process, so the test does
-// not run in parallel.
+// TestParseAllocs checks the allocation contracts of Format, AppendFormat
+// and Parse. MaxAllocs counts the allocations of the whole process, so the
+// test does not run in parallel.
 func TestParseAllocs(t *testing.T) {
 	t.Run("Format", func(t *testing.T) {
 		var s string
 		expect.MaxAllocs(t, func() { s = uuidv4.Format(exampleID) }, 1, "Format must allocate only the returned string")
 		assert.Equal(t, s, exampleText, "the test must measure the text form of the ID")
+	})
+
+	t.Run("AppendFormat", func(t *testing.T) {
+		buf := make([]byte, 0, len(exampleText))
+
+		var got []byte
+		expect.MaxAllocs(t, func() { got = uuidv4.AppendFormat(buf[:0], exampleID) }, 0,
+			"AppendFormat must not allocate into a buffer with room")
+		assert.Equal(t, string(got), exampleText, "the test must measure the text form of the ID")
 	})
 
 	t.Run("Parse", func(t *testing.T) {
@@ -172,8 +219,8 @@ func TestParseAllocs(t *testing.T) {
 	})
 }
 
-// BenchmarkParse reports the cost of Format and Parse, and fails when one
-// allocates more than TestParseAllocs allows.
+// BenchmarkParse reports the cost of Format, AppendFormat and Parse. It
+// fails when one of them allocates more than TestParseAllocs allows.
 func BenchmarkParse(b *testing.B) {
 	b.Run("Format", func(b *testing.B) {
 		var s string
@@ -186,6 +233,20 @@ func BenchmarkParse(b *testing.B) {
 		}
 
 		assert.Equal(b, s, exampleText, "the benchmark must measure the text form of the ID")
+	})
+
+	b.Run("AppendFormat", func(b *testing.B) {
+		buf := make([]byte, 0, len(exampleText))
+		var got []byte
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			got = uuidv4.AppendFormat(buf[:0], exampleID)
+		}
+
+		assert.Equal(b, string(got), exampleText, "the benchmark must measure the text form of the ID")
 	})
 
 	b.Run("Parse", func(b *testing.B) {

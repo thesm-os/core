@@ -28,6 +28,10 @@ const (
 // characters of the Crockford alphabet.
 const canonical = `[0-7][0-9A-HJKMNP-TV-Z]{25}`
 
+// dstText is the text of the buffer that AppendFormat appends to in the
+// tests.
+const dstText = "ids/"
+
 // specText is the example ULID of the ULID specification, and specBytes
 // its bytes, whose timestamp is 1469922850259 milliseconds, as
 // github.com/oklog/ulid/v2 decodes them.
@@ -120,6 +124,47 @@ func TestParse(t *testing.T) {
 			prop.ForAll(t, "Format must return the canonical form of a ULID", func(c *prop.Case) {
 				s := ulid.Format(c.Draw(ulids, "id"))
 				assert.Matches(c, s, "^"+canonical+"$", "Format must return a canonical ULID")
+			})
+		})
+	})
+
+	t.Run("AppendFormat", func(t *testing.T) {
+		t.Parallel()
+
+		tests := []struct {
+			name string
+			give id.ID
+			want string
+		}{
+			{name: "returns dst unchanged for Zero", give: id.Zero, want: dstText},
+			{
+				name: "appends the example of the specification to dst",
+				give: id.New128(specBytes),
+				want: dstText + specText,
+			},
+			{
+				name: "appends the encoding of the first 128 bits of a 256-bit ID",
+				give: id.New256([id.Size256]byte(append(specBytes[:], make([]byte, 16)...))),
+				want: dstText + specText,
+			},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				got := ulid.AppendFormat([]byte(dstText), tt.give)
+				assert.Equal(t, string(got), tt.want, "AppendFormat must append the Crockford base32 encoding to dst")
+			})
+		}
+
+		t.Run("appends the text that Format returns to the bytes of dst", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "AppendFormat must append the text that Format returns", func(c *prop.Case) {
+				dst := c.Draw(prop.Bytes(prop.MaxSize(8)), "dst")
+				u := c.Draw(ulids, "id")
+
+				want := string(dst) + ulid.Format(u)
+				got := ulid.AppendFormat(dst, u)
+				assert.Equal(c, string(got), want, "the result must be dst followed by the text of Format")
 			})
 		})
 	})
@@ -295,14 +340,23 @@ func TestParse(t *testing.T) {
 	})
 }
 
-// TestParseAllocs checks the allocation contracts of Format and ParseULID.
-// MaxAllocs counts the allocations of the whole process, so the test does
-// not run in parallel.
+// TestParseAllocs checks the allocation contracts of Format, AppendFormat
+// and ParseULID. MaxAllocs counts the allocations of the whole process, so
+// the test does not run in parallel.
 func TestParseAllocs(t *testing.T) {
 	t.Run("Format", func(t *testing.T) {
 		var s string
 		expect.MaxAllocs(t, func() { s = ulid.Format(asymmetric) }, 1, "Format must allocate only the returned string")
 		assert.Equal(t, s, asymmetricText, "the test must measure the encoding of the ULID")
+	})
+
+	t.Run("AppendFormat", func(t *testing.T) {
+		buf := make([]byte, 0, len(asymmetricText))
+
+		var got []byte
+		expect.MaxAllocs(t, func() { got = ulid.AppendFormat(buf[:0], asymmetric) }, 0,
+			"AppendFormat must not allocate into a buffer with room")
+		assert.Equal(t, string(got), asymmetricText, "the test must measure the encoding of the ULID")
 	})
 
 	t.Run("ParseULID", func(t *testing.T) {
@@ -316,8 +370,8 @@ func TestParseAllocs(t *testing.T) {
 	})
 }
 
-// BenchmarkParse reports the cost of Format and ParseULID, and fails when
-// one allocates more than TestParseAllocs allows.
+// BenchmarkParse reports the cost of Format, AppendFormat and ParseULID.
+// It fails when one of them allocates more than TestParseAllocs allows.
 func BenchmarkParse(b *testing.B) {
 	b.Run("Format", func(b *testing.B) {
 		var s string
@@ -330,6 +384,20 @@ func BenchmarkParse(b *testing.B) {
 		}
 
 		assert.Equal(b, s, asymmetricText, "the benchmark must measure the encoding of the ULID")
+	})
+
+	b.Run("AppendFormat", func(b *testing.B) {
+		buf := make([]byte, 0, len(asymmetricText))
+		var got []byte
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			got = ulid.AppendFormat(buf[:0], asymmetric)
+		}
+
+		assert.Equal(b, string(got), asymmetricText, "the benchmark must measure the encoding of the ULID")
 	})
 
 	b.Run("ParseULID", func(b *testing.B) {

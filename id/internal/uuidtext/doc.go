@@ -6,11 +6,13 @@
 // 4 and 12, separated by hyphens, as in
 // "f81d4fae-7dec-11d0-a765-00a0c91e6bf6".
 //
-// The UUID packages of [go.thesmos.sh/core/id] implement their Format and
-// Parse functions with this package. Each passes its own sentinel errors
-// to [Parse].
+// The UUID packages of [go.thesmos.sh/core/id] implement their Format,
+// AppendFormat and Parse functions with this package. Each passes its own
+// sentinel errors to [Parse].
 //
 // # Allocation contract
 //
 // [Parse] does not allocate. [Format] allocates the returned string.
+// [AppendFormat] does not allocate when its buffer has room for [Len] more
+// bytes.
 package uuidtext

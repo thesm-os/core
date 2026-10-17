@@ -21,7 +21,9 @@
 // # Encoding
 //
 // [Format] returns the canonical 26-character Crockford base32
-// encoding. The raw [id.ID] bytes are the underlying 16-byte
+// encoding. [AppendFormat] appends the same text to a caller's
+// buffer and does not allocate when the buffer has room for it.
+// The raw [id.ID] bytes are the underlying 16-byte
 // ULID; consumers that store the bytes directly need no
 // conversion.
 //

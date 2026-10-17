@@ -16,6 +16,10 @@ import (
 	"go.thesmos.sh/core/id/uuidv7"
 )
 
+// dstText is the text of the buffer that AppendFormat appends to in the
+// tests.
+const dstText = "ids/"
+
 func TestParse(t *testing.T) {
 	t.Parallel()
 
@@ -31,6 +35,24 @@ func TestParse(t *testing.T) {
 			t.Run("returns the empty string for "+tt.name, func(t *testing.T) {
 				t.Parallel()
 				assert.Equal(t, uuidv7.Format(tt.id), "", "Format must return the empty string")
+			})
+		}
+	})
+
+	t.Run("AppendFormat", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("appends the lowercase text form of a 128-bit ID to dst", func(t *testing.T) {
+			t.Parallel()
+			got := uuidv7.AppendFormat([]byte(dstText), exampleID)
+			assert.Equal(t, string(got), dstText+exampleText, "AppendFormat must append the text form to dst")
+		})
+
+		for _, tt := range notUUIDs {
+			t.Run("returns dst unchanged for "+tt.name, func(t *testing.T) {
+				t.Parallel()
+				got := uuidv7.AppendFormat([]byte(dstText), tt.id)
+				assert.Equal(t, string(got), dstText, "AppendFormat must leave dst unchanged")
 			})
 		}
 	})
@@ -87,14 +109,23 @@ func TestParse(t *testing.T) {
 	})
 }
 
-// TestParseAllocs checks the allocation contracts of Format and Parse.
-// MaxAllocs counts the allocations of the whole process, so the test does
-// not run in parallel.
+// TestParseAllocs checks the allocation contracts of Format, AppendFormat
+// and Parse. MaxAllocs counts the allocations of the whole process, so the
+// test does not run in parallel.
 func TestParseAllocs(t *testing.T) {
 	t.Run("Format", func(t *testing.T) {
 		var s string
 		expect.MaxAllocs(t, func() { s = uuidv7.Format(exampleID) }, 1, "Format must allocate only the returned string")
 		assert.Equal(t, s, exampleText, "the test must measure the text form of the UUIDv7")
+	})
+
+	t.Run("AppendFormat", func(t *testing.T) {
+		buf := make([]byte, 0, len(exampleText))
+
+		var got []byte
+		expect.MaxAllocs(t, func() { got = uuidv7.AppendFormat(buf[:0], exampleID) }, 0,
+			"AppendFormat must not allocate into a buffer with room")
+		assert.Equal(t, string(got), exampleText, "the test must measure the text form of the UUIDv7")
 	})
 
 	t.Run("Parse", func(t *testing.T) {
@@ -108,8 +139,8 @@ func TestParseAllocs(t *testing.T) {
 	})
 }
 
-// BenchmarkParse reports the cost of Format and Parse, and fails when one
-// allocates more than TestParseAllocs allows.
+// BenchmarkParse reports the cost of Format, AppendFormat and Parse. It
+// fails when one of them allocates more than TestParseAllocs allows.
 func BenchmarkParse(b *testing.B) {
 	b.Run("Format", func(b *testing.B) {
 		var s string
@@ -122,6 +153,20 @@ func BenchmarkParse(b *testing.B) {
 		}
 
 		assert.Equal(b, s, exampleText, "the benchmark must measure the text form of the UUIDv7")
+	})
+
+	b.Run("AppendFormat", func(b *testing.B) {
+		buf := make([]byte, 0, len(exampleText))
+		var got []byte
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			got = uuidv7.AppendFormat(buf[:0], exampleID)
+		}
+
+		assert.Equal(b, string(got), exampleText, "the benchmark must measure the text form of the UUIDv7")
 	})
 
 	b.Run("Parse", func(b *testing.B) {

@@ -24,7 +24,9 @@
 // # Encoding
 //
 // [Format] returns the canonical 27-character base62 encoding
-// using the alphabet "0..9A..Za..z". The raw [id.ID] bytes are
+// using the alphabet "0..9A..Za..z". [AppendFormat] appends the
+// same text to a caller's buffer and does not allocate when the
+// buffer has room for it. The raw [id.ID] bytes are
 // the underlying 20-byte KSUID; consumers that store the bytes
 // directly need no conversion.
 //
