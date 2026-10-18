@@ -142,6 +142,7 @@ Start from [`docs/templates/RFC.md`](../templates/RFC.md).
 | [0072](0072-read-ahead-of-a-table-cursor.md) | Read-Ahead of a Table Cursor | Accepted |
 | [0073](0073-ulid-ksuid-and-uuid-value-types.md) | ULID, KSUID and UUID Value Types | Accepted |
 | [0074](0074-array-and-value-type-keys-in-idmap.md) | Array and Value-Type Keys in idmap | Accepted |
+| [0075](0075-blocks-that-a-cache-lends-to-readers.md) | Blocks That a Cache Lends to Readers | Accepted |
 
 ## Canonical first RFC
 
