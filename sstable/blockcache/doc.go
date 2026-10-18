@@ -13,6 +13,16 @@
 // to the pool once the last cursor that reads the block moves on, so a miss
 // allocates the entry of the cache.Cache and no block.
 //
+// # Identities
+//
+// The tables that share a Cache need different identities, because a Reader
+// does not check the CRC32C of a block that the Cache lends. [Cache.NewID]
+// returns 1 at its first call and one more at each call after it. A consumer
+// takes one for each table that it opens through the Cache, and passes it as
+// the CacheID of [sstable.ReaderOptions]. The Cache keeps a block by the
+// identity and the offset alone, and ignores the [sstable.BlockRole] that
+// Lend and AddBlock receive.
+//
 // # Capacity
 //
 // The capacity of a Cache bounds the sum of the footprints of its blocks.
@@ -26,7 +36,7 @@
 //
 // # Allocation contract
 //
-// Lend does not allocate. AddBlock and Add allocate the entry of the
+// Lend and NewID do not allocate. AddBlock and Add allocate the entry of the
 // cache.Cache, and Add takes its Block from the pool. Get allocates the copy
 // that it returns.
 //
@@ -37,6 +47,7 @@
 //
 // # Dependency position
 //
-// Imports bytes, context and time from the standard library, and
-// go.thesmos.sh/core/cache and go.thesmos.sh/core/sstable from this module.
+// Imports bytes, context, sync/atomic and time from the standard library,
+// and go.thesmos.sh/core/cache and go.thesmos.sh/core/sstable from this
+// module.
 package blockcache

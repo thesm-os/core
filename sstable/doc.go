@@ -87,6 +87,14 @@
 // [go.thesmos.sh/core/sstable/blockcache] implements a LendingCache over
 // [go.thesmos.sh/core/cache.Cache].
 //
+// A Reader passes a LendingCache the [BlockRole] of each block: [DataBlock],
+// [IndexBlock] or [FilterBlock]. The cache can then count the lookups of the
+// data blocks apart from the lookups of the partitions. Readers of different
+// tables that share a cache need different identities in the CacheID of
+// their [ReaderOptions]. A Reader does not check the CRC32C of a block that
+// the cache returns, so the Readers of two tables with one identity read the
+// blocks of each other.
+//
 // # Merges
 //
 // A [Source] is a cursor over a sorted run of entries that moves in both

@@ -475,9 +475,9 @@ func (it *Iter) indexPrev(ctx context.Context) bool {
 // CRC32C. A partition at the offset of the partition that index has stays,
 // and the cursor moves to no entry of it. Otherwise loadPart releases the
 // reference to the partition before, checks ctx, and takes the partition as
-// fetch takes it. loadPart sets err and reports false for a ctx that ended,
-// a value with other fields, a place outside the partitions and a read that
-// fails. A load that fails leaves index without a partition.
+// fetch takes an index partition. loadPart sets err and reports false for a
+// ctx that ended, a value with other fields, a place outside the partitions
+// and a read that fails. A load that fails leaves index without a partition.
 func (it *Iter) loadPart(ctx context.Context, v []byte) bool {
 	off, n, _, want, ok := it.r.partition(v, true)
 	if !ok {
@@ -500,7 +500,7 @@ func (it *Iter) loadPart(ctx context.Context, v []byte) bool {
 
 		return false
 	}
-	b, blk, err := it.fetch(ctx, off, n, want, false)
+	b, blk, err := it.fetch(ctx, off, n, want, IndexBlock)
 	if err != nil {
 		it.err = err
 
@@ -514,12 +514,12 @@ func (it *Iter) loadPart(ctx context.Context, v []byte) bool {
 
 // load sets the data cursor on the data block of the current entry of the
 // index. The value of the entry is the place of the block and its CRC32C.
-// load takes the block as fetch takes it, and keeps the reference of a
-// LendingCache to the block. load sets err and reports false for a ctx that
-// ended, a value with other fields, a place outside the data blocks and a
-// read that fails. Every caller calls load with the data cursor on no entry,
-// and a load that fails leaves it there. load first releases the reference
-// of the cursor to the block of its last load.
+// load takes the block as fetch takes a data block, and keeps the reference
+// of a LendingCache to the block. load sets err and reports false for a ctx
+// that ended, a value with other fields, a place outside the data blocks and
+// a read that fails. Every caller calls load with the data cursor on no
+// entry, and a load that fails leaves it there. load first releases the
+// reference of the cursor to the block of its last load.
 func (it *Iter) load(ctx context.Context) bool {
 	// The data cursor is on no entry, so it does not read the block of the
 	// last load again.
@@ -549,7 +549,7 @@ func (it *Iter) load(ctx context.Context) bool {
 	}
 	want := binary.BigEndian.Uint32(v[n1+n2:])
 
-	b, blk, err := it.fetch(ctx, off, n, want, true)
+	b, blk, err := it.fetch(ctx, off, n, want, DataBlock)
 	if err != nil {
 		it.err = err
 
@@ -562,9 +562,9 @@ func (it *Iter) load(ctx context.Context) bool {
 }
 
 // fetch returns the decoded block of n stored bytes at off whose CRC32C is
-// want: a data block for data, and a partition otherwise. It lends the block
-// from a LendingCache, and returns the lent Block with the reference for the
-// cursor. It takes the block from another BlockCache. Otherwise it reads the
+// want. role is the role of the block in the table. fetch passes it to Lend
+// and AddBlock of a LendingCache. It lends the block from a LendingCache,
+// and returns the lent Block with the reference for the cursor. It takes the block from another BlockCache. Otherwise it reads the
 // block under ctx and compares its CRC32C with want. A data block takes the
 // read ahead of the cursor and the buffers raw and buf, and a partition
 // takes partRaw and partBuf. fetch adds the block that it read to the cache,
@@ -573,10 +573,10 @@ func (it *Iter) load(ctx context.Context) bool {
 // cursor after AddBlock, or into a copy for another BlockCache. fetch
 // returns the error of a read that fails and ErrCorrupt for a block that
 // does not check.
-func (it *Iter) fetch(ctx context.Context, off, n uint64, want uint32, data bool) ([]byte, *Block, error) {
+func (it *Iter) fetch(ctx context.Context, off, n uint64, want uint32, role BlockRole) ([]byte, *Block, error) {
 	c, lc := it.r.cache, it.r.lending
 	if lc != nil {
-		if blk, ok := lc.Lend(ctx, it.r.cacheID, off); ok {
+		if blk, ok := lc.Lend(ctx, it.r.cacheID, off, role); ok {
 			b := blk.Bytes()
 
 			return b, blk, nil
@@ -592,7 +592,7 @@ func (it *Iter) fetch(ctx context.Context, off, n uint64, want uint32, data bool
 	buf := &it.partBuf
 	var raw []byte
 	var err error
-	if data {
+	if role == DataBlock {
 		buf = &it.buf
 		raw, err = it.read(ctx, off, size)
 	} else {
@@ -613,7 +613,7 @@ func (it *Iter) fetch(ctx context.Context, off, n uint64, want uint32, data bool
 	if lc != nil {
 		blk := NewBlock(len(b))
 		copy(blk.buf, b)
-		lc.AddBlock(ctx, it.r.cacheID, off, blk)
+		lc.AddBlock(ctx, it.r.cacheID, off, role, blk)
 		b = blk.Bytes()
 
 		return b, blk, nil
@@ -673,11 +673,12 @@ func (it *Iter) read(ctx context.Context, off uint64, size int) ([]byte, error) 
 // entry with key, for [Reader.MayContain] and [Reader.Get]. A table without
 // a filter may contain every key. Otherwise mayContain checks ctx, searches
 // the top-level index of the filter for the first partition whose last key
-// is at or after key, and takes the partition as fetch takes a partition. A
-// key after the last key of the table has no partition, and the table does
-// not contain it. mayContain releases a partition that a LendingCache lent.
-// It returns the error of ctx and of a read, and ErrCorrupt for an entry of
-// the top-level index or a partition that does not check.
+// is at or after key, and takes the partition as fetch takes a filter
+// partition. A key after the last key of the table has no partition, and the
+// table does not contain it. mayContain releases a partition that a
+// LendingCache lent. It returns the error of ctx and of a read, and
+// ErrCorrupt for an entry of the top-level index or a partition that does
+// not check.
 func (it *Iter) mayContain(ctx context.Context, key []byte) (bool, error) {
 	r := it.r
 	if !r.hasFilter {
@@ -699,7 +700,7 @@ func (it *Iter) mayContain(ctx context.Context, key []byte) (bool, error) {
 	if !ok {
 		return false, ErrCorrupt
 	}
-	b, blk, err := it.fetch(ctx, off, n, want, false)
+	b, blk, err := it.fetch(ctx, off, n, want, FilterBlock)
 	if err != nil {
 		return false, err
 	}

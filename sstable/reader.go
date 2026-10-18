@@ -11,6 +11,7 @@ import (
 	"hash/crc32"
 	"io"
 	"math"
+	"strconv"
 
 	"go.thesmos.sh/core/compress/snappy"
 	"go.thesmos.sh/core/filter"
@@ -39,24 +40,31 @@ type File interface {
 
 // ReaderOptions configure a [Reader].
 type ReaderOptions struct {
-	// Cache keeps the decoded data blocks of the Reader. Without a Cache the
-	// Reader reads every block from the File.
+	// Cache keeps the decoded data blocks and partitions of the Reader.
+	// Without a Cache the Reader reads every block from the File.
 	Cache BlockCache
 
 	// CacheID is the identity of the table in Cache. The readers of
-	// different tables that share a Cache need different identities.
+	// different tables that share a Cache need different identities. A
+	// Reader checks the CRC32C of each block that it reads from the File,
+	// and not of a block that Cache returns. The Readers of two tables with
+	// one identity therefore read the blocks of each other as valid data.
+	// [go.thesmos.sh/core/sstable/blockcache.Cache.NewID] issues identities
+	// that never repeat within one cache. It never issues 0, so none of its
+	// identities equals the CacheID of a Reader that sets none.
 	CacheID uint64
 }
 
-// BlockCache keeps the decoded data blocks of the readers that share it. Its
-// key is the identity of the table and the offset of the block in the table.
-// Each call takes the context of the read that looks the block up, so a
-// cache counts and traces its lookups under that context.
+// BlockCache keeps the decoded data blocks and partitions of the readers
+// that share it. Its key is the identity of the table and the offset of the
+// block in the table. Each call takes the context of the read that looks
+// the block up, so a cache counts and traces its lookups under that context.
 //
 // A Reader never writes a block that it adds to the cache or that Get
 // returns, and the cache must not change a block either. The capacity and
 // the eviction of the cache are the policy of its owner. A cache that
-// implements [LendingCache] lends a [Block] in place of a byte slice.
+// implements [LendingCache] lends a [Block] in place of a byte slice, and
+// receives the [BlockRole] of each block.
 //
 // # Concurrency
 //
@@ -71,6 +79,49 @@ type BlockCache interface {
 	Add(ctx context.Context, id, offset uint64, block []byte)
 }
 
+// BlockRole is the role of a block in its table. A [Reader] passes the role
+// of each block that it lends from a [LendingCache] or adds to it, so the
+// cache can count its hits and its misses for each role. The zero BlockRole
+// is not valid.
+type BlockRole uint8
+
+const (
+	// DataBlock is the role of a data block.
+	DataBlock BlockRole = 1 // data
+	// IndexBlock is the role of an index partition of a table of format
+	// version 2. A Reader keeps the index block of a table of format version
+	// 1 in memory and never looks it up in a cache.
+	IndexBlock BlockRole = 2 // index
+	// FilterBlock is the role of a filter partition of a table of format
+	// version 2. A Reader keeps the filter block of a table of format
+	// version 1 in memory and never looks it up in a cache.
+	FilterBlock BlockRole = 3 // filter
+)
+
+// Valid reports whether r is [DataBlock], [IndexBlock] or [FilterBlock].
+func (r BlockRole) Valid() bool {
+	return DataBlock <= r && r <= FilterBlock
+}
+
+// String returns "data", "index" or "filter", and "BlockRole(N)" for a value
+// that is not valid.
+//
+// # Allocation contract
+//
+// Zero-alloc for a valid BlockRole. Another value allocates its text.
+func (r BlockRole) String() string {
+	switch r {
+	case DataBlock:
+		return "data"
+	case IndexBlock:
+		return "index"
+	case FilterBlock:
+		return "filter"
+	default:
+		return "BlockRole(" + strconv.Itoa(int(r)) + ")"
+	}
+}
+
 // LendingCache is a [BlockCache] that keeps each block in a [Block] and
 // lends it to the readers. A Reader whose cache implements LendingCache
 // calls Lend in place of Get, and AddBlock in place of Add. It copies a block
@@ -80,6 +131,12 @@ type BlockCache interface {
 // its pool, so a cache that releases the blocks that leave it allocates no
 // block for a miss.
 //
+// Lend and AddBlock receive the [BlockRole] of the block, so a cache can
+// count the lookups of the data blocks apart from the lookups of the
+// partitions. The block at one offset of a table always has the same role,
+// so a cache keeps a block by the identity of the table and the offset
+// alone. A Reader of a table of format version 1 passes only [DataBlock].
+//
 // # Concurrency
 //
 // The methods of a LendingCache must be safe for concurrent use.
@@ -88,13 +145,15 @@ type LendingCache interface {
 
 	// Lend returns the block of the table id at offset with a reference
 	// that the caller releases, and reports whether the cache contains it.
-	// The bytes of the block do not change until that Release.
-	Lend(ctx context.Context, id, offset uint64) (*Block, bool)
+	// role is the role of the block in the table. The bytes of the block do
+	// not change until that Release.
+	Lend(ctx context.Context, id, offset uint64, role BlockRole) (*Block, bool)
 
-	// AddBlock adds b as the block of the table id at offset. The cache
-	// takes a reference of its own and releases it once the block leaves
-	// the cache. The caller keeps its own reference.
-	AddBlock(ctx context.Context, id, offset uint64, b *Block)
+	// AddBlock adds b as the block of the table id at offset. role is the
+	// role of the block in the table. The cache takes a reference of its
+	// own and releases it once the block leaves the cache. The caller keeps
+	// its own reference.
+	AddBlock(ctx context.Context, id, offset uint64, role BlockRole, b *Block)
 }
 
 // Span is the part of a table that the entries of a key range can occupy.

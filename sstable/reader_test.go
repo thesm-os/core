@@ -23,6 +23,7 @@ import (
 	"go.dokimi.dev/assert/stateful"
 
 	"go.thesmos.sh/core/sstable"
+	"go.thesmos.sh/core/sstable/blockcache"
 )
 
 // The workload of the check of the false positives of a filter.
@@ -115,6 +116,39 @@ func (r shortFile) ReadAt(_ context.Context, p []byte, off int64) (int, error) {
 	return n, nil
 }
 
+// lookup is the offset and the role of a block that a roleCache lent or
+// received.
+type lookup struct {
+	offset uint64
+	role   sstable.BlockRole
+}
+
+// roleCache is a LendingCache over a blockcache.Cache that records the
+// offset and the role of each Lend and each AddBlock in the order of the
+// calls. A case reads through it on one goroutine.
+type roleCache struct {
+	*blockcache.Cache
+
+	lends, adds []lookup
+}
+
+var _ sstable.LendingCache = (*roleCache)(nil)
+
+// Lend records the offset and the role of the block, and lends the block of
+// the cache.
+func (c *roleCache) Lend(ctx context.Context, id, offset uint64, role sstable.BlockRole) (*sstable.Block, bool) {
+	c.lends = append(c.lends, lookup{offset: offset, role: role})
+
+	return c.Cache.Lend(ctx, id, offset, role)
+}
+
+// AddBlock records the offset and the role of the block, and adds b to the
+// cache.
+func (c *roleCache) AddBlock(ctx context.Context, id, offset uint64, role sstable.BlockRole, b *sstable.Block) {
+	c.adds = append(c.adds, lookup{offset: offset, role: role})
+	c.Cache.AddBlock(ctx, id, offset, role, b)
+}
+
 func TestReader(t *testing.T) {
 	t.Parallel()
 
@@ -128,6 +162,53 @@ func TestReader(t *testing.T) {
 		// The cache keeps two blocks, so the reads evict the blocks of each
 		// other and the pool lends the buffers of the evicted blocks again.
 		prop.ForAll(t, readContract, func(c *prop.Case) { readSteps(c, lendingCache(c, 2)) })
+	})
+
+	t.Run("BlockRole", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("Valid", func(t *testing.T) {
+			t.Parallel()
+
+			tests := []struct {
+				name string
+				give sstable.BlockRole
+				want bool
+			}{
+				{name: "reports true for DataBlock", give: sstable.DataBlock, want: true},
+				{name: "reports true for IndexBlock", give: sstable.IndexBlock, want: true},
+				{name: "reports true for FilterBlock", give: sstable.FilterBlock, want: true},
+				{name: "reports false for the zero BlockRole", give: 0, want: false},
+				{name: "reports false for a value above FilterBlock", give: 4, want: false},
+			}
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					t.Parallel()
+					assert.Equal(t, tt.give.Valid(), tt.want, "Valid accepts the three roles alone")
+				})
+			}
+		})
+
+		t.Run("String", func(t *testing.T) {
+			t.Parallel()
+
+			tests := []struct {
+				name string
+				give sstable.BlockRole
+				want string
+			}{
+				{name: "returns data for DataBlock", give: sstable.DataBlock, want: "data"},
+				{name: "returns index for IndexBlock", give: sstable.IndexBlock, want: "index"},
+				{name: "returns filter for FilterBlock", give: sstable.FilterBlock, want: "filter"},
+				{name: "returns the number of a value that is not valid", give: 0, want: "BlockRole(0)"},
+			}
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					t.Parallel()
+					assert.Equal(t, tt.give.String(), tt.want, "String names the role")
+				})
+			}
+		})
 	})
 
 	t.Run("Open", func(t *testing.T) {
@@ -802,6 +883,22 @@ func TestReader(t *testing.T) {
 			_, err = r.Span(t.Context(), []byte("key 010"), []byte("key 050"))
 			assert.ErrorIs(t, err, errRead, "Span returns the error of the read of a partition")
 		})
+
+		t.Run("lends the index partition of each bound with IndexBlock", func(t *testing.T) {
+			t.Parallel()
+			l := newLayout(t, settings[5].opts, goldenTable())
+			cache := &roleCache{Cache: lendingCache(t, 4)}
+			r := openTable(t, l.data, sstable.ReaderOptions{Cache: cache, CacheID: 1})
+			lower, upper := []byte("key 010"), []byte("key 050")
+			assert.NotEqual(t, placeOf(l.indexParts, lower), placeOf(l.indexParts, upper),
+				"the two bounds are in two index partitions")
+			_, err := r.Span(t.Context(), lower, upper)
+			assert.NoError(t, err, "Span reads the index partitions")
+			assert.Equal(t, cache.lends, []lookup{
+				{offset: placeOf(l.indexParts, lower), role: sstable.IndexBlock},
+				{offset: placeOf(l.indexParts, upper), role: sstable.IndexBlock},
+			}, "Span lends the index partitions of lower and upper with IndexBlock")
+		})
 	})
 
 	t.Run("MayContain", func(t *testing.T) {
@@ -950,6 +1047,19 @@ func TestReader(t *testing.T) {
 			l.seal()
 			_, err := openTable(t, l.data, sstable.ReaderOptions{}).MayContain(t.Context(), goldenKeys[55])
 			assert.ErrorIs(t, err, sstable.ErrCorrupt, "MayContain refuses the place of the partition")
+		})
+
+		t.Run("lends the filter partition of its key with FilterBlock", func(t *testing.T) {
+			t.Parallel()
+			l := newLayout(t, settings[5].opts, goldenTable())
+			cache := &roleCache{Cache: lendingCache(t, 4)}
+			r := openTable(t, l.data, sstable.ReaderOptions{Cache: cache, CacheID: 1})
+			key := []byte("key 030")
+			may, err := r.MayContain(t.Context(), key)
+			assert.NoError(t, err, "MayContain reads the filter partition")
+			assert.True(t, may, "MayContain reports true for a key of the table")
+			assert.Equal(t, cache.lends, []lookup{{offset: placeOf(l.filterParts, key), role: sstable.FilterBlock}},
+				"MayContain lends the filter partition of the key with FilterBlock")
 		})
 	})
 
@@ -1123,6 +1233,47 @@ func TestReader(t *testing.T) {
 			assert.True(t, ok, "the second Get finds the entry")
 			assert.Equal(t, cache.adds, 1, "the second Get does not add a block")
 			assert.Equal(t, cache.call, any(readGet), "the cache receives the context of the second Get")
+		})
+
+		t.Run("lends each block of the key with the role of the block", func(t *testing.T) {
+			t.Parallel()
+			l := newLayout(t, settings[5].opts, goldenTable())
+			cache := &roleCache{Cache: lendingCache(t, 4)}
+			r := openTable(t, l.data, sstable.ReaderOptions{Cache: cache, CacheID: 1})
+			key := []byte("key 030")
+			_, _, ok, err := r.Get(t.Context(), key, 2, nil)
+			assert.NoError(t, err, "Get reads the table")
+			assert.True(t, ok, "Get finds the entry")
+			assert.Equal(t, cache.lends, []lookup{
+				{offset: placeOf(l.filterParts, key), role: sstable.FilterBlock},
+				{offset: placeOf(l.indexParts, key), role: sstable.IndexBlock},
+				{offset: placeOf(l.blocks, key), role: sstable.DataBlock},
+			}, "Get lends the filter partition, the index partition and the data block of the key with their roles")
+		})
+
+		t.Run("adds each block that misses with the role of its Lend", func(t *testing.T) {
+			t.Parallel()
+			cache := &roleCache{Cache: lendingCache(t, 4)}
+			data := writeTable(t, settings[5].opts, goldenTable())
+			r := openTable(t, data, sstable.ReaderOptions{Cache: cache, CacheID: 1})
+			_, _, ok, err := r.Get(t.Context(), []byte("key 030"), 2, nil)
+			assert.NoError(t, err, "Get reads the table")
+			assert.True(t, ok, "Get finds the entry")
+			assert.Length(t, cache.lends, 3, "Get lends the filter partition, the index partition and the data block")
+			assert.Equal(t, cache.adds, cache.lends, "Get adds each block that missed with the role of its Lend")
+		})
+
+		t.Run("lends the data block of a table without partitions with DataBlock", func(t *testing.T) {
+			t.Parallel()
+			l := newLayout(t, settings[1].opts, goldenTable())
+			cache := &roleCache{Cache: lendingCache(t, 4)}
+			r := openTable(t, l.data, sstable.ReaderOptions{Cache: cache, CacheID: 1})
+			key := []byte("key 030")
+			_, _, ok, err := r.Get(t.Context(), key, 2, nil)
+			assert.NoError(t, err, "Get reads the table")
+			assert.True(t, ok, "Get finds the entry")
+			assert.Equal(t, cache.lends, []lookup{{offset: placeOf(l.blocks, key), role: sstable.DataBlock}},
+				"Get lends the data block alone, because the index block and the filter block are in memory")
 		})
 
 		t.Run("returns the error of the context of its read", func(t *testing.T) {
@@ -1692,6 +1843,16 @@ func spanOf(l *layout, lower, upper []byte) sstable.Span {
 	end := l.blocks[last].off + l.blocks[last].n + trailerLen
 
 	return sstable.Span{Blocks: last - first + 1, Bytes: int64(end - l.blocks[first].off)}
+}
+
+// placeOf returns the offset of the first of places whose last key is at or
+// after key. Of the data blocks, the index partitions or the filter
+// partitions of a table, it is the place that a lookup of key at its highest
+// sequence reads.
+func placeOf(places []place, key []byte) uint64 {
+	i := slices.IndexFunc(places, func(p place) bool { return bytes.Compare(p.last, key) >= 0 })
+
+	return uint64(places[i].off)
 }
 
 // openChanged writes a golden table under a drawn setting and sets up to

@@ -46,12 +46,12 @@ var blocks = func() (pools [blockClasses]*pool.Pool[*Block]) {
 	return pools
 }()
 
-// Block is the bytes of a decoded data block in a buffer from a pool, which
-// a [LendingCache] shares with the readers of its table. A Block counts its
-// references. The cache keeps one while the block is in the cache, and each
-// cursor or [Reader.Get] keeps one while it reads the block. The last
-// [Block.Release] returns the buffer to its pool, which lends it again for
-// another block.
+// Block is the bytes of a decoded data block or partition in a buffer from a
+// pool, which a [LendingCache] shares with the readers of its table. A Block
+// counts its references. The cache keeps one while the block is in the
+// cache, and each cursor or [Reader.Get] keeps one while it reads the block.
+// The last [Block.Release] returns the buffer to its pool, which lends it
+// again for another block.
 //
 // The bytes of a Block do not change while a reference remains, so a holder
 // reads them without a lock. The holder of a new Block writes its bytes

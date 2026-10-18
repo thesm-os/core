@@ -6,6 +6,7 @@ package blockcache
 import (
 	"bytes"
 	"context"
+	"sync/atomic"
 	"time"
 
 	"go.thesmos.sh/core/cache"
@@ -22,7 +23,10 @@ type Config struct {
 // Cache is a [sstable.LendingCache] over a [cache.Cache] of blocks. It costs
 // a block by its footprint. It releases its reference to a block once the
 // block leaves the cache.Cache, which passes a pinned block on at its last
-// Unpin. The zero Cache is not usable. [New] returns a Cache.
+// Unpin. It keeps a block by the identity of its table and its offset, and
+// ignores the role of the block. [Cache.NewID] issues the identities of the
+// tables that share the cache. The zero Cache is not usable. [New] returns a
+// Cache.
 //
 // # Concurrency
 //
@@ -30,11 +34,15 @@ type Config struct {
 //
 // # Allocation contract
 //
-// Lend does not allocate. AddBlock and Add allocate the entry of the
+// Lend and NewID do not allocate. AddBlock and Add allocate the entry of the
 // cache.Cache, and Get allocates the copy that it returns.
 type Cache struct {
 	// blocks keeps the blocks by their table and their offset.
 	blocks *cache.Cache[key, *sstable.Block]
+
+	// ids is the last identity that NewID returned, or 0 before the first
+	// call.
+	ids atomic.Uint64
 }
 
 var _ sstable.LendingCache = (*Cache)(nil)
@@ -64,16 +72,32 @@ func New(cfg Config) (*Cache, error) {
 	return &Cache{blocks: blocks}, nil
 }
 
-// Lend returns the block of the table id at offset with a reference that
-// the caller releases, and reports whether the cache contains the block. It
-// pins the entry of the block while it takes the reference. A block that
-// leaves the cache during the Lend then keeps its bytes until the caller
-// releases it. A Lend counts as a hit of the block.
+// NewID returns an identity for a table that reads through the cache. A
+// consumer passes it as the CacheID of the [sstable.ReaderOptions] of the
+// table. NewID returns 1 at its first call and one more at each call after
+// it, so it never returns an identity twice. It never returns 0, so none of
+// its identities equals the CacheID of a Reader that sets none. NewID does
+// not reuse the identity of a table whose blocks left the cache, and each
+// cache counts its identities apart from every other cache.
 //
 // # Allocation contract
 //
 // Zero alloc.
-func (c *Cache) Lend(_ context.Context, id, offset uint64) (*sstable.Block, bool) {
+func (c *Cache) NewID() uint64 {
+	return c.ids.Add(1)
+}
+
+// Lend returns the block of the table id at offset with a reference that
+// the caller releases, and reports whether the cache contains the block. It
+// ignores the role of the block. It pins the entry of the block while it
+// takes the reference. A block that leaves the cache during the Lend then
+// keeps its bytes until the caller releases it. A Lend counts as a hit of the
+// block.
+//
+// # Allocation contract
+//
+// Zero alloc.
+func (c *Cache) Lend(_ context.Context, id, offset uint64, _ sstable.BlockRole) (*sstable.Block, bool) {
 	p, ok := c.blocks.Pin(key{id, offset})
 	if !ok {
 		return nil, false
@@ -86,49 +110,48 @@ func (c *Cache) Lend(_ context.Context, id, offset uint64) (*sstable.Block, bool
 }
 
 // AddBlock adds b as the block of the table id at offset, in place of an
-// earlier block of that place. The cache takes a reference to b, and
-// releases it once b leaves the cache. A block whose footprint exceeds the
-// capacity leaves at once.
+// earlier block of that place. It ignores the role of the block. The cache
+// takes a reference to b, and releases it once b leaves the cache. A block
+// whose footprint exceeds the capacity leaves at once.
 //
 // # Allocation contract
 //
 // One allocation for the entry of the cache.Cache.
-func (c *Cache) AddBlock(_ context.Context, id, offset uint64, b *sstable.Block) {
+func (c *Cache) AddBlock(_ context.Context, id, offset uint64, _ sstable.BlockRole, b *sstable.Block) {
 	b.Retain()
 	c.blocks.Set(key{id, offset}, b, time.Time{})
 }
 
 // Get returns a copy of the block of the table id at offset, and reports
-// whether the cache contains the block. A Reader of package sstable calls
-// Lend in its place.
+// whether the cache contains the block. It pins the entry of the block while
+// it copies the bytes. A Reader of package sstable calls Lend in its place.
 //
 // # Allocation contract
 //
 // One allocation for the copy.
-func (c *Cache) Get(ctx context.Context, id, offset uint64) ([]byte, bool) {
-	b, ok := c.Lend(ctx, id, offset)
+func (c *Cache) Get(_ context.Context, id, offset uint64) ([]byte, bool) {
+	p, ok := c.blocks.Pin(key{id, offset})
 	if !ok {
 		return nil, false
 	}
-	block := bytes.Clone(b.Bytes())
-	b.Release()
+	block := bytes.Clone(p.Value().Bytes())
+	p.Unpin()
 
 	return block, true
 }
 
 // Add adds a copy of block as the block of the table id at offset, in a
-// Block from the pool of package sstable. A Reader of package sstable calls
-// AddBlock in its place.
+// Block from the pool of package sstable. The cache takes the reference of
+// the new Block. A Reader of package sstable calls AddBlock in its place.
 //
 // # Allocation contract
 //
 // One allocation for the entry of the cache.Cache, and the buffer of the
 // Block when the pool of its class is empty.
-func (c *Cache) Add(ctx context.Context, id, offset uint64, block []byte) {
+func (c *Cache) Add(_ context.Context, id, offset uint64, block []byte) {
 	b := sstable.NewBlock(len(block))
 	copy(b.Bytes(), block)
-	c.AddBlock(ctx, id, offset, b)
-	b.Release()
+	c.blocks.Set(key{id, offset}, b, time.Time{})
 }
 
 // Capacity returns the Capacity of the Config of the cache.
