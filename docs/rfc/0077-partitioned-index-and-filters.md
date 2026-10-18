@@ -95,7 +95,7 @@ blocks to hit their target size much more accurately".
 | `WriterOptions.PartitionSize` | The size of a partition, or 0 for format version 1 |
 | `Writer` | Cuts index partitions and filter partitions, and writes them and their two top-level indexes after the data blocks |
 | `filter.FuseSize` | The length of the encoding of a filter of n hashes, so the Writer cuts a filter partition before it passes `PartitionSize` |
-| `Reader` | Keeps the two top-level indexes in memory, and reads the partitions through its cache |
+| `Reader` | Keeps the two top-level indexes in memory, and reads the partitions through its cache with the role of each partition |
 | `Iter` | Keeps a reference to the index partition of its data block, beside the data block |
 | `Reader.MayContain`, `Reader.Span` | Read the partitions of their keys under a context |
 
@@ -189,12 +189,12 @@ sequenceDiagram
     participant C as BlockCache
     participant F as File
     G->>M: search the top-level index of the filter for key
-    G->>C: Lend the filter partition
+    G->>C: Lend the filter partition as FilterBlock
     C-->>G: the partition, or a miss
-    G->>F: on a miss, ReadAt of the partition, then AddBlock
+    G->>F: on a miss, ReadAt of the partition, then AddBlock as FilterBlock
     Note over G: filter.ParseFuse and MayContain of the hash of key
     G->>M: search the top-level index of the index for key and seq
-    G->>C: Lend the index partition, then the data block
+    G->>C: Lend the index partition as IndexBlock, then the data block as DataBlock
 ```
 
 - `Open` reads the footer and the two top-level indexes, checks their
@@ -215,6 +215,10 @@ sequenceDiagram
   under the identity of the table and its offset, as it keeps a data block.
   A Reader lends it from a `LendingCache`, and fills the cache on a miss. A
   cursor with `NoFill` does not add a partition.
+- A Reader passes `IndexBlock` for an index partition and `FilterBlock` for
+  a filter partition to `Lend` and `AddBlock` of a `LendingCache`. A cache
+  then counts the lookups of the partitions apart from the lookups of the
+  data blocks. RFC-0075 designs the roles.
 - A Reader without a cache reads each partition from the File for each read
   that needs it.
 

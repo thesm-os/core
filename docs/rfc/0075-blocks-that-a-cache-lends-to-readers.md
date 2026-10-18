@@ -22,14 +22,18 @@ produces-adr: tbd
 
 A `sstable.Reader` adds a new copy of each block that misses its
 `BlockCache`, so every miss allocates a buffer of the size of the block. We
-propose three additions:
+propose four additions:
 
 - `sstable.Block` is a buffer of a decoded block that counts its
   references. Its last `Release` returns the buffer to a pool of size
   classes.
+- `sstable.BlockRole` is the role of a block in its table: a data block, an
+  index partition or a filter partition.
 - `sstable.LendingCache` is a `BlockCache` that keeps `Block`s and lends
-  each one to a reader with a reference.
+  each one to a reader with a reference. Each call receives the role of its
+  block.
 - Package `sstable/blockcache` implements `LendingCache` over `cache.Cache`.
+  It issues the identities of the tables that share a cache.
 
 A Reader whose cache implements `LendingCache` copies a block that misses
 into a pooled `Block` and adds that `Block`. Each cursor keeps a reference
@@ -72,6 +76,44 @@ when the last reader of a block is done with it.
 has left the cache fails (`cache/cache.go:195`). `Config.Evicted` receives
 an entry that left while pinned at its last `Unpin` (`cache/cache.go:38`).
 
+### A cache counts the roles of its blocks together
+
+A Reader of a table of format version 2 (RFC-0077) looks up its filter
+partitions, its index partitions and its data blocks through the same calls
+of its cache. A cache that counts its lookups then counts the three roles
+together.
+
+A probe wrote a table of 65,315,331 bytes of 100-byte values. The table has
+data blocks and partitions of 4 KiB. The probe read it through a
+`blockcache.Cache` of 8 MiB. It warmed the cache with 200,000 `Get`s of
+random keys and counted the lookups of 200,000 more:
+
+| Lookups | Hits | Misses | Hit ratio |
+|---|---|---|---|
+| Data blocks | 19,877 | 180,123 | 9.9% |
+| Partitions | 399,988 | 12 | 100.0% |
+| All | 419,865 | 180,135 | 70.0% |
+
+Each `Get` looks up a filter partition, an index partition and a data block.
+The partitions fit the cache, so the hit ratio of all lookups is 70%. Of the
+data blocks, 90% come from the file. A consumer can tell a data block from a
+partition by its offset only when it knows where the data blocks of each
+table end. It cannot tell an index partition from a filter partition by its
+offset.
+
+### Tables of one identity read the blocks of each other
+
+The readers of different tables that share a cache need different
+identities. A consumer has to keep a source of identities beside each
+cache. A Reader checks the CRC32C of each block that it reads from its File,
+and not of a block that the cache returns.
+
+A probe wrote two tables of one key `k`. The value of `k` is `a` in the
+first table and `b` in the second. The probe opened both behind one
+`blockcache.Cache` under the `CacheID` 7. A `Get` of `k` from the first
+table filled the cache. A `Get` of `k` from the second table then returned
+`a` without an error.
+
 ## Detailed design
 
 ### Components
@@ -80,18 +122,20 @@ an entry that left while pinned at its last `Unpin` (`cache/cache.go:38`).
 |---|---|
 | `sstable.Block` | A buffer of the bytes of a decoded block, with a count of references |
 | `sstable.NewBlock` | A `Block` from a pool of size classes, with one reference |
-| `sstable.LendingCache` | A `BlockCache` that lends each `Block` with a reference, and takes a reference to each `Block` that it adds |
-| `Iter`, `Reader.Get` | Lend a block on a hit, copy a block that misses into a `Block`, and keep a reference to the block of the current entry |
-| `blockcache.Cache` | A `LendingCache` over `cache.Cache` that costs a block by its footprint and releases a block that leaves it |
+| `sstable.BlockRole` | The role of a block in its table: `DataBlock`, `IndexBlock` or `FilterBlock` |
+| `sstable.LendingCache` | A `BlockCache` that lends each `Block` with a reference, takes a reference to each `Block` that it adds, and receives the role of each block |
+| `Iter`, `Reader.Get` | Lend a block on a hit, copy a block that misses into a `Block`, keep a reference to the block of the current entry, and pass the role of each block |
+| `blockcache.Cache` | A `LendingCache` over `cache.Cache` that costs a block by its footprint, releases a block that leaves it and ignores the role of a block |
+| `blockcache.Cache.NewID` | The identities 1, 2, 3 and on of the tables that share a cache |
 
 ### API
 
 ```go
 // package sstable
 
-// Block is the bytes of a decoded data block in a buffer from a pool, which
-// a LendingCache shares with the readers of its table. A Block counts its
-// references. The last Release returns the buffer to its pool.
+// Block is the bytes of a decoded data block or partition in a buffer from a
+// pool, which a LendingCache shares with the readers of its table. A Block
+// counts its references. The last Release returns the buffer to its pool.
 type Block struct{ /* unexported */ }
 
 // NewBlock returns a Block of n bytes with one reference for the caller.
@@ -110,19 +154,35 @@ func (b *Block) Retain()
 // Release ends a reference.
 func (b *Block) Release()
 
+// BlockRole is the role of a block in its table. The zero BlockRole is not
+// valid.
+type BlockRole uint8
+
+const (
+	DataBlock   BlockRole = 1 // data
+	IndexBlock  BlockRole = 2 // index
+	FilterBlock BlockRole = 3 // filter
+)
+
+// Valid reports whether r is DataBlock, IndexBlock or FilterBlock.
+func (r BlockRole) Valid() bool
+
+// String returns "data", "index" or "filter".
+func (r BlockRole) String() string
+
 // LendingCache is a BlockCache that keeps each block in a Block and lends
-// it to the readers.
+// it to the readers. Each call receives the role of its block.
 type LendingCache interface {
 	BlockCache
 
 	// Lend returns the block of the table id at offset with a reference
 	// that the caller releases, and reports whether the cache contains it.
-	Lend(ctx context.Context, id, offset uint64) (*Block, bool)
+	Lend(ctx context.Context, id, offset uint64, role BlockRole) (*Block, bool)
 
 	// AddBlock adds b as the block of the table id at offset. The cache
 	// takes a reference of its own and releases it once the block leaves
 	// the cache.
-	AddBlock(ctx context.Context, id, offset uint64, b *Block)
+	AddBlock(ctx context.Context, id, offset uint64, role BlockRole, b *Block)
 }
 ```
 
@@ -139,8 +199,9 @@ type Config struct {
 type Cache struct{ /* unexported */ }
 
 func New(cfg Config) (*Cache, error)
-func (c *Cache) Lend(ctx context.Context, id, offset uint64) (*sstable.Block, bool)
-func (c *Cache) AddBlock(ctx context.Context, id, offset uint64, b *sstable.Block)
+func (c *Cache) NewID() uint64
+func (c *Cache) Lend(ctx context.Context, id, offset uint64, role sstable.BlockRole) (*sstable.Block, bool)
+func (c *Cache) AddBlock(ctx context.Context, id, offset uint64, role sstable.BlockRole, b *sstable.Block)
 func (c *Cache) Get(ctx context.Context, id, offset uint64) ([]byte, bool)
 func (c *Cache) Add(ctx context.Context, id, offset uint64, block []byte)
 func (c *Cache) Capacity() int64
@@ -148,7 +209,7 @@ func (c *Cache) Cost() int64
 func (c *Cache) Len() int
 ```
 
-A consumer passes the cache to each Reader as it passes a `BlockCache`:
+A consumer passes the cache and an identity of `NewID` to each Reader:
 
 ```go
 blocks, err := blockcache.New(blockcache.Config{Capacity: 4 << 20})
@@ -156,7 +217,7 @@ if err != nil {
 	return err
 }
 
-r, err := sstable.Open(ctx, file, size, sstable.ReaderOptions{Cache: blocks, CacheID: id})
+r, err := sstable.Open(ctx, file, size, sstable.ReaderOptions{Cache: blocks, CacheID: blocks.NewID()})
 ```
 
 ### References
@@ -169,11 +230,11 @@ sequenceDiagram
     participant I as Iter
     participant P as Pool of a class
     participant C as blockcache.Cache
-    I->>C: Lend(id, offset)
+    I->>C: Lend(id, offset, DataBlock)
     C-->>I: miss
     I->>P: NewBlock(n)
     P-->>I: Block with 1 reference
-    I->>C: AddBlock(id, offset, Block)
+    I->>C: AddBlock(id, offset, DataBlock, Block)
     Note over C: Retain: 2 references
     Note over I: Release at the next block: 1 reference
     Note over C: Evicted, then Release: 0 references
@@ -190,15 +251,41 @@ own reference in `Evicted`, and `cache.Cache` calls `Evicted` after the last
 - `Iter.load` first releases the reference of the cursor to the block of
   its last load, because each caller calls it with the data cursor on no
   entry.
-- Through a `LendingCache`, `load` calls `Lend`. On a miss it reads and
-  decodes the block into the buffers of the cursor as before, and copies
-  the block into a `Block` of `NewBlock(len(b))`. It calls `AddBlock` and
-  keeps the reference of the `Block`.
+- Through a `LendingCache`, `load` calls `Lend` with the role `DataBlock`.
+  On a miss it reads and decodes the block into the buffers of the cursor
+  as before, and copies the block into a `Block` of `NewBlock(len(b))`. It
+  calls `AddBlock` and keeps the reference of the `Block`.
 - A cursor with `NoFill` lends the blocks that the cache contains, and adds
   no block.
 - `Close` releases the block of the cursor. `Reader.Get` appends the value
   to `dst` before it closes its cursor.
 - `Open` asserts the cache of the Reader to `LendingCache` once.
+
+### Roles
+
+- `Iter.fetch` passes the role of each block to `Lend` and `AddBlock`.
+  `load` fetches a data block as `DataBlock`. Of a table of format version
+  2, `loadPart` fetches an index partition as `IndexBlock`, and
+  `mayContain` fetches a filter partition as `FilterBlock`.
+- `AddBlock` receives the role of the `Lend` that missed.
+- A Reader of a table of format version 1 passes only `DataBlock`, because
+  it keeps the index block and the filter block in memory.
+- The block at one offset of a table always has the same role, so a cache
+  keeps a block by the identity of the table and the offset alone.
+  `blockcache.Cache` ignores the role. A consumer that counts the hits and
+  the misses of each role wraps the cache and counts in `Lend`.
+- The roles start at 1, so the zero `BlockRole` is not valid. `String`
+  returns `data`, `index` and `filter` as the values of an attribute of
+  telemetry.
+
+### Identities
+
+- `NewID` adds 1 to an atomic counter of the cache and returns the sum. The
+  identities of a cache are 1, 2, 3 and on in the order of the calls.
+- `NewID` never returns 0. A Reader that sets no `CacheID` has the identity
+  0, so two such Readers still share an identity.
+- `NewID` does not issue an identity again after the cache evicts the blocks
+  of its table. A consumer takes an identity for each table that it opens.
 
 ### Size classes
 
@@ -225,6 +312,9 @@ of the package and serve every cache of the process.
 - A cursor has a reference to one `Block` at most, the block of its current
   entry.
 - A Reader with a `BlockCache` that is not a `LendingCache` reads as before.
+- Each `Lend` and each `AddBlock` receives the role of the block at its
+  offset.
+- `NewID` returns each identity of a cache once, and never 0.
 
 ### Bounds
 
@@ -257,6 +347,7 @@ measured the reads through no cache and through a cache of copies from
 | A garbage collection | The pools drop their idle buffers, and the next `NewBlock` of each class allocates |
 | A block larger than 16 MiB | A buffer of its own, which the garbage collector frees |
 | A block whose footprint exceeds the capacity | `cache.Cache` passes it to `Evicted` at once, which releases the reference of the cache |
+| Two Readers of different tables under one identity | Each reads the blocks of the other as valid data, because a Reader does not check a block of the cache. An identity of `NewID` for each table prevents it |
 
 ### Allocation contract
 
@@ -264,7 +355,8 @@ measured the reads through no cache and through a cache of copies from
 |---|---|
 | `NewBlock` | 0 when the pool of the class has a buffer, else the `Block` and its buffer |
 | `Block.Bytes`, `Footprint`, `Retain`, `Release` | 0 |
-| `blockcache.Cache.Lend` | 0 |
+| `BlockRole.String` of a valid role | 0 |
+| `blockcache.Cache.NewID`, `Lend` | 0 |
 | `blockcache.Cache.AddBlock`, `Add` | The entry of `cache.Cache` |
 | `blockcache.Cache.Get` | The copy |
 | A miss of a cursor or of `Reader.Get` through `blockcache.Cache` | The entry of `cache.Cache` |
@@ -283,7 +375,11 @@ measured the reads through no cache and through a cache of copies from
 | 8 | A `Get` of a block that a `blockcache.Cache` contains does not allocate |
 | 9 | A `Get` that misses a `blockcache.Cache` allocates one object, and a scan allocates no block |
 | 10 | A block that a `blockcache.Cache` evicts after a `Get` of the block returns to its pool |
-| 11 | The suites pass under the race detector, cover every statement, and dokimi-mutate-go detects every mutant |
+| 11 | `Get`, `MayContain` and `Span` lend each block with its role, and `AddBlock` receives the role of the `Lend` that missed |
+| 12 | `BlockRole.Valid` accepts the three roles alone, and `String` returns the spelling of each |
+| 13 | `blockcache.Cache` lends a block whatever role `AddBlock` received |
+| 14 | `NewID` returns 1 at its first call, and concurrent calls return 1, 2, 3 and on in an order that is linearizable |
+| 15 | The suites pass under the race detector, cover every statement, and dokimi-mutate-go detects every mutant |
 
 ## Alternatives considered
 
@@ -344,11 +440,42 @@ that a fill adds to a miss, the time of the walk that fills a
 into the `Block` would change the read ahead and the check of the trailer,
 which read into the buffers of the cursor.
 
+### G. The role from the offset
+
+A consumer would take the role of a block from its offset, because the data
+blocks of a table end at its first partition.
+
+**Why not:** the consumer would need the end of the data blocks of every
+table in the cache. It also cannot tell an index partition from a filter
+partition by its offset.
+
+### H. Identities that `Open` issues
+
+`Open` would take an identity from a counter of package `sstable` for each
+Reader with a `CacheID` of 0. A Reader without a `CacheID` could then not
+collide with another.
+
+**Why not:** a `CacheID` of 0 is a valid identity of a released field, and
+the change would give it another meaning. The counter would also add state
+to package `sstable`.
+
+### I. `NewID` in `LendingCache`
+
+The interface would declare `NewID`, so every lending cache would issue
+identities.
+
+**Why not:** a Reader never calls `NewID`, and core declares only the
+methods of an interface that its consumer calls. A consumer that wraps a
+`blockcache.Cache` keeps the method through the embedded cache.
+
 ## Drawbacks
 
-- `sstable` adds 1 type with 4 methods, 1 function and 1 interface of 2
-  methods. `blockcache` adds a package of 2 types, 1 function and 7
-  methods.
+- `sstable` adds 2 types with 6 methods, 3 constants, 1 function and 1
+  interface of 2 methods. `blockcache` adds a package of 2 types, 1
+  function and 8 methods.
+- A cache that does not count roles receives an argument that it ignores.
+- Readers that set no `CacheID` still read the blocks of each other, so a
+  consumer must take the identity of each table from `NewID`.
 - A `LendingCache` implements `Get` and `Add` of `BlockCache` too, which a
   Reader does not call. `blockcache.Cache` implements them with copies.
 - A buffer exceeds its block by up to an eighth, and the cache costs the
@@ -371,11 +498,26 @@ None.
 
 - Issue 76 of thesm-os/core, the request and the measurements of a mixed
   workload.
+- Issues 80 and 81 of thesm-os/core, the requests for the role of each
+  block and for the identities of the tables, with their probe.
 - Pebble, `internal/cache/value.go` and `internal/cache/cache.go` at
   a7b8321, a block cache of reference-counted values:
   <https://github.com/cockroachdb/pebble/tree/a7b8321871e3e3c19be21eaf42a6aaa7e2d04f23/internal/cache>.
 - RocksDB, `Cache::Lookup` and `Cache::Release`:
   <https://github.com/facebook/rocksdb/blob/main/include/rocksdb/advanced_cache.h>.
+- RocksDB at 54732b0, `CacheEntryRole`, the role of each entry of its block
+  cache:
+  <https://github.com/facebook/rocksdb/blob/54732b0c8f6f8af34f973d7fae0a234022fcf1fa/include/rocksdb/cache.h#L55-L67>.
+  RocksDB documents the field `role` of `CacheItemHelper` as the
+  "classification of the entry for monitoring purposes in block cache":
+  <https://github.com/facebook/rocksdb/blob/54732b0c8f6f8af34f973d7fae0a234022fcf1fa/include/rocksdb/advanced_cache.h#L129-L149>.
+- RocksDB at 54732b0, the tickers of the block cache. `BLOCK_CACHE_MISS` is
+  the sum of the misses of the index, filter and data blocks:
+  <https://github.com/facebook/rocksdb/blob/54732b0c8f6f8af34f973d7fae0a234022fcf1fa/include/rocksdb/statistics.h#L33-L65>.
+- RocksDB at 54732b0, `Cache::NewId`, the identities of the clients of one
+  cache:
+  <https://github.com/facebook/rocksdb/blob/54732b0c8f6f8af34f973d7fae0a234022fcf1fa/include/rocksdb/advanced_cache.h#L339-L343>.
 - RFC-0062, sorted tables and memtables, the section on `BlockCache`.
 - ADR-0065, reads and writes of a table take a context.
+- RFC-0077, partitioned index and filters of a table.
 - `sstable/iter.go`, `Iter.load`, and `cache/cache.go:38`, `:60` and `:195`.
