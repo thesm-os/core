@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.30.0
+
+### Minor Changes
+
+- 21ef05e: Add `arena.NewWithBuffer` and `arena.NewBumpWithArray` to build an `Arena` and a `Bump` over memory of the caller.
+- 3649221: Add package `sstable/blockcache` with a `LendingCache` over `cache.Cache` that returns the buffer of each block that it evicts to the pool of `sstable`.
+- f161738: Add `blockcache.Cache.NewID` to issue the identities of the tables that share a cache.
+- c3471ef: Add `cache.Cache.Capacity` to return the capacity of the `Config` of a cache.
+- 7462ce8: Add `filter.FuseSize` to return the length of the encoding of a fuse filter before its build.
+- ca78e47: Add `sstable.Block`, `sstable.NewBlock` and `sstable.LendingCache` so that a `Reader` fills a block cache without allocating a block for each miss.
+- 57246bf: Add `skiplist.Config.Data`, `Config.Nodes` and `skiplist.NodeWords` to build a `List` over memory of the caller.
+- f161738: Add `sstable.BlockRole` to pass the role of each block to `sstable.LendingCache.Lend` and `AddBlock`.
+- 1edcae5: Add `sstable.WriterOptions.PartitionSize` to cut the index and the filter of a table into partitions that a `Reader` reads through its block cache.
+- 1edcae5: **Breaking:** Change `sstable.Reader.MayContain` and `sstable.Reader.Span` to take a `context.Context` and return an error.
+
 ## 0.29.0
 
 ### Minor Changes
