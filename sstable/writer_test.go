@@ -12,10 +12,12 @@ import (
 	"flag"
 	"io"
 	"math"
+	"math/rand/v2"
 	"os"
 	"os/exec"
 	"reflect"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -75,6 +77,78 @@ var goldenFiles = []struct {
 	{name: settings[5].name, file: "partitions-filter.sst", opts: settings[5].opts},
 	{name: settings[6].name, file: "compressed-partitions-filter.sst", opts: settings[6].opts},
 }
+
+// refusedOptions are options that NewWriter and MaxSize refuse.
+var refusedOptions = []struct {
+	name string
+	give sstable.WriterOptions
+}{
+	{name: "returns ErrOptions for a negative BlockSize", give: sstable.WriterOptions{BlockSize: -1}},
+	{
+		name: "returns ErrOptions for a BlockSize above 2^32 - 1",
+		give: sstable.WriterOptions{BlockSize: math.MaxUint32 + 1},
+	},
+	{name: "returns ErrOptions for a negative RestartInterval", give: sstable.WriterOptions{RestartInterval: -1}},
+	{name: "returns ErrOptions for an unknown Compression", give: sstable.WriterOptions{Compression: 2}},
+	{name: "returns ErrOptions for 3 bits of filter", give: sstable.WriterOptions{FilterBits: 3}},
+	{name: "returns ErrOptions for 17 bits of filter", give: sstable.WriterOptions{FilterBits: 17}},
+	{name: "returns ErrOptions for negative bits of filter", give: sstable.WriterOptions{FilterBits: -8}},
+	{name: "returns ErrOptions for a negative MaxRetained", give: sstable.WriterOptions{MaxRetained: -1}},
+	{name: "returns ErrOptions for a negative PartitionSize", give: sstable.WriterOptions{PartitionSize: -1}},
+	{
+		name: "returns ErrOptions for a PartitionSize above 2^32 - 1",
+		give: sstable.WriterOptions{PartitionSize: math.MaxUint32 + 1},
+	},
+}
+
+// pinned are the entries of the tables whose bytes MaxSize counts exactly.
+// Their keys of 120 and 192 bytes share no prefix, and their internal keys
+// take 128 and 200 bytes. Their values take 128 bytes. Every varint of their
+// tables then takes as many bytes as the bound counts for it.
+var pinned = []entry{
+	{key: bytes.Repeat([]byte{'a'}, 120), seq: 1, value: bytes.Repeat([]byte{'x'}, 128)},
+	{key: bytes.Repeat([]byte{'b'}, 120), seq: 1, value: bytes.Repeat([]byte{'y'}, 128)},
+	{key: bytes.Repeat([]byte{'c'}, 192), seq: 1, value: bytes.Repeat([]byte{'z'}, 128)},
+}
+
+// writerOptions generates the options of the tables of the checks of
+// MaxSize: both codecs, filters of 0, 4, 8 and 16 bits, and both format
+// versions, with the defaults of BlockSize and RestartInterval included.
+var writerOptions = prop.Composite(func(c *prop.Case) sstable.WriterOptions {
+	return sstable.WriterOptions{
+		BlockSize:       c.Draw(prop.Integer(0, 512), "block size"),
+		RestartInterval: c.Draw(prop.Integer(0, 8), "restart interval"),
+		Compression:     c.Draw(prop.SampledFrom(sstable.NoCompression, sstable.SnappyCompression), "compression"),
+		FilterBits:      c.Draw(prop.SampledFrom(0, 4, 8, 16), "filter bits"),
+		PartitionSize:   c.Draw(prop.SampledFrom(0, 1, 32, partitionBytes, 408, 4096), "partition size"),
+	}
+})
+
+// sizedEntries generates runs of up to 40 entries in the order of Compare.
+// Half of their keys come from keys, so a run repeats a key with another
+// sequence. The other keys and every value have up to 9,000 random bytes, so
+// a long key fills a data block and an index partition alone, and the
+// lengths take varints of one and two bytes.
+var sizedEntries = prop.Composite(func(c *prop.Case) []entry {
+	length := prop.OneOf(prop.Integer(0, 20), prop.Integer(100, 300), prop.Integer(4000, 9000))
+	seed := prop.Integer[uint64](0, math.MaxUint64)
+	n := c.Draw(prop.Integer(0, 40), "entries")
+	es := make([]entry, 0, n)
+	for range n {
+		key := c.Draw(prop.SampledFrom(keys...), "key")
+		if c.Draw(prop.Boolean(), "random key") {
+			key = randomBytes(c.Draw(length, "key length"), c.Draw(seed, "key seed"))
+		}
+		es = append(es, entry{
+			key:   key,
+			seq:   c.Draw(prop.Integer[uint64](0, 5), "seq"),
+			value: randomBytes(c.Draw(length, "value length"), c.Draw(seed, "value seed")),
+		})
+	}
+	slices.SortFunc(es, func(a, b entry) int { return sstable.Compare(a.key, a.seq, b.key, b.seq) })
+
+	return slices.CompactFunc(es, func(a, b entry) bool { return bytes.Equal(a.key, b.key) && a.seq == b.seq })
+})
 
 // failingSink is a Sink that accepts the first n bytes of its writes and
 // fails every write after them with errWrite.
@@ -157,37 +231,164 @@ func TestWriter(t *testing.T) {
 		})
 	})
 
+	t.Run("WriterOptions", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("MaxSize", func(t *testing.T) {
+			t.Parallel()
+
+			t.Run("returns at least the size of the table of the counts", func(t *testing.T) {
+				t.Parallel()
+				prop.ForAll(t, "a table takes at most the bytes of MaxSize of its counts", func(c *prop.Case) {
+					opts := c.Draw(writerOptions, "options")
+					es := c.Draw(sizedEntries, "entries")
+					bound, err := opts.MaxSize(countsOf(es))
+					assert.NoError(c, err, "MaxSize accepts the options")
+					assert.InRange(c, len(writeTable(c, opts, es)), 0, float64(bound),
+						"the table takes at most the bytes of MaxSize")
+				})
+			})
+
+			t.Run("exceeds a table of small random entries by at most a quarter", func(t *testing.T) {
+				t.Parallel()
+				// Entries of at most 64 bytes of key and 64 bytes of value fill blocks
+				// and partitions of 2 KiB or more to within one entry of their size.
+				prop.ForAll(t, "MaxSize of a table of small random entries is close to its size", func(c *prop.Case) {
+					opts := c.Draw(writerOptions, "options")
+					opts.BlockSize = c.Draw(prop.SampledFrom(0, 2048, 4096), "large block size")
+					opts.PartitionSize = c.Draw(prop.SampledFrom(0, 2048, 4096), "large partition size")
+					keyLen := c.Draw(prop.Integer(1, 64), "key length")
+					valueLen := c.Draw(prop.Integer(0, 64), "value length")
+					seed := c.Draw(prop.Integer[uint64](0, math.MaxUint64), "seed")
+					n := c.Draw(prop.Integer(0, 200), "entries")
+					es := make([]entry, 0, n)
+					for i := range uint64(n) {
+						key, value := randomBytes(keyLen, seed+i), randomBytes(valueLen, ^(seed+i))
+						es = append(es, entry{key: key, seq: 1, value: value})
+					}
+					slices.SortFunc(es, func(a, b entry) int { return bytes.Compare(a.key, b.key) })
+					es = slices.CompactFunc(es, func(a, b entry) bool { return bytes.Equal(a.key, b.key) })
+					size := len(writeTable(c, opts, es))
+					bound, err := opts.MaxSize(countsOf(es))
+					assert.NoError(c, err, "MaxSize accepts the options")
+					assert.InRange(c, bound, float64(size), float64(size+size/4+opts.PartitionSize+4096),
+						"MaxSize exceeds the table by at most a quarter of it, a partition and 4 KiB")
+				})
+			})
+
+			tests := []struct {
+				name        string
+				giveOpts    sstable.WriterOptions
+				giveEntries []entry
+			}{
+				{
+					name:        "returns the size of a table in blocks of one entry",
+					giveOpts:    sstable.WriterOptions{BlockSize: 1, RestartInterval: 1},
+					giveEntries: pinned,
+				},
+				{
+					name:        "returns the size of a table with a filter",
+					giveOpts:    sstable.WriterOptions{BlockSize: 1, RestartInterval: 1, FilterBits: 8},
+					giveEntries: pinned,
+				},
+				{
+					name:        "returns the size of a table in one block",
+					giveOpts:    sstable.WriterOptions{BlockSize: 4096, RestartInterval: 2},
+					giveEntries: pinned,
+				},
+				{
+					name:        "returns the size of a table in partitions of one entry",
+					giveOpts:    sstable.WriterOptions{BlockSize: 1, RestartInterval: 1, PartitionSize: 1},
+					giveEntries: pinned,
+				},
+				{
+					name: "returns the size of a table in partitions with a filter",
+					giveOpts: sstable.WriterOptions{
+						BlockSize: 1, RestartInterval: 1, FilterBits: 8, PartitionSize: 1,
+					},
+					giveEntries: pinned,
+				},
+				{
+					name: "returns the size of a table in one partition",
+					giveOpts: sstable.WriterOptions{
+						BlockSize: 4096, RestartInterval: 2, FilterBits: 8, PartitionSize: 4096,
+					},
+					giveEntries: pinned,
+				},
+				{name: "returns the size of a table of no entries", giveOpts: sstable.WriterOptions{}},
+				{
+					name:     "returns the size of a table of no entries with a filter",
+					giveOpts: sstable.WriterOptions{FilterBits: 8},
+				},
+				{
+					name:     "returns the size of a table of no entries in partitions",
+					giveOpts: sstable.WriterOptions{PartitionSize: 1},
+				},
+				{
+					name:     "returns the size of a table of no entries in partitions with a filter",
+					giveOpts: sstable.WriterOptions{FilterBits: 8, PartitionSize: 1},
+				},
+			}
+			for _, tt := range tests {
+				t.Run(tt.name, func(t *testing.T) {
+					t.Parallel()
+					bound, err := tt.giveOpts.MaxSize(countsOf(tt.giveEntries))
+					assert.NoError(t, err, "MaxSize accepts the options")
+					assert.Equal(t, bound, int64(len(writeTable(t, tt.giveOpts, tt.giveEntries))),
+						"MaxSize returns the size of the table")
+				})
+			}
+
+			saturated := []struct {
+				name           string
+				giveEntries    int64
+				giveKeyBytes   int64
+				giveValueBytes int64
+				giveLongest    int
+			}{
+				{name: "returns math.MaxInt64 for more entries than 2^48", giveEntries: 1<<48 + 1},
+				{name: "returns math.MaxInt64 for more key bytes than 2^48", giveKeyBytes: 1<<48 + 1},
+				{name: "returns math.MaxInt64 for more value bytes than 2^48", giveValueBytes: 1<<48 + 1},
+				{name: "returns math.MaxInt64 for a longest key above 2^48", giveLongest: math.MaxInt},
+			}
+			for _, tt := range saturated {
+				t.Run(tt.name, func(t *testing.T) {
+					t.Parallel()
+					opts := settings[5].opts
+					bound, err := opts.MaxSize(tt.giveEntries, tt.giveKeyBytes, tt.giveValueBytes, tt.giveLongest)
+					assert.NoError(t, err, "MaxSize accepts the options")
+					assert.Equal(t, bound, int64(math.MaxInt64), "MaxSize saturates")
+				})
+			}
+
+			t.Run("counts a negative count as 0", func(t *testing.T) {
+				t.Parallel()
+				bound, err := settings[5].opts.MaxSize(-1, -1, -1, -1)
+				assert.NoError(t, err, "MaxSize accepts the options")
+				assert.Equal(t, bound, int64(len(writeTable(t, settings[5].opts, nil))),
+					"MaxSize returns the size of a table of no entries")
+			})
+
+			for _, tt := range refusedOptions {
+				t.Run(tt.name, func(t *testing.T) {
+					t.Parallel()
+					_, err := tt.give.MaxSize(1, 1, 1, 1)
+					assert.ErrorIs(t, err, sstable.ErrOptions, "MaxSize refuses the options")
+				})
+			}
+
+			t.Run("returns filter.ErrTooLarge for a filter block of more fingerprints than 2^32", func(t *testing.T) {
+				t.Parallel()
+				_, err := sstable.WriterOptions{FilterBits: 8}.MaxSize(1<<40, 0, 0, 0)
+				assert.ErrorIs(t, err, filter.ErrTooLarge, "MaxSize refuses a filter that the filter package refuses")
+			})
+		})
+	})
+
 	t.Run("NewWriter", func(t *testing.T) {
 		t.Parallel()
 
-		tests := []struct {
-			name string
-			give sstable.WriterOptions
-		}{
-			{name: "returns ErrOptions for a negative BlockSize", give: sstable.WriterOptions{BlockSize: -1}},
-			{
-				name: "returns ErrOptions for a BlockSize above 2^32 - 1",
-				give: sstable.WriterOptions{BlockSize: math.MaxUint32 + 1},
-			},
-			{
-				name: "returns ErrOptions for a negative RestartInterval",
-				give: sstable.WriterOptions{RestartInterval: -1},
-			},
-			{name: "returns ErrOptions for an unknown Compression", give: sstable.WriterOptions{Compression: 2}},
-			{name: "returns ErrOptions for 3 bits of filter", give: sstable.WriterOptions{FilterBits: 3}},
-			{name: "returns ErrOptions for 17 bits of filter", give: sstable.WriterOptions{FilterBits: 17}},
-			{name: "returns ErrOptions for negative bits of filter", give: sstable.WriterOptions{FilterBits: -8}},
-			{name: "returns ErrOptions for a negative MaxRetained", give: sstable.WriterOptions{MaxRetained: -1}},
-			{
-				name: "returns ErrOptions for a negative PartitionSize",
-				give: sstable.WriterOptions{PartitionSize: -1},
-			},
-			{
-				name: "returns ErrOptions for a PartitionSize above 2^32 - 1",
-				give: sstable.WriterOptions{PartitionSize: math.MaxUint32 + 1},
-			},
-		}
-		for _, tt := range tests {
+		for _, tt := range refusedOptions {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
 				w, err := sstable.NewWriter(discardSink{}, tt.give)
@@ -480,9 +681,9 @@ func TestWriter(t *testing.T) {
 				})
 		})
 
-		t.Run("ends a filter partition at the most keys whose encoding fits PartitionSize", func(t *testing.T) {
+		t.Run("ends a filter partition at the most keys up to which every count fits", func(t *testing.T) {
 			t.Parallel()
-			prop.ForAll(t, "a filter partition before the last has as many keys as fit PartitionSize bytes",
+			prop.ForAll(t, "a full filter partition has the most keys up to which every count fits PartitionSize",
 				func(c *prop.Case) {
 					bits := c.Draw(prop.SampledFrom(4, 8, 16), "filter bits")
 					size := c.Draw(prop.Integer(1, 1024), "partition size")
@@ -507,15 +708,20 @@ func TestWriter(t *testing.T) {
 						n, err := filter.FuseSize(counts[j], bits)
 						assert.NoError(c, err, "FuseSize measures the encoding of the keys of a partition")
 						assert.Equal(c, p.n, n, "a filter partition is the encoding of its keys")
+						if counts[j] > 1 {
+							assert.InRange(c, p.n, 0, float64(size),
+								"a filter partition of more keys than one fits PartitionSize")
+						}
 					}
 					if len(counts) < 2 {
 						return
 					}
 					most := counts[0]
 					if most > 1 {
-						n, err := filter.FuseSize(most, bits)
-						assert.NoError(c, err, "FuseSize measures the encoding of the keys of a full partition")
-						assert.InRange(c, n, 0, float64(size), "the keys of a full partition fit PartitionSize")
+						n, err := filter.MaxFuseSize(most, bits)
+						assert.NoError(c, err, "MaxFuseSize measures the keys of a full partition")
+						assert.InRange(c, n, 0, float64(size),
+							"every count up to the keys of a full partition fits PartitionSize")
 					}
 					n, err := filter.FuseSize(most+1, bits)
 					assert.NoError(c, err, "FuseSize measures the encoding of one key more")
@@ -526,6 +732,23 @@ func TestWriter(t *testing.T) {
 					assert.InRange(c, counts[len(counts)-1], 1, float64(most),
 						"the last partition has at most as many keys as the first")
 				})
+		})
+
+		t.Run("keeps a filter partition of fewer keys than the first within PartitionSize", func(t *testing.T) {
+			t.Parallel()
+			// The encoding of 242 keys of 8 bits takes 466 bytes, and the
+			// encoding of 256 keys takes at most 408. The keys of the table are
+			// their numbers in 4 bytes.
+			const size, keys = 408, 498
+			es := make([]entry, 0, keys)
+			for i := range uint32(keys) {
+				es = append(es, entry{key: binary.BigEndian.AppendUint32(nil, i), seq: 1})
+			}
+			l := newLayout(t, sstable.WriterOptions{FilterBits: 8, PartitionSize: size}, es)
+			assert.InRange(t, len(l.filterParts), 2, math.Inf(1), "the keys fill more than one partition")
+			for _, p := range l.filterParts {
+				expect.InRange(t, p.n, 0, size, "every filter partition of more keys than one fits PartitionSize")
+			}
 		})
 
 		t.Run("releases the buffers of a Writer above MaxRetained", func(t *testing.T) {
@@ -989,6 +1212,30 @@ func writeSteps(c *prop.Case) {
 		},
 		Settle: func(c *prop.Case, _ struct{}) { closeTable(c) },
 	})
+}
+
+// countsOf returns the counts of es that WriterOptions.MaxSize takes: the
+// number of entries, the bytes of their keys and of their values, and the
+// length of the longest key.
+func countsOf(es []entry) (entries, keyBytes, valueBytes int64, longest int) {
+	for _, e := range es {
+		keyBytes += int64(len(e.key))
+		valueBytes += int64(len(e.value))
+		longest = max(longest, len(e.key))
+	}
+
+	return int64(len(es)), keyBytes, valueBytes, longest
+}
+
+// randomBytes returns n bytes of a PCG of seed, which Snappy does not shrink.
+func randomBytes(n int, seed uint64) []byte {
+	r := rand.New(rand.NewPCG(seed, seed))
+	b := make([]byte, n)
+	for i := range b {
+		b[i] = byte(r.Uint32())
+	}
+
+	return b
 }
 
 // filledWriter returns a Writer onto sink under opts, after an Add of every

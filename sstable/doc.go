@@ -41,6 +41,10 @@
 // [ErrCorrupt]. [Writer.Close] documents the layout in full, and the layout
 // does not change between releases.
 //
+// [WriterOptions.MaxSize] returns the most bytes of a table from the number of
+// its entries and the bytes of their keys and values, so a store reserves the
+// space of a table before the Writer writes it.
+//
 // # Partitions
 //
 // With the PartitionSize of WriterOptions, the Writer writes format version

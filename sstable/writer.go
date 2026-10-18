@@ -12,6 +12,7 @@ import (
 	"hash/crc32"
 	"io"
 	"math"
+	"math/bits"
 	"strconv"
 
 	"go.thesmos.sh/core/compress/snappy"
@@ -66,6 +67,11 @@ const (
 	// varint more: the number of data blocks up to the end of its partition.
 	maxTopOverhead = maxIndexOverhead + binary.MaxVarintLen64
 )
+
+// maxSizeCount is the largest count that [WriterOptions.MaxSize] bounds: 2^48
+// on a platform whose int has 64 bits, and the largest int otherwise. The
+// bound of smaller counts fits an int64.
+const maxSizeCount = min(1<<48, math.MaxInt)
 
 // castagnoli is the table of CRC32C. The blocks and the footer of a table
 // have CRC32C checksums.
@@ -141,11 +147,174 @@ type WriterOptions struct {
 	// PartitionSize is the size in bytes of an index partition and of a
 	// filter partition, in format version 2. The Writer ends an index
 	// partition with the entry that brings its entries to PartitionSize
-	// bytes or more. It ends a filter partition before the key that would
-	// take the encoding of the partition past PartitionSize bytes. With 0 the
-	// Writer writes one index block and one filter block, in format version
-	// 1. The largest PartitionSize is 2^32 - 1.
+	// bytes or more. It ends a filter partition at the most keys up to which
+	// the encoding of every count of keys takes at most PartitionSize bytes,
+	// so every filter partition of more than one key fits PartitionSize. With
+	// 0 the Writer writes one index block and one filter block, in format
+	// version 1. The largest PartitionSize is 2^32 - 1.
 	PartitionSize int
+}
+
+// MaxSize returns the most bytes of a table that a [Writer] under o writes
+// for at most entries entries. Their keys take at most keyBytes bytes in all
+// and at most longest bytes each, and their values take at most valueBytes
+// bytes in all. A store that reserves the space of a table before a flush
+// passes the counts of the entries that the flush writes.
+//
+// The bound takes every entry at a restart point with no shared prefix, and
+// every block without compression. It counts the most data blocks and
+// partitions that the bytes of their entries allow. The key of an entry of an
+// index or of a top-level index counts at most longest bytes, and the keys of
+// one kind of index count at most keyBytes bytes together. A filter takes the
+// bytes of the largest encoding of at most its count of keys.
+// [filter.MaxFuseSize] returns that length. A negative count counts as 0, and
+// a count above 2^48 makes MaxSize return math.MaxInt64.
+//
+// Error modes:
+//
+//   - Options that [NewWriter] refuses return [ErrOptions].
+//   - Entries whose filter block of format version 1 needs more than 2^32
+//     fingerprints return the error of [filter.MaxFuseSize].
+func (o WriterOptions) MaxSize(entries, keyBytes, valueBytes int64, longest int) (int64, error) {
+	if err := o.check(); err != nil {
+		return 0, err
+	}
+	n, keys, values, l := uint64(max(entries, 0)), uint64(max(keyBytes, 0)), uint64(max(valueBytes, 0)),
+		uint64(max(longest, 0))
+	if max(n, keys, values, l) > maxSizeCount {
+		return math.MaxInt64, nil
+	}
+
+	// keysOf returns the most bytes that the keys of c distinct entries
+	// take: c keys of the longest length, and at most the bytes of every key.
+	l = min(l, keys)
+	keysOf := func(c uint64) uint64 {
+		if l != 0 && c > keys/l {
+			return keys
+		}
+
+		return c * l
+	}
+	keys = keysOf(n)
+
+	// An entry has three varints, its internal key and its value. A varint
+	// of a length takes one byte, and at most one more for each 128 bytes of
+	// the length. A block ends after the entry that brings its entries to
+	// BlockSize bytes. It then has a uint32 for each restart point and one
+	// for their count, and a trailer.
+	ikeys := keys + seqLen*n
+	data := ikeys + values + 3*n + ikeys/128 + values/128
+	blocks := uint64(0)
+	if n != 0 {
+		//nolint:gosec // G115: check refuses a negative BlockSize
+		blocks = min(n, data/uint64(cmp.Or(o.BlockSize, defaultBlockSize))+1)
+	}
+	//nolint:gosec // G115: check refuses a negative RestartInterval
+	data += 4*min(n, n/uint64(cmp.Or(o.RestartInterval, defaultRestartInterval))+blocks) + (4+trailerLen)*blocks
+
+	// An entry of the index has the internal key of the last entry of its
+	// block, and the offset and the length of the block. The first block is
+	// at the offset 0, whose varint takes one byte. Each other offset and
+	// each length takes at most the bytes of the varint of the data blocks.
+	placeLen := uint64(bits.Len64(data|1)+6) / 7 //nolint:gosec // G115: Len64 returns at most 64
+	last := keysOf(blocks) + seqLen*blocks
+	index := last + last/128 + (3+crcLen+2*placeLen)*blocks
+	if blocks != 0 {
+		index -= placeLen - 1
+	}
+
+	// The filter of format version 1 is one block of the hashes of every
+	// key. Format version 2 cuts it into partitions of at most the keys of
+	// partitionKeys.
+	fparts, fkeys := uint64(1), n
+	filters, fpartLen := uint64(0), uint64(0)
+	if o.FilterBits != 0 {
+		if o.PartitionSize != 0 {
+			//nolint:gosec // G115: partitionKeys returns at least 1
+			fkeys = min(uint64(partitionKeys(o.PartitionSize, o.FilterBits)), max(n, 1))
+			fparts = (n + fkeys - 1) / fkeys
+		}
+		//nolint:gosec // G115: fkeys is at most maxSizeCount, an int
+		f, err := filter.MaxFuseSize(int(fkeys), o.FilterBits)
+		if err != nil {
+			return 0, err
+		}
+		largest := uint64(f) //nolint:gosec // G115: the length of an encoding is not negative
+		filters = fparts * (largest + trailerLen)
+		fpartLen = uint64(bits.Len64(largest|1)+6) / 7 //nolint:gosec // G115: Len64 returns at most 64
+	}
+
+	// The entries of the index have a uint32 each for their restart points.
+	size := data + filters + index + 4*blocks + footerLen
+	if o.PartitionSize == 0 {
+		// The index block has a uint32 for the count of its entries and a
+		// trailer.
+		//nolint:gosec // G115: the bound of counts up to maxSizeCount fits an int64
+		return int64(size + 4 + trailerLen), nil
+	}
+
+	// An index partition ends at the entry that brings its entries to
+	// PartitionSize bytes. It has a uint32 for the count of its entries and a
+	// trailer.
+	parts := uint64(0)
+	if blocks != 0 {
+		//nolint:gosec // G115: check refuses a negative PartitionSize
+		parts = min(blocks, index/uint64(o.PartitionSize)+1)
+	}
+	//nolint:gosec // G115: Len64 returns at most 64
+	partLen := uint64(bits.Len64((index+4*blocks+(4+trailerLen)*parts)|1)+6) / 7
+	size += (4 + trailerLen) * parts
+
+	// An entry of a top-level index has the internal key of the last entry
+	// of its partition, and the offset and the length of the partition. An
+	// entry of the index also has the number of data blocks up to the end of
+	// its partition. A top-level index has a uint32 for the restart point of
+	// each entry and one for their count, and a trailer.
+	partKeys := keysOf(parts) + seqLen*parts
+	blocksLen := uint64(bits.Len64(blocks|1)+6) / 7 //nolint:gosec // G115: Len64 returns at most 64
+	size += partKeys + partKeys/128 + (3+crcLen+4+partLen+blocksLen)*parts + 4 + trailerLen
+	tops := parts
+	if o.FilterBits != 0 {
+		filterKeys := keysOf(fparts) + seqLen*fparts
+		size += filterKeys + filterKeys/128 + (3+crcLen+4+fpartLen)*fparts + 4 + trailerLen
+		tops += fparts
+	}
+
+	// The offset of each partition is below the size of the table, so the
+	// varint of a bound of the size bounds the varint of each offset. The
+	// bound with varints of 10 bytes bounds the size, and so does each bound
+	// with the varints of the bound before it.
+	offLen := uint64(binary.MaxVarintLen64)
+	for {
+		total := size + offLen*tops
+		next := uint64(bits.Len64(total|1)+6) / 7 //nolint:gosec // G115: Len64 returns at most 64
+		if next == offLen {
+			//nolint:gosec // G115: the bound of counts up to maxSizeCount fits an int64
+			return int64(total), nil
+		}
+		offLen = next
+	}
+}
+
+// check returns [ErrOptions] for options that a Writer does not accept: a
+// negative BlockSize, RestartInterval, MaxRetained or PartitionSize, a
+// BlockSize or a PartitionSize above 2^32 - 1, a Compression that is not
+// valid, and a FilterBits that is neither 0 nor a width of fingerprints that
+// [filter.FuseSize] accepts.
+func (o WriterOptions) check() error {
+	if o.BlockSize < 0 || int64(o.BlockSize) > math.MaxUint32 || o.RestartInterval < 0 ||
+		!o.Compression.Valid() || o.MaxRetained < 0 ||
+		o.PartitionSize < 0 || int64(o.PartitionSize) > math.MaxUint32 {
+
+		return ErrOptions
+	}
+	if o.FilterBits != 0 {
+		if _, err := filter.FuseSize(0, o.FilterBits); err != nil {
+			return ErrOptions
+		}
+	}
+
+	return nil
 }
 
 // Summary describes the entries, the size and the range of keys and
@@ -303,7 +472,7 @@ type Writer struct {
 }
 
 // NewWriter returns a [Writer] that writes a table to w under opts. It
-// checks FilterBits with a [filter.FuseBuilder], so the Writer accepts every
+// checks FilterBits with [filter.FuseSize], so the Writer accepts every
 // width of fingerprints that the filter package builds.
 //
 // Error modes:
@@ -315,14 +484,10 @@ type Writer struct {
 //
 // # Allocation contract
 //
-// Allocates the Writer, and with a filter the encoding of an empty filter
-// that checks the width.
+// Allocates the Writer.
 func NewWriter(w Sink, opts WriterOptions) (*Writer, error) {
-	if opts.BlockSize < 0 || int64(opts.BlockSize) > math.MaxUint32 || opts.RestartInterval < 0 ||
-		!opts.Compression.Valid() || opts.MaxRetained < 0 ||
-		opts.PartitionSize < 0 || int64(opts.PartitionSize) > math.MaxUint32 {
-
-		return nil, ErrOptions
+	if err := opts.check(); err != nil {
+		return nil, err
 	}
 
 	wr := &Writer{
@@ -335,9 +500,6 @@ func NewWriter(w Sink, opts WriterOptions) (*Writer, error) {
 		partitionSize:   opts.PartitionSize,
 	}
 	if opts.FilterBits != 0 {
-		if _, err := wr.builder.Append(nil, nil, opts.FilterBits); err != nil {
-			return nil, ErrOptions
-		}
 		wr.filterKeys = partitionKeys(opts.PartitionSize, opts.FilterBits)
 	}
 
@@ -347,10 +509,10 @@ func NewWriter(w Sink, opts WriterOptions) (*Writer, error) {
 // Add appends the entry of key, seq and value to the table. The entry must
 // follow the previous entry in the order of [Compare]. Add copies key and
 // value. It writes the current data block to the Sink under ctx when the
-// entry ends the block. With a PartitionSize, a key that would take the
-// current filter partition past PartitionSize bytes ends the partition, and
-// a data block that brings the current index partition to PartitionSize
-// bytes ends that partition.
+// entry ends the block. With a PartitionSize, a distinct key after the most
+// keys of a filter partition ends the partition, and a data block that
+// brings the current index partition to PartitionSize bytes ends that
+// partition.
 //
 // Error modes:
 //
@@ -855,18 +1017,18 @@ func appendRecord(dst, key []byte, n uint64, sum uint32) []byte {
 }
 
 // partitionKeys returns the number of distinct keys at which the Writer ends
-// a filter partition of size bytes, for fingerprints of the width bits. The
-// encoding of that count n takes at most size bytes, and n+1 keys take more.
-// One key that takes more than size bytes alone makes the count 1. The
-// length of an encoding grows in steps that can fall back between two
-// counts, so partitionKeys searches in halves for a count at the bound. A
-// filter has at least one fingerprint for each key, so size*8/bits + 1 keys
-// do not fit.
+// a filter partition of size bytes, for fingerprints of the width bits: the
+// most keys n for which the encoding of every count up to n takes at most
+// size bytes. The last partition of a table can have fewer keys than n, and
+// it fits size bytes too. One key that takes more than size bytes alone
+// makes the count 1. [filter.MaxFuseSize] never falls as its count grows, so
+// partitionKeys searches it in halves. A filter has at least one fingerprint
+// for each key, so size*8/bits + 1 keys do not fit.
 func partitionKeys(size, bits int) int {
 	lo, hi := 1, int(min(int64(size)*8/int64(bits)+1, math.MaxInt32))
 	for hi-lo > 1 {
 		mid := lo + (hi-lo)/2
-		if n, err := filter.FuseSize(mid, bits); err != nil || n > size {
+		if n, err := filter.MaxFuseSize(mid, bits); err != nil || n > size {
 			hi = mid
 		} else {
 			lo = mid
