@@ -19,12 +19,12 @@ var (
 	ErrBitsPerKey = errs.WithClass(errors.New("filter: bits per key out of range"), errs.Invalid)
 
 	// ErrTooLarge is returned by [NewBloom] for a filter of more than 2^32
-	// blocks. [FuseBuilder.Append] returns it for a set of hashes whose fuse
-	// filter has more than 2^32 fingerprints.
+	// blocks. [FuseBuilder.Append] and [FuseSize] return it for a set of
+	// hashes whose fuse filter has more than 2^32 fingerprints.
 	ErrTooLarge = errs.WithClass(errors.New("filter: filter too large"), errs.Invalid)
 
-	// ErrFingerprintBits is returned by [FuseBuilder.Append] for a width of
-	// fingerprints other than 4, 8, 10, 12 or 16 bits.
+	// ErrFingerprintBits is returned by [FuseBuilder.Append] and [FuseSize]
+	// for a width of fingerprints other than 4, 8, 10, 12 or 16 bits.
 	ErrFingerprintBits = errs.WithClass(errors.New("filter: unsupported fingerprint width"), errs.Invalid)
 
 	// ErrBuild reports a set of hashes that none of the 1,024 seeds of

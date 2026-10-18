@@ -321,6 +321,30 @@ func (g geometry) forAttempt(attempt, n int) geometry {
 	return g
 }
 
+// FuseSize returns the length of the encoding that [FuseBuilder.Append]
+// builds for n hashes with fingerprints of bits bits. Every attempt of a build
+// has the same number of fingerprints, so the length depends on n and bits
+// alone. A caller that cuts a set of hashes into filters of a size, such as a
+// table writer that partitions its filter, calls FuseSize before the build. A
+// negative n counts as 0.
+//
+// Error modes:
+//
+//   - A bits other than 4, 8, 10, 12 or 16 returns [ErrFingerprintBits].
+//   - More hashes than fit 2^32 fingerprints returns [ErrTooLarge].
+func FuseSize(n, bits int) (int, error) {
+	g, err := newGeometry(max(n, 0), bits)
+	if err != nil {
+		return 0, err
+	}
+	fingerprints := 0
+	if g.segments > 0 {
+		fingerprints = int(g.segments+2) << g.exponent
+	}
+
+	return headerLen + fingerprints*bits/8 + padLen, nil
+}
+
 // appendEncoding appends the encoding of a filter of the geometry g, the seed
 // and the fingerprints fps of width bits to dst. It packs the fingerprints
 // from the most significant bit of the first byte, and grows dst once.

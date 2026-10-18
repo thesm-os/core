@@ -5,6 +5,7 @@ package filter_test
 
 import (
 	"encoding/binary"
+	"math"
 	"math/bits"
 	"path/filepath"
 	"reflect"
@@ -16,6 +17,7 @@ import (
 	"go.dokimi.dev/assert/bench"
 	"go.dokimi.dev/assert/expect"
 	"go.dokimi.dev/assert/golden"
+	"go.dokimi.dev/assert/prop"
 
 	"go.thesmos.sh/core/filter"
 )
@@ -173,6 +175,65 @@ func TestFuseBuilder(t *testing.T) {
 			for _, h := range distinct {
 				expect.True(t, f.MayContain(h), "MayContain reports true for a repeated hash")
 			}
+		})
+	})
+
+	t.Run("FuseSize", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the length of the encoding that Append builds", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "FuseSize must return the length of the encoding of n hashes", func(c *prop.Case) {
+				n := c.Draw(prop.Integer(0, 12_000), "n")
+				w := c.Draw(prop.SampledFrom(widths...), "width")
+				size, err := filter.FuseSize(n, w)
+				assert.NoError(c, err, "FuseSize accepts the width")
+				assert.Length(c, build(c, hashes(n, uint64(w)), w), size, "the encoding has the length of FuseSize")
+			})
+		})
+
+		t.Run("returns the length of the encoding at the bounds of the segment exponents", func(t *testing.T) {
+			t.Parallel()
+			// The examples are the last count of an exponent and the first count
+			// of the next one, for the exponents 8 to 11.
+			var b filter.FuseBuilder
+			prop.Equal(t, func(n int) int {
+				size, _ := filter.FuseSize(n, 8)
+
+				return size
+			}, func(n int) int {
+				enc, _ := b.Append(nil, hashes(n, 31), 8)
+
+				return len(enc)
+			}, "FuseSize must return the length of the encoding at each bound",
+				prop.Using(prop.Integer(1, 40_000)),
+				prop.Examples(1009, 1010, 3361, 3362, 11192, 11193, 37272, 37273))
+		})
+
+		t.Run("returns the length of the encoding of a set of a million hashes", func(t *testing.T) {
+			t.Parallel()
+			size, err := filter.FuseSize(1_000_000, 8)
+			assert.NoError(t, err, "FuseSize accepts the width")
+			assert.Length(t, build(t, hashes(1_000_000, 29), 8), size, "the encoding has the length of FuseSize")
+		})
+
+		t.Run("counts a negative n as 0", func(t *testing.T) {
+			t.Parallel()
+			size, err := filter.FuseSize(-1, 8)
+			assert.NoError(t, err, "FuseSize accepts the width")
+			assert.Length(t, build(t, nil, 8), size, "the length is the length of the empty filter")
+		})
+
+		t.Run("returns ErrFingerprintBits for fingerprints of 9 bits", func(t *testing.T) {
+			t.Parallel()
+			_, err := filter.FuseSize(10, 9)
+			assert.ErrorIs(t, err, filter.ErrFingerprintBits, "FuseSize refuses the width")
+		})
+
+		t.Run("returns ErrTooLarge for more hashes than fit 2^32 fingerprints", func(t *testing.T) {
+			t.Parallel()
+			_, err := filter.FuseSize(math.MaxInt, 8)
+			assert.ErrorIs(t, err, filter.ErrTooLarge, "FuseSize refuses the number of hashes")
 		})
 	})
 

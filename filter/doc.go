@@ -24,6 +24,8 @@
 //     takes about 9 bits per hash for 0.39% false positives, where a Bloom
 //     filter takes about 14 bits per key for the same rate. [FuseBuilder]
 //     builds its encoding, and [ParseFuse] queries the encoding in place.
+//     [FuseSize] returns the length of an encoding before the build, so a
+//     caller can cut a set into filters of a size.
 //
 // # Encoding of a fuse filter
 //
@@ -50,7 +52,8 @@
 //
 // [NewBloom] returns [ErrBitsPerKey] and [ErrTooLarge].
 // [FuseBuilder.Append] returns [ErrFingerprintBits], ErrTooLarge and
-// [ErrBuild]. [ParseFuse] returns [ErrCorrupt].
+// [ErrBuild], and FuseSize returns ErrFingerprintBits and ErrTooLarge.
+// [ParseFuse] returns [ErrCorrupt].
 //
 // # Concurrency
 //
