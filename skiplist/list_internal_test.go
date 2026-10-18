@@ -227,6 +227,16 @@ func TestList(t *testing.T) {
 				name:       "returns ErrSize for a node arena of 2^32 bytes",
 				giveConfig: Config{DataBytes: dataBytes, NodeBytes: math.MaxUint32 + 1},
 			},
+			{
+				name:       "returns ErrSize for a Data shorter than DataBytes",
+				giveConfig: Config{DataBytes: dataBytes, NodeBytes: nodeBytes, Data: make([]byte, dataBytes-1)},
+			},
+			{
+				name: "returns ErrSize for a Nodes shorter than the words of NodeBytes",
+				giveConfig: Config{
+					DataBytes: dataBytes, NodeBytes: nodeBytes, Nodes: make([]uint32, NodeWords(nodeBytes)-1),
+				},
+			},
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
@@ -236,6 +246,36 @@ func TestList(t *testing.T) {
 				assert.Nil(t, l, "New returns no List")
 			})
 		}
+
+		t.Run("keeps its entries in the memory of Data and Nodes", func(t *testing.T) {
+			t.Parallel()
+			data, nodes := make([]byte, 8), make([]uint32, NodeWords(nodeBytes))
+			l, err := New(Config{DataBytes: len(data), NodeBytes: nodeBytes, Seed: 1, Data: data, Nodes: nodes})
+			assert.NoError(t, err, "New accepts the memory")
+			assert.NoError(t, l.Add([]byte("key"), 1, []byte("value")), "Add adds the entry")
+			expect.Equal(t, data, []byte("keyvalue"), "the List writes the key and the value into Data")
+			expect.Equal(t, &l.nodes[0], &nodes[0], "the node arena is the array of Nodes", assert.ByIdentity())
+		})
+
+		t.Run("returns a List over memory of any content", func(t *testing.T) {
+			t.Parallel()
+			data, nodes := bytes.Repeat([]byte{0xff}, dataBytes), make([]uint32, NodeWords(nodeBytes))
+			for i := range nodes {
+				nodes[i] = math.MaxUint32
+			}
+			l, err := New(Config{DataBytes: dataBytes, NodeBytes: nodeBytes, Seed: 1, Data: data, Nodes: nodes})
+			assert.NoError(t, err, "New accepts the memory")
+			var want model
+			for i, k := range keys {
+				e := entry{key: k, seq: uint64(i), value: []byte{byte(i)}}
+				assert.NoError(t, l.Add(e.key, e.seq, e.value), "Add adds the entry")
+				want.add(e)
+			}
+			expect.Equal(t, scan(t.Context(), l.NewIter()), []entry(want), "a cursor yields the entries in order")
+			back := slices.Clone(want)
+			slices.Reverse(back)
+			expect.Equal(t, scanBack(t.Context(), l.NewIter()), []entry(back), "a cursor yields the entries back")
+		})
 	})
 
 	t.Run("Add", func(t *testing.T) {
@@ -631,6 +671,51 @@ func TestList(t *testing.T) {
 			assert.Equal(t, scan(t.Context(), l.NewIter()), []entry{{key: []byte("ef"), seq: 1, value: []byte("gh")}},
 				"the List has the entry of the second fill alone")
 		})
+
+		t.Run("zeroes the memory of Data and Nodes that was zero at New", func(t *testing.T) {
+			t.Parallel()
+			data, nodes := make([]byte, dataBytes), make([]uint32, NodeWords(nodeBytes))
+			l, err := New(Config{DataBytes: dataBytes, NodeBytes: nodeBytes, Seed: 1, Data: data, Nodes: nodes})
+			assert.NoError(t, err, "New accepts the memory")
+			for i, k := range keys {
+				assert.NoError(t, l.Add(k, uint64(i), k), "Add adds the entry")
+			}
+			l.Reset()
+			expect.Equal(t, data, make([]byte, dataBytes), "Reset zeroes every byte of Data")
+			expect.Equal(t, nodes, make([]uint32, NodeWords(nodeBytes)), "Reset zeroes every word of Nodes")
+		})
+	})
+
+	t.Run("NodeWords", func(t *testing.T) {
+		t.Parallel()
+
+		tests := []struct {
+			name      string
+			giveBytes int
+			wantWords int
+		}{
+			{
+				name:      "returns the words of the tallest node and a word for each 4 bytes",
+				giveBytes: nodeBytes,
+				wantWords: (tallestNodeBytes + nodeBytes) / wordBytes,
+			},
+			{
+				name:      "rounds a nodeBytes that is not a multiple of 4 down to whole words",
+				giveBytes: 7,
+				wantWords: (tallestNodeBytes + 4) / wordBytes,
+			},
+			{
+				name:      "counts a negative nodeBytes as 0",
+				giveBytes: -4,
+				wantWords: tallestNodeBytes / wordBytes,
+			},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				assert.Equal(t, NodeWords(tt.giveBytes), tt.wantWords, "NodeWords counts the head node and the nodes")
+			})
+		}
 	})
 
 	t.Run("NewIter", func(t *testing.T) {
@@ -748,6 +833,19 @@ func FuzzList(f *testing.F) {
 // not run in parallel.
 func TestListAllocs(t *testing.T) {
 	value := make([]byte, benchValueLen)
+
+	t.Run("New", func(t *testing.T) {
+		cfg := Config{
+			DataBytes: dataBytes, NodeBytes: nodeBytes, Seed: 1,
+			Data: make([]byte, dataBytes), Nodes: make([]uint32, NodeWords(nodeBytes)),
+		}
+		var l *List
+		var err error
+		expect.MaxAllocs(t, func() { l, err = New(cfg) }, 3,
+			"New over the memory of Config allocates the List and its two arenas")
+		assert.NoError(t, err, "the test measures a New that succeeds")
+		assert.Equal(t, &l.data[0], &cfg.Data[0], "the test measures a List over Data", assert.ByIdentity())
+	})
 
 	t.Run("Add", func(t *testing.T) {
 		l, err := New(Config{DataBytes: 1 << 20, NodeBytes: 1 << 20, Seed: 1})
@@ -908,6 +1006,25 @@ func BenchmarkList(b *testing.B) {
 	})
 
 	b.Run("New", func(b *testing.B) {
+		b.Run("over the memory of Config", func(b *testing.B) {
+			cfg := Config{
+				DataBytes: dataBytes, NodeBytes: nodeBytes, Seed: 1,
+				Data: make([]byte, dataBytes), Nodes: make([]uint32, NodeWords(nodeBytes)),
+			}
+			var l *List
+			var err error
+
+			c := bench.Start(b).MaxAllocs(3)
+			defer c.End()
+
+			for c.Loop() {
+				l, err = New(cfg)
+			}
+
+			assert.NoError(b, err, "the benchmark measures a New that succeeds")
+			assert.Equal(b, &l.data[0], &cfg.Data[0], "the benchmark measures a List over Data", assert.ByIdentity())
+		})
+
 		b.Run("with 1048576 entries live during runtime.GC", func(b *testing.B) {
 			l := filled(b, benchEntries, benchKey)
 

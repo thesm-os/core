@@ -25,6 +25,13 @@
 // [List.Add] returns [ErrFull] for an entry that does not fit. An engine
 // then freezes the full List and adds the entry to a new one.
 //
+// [Config.Data] and [Config.Nodes] pass memory of the caller to the arenas,
+// and [NodeWords] returns the number of words that the node arena needs. An
+// engine that moves the memory of a memtable between Lists and the arenas of
+// [go.thesmos.sh/core/arena] then allocates the memory once. [List.Reset]
+// zeroes the memory that the List used, so the next user of the memory finds
+// it zero.
+//
 // # Heights
 //
 // A node has 1 level, plus 1 for each level k from 1 to 19 that a hash of
@@ -78,9 +85,10 @@
 //
 // # Allocation contract
 //
-// [New] allocates the List, its two arenas and their arrays. NewIter
-// allocates the cursor. Add, Get, Len, Size, Cost, MaxCost, Reset, the Add of
-// an Inserter and the methods of an Iter do not allocate.
+// [New] allocates the List, its two arenas and the array of each arena whose
+// memory the Config does not provide. NewIter allocates the cursor. Add, Get,
+// Len, Size, Cost, MaxCost, Reset, the Add of an Inserter and the methods of
+// an Iter do not allocate.
 //
 // # Dependency position
 //

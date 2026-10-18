@@ -88,7 +88,28 @@ var levelBounds = func() (bounds [maxHeight - 1]uint64) {
 // [MaxCost] returns them for the tallest node. An engine that budgets its
 // entries with Cost or MaxCost against DataBytes and NodeBytes does not
 // repeat the layout of a node.
+//
+// Data and Nodes are optional memory of the caller for the two arenas. New
+// uses that memory in place of arrays of its own, so an engine that moves the
+// memory of a memtable between Lists and arenas allocates the memory once.
+// The List uses the memory until the caller drops the List. The caller does
+// not write the memory in the meantime, and reuses it only after the last
+// reader of the List. Memory that was zero at New is zero again after
+// [List.Reset].
 type Config struct {
+	// Data is the memory of the data arena, or nil. New uses the first
+	// DataBytes bytes of Data, and returns ErrSize when Data is shorter. The
+	// List writes each byte before it reads the byte, so Data can contain
+	// any bytes.
+	Data []byte
+
+	// Nodes is the memory of the node arena, or nil. New uses as many words
+	// of Nodes as [NodeWords] returns for NodeBytes, and returns ErrSize
+	// when Nodes is shorter. New writes the words of the head node, and the
+	// List writes every other word before it reads the word, so Nodes can
+	// contain any words.
+	Nodes []uint32
+
 	// DataBytes is the capacity of the data arena in bytes, from 1 to
 	// 2^32 - 1. The data arena contains the keys and the values.
 	DataBytes int
@@ -120,8 +141,9 @@ type Config struct {
 //
 // # Allocation contract
 //
-// [New] allocates the List, its two arenas and their arrays. NewIter
-// allocates the cursor. The other methods do not allocate.
+// [New] allocates the List, its two arenas and the array of each arena that
+// [Config] does not provide. NewIter allocates the cursor. The other methods
+// do not allocate.
 type List struct {
 	// dataArena reserves the bytes of the keys and the values.
 	dataArena *arena.Bump[byte]
@@ -156,34 +178,51 @@ type List struct {
 }
 
 // New returns an empty [List] with the arenas of cfg. The heights of its
-// nodes derive from the Seed of cfg.
+// nodes derive from the Seed of cfg. The arenas take the memory of the Data
+// and the Nodes of cfg, or new arrays for the memory that cfg does not
+// provide. New writes the words of the head node.
 //
 // Error modes:
 //
 //   - A DataBytes or a NodeBytes below 1 or above 2^32 - 1 returns
 //     [ErrSize].
+//   - A Data shorter than DataBytes returns ErrSize, and so does a Nodes
+//     shorter than [NodeWords] of NodeBytes.
 //
 // # Allocation contract
 //
-// Allocates the List, its two [arena.Bump] values and their arrays.
+// Allocates the List and its two [arena.Bump] values, and the array of each
+// arena whose memory cfg does not provide.
 func New(cfg Config) (*List, error) {
 	// A capacity of 2^32 - 1 bytes or less has no bit set above its 32
 	// bits, so every offset and every length fits a word.
 	if cfg.DataBytes < 1 || cfg.NodeBytes < 1 || uint64(cfg.DataBytes)>>32 != 0 || uint64(cfg.NodeBytes)>>32 != 0 {
 		return nil, ErrSize
 	}
+	words := NodeWords(cfg.NodeBytes)
+	if cfg.Data != nil && len(cfg.Data) < cfg.DataBytes || cfg.Nodes != nil && len(cfg.Nodes) < words {
+		return nil, ErrSize
+	}
+	data, nodes := cfg.Data, cfg.Nodes
+	if data == nil {
+		data = make([]byte, cfg.DataBytes)
+	}
+	if nodes == nil {
+		nodes = make([]uint32, words)
+	}
 
 	seed := cfg.Seed
 	secret0 := splitmix64(&seed)
 	secret1 := splitmix64(&seed)
 	l := &List{
-		dataArena: arena.NewBump[byte](cfg.DataBytes),
-		nodeArena: arena.NewBump[uint32](headWords + cfg.NodeBytes/wordBytes),
+		dataArena: arena.NewBumpWithArray(data[:cfg.DataBytes]),
+		nodeArena: arena.NewBumpWithArray(nodes[:words]),
 		secret0:   secret0,
 		secret1:   secret1,
 	}
 	l.data, l.nodes = l.dataArena.Values(), l.nodeArena.Values()
 	l.nodeArena.Reserve(headWords)
+	clear(l.nodes[:headWords])
 	l.levels.Store(1)
 
 	return l, nil
@@ -296,10 +335,11 @@ func (l *List) Cost(key []byte, seq uint64, valueLen int) (dataBytes, nodeBytes 
 }
 
 // Reset removes every entry and keeps the arenas. It zeroes the bytes and
-// the words in use, so it takes time in proportion to [List.Size]. Every key
-// and value that the List returned before is invalid after Reset. A cursor
-// of the List is on no entry until a First, a Last, a SeekGE or a SeekLT
-// moves it, and an [Inserter] searches its next Add from the head.
+// the words in use, so it takes time in proportion to [List.Size]. Memory of
+// [Config] that was zero at New is zero again after Reset. Every key and
+// value that the List returned before is invalid after Reset. A cursor of
+// the List is on no entry until a First, a Last, a SeekGE or a SeekLT moves
+// it, and an [Inserter] searches its next Add from the head.
 //
 // # Allocation contract
 //
@@ -598,6 +638,18 @@ func (l *List) height(key []byte, seq uint64) int {
 // Zero-alloc.
 func MaxCost(keyLen, valueLen int) (dataBytes, nodeBytes int) {
 	return min(max(keyLen, 0), maxValueLen) + min(max(valueLen, 0), maxValueLen), wordBytes * (nodeHeader + maxHeight)
+}
+
+// NodeWords returns the number of words of the node arena of a List with a
+// NodeBytes of nodeBytes. They are the 28 words of the head node and a word
+// for each 4 bytes of nodeBytes. A caller that passes [Config.Nodes] makes it
+// at least that long. A nodeBytes below 0 counts as 0.
+//
+// # Concurrency
+//
+// Safe for concurrent use. NodeWords does not read a List.
+func NodeWords(nodeBytes int) int {
+	return headWords + max(nodeBytes, 0)/wordBytes
 }
 
 // splitmix64 advances the state of a splitmix64 generator and returns its
