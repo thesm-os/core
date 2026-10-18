@@ -55,7 +55,8 @@ type ReaderOptions struct {
 //
 // A Reader never writes a block that it adds to the cache or that Get
 // returns, and the cache must not change a block either. The capacity and
-// the eviction of the cache are the policy of its owner.
+// the eviction of the cache are the policy of its owner. A cache that
+// implements [LendingCache] lends a [Block] in place of a byte slice.
 //
 // # Concurrency
 //
@@ -68,6 +69,32 @@ type BlockCache interface {
 	// Add adds the block of the table id at offset. A Reader does not write
 	// block again, so the cache may keep it.
 	Add(ctx context.Context, id, offset uint64, block []byte)
+}
+
+// LendingCache is a [BlockCache] that keeps each block in a [Block] and
+// lends it to the readers. A Reader whose cache implements LendingCache
+// calls Lend in place of Get, and AddBlock in place of Add. It copies a block
+// that misses into a Block of [NewBlock] and adds that Block. A cursor keeps
+// a reference to the Block of its current entry, and releases it when it
+// moves to another block or closes. The last Release returns the buffer to
+// its pool, so a cache that releases the blocks that leave it allocates no
+// block for a miss.
+//
+// # Concurrency
+//
+// The methods of a LendingCache must be safe for concurrent use.
+type LendingCache interface {
+	BlockCache
+
+	// Lend returns the block of the table id at offset with a reference
+	// that the caller releases, and reports whether the cache contains it.
+	// The bytes of the block do not change until that Release.
+	Lend(ctx context.Context, id, offset uint64) (*Block, bool)
+
+	// AddBlock adds b as the block of the table id at offset. The cache
+	// takes a reference of its own and releases it once the block leaves
+	// the cache. The caller keeps its own reference.
+	AddBlock(ctx context.Context, id, offset uint64, b *Block)
 }
 
 // Span is the part of a table that the entries of a key range can occupy.
@@ -99,14 +126,18 @@ type Span struct {
 // [Open] allocates the Reader, the index block, the filter block and the
 // keys of the summary. Get, [Reader.MayContain] and NewIter do not allocate
 // once the pool of cursors has a cursor whose buffers have grown to the
-// largest block. Span does not allocate. A read through the cache allocates
-// the copy of each block that it adds.
+// largest block. Span does not allocate. A read through a [BlockCache]
+// allocates the copy of each block that it adds. A read through a
+// [LendingCache] takes a [Block] from a pool in place of that copy.
 type Reader struct {
 	// f contains the table.
 	f File
 
 	// cache keeps the decoded data blocks under cacheID, or is nil.
 	cache BlockCache
+
+	// lending is cache when cache is a LendingCache, and nil otherwise.
+	lending LendingCache
 
 	// index is the index block.
 	index []byte
@@ -238,6 +269,7 @@ func Open(ctx context.Context, file File, size int64, opts ReaderOptions) (*Read
 		return nil, err
 	}
 	rd.cache, rd.cacheID = opts.Cache, opts.CacheID
+	rd.lending, _ = opts.Cache.(LendingCache)
 
 	return rd, nil
 }
@@ -370,8 +402,10 @@ func (r *Reader) MayContain(key []byte) bool {
 //
 // Zero-alloc when dst has room for the value, the pool of cursors has a
 // cursor whose buffers have grown to the block, and the cache contains the
-// block or the Reader has no cache. A block that the cache does not contain
-// allocates its copy for the cache.
+// block or the Reader has no cache. A block that a [BlockCache] does not
+// contain allocates its copy for the cache. A block that a [LendingCache]
+// does not contain takes a [Block] from a pool, which allocates only when
+// the pool of its class is empty.
 func (r *Reader) Get(ctx context.Context, key []byte, seq uint64, dst []byte) ([]byte, uint64, bool, error) {
 	if !r.MayContain(key) {
 		return dst, 0, false, nil

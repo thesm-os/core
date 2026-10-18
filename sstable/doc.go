@@ -57,6 +57,18 @@
 // ReadAhead reads the data blocks of ReadAhead bytes with one read of the
 // File, so a scan makes one read for many blocks.
 //
+// # Block caches
+//
+// A [BlockCache] keeps the decoded data blocks that the readers of its
+// tables share. On a miss, a Reader adds a copy of the block that it read.
+// A [LendingCache] keeps its blocks in [Block] buffers. On a miss of such a
+// cache, a Reader copies the block into a Block of [NewBlock] and adds that
+// Block. The cache and every cursor that reads a Block keep a reference to
+// it. The last [Block.Release] returns the buffer to a pool of size classes,
+// which lends the buffer for the next block. Package
+// [go.thesmos.sh/core/sstable/blockcache] implements a LendingCache over
+// [go.thesmos.sh/core/cache.Cache].
+//
 // # Merges
 //
 // A [Source] is a cursor over a sorted run of entries that moves in both
@@ -89,9 +101,10 @@
 //   - Reader.Get, Reader.MayContain, Reader.NewIter, Iter.Close and the moves
 //     of an Iter and a Merger do not allocate once the pooled cursors have
 //     grown to the largest block. Reader.Span does not allocate. A read
-//     through a [BlockCache] allocates a
-//     copy of each block that the cache does not contain, apart from the
-//     reads of a cursor with NoFill.
+//     through a [BlockCache] allocates a copy of each block that the cache
+//     does not contain, apart from the reads of a cursor with NoFill. A read
+//     through a LendingCache copies such a block into a Block from the pool,
+//     which allocates only when the pool of its class is empty.
 //   - [NewWriter], Writer.Close and [Open] allocate the Writer or the Reader
 //     and their buffers. [Reader.Footprint] returns the bytes of the buffers
 //     that a Reader keeps.
@@ -99,8 +112,8 @@
 // # Dependency position
 //
 // Imports bytes, cmp, context, encoding/binary, errors, fmt, hash/crc32, io,
-// math, slices and strconv from the standard library, and
-// go.thesmos.sh/core/compress/snappy, go.thesmos.sh/core/errs,
+// math, math/bits, slices, strconv and sync/atomic from the standard
+// library, and go.thesmos.sh/core/compress/snappy, go.thesmos.sh/core/errs,
 // go.thesmos.sh/core/filter, go.thesmos.sh/core/hash/xxh3 and
 // go.thesmos.sh/core/pool from this module.
 package sstable

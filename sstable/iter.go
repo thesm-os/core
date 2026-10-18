@@ -57,7 +57,9 @@ type IterOptions struct {
 // the current block.
 //
 // The key and the value of the current entry are valid until the next move
-// of the cursor.
+// of the cursor. A cursor that reads through a [LendingCache] keeps a
+// reference to the [Block] of its current entry. It releases the reference
+// when it moves to another block or closes.
 //
 // # Concurrency
 //
@@ -66,8 +68,10 @@ type IterOptions struct {
 // # Allocation contract
 //
 // The moves of a cursor do not allocate once its buffers have grown to the
-// largest block. A move through the cache of the Reader allocates the copy
-// of each block that it adds, and a cursor with NoFill does not add a block.
+// largest block. A move through a [BlockCache] allocates the copy of each
+// block that it adds. A move through a LendingCache copies the block into a
+// Block of [NewBlock] instead, which allocates only when the pool of its
+// class is empty. A cursor with NoFill does not add a block.
 // A cursor with ReadAhead allocates the buffer of its reads ahead at its
 // first read of more than one block, and Close releases it. Key, Seq, Value,
 // Err and Close do not allocate.
@@ -77,6 +81,10 @@ type Iter struct {
 
 	// r is the Reader of the cursor, or nil after Close.
 	r *Reader
+
+	// lent is the block of data when a LendingCache lent it or received it,
+	// and nil otherwise. The cursor keeps a reference to it.
+	lent *Block
 
 	// raw receives a stored block and its trailer. buf receives the decoding
 	// of a compressed block.
@@ -308,10 +316,11 @@ func (it *Iter) Err() error {
 	return it.err
 }
 
-// Close returns the cursor and its buffers to the pool of cursors, and
-// returns the error of Err. The cursor is unusable after Close, because a
-// later [Reader.NewIter] can take it from the pool. A second Close before
-// such a NewIter returns nil and leaves the pool unchanged.
+// Close releases the reference of the cursor to a block of a [LendingCache],
+// returns the cursor and its buffers to the pool of cursors, and returns the
+// error of Err. The cursor is unusable after Close, because a later
+// [Reader.NewIter] can take it from the pool. A second Close before such a
+// NewIter returns nil and leaves the pool unchanged.
 //
 // # Allocation contract
 //
@@ -319,6 +328,9 @@ func (it *Iter) Err() error {
 func (it *Iter) Close() error {
 	if it.r == nil {
 		return nil
+	}
+	if it.lent != nil {
+		it.lent.Release()
 	}
 	err := it.err
 	*it = Iter{
@@ -375,7 +387,18 @@ func (it *Iter) backward(ctx context.Context, ok bool) bool {
 // ended, a value with other fields, a place outside the data blocks and a
 // read that fails. Every caller calls load with the data cursor on no entry,
 // and a load that fails leaves it there.
+//
+// load first releases the reference of the cursor to the block of its last
+// load. Through a LendingCache it keeps the reference that Lend returns, or
+// copies the block that it reads into a Block of NewBlock and keeps the
+// reference of that Block after AddBlock.
 func (it *Iter) load(ctx context.Context) bool {
+	// The data cursor is on no entry, so it does not read the block of the
+	// last load again.
+	if it.lent != nil {
+		it.lent.Release()
+		it.lent = nil
+	}
 	if err := ctx.Err(); err != nil {
 		it.err = err
 
@@ -398,8 +421,15 @@ func (it *Iter) load(ctx context.Context) bool {
 	}
 	want := binary.BigEndian.Uint32(v[n1+n2:])
 
-	c := it.r.cache
-	if c != nil {
+	c, lc := it.r.cache, it.r.lending
+	if lc != nil {
+		if blk, ok := lc.Lend(ctx, it.r.cacheID, off); ok {
+			it.data.init(blk.Bytes())
+			it.lent = blk
+
+			return true
+		}
+	} else if c != nil {
 		if b, ok := c.Get(ctx, it.r.cacheID, off); ok {
 			it.data.init(b)
 
@@ -422,8 +452,15 @@ func (it *Iter) load(ctx context.Context) bool {
 		return false
 	}
 	if c != nil && !it.noFill {
-		b = bytes.Clone(b)
-		c.Add(ctx, it.r.cacheID, off, b)
+		if lc != nil {
+			blk := NewBlock(len(b))
+			copy(blk.buf, b)
+			lc.AddBlock(ctx, it.r.cacheID, off, blk)
+			it.lent, b = blk, blk.Bytes()
+		} else {
+			b = bytes.Clone(b)
+			c.Add(ctx, it.r.cacheID, off, b)
+		}
 	}
 	it.data.init(b)
 

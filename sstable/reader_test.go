@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"runtime"
 	"slices"
 	"strconv"
 	"testing"
@@ -82,6 +83,11 @@ const (
 	key059Entry = 118
 )
 
+// missStride is the number of keys from the key of one Get to the next in
+// the cases that miss a cache of four blocks. Fourteen entries of the golden
+// table span about three blocks of smallBlocks.
+const missStride = 7
+
 // The table of the benchmark of Span.
 const (
 	// spanEntries is the number of its entries.
@@ -111,7 +117,14 @@ func TestReader(t *testing.T) {
 
 	t.Run("returns what one sequence of reads returns for concurrent reads through one cache", func(t *testing.T) {
 		t.Parallel()
-		prop.ForAll(t, readContract, readSteps)
+		prop.ForAll(t, readContract, func(c *prop.Case) { readSteps(c, &mapCache{}) })
+	})
+
+	t.Run("returns what sequential reads return for concurrent reads through a lending cache", func(t *testing.T) {
+		t.Parallel()
+		// The cache keeps two blocks, so the reads evict the blocks of each
+		// other and the pool lends the buffers of the evicted blocks again.
+		prop.ForAll(t, readContract, func(c *prop.Case) { readSteps(c, lendingCache(c, 2)) })
 	})
 
 	t.Run("Open", func(t *testing.T) {
@@ -900,6 +913,7 @@ func TestReaderAllocs(t *testing.T) {
 		}{
 			{name: "without a cache"},
 			{name: "from a cache", cache: &mapCache{}},
+			{name: "from a lending cache", cache: lendingCache(t, 4)},
 		} {
 			t.Run(tt.name, func(t *testing.T) {
 				r := openTable(t, data, sstable.ReaderOptions{Cache: tt.cache, CacheID: 1})
@@ -911,6 +925,42 @@ func TestReaderAllocs(t *testing.T) {
 				expect.True(t, ok, "the test measures a Get of an entry")
 			})
 		}
+
+		t.Run("of blocks that a lending cache does not contain", func(t *testing.T) {
+			r := openTable(t, data, sstable.ReaderOptions{Cache: lendingCache(t, 4), CacheID: 1})
+			i := 0
+			var ok bool
+			var err error
+			expect.MaxAllocs(t, func() {
+				_, _, ok, err = r.Get(t.Context(), goldenKeys[missStride*i%len(goldenKeys)], 1, dst)
+				i++
+			}, 1, "a Get that misses a lending cache allocates the entry of the cache alone")
+			expect.NoError(t, err, "the test measures Gets that read")
+			expect.True(t, ok, "the test measures Gets of entries")
+		})
+
+		t.Run("of blocks that a lending cache evicts after a hit", func(t *testing.T) {
+			r := openTable(t, data, sstable.ReaderOptions{Cache: lendingCache(t, 4), CacheID: 1})
+			i := 0
+			var ok bool
+			var miss, hit error
+			// The collections empty the pools of the buffers that earlier tests
+			// released. A Get that does not release a lent block then allocates
+			// a buffer for each later fill.
+			runtime.GC()
+			runtime.GC()
+			expect.MaxAllocs(t, func() {
+				// The first Get adds the block of the key, and the second takes
+				// the block from the cache.
+				key := goldenKeys[missStride*i%len(goldenKeys)]
+				_, _, _, miss = r.Get(t.Context(), key, 1, dst)
+				_, _, ok, hit = r.Get(t.Context(), key, 1, dst)
+				i++
+			}, 1, "a Get releases a lent block, so the block returns to its pool when the cache evicts it")
+			expect.NoError(t, miss, "the test measures Gets that read")
+			expect.NoError(t, hit, "the test measures Gets that take their block from the cache")
+			expect.True(t, ok, "the test measures Gets of entries")
+		})
 	})
 
 	t.Run("MayContain", func(t *testing.T) {
@@ -932,7 +982,8 @@ func TestReaderAllocs(t *testing.T) {
 // BenchmarkReader reports the cost of the methods of a Reader on a hot
 // path, and fails when a method allocates.
 func BenchmarkReader(b *testing.B) {
-	data := writeTable(b, settings[3].opts, goldenTable())
+	l := newLayout(b, settings[3].opts, goldenTable())
+	data := l.data
 	dst := make([]byte, 0, 256)
 
 	b.Run("Get", func(b *testing.B) {
@@ -942,6 +993,8 @@ func BenchmarkReader(b *testing.B) {
 		}{
 			{name: "without a cache"},
 			{name: "from a cache", cache: &mapCache{}},
+			// The lending cache has room for every block of the table.
+			{name: "from a lending cache", cache: lendingCache(b, len(l.blocks))},
 		} {
 			b.Run(tt.name, func(b *testing.B) {
 				r := openTable(b, data, sstable.ReaderOptions{Cache: tt.cache, CacheID: 1})
@@ -961,6 +1014,45 @@ func BenchmarkReader(b *testing.B) {
 				assert.True(b, ok, "the benchmark measures Gets of entries")
 			})
 		}
+
+		b.Run("of blocks that a lending cache does not contain", func(b *testing.B) {
+			r := openTable(b, data, sstable.ReaderOptions{Cache: lendingCache(b, 4), CacheID: 1})
+			var ok bool
+			var err error
+			i := 0
+
+			c := bench.Start(b).MaxAllocs(1)
+			defer c.End()
+
+			for c.Loop() {
+				_, _, ok, err = r.Get(b.Context(), goldenKeys[missStride*i%len(goldenKeys)], 1, dst)
+				i++
+			}
+
+			assert.NoError(b, err, "the benchmark measures Gets that read")
+			assert.True(b, ok, "the benchmark measures Gets of entries")
+		})
+
+		b.Run("of blocks that a lending cache evicts after a hit", func(b *testing.B) {
+			r := openTable(b, data, sstable.ReaderOptions{Cache: lendingCache(b, 4), CacheID: 1})
+			var ok bool
+			var miss, hit error
+			i := 0
+
+			c := bench.Start(b).MaxAllocs(1)
+			defer c.End()
+
+			for c.Loop() {
+				key := goldenKeys[missStride*i%len(goldenKeys)]
+				_, _, _, miss = r.Get(b.Context(), key, 1, dst)
+				_, _, ok, hit = r.Get(b.Context(), key, 1, dst)
+				i++
+			}
+
+			assert.NoError(b, miss, "the benchmark measures Gets that read")
+			assert.NoError(b, hit, "the benchmark measures Gets that take their block from the cache")
+			assert.True(b, ok, "the benchmark measures Gets of entries")
+		})
 	})
 
 	b.Run("MayContain", func(b *testing.B) {
@@ -1034,16 +1126,16 @@ func BenchmarkReader(b *testing.B) {
 }
 
 // readSteps writes drawn entries into a table under a drawn setting, and
-// opens the table with a cache. Clients read the table through the one Reader
+// opens the table with cache. Clients read the table through the one Reader
 // at once: Get, and the entries after a SeekGE or before a SeekLT of a
 // cursor. Each read returns the entries that it finds as text, and an error
 // returns its own text. The spec computes the text of each read from the
 // entries, so the history of the reads is linearizable when every read
 // returns what the entries return.
-func readSteps(c *prop.Case) {
+func readSteps(c *prop.Case, cache sstable.BlockCache) {
 	es := c.Draw(entries, "entries")
 	opts := c.Draw(prop.SampledFrom(settings...), "setting").opts
-	r := openTable(c, writeTable(c, opts, es), sstable.ReaderOptions{Cache: &mapCache{}, CacheID: 1})
+	r := openTable(c, writeTable(c, opts, es), sstable.ReaderOptions{Cache: cache, CacheID: 1})
 
 	read := func(name string) stateful.Action[struct{}] {
 		return stateful.Action[struct{}]{

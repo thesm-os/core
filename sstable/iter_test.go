@@ -38,6 +38,15 @@ const iterContract = "every move must put the cursor on the entry of a sorted mo
 // of a table of smallBlocks.
 const aheadBytes = 1024
 
+// indexAllocs bounds the allocations of the index of a lending cache of four
+// blocks in a scan of the golden table under settings[3]. The cache builds a
+// new index of two objects, the index and its slots, when the tombs of the
+// evicted blocks fill the slots. The hash seed of the cache places the
+// tombs, and 30 seeds measured 3 to 5 such allocations per scan. A profile
+// of the scan attributes them to the index of cache.Cache, and one more
+// allocation to its entry for each block.
+const indexAllocs = 6
+
 // everyEntry are the options of the tables whose data blocks a case changes:
 // small blocks with a restart point at every entry, so the restart offsets
 // of a block are the offsets of all its entries. The data blocks end at the
@@ -750,6 +759,48 @@ func TestIter(t *testing.T) {
 				expect.Equal(t, cache.adds, 1, "the cursor adds the first block alone")
 			})
 		}
+
+		t.Run("adds no block to a lending cache under NoFill", func(t *testing.T) {
+			t.Parallel()
+			lending := lendingCache(t, 4)
+			it := openTable(t, writeTable(t, settings[3].opts, goldenTable()),
+				sstable.ReaderOptions{Cache: lending, CacheID: 1}).NewIter(sstable.IterOptions{NoFill: true})
+			defer it.Close()
+			got, err := scanAll(t.Context(), it)
+			assert.NoError(t, err, "the cursor reads the table")
+			expect.Length(t, got, goldenEntries, "the cursor yields every entry")
+			expect.Equal(t, lending.Len(), 0, "a cursor under NoFill adds no block to the cache")
+		})
+
+		t.Run("leaves the blocks of a lending cache intact under NoFill", func(t *testing.T) {
+			t.Parallel()
+			es := goldenTable()
+			l := newLayout(t, settings[0].opts, es)
+			prop.ForAll(t, "a lending cache returns the entries of every block after a scan under NoFill",
+				func(c *prop.Case) {
+					// The cache has room for every block, so it evicts none. A block
+					// that the scan under NoFill returned to its pool would receive
+					// the bytes of a block that the next scan adds.
+					r := openTable(c, l.data, sstable.ReaderOptions{Cache: lendingCache(c, len(l.blocks)), CacheID: 1})
+					for _, key := range goldenKeys {
+						if c.Draw(prop.Boolean(), "warm") {
+							_, _, _, err := r.Get(c.Context(), key, 1, nil)
+							assert.NoError(c, err, "Get adds the block of its key to the cache")
+						}
+					}
+					cold := r.NewIter(sstable.IterOptions{NoFill: true})
+					_, err := scanAll(c.Context(), cold)
+					assert.NoError(c, err, "the scan under NoFill reads the table")
+					assert.NoError(c, cold.Close(), "the cursor under NoFill closes without an error")
+					it := r.NewIter(sstable.IterOptions{})
+					defer it.Close()
+					_, err = scanAll(c.Context(), it)
+					assert.NoError(c, err, "the first scan without NoFill adds every other block to the cache")
+					got, err := scanAll(c.Context(), it)
+					assert.NoError(c, err, "the second scan takes every block from the cache")
+					assert.Equal(c, got, es, "the second scan yields the entries of the table")
+				})
+		})
 	})
 
 	t.Run("Prev", func(t *testing.T) {
@@ -912,6 +963,34 @@ func TestIter(t *testing.T) {
 			expect.ErrorIs(t, err, sstable.ErrCorrupt, "Prev refuses the second entry of the second block")
 			assert.NotEmpty(t, got, "the cursor yields the entries after the second block")
 			expect.Equal(t, got[len(got)-1].key, []byte("c"), "the cursor yields the third entry before the error")
+		})
+	})
+
+	t.Run("Value", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the value of the current entry after a lending cache drops its block", func(t *testing.T) {
+			t.Parallel()
+			es := goldenTable()
+			lending := lendingCache(t, 4)
+			r := openTable(t, writeTable(t, settings[2].opts, es), sstable.ReaderOptions{Cache: lending, CacheID: 1})
+			warm := r.NewIter(sstable.IterOptions{})
+			assert.True(t, warm.First(t.Context()), "First adds the first block to the cache")
+			assert.NoError(t, warm.Close(), "Close releases the first block")
+			it := r.NewIter(sstable.IterOptions{})
+			defer it.Close()
+			assert.True(t, it.First(t.Context()), "First lends the first block from the cache")
+			// The cache drops its reference to the lent block when Add replaces
+			// the block. The scan then copies each block that it reads into a
+			// buffer from the pool.
+			block, ok := lending.Get(t.Context(), 1, 0)
+			assert.True(t, ok, "the cache contains the first block")
+			lending.Add(t.Context(), 1, 0, block)
+			other := r.NewIter(sstable.IterOptions{})
+			defer other.Close()
+			_, err := scanAll(t.Context(), other)
+			assert.NoError(t, err, "the second cursor reads the table")
+			expect.Equal(t, it.Value(), es[0].value, "the value of the current entry keeps its bytes")
 		})
 	})
 
@@ -1361,6 +1440,24 @@ func TestIterAllocs(t *testing.T) {
 		}
 	}, 0, "a scan with ReadAhead does not allocate once the buffer of its reads has grown")
 	expect.Equal(t, n, goldenEntries, "the test measures a scan of every entry with ReadAhead")
+
+	// The cache keeps four blocks, so a scan adds every block that it reads
+	// and the cache evicts the earlier ones. Each block of the scan takes a
+	// buffer that an evicted block returned to the pool. The cache allocates
+	// an entry for each block. indexAllocs bounds the allocations of the new
+	// indexes that it builds when the tombs of the evicted blocks fill its 16
+	// slots.
+	blocks := uint64(len(newLayout(t, settings[3].opts, goldenTable()).blocks))
+	filling := openTable(t, writeTable(t, settings[3].opts, goldenTable()),
+		sstable.ReaderOptions{Cache: lendingCache(t, 4), CacheID: 1}).NewIter(sstable.IterOptions{})
+	defer filling.Close()
+	expect.MaxAllocs(t, func() {
+		n = 0
+		for ok := filling.First(t.Context()); ok; ok = filling.Next(t.Context()) {
+			n++
+		}
+	}, blocks+indexAllocs, "a scan through a lending cache allocates no block")
+	expect.Equal(t, n, goldenEntries, "the test measures a scan of every entry through a lending cache")
 }
 
 // BenchmarkIter reports the cost of the moves of a cursor, and fails when a
@@ -1381,6 +1478,7 @@ func BenchmarkIter(b *testing.B) {
 				cache: emptyCache{}, opts: sstable.IterOptions{NoFill: true},
 			},
 			{name: "with ReadAhead without a cache", opts: sstable.IterOptions{ReadAhead: aheadBytes}},
+			{name: "through a lending cache of four blocks", cache: lendingCache(b, 4)},
 		} {
 			b.Run(tt.name, func(b *testing.B) {
 				it := openTable(b, data, sstable.ReaderOptions{Cache: tt.cache, CacheID: 1}).NewIter(tt.opts)

@@ -18,6 +18,7 @@ import (
 	"go.dokimi.dev/assert/prop"
 
 	"go.thesmos.sh/core/sstable"
+	"go.thesmos.sh/core/sstable/blockcache"
 )
 
 // The layout of the tables of most cases: small blocks with a restart point
@@ -457,6 +458,18 @@ func openTable(tb assert.TB, data []byte, opts sstable.ReaderOptions) *sstable.R
 	assert.NoError(tb, err, "Open reads the table")
 
 	return r
+}
+
+// lendingCache returns an empty LendingCache with room for the given number
+// of blocks of the smallest class, which every block of a table of
+// smallBlocks takes.
+func lendingCache(tb assert.TB, blocks int) *blockcache.Cache {
+	tb.Helper()
+
+	c, err := blockcache.New(blockcache.Config{Capacity: int64(blocks) * smallestClass})
+	assert.NoError(tb, err, "New accepts a positive Capacity")
+
+	return c
 }
 
 // scanAll returns a copy of every entry that s yields from its first entry
