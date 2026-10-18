@@ -78,10 +78,12 @@ type Config[K comparable, V any] struct {
 // Get, Pin, [Pinned.Unpin], Delete, Len, Cost and Capacity do not allocate,
 // for a key whose hash [maphash.Comparable] computes without an allocation:
 // a string, or a value without pointers. Set and SetPinned allocate the
-// entry, and the memory of the index, the ghost and the heap when they grow,
-// so a cache in a steady state allocates once per Set or SetPinned. A Set,
-// SetPinned or Unpin that evicts more than eight entries allocates the list
-// of their callbacks. Expire does not allocate.
+// entry, and the memory of the index, the ghost and the heap when they grow.
+// In a steady state, the tombs of the entries that left still fill the
+// index. The cache then replaces the index with a new one of 2 objects. An
+// index of n slots takes at least n/4 Sets to fill. A Set, SetPinned or
+// Unpin that evicts more than eight entries allocates the list of their
+// callbacks. Expire does not allocate.
 type Cache[K comparable, V any] struct {
 	// index is the current index. A writer replaces it when it grows.
 	index atomic.Pointer[index[K, V]]
