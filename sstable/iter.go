@@ -695,8 +695,7 @@ func (it *Iter) mayContain(ctx context.Context, key []byte) (bool, error) {
 	if i == top.count {
 		return false, nil
 	}
-	_, v, _ := top.restartEntry(i)
-	off, n, _, want, ok := r.partition(v, false)
+	off, n, _, want, ok := r.partition(top.restartValue(i), false)
 	if !ok {
 		return false, ErrCorrupt
 	}
@@ -777,7 +776,7 @@ func (it *Iter) partBlock(ctx context.Context, p int, key []byte) (int, uint64, 
 	if p > 0 {
 		before = it.blocks(p - 1)
 	}
-	if _, v, _ := it.top.restartEntry(p); !it.loadPart(ctx, v) {
+	if !it.loadPart(ctx, it.top.restartValue(p)) {
 		return 0, 0, 0, it.err
 	}
 	i, ok := 0, true
@@ -787,8 +786,7 @@ func (it *Iter) partBlock(ctx context.Context, p int, key []byte) (int, uint64, 
 	if !ok || i == it.index.count {
 		return 0, 0, 0, ErrCorrupt
 	}
-	_, v, _ := it.index.restartEntry(i)
-	off, n, ok := it.r.place(v)
+	off, n, ok := it.r.place(it.index.restartValue(i))
 	if !ok || before < 0 {
 		return 0, 0, 0, ErrCorrupt
 	}
@@ -800,8 +798,7 @@ func (it *Iter) partBlock(ctx context.Context, p int, key []byte) (int, uint64, 
 // partition of the top-level entry p, from the value of the entry, or -1 for
 // an entry or a value that does not decode.
 func (it *Iter) blocks(p int) int {
-	_, v, _ := it.top.restartEntry(p)
-	_, _, n, _, ok := it.r.partition(v, true)
+	_, _, n, _, ok := it.r.partition(it.top.restartValue(p), true)
 	if !ok {
 		return -1
 	}
@@ -1032,48 +1029,58 @@ func (c *blockCursor) gallop(lo int, key []byte, seq uint64) (int, bool) {
 // restartCompare returns the order of the entry at the restart point i and
 // the entry (key, seq) under Compare. It compares the whole key of the
 // restart point where the block stores it, without a copy into c.key. It
-// sets err to ErrCorrupt and reports false for an entry that restartEntry
-// refuses, and for an internal key shorter than a sequence.
+// sets err to ErrCorrupt and reports false for a restart offset outside the
+// entries, and for an entry at the offset whose header does not decode,
+// whose internal key does not fit the entries or is shorter than a sequence,
+// or that shares a prefix with a key before it.
 func (c *blockCursor) restartCompare(i int, key []byte, seq uint64) (int, bool) {
-	ikey, _, ok := c.restartEntry(i)
-	// A header that does not decode has a key of no bytes, which is shorter
-	// than a sequence.
-	if !ok || len(ikey) < seqLen {
+	off := binary.BigEndian.Uint32(c.block[c.end+4*i:])
+	//dokimi:mutate-skip ror-boundary: an entry at the end of the entries has no bytes, which uvarints refuses
+	if int64(off) >= int64(c.end) {
 		c.valid, c.err = false, ErrCorrupt
 
 		return 0, false
 	}
-	k := len(ikey) - seqLen
-
-	return Compare(ikey[:k], binary.BigEndian.Uint64(ikey[k:]), key, seq), true
-}
-
-// restartEntry returns the internal key and the value of the entry at the
-// restart point i as parts of the block, without a copy. It reports false
-// for a restart offset outside the entries, for an entry that shares a
-// prefix with a key before it, and for a key or a value that does not fit
-// the entries. A header that does not decode has a key and a value of no
-// bytes. i is a restart point of the block.
-func (c *blockCursor) restartEntry(i int) (ikey, value []byte, ok bool) {
-	off := binary.BigEndian.Uint32(c.block[c.end+4*i:])
-	//dokimi:mutate-skip ror-boundary: an entry at the end of the entries has no bytes, which uvarints refuses
-	if int64(off) >= int64(c.end) {
-		return nil, nil, false
-	}
 	p := c.block[off:c.end]
-	shared, unshared, vlen, short := shortHeader(p)
+	shared, unshared, _, short := shortHeader(p)
 	n := 3
 	if !short {
-		shared, unshared, vlen, n = uvarints(p)
+		shared, unshared, _, n = uvarints(p)
+	}
+	// A header that does not decode has a key of no bytes, which is shorter
+	// than a sequence. The search reads the key alone, so it does not check
+	// the length of the value.
+	p = p[n:]
+	if shared != 0 || unshared > uint64(len(p)) || unshared < seqLen {
+		c.valid, c.err = false, ErrCorrupt
+
+		return 0, false
+	}
+	//nolint:gosec // G115: unshared is at most len(p)
+	k := int(unshared) - seqLen
+
+	return Compare(p[:k], binary.BigEndian.Uint64(p[k:]), key, seq), true
+}
+
+// restartValue returns the value of the entry at the restart point i as a
+// part of the block, or nil for a value that does not fit the entries. A
+// restart offset or a key past the entries leaves no bytes for the value,
+// and a header that does not decode has a value of no bytes. i is a restart
+// point of the block.
+func (c *blockCursor) restartValue(i int) []byte {
+	p := c.block[min(int64(binary.BigEndian.Uint32(c.block[c.end+4*i:])), int64(c.end)):c.end]
+	_, unshared, vlen, short := shortHeader(p)
+	n := 3
+	if !short {
+		_, unshared, vlen, n = uvarints(p)
 	}
 	p = p[n:]
-	if shared != 0 || unshared > uint64(len(p)) || vlen > uint64(len(p))-unshared {
-		return nil, nil, false
+	p = p[min(unshared, uint64(len(p))):]
+	if vlen > uint64(len(p)) {
+		return nil
 	}
-	//nolint:gosec // G115: both lengths are at most len(p)
-	k, v := int(unshared), int(vlen)
 
-	return p[:k], p[k : k+v : k+v], true
+	return p[:vlen:vlen]
 }
 
 // decode moves to the entry at off. The key of the entry shares its first

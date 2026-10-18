@@ -1417,6 +1417,10 @@ func BenchmarkReader(b *testing.B) {
 		} {
 			b.Run(tt.name, func(b *testing.B) {
 				r := openTable(b, tt.data, sstable.ReaderOptions{})
+				// A conversion in the loop would copy the key in each call,
+				// because the key of a table in partitions reaches the
+				// comparisons of a search.
+				key := []byte("key 030")
 				var ok bool
 				var err error
 
@@ -1424,7 +1428,7 @@ func BenchmarkReader(b *testing.B) {
 				defer c.End()
 
 				for c.Loop() {
-					ok, err = r.MayContain(b.Context(), []byte("key 030"))
+					ok, err = r.MayContain(b.Context(), key)
 				}
 
 				assert.NoError(b, err, "the benchmark measures a MayContain that reads")

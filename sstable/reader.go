@@ -376,7 +376,7 @@ func (r *Reader) Span(ctx context.Context, lower, upper []byte) (Span, error) {
 	}
 
 	// Every entry of the index is a restart point, so the number of a restart
-	// point is the number of its block. restartEntry returns a nil value for
+	// point is the number of its block. restartValue returns a nil value for
 	// an entry that does not fit, and place refuses it. Every block ends at
 	// or after an empty lower.
 	var c blockCursor
@@ -397,13 +397,11 @@ func (r *Reader) Span(ctx context.Context, lower, upper []byte) (Span, error) {
 		return Span{}, nil
 	}
 
-	_, v, _ := c.restartEntry(first)
-	start, _, ok := r.place(v)
+	start, _, ok := r.place(c.restartValue(first))
 	last, end := c.count-1, r.dataEnd
 	if ok && after < c.count {
-		_, v, _ = c.restartEntry(after)
 		var off, n uint64
-		off, n, ok = r.place(v)
+		off, n, ok = r.place(c.restartValue(after))
 		last, end = after, off+n+trailerLen
 	}
 	if !ok || end <= start {
