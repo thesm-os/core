@@ -28,6 +28,11 @@ const (
 	smallBlocks   = 256
 	everyFourth   = 4
 	goldenEntries = 120
+
+	// partitionBytes is the PartitionSize of the settings in partitions. The
+	// golden table then has several index partitions of about five blocks,
+	// and two filter partitions.
+	partitionBytes = 128
 )
 
 // The long entries of longTable: longKeys keys of longKeyLen bytes that share
@@ -69,6 +74,8 @@ const (
 	footerFilterLen = 28
 	footerFilterCRC = 36
 	footerVersion   = 64
+	// partitionedVersion is the format version of a table with partitions.
+	partitionedVersion = 2
 )
 
 // The names of the actions of the machines of a cursor and a merge: the six
@@ -93,6 +100,9 @@ type callKey struct{}
 // oneEntry are the options of the tables whose data blocks a case changes at
 // their only entry: every entry ends its data block.
 var oneEntry = sstable.WriterOptions{BlockSize: 1}
+
+// oneEntryParts are the options of oneEntry in partitions, with a filter.
+var oneEntryParts = sstable.WriterOptions{BlockSize: 1, FilterBits: 8, PartitionSize: partitionBytes}
 
 // longEntries are the options of the tables of long entries: blocks of
 // several entries with a restart point every 4 entries.
@@ -127,6 +137,25 @@ var settings = []struct {
 		opts: sstable.WriterOptions{
 			BlockSize: smallBlocks, RestartInterval: everyFourth, Compression: sstable.SnappyCompression,
 			FilterBits: 8,
+		},
+	},
+	{
+		name: "in partitions without a filter",
+		opts: sstable.WriterOptions{
+			BlockSize: smallBlocks, RestartInterval: everyFourth, PartitionSize: partitionBytes,
+		},
+	},
+	{
+		name: "in partitions with a filter",
+		opts: sstable.WriterOptions{
+			BlockSize: smallBlocks, RestartInterval: everyFourth, FilterBits: 8, PartitionSize: partitionBytes,
+		},
+	},
+	{
+		name: "compressed in partitions with a filter",
+		opts: sstable.WriterOptions{
+			BlockSize: smallBlocks, RestartInterval: everyFourth, Compression: sstable.SnappyCompression,
+			FilterBits: 8, PartitionSize: partitionBytes,
 		},
 	},
 }
@@ -247,18 +276,31 @@ type place struct {
 type layout struct {
 	data   []byte
 	blocks []place // the data blocks, in their order
-	filter place   // the filter block, or a place of length 0
-	index  place   // the index block
+	filter place   // the filter block or the top-level index of the filter, or a place of length 0
+	index  place   // the index block or the top-level index of the index
+
+	// filterParts and indexParts are the partitions of a table of format
+	// version 2, in their order. The last key of a filter partition has no
+	// sequence.
+	filterParts, indexParts []place
 }
 
 // newLayout writes a table of the entries under opts, and reads the places
-// of its blocks from its footer and its index. Every entry of the index is a
+// of its blocks from its footer and its index. Every entry of an index is a
 // restart point. Its value is the offset and the length of its block as two
-// varints, followed by the CRC32C of the block.
+// varints, followed by the CRC32C of the block. A table of format version 2
+// has an index partition for each entry of the top-level index of the
+// index, and a filter partition for each entry of the top-level index of the
+// filter.
 func newLayout(tb assert.TB, opts sstable.WriterOptions, es []entry) *layout {
 	tb.Helper()
 
-	data := writeTable(tb, opts, es)
+	return parseLayout(writeTable(tb, opts, es))
+}
+
+// parseLayout reads the places of the blocks of the table data, as newLayout
+// does.
+func parseLayout(data []byte) *layout {
 	f := data[len(data)-footerLen:]
 	be := binary.BigEndian
 	l := &layout{
@@ -272,17 +314,39 @@ func newLayout(tb assert.TB, opts sstable.WriterOptions, es []entry) *layout {
 			parent: f[footerIndexCRC : footerIndexCRC+crcLen],
 		},
 	}
-	index := data[l.index.off : l.index.off+l.index.n]
-	for _, off := range restarts(index) {
-		ikey, value := restartEntry(index[off:])
+	indexes := []place{l.index}
+	if be.Uint32(f[footerVersion:]) == partitionedVersion {
+		l.indexParts = indexPlaces(data, l.index)
+		if l.filter.n != 0 {
+			l.filterParts = indexPlaces(data, l.filter)
+		}
+		indexes = l.indexParts
+	}
+	for _, index := range indexes {
+		l.blocks = append(l.blocks, indexPlaces(data, index)...)
+	}
+
+	return l
+}
+
+// indexPlaces returns the places that the entries of the index at the place
+// index of data state, in their order. The last key of each place is the
+// key of its entry without the sequence: the last key of a data block or of
+// a partition.
+func indexPlaces(data []byte, index place) []place {
+	block := data[index.off : index.off+index.n]
+	offsets := restarts(block)
+	places := make([]place, 0, len(offsets))
+	for _, off := range offsets {
+		ikey, value := restartEntry(block[off:])
 		blockOff, n := binary.Uvarint(value)
 		blockLen, _ := binary.Uvarint(value[n:])
-		l.blocks = append(l.blocks, place{
+		places = append(places, place{
 			off: int(blockOff), n: int(blockLen), parent: value[len(value)-crcLen:], last: ikey[:len(ikey)-seqLen],
 		})
 	}
 
-	return l
+	return places
 }
 
 // seal brings the checksums of the table up to date with the changes of a
@@ -291,10 +355,11 @@ func newLayout(tb assert.TB, opts sstable.WriterOptions, es []entry) *layout {
 // of the footer. A block that the case did not change keeps its checksums,
 // so a case can change the CRC32C that a parent states and seal the table.
 // seal takes the places that newLayout read before the case changed the
-// table. It seals the data blocks first, because the index is their parent.
+// table. It seals the data blocks first, because an index is their parent,
+// and the partitions before their top-level indexes.
 func (l *layout) seal() {
 	be := binary.BigEndian
-	for _, b := range slices.Concat(l.blocks, []place{l.filter, l.index}) {
+	for _, b := range slices.Concat(l.blocks, l.filterParts, l.indexParts, []place{l.filter, l.index}) {
 		if b.n == 0 {
 			continue
 		}

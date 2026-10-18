@@ -41,11 +41,28 @@
 // [ErrCorrupt]. [Writer.Close] documents the layout in full, and the layout
 // does not change between releases.
 //
+// # Partitions
+//
+// With the PartitionSize of WriterOptions, the Writer writes format version
+// 2. It cuts the index into index partitions of about PartitionSize bytes
+// and the filter into filter partitions of at most PartitionSize bytes. A
+// top-level index of each kind has an entry for each of its partitions, and
+// the footer states the two top-level indexes in place of the index block
+// and the filter block. The data blocks have the bytes of format version 1.
+//
+// A Reader reads both versions. Of a table of version 1 it keeps the index
+// block and the filter block in memory. Of a table of version 2 it keeps the
+// two top-level indexes, so its memory grows with the number of partitions
+// and not with the number of keys. A lookup reads the filter partition and
+// the index partition of its key as it reads a data block, through the
+// cache.
+//
 // # Contexts
 //
 // Every call that can read or write a table takes the context of its
-// caller: [Open], [Reader.Get], each move of a [Source], the methods of a
-// [BlockCache], [Writer.Add] and [Writer.Close]. The package passes the
+// caller: [Open], [Reader.Get], [Reader.MayContain], [Reader.Span], each
+// move of a [Source], the methods of a [BlockCache], [Writer.Add] and
+// [Writer.Close]. The package passes the
 // context to the File, the Sink and the cache. A File or a Sink that waits
 // ends its wait with the error of the context. A move of an [Iter] that
 // needs a block checks the context first, so a scan stops at the next block
@@ -59,8 +76,9 @@
 //
 // # Block caches
 //
-// A [BlockCache] keeps the decoded data blocks that the readers of its
-// tables share. On a miss, a Reader adds a copy of the block that it read.
+// A [BlockCache] keeps the decoded data blocks and partitions that the
+// readers of its tables share. On a miss, a Reader adds a copy of the block
+// or the partition that it read.
 // A [LendingCache] keeps its blocks in [Block] buffers. On a miss of such a
 // cache, a Reader copies the block into a Block of [NewBlock] and adds that
 // Block. The cache and every cursor that reads a Block keep a reference to
@@ -93,18 +111,20 @@
 // # Allocation contract
 //
 //   - Writer.Add does not allocate once the buffers of the current block,
-//     the index and the hashes of the filter have room. [Writer.Reset] keeps
-//     the buffers for the next table, so a table after Reset allocates the
-//     two keys of its summary once the buffers have grown. A Writer releases
-//     its buffers once [Writer.Footprint] exceeds the MaxRetained of
-//     [WriterOptions], and the next table grows them again.
-//   - Reader.Get, Reader.MayContain, Reader.NewIter, Iter.Close and the moves
-//     of an Iter and a Merger do not allocate once the pooled cursors have
-//     grown to the largest block. Reader.Span does not allocate. A read
-//     through a [BlockCache] allocates a copy of each block that the cache
-//     does not contain, apart from the reads of a cursor with NoFill. A read
-//     through a LendingCache copies such a block into a Block from the pool,
-//     which allocates only when the pool of its class is empty.
+//     the index, the hashes of the filter and the partitions have room.
+//     [Writer.Reset] keeps the buffers for the next table, so a table after
+//     Reset allocates the two keys of its summary once the buffers have
+//     grown. A Writer releases its buffers once [Writer.Footprint] exceeds
+//     the MaxRetained of [WriterOptions], and the next table grows them
+//     again.
+//   - Reader.Get, Reader.MayContain, Reader.Span, Reader.NewIter, Iter.Close
+//     and the moves of an Iter and a Merger do not allocate once the pooled
+//     cursors have grown to the largest block and the largest partition. A
+//     read through a [BlockCache] allocates a copy of each block or partition
+//     that the cache does not contain, apart from the reads of a cursor with
+//     NoFill. A read through a LendingCache copies such a block into a Block
+//     from the pool, which allocates only when the pool of its class is
+//     empty.
 //   - [NewWriter], Writer.Close and [Open] allocate the Writer or the Reader
 //     and their buffers. [Reader.Footprint] returns the bytes of the buffers
 //     that a Reader keeps.

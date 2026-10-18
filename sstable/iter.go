@@ -9,8 +9,11 @@ import (
 	"context"
 	"encoding/binary"
 	"io"
+	"math"
 	"slices"
 
+	"go.thesmos.sh/core/filter"
+	"go.thesmos.sh/core/hash/xxh3"
 	"go.thesmos.sh/core/pool"
 )
 
@@ -61,6 +64,12 @@ type IterOptions struct {
 // reference to the [Block] of its current entry. It releases the reference
 // when it moves to another block or closes.
 //
+// A cursor of a table of format version 2 searches the top-level index of
+// the index for the index partition of its block, and reads the partition
+// through the cache as it reads a block. It keeps the partition, and a
+// reference to it when a LendingCache lent it. At the end of a partition,
+// Next and Prev read the partition after it or before it.
+//
 // # Concurrency
 //
 // A cursor is for one goroutine. Cursors of one [Reader] can move at once.
@@ -68,13 +77,13 @@ type IterOptions struct {
 // # Allocation contract
 //
 // The moves of a cursor do not allocate once its buffers have grown to the
-// largest block. A move through a [BlockCache] allocates the copy of each
-// block that it adds. A move through a LendingCache copies the block into a
-// Block of [NewBlock] instead, which allocates only when the pool of its
-// class is empty. A cursor with NoFill does not add a block.
-// A cursor with ReadAhead allocates the buffer of its reads ahead at its
-// first read of more than one block, and Close releases it. Key, Seq, Value,
-// Err and Close do not allocate.
+// largest block and the largest partition. A move through a [BlockCache]
+// allocates the copy of each block or partition that it adds. A move through
+// a LendingCache copies the block into a Block of [NewBlock] instead, which
+// allocates only when the pool of its class is empty. A cursor with NoFill
+// does not add a block or a partition. A cursor with ReadAhead allocates the
+// buffer of its reads ahead at its first read of more than one block, and
+// Close releases it. Key, Seq, Value, Err and Close do not allocate.
 type Iter struct {
 	// err is the error that exhausted the cursor.
 	err error
@@ -86,15 +95,28 @@ type Iter struct {
 	// and nil otherwise. The cursor keeps a reference to it.
 	lent *Block
 
+	// part is the index partition of index when a LendingCache lent it or
+	// received it, and nil otherwise. The cursor keeps a reference to it.
+	part *Block
+
 	// raw receives a stored block and its trailer. buf receives the decoding
 	// of a compressed block.
 	raw, buf []byte
+
+	// partRaw and partBuf receive a stored partition and its trailer, and the
+	// decoding of a compressed partition.
+	partRaw, partBuf []byte
 
 	// ahead contains the bytes of the last read ahead, from the offset
 	// aheadOff of the table on. It is empty before the first one.
 	ahead []byte
 
-	// index is on the entry of the index for the block of data.
+	// top is on the entry of the top-level index of the index for the index
+	// partition of a table of format version 2.
+	top blockCursor
+
+	// index is on the entry of the index or of the index partition for the
+	// block of data.
 	index blockCursor
 
 	// data is on the current entry, or on no entry.
@@ -102,6 +124,10 @@ type Iter struct {
 
 	// aheadOff is the offset of the bytes of ahead in the table.
 	aheadOff uint64
+
+	// partOff is the offset of the index partition of index, when index has
+	// a partition.
+	partOff uint64
 
 	// readAhead is the ReadAhead of [IterOptions].
 	readAhead int
@@ -131,8 +157,8 @@ var (
 //
 // Zero-alloc once the buffers of the cursor have room for the block.
 func (it *Iter) First(ctx context.Context) bool {
-	it.err, it.index.err, it.data.err, it.data.valid = nil, nil, nil, false
-	ok := it.index.restart(0) && it.load(ctx) && it.data.restart(0)
+	it.err, it.top.err, it.index.err, it.data.err, it.data.valid = nil, nil, nil, nil, false
+	ok := it.indexFirst(ctx) && it.load(ctx) && it.data.restart(0)
 
 	return it.forward(ctx, ok)
 }
@@ -152,8 +178,8 @@ func (it *Iter) First(ctx context.Context) bool {
 //
 // Zero-alloc once the buffers of the cursor have room for the block.
 func (it *Iter) Last(ctx context.Context) bool {
-	it.err, it.index.err, it.data.err, it.data.valid = nil, nil, nil, false
-	ok := it.index.last() && it.load(ctx) && it.data.last()
+	it.err, it.top.err, it.index.err, it.data.err, it.data.valid = nil, nil, nil, nil, false
+	ok := it.indexLast(ctx) && it.load(ctx) && it.data.last()
 
 	return it.backward(ctx, ok)
 }
@@ -183,8 +209,8 @@ func (it *Iter) SeekGE(ctx context.Context, key []byte, seq uint64) bool {
 	if it.data.valid && it.data.compare(key, seq) <= 0 && it.index.compare(key, seq) >= 0 {
 		return it.forward(ctx, it.data.seekGE(key, seq))
 	}
-	it.err, it.index.err, it.data.err, it.data.valid = nil, nil, nil, false
-	ok := it.index.seekGE(key, seq) && it.load(ctx) && it.data.seekGE(key, seq)
+	it.err, it.top.err, it.index.err, it.data.err, it.data.valid = nil, nil, nil, nil, false
+	ok := it.indexSeekGE(ctx, key, seq) && it.load(ctx) && it.data.seekGE(key, seq)
 
 	return it.forward(ctx, ok)
 }
@@ -207,12 +233,12 @@ func (it *Iter) SeekGE(ctx context.Context, key []byte, seq uint64) bool {
 //
 // Zero-alloc once the buffers of the cursor have room for the block.
 func (it *Iter) SeekLT(ctx context.Context, key []byte, seq uint64) bool {
-	it.err, it.index.err, it.data.err, it.data.valid = nil, nil, nil, false
+	it.err, it.top.err, it.index.err, it.data.err, it.data.valid = nil, nil, nil, nil, false
 	ok := false
-	if it.index.seekGE(key, seq) {
+	if it.indexSeekGE(ctx, key, seq) {
 		ok = it.load(ctx) && it.data.seekLT(key, seq)
-	} else if it.index.err == nil {
-		ok = it.index.last() && it.load(ctx) && it.data.last()
+	} else if it.err == nil && it.top.err == nil && it.index.err == nil {
+		ok = it.indexLast(ctx) && it.load(ctx) && it.data.last()
 	}
 
 	return it.backward(ctx, ok)
@@ -316,11 +342,11 @@ func (it *Iter) Err() error {
 	return it.err
 }
 
-// Close releases the reference of the cursor to a block of a [LendingCache],
-// returns the cursor and its buffers to the pool of cursors, and returns the
-// error of Err. The cursor is unusable after Close, because a later
-// [Reader.NewIter] can take it from the pool. A second Close before such a
-// NewIter returns nil and leaves the pool unchanged.
+// Close releases the references of the cursor to a block and a partition of
+// a [LendingCache], returns the cursor and its buffers to the pool of
+// cursors, and returns the error of Err. The cursor is unusable after Close,
+// because a later [Reader.NewIter] can take it from the pool. A second Close
+// before such a NewIter returns nil and leaves the pool unchanged.
 //
 // # Allocation contract
 //
@@ -332,12 +358,18 @@ func (it *Iter) Close() error {
 	if it.lent != nil {
 		it.lent.Release()
 	}
+	if it.part != nil {
+		it.part.Release()
+	}
 	err := it.err
 	*it = Iter{
-		index: blockCursor{key: it.index.key[:0]},
-		data:  blockCursor{key: it.data.key[:0]},
-		raw:   it.raw[:0],
-		buf:   it.buf[:0],
+		top:     blockCursor{key: it.top.key[:0]},
+		index:   blockCursor{key: it.index.key[:0]},
+		data:    blockCursor{key: it.data.key[:0]},
+		raw:     it.raw[:0],
+		buf:     it.buf[:0],
+		partRaw: it.partRaw[:0],
+		partBuf: it.partBuf[:0],
 	}
 	iters.Put(it)
 
@@ -351,11 +383,11 @@ func (it *Iter) Close() error {
 // an entry. A step that reports ok leaves every error nil, so forward joins
 // the errors only after a step that failed.
 func (it *Iter) forward(ctx context.Context, ok bool) bool {
-	for !ok && it.err == nil && it.data.err == nil && it.index.next() {
+	for !ok && it.err == nil && it.data.err == nil && it.indexNext(ctx) {
 		ok = it.load(ctx) && it.data.restart(0)
 	}
 	if !ok {
-		it.err = cmp.Or(it.err, it.index.err, it.data.err)
+		it.err = cmp.Or(it.err, it.top.err, it.index.err, it.data.err)
 	}
 
 	return ok
@@ -368,30 +400,126 @@ func (it *Iter) forward(ctx context.Context, ok bool) bool {
 // cursor is on an entry. It joins the errors only after a step that failed,
 // as forward does.
 func (it *Iter) backward(ctx context.Context, ok bool) bool {
-	for !ok && it.err == nil && it.data.err == nil && it.index.prev() {
+	for !ok && it.err == nil && it.data.err == nil && it.indexPrev(ctx) {
 		ok = it.load(ctx) && it.data.last()
 	}
 	if !ok {
-		it.err = cmp.Or(it.err, it.index.err, it.data.err)
+		it.err = cmp.Or(it.err, it.top.err, it.index.err, it.data.err)
 	}
 
 	return ok
 }
 
+// indexFirst moves the index cursor to the entry of the first data block. Of
+// a table of format version 2 it moves the top-level cursor to its first
+// entry and loads that partition. A move of the top-level cursor that fails
+// leaves the index cursor on no entry, so the next index move fails too.
+func (it *Iter) indexFirst(ctx context.Context) bool {
+	if !it.r.partitioned {
+		return it.index.restart(0)
+	}
+	it.index.valid = false
+
+	return it.top.restart(0) && it.loadPart(ctx, it.top.value) && it.index.restart(0)
+}
+
+// indexLast moves the index cursor to the entry of the last data block,
+// through the last partition of a table of format version 2.
+func (it *Iter) indexLast(ctx context.Context) bool {
+	if !it.r.partitioned {
+		return it.index.last()
+	}
+	it.index.valid = false
+
+	return it.top.last() && it.loadPart(ctx, it.top.value) && it.index.last()
+}
+
+// indexSeekGE moves the index cursor to the entry of the first data block
+// whose last entry is at or after the entry (key, seq), through the first
+// partition whose last entry is at or after it.
+func (it *Iter) indexSeekGE(ctx context.Context, key []byte, seq uint64) bool {
+	if !it.r.partitioned {
+		return it.index.seekGE(key, seq)
+	}
+	it.index.valid = false
+
+	return it.top.seekGE(key, seq) && it.loadPart(ctx, it.top.value) && it.index.seekGE(key, seq)
+}
+
+// indexNext moves the index cursor to the entry of the next data block. At
+// the end of an index partition it moves the top-level cursor to the next
+// partition, loads it and moves to its first entry.
+func (it *Iter) indexNext(ctx context.Context) bool {
+	if it.index.next() {
+		return true
+	}
+
+	return it.r.partitioned && it.index.err == nil && it.top.next() && it.loadPart(ctx, it.top.value) &&
+		it.index.restart(0)
+}
+
+// indexPrev moves the index cursor to the entry of the data block before the
+// current one. At the start of an index partition it moves the top-level
+// cursor to the partition before, loads it and moves to its last entry.
+func (it *Iter) indexPrev(ctx context.Context) bool {
+	if it.index.prev() {
+		return true
+	}
+
+	return it.r.partitioned && it.index.err == nil && it.top.prev() && it.loadPart(ctx, it.top.value) &&
+		it.index.last()
+}
+
+// loadPart sets the index cursor on the index partition of the top-level
+// value v: the place of the partition, its count of data blocks and its
+// CRC32C. A partition at the offset of the partition that index has stays,
+// and the cursor moves to no entry of it. Otherwise loadPart releases the
+// reference to the partition before, checks ctx, and takes the partition as
+// fetch takes it. loadPart sets err and reports false for a ctx that ended,
+// a value with other fields, a place outside the partitions and a read that
+// fails. A load that fails leaves index without a partition.
+func (it *Iter) loadPart(ctx context.Context, v []byte) bool {
+	off, n, _, want, ok := it.r.partition(v, true)
+	if !ok {
+		it.err = ErrCorrupt
+
+		return false
+	}
+	if it.index.block != nil && off == it.partOff {
+		it.index.init(it.index.block)
+
+		return true
+	}
+	if it.part != nil {
+		it.part.Release()
+		it.part = nil
+	}
+	it.index.block = nil
+	if err := ctx.Err(); err != nil {
+		it.err = err
+
+		return false
+	}
+	b, blk, err := it.fetch(ctx, off, n, want, false)
+	if err != nil {
+		it.err = err
+
+		return false
+	}
+	it.part, it.partOff = blk, off
+	it.index.init(b)
+
+	return true
+}
+
 // load sets the data cursor on the data block of the current entry of the
 // index. The value of the entry is the place of the block and its CRC32C.
-// load takes the block from the cache of the Reader, or reads it under ctx,
-// compares its CRC32C with the CRC32C of the entry and adds a copy to the
-// cache. A cursor with noFill leaves the block in raw or buf and adds
-// nothing to the cache. load sets err and reports false for a ctx that
+// load takes the block as fetch takes it, and keeps the reference of a
+// LendingCache to the block. load sets err and reports false for a ctx that
 // ended, a value with other fields, a place outside the data blocks and a
 // read that fails. Every caller calls load with the data cursor on no entry,
-// and a load that fails leaves it there.
-//
-// load first releases the reference of the cursor to the block of its last
-// load. Through a LendingCache it keeps the reference that Lend returns, or
-// copies the block that it reads into a Block of NewBlock and keeps the
-// reference of that Block after AddBlock.
+// and a load that fails leaves it there. load first releases the reference
+// of the cursor to the block of its last load.
 func (it *Iter) load(ctx context.Context) bool {
 	// The data cursor is on no entry, so it does not read the block of the
 	// last load again.
@@ -421,50 +549,79 @@ func (it *Iter) load(ctx context.Context) bool {
 	}
 	want := binary.BigEndian.Uint32(v[n1+n2:])
 
-	c, lc := it.r.cache, it.r.lending
-	if lc != nil {
-		if blk, ok := lc.Lend(ctx, it.r.cacheID, off); ok {
-			it.data.init(blk.Bytes())
-			it.lent = blk
-
-			return true
-		}
-	} else if c != nil {
-		if b, ok := c.Get(ctx, it.r.cacheID, off); ok {
-			it.data.init(b)
-
-			return true
-		}
-	}
-
-	//nolint:gosec // G115: the block lies before dataEnd, inside a table whose size is an int64
-	size := int(n) + trailerLen
-	raw, err := it.read(ctx, off, size)
+	b, blk, err := it.fetch(ctx, off, n, want, true)
 	if err != nil {
 		it.err = err
 
 		return false
 	}
-	b, err := unseal(raw, want, &it.buf)
-	if err != nil {
-		it.err = err
-
-		return false
-	}
-	if c != nil && !it.noFill {
-		if lc != nil {
-			blk := NewBlock(len(b))
-			copy(blk.buf, b)
-			lc.AddBlock(ctx, it.r.cacheID, off, blk)
-			it.lent, b = blk, blk.Bytes()
-		} else {
-			b = bytes.Clone(b)
-			c.Add(ctx, it.r.cacheID, off, b)
-		}
-	}
+	it.lent = blk
 	it.data.init(b)
 
 	return true
+}
+
+// fetch returns the decoded block of n stored bytes at off whose CRC32C is
+// want: a data block for data, and a partition otherwise. It lends the block
+// from a LendingCache, and returns the lent Block with the reference for the
+// cursor. It takes the block from another BlockCache. Otherwise it reads the
+// block under ctx and compares its CRC32C with want. A data block takes the
+// read ahead of the cursor and the buffers raw and buf, and a partition
+// takes partRaw and partBuf. fetch adds the block that it read to the cache,
+// unless the cursor has noFill. It copies the block into a Block of NewBlock
+// for a LendingCache, and returns that Block with the reference for the
+// cursor after AddBlock, or into a copy for another BlockCache. fetch
+// returns the error of a read that fails and ErrCorrupt for a block that
+// does not check.
+func (it *Iter) fetch(ctx context.Context, off, n uint64, want uint32, data bool) ([]byte, *Block, error) {
+	c, lc := it.r.cache, it.r.lending
+	if lc != nil {
+		if blk, ok := lc.Lend(ctx, it.r.cacheID, off); ok {
+			b := blk.Bytes()
+
+			return b, blk, nil
+		}
+	} else if c != nil {
+		if b, ok := c.Get(ctx, it.r.cacheID, off); ok {
+			return b, nil, nil
+		}
+	}
+
+	//nolint:gosec // G115: the block lies inside a table whose size is an int64
+	size := int(n) + trailerLen
+	buf := &it.partBuf
+	var raw []byte
+	var err error
+	if data {
+		buf = &it.buf
+		raw, err = it.read(ctx, off, size)
+	} else {
+		it.partRaw = slices.Grow(it.partRaw[:0], size)[:size]
+		//nolint:gosec // G115: the partition lies before partEnd, inside the table
+		raw, err = it.partRaw, readAt(ctx, it.r.f, it.partRaw, int64(off))
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	b, err := unseal(raw, want, buf)
+	if err != nil {
+		return nil, nil, err
+	}
+	if c == nil || it.noFill {
+		return b, nil, nil
+	}
+	if lc != nil {
+		blk := NewBlock(len(b))
+		copy(blk.buf, b)
+		lc.AddBlock(ctx, it.r.cacheID, off, blk)
+		b = blk.Bytes()
+
+		return b, blk, nil
+	}
+	b = bytes.Clone(b)
+	c.Add(ctx, it.r.cacheID, off, b)
+
+	return b, nil, nil
 }
 
 // read returns the stored block of size bytes at off and its trailer, which
@@ -510,6 +667,147 @@ func (it *Iter) read(ctx context.Context, off uint64, size int) ([]byte, error) 
 	it.aheadOff = start
 
 	return it.ahead[off-start : end-start], nil
+}
+
+// mayContain reports whether a table of format version 2 may contain an
+// entry with key, for [Reader.MayContain] and [Reader.Get]. A table without
+// a filter may contain every key. Otherwise mayContain checks ctx, searches
+// the top-level index of the filter for the first partition whose last key
+// is at or after key, and takes the partition as fetch takes a partition. A
+// key after the last key of the table has no partition, and the table does
+// not contain it. mayContain releases a partition that a LendingCache lent.
+// It returns the error of ctx and of a read, and ErrCorrupt for an entry of
+// the top-level index or a partition that does not check.
+func (it *Iter) mayContain(ctx context.Context, key []byte) (bool, error) {
+	r := it.r
+	if !r.hasFilter {
+		return true, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	var top blockCursor
+	top.init(r.filterIndex)
+	i, ok := top.search(0, top.count, key, math.MaxUint64)
+	if !ok {
+		return false, ErrCorrupt
+	}
+	if i == top.count {
+		return false, nil
+	}
+	_, v, _ := top.restartEntry(i)
+	off, n, _, want, ok := r.partition(v, false)
+	if !ok {
+		return false, ErrCorrupt
+	}
+	b, blk, err := it.fetch(ctx, off, n, want, false)
+	if err != nil {
+		return false, err
+	}
+	f, err := filter.ParseFuse(b)
+	may := err == nil && f.MayContain(xxh3.Hash(key))
+	if blk != nil {
+		blk.Release()
+	}
+	if err != nil {
+		return false, ErrCorrupt
+	}
+
+	return may, nil
+}
+
+// span returns the [Span] of the range from lower to upper of a table of
+// format version 2, for [Reader.Span]. It searches the top-level index of the
+// index in halves for the partition of lower, and from there in steps that
+// double for the partition of upper. It then reads the two partitions under
+// ctx and searches them for the first block and the last block. The
+// top-level entry before a partition counts the data blocks before the
+// partition. span returns the error of ctx and of a read, and ErrCorrupt for
+// an entry or a partition that does not check.
+func (it *Iter) span(ctx context.Context, lower, upper []byte) (Span, error) {
+	top := &it.top
+	first, ok := 0, true
+	if len(lower) != 0 {
+		first, ok = top.search(0, top.count, lower, math.MaxUint64)
+	}
+	after := top.count
+	if ok && upper != nil {
+		after, ok = top.gallop(first, upper, math.MaxUint64)
+	}
+	if !ok {
+		return Span{}, ErrCorrupt
+	}
+	if first == top.count {
+		return Span{}, nil
+	}
+
+	lo, start, _, err := it.partBlock(ctx, first, lower)
+	if err != nil {
+		return Span{}, err
+	}
+	var last int
+	var end uint64
+	if after < top.count {
+		var off, n uint64
+		last, off, n, err = it.partBlock(ctx, after, upper)
+		end = off + n + trailerLen
+	} else {
+		last, end = it.blocks(top.count-1)-1, it.r.dataEnd
+	}
+	if err != nil {
+		return Span{}, err
+	}
+	if last < lo || end <= start {
+		return Span{}, ErrCorrupt
+	}
+
+	//nolint:gosec // G115: end is at most dataEnd, inside a table whose size is an int64
+	return Span{Blocks: last - lo + 1, Bytes: int64(end - start)}, nil
+}
+
+// partBlock returns the number in the table of the first data block whose
+// last key is at or after key, among the blocks of the partition of the
+// top-level entry p, and the offset and the length of the block. An empty
+// key takes the first block of the partition. partBlock loads the partition
+// under ctx, as loadPart loads it. It returns the error of the load, and
+// ErrCorrupt for an entry or a partition that does not check and for a key
+// after the last block of the partition.
+func (it *Iter) partBlock(ctx context.Context, p int, key []byte) (int, uint64, uint64, error) {
+	before := 0
+	if p > 0 {
+		before = it.blocks(p - 1)
+	}
+	if _, v, _ := it.top.restartEntry(p); !it.loadPart(ctx, v) {
+		return 0, 0, 0, it.err
+	}
+	i, ok := 0, true
+	if len(key) != 0 {
+		i, ok = it.index.search(0, it.index.count, key, math.MaxUint64)
+	}
+	if !ok || i == it.index.count {
+		return 0, 0, 0, ErrCorrupt
+	}
+	_, v, _ := it.index.restartEntry(i)
+	off, n, ok := it.r.place(v)
+	if !ok || before < 0 {
+		return 0, 0, 0, ErrCorrupt
+	}
+
+	return before + i, off, n, nil
+}
+
+// blocks returns the number of data blocks of the table up to the end of the
+// partition of the top-level entry p, from the value of the entry, or -1 for
+// an entry or a value that does not decode.
+func (it *Iter) blocks(p int) int {
+	_, v, _ := it.top.restartEntry(p)
+	_, _, n, _, ok := it.r.partition(v, true)
+	if !ok {
+		return -1
+	}
+
+	//nolint:gosec // G115: a count above MaxInt converts to a negative count, which the callers refuse
+	return int(n)
 }
 
 // blockCursor is a cursor over the entries of a decoded block. The block
@@ -734,57 +1032,48 @@ func (c *blockCursor) gallop(lo int, key []byte, seq uint64) (int, bool) {
 // restartCompare returns the order of the entry at the restart point i and
 // the entry (key, seq) under Compare. It compares the whole key of the
 // restart point where the block stores it, without a copy into c.key. It
-// sets err to ErrCorrupt and reports false for a restart offset outside the
-// entries, and for an entry at the offset whose header does not decode,
-// whose internal key does not fit the entries or is shorter than a sequence,
-// or that shares a prefix with a key before it.
+// sets err to ErrCorrupt and reports false for an entry that restartEntry
+// refuses, and for an internal key shorter than a sequence.
 func (c *blockCursor) restartCompare(i int, key []byte, seq uint64) (int, bool) {
+	ikey, _, ok := c.restartEntry(i)
+	// A header that does not decode has a key of no bytes, which is shorter
+	// than a sequence.
+	if !ok || len(ikey) < seqLen {
+		c.valid, c.err = false, ErrCorrupt
+
+		return 0, false
+	}
+	k := len(ikey) - seqLen
+
+	return Compare(ikey[:k], binary.BigEndian.Uint64(ikey[k:]), key, seq), true
+}
+
+// restartEntry returns the internal key and the value of the entry at the
+// restart point i as parts of the block, without a copy. It reports false
+// for a restart offset outside the entries, for an entry that shares a
+// prefix with a key before it, and for a key or a value that does not fit
+// the entries. A header that does not decode has a key and a value of no
+// bytes. i is a restart point of the block.
+func (c *blockCursor) restartEntry(i int) (ikey, value []byte, ok bool) {
 	off := binary.BigEndian.Uint32(c.block[c.end+4*i:])
 	//dokimi:mutate-skip ror-boundary: an entry at the end of the entries has no bytes, which uvarints refuses
 	if int64(off) >= int64(c.end) {
-		c.valid, c.err = false, ErrCorrupt
-
-		return 0, false
+		return nil, nil, false
 	}
 	p := c.block[off:c.end]
-	shared, unshared, _, short := shortHeader(p)
+	shared, unshared, vlen, short := shortHeader(p)
 	n := 3
 	if !short {
-		shared, unshared, _, n = uvarints(p)
+		shared, unshared, vlen, n = uvarints(p)
 	}
-	// A header that does not decode has a key of no bytes, which is shorter
-	// than a sequence. The search reads the key alone, so it does not check
-	// the length of the value.
 	p = p[n:]
-	if shared != 0 || unshared > uint64(len(p)) || unshared < seqLen {
-		c.valid, c.err = false, ErrCorrupt
-
-		return 0, false
+	if shared != 0 || unshared > uint64(len(p)) || vlen > uint64(len(p))-unshared {
+		return nil, nil, false
 	}
-	//nolint:gosec // G115: unshared is at most len(p)
-	k := int(unshared) - seqLen
+	//nolint:gosec // G115: both lengths are at most len(p)
+	k, v := int(unshared), int(vlen)
 
-	return Compare(p[:k], binary.BigEndian.Uint64(p[k:]), key, seq), true
-}
-
-// restartValue returns the value of the entry at the restart point i as a
-// part of the block, or nil for a value that does not fit the entries. The
-// caller calls it for an entry that restartCompare accepted, so the offset
-// and the key of the entry fit the entries.
-func (c *blockCursor) restartValue(i int) []byte {
-	p := c.block[binary.BigEndian.Uint32(c.block[c.end+4*i:]):c.end]
-	_, unshared, vlen, short := shortHeader(p)
-	n := 3
-	if !short {
-		_, unshared, vlen, n = uvarints(p)
-	}
-	//nolint:gosec // G115: restartCompare accepted the key, so it ends inside p
-	p = p[n+int(unshared):]
-	if vlen > uint64(len(p)) {
-		return nil
-	}
-
-	return p[:vlen:vlen]
+	return p[:k], p[k : k+v : k+v], true
 }
 
 // decode moves to the entry at off. The key of the entry shares its first

@@ -112,10 +112,12 @@ type Span struct {
 // Reader reads a table through a [File]. [Reader.Get] looks up one key, and
 // [Reader.NewIter] returns a cursor over the entries. [Reader.Span] returns
 // the data blocks of a key range from the index. The Reader keeps the
-// index block, the filter block and the summary of the table in memory, and
-// reads a data block for each lookup or move that needs it, under the
-// context of that call. [Reader.Footprint] returns the bytes of the buffers
-// that it keeps.
+// index block, the filter block and the summary of a table of format version
+// 1 in memory. Of a table of format version 2 it keeps the two top-level
+// indexes and the summary, and reads the index partitions and the filter
+// partitions as it reads data blocks. The Reader reads a block for each
+// lookup or move that needs it, under the context of that call.
+// [Reader.Footprint] returns the bytes of the buffers that it keeps.
 //
 // # Concurrency
 //
@@ -123,26 +125,34 @@ type Span struct {
 //
 // # Allocation contract
 //
-// [Open] allocates the Reader, the index block, the filter block and the
-// keys of the summary. Get, [Reader.MayContain] and NewIter do not allocate
-// once the pool of cursors has a cursor whose buffers have grown to the
-// largest block. Span does not allocate. A read through a [BlockCache]
-// allocates the copy of each block that it adds. A read through a
-// [LendingCache] takes a [Block] from a pool in place of that copy.
+// [Open] allocates the Reader, the index block, the filter block or the two
+// top-level indexes, and the keys of the summary. Get, [Reader.MayContain],
+// [Reader.Span] and NewIter do not allocate once the pool of cursors has a
+// cursor whose buffers have grown to the largest block and the largest
+// partition. A read through a [BlockCache] allocates the copy of each block
+// or partition that it adds. A read through a [LendingCache] takes a [Block]
+// from a pool in place of that copy.
 type Reader struct {
 	// f contains the table.
 	f File
 
-	// cache keeps the decoded data blocks under cacheID, or is nil.
+	// cache keeps the decoded blocks and partitions under cacheID, or is
+	// nil.
 	cache BlockCache
 
 	// lending is cache when cache is a LendingCache, and nil otherwise.
 	lending LendingCache
 
-	// index is the index block.
+	// index is the index block of a table of format version 1, or the
+	// top-level index of the index of format version 2.
 	index []byte
 
-	// filter is the filter of the table when hasFilter is true.
+	// filterIndex is the top-level index of the filter of a table of format
+	// version 2 with a filter, and nil otherwise.
+	filterIndex []byte
+
+	// filter is the filter of a table of format version 1 when hasFilter is
+	// true.
 	filter filter.Fuse
 
 	// summary describes the table.
@@ -154,40 +164,50 @@ type Reader struct {
 	// dataEnd is the offset after the trailer of the last data block.
 	dataEnd uint64
 
-	// filterSize is the capacity of the filter block that filter reads, or 0
-	// when the table has no filter.
+	// partEnd is the offset after the trailer of the last partition of a
+	// table of format version 2, where its top-level indexes start.
+	partEnd uint64
+
+	// filterSize is the capacity of the filter block that filter reads, or
+	// of filterIndex, and 0 for a table without a filter.
 	filterSize int
 
 	// hasFilter reports whether the table has a filter.
 	hasFilter bool
+
+	// partitioned reports whether the table has format version 2.
+	partitioned bool
 }
 
 // Open reads the footer, the index block and the filter block of the table
 // of size bytes in file under ctx, and checks the checksum and the layout of
-// each. It compares the CRC32C of the index block and the filter block with
-// the CRC32C that the footer states for each. It reads the first entry of
-// the first data block for the smallest key of the summary, and the last
-// entry of the index for the largest key. It does not add the first data
-// block to the cache.
+// each. Of a table of format version 2 it reads the two top-level indexes
+// in place of the two blocks. It compares the CRC32C of each block with the
+// CRC32C that the footer states for it. It reads the first entry of the
+// first data block for the smallest key of the summary, and the last entry
+// of the index for the largest key. It does not add the first data block or
+// its partition to the cache.
 //
 // Error modes:
 //
 //   - A table shorter than 89 bytes returns [ErrCorrupt].
-//   - A footer with another magic number, a failed checksum, another version
-//     or places of the index and the filter that do not fit the table
-//     returns ErrCorrupt. A footer of a table without a filter that states
-//     a filter offset or a filter CRC32C returns ErrCorrupt too.
-//   - An index block, a filter block or a first data block that fails its
-//     checksum or its layout returns ErrCorrupt. So does a block whose CRC32C
-//     differs from the CRC32C that the footer or its index entry states.
+//   - A footer with another magic number, a failed checksum, a version other
+//     than 1 and 2 or places of the index and the filter that do not fit the
+//     table returns ErrCorrupt. A footer of a table without a filter that
+//     states a filter offset or a filter CRC32C returns ErrCorrupt too.
+//   - An index block, a filter block, a top-level index, a first partition
+//     or a first data block that fails its checksum or its layout returns
+//     ErrCorrupt. So does a block whose CRC32C differs from the CRC32C that
+//     the footer or its index entry states.
 //   - An error of file, such as the error of ctx at the end of a wait,
 //     returns an error that wraps it. A read of fewer bytes without an error
 //     returns an error that wraps io.ErrUnexpectedEOF.
 //
 // # Allocation contract
 //
-// Allocates the Reader, the footer, the index block, the filter block and
-// the keys of the summary, and a cursor when the pool has none.
+// Allocates the Reader, the footer, the index block, the filter block or the
+// top-level indexes and the keys of the summary, and a cursor when the pool
+// has none.
 func Open(ctx context.Context, file File, size int64, opts ReaderOptions) (*Reader, error) {
 	if size < minTableSize {
 		return nil, ErrCorrupt
@@ -197,8 +217,9 @@ func Open(ctx context.Context, file File, size int64, opts ReaderOptions) (*Read
 		return nil, err
 	}
 	be := binary.BigEndian
+	version := be.Uint32(f[64:])
 	if be.Uint64(f[72:]) != magic || be.Uint32(f[footerChecked:]) != crc32.Checksum(f[:footerChecked], castagnoli) ||
-		be.Uint32(f[64:]) != formatVersion {
+		version != formatVersion && version != partitionedVersion {
 
 		return nil, ErrCorrupt
 	}
@@ -229,7 +250,7 @@ func Open(ctx context.Context, file File, size int64, opts ReaderOptions) (*Read
 		return nil, err
 	}
 	rd := &Reader{
-		f: file, index: index, dataEnd: dataEnd,
+		f: file, index: index, dataEnd: dataEnd, partEnd: dataEnd, partitioned: version == partitionedVersion,
 		summary: Summary{
 			//nolint:gosec // G115: a Writer counts its entries in an int64
 			Entries: int64(be.Uint64(f[40:])), Size: size, MinSeq: be.Uint64(f[48:]), MaxSeq: be.Uint64(f[56:]),
@@ -237,7 +258,8 @@ func Open(ctx context.Context, file File, size int64, opts ReaderOptions) (*Read
 	}
 
 	// Every entry of the index is a restart point, so the last restart point
-	// is the last entry. An index of no entries has none.
+	// is the last entry. An index of no entries has none. The last entry of
+	// the top-level index of the index is the last entry of the table too.
 	var c blockCursor
 	c.init(index)
 	if c.restart(c.count - 1) {
@@ -253,10 +275,19 @@ func Open(ctx context.Context, file File, size int64, opts ReaderOptions) (*Read
 		if err != nil {
 			return nil, err
 		}
-		if rd.filter, err = filter.ParseFuse(b); err != nil {
+		if rd.partitioned {
+			rd.filterIndex = b
+		} else if rd.filter, err = filter.ParseFuse(b); err != nil {
 			return nil, ErrCorrupt
 		}
 		rd.hasFilter, rd.filterSize = true, cap(b)
+	}
+	if rd.partitioned {
+		dataEnd, err := rd.firstPartition()
+		if err != nil {
+			return nil, err
+		}
+		rd.dataEnd = dataEnd
 	}
 
 	// Open sets the cache after it reads the first block, so the read does
@@ -287,9 +318,11 @@ func (r *Reader) Summary() Summary {
 
 // Footprint returns the bytes of memory that the buffers of r take. It adds
 // the capacity of the index block, of the filter block and of the two keys
-// of the summary. The buffers do not change after [Open], so every call
-// returns the same value. Footprint does not count the blocks of a
-// [BlockCache] or the cursors of the pool that every Reader shares.
+// of the summary, and of the two top-level indexes in place of the two
+// blocks of a table of format version 2. The buffers do not change after
+// [Open], so every call returns the same value. Footprint does not count the
+// blocks and the partitions of a [BlockCache] or the cursors of the pool that
+// every Reader shares.
 //
 // # Allocation contract
 //
@@ -301,14 +334,18 @@ func (r *Reader) Footprint() int {
 // Span returns the data blocks of the table that can contain an entry whose
 // key is at or after lower and before upper. A nil lower starts the range
 // at the first key of the table, and a nil upper ends it after the last key.
-// Span searches the index in memory and does not read a data block.
+// Span searches the index of a table of format version 1 in memory and does
+// not read a block. Of a table of format version 2 it reads the index
+// partitions of lower and upper under ctx, and counts the data blocks before
+// each partition from the top-level index.
 //
 // The first block of the range is the first block whose last key is at or
 // after lower. The last block is the first block whose last key is at or
 // after upper, or the last block of the table. That block can start at or
 // after upper, so Span can count one block without an entry of the range.
 // Span returns the zero Span for a range whose upper is at or before lower
-// and for a range whose lower is after the last key.
+// and for a range whose lower is after the last key. A table of either
+// format version returns the same Span for the same entries and options.
 //
 // Span searches the index in halves for lower, and does not search for an
 // empty lower. It searches for upper from the block of lower in steps that
@@ -316,22 +353,32 @@ func (r *Reader) Footprint() int {
 //
 // Error modes:
 //
-//   - An entry of the index that does not decode returns [ErrCorrupt]. So do
-//     a place of a block outside the data blocks and a last block that does
-//     not end after the start of the first block.
+//   - An entry of an index that does not decode returns [ErrCorrupt]. So do
+//     a place of a block or a partition outside its part of the table, and
+//     a last block that does not end after the start of the first block.
+//   - A ctx that ended before a read of a partition returns the error of
+//     ctx, and an error of the File returns an error that wraps it.
 //
 // # Allocation contract
 //
-// Zero-alloc.
-func (r *Reader) Span(lower, upper []byte) (Span, error) {
+// Zero-alloc once the pool of cursors has a cursor whose buffers have grown
+// to the largest partition.
+func (r *Reader) Span(ctx context.Context, lower, upper []byte) (Span, error) {
 	if upper != nil && bytes.Compare(lower, upper) >= 0 {
 		return Span{}, nil
 	}
+	if r.partitioned {
+		it := r.NewIter(IterOptions{})
+		var s Span
+		s, it.err = it.span(ctx, lower, upper)
+
+		return s, it.Close()
+	}
 
 	// Every entry of the index is a restart point, so the number of a restart
-	// point is the number of its block. search and gallop compare the entry
-	// of each number that they return, so restartValue reads an entry whose
-	// key fits. Every block ends at or after an empty lower.
+	// point is the number of its block. restartEntry returns a nil value for
+	// an entry that does not fit, and place refuses it. Every block ends at
+	// or after an empty lower.
 	var c blockCursor
 	c.init(r.index)
 	first, ok := 0, true
@@ -350,11 +397,13 @@ func (r *Reader) Span(lower, upper []byte) (Span, error) {
 		return Span{}, nil
 	}
 
-	start, _, ok := r.place(c.restartValue(first))
+	_, v, _ := c.restartEntry(first)
+	start, _, ok := r.place(v)
 	last, end := c.count-1, r.dataEnd
 	if ok && after < c.count {
+		_, v, _ = c.restartEntry(after)
 		var off, n uint64
-		off, n, ok = r.place(c.restartValue(after))
+		off, n, ok = r.place(v)
 		last, end = after, off+n+trailerLen
 	}
 	if !ok || end <= start {
@@ -368,13 +417,34 @@ func (r *Reader) Span(lower, upper []byte) (Span, error) {
 // MayContain reports whether the table may contain an entry with key. It
 // reports true for every key of the table, and true for every key when the
 // table has no filter. For a key that the table does not contain, a filter
-// of b bits per fingerprint reports true with a probability of 2^-b.
+// of b bits per fingerprint reports true with a probability of 2^-b. The
+// filter of a table of format version 1 is in memory. Of a table of format
+// version 2, MayContain reads the filter partition of key under ctx, through
+// the cache of r, and reports false without a read for a key after the last
+// key of the table.
+//
+// Error modes:
+//
+//   - A ctx that ended returns the error of ctx for a table of format
+//     version 2, also when the cache contains the partition.
+//   - An entry of the top-level index of the filter or a filter partition
+//     that does not check returns [ErrCorrupt].
+//   - An error of the File returns an error that wraps it.
 //
 // # Allocation contract
 //
-// Zero-alloc.
-func (r *Reader) MayContain(key []byte) bool {
-	return !r.hasFilter || r.filter.MayContain(xxh3.Hash(key))
+// Zero-alloc once the pool of cursors has a cursor whose buffers have grown
+// to the largest partition. A filter partition that a cache does not contain
+// allocates its copy or its [Block] for the cache, as a data block does.
+func (r *Reader) MayContain(ctx context.Context, key []byte) (bool, error) {
+	if !r.partitioned {
+		return !r.hasFilter || r.filter.MayContain(xxh3.Hash(key)), nil
+	}
+	it := r.NewIter(IterOptions{})
+	var may bool
+	may, it.err = it.mayContain(ctx, key)
+
+	return may, it.Close()
 }
 
 // Get returns the value and the sequence of the first entry at or after the
@@ -387,12 +457,14 @@ func (r *Reader) MayContain(key []byte) bool {
 // Get asks the filter first. A lookup of a key that the table does not
 // contain reads a data block only when the filter reports a false positive.
 // Get reads at most one data block under ctx, through the cache when the
-// Reader has one, and adds the block that it reads to the cache.
+// Reader has one, and adds the block that it reads to the cache. Of a table
+// of format version 2 it also reads the filter partition and the index
+// partition of key, as it reads a data block.
 //
 // Error modes:
 //
-//   - A data block that fails its checksum, its decompression or its layout
-//     returns [ErrCorrupt].
+//   - A data block or a partition that fails its checksum, its
+//     decompression or its layout returns [ErrCorrupt].
 //   - A ctx that ended returns the error of ctx when Get needs a block, also
 //     when the cache contains the block.
 //   - An error of the File, such as the error of ctx at the end of a wait,
@@ -401,18 +473,27 @@ func (r *Reader) MayContain(key []byte) bool {
 // # Allocation contract
 //
 // Zero-alloc when dst has room for the value, the pool of cursors has a
-// cursor whose buffers have grown to the block, and the cache contains the
-// block or the Reader has no cache. A block that a [BlockCache] does not
-// contain allocates its copy for the cache. A block that a [LendingCache]
-// does not contain takes a [Block] from a pool, which allocates only when
-// the pool of its class is empty.
+// cursor whose buffers have grown to the block and the partitions, and the
+// cache contains them or the Reader has no cache. A block or a partition
+// that a [BlockCache] does not contain allocates its copy for the cache. A
+// block or a partition that a [LendingCache] does not contain takes a
+// [Block] from a pool, which allocates only when the pool of its class is
+// empty.
 func (r *Reader) Get(ctx context.Context, key []byte, seq uint64, dst []byte) ([]byte, uint64, bool, error) {
-	if !r.MayContain(key) {
+	// The filter of a table of format version 1 is in memory, so a key that
+	// it refuses takes no cursor.
+	if !r.partitioned && r.hasFilter && !r.filter.MayContain(xxh3.Hash(key)) {
 		return dst, 0, false, nil
 	}
 
+	// The lookup ends before the seek when the filter partition refuses key
+	// or fails. Close returns the error of the cursor.
 	it := r.NewIter(IterOptions{})
-	ok := it.SeekGE(ctx, key, seq) && bytes.Equal(it.Key(), key)
+	may := true
+	if r.partitioned {
+		may, it.err = it.mayContain(ctx, key)
+	}
+	ok := may && it.SeekGE(ctx, key, seq) && bytes.Equal(it.Key(), key)
 	var found uint64
 	if ok {
 		dst, found = append(dst, it.Value()...), it.Seq()
@@ -435,9 +516,45 @@ func (r *Reader) Get(ctx context.Context, key []byte, seq uint64, dst []byte) ([
 func (r *Reader) NewIter(opts IterOptions) *Iter {
 	it := iters.Get()
 	it.r, it.noFill, it.readAhead = r, opts.NoFill, opts.ReadAhead
-	it.index.init(r.index)
+	if r.partitioned {
+		it.top.init(r.index)
+	} else {
+		it.index.init(r.index)
+	}
 
 	return it
+}
+
+// firstPartition returns the offset of the first partition of a table of
+// format version 2, where its data blocks end: the first filter partition,
+// or the first index partition of a table without filter partitions. A
+// table without partitions has no data blocks, and firstPartition returns
+// partEnd for it. It returns ErrCorrupt for a top-level index of the filter
+// without room for its restart offsets, and for a first entry that does not
+// decode or whose offset is past partEnd.
+func (r *Reader) firstPartition() (uint64, error) {
+	var top blockCursor
+	if r.hasFilter {
+		top.init(r.filterIndex)
+		if top.err != nil {
+			return 0, top.err
+		}
+	}
+	if top.count == 0 {
+		top.init(r.index)
+	}
+	if top.count == 0 {
+		return r.partEnd, nil
+	}
+	if !top.restart(0) {
+		return 0, ErrCorrupt
+	}
+	off, n := binary.Uvarint(top.value)
+	if n <= 0 || off > r.partEnd {
+		return 0, ErrCorrupt
+	}
+
+	return off, nil
 }
 
 // place returns the offset and the stored length of the data block of the
@@ -459,6 +576,33 @@ func (r *Reader) place(v []byte) (uint64, uint64, bool) {
 	}
 
 	return off, n, true
+}
+
+// partition returns the place of the partition of the top-level entry value
+// v: its offset, its length without its trailer, the number of data blocks
+// up to its end for a counted value of the top-level index of the index,
+// and its CRC32C. It reports false for a value with other fields and for a
+// partition outside the bytes from dataEnd to partEnd.
+func (r *Reader) partition(v []byte, counted bool) (off, n, blocks uint64, sum uint32, ok bool) {
+	off, n1 := binary.Uvarint(v)
+	// When a varint fails, Uvarint decodes the same bytes for the next one
+	// and fails again, so the last varint reports a failure of any of them.
+	n, last := binary.Uvarint(v[max(n1, 0):])
+	at := max(n1, 0) + max(last, 0)
+	if counted {
+		var n3 int
+		blocks, n3 = binary.Uvarint(v[at:])
+		at, last = at+max(n3, 0), n3
+	}
+	end := r.partEnd
+	if last <= 0 || len(v) != at+crcLen ||
+		n > end ||
+		end-n < trailerLen || off < r.dataEnd || off > end-n-trailerLen {
+
+		return 0, 0, 0, 0, false
+	}
+
+	return off, n, blocks, binary.BigEndian.Uint32(v[at:]), true
 }
 
 // readBlock reads the stored block of n bytes at off and its trailer from f

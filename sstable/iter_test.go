@@ -1030,9 +1030,11 @@ func TestIter(t *testing.T) {
 		})
 
 		// A case changes the second data block or its entry in the index. A
-		// cached case reads the changed table through a cache with every
-		// block of the table before the change. A cursor that took a block of
-		// a corrupt place from that cache would find the block.
+		// case of a table in partitions changes the second index partition or
+		// its entry in the top-level index instead. A cached case reads the
+		// changed table through a cache with every block and partition of the
+		// table before the change. A cursor that took a block of a corrupt
+		// place from that cache would find the block.
 		tests := []struct {
 			name       string
 			giveOpts   sstable.WriterOptions
@@ -1226,16 +1228,117 @@ func TestIter(t *testing.T) {
 					l.blocks[1].parent[0] ^= 1
 				},
 			},
+			{
+				name:     "returns ErrCorrupt for a CRC32C in the top-level index that differs from the partition",
+				giveOpts: oneEntryParts,
+				giveChange: func(l *layout, _ []byte) {
+					l.indexParts[1].parent[0] ^= 1
+				},
+			},
+			{
+				name:     "returns ErrCorrupt for an index partition without room for its restart offsets",
+				giveOpts: oneEntryParts,
+				giveChange: func(_ *layout, part []byte) {
+					binary.BigEndian.PutUint32(part[len(part)-4:], math.MaxUint32)
+				},
+			},
+			{
+				name:       "returns ErrCorrupt for a partition one byte before the partitions",
+				giveOpts:   oneEntryParts,
+				giveCached: true,
+				giveChange: func(l *layout, _ []byte) {
+					// The data blocks end at the first filter partition. Both
+					// offsets have a varint of two bytes.
+					binary.PutUvarint(indexValue(l, 1), uint64(l.filterParts[0].off-1))
+				},
+			},
+			{
+				name:       "returns ErrCorrupt for a partition that ends one byte past the partitions",
+				giveOpts:   oneEntryParts,
+				giveCached: true,
+				giveChange: func(l *layout, _ []byte) {
+					// The partitions end at the top-level index of the filter.
+					setBlockLength(l, 1, l.filter.off-l.indexParts[1].off-trailerLen+1)
+				},
+			},
+			{
+				name:       "returns ErrCorrupt for a partition length that leaves no room for its trailer",
+				giveOpts:   oneEntryParts,
+				giveCached: true,
+				giveChange: func(l *layout, _ []byte) {
+					setBlockLength(l, 1, l.filter.off-trailerLen+1)
+				},
+			},
+			{
+				name:       "returns ErrCorrupt for a partition length past the partitions",
+				giveOpts:   oneEntryParts,
+				giveCached: true,
+				giveChange: func(l *layout, _ []byte) {
+					// The offset and the length have varints of two bytes.
+					v := indexValue(l, 1)
+					v[2], v[3] = 0xff, 0x7f
+				},
+			},
+			{
+				name:       "returns ErrCorrupt for a partition offset whose varint does not end",
+				giveOpts:   oneEntryParts,
+				giveCached: true,
+				giveChange: func(l *layout, _ []byte) {
+					v := indexValue(l, 1)
+					for i := range v {
+						v[i] = 0x80
+					}
+				},
+			},
+			{
+				name:       "returns ErrCorrupt for a count of blocks whose varint does not end",
+				giveOpts:   oneEntryParts,
+				giveCached: true,
+				giveChange: func(l *layout, _ []byte) {
+					// The varint continues through the bytes of the CRC32C.
+					v := indexValue(l, 1)
+					for i := range crcLen + 1 {
+						v[len(v)-1-i] = 0x80
+					}
+				},
+			},
+			{
+				name:       "returns ErrCorrupt for a top-level value with bytes after the CRC32C",
+				giveOpts:   oneEntryParts,
+				giveCached: true,
+				giveChange: func(l *layout, _ []byte) {
+					// Without the high bit of its first byte, the varint of the
+					// offset ends after one byte.
+					indexValue(l, 1)[0] &^= 0x80
+				},
+			},
+			{
+				name:       "returns ErrCorrupt for a top-level value without room for its CRC32C",
+				giveOpts:   oneEntryParts,
+				giveCached: true,
+				giveChange: func(l *layout, _ []byte) {
+					// The count of blocks has a varint of one byte. With the high
+					// bit, the varint ends at the first byte of the CRC32C.
+					v := indexValue(l, 1)
+					v[len(v)-crcLen-1] |= 0x80
+					v[len(v)-crcLen] = 0
+				},
+			},
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
 				es := goldenTable()
 				l := newLayout(t, tt.giveOpts, es)
-				// Every entry of the first two blocks is a restart point, so
-				// their restart points count the entries before the second
-				// block and after it.
-				first, second := l.blocks[0], l.blocks[1]
+				// Every entry of the first two blocks or index partitions is a
+				// restart point. A block of a table in partitions has one entry,
+				// so the restart points count the entries before the second
+				// block or partition and after it.
+				units := l.blocks
+				if tt.giveOpts.PartitionSize != 0 {
+					units = l.indexParts
+				}
+				first, second := units[0], units[1]
 				before := len(restarts(l.data[first.off : first.off+first.n]))
 				want := es[:before]
 				wantBack := slices.Clone(es[before+len(restarts(l.data[second.off:second.off+second.n])):])
@@ -1253,16 +1356,33 @@ func TestIter(t *testing.T) {
 				it := openTable(t, l.data, opts).NewIter(sstable.IterOptions{})
 				defer it.Close()
 				got, err := scanAll(t.Context(), it)
-				expect.ErrorIs(t, err, sstable.ErrCorrupt, "the cursor refuses the second block")
-				expect.Equal(t, got, want, "the cursor yields the entries of the first block")
+				expect.ErrorIs(t, err, sstable.ErrCorrupt, "the cursor refuses the change")
+				expect.Equal(t, got, want, "the cursor yields the entries before the change")
 				back, err := scanBack(t.Context(), it)
-				expect.ErrorIs(t, err, sstable.ErrCorrupt, "the cursor refuses the second block from the last entry")
-				expect.Equal(t, back, wantBack, "the cursor yields the entries after the second block back")
+				expect.ErrorIs(t, err, sstable.ErrCorrupt, "the cursor refuses the change from the last entry")
+				expect.Equal(t, back, wantBack, "the cursor yields the entries after the change back")
 				probe := es[before]
-				expect.False(t, it.SeekGE(t.Context(), probe.key, probe.seq), "SeekGE finds no entry of the block")
-				expect.ErrorIs(t, it.Err(), sstable.ErrCorrupt, "SeekGE refuses the second block")
+				expect.False(t, it.SeekGE(t.Context(), probe.key, probe.seq), "SeekGE finds no entry of the change")
+				expect.ErrorIs(t, it.Err(), sstable.ErrCorrupt, "SeekGE refuses the change")
 			})
 		}
+
+		t.Run("returns ErrCorrupt for a restart offset of the top-level index that its search decodes",
+			func(t *testing.T) {
+				t.Parallel()
+				// The search of the top-level index decodes its middle restart
+				// point first. Open reads the first and the last entry alone.
+				l := newLayout(t, oneEntryParts, goldenTable())
+				top := l.data[l.index.off : l.index.off+l.index.n]
+				count := len(restarts(top))
+				binary.BigEndian.PutUint32(top[len(top)-4-4*count+4*(count/2):], math.MaxUint32)
+				l.seal()
+				it := openTable(t, l.data, sstable.ReaderOptions{}).NewIter(sstable.IterOptions{})
+				defer it.Close()
+				expect.False(t, it.SeekGE(t.Context(), goldenKeys[30], 1), "SeekGE finds no entry")
+				expect.ErrorIs(t, it.Err(), sstable.ErrCorrupt,
+					"SeekGE refuses the restart offset of the top-level index")
+			})
 
 		t.Run("returns the error of the File", func(t *testing.T) {
 			t.Parallel()
@@ -1576,11 +1696,14 @@ func BenchmarkIter(b *testing.B) {
 // the cursor is a place in the entries. A move off either end leaves the
 // cursor on no entry, and Next and Prev report false there.
 //
-// The cursor reads through a cache when the case draws one, under NoFill
-// when the case draws it, and with the ReadAhead that the case draws. Each
-// move passes a context with the name of the move, and the cache must
-// receive that context. A cursor under NoFill must not add a block to the
-// cache.
+// The table has partitions when the case draws a PartitionSize. A size of 1
+// ends an index partition at every data block. The cursor reads through a
+// cache when the case draws one, under NoFill when the case draws it, and
+// with the ReadAhead that the case draws. The cache is a mapCache or a
+// lending cache with room for four blocks, so the lending cache evicts the
+// blocks and the partitions that the cursor keeps. Each move passes a
+// context with the name of the move, and a mapCache must receive that
+// context. A cursor under NoFill must not add a block to either cache.
 func iterSteps(c *prop.Case) {
 	es := c.Draw(entries, "entries")
 	opts := sstable.WriterOptions{
@@ -1589,13 +1712,20 @@ func iterSteps(c *prop.Case) {
 		Compression:     c.Draw(prop.SampledFrom(sstable.NoCompression, sstable.SnappyCompression), "compression"),
 		FilterBits:      c.Draw(prop.SampledFrom(0, 8), "filter bits"),
 	}
-	cache := &mapCache{}
+	// The draws of the partitions and the lending cache follow the draws
+	// that the stored cases record.
+	cache, lending := &mapCache{}, lendingCache(c, 4)
 	readerOpts := sstable.ReaderOptions{CacheID: 1}
-	if c.Draw(prop.Boolean(), "cache") {
-		readerOpts.Cache = cache
-	}
+	cached := c.Draw(prop.Boolean(), "cache")
 	noFill := c.Draw(prop.Boolean(), "no fill")
 	readAhead := c.Draw(prop.SampledFrom(0, aheadBytes, 64*aheadBytes), "read ahead")
+	opts.PartitionSize = c.Draw(prop.SampledFrom(0, 1, 32, partitionBytes, 1024), "partition size")
+	if cached {
+		readerOpts.Cache = cache
+		if c.Draw(prop.Boolean(), "lending") {
+			readerOpts.Cache = lending
+		}
+	}
 	it := openTable(c, writeTable(c, opts, es), readerOpts).
 		NewIter(sstable.IterOptions{NoFill: noFill, ReadAhead: readAhead})
 	defer it.Close()
@@ -1681,6 +1811,7 @@ func iterSteps(c *prop.Case) {
 			}
 			if noFill {
 				assert.Equal(c, cache.adds, 0, "a cursor under NoFill does not add a block to the cache")
+				assert.Equal(c, lending.Len(), 0, "a cursor under NoFill does not add a block to the lending cache")
 			}
 			assert.Equal(c, ok, on, "a move reports whether the model has an entry at its place")
 			if !on {
