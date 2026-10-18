@@ -25,6 +25,11 @@
 // bytes. A caller transfers ownership at the boundary with
 // [Arena.CopyOut], [Arena.CopyOutTo], [RebaseSlices] or [RebaseSlicesTo].
 //
+// [NewWithBuffer] builds an Arena over zeroed memory of the caller. A caller
+// that moves the memory of a memtable between an Arena and a
+// [go.thesmos.sh/core/skiplist.List] keeps the memory, and builds each Arena
+// over it without an allocation of the memory.
+//
 // # List
 //
 // Growing a slice with append reallocates its backing array and copies
@@ -67,7 +72,7 @@
 // false when fewer values remain than it needs. The array never grows or
 // moves, so a reserved range keeps its position until [Bump.Reset]. The
 // memtable of [go.thesmos.sh/core/skiplist] keeps its nodes and its bytes in
-// two Bumps.
+// two Bumps. [NewBumpWithArray] builds a Bump over an array of the caller.
 //
 // # Pool integration
 //
@@ -87,11 +92,13 @@
 // # Allocation contract
 //
 // [Arena.Append] and [Arena.Alloc] do not allocate when the backing buffer
-// has room. The first call after construction or after [Arena.Shrink]
-// allocates the backing buffer, and later calls in the same Reset cycle
-// reuse it. [Arena.CopyOut] makes one allocation of the size of the
-// appended bytes. [Arena.CopyOutTo] does not allocate when the destination
-// has room. [RebaseSlices] and [RebaseSlicesTo] allocate at most once.
+// has room. The first call after [New] or after [Arena.Shrink] allocates the
+// backing buffer, and later calls in the same Reset cycle reuse it.
+// [NewWithCapacity] allocates the Arena and its backing buffer, and
+// [NewWithBuffer] allocates the Arena alone. [Arena.CopyOut] makes one
+// allocation of the size of the appended bytes. [Arena.CopyOutTo] does not
+// allocate when the destination has room. [RebaseSlices] and
+// [RebaseSlicesTo] allocate at most once.
 //
 // [List.Append] allocates only when a List grows past [List.Cap]. No other
 // List method allocates.
@@ -103,6 +110,6 @@
 // a Free does not allocate. [RefSlabs.Alloc] and [RefSlabs.Free] allocate
 // as their Slabs counterparts do. [RefSlabs.Bytes] does not allocate.
 //
-// [NewBump] allocates the Bump and its array. No method of a Bump
-// allocates.
+// [NewBump] allocates the Bump and its array, and [NewBumpWithArray]
+// allocates the Bump alone. No method of a Bump allocates.
 package arena

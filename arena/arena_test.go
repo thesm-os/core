@@ -5,6 +5,7 @@ package arena_test
 
 import (
 	"bytes"
+	"math"
 	"slices"
 	"testing"
 
@@ -92,6 +93,38 @@ func TestArena(t *testing.T) {
 				assert.Equal(c, a.Len(), 0, "the arena must be empty")
 				assert.Equal(c, a.Cap(), n, "the capacity must be initialCap")
 			})
+		})
+	})
+
+	t.Run("NewWithBuffer", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns an empty arena with the capacity of buf", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "NewWithBuffer must return an empty arena of the capacity of buf", func(c *prop.Case) {
+				n := c.Draw(capacities, "capacity")
+				a := arena.NewWithBuffer(make([]byte, c.Draw(prop.Integer(0, n), "length"), n))
+				assert.Equal(c, a.Len(), 0, "the arena must be empty")
+				assert.Equal(c, a.Cap(), n, "the capacity must be the capacity of buf")
+			})
+		})
+
+		t.Run("returns an arena that appends into the array of buf", func(t *testing.T) {
+			t.Parallel()
+			buf := make([]byte, 64)
+			a := arena.NewWithBuffer(buf)
+			a.Append([]byte("hello"))
+			assert.Equal(t, buf[:5], []byte("hello"), "the append must write into buf")
+		})
+
+		t.Run("returns an arena that moves to a new array for a write past the capacity of buf", func(t *testing.T) {
+			t.Parallel()
+			buf := make([]byte, 8)
+			a := arena.NewWithBuffer(buf)
+			a.Append([]byte("abc"))
+			a.Append(make([]byte, 16))
+			expect.Equal(t, buf[:3], []byte("abc"), "buf must keep the bytes written before the move")
+			expect.InRange(t, a.Cap(), float64(len(buf)+1), math.MaxInt, "the capacity must exceed the capacity of buf")
 		})
 	})
 
@@ -271,6 +304,14 @@ func FuzzArena(f *testing.F) {
 func TestArenaAllocs(t *testing.T) {
 	data := []byte("hello world")
 
+	t.Run("NewWithBuffer", func(t *testing.T) {
+		buf := make([]byte, 1024)
+
+		var a *arena.Arena
+		expect.MaxAllocs(t, func() { a = arena.NewWithBuffer(buf) }, 1, "NewWithBuffer must allocate the Arena alone")
+		assert.Equal(t, a.Cap(), len(buf), "the test must measure an arena over buf")
+	})
+
 	t.Run("Append", func(t *testing.T) {
 		a := arena.NewWithCapacity(1024)
 
@@ -343,6 +384,21 @@ func TestArenaAllocs(t *testing.T) {
 // BenchmarkArena reports the cost of each method of an Arena whose backing
 // buffer has room for its writes, and fails when a method allocates.
 func BenchmarkArena(b *testing.B) {
+	b.Run("NewWithBuffer", func(b *testing.B) {
+		buf := make([]byte, 4096)
+
+		var a *arena.Arena
+
+		c := bench.Start(b).MaxAllocs(1)
+		defer c.End()
+
+		for c.Loop() {
+			a = arena.NewWithBuffer(buf)
+		}
+
+		assert.Equal(b, a.Cap(), len(buf), "the benchmark must measure an arena over buf")
+	})
+
 	b.Run("Append", func(b *testing.B) {
 		for _, size := range sizes {
 			b.Run(size.name, func(b *testing.B) {

@@ -89,6 +89,33 @@ func TestBump(t *testing.T) {
 		})
 	})
 
+	t.Run("NewBumpWithArray", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns an empty Bump over the array of values", func(t *testing.T) {
+			t.Parallel()
+			values := make([]uint32, 8)
+			b := arena.NewBumpWithArray(values)
+			expect.Equal(t, b.Len(), 0, "a new Bump has no reserved values")
+			expect.Length(t, b.Values(), 8, "the Bump has room for len(values) values")
+			expect.Equal(t, &b.Values()[0], &values[0], "the Bump uses the array of values", assert.ByIdentity())
+		})
+
+		t.Run("returns a Bump whose values have a capacity of len(values)", func(t *testing.T) {
+			t.Parallel()
+			b := arena.NewBumpWithArray(make([]byte, 4, 16))
+			assert.Equal(t, cap(b.Values()), 4, "an append to the values does not write past len(values)")
+		})
+
+		t.Run("returns a Bump that reserves the values of the array", func(t *testing.T) {
+			t.Parallel()
+			b := arena.NewBumpWithArray(bytes.Repeat([]byte{fill}, 3))
+			at, ok := b.Reserve(2)
+			assert.True(t, ok, "Reserve reserves the range")
+			assert.Equal(t, b.Values()[at:at+2], []byte{fill, fill}, "the reserved values are the values of the array")
+		})
+	})
+
 	t.Run("Reserve", func(t *testing.T) {
 		t.Parallel()
 
@@ -317,6 +344,15 @@ func FuzzBump(f *testing.F) {
 // MaxAllocs counts the allocations of the whole process, so the test does
 // not run in parallel.
 func TestBumpAllocs(t *testing.T) {
+	t.Run("NewBumpWithArray", func(t *testing.T) {
+		values := make([]byte, 1024)
+
+		var b *arena.Bump[byte]
+		expect.MaxAllocs(t, func() { b = arena.NewBumpWithArray(values) }, 1,
+			"NewBumpWithArray allocates the Bump alone")
+		assert.Length(t, b.Values(), len(values), "the test measures a Bump over the array")
+	})
+
 	t.Run("Reserve", func(t *testing.T) {
 		b := arena.NewBump[byte](1024)
 
@@ -358,6 +394,21 @@ func TestBumpAllocs(t *testing.T) {
 // BenchmarkBump reports the cost of each method of a Bump on a hot path, and
 // fails when a method allocates.
 func BenchmarkBump(b *testing.B) {
+	b.Run("NewBumpWithArray", func(b *testing.B) {
+		values := make([]byte, 4096)
+
+		var bp *arena.Bump[byte]
+
+		c := bench.Start(b).MaxAllocs(1)
+		defer c.End()
+
+		for c.Loop() {
+			bp = arena.NewBumpWithArray(values)
+		}
+
+		assert.Length(b, bp.Values(), len(values), "the benchmark measures a Bump over the array")
+	})
+
 	b.Run("Reserve", func(b *testing.B) {
 		b.Run("and Reset", func(b *testing.B) {
 			bp := arena.NewBump[byte](64)

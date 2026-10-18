@@ -3,7 +3,10 @@
 
 package arena
 
-import "sync/atomic"
+import (
+	"slices"
+	"sync/atomic"
+)
 
 // Bump is a fixed array of values of type T that goroutines reserve in
 // ranges without locks. [Bump.Reserve] moves the end of the reserved values
@@ -24,7 +27,8 @@ import "sync/atomic"
 //
 // # Allocation contract
 //
-// [NewBump] allocates the Bump and its array. The methods do not allocate.
+// [NewBump] allocates the Bump and its array, and [NewBumpWithArray]
+// allocates the Bump alone. The methods do not allocate.
 type Bump[T any] struct {
 	// values is the array. Its length is the capacity of the Bump.
 	values []T
@@ -43,15 +47,30 @@ func NewBump[T any](capacity int) *Bump[T] {
 	return &Bump[T]{values: make([]T, max(capacity, 0))}
 }
 
+// NewBumpWithArray returns an empty [Bump] over the array of values, with
+// room for len(values) values. A caller that keeps an array across the
+// lifecycles of its Bumps passes the array here, and the Bump allocates no
+// array. The Bump uses the array as it is, so [Bump.Reserve] reserves the
+// values that the caller left in it.
+//
+// # Allocation contract
+//
+// Allocates the Bump alone.
+func NewBumpWithArray[T any](values []T) *Bump[T] {
+	return &Bump[T]{values: slices.Clip(values)}
+}
+
 // Reserve reserves the next n values and returns the index of the first in
 // [Bump.Values]. It reports false and changes nothing when fewer than n
 // values remain, and for an n below 0. A Reserve of 0 values returns the
 // number of reserved values.
 //
-// The reserved values are zero: they are the values of a new array, or
-// values that [Bump.Reset] zeroed. When another goroutine moves the end
-// first, the compare-and-swap of Reserve fails, and Reserve tries again from
-// the new end.
+// The reserved values of a Bump of [NewBump] are zero: they are the values of
+// a new array, or values that [Bump.Reset] zeroed. A Bump of
+// [NewBumpWithArray] reserves the values that the caller left in its array,
+// apart from the values that a Reset zeroed. When another goroutine moves the
+// end first, the compare-and-swap of Reserve fails, and Reserve tries again
+// from the new end.
 //
 // # Allocation contract
 //

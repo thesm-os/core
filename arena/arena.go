@@ -31,9 +31,9 @@ import "go.thesmos.sh/core/epoch"
 //	// view[0] == 'a'  (a copy on array B)
 //	// A write through first does not change view.
 //
-// An arena created by [NewWithCapacity] with room for the largest total of
-// a Reset cycle never reallocates in that cycle, so every sub-slice aliases
-// one backing array until [Arena.Reset].
+// An arena created by [NewWithCapacity] or [NewWithBuffer] with room for the
+// largest total of a Reset cycle never reallocates in that cycle, so every
+// sub-slice aliases one backing array until [Arena.Reset].
 //
 // After [Arena.Reset], every sub-slice returned earlier is invalid: the
 // next append may overwrite its bytes.
@@ -65,6 +65,30 @@ func New() *Arena {
 // appends sizes the arena up front and avoids the first allocation.
 func NewWithCapacity(initialCap int) *Arena {
 	return &Arena{buf: make([]byte, 0, initialCap)}
+}
+
+// NewWithBuffer returns an empty [Arena] over the array of buf, with the
+// capacity of buf. The arena appends from the start of the array. A caller
+// that keeps memory across the lifecycles of its arenas, such as the memory
+// of a memtable, passes the memory in buf, and the arena does not allocate a
+// backing buffer.
+//
+// A write past the capacity moves the arena to a new backing array, as for
+// any arena. buf then keeps the bytes that the arena wrote before the move,
+// and [Arena.Cap] exceeds the capacity of buf.
+//
+// # Preconditions
+//
+// Every byte of buf up to its capacity must be zero, as the spare capacity of
+// every arena is. NewWithBuffer does not check it, because the check would
+// read every byte. [Arena.Alloc] returns a byte of buf that is not zero in
+// place of a zero, and [Arena.AppendVia] passes it to its appender.
+//
+// # Allocation contract
+//
+// Allocates the Arena alone.
+func NewWithBuffer(buf []byte) *Arena {
+	return &Arena{buf: buf[:0]}
 }
 
 // Append copies data into the arena and returns the sub-slice of the
