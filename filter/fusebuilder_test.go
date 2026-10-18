@@ -22,6 +22,15 @@ import (
 	"go.thesmos.sh/core/filter"
 )
 
+// The counts of the check of MaxFuseSize. The size factor of a set falls
+// where its count reaches a power of two, up to 2^20 hashes, so the check
+// takes every count up to denseCounts and the counts at each power of two up
+// to maxFuseCount.
+const (
+	denseCounts  = 1 << 12
+	maxFuseCount = 1<<21 + 1
+)
+
 func TestFuseBuilder(t *testing.T) {
 	t.Parallel()
 
@@ -234,6 +243,49 @@ func TestFuseBuilder(t *testing.T) {
 			t.Parallel()
 			_, err := filter.FuseSize(math.MaxInt, 8)
 			assert.ErrorIs(t, err, filter.ErrTooLarge, "FuseSize refuses the number of hashes")
+		})
+	})
+
+	t.Run("MaxFuseSize", func(t *testing.T) {
+		t.Parallel()
+
+		for _, w := range widths {
+			t.Run("returns the largest FuseSize of at most n hashes of "+strconv.Itoa(w)+" bits", func(t *testing.T) {
+				t.Parallel()
+				var got, want []int
+				most := 0
+				for n := range maxFuseCount + 1 {
+					size, err := filter.FuseSize(n, w)
+					assert.NoError(t, err, "FuseSize accepts the count")
+					most = max(most, size)
+					if n > denseCounts && n&(n-1) != 0 && n&(n+1) != 0 && (n-1)&(n-2) != 0 {
+						continue
+					}
+					largest, err := filter.MaxFuseSize(n, w)
+					assert.NoError(t, err, "MaxFuseSize accepts the count")
+					got, want = append(got, largest), append(want, most)
+				}
+				assert.Equal(t, got, want, "MaxFuseSize returns the largest FuseSize of the counts up to n")
+			})
+		}
+
+		t.Run("counts a negative n as 0", func(t *testing.T) {
+			t.Parallel()
+			size, err := filter.MaxFuseSize(-1, 8)
+			assert.NoError(t, err, "MaxFuseSize accepts the width")
+			assert.Length(t, build(t, nil, 8), size, "the length is the length of the empty filter")
+		})
+
+		t.Run("returns ErrFingerprintBits for fingerprints of 9 bits", func(t *testing.T) {
+			t.Parallel()
+			_, err := filter.MaxFuseSize(10, 9)
+			assert.ErrorIs(t, err, filter.ErrFingerprintBits, "MaxFuseSize refuses the width")
+		})
+
+		t.Run("returns ErrTooLarge for more hashes than fit 2^32 fingerprints", func(t *testing.T) {
+			t.Parallel()
+			_, err := filter.MaxFuseSize(math.MaxInt, 8)
+			assert.ErrorIs(t, err, filter.ErrTooLarge, "MaxFuseSize refuses the number of hashes")
 		})
 	})
 

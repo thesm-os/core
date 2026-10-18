@@ -345,6 +345,34 @@ func FuseSize(n, bits int) (int, error) {
 	return headerLen + fingerprints*bits/8 + padLen, nil
 }
 
+// MaxFuseSize returns the length of the largest encoding that
+// [FuseBuilder.Append] builds for at most n hashes with fingerprints of bits
+// bits. The length of [FuseSize] grows with n between two powers of two. It
+// can fall where n reaches a power of two up to 2^20, because the size factor
+// of a set falls there. MaxFuseSize therefore takes the largest length at n
+// and at the count below each power of two up to n, and never falls as n
+// grows. A table writer that cuts its filter into partitions calls
+// MaxFuseSize to bound a partition of at most n hashes. A negative n counts
+// as 0.
+//
+// Error modes:
+//
+//   - A bits other than 4, 8, 10, 12 or 16 returns [ErrFingerprintBits].
+//   - More hashes than fit 2^32 fingerprints returns [ErrTooLarge].
+func MaxFuseSize(n, bits int) (int, error) {
+	most := 0
+	for c := min(n, 1); ; c = min(2*c+1, n) {
+		size, err := FuseSize(c, bits)
+		if err != nil {
+			return 0, err
+		}
+		most = max(most, size)
+		if c == n {
+			return most, nil
+		}
+	}
+}
+
 // appendEncoding appends the encoding of a filter of the geometry g, the seed
 // and the fingerprints fps of width bits to dst. It packs the fingerprints
 // from the most significant bit of the first byte, and grows dst once.

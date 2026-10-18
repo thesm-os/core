@@ -25,7 +25,8 @@
 //     filter takes about 14 bits per key for the same rate. [FuseBuilder]
 //     builds its encoding, and [ParseFuse] queries the encoding in place.
 //     [FuseSize] returns the length of an encoding before the build, so a
-//     caller can cut a set into filters of a size.
+//     caller can cut a set into filters of a size. [MaxFuseSize] returns the
+//     length of the largest encoding of at most a count of hashes.
 //
 // # Encoding of a fuse filter
 //
@@ -52,7 +53,8 @@
 //
 // [NewBloom] returns [ErrBitsPerKey] and [ErrTooLarge].
 // [FuseBuilder.Append] returns [ErrFingerprintBits], ErrTooLarge and
-// [ErrBuild], and FuseSize returns ErrFingerprintBits and ErrTooLarge.
+// [ErrBuild]. FuseSize and MaxFuseSize return ErrFingerprintBits and
+// ErrTooLarge.
 // [ParseFuse] returns [ErrCorrupt].
 //
 // # Concurrency
