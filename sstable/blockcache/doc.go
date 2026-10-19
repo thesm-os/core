@@ -20,8 +20,8 @@
 // returns 1 at its first call and one more at each call after it. A consumer
 // takes one for each table that it opens through the Cache, and passes it as
 // the CacheID of [sstable.ReaderOptions]. The Cache keeps a block by the
-// identity and the offset alone, and ignores the [sstable.BlockRole] that
-// Lend and AddBlock receive.
+// identity and the offset alone. Lend ignores the [sstable.BlockRole] that
+// it receives.
 //
 // # Capacity
 //
@@ -29,25 +29,39 @@
 // The footprint of a block is the capacity of its buffer, which exceeds the
 // block by at most an eighth. [Cache.Cost] returns the sum.
 //
+// # Pins
+//
+// [Cache.PinTable] makes the Cache pin the index partitions and the filter
+// partitions of a table that AddBlock adds, while their footprints fit the
+// PinnedCapacity of [Config]. The pinned partitions count against the
+// capacity, so the data blocks take the bytes that the pins leave. The
+// evictor does not remove a pinned partition until [Cache.UnpinTable], so a
+// table that readers use rarely does not read its partitions again. A
+// consumer pins a table before it opens the Reader of the table, and unpins
+// it before it deletes the table. [Cache.Pinned] returns the bytes of the
+// pins.
+//
 // # Concurrency
 //
 // A Cache is safe for concurrent use. Lend takes no lock, because a lookup
-// in a cache.Cache takes none.
+// in a cache.Cache takes none. AddBlock of a partition, PinTable and
+// UnpinTable lock a mutex of the Cache.
 //
 // # Allocation contract
 //
-// Lend and NewID do not allocate. AddBlock and Add allocate the entry of the
-// cache.Cache, and Add takes its Block from the pool. Get allocates the copy
-// that it returns.
+// Lend, NewID and Pinned do not allocate. AddBlock and Add allocate the entry
+// of the cache.Cache, and Add takes its Block from the pool. AddBlock of a
+// pinned partition also allocates the growth of the map of the pins of its
+// table. Get allocates the copy that it returns.
 //
 // # Errors
 //
 // [New] returns [cache.ErrConfig] for a Config with a Capacity that is not
-// positive.
+// positive, and for a PinnedCapacity below 0 or above the Capacity.
 //
 // # Dependency position
 //
-// Imports bytes, context, sync/atomic and time from the standard library,
-// and go.thesmos.sh/core/cache and go.thesmos.sh/core/sstable from this
-// module.
+// Imports bytes, context, sync, sync/atomic and time from the standard
+// library, and go.thesmos.sh/core/cache and go.thesmos.sh/core/sstable from
+// this module.
 package blockcache
