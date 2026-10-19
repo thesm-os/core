@@ -35,8 +35,8 @@ It reads the partitions through its `BlockCache`, as it reads data blocks.
 - `filter.FuseSize` returns the length of the encoding of a filter, and
   `filter.MaxFuseSize` the length of the largest encoding of at most a count
   of keys. The Writer needs both to cut a filter partition.
-- `WriterOptions.MaxSize` returns the most bytes of a table from the number
-  of its entries and the bytes of their keys and values.
+- `WriterOptions.MaxSize` returns the most bytes of a table from its
+  `Counts`: the number of its entries and the bytes of their keys and values.
 
 ## Motivation
 
@@ -199,11 +199,19 @@ func (r *Reader) MayContain(ctx context.Context, key []byte) (bool, error)
 // reads the index partitions of lower and upper under ctx.
 func (r *Reader) Span(ctx context.Context, lower, upper []byte) (Span, error)
 
+// Counts are the counts of the parts of a table that MaxSize bounds.
+type Counts struct {
+	Entries    int64 // the most entries
+	KeyBytes   int64 // the most bytes of the keys of the entries, in all
+	ValueBytes int64 // the most bytes of the values of the entries, in all
+	Longest    int   // the most bytes of one key
+
+	// ...the counts of the fragments of range tombstones of RFC-0078
+}
+
 // MaxSize returns the most bytes of a table that a Writer under o writes for
-// at most entries entries, whose keys take at most keyBytes bytes in all and
-// at most longest bytes each, and whose values take at most valueBytes bytes
-// in all.
-func (o WriterOptions) MaxSize(entries, keyBytes, valueBytes int64, longest int) (int64, error)
+// the counts of c.
+func (o WriterOptions) MaxSize(c Counts) (int64, error)
 ```
 
 ```go
@@ -285,8 +293,8 @@ sequenceDiagram
   trailer.
 - An entry of the index for each data block, and the most index partitions
   that the bytes of the index allow.
-- The keys of one kind of index: at most `longest` bytes each and at most
-  `keyBytes` in all. The same key can be in the index, the top-level index
+- The keys of one kind of index: at most `Longest` bytes each and at most
+  `KeyBytes` in all. The same key can be in the index, the top-level index
   of the index and the top-level index of the filter, so each kind has a cap
   of its own.
 - Each filter or filter partition at the largest encoding of at most its
