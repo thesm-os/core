@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.31.0
+
+### Minor Changes
+
+- 091e968: Add `blockcache.Cache.PinTable` and `UnpinTable` to keep the partitions of a table in the cache within `Config.PinnedCapacity`.
+- cf616d5: Add `filter.MaxFuseSize` to return the length of the largest encoding of at most n hashes.
+- 8f9f38f: Add `resilience.Limiter.SetRate` to change the rate and the burst of a `Limiter` in place.
+- 24456bb: Add `sstable.WriterOptions.MaxSize` to bound the size of a table before a `Writer` writes it.
+- 08fc2f8: Add `sstable.WriterOptions.Prefix` and `sstable.Reader.MayContainPrefix` to skip the tables without a key of a prefix.
+- 08fc2f8: Add `sstable.Writer.AddRangeDelete`, `sstable.Fragmenter` and `sstable.Reader.RangeDeletes` to store and read the fragments of range tombstones.
+
+### Patch Changes
+
+- 24456bb: Fix `sstable.Writer` to keep every filter partition of more than one key within `PartitionSize`.
+
 ## 0.30.0
 
 ### Minor Changes
