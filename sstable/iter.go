@@ -64,7 +64,7 @@ type IterOptions struct {
 // reference to the [Block] of its current entry. It releases the reference
 // when it moves to another block or closes.
 //
-// A cursor of a table of format version 2 searches the top-level index of
+// A cursor of a table in partitions searches the top-level index of
 // the index for the index partition of its block, and reads the partition
 // through the cache as it reads a block. It keeps the partition, and a
 // reference to it when a LendingCache lent it. At the end of a partition,
@@ -112,7 +112,7 @@ type Iter struct {
 	ahead []byte
 
 	// top is on the entry of the top-level index of the index for the index
-	// partition of a table of format version 2.
+	// partition of a table in partitions.
 	top blockCursor
 
 	// index is on the entry of the index or of the index partition for the
@@ -411,7 +411,7 @@ func (it *Iter) backward(ctx context.Context, ok bool) bool {
 }
 
 // indexFirst moves the index cursor to the entry of the first data block. Of
-// a table of format version 2 it moves the top-level cursor to its first
+// a table in partitions it moves the top-level cursor to its first
 // entry and loads that partition. A move of the top-level cursor that fails
 // leaves the index cursor on no entry, so the next index move fails too.
 func (it *Iter) indexFirst(ctx context.Context) bool {
@@ -424,7 +424,7 @@ func (it *Iter) indexFirst(ctx context.Context) bool {
 }
 
 // indexLast moves the index cursor to the entry of the last data block,
-// through the last partition of a table of format version 2.
+// through the last partition of a table in partitions.
 func (it *Iter) indexLast(ctx context.Context) bool {
 	if !it.r.partitioned {
 		return it.index.last()
@@ -669,26 +669,22 @@ func (it *Iter) read(ctx context.Context, off uint64, size int) ([]byte, error) 
 	return it.ahead[off-start : end-start], nil
 }
 
-// mayContain reports whether a table of format version 2 may contain an
-// entry with key, for [Reader.MayContain] and [Reader.Get]. A table without
-// a filter may contain every key. Otherwise mayContain checks ctx, searches
-// the top-level index of the filter for the first partition whose last key
-// is at or after key, and takes the partition as fetch takes a filter
-// partition. A key after the last key of the table has no partition, and the
-// table does not contain it. mayContain releases a partition that a
-// LendingCache lent. It returns the error of ctx and of a read, and
-// ErrCorrupt for an entry of the top-level index or a partition that does
-// not check.
-func (it *Iter) mayContain(ctx context.Context, key []byte) (bool, error) {
-	r := it.r
-	if !r.hasFilter {
-		return true, nil
-	}
+// mayContain reports whether a table in partitions may contain key by the
+// filter whose top-level index is index, for [Reader.MayContain],
+// [Reader.MayContainPrefix] and [Reader.Get]. It checks ctx, searches the
+// top-level index for the first partition whose last key is at or after
+// key, and takes the partition as fetch takes a filter partition. A key
+// after the last key of the filter has no partition, and the table does not
+// contain it. mayContain releases a partition that a LendingCache lent. It
+// returns the error of ctx and of a read, and ErrCorrupt for an entry of the
+// top-level index or a partition that does not check. Open checks the
+// restart offsets of index.
+func (it *Iter) mayContain(ctx context.Context, index, key []byte) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
 	}
 	var top blockCursor
-	top.init(r.filterIndex)
+	top.init(index)
 	i, ok := top.search(0, top.count, key, math.MaxUint64)
 	if !ok {
 		return false, ErrCorrupt
@@ -696,7 +692,7 @@ func (it *Iter) mayContain(ctx context.Context, key []byte) (bool, error) {
 	if i == top.count {
 		return false, nil
 	}
-	off, n, _, want, ok := r.partition(top.restartValue(i), false)
+	off, n, _, want, ok := it.r.partition(top.restartValue(i), false)
 	if !ok {
 		return false, ErrCorrupt
 	}
@@ -716,8 +712,8 @@ func (it *Iter) mayContain(ctx context.Context, key []byte) (bool, error) {
 	return may, nil
 }
 
-// span returns the [Span] of the range from lower to upper of a table of
-// format version 2, for [Reader.Span]. It searches the top-level index of the
+// span returns the [Span] of the range from lower to upper of a table in
+// partitions, for [Reader.Span]. It searches the top-level index of the
 // index in halves for the partition of lower, and from there in steps that
 // double for the partition of upper. It then reads the two partitions under
 // ctx and searches them for the first block and the last block. The

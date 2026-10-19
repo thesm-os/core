@@ -9,7 +9,9 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"maps"
 	"math"
+	"math/rand/v2"
 	"runtime"
 	"slices"
 	"strconv"
@@ -217,9 +219,10 @@ func TestReader(t *testing.T) {
 		for _, tt := range goldenFiles {
 			t.Run("returns ErrCorrupt for every truncation of the golden table for "+tt.name, func(t *testing.T) {
 				t.Parallel()
-				data := writeTable(t, tt.opts, goldenTable())
+				data := writeTable(t, tt.opts, goldenTable(), tt.dels...)
+				opts := sstable.ReaderOptions{Prefix: tt.opts.Prefix}
 				for n := range len(data) {
-					_, err := sstable.Open(t.Context(), bytesFile(data[:n]), int64(n), sstable.ReaderOptions{})
+					_, err := sstable.Open(t.Context(), bytesFile(data[:n]), int64(n), opts)
 					expect.ErrorIs(t, err, sstable.ErrCorrupt, "Open refuses the first "+strconv.Itoa(n)+" bytes")
 				}
 			})
@@ -227,15 +230,15 @@ func TestReader(t *testing.T) {
 			t.Run("returns ErrCorrupt for every flipped bit of the golden table for "+tt.name, func(t *testing.T) {
 				t.Parallel()
 				es := goldenTable()
-				data := writeTable(t, tt.opts, es)
+				data := writeTable(t, tt.opts, es, tt.dels...)
 				changed := make([]byte, len(data))
 				for bit := range 8 * len(data) {
 					copy(changed, data)
 					changed[bit/8] ^= 1 << (bit % 8)
 					r, err := sstable.Open(t.Context(), bytesFile(changed), int64(len(changed)),
-						sstable.ReaderOptions{})
+						sstable.ReaderOptions{Prefix: tt.opts.Prefix})
 					if err == nil {
-						err = readAll(t.Context(), r, es)
+						err = readAll(t.Context(), r, es, tt.opts.Prefix)
 					}
 					expect.ErrorIs(t, err, sstable.ErrCorrupt,
 						"Open or a read detects the flip of bit "+strconv.Itoa(bit))
@@ -256,10 +259,10 @@ func TestReader(t *testing.T) {
 				},
 			},
 			{
-				name:     "returns ErrCorrupt for a footer of version 3",
-				giveOpts: settings[5].opts,
+				name:     "returns ErrCorrupt for a footer of version 4",
+				giveOpts: settings[1].opts,
 				giveChange: func(l *layout) {
-					binary.BigEndian.PutUint32(l.data[len(l.data)-footerLen+footerVersion:], partitionedVersion+1)
+					binary.BigEndian.PutUint32(l.data[len(l.data)-footerLen+footerVersion:], placedVersion+1)
 				},
 			},
 			{
@@ -420,6 +423,271 @@ func TestReader(t *testing.T) {
 			})
 		}
 
+		// The cases change a table of format version 3 with the fragments of
+		// goldenDeletes, and open it with goldenPrefix. The block of fragments
+		// has the five fragments of goldenDeletes. Its entries 1 and 2 are one
+		// fragment from key 015 up to key 020 at 9 and at 7.
+		placed := []struct {
+			name       string
+			giveOpts   sstable.WriterOptions
+			giveChange func(l *layout)
+		}{
+			{
+				name:     "returns ErrCorrupt for a block of places that ends before the footer",
+				giveOpts: settings[7].opts,
+				giveChange: func(l *layout) {
+					binary.BigEndian.PutUint64(l.data[len(l.data)-footerLen+footerFilterLen:], uint64(l.places.n-1))
+				},
+			},
+			{
+				name:       "returns ErrCorrupt for a CRC32C in the footer that differs from the block of places",
+				giveOpts:   settings[7].opts,
+				giveChange: func(l *layout) { l.places.parent[0] ^= 1 },
+			},
+			{
+				name:       "returns ErrCorrupt for a block of places with an unknown flag",
+				giveOpts:   settings[7].opts,
+				giveChange: func(l *layout) { l.data[l.places.off] = partitionedFlag << 1 },
+			},
+			{
+				name:     "returns ErrCorrupt for a block of places whose flags do not end",
+				giveOpts: settings[7].opts,
+				giveChange: func(l *layout) {
+					for i := range l.places.n {
+						l.data[l.places.off+i] = 0x80
+					}
+				},
+			},
+			{
+				name:     "returns ErrCorrupt for a block of places whose place of the filter does not end",
+				giveOpts: settings[7].opts,
+				giveChange: func(l *layout) {
+					for i := 1; i < l.places.n; i++ {
+						l.data[l.places.off+i] = 0x80
+					}
+				},
+			},
+			{
+				name:     "returns ErrCorrupt for a block of places without room for the CRC32C of a place",
+				giveOpts: settings[1].opts,
+				giveChange: func(l *layout) {
+					// The length of the missing filter of prefixes takes every byte
+					// of the block up to the length of the name.
+					_, n := placeFields(l, 2)
+					end := l.places.off + l.places.n
+					for i := n; i < end-2; i++ {
+						l.data[i] = 0x80
+					}
+					l.data[end-2] = 1
+				},
+			},
+			{
+				name:     "returns ErrCorrupt for a block of places that ends after its last place",
+				giveOpts: settings[1].opts,
+				giveChange: func(l *layout) {
+					// The length 0 of the missing filter of prefixes takes two bytes,
+					// so the block ends at the CRC32C of the filter of prefixes.
+					_, n := placeFields(l, 2)
+					l.data[n], l.data[n+1] = 0x80, 0
+				},
+			},
+			{
+				name:     "returns ErrCorrupt for a block of places with a byte after the name",
+				giveOpts: settings[7].opts,
+				giveChange: func(l *layout) {
+					l.data[l.places.off+l.places.n-len(firstSix)-1]--
+				},
+			},
+			{
+				name:     "returns ErrCorrupt for a block of places whose name passes its end",
+				giveOpts: settings[7].opts,
+				giveChange: func(l *layout) {
+					l.data[l.places.off+l.places.n-len(firstSix)-1]++
+				},
+			},
+			{
+				name:     "returns ErrCorrupt for an index that ends before the block of places",
+				giveOpts: settings[7].opts,
+				giveChange: func(l *layout) {
+					binary.BigEndian.PutUint64(l.data[len(l.data)-footerLen+footerIndexLen:], uint64(l.index.n-1))
+				},
+			},
+			{
+				name:     "returns ErrCorrupt for a filter of prefixes that ends before the index",
+				giveOpts: settings[7].opts,
+				giveChange: func(l *layout) {
+					// Each length keeps the bytes of its varint.
+					_, n := placeFields(l, 2)
+					binary.PutUvarint(l.data[n:], uint64(l.prefix.n-1))
+				},
+			},
+			{
+				name:     "returns ErrCorrupt for a filter that ends before the filter of prefixes",
+				giveOpts: settings[7].opts,
+				giveChange: func(l *layout) {
+					_, n := placeFields(l, 0)
+					binary.PutUvarint(l.data[n:], uint64(l.filter.n-1))
+				},
+			},
+			{
+				name:     "returns ErrCorrupt for a block of fragments that ends before the filter",
+				giveOpts: settings[7].opts,
+				giveChange: func(l *layout) {
+					_, n := placeFields(l, 1)
+					binary.PutUvarint(l.data[n:], uint64(l.fragments.n-1))
+				},
+			},
+			{
+				name:     "returns ErrCorrupt for an offset of a missing filter of prefixes",
+				giveOpts: settings[1].opts,
+				giveChange: func(l *layout) {
+					off, _ := placeFields(l, 2)
+					l.data[off] = 1
+				},
+			},
+			{
+				name:       "returns ErrCorrupt for a CRC32C in the block of places that differs from the filter",
+				giveOpts:   settings[7].opts,
+				giveChange: func(l *layout) { l.filter.parent[0] ^= 1 },
+			},
+			{
+				name:       "returns ErrCorrupt for a CRC32C in the block of places that differs from the block of fragments",
+				giveOpts:   settings[7].opts,
+				giveChange: func(l *layout) { l.fragments.parent[0] ^= 1 },
+			},
+			{
+				name:       "returns ErrCorrupt for a CRC32C in the block of places that differs from the filter of prefixes",
+				giveOpts:   settings[7].opts,
+				giveChange: func(l *layout) { l.prefix.parent[0] ^= 1 },
+			},
+			{
+				name:       "returns ErrCorrupt for a filter of prefixes of another encoding version",
+				giveOpts:   settings[7].opts,
+				giveChange: func(l *layout) { l.data[l.prefix.off]++ },
+			},
+			{
+				name:     "returns ErrCorrupt for a top-level index of the filter of prefixes without room for its restart offsets",
+				giveOpts: settings[8].opts,
+				giveChange: func(l *layout) {
+					binary.BigEndian.PutUint32(l.data[l.prefix.off+l.prefix.n-4:], math.MaxUint32)
+				},
+			},
+			{
+				name:     "returns ErrCorrupt for a block of fragments without room for its restart offsets",
+				giveOpts: settings[7].opts,
+				giveChange: func(l *layout) {
+					binary.BigEndian.PutUint32(l.data[l.fragments.off+l.fragments.n-4:], math.MaxUint32)
+				},
+			},
+			{
+				name:     "returns ErrCorrupt for a block of fragments without fragments",
+				giveOpts: settings[7].opts,
+				giveChange: func(l *layout) {
+					binary.BigEndian.PutUint32(l.data[l.fragments.off+l.fragments.n-4:], 0)
+				},
+			},
+			{
+				name:     "returns ErrCorrupt for a fragment whose entry does not decode",
+				giveOpts: settings[7].opts,
+				giveChange: func(l *layout) {
+					// A restart point does not share a prefix with the key before
+					// it.
+					block := l.data[l.fragments.off : l.fragments.off+l.fragments.n]
+					block[restarts(block)[1]] = 1
+				},
+			},
+			{
+				name:     "returns ErrCorrupt for a fragment whose start is at its end",
+				giveOpts: settings[7].opts,
+				giveChange: func(l *layout) {
+					// The end key 015 of the first fragment becomes key 010.
+					_, end := fragmentEntry(l, 0)
+					end[len(end)-1] = '0'
+				},
+			},
+			{
+				name:     "returns ErrCorrupt for a fragment whose start is after its end",
+				giveOpts: settings[7].opts,
+				giveChange: func(l *layout) {
+					// The end key 015 of the first fragment becomes key 005.
+					_, end := fragmentEntry(l, 0)
+					end[len(end)-2] = '0'
+				},
+			},
+			{
+				name:     "returns ErrCorrupt for a fragment at the sequence of the entry before it",
+				giveOpts: settings[7].opts,
+				giveChange: func(l *layout) {
+					ikey, _ := fragmentEntry(l, 2)
+					binary.BigEndian.PutUint64(ikey[len(ikey)-seqLen:], 9)
+				},
+			},
+			{
+				name:     "returns ErrCorrupt for a fragment above the sequence of the entry before it",
+				giveOpts: settings[7].opts,
+				giveChange: func(l *layout) {
+					ikey, _ := fragmentEntry(l, 2)
+					binary.BigEndian.PutUint64(ikey[len(ikey)-seqLen:], 10)
+				},
+			},
+			{
+				name:     "returns ErrCorrupt for a fragment that starts before the end of the fragment before it",
+				giveOpts: settings[7].opts,
+				giveChange: func(l *layout) {
+					// The start key 020 of the fourth fragment becomes key 019.
+					ikey, _ := fragmentEntry(l, 3)
+					ikey[len("key 0")], ikey[len("key 01")] = '1', '9'
+				},
+			},
+			{
+				name:     "returns ErrCorrupt for a fragment of the start before it with another end",
+				giveOpts: settings[7].opts,
+				giveChange: func(l *layout) {
+					// The end key 020 of the third fragment becomes key 021, and so
+					// does the start of the fourth fragment, so the fragments after
+					// the third follow it.
+					_, end := fragmentEntry(l, 2)
+					end[len(end)-1] = '1'
+					ikey, _ := fragmentEntry(l, 3)
+					ikey[len("key 02")] = '1'
+				},
+			},
+			{
+				name:     "returns ErrCorrupt for a fragment of the end before it with another start",
+				giveOpts: settings[7].opts,
+				giveChange: func(l *layout) {
+					// The start key 015 of the third fragment becomes key 016.
+					ikey, _ := fragmentEntry(l, 2)
+					ikey[len("key 01")] = '6'
+				},
+			},
+		}
+		for _, tt := range placed {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				l := newLayout(t, tt.giveOpts, goldenTable(), goldenDeletes...)
+				tt.giveChange(l)
+				l.seal()
+				_, err := sstable.Open(t.Context(), bytesFile(l.data), int64(len(l.data)),
+					sstable.ReaderOptions{Prefix: goldenPrefix})
+				assert.ErrorIs(t, err, sstable.ErrCorrupt, "Open refuses the changed table")
+			})
+		}
+
+		t.Run("reads the filter of prefixes only for a Reader of its extraction", func(t *testing.T) {
+			t.Parallel()
+			data := writeTable(t, settings[7].opts, goldenTable(), goldenDeletes...)
+			reads := make([]int, 0, 3)
+			for _, prefix := range []sstable.PrefixExtractor{goldenPrefix, fixedPrefix{name: firstSixAgain, n: 6}, nil} {
+				counter := &countingFile{data: data}
+				_, err := sstable.Open(t.Context(), counter, int64(len(data)), sstable.ReaderOptions{Prefix: prefix})
+				assert.NoError(t, err, "Open reads the table")
+				reads = append(reads, counter.reads)
+			}
+			assert.Equal(t, reads, []int{reads[0], reads[0] - 1, reads[0] - 1},
+				"a Reader of another extraction or of none reads one block less")
+		})
+
 		t.Run("returns ErrCorrupt for a filter before an index at the start of the table", func(t *testing.T) {
 			t.Parallel()
 			// A table of no entries without a filter has its index at offset
@@ -484,14 +752,16 @@ func TestReader(t *testing.T) {
 
 		t.Run("returns the error of each read of the File", func(t *testing.T) {
 			t.Parallel()
-			data := writeTable(t, settings[1].opts, goldenTable())
-			counter := &countingFile{data: data}
-			_, err := sstable.Open(t.Context(), counter, int64(len(data)), sstable.ReaderOptions{})
-			assert.NoError(t, err, "Open reads the table")
-			for ok := range counter.reads {
-				_, err := sstable.Open(t.Context(), &failingFile{data: data, ok: ok}, int64(len(data)),
-					sstable.ReaderOptions{})
-				expect.ErrorIs(t, err, errRead, "Open returns the error of its read "+strconv.Itoa(ok+1))
+			for _, setting := range []sstable.WriterOptions{settings[1].opts, settings[7].opts, settings[8].opts} {
+				data := writeTable(t, setting, goldenTable(), goldenDeletes...)
+				opts := sstable.ReaderOptions{Prefix: setting.Prefix}
+				counter := &countingFile{data: data}
+				_, err := sstable.Open(t.Context(), counter, int64(len(data)), opts)
+				assert.NoError(t, err, "Open reads the table")
+				for ok := range counter.reads {
+					_, err := sstable.Open(t.Context(), &failingFile{data: data, ok: ok}, int64(len(data)), opts)
+					expect.ErrorIs(t, err, errRead, "Open returns the error of its read "+strconv.Itoa(ok+1))
+				}
 			}
 		})
 
@@ -523,16 +793,22 @@ func TestReader(t *testing.T) {
 
 		t.Run("returns the summary that Close returned", func(t *testing.T) {
 			t.Parallel()
-			var buf bufferSink
-			w, err := sstable.NewWriter(&buf, settings[3].opts)
-			assert.NoError(t, err, "NewWriter accepts the options")
-			for _, e := range goldenTable() {
-				assert.NoError(t, w.Add(t.Context(), e.key, e.seq, e.value), "Add adds the entry")
-			}
-			want, err := w.Close(t.Context())
-			assert.NoError(t, err, "Close writes the table")
-			assert.Equal(t, openTable(t, buf.Bytes(), sstable.ReaderOptions{}).Summary(), want,
-				"the Reader returns the summary of the Writer")
+			prop.ForAll(t, "the Reader returns the summary of the Writer", func(c *prop.Case) {
+				var buf bufferSink
+				w, err := sstable.NewWriter(&buf, c.Draw(prop.SampledFrom(settings...), "setting").opts)
+				assert.NoError(c, err, "NewWriter accepts the options")
+				for _, e := range c.Draw(entries, "entries") {
+					assert.NoError(c, w.Add(c.Context(), e.key, e.seq, e.value), "Add adds the entry")
+				}
+				for _, d := range c.Draw(fragments, "fragments") {
+					assert.NoError(c, w.AddRangeDelete(c.Context(), d.start, d.end, d.seq),
+						"AddRangeDelete adds the fragment")
+				}
+				want, err := w.Close(c.Context())
+				assert.NoError(c, err, "Close writes the table")
+				assert.Equal(c, openTable(c, buf.Bytes(), sstable.ReaderOptions{}).Summary(), want,
+					"the Reader returns the summary of the Writer")
+			})
 		})
 	})
 
@@ -541,14 +817,23 @@ func TestReader(t *testing.T) {
 
 		t.Run("returns the capacity of every buffer in bytes", func(t *testing.T) {
 			t.Parallel()
-			prop.ForAll(t, "Footprint returns the bytes of the index block, the filter block and the summary keys",
+			prop.ForAll(t, "Footprint returns the bytes of the blocks that the Reader keeps and the summary keys",
 				func(c *prop.Case) {
 					opts := c.Draw(prop.SampledFrom(settings...), "setting").opts
-					l := newLayout(c, opts, c.Draw(entries, "entries"))
-					r := openTable(c, l.data, sstable.ReaderOptions{})
+					l := newLayout(c, opts, c.Draw(entries, "entries"), c.Draw(fragments, "fragments")...)
+					var prefix sstable.PrefixExtractor
+					if c.Draw(prop.Boolean(), "reader of the extraction") {
+						prefix = opts.Prefix
+					}
+					r := openTable(c, l.data, sstable.ReaderOptions{Prefix: prefix})
+					want := l.index.n + l.filter.n + l.fragments.n
+					if prefix != nil {
+						want += l.prefix.n
+					}
 					s := r.Summary()
-					assert.Equal(c, r.Footprint(), l.index.n+l.filter.n+cap(s.SmallestKey)+cap(s.LargestKey),
-						"Footprint adds the stored lengths of the two blocks to the capacity of the two keys")
+					want += cap(s.SmallestKey) + cap(s.LargestKey) + cap(s.RangeDeleteStart) + cap(s.RangeDeleteEnd)
+					assert.Equal(c, r.Footprint(), want,
+						"Footprint adds the lengths of the blocks that the Reader keeps to the capacity of the keys")
 				})
 		})
 	})
@@ -564,8 +849,8 @@ func TestReader(t *testing.T) {
 			tables := prop.OneOf(entries, prop.Just(longTable()))
 			prop.ForAll(t, "Span counts from the block of lower to the block of upper", func(c *prop.Case) {
 				opts := c.Draw(prop.SampledFrom(oneEntry, oneEntryParts, settings[1].opts, settings[3].opts,
-					settings[4].opts, settings[6].opts), "options")
-				l := newLayout(c, opts, c.Draw(tables, "entries"))
+					settings[4].opts, settings[6].opts, settings[7].opts, settings[8].opts), "options")
+				l := newLayout(c, opts, c.Draw(tables, "entries"), c.Draw(fragments, "fragments")...)
 				var lower, upper []byte
 				if p := c.Draw(bound, "lower"); p != nil {
 					lower = *p
@@ -1063,6 +1348,319 @@ func TestReader(t *testing.T) {
 		})
 	})
 
+	t.Run("MayContainPrefix", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("reports true for the prefix of every key of a table", func(t *testing.T) {
+			t.Parallel()
+			options := prop.SampledFrom(settings[1].opts, settings[5].opts, oneEntryParts, prefixParts)
+			prop.ForAll(t, "MayContainPrefix reports true for the prefix of every key", func(c *prop.Case) {
+				es := c.Draw(entries, "entries")
+				opts := c.Draw(options, "options")
+				prefix := fixedPrefix{name: firstBytes, n: c.Draw(prop.Integer(0, 3), "prefix length")}
+				opts.Prefix = prefix
+				r := openTable(c, writeTable(c, opts, es), sstable.ReaderOptions{Prefix: prefix})
+				for _, e := range es {
+					p, ok := prefix.Prefix(e.key)
+					if !ok {
+						continue
+					}
+					may, err := r.MayContainPrefix(c.Context(), p)
+					assert.NoError(c, err, "MayContainPrefix reads the filter of prefixes")
+					assert.True(c, may, "MayContainPrefix reports true for a prefix of the table")
+				}
+			})
+		})
+
+		for _, tt := range []struct {
+			name     string
+			giveOpts sstable.WriterOptions
+		}{
+			{
+				name:     "reports false for most prefixes that a table does not contain",
+				giveOpts: sstable.WriterOptions{FilterBits: 16, Prefix: goldenPrefix},
+			},
+			{
+				name:     "reports false for most prefixes that a table in partitions does not contain",
+				giveOpts: sstable.WriterOptions{FilterBits: 16, PartitionSize: partitionBytes, Prefix: goldenPrefix},
+			},
+		} {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				data := writeTable(t, tt.giveOpts, goldenTable())
+				r := openTable(t, data, sstable.ReaderOptions{Prefix: goldenPrefix})
+				admitted := 0
+				for i := range absentKeys {
+					may, err := r.MayContainPrefix(t.Context(), []byte("absent "+strconv.Itoa(i)))
+					assert.NoError(t, err, "MayContainPrefix reads the filter of prefixes")
+					if may {
+						admitted++
+					}
+				}
+				assert.InRange(t, admitted, 0, falsePositives, "a filter of 16 bits admits about 1 prefix in 65,536")
+			})
+		}
+
+		readers := []struct {
+			name       string
+			giveOpts   sstable.WriterOptions
+			givePrefix sstable.PrefixExtractor
+		}{
+			{
+				name:       "reports true for every prefix for a Reader of another extraction",
+				giveOpts:   settings[7].opts,
+				givePrefix: fixedPrefix{name: firstSixAgain, n: 6},
+			},
+			{
+				name:     "reports true for every prefix for a Reader without an extraction",
+				giveOpts: settings[8].opts,
+			},
+			{
+				name:       "reports true for every prefix of a table without a filter of prefixes",
+				giveOpts:   settings[1].opts,
+				givePrefix: goldenPrefix,
+			},
+		}
+		for _, tt := range readers {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				data := writeTable(t, tt.giveOpts, goldenTable())
+				r := openTable(t, data, sstable.ReaderOptions{Prefix: tt.givePrefix})
+				may, err := r.MayContainPrefix(t.Context(), []byte("absent"))
+				assert.NoError(t, err, "MayContainPrefix reads no filter")
+				assert.True(t, may, "the Reader may find a key of every prefix")
+			})
+		}
+
+		t.Run("reports false without a read for a prefix after the last prefix of a table in partitions",
+			func(t *testing.T) {
+				t.Parallel()
+				data := writeTable(t, settings[8].opts, goldenTable())
+				counter := &countingFile{data: data}
+				opts := sstable.ReaderOptions{Prefix: goldenPrefix}
+				r, err := sstable.Open(t.Context(), counter, int64(len(data)), opts)
+				assert.NoError(t, err, "Open reads the table")
+				reads := counter.reads
+				may, err := r.MayContainPrefix(t.Context(), []byte("zz"))
+				assert.NoError(t, err, "MayContainPrefix finds no partition")
+				expect.False(t, may, "a prefix after the last prefix has no partition")
+				expect.Equal(t, counter.reads, reads, "MayContainPrefix reads no partition")
+			})
+
+		t.Run("reads the partition of its prefix alone", func(t *testing.T) {
+			t.Parallel()
+			data := writeTable(t, prefixParts, goldenTable())
+			opts := sstable.ReaderOptions{Prefix: goldenPrefix}
+			counter := &countingFile{data: data}
+			_, err := sstable.Open(t.Context(), counter, int64(len(data)), opts)
+			assert.NoError(t, err, "Open reads the table")
+			r, err := sstable.Open(t.Context(), &failingFile{data: data, ok: counter.reads + 1}, int64(len(data)), opts)
+			assert.NoError(t, err, "Open reads the table with the reads that it needs")
+			may, err := r.MayContainPrefix(t.Context(), []byte("key 03"))
+			expect.NoError(t, err, "MayContainPrefix reads the partition of its prefix")
+			expect.True(t, may, "MayContainPrefix reports true for a prefix of the table")
+			_, err = r.MayContainPrefix(t.Context(), []byte("key 05"))
+			expect.ErrorIs(t, err, errRead, "MayContainPrefix of a prefix of another partition reads that partition")
+		})
+
+		t.Run("returns the error of the context of its read", func(t *testing.T) {
+			t.Parallel()
+			data := writeTable(t, settings[8].opts, goldenTable())
+			r := openTable(t, data, sstable.ReaderOptions{Prefix: goldenPrefix})
+			assert.HonoursCancellation(t, func(ctx context.Context) error {
+				_, err := r.MayContainPrefix(ctx, []byte("key 03"))
+
+				return err
+			}, "MayContainPrefix returns the error of a context that ended before its read")
+		})
+
+		t.Run("returns ErrCorrupt for a partition that does not parse", func(t *testing.T) {
+			t.Parallel()
+			l := newLayout(t, prefixParts, goldenTable())
+			assert.Length(t, l.prefixParts, 3, "the filter of prefixes has three partitions")
+			// The first byte of an encoding is the version of its format.
+			l.data[l.prefixParts[0].off]++
+			l.seal()
+			_, err := openTable(t, l.data, sstable.ReaderOptions{Prefix: goldenPrefix}).
+				MayContainPrefix(t.Context(), []byte("key 00"))
+			assert.ErrorIs(t, err, sstable.ErrCorrupt, "MayContainPrefix refuses the partition")
+		})
+
+		t.Run("lends the partition of its prefix with FilterBlock", func(t *testing.T) {
+			t.Parallel()
+			l := newLayout(t, prefixParts, goldenTable())
+			cache := &roleCache{Cache: lendingCache(t, 4)}
+			r := openTable(t, l.data, sstable.ReaderOptions{Cache: cache, CacheID: 1, Prefix: goldenPrefix})
+			p := []byte("key 03")
+			may, err := r.MayContainPrefix(t.Context(), p)
+			assert.NoError(t, err, "MayContainPrefix reads the partition of its prefix")
+			assert.True(t, may, "MayContainPrefix reports true for a prefix of the table")
+			assert.Equal(t, cache.lends, []lookup{{offset: placeOf(l.prefixParts, p), role: sstable.FilterBlock}},
+				"MayContainPrefix lends the partition of its prefix with FilterBlock")
+		})
+
+		t.Run("skips the tables without a key of the prefix apart from false positives", func(t *testing.T) {
+			t.Parallel()
+			// The tables of a store of 1,024 logs contain the records of 64
+			// logs each. The key of a record is the byte r, the log in 8 bytes
+			// and the record in 8 bytes, and the prefix of the log takes 9
+			// bytes. A filter of 8 bits admits about one prefix in 256.
+			const tables, logs, logsPerTable, records = 16, 1024, 64, 8
+			prefix := fixedPrefix{name: firstBytes, n: 9}
+			opts := sstable.WriterOptions{BlockSize: 4096, FilterBits: 8, PartitionSize: 1024, Prefix: prefix}
+			rng := rand.New(rand.NewPCG(1, 2))
+			readers := make([]*sstable.Reader, 0, tables)
+			has := make([]map[uint64]bool, 0, tables)
+			for range tables {
+				chosen := map[uint64]bool{}
+				for len(chosen) < logsPerTable {
+					chosen[rng.Uint64N(logs)] = true
+				}
+				es := make([]entry, 0, logsPerTable*records)
+				for _, log := range slices.Sorted(maps.Keys(chosen)) {
+					for record := range uint64(records) {
+						key := binary.BigEndian.AppendUint64(binary.BigEndian.AppendUint64([]byte{'r'}, log), record)
+						es = append(es, entry{key: key, seq: 1})
+					}
+				}
+				readers = append(readers, openTable(t, writeTable(t, opts, es), sstable.ReaderOptions{Prefix: prefix}))
+				has = append(has, chosen)
+			}
+			admitted := 0
+			for log := range uint64(logs) {
+				p := binary.BigEndian.AppendUint64([]byte{'r'}, log)
+				for i, r := range readers {
+					may, err := r.MayContainPrefix(t.Context(), p)
+					assert.NoError(t, err, "MayContainPrefix reads the filter of prefixes")
+					if has[i][log] {
+						assert.True(t, may, "MayContainPrefix reports true for a table with a key of the prefix")
+					} else if may {
+						admitted++
+					}
+				}
+			}
+			assert.InRange(t, admitted, 0, tables*logs/128, "a filter of 8 bits admits about 1 prefix in 256")
+		})
+	})
+
+	t.Run("RangeDeletes", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns a cursor over the fragments of the table in their order", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "RangeDeletes yields the fragments that AddRangeDelete added", func(c *prop.Case) {
+				dels := c.Draw(fragments, "fragments")
+				opts := c.Draw(prop.SampledFrom(settings...), "setting").opts
+				r := openTable(c, writeTable(c, opts, c.Draw(entries, "entries"), dels...), sstable.ReaderOptions{})
+				it := r.RangeDeletes()
+				defer it.Close()
+				var got []rangeDelete
+				for ok := it.First(); ok; ok = it.Next() {
+					got = append(got,
+						rangeDelete{start: bytes.Clone(it.Start()), end: bytes.Clone(it.End()), seq: it.Seq()})
+				}
+				assert.Equal(c, got, dels, "RangeDeletes yields the fragments in their order", assert.EquateEmpty())
+			})
+		})
+
+		t.Run("returns a cursor without positions for a table without fragments", func(t *testing.T) {
+			t.Parallel()
+			it := openTable(t, writeTable(t, settings[1].opts, goldenTable()), sstable.ReaderOptions{}).RangeDeletes()
+			defer it.Close()
+			expect.False(t, it.First(), "First finds no fragment")
+			expect.False(t, it.Last(), "Last finds no fragment")
+			expect.False(t, it.SeekGE([]byte("key 000")), "SeekGE finds no fragment")
+			expect.False(t, it.SeekLT([]byte("key 999")), "SeekLT finds no fragment")
+		})
+
+		t.Run("returns one fragment for the tombstone of a range of 10,000 keys", func(t *testing.T) {
+			t.Parallel()
+			// A table contains the 10,000 keys a/0000000 and on and the 100 keys
+			// b/0000 and on. A newer table deletes the keys a/... with one
+			// tombstone at the sequence 2. A read of the first key finds the
+			// fragment that covers it, and a seek to the end of the fragment
+			// finds the first live key.
+			const deleted, live = 10_000, 100
+			value := bytes.Repeat([]byte{'v'}, 100)
+			es := make([]entry, 0, deleted+live)
+			for i := range deleted {
+				es = append(es, entry{key: fmt.Appendf(nil, "a/%07d", i), seq: 1, value: value})
+			}
+			for i := range live {
+				es = append(es, entry{key: fmt.Appendf(nil, "b/%04d", i), seq: 1, value: value})
+			}
+			older := openTable(t, writeTable(t, settings[5].opts, es), sstable.ReaderOptions{})
+			var sink bufferSink
+			w, err := sstable.NewWriter(&sink, settings[5].opts)
+			assert.NoError(t, err, "NewWriter accepts the options")
+			f, err := sstable.NewFragmenter(w)
+			assert.NoError(t, err, "NewFragmenter accepts the Writer")
+			assert.NoError(t, f.Add(t.Context(), []byte("a/"), []byte("a0"), 2),
+				"Add adds the tombstone of the keys a/")
+			assert.NoError(t, f.Flush(t.Context()), "Flush passes the fragment to the Writer")
+			sum, err := w.Close(t.Context())
+			assert.NoError(t, err, "Close writes the table of the tombstone")
+			assert.Equal(t, sum.RangeDeletes, int64(1), "the delete of the range takes one fragment")
+
+			it := openTable(t, sink.Bytes(), sstable.ReaderOptions{}).RangeDeletes()
+			defer it.Close()
+			assert.True(t, it.SeekGE(es[0].key), "SeekGE finds the fragment of the first key")
+			expect.Equal(t, it.Start(), []byte("a/"), "the fragment starts at the start of the tombstone")
+			expect.Equal(t, it.Seq(), uint64(2), "the fragment has the sequence of the tombstone")
+			cursor := older.NewIter(sstable.IterOptions{})
+			defer cursor.Close()
+			assert.True(t, cursor.SeekGE(t.Context(), it.End(), math.MaxUint64),
+				"a seek to the end of the fragment finds an entry")
+			assert.Equal(t, cursor.Key(), es[deleted].key,
+				"the seek to the end of the fragment finds the first live key")
+		})
+	})
+
+	t.Run("reads a table of format version 3 as the table without its parts of version 3", func(t *testing.T) {
+		t.Parallel()
+		const contract = "a table with fragments and prefixes reads as the table of its entries alone"
+		prop.ForAll(t, contract, func(c *prop.Case) {
+			es := c.Draw(entries, "entries")
+			opts := c.Draw(prop.SampledFrom(settings[:7]...), "setting").opts
+			plain := parseLayout(writeTable(c, opts, es))
+			if opts.FilterBits != 0 {
+				opts.Prefix = fixedPrefix{name: firstBytes, n: c.Draw(prop.Integer(0, 3), "prefix length")}
+			}
+			placed := newLayout(c, opts, es, c.Draw(fragments, "fragments")...)
+			assert.Equal(c, placed.blocks, plain.blocks, "the tables have the places of the data blocks")
+			r := openTable(c, placed.data, sstable.ReaderOptions{})
+			without := openTable(c, plain.data, sstable.ReaderOptions{})
+			it := r.NewIter(sstable.IterOptions{})
+			defer it.Close()
+			got, err := scanAll(c.Context(), it)
+			assert.NoError(c, err, "a scan reads the table")
+			assert.Equal(c, got, es, "the table contains the entries", assert.EquateEmpty())
+			bound := prop.Optional(prop.SampledFrom(keys...))
+			for range 10 {
+				key, seq := c.Draw(prop.SampledFrom(keys...), "key"), c.Draw(prop.Integer[uint64](0, 6), "seq")
+				value, s, ok, err := r.Get(c.Context(), key, seq, nil)
+				assert.NoError(c, err, "Get reads the table")
+				wantValue, wantSeq, wantOK, err := without.Get(c.Context(), key, seq, nil)
+				assert.NoError(c, err, "Get reads the table without the parts of version 3")
+				assert.Equal(c, ok, wantOK, "Get finds an entry where it finds one in the other table")
+				assert.Equal(c, s, wantSeq, "Get returns the sequence of the other table")
+				assert.Equal(c, value, wantValue, "Get returns the value of the other table")
+				var lower, upper []byte
+				if p := c.Draw(bound, "lower"); p != nil {
+					lower = *p
+				}
+				if p := c.Draw(bound, "upper"); p != nil {
+					upper = *p
+				}
+				span, err := r.Span(c.Context(), lower, upper)
+				assert.NoError(c, err, "Span searches the index of the table")
+				wantSpan, err := without.Span(c.Context(), lower, upper)
+				assert.NoError(c, err, "Span searches the index of the other table")
+				assert.Equal(c, span, wantSpan, "Span returns the Span of the other table")
+			}
+		})
+	})
+
 	t.Run("Get", func(t *testing.T) {
 		t.Parallel()
 
@@ -1464,6 +2062,46 @@ func TestReaderAllocs(t *testing.T) {
 		}
 	})
 
+	t.Run("MayContainPrefix", func(t *testing.T) {
+		for _, tt := range []struct {
+			name string
+			opts sstable.WriterOptions
+		}{
+			{name: "of a table", opts: settings[7].opts},
+			{name: "of a table in partitions", opts: settings[8].opts},
+		} {
+			t.Run(tt.name, func(t *testing.T) {
+				r := openTable(t, writeTable(t, tt.opts, goldenTable()), sstable.ReaderOptions{Prefix: goldenPrefix})
+				p := []byte("key 03")
+				var ok bool
+				var err error
+				expect.MaxAllocs(t, func() { ok, err = r.MayContainPrefix(t.Context(), p) }, 0,
+					"MayContainPrefix does not allocate once its pooled cursor has grown")
+				expect.NoError(t, err, "the test measures a MayContainPrefix that reads")
+				expect.True(t, ok, "the test measures a prefix of the table")
+			})
+		}
+	})
+
+	t.Run("RangeDeletes", func(t *testing.T) {
+		r := openTable(t, writeTable(t, settings[7].opts, goldenTable(), goldenDeletes...), sstable.ReaderOptions{})
+		key := []byte("key 017")
+		var seqs uint64
+		// The collections empty the pool of the cursors that earlier tests
+		// closed, so a cursor that Close does not return allocates in the
+		// count.
+		runtime.GC()
+		runtime.GC()
+		expect.MaxAllocs(t, func() {
+			it := r.RangeDeletes()
+			for ok := it.SeekGE(key); ok && bytes.Compare(it.Start(), key) <= 0; ok = it.Next() {
+				seqs += it.Seq()
+			}
+			it.Close()
+		}, 0, "RangeDeletes takes a cursor of the pool, and its moves do not allocate")
+		expect.NotEqual(t, seqs, uint64(0), "the test measures the fragments of a key")
+	})
+
 	t.Run("NewIter", func(t *testing.T) {
 		r := openTable(t, data, sstable.ReaderOptions{})
 		var err error
@@ -1586,6 +2224,55 @@ func BenchmarkReader(b *testing.B) {
 				assert.True(b, ok, "the benchmark measures a key of the table")
 			})
 		}
+	})
+
+	b.Run("MayContainPrefix", func(b *testing.B) {
+		for _, tt := range []struct {
+			name string
+			opts sstable.WriterOptions
+		}{
+			{name: "of a table", opts: settings[7].opts},
+			{name: "of a table in partitions", opts: settings[8].opts},
+		} {
+			b.Run(tt.name, func(b *testing.B) {
+				r := openTable(b, writeTable(b, tt.opts, goldenTable()), sstable.ReaderOptions{Prefix: goldenPrefix})
+				p := []byte("key 03")
+				var ok bool
+				var err error
+
+				c := bench.Start(b).MaxAllocs(0)
+				defer c.End()
+
+				for c.Loop() {
+					ok, err = r.MayContainPrefix(b.Context(), p)
+				}
+
+				assert.NoError(b, err, "the benchmark measures a MayContainPrefix that reads")
+				assert.True(b, ok, "the benchmark measures a prefix of the table")
+			})
+		}
+	})
+
+	b.Run("RangeDeletes", func(b *testing.B) {
+		// The key is in the fragment from key 015 up to key 020 at the
+		// sequences 9 and 7.
+		r := openTable(b, writeTable(b, settings[7].opts, goldenTable(), goldenDeletes...), sstable.ReaderOptions{})
+		key := []byte("key 017")
+		var seqs uint64
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			seqs = 0
+			it := r.RangeDeletes()
+			for ok := it.SeekGE(key); ok && bytes.Compare(it.Start(), key) <= 0; ok = it.Next() {
+				seqs += it.Seq()
+			}
+			it.Close()
+		}
+
+		assert.Equal(b, seqs, uint64(16), "the benchmark measures the two sequences of the fragment of the key")
 	})
 
 	b.Run("Span", func(b *testing.B) {
@@ -1845,6 +2532,32 @@ func spanOf(l *layout, lower, upper []byte) sstable.Span {
 	return sstable.Span{Blocks: last - first + 1, Bytes: int64(end - l.blocks[first].off)}
 }
 
+// placeFields returns the offsets in the table of the varints of the offset
+// and of the length of the part i of the block of places of l: 0 for the
+// filter, 1 for the block of fragments and 2 for the filter of prefixes. The
+// flags of the block are its first varint.
+func placeFields(l *layout, i int) (off, n int) {
+	at := l.places.off
+	_, k := binary.Uvarint(l.data[at:])
+	for range i + 1 {
+		at += k
+		_, n1 := binary.Uvarint(l.data[at:])
+		_, n2 := binary.Uvarint(l.data[at+n1:])
+		off, n, k = at, at+n1, n1+n2+crcLen
+	}
+
+	return off, n
+}
+
+// fragmentEntry returns the internal key and the end of the entry i of the
+// block of fragments of l, as parts of the bytes of the table. Every entry of
+// the block is a restart point.
+func fragmentEntry(l *layout, i int) (ikey, end []byte) {
+	block := l.data[l.fragments.off : l.fragments.off+l.fragments.n]
+
+	return restartEntry(block[restarts(block)[i]:])
+}
+
 // placeOf returns the offset of the first of places whose last key is at or
 // after key. Of the data blocks, the index partitions or the filter
 // partitions of a table, it is the place that a lookup of key at its highest
@@ -1857,22 +2570,25 @@ func placeOf(places []place, key []byte) uint64 {
 
 // openChanged writes a golden table under a drawn setting and sets up to
 // four drawn bytes to drawn values. It cuts the table to a drawn length, then
-// opens and reads it. Open and every read return ErrCorrupt or succeed.
+// opens and reads it with the extraction of the setting. Open and every read
+// return ErrCorrupt or succeed.
 func openChanged(c *prop.Case) {
 	es := goldenTable()
-	data := writeTable(c, c.Draw(prop.SampledFrom(goldenFiles...), "setting").opts, es)
+	setting := c.Draw(prop.SampledFrom(goldenFiles...), "setting")
+	data := writeTable(c, setting.opts, es, setting.dels...)
 	for range c.Draw(prop.Integer(0, 4), "changes") {
 		data[c.Draw(prop.Integer(0, len(data)-1), "index")] = c.Draw(prop.Integer[byte](0, 255), "byte")
 	}
 	data = data[:c.Draw(prop.Integer(0, len(data)), "length")]
 
-	r, err := sstable.Open(c.Context(), bytesFile(data), int64(len(data)), sstable.ReaderOptions{})
+	opts := sstable.ReaderOptions{Prefix: setting.opts.Prefix}
+	r, err := sstable.Open(c.Context(), bytesFile(data), int64(len(data)), opts)
 	if err != nil {
 		assert.ErrorIs(c, err, sstable.ErrCorrupt, "Open refuses a changed table with ErrCorrupt")
 
 		return
 	}
-	if err := readAll(c.Context(), r, es); err != nil {
+	if err := readAll(c.Context(), r, es, setting.opts.Prefix); err != nil {
 		assert.ErrorIs(c, err, sstable.ErrCorrupt, "a read refuses a changed block with ErrCorrupt")
 	}
 }

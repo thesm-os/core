@@ -41,42 +41,73 @@
 // [ErrCorrupt]. [Writer.Close] documents the layout in full, and the layout
 // does not change between releases.
 //
-// [WriterOptions.MaxSize] returns the most bytes of a table from the number of
-// its entries and the bytes of their keys and values, so a store reserves the
-// space of a table before the Writer writes it.
+// [WriterOptions.MaxSize] returns the most bytes of a table from the
+// [Counts] of its entries and its fragments, so a store reserves the space
+// of a table before the Writer writes it.
 //
 // # Partitions
 //
-// With the PartitionSize of WriterOptions, the Writer writes format version
-// 2. It cuts the index into index partitions of about PartitionSize bytes
-// and the filter into filter partitions of at most PartitionSize bytes. A
-// top-level index of each kind has an entry for each of its partitions, and
-// the footer states the two top-level indexes in place of the index block
-// and the filter block. The data blocks have the bytes of format version 1.
+// With the PartitionSize of WriterOptions, the Writer cuts the index into
+// index partitions of about PartitionSize bytes and the filter into filter
+// partitions of at most PartitionSize bytes. A top-level index of each kind
+// has an entry for each of its partitions, and the footer states the
+// top-level indexes in place of the index block and the filter block. The
+// data blocks have the bytes of a table without partitions. A table in
+// partitions has format version 2, and a table without them version 1.
 //
-// A Reader reads both versions. Of a table of version 1 it keeps the index
-// block and the filter block in memory. Of a table of version 2 it keeps the
-// two top-level indexes, so its memory grows with the number of partitions
-// and not with the number of keys. A lookup reads the filter partition and
-// the index partition of its key as it reads a data block, through the
-// cache.
+// A Reader reads every version. Of a table without partitions it keeps the
+// index block and the filter block in memory. Of a table in partitions it
+// keeps the top-level indexes, so its memory grows with the number of
+// partitions and not with the number of keys. A lookup reads the filter
+// partition and the index partition of its key as it reads a data block,
+// through the cache.
+//
+// # Range tombstones
+//
+// A range tombstone deletes the keys from its start up to its end, which the
+// tombstone excludes, at a sequence. [Writer.AddRangeDelete] adds the
+// fragments of range tombstones in the order that [RangeDeleter] states, so
+// the fragments of a table do not overlap. A [Fragmenter] splits tombstones
+// that overlap at their overlap points, and passes the fragments to the
+// Writer. The Writer keeps the fragments in a block of fragments, and the
+// Reader keeps that block in memory. [Reader.RangeDeletes] returns a
+// [RangeDeleteIter] over the fragments, whose moves do not read a block. The
+// package does not apply a fragment to the entries that it covers. The
+// engine compares the sequence of each fragment with the sequences of those
+// entries.
+//
+// # Prefixes
+//
+// With the Prefix of WriterOptions, the Writer also builds a filter of the
+// prefixes of the keys, and records the name of the [PrefixExtractor] in the
+// table. The filter of prefixes has the layout and the partitions of the
+// filter of the keys. [Reader.MayContainPrefix] asks it, so a scan of the
+// keys of a prefix skips a table without such a key. A Reader uses the
+// filter of prefixes only when the Prefix of its [ReaderOptions] has the
+// name of the extraction of the table.
+//
+// A table with fragments or with a filter of prefixes has format version 3.
+// Its footer states a block of places in place of the filter. That block
+// states the places of the filter, of the block of fragments and of the
+// filter of prefixes. A table of version 3 has the index and the filter of
+// version 1, or of version 2 in partitions.
 //
 // # Contexts
 //
 // Every call that can read or write a table takes the context of its
-// caller: [Open], [Reader.Get], [Reader.MayContain], [Reader.Span], each
-// move of a [Source], the methods of a [BlockCache], [Writer.Add] and
-// [Writer.Close]. The package passes the
-// context to the File, the Sink and the cache. A File or a Sink that waits
-// ends its wait with the error of the context. A move of an [Iter] that
-// needs a block checks the context first, so a scan stops at the next block
-// after its context ended, also when the cache contains the block. Next,
-// Prev and SeekGE ignore the context when they move within the current
-// block. A cursor of [IterOptions] with NoFill takes the blocks that the
-// cache contains and does not add the blocks that it reads, so a scan of a
-// compaction keeps the blocks of the reads in the cache. A cursor with
-// ReadAhead reads the data blocks of ReadAhead bytes with one read of the
-// File, so a scan makes one read for many blocks.
+// caller: [Open], [Reader.Get], [Reader.MayContain], [Reader.MayContainPrefix],
+// [Reader.Span], each move of a [Source], the methods of a [BlockCache],
+// [Writer.Add], [Writer.Close], and the methods of a [RangeDeleter] and of a
+// Fragmenter. The package passes the context to the File, the Sink and the
+// cache. A File or a Sink that waits ends its wait with the error of the
+// context. A move of an [Iter] that needs a block checks the context first,
+// so a scan stops at the next block after its context ended, also when the
+// cache contains the block. Next, Prev and SeekGE ignore the context when
+// they move within the current block. A cursor of [IterOptions] with NoFill
+// takes the blocks that the cache contains and does not add the blocks that
+// it reads, so a scan of a compaction keeps the blocks of the reads in the
+// cache. A cursor with ReadAhead reads the data blocks of ReadAhead bytes
+// with one read of the File, so a scan makes one read for many blocks.
 //
 // # Block caches
 //
@@ -110,36 +141,40 @@
 //
 // # Concurrency
 //
-// A Reader is safe for concurrent use. A Writer, an Iter and a Merger are for
-// one goroutine.
+// A Reader is safe for concurrent use. A Writer, a Fragmenter, an Iter, a
+// RangeDeleteIter and a Merger are for one goroutine.
 //
 // # Errors
 //
-// The functions return [ErrOptions], [ErrOrder], [ErrClosed], [ErrTooLarge]
-// and [ErrCorrupt], and errors that wrap the errors of the Sink and the File.
-// A read or a write that ends with its context returns an error that wraps
-// the error of the context.
+// The functions return [ErrOptions], [ErrOrder], [ErrClosed], [ErrTooLarge],
+// [ErrRange], [ErrPrefix] and [ErrCorrupt], and errors that wrap the errors
+// of the Sink and the File. A read or a write that ends with its context
+// returns an error that wraps the error of the context.
 //
 // # Allocation contract
 //
-//   - Writer.Add does not allocate once the buffers of the current block,
-//     the index, the hashes of the filter and the partitions have room.
-//     [Writer.Reset] keeps the buffers for the next table, so a table after
-//     Reset allocates the two keys of its summary once the buffers have
-//     grown. A Writer releases its buffers once [Writer.Footprint] exceeds
-//     the MaxRetained of [WriterOptions], and the next table grows them
-//     again.
-//   - Reader.Get, Reader.MayContain, Reader.Span, Reader.NewIter, Iter.Close
-//     and the moves of an Iter and a Merger do not allocate once the pooled
+//   - Writer.Add and Writer.AddRangeDelete do not allocate once the buffers
+//     of the current block, the index, the hashes of the filters, the
+//     partitions and the fragments have room. [Writer.Reset] keeps the
+//     buffers for the next table, so a table after Reset allocates the keys
+//     of its summary once the buffers have grown. A Writer releases its
+//     buffers once [Writer.Footprint] exceeds the MaxRetained of
+//     [WriterOptions], and the next table grows them again.
+//   - [Fragmenter.Add] and [Fragmenter.Flush] do not allocate once the
+//     buffers of the tombstones that overlap have room.
+//   - Reader.Get, Reader.MayContain, Reader.MayContainPrefix, Reader.Span,
+//     Reader.NewIter, Reader.RangeDeletes, Iter.Close and the moves of an
+//     Iter, a RangeDeleteIter and a Merger do not allocate once the pooled
 //     cursors have grown to the largest block and the largest partition. A
-//     read through a [BlockCache] allocates a copy of each block or partition
-//     that the cache does not contain, apart from the reads of a cursor with
-//     NoFill. A read through a LendingCache copies such a block into a Block
-//     from the pool, which allocates only when the pool of its class is
-//     empty.
-//   - [NewWriter], Writer.Close and [Open] allocate the Writer or the Reader
-//     and their buffers. [Reader.Footprint] returns the bytes of the buffers
-//     that a Reader keeps.
+//     read through a [BlockCache] allocates a copy of each block or
+//     partition that the cache does not contain, apart from the reads of a
+//     cursor with NoFill. A read through a LendingCache copies such a block
+//     into a Block from the pool, which allocates only when the pool of its
+//     class is empty.
+//   - [NewWriter], [NewFragmenter], Writer.Close and [Open] allocate the
+//     Writer, the Fragmenter or the Reader and their buffers.
+//     [Reader.Footprint] returns the bytes of the buffers that a Reader
+//     keeps.
 //
 // # Dependency position
 //

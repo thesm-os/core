@@ -41,6 +41,14 @@ const (
 	// partitionedVersion is the version of the layout of a table whose index
 	// and filter are cut into partitions.
 	partitionedVersion = 2
+	// placedVersion is the version of the layout of a table with a block of
+	// places, which places the filter, the block of fragments of range
+	// tombstones and the filter of prefixes. The filter fields of the footer
+	// state the place of the block of places.
+	placedVersion = 3
+	// partitionedFlag is the flag of the block of places of a table whose
+	// index and filters are cut into partitions.
+	partitionedFlag = 1
 	// magic is the number at the end of a table. It is the first 8 bytes of
 	// the SHA-256 of go.thesmos.sh/core/sstable.
 	magic = 0xf65ba2ce515d9bd3
@@ -66,6 +74,11 @@ const (
 	// maxTopOverhead bounds an entry of a top-level index, whose value has a
 	// varint more: the number of data blocks up to the end of its partition.
 	maxTopOverhead = maxIndexOverhead + binary.MaxVarintLen64
+
+	// maxFilterTopOverhead bounds an entry of the top-level index of a
+	// filter beside its key: the sequence 0 after the key, and the bytes of
+	// an entry of a top-level index.
+	maxFilterTopOverhead = seqLen + maxTopOverhead
 )
 
 // maxSizeCount is the largest count that [WriterOptions.MaxSize] bounds: 2^48
@@ -113,10 +126,62 @@ func (c Compression) String() string {
 	}
 }
 
+// PrefixExtractor returns the prefix of a key for the prefix filter of a
+// table. The Writer records the Name of the extraction in each table, and a
+// [Reader] uses the prefix filter only for a [ReaderOptions] whose extractor
+// has that name. A reader that assumed another extraction would skip tables
+// that contain keys of a prefix.
+//
+// # Concurrency
+//
+// The methods of a PrefixExtractor must be safe for concurrent use, because
+// the Writers and the Readers of many tables can share one.
+type PrefixExtractor interface {
+	// Name returns the name of the extraction. It must not be empty.
+	Name() string
+
+	// Prefix returns the prefix of key, and reports false for a key without
+	// a prefix. The prefix must be a byte prefix of key, and the prefixes of
+	// keys in the order of bytes.Compare must not fall, so the keys of one
+	// prefix are consecutive in a table. The Writer copies the prefix.
+	Prefix(key []byte) ([]byte, bool)
+}
+
+// Counts are the counts of the parts of a table that
+// [WriterOptions.MaxSize] bounds. A negative count counts as 0.
+type Counts struct {
+	// Entries is the most entries of the table.
+	Entries int64
+
+	// KeyBytes is the most bytes of the keys of the entries, in all.
+	KeyBytes int64
+
+	// ValueBytes is the most bytes of the values of the entries, in all.
+	ValueBytes int64
+
+	// Longest is the most bytes of one key.
+	Longest int
+
+	// RangeDeletes is the most calls of [Writer.AddRangeDelete], one for each
+	// sequence of each fragment.
+	RangeDeletes int64
+
+	// RangeDeleteBytes is the most bytes of the starts and the ends of those
+	// calls, in all.
+	RangeDeleteBytes int64
+}
+
 // WriterOptions configure a [Writer]. The zero value writes data blocks of
 // 4,096 bytes with a restart point every 16 entries, without compression and
 // without a filter.
 type WriterOptions struct {
+	// Prefix extracts the prefixes of the prefix filter of the table: a
+	// [filter.Fuse] over the [xxh3.Hash] of each distinct prefix, with the
+	// width of FilterBits and the partitions of PartitionSize. With nil the
+	// Writer does not write a prefix filter. A table with a prefix filter
+	// has format version 3.
+	Prefix PrefixExtractor
+
 	// BlockSize is the size of the entries after which a data block ends.
 	// The Writer ends a block after the first entry that brings the entries
 	// of the block to BlockSize bytes or more. 0 means 4,096, and the largest
@@ -145,43 +210,47 @@ type WriterOptions struct {
 	MaxRetained int
 
 	// PartitionSize is the size in bytes of an index partition and of a
-	// filter partition, in format version 2. The Writer ends an index
-	// partition with the entry that brings its entries to PartitionSize
-	// bytes or more. It ends a filter partition at the most keys up to which
-	// the encoding of every count of keys takes at most PartitionSize bytes,
-	// so every filter partition of more than one key fits PartitionSize. With
-	// 0 the Writer writes one index block and one filter block, in format
-	// version 1. The largest PartitionSize is 2^32 - 1.
+	// filter partition. The Writer ends an index partition with the entry
+	// that brings its entries to PartitionSize bytes or more. It ends a
+	// filter partition at the most keys or prefixes up to which the encoding
+	// of every count takes at most PartitionSize bytes, so every filter
+	// partition of more than one key fits PartitionSize. A table in
+	// partitions has format version 2, or 3 with fragments or a Prefix. With
+	// 0 the Writer writes one index block and one filter block of each kind.
+	// The largest PartitionSize is 2^32 - 1.
 	PartitionSize int
 }
 
 // MaxSize returns the most bytes of a table that a [Writer] under o writes
-// for at most entries entries. Their keys take at most keyBytes bytes in all
-// and at most longest bytes each, and their values take at most valueBytes
-// bytes in all. A store that reserves the space of a table before a flush
-// passes the counts of the entries that the flush writes.
+// for the counts of c. A store that reserves the space of a table before a
+// flush passes the counts of the entries and the fragments that the flush
+// writes.
 //
 // The bound takes every entry at a restart point with no shared prefix, and
 // every block without compression. It counts the most data blocks and
 // partitions that the bytes of their entries allow. The key of an entry of an
-// index or of a top-level index counts at most longest bytes, and the keys of
-// one kind of index count at most keyBytes bytes together. A filter takes the
+// index or of a top-level index counts at most Longest bytes, and the keys of
+// one kind of index count at most KeyBytes bytes together. A filter takes the
 // bytes of the largest encoding of at most its count of keys.
-// [filter.MaxFuseSize] returns that length. A negative count counts as 0, and
-// a count above 2^48 makes MaxSize return math.MaxInt64.
+// [filter.MaxFuseSize] returns that length. A filter of prefixes has at most
+// a prefix for each entry, and takes the bound of the filter of the keys.
+// Each call of [Writer.AddRangeDelete] takes an entry of the block of
+// fragments with no shared prefix. A count above 2^48 makes MaxSize return
+// math.MaxInt64.
 //
 // Error modes:
 //
 //   - Options that [NewWriter] refuses return [ErrOptions].
-//   - Entries whose filter block of format version 1 needs more than 2^32
-//     fingerprints return the error of [filter.MaxFuseSize].
-func (o WriterOptions) MaxSize(entries, keyBytes, valueBytes int64, longest int) (int64, error) {
+//   - Entries whose filter block of a table without partitions needs more
+//     than 2^32 fingerprints return the error of [filter.MaxFuseSize].
+func (o WriterOptions) MaxSize(c Counts) (int64, error) {
 	if err := o.check(); err != nil {
 		return 0, err
 	}
-	n, keys, values, l := uint64(max(entries, 0)), uint64(max(keyBytes, 0)), uint64(max(valueBytes, 0)),
-		uint64(max(longest, 0))
-	if max(n, keys, values, l) > maxSizeCount {
+	n, keys, values, l := uint64(max(c.Entries, 0)), uint64(max(c.KeyBytes, 0)), uint64(max(c.ValueBytes, 0)),
+		uint64(max(c.Longest, 0))
+	deletes, deleteBytes := uint64(max(c.RangeDeletes, 0)), uint64(max(c.RangeDeleteBytes, 0))
+	if max(n, keys, values, l, deletes, deleteBytes) > maxSizeCount {
 		return math.MaxInt64, nil
 	}
 
@@ -221,9 +290,17 @@ func (o WriterOptions) MaxSize(entries, keyBytes, valueBytes int64, longest int)
 	last := keysOf(blocks) + seqLen*blocks
 	index := last + last/128 + (3+crcLen+2*placeLen)*blocks - (placeLen - 1)
 
-	// The filter of format version 1 is one block of the hashes of every
-	// key. Format version 2 cuts it into partitions of at most the keys of
-	// partitionKeys.
+	// The filter of a table without partitions is one block of the hashes of
+	// every key. A table in partitions cuts it into partitions of at most the
+	// keys of partitionKeys. The filter of prefixes has at most a prefix for
+	// each entry, so it takes the same bound.
+	filterKinds := uint64(0)
+	if o.FilterBits != 0 {
+		filterKinds = 1
+	}
+	if o.Prefix != nil {
+		filterKinds = 2
+	}
 	fparts, fkeys := uint64(1), n
 	filters, fpartLen := uint64(0), uint64(0)
 	if o.FilterBits != 0 {
@@ -238,46 +315,83 @@ func (o WriterOptions) MaxSize(entries, keyBytes, valueBytes int64, longest int)
 			return 0, err
 		}
 		largest := uint64(f) //nolint:gosec // G115: the length of an encoding is not negative
-		filters = fparts * (largest + trailerLen)
+		filters = filterKinds * fparts * (largest + trailerLen)
 		fpartLen = uint64(bits.Len64(largest|1)+6) / 7 //nolint:gosec // G115: Len64 returns at most 64
 	}
 
+	// The block of fragments has an entry at a restart point for each call
+	// of AddRangeDelete: three varints, the internal key of the start and the
+	// sequence, and the end as its value. It has a uint32 for each restart
+	// point and one for their count, and a trailer.
+	fragments := uint64(0)
+	if deletes != 0 {
+		ikeys := deleteBytes + seqLen*deletes
+		fragments = ikeys + ikeys/128 + (3+4)*deletes + 4 + trailerLen
+	}
+
 	// The entries of the index have a uint32 each for their restart points.
-	size := data + filters + index + 4*blocks + footerLen
+	// An index block has a uint32 for the count of its entries and a trailer.
+	size := data + filters + fragments + index + 4*blocks + footerLen
+	tops := uint64(0)
 	if o.PartitionSize == 0 {
-		// The index block has a uint32 for the count of its entries and a
-		// trailer.
-		//nolint:gosec // G115: the bound of counts up to maxSizeCount fits an int64
-		return int64(size + 4 + trailerLen), nil
-	}
+		size += 4 + trailerLen
+	} else {
+		// An index partition ends at the entry that brings its entries to
+		// PartitionSize bytes. It has a uint32 for the count of its entries
+		// and a trailer.
+		//nolint:gosec // G115: check refuses a negative PartitionSize
+		parts := min(blocks, index/uint64(o.PartitionSize)+1)
+		size += (4 + trailerLen) * parts
 
-	// An index partition ends at the entry that brings its entries to
-	// PartitionSize bytes. It has a uint32 for the count of its entries and a
-	// trailer.
-	//nolint:gosec // G115: check refuses a negative PartitionSize
-	parts := min(blocks, index/uint64(o.PartitionSize)+1)
-	size += (4 + trailerLen) * parts
-
-	// An entry of a top-level index has the internal key of the last entry
-	// of its partition, and the offset and the length of the partition. An
-	// entry of the index also has the number of data blocks up to the end of
-	// its partition. A top-level index has a uint32 for the restart point of
-	// each entry and one for their count, and a trailer.
-	partKeys := keysOf(parts) + seqLen*parts
-	blocksLen := uint64(bits.Len64(blocks|1)+6) / 7 //nolint:gosec // G115: Len64 returns at most 64
-	size += partKeys + partKeys/128 + (3+crcLen+4+blocksLen)*parts + 4 + trailerLen
-	tops := 2 * parts
-	if o.FilterBits != 0 {
+		// An entry of a top-level index has the internal key of the last
+		// entry of its partition, and the offset and the length of the
+		// partition. An entry of the index also has the number of data blocks
+		// up to the end of its partition. A top-level index has a uint32 for
+		// the restart point of each entry and one for their count, and a
+		// trailer. The top-level index of the prefixes has the bound of the
+		// top-level index of the keys.
+		partKeys := keysOf(parts) + seqLen*parts
+		blocksLen := uint64(bits.Len64(blocks|1)+6) / 7 //nolint:gosec // G115: Len64 returns at most 64
+		size += partKeys + partKeys/128 + (3+crcLen+4+blocksLen)*parts + 4 + trailerLen
 		filterKeys := keysOf(fparts) + seqLen*fparts
-		size += filterKeys + filterKeys/128 + (3+crcLen+4+fpartLen)*fparts + 4 + trailerLen
-		tops += fparts
+		size += filterKinds * (filterKeys + filterKeys/128 + (3+crcLen+4+fpartLen)*fparts + 4 + trailerLen)
+		tops = 2*parts + filterKinds*fparts
 	}
 
-	// The offset of each partition and the length of each index partition
-	// are below the size of the table, so the varint of a bound of the size
-	// bounds the varint of each of them. The bound with varints of 10 bytes
-	// bounds the size, and so does each bound with the varints of the bound
-	// before it.
+	// The block of places of format version 3 has the flags, the CRC32C of
+	// three parts, the name of the extractor with the varint of its length,
+	// and a trailer. The offset of each part is below the size of the table,
+	// and so is the length of a top-level index. The length of a filter block
+	// takes the bytes of the varint of the largest filter, and the length of
+	// the block of fragments the bytes of the varint of its bound. A missing
+	// part has an offset and a length of one byte each.
+	if o.Prefix != nil || deletes != 0 {
+		name := uint64(0)
+		if o.Prefix != nil {
+			name = uint64(len(o.Prefix.Name()))
+		}
+		//nolint:gosec // G115: Len64 returns at most 64
+		size += 1 + 3*crcLen + uint64(bits.Len64(name|1)+6)/7 + name + trailerLen + 2*(2-filterKinds)
+		tops += filterKinds
+		if o.PartitionSize == 0 {
+			size += filterKinds * fpartLen
+		} else {
+			tops += filterKinds
+		}
+		if deletes == 0 {
+			size += 2
+		} else {
+			//nolint:gosec // G115: Len64 returns at most 64
+			size += uint64(bits.Len64((fragments-trailerLen)|1)+6) / 7
+			tops++
+		}
+	}
+
+	// The offset of each partition and of each part of the block of places,
+	// and the length of each index partition and of each part, are below the
+	// size of the table, so the varint of a bound of the size bounds the
+	// varint of each of them. The bound with varints of 10 bytes bounds the
+	// size, and so does each bound with the varints of the bound before it.
 	offLen := uint64(binary.MaxVarintLen64)
 	for {
 		total := size + offLen*tops
@@ -293,8 +407,9 @@ func (o WriterOptions) MaxSize(entries, keyBytes, valueBytes int64, longest int)
 // check returns [ErrOptions] for options that a Writer does not accept: a
 // negative BlockSize, RestartInterval, MaxRetained or PartitionSize, a
 // BlockSize or a PartitionSize above 2^32 - 1, a Compression that is not
-// valid, and a FilterBits that is neither 0 nor a width of fingerprints that
-// [filter.FuseSize] accepts.
+// valid, a FilterBits that is neither 0 nor a width of fingerprints that
+// [filter.FuseSize] accepts, and a Prefix without FilterBits or with an
+// empty name.
 func (o WriterOptions) check() error {
 	if o.BlockSize < 0 || int64(o.BlockSize) > math.MaxUint32 || o.RestartInterval < 0 ||
 		!o.Compression.Valid() || o.MaxRetained < 0 ||
@@ -307,22 +422,30 @@ func (o WriterOptions) check() error {
 			return ErrOptions
 		}
 	}
+	if o.Prefix != nil && (o.FilterBits == 0 || o.Prefix.Name() == "") {
+		return ErrOptions
+	}
 
 	return nil
 }
 
-// Summary describes the entries, the size and the range of keys and
-// sequences of a table. For a table of no entries, every field except Size
-// is zero or nil.
+// Summary describes the entries, the fragments of range tombstones, the size
+// and the range of keys and sequences of a table. For a table of no entries
+// and no fragments, every field except Size is zero or nil. Summary keeps the
+// bounds of the entries apart from the bounds of the fragments, and an engine
+// places a table by both pairs.
 type Summary struct {
-	SmallestKey []byte // the key of the first entry
-	LargestKey  []byte // the key of the last entry
-	Entries     int64  // the number of entries
-	Size        int64  // the bytes of the table
-	MinSeq      uint64 // the lowest sequence of any entry
-	MaxSeq      uint64 // the highest sequence of any entry
-	SmallestSeq uint64 // the sequence of the first entry
-	LargestSeq  uint64 // the sequence of the last entry
+	SmallestKey      []byte // the key of the first entry
+	LargestKey       []byte // the key of the last entry
+	RangeDeleteStart []byte // the start of the first fragment
+	RangeDeleteEnd   []byte // the end of the last fragment, which the fragment excludes
+	Entries          int64  // the number of entries
+	RangeDeletes     int64  // the number of the entries of the block of fragments, one for each sequence of a fragment
+	Size             int64  // the bytes of the table
+	MinSeq           uint64 // the lowest sequence of any entry or fragment
+	MaxSeq           uint64 // the highest sequence of any entry or fragment
+	SmallestSeq      uint64 // the sequence of the first entry
+	LargestSeq       uint64 // the sequence of the last entry
 }
 
 // Sink receives the bytes of the table that a [Writer] writes. Write has the
@@ -343,12 +466,99 @@ type blockPlace struct {
 	crc    uint32
 }
 
+// places is the block of places of a table of format version 3: whether the
+// index and the filters are partitioned, the places of the filter, the block
+// of fragments and the filter of prefixes, and the name of the extractor of
+// the prefixes. A part that the table does not have has the zero place, and
+// a table without a filter of prefixes has an empty name. Every block has at
+// least one byte, so a Reader takes a length of 0 for a missing part.
+type places struct {
+	name                      string
+	filter, fragments, prefix blockPlace
+	partitioned               bool
+}
+
+// append appends the encoding of p to dst and returns the extended slice:
+// the flags as a varint, each place as its offset and its length as varints
+// and its CRC32C as a uint32, then the length of the name as a varint and the
+// name.
+func (p *places) append(dst []byte) []byte {
+	flags := uint64(0)
+	if p.partitioned {
+		flags = partitionedFlag
+	}
+	dst = binary.AppendUvarint(dst, flags)
+	for _, b := range [...]blockPlace{p.filter, p.fragments, p.prefix} {
+		dst = binary.BigEndian.AppendUint32(binary.AppendUvarint(binary.AppendUvarint(dst, b.off), b.n), b.crc)
+	}
+	dst = binary.AppendUvarint(dst, uint64(len(p.name)))
+
+	return append(dst, p.name...)
+}
+
+// decode decodes the block of places b into p. It reports false for a block
+// whose fields do not decode, with a flag other than partitionedFlag, or with
+// a byte after the name. decode allocates the name.
+func (p *places) decode(b []byte) bool {
+	// When the varint of the flags fails, Uvarint returns the flags 0, and
+	// the place of the filter decodes the same bytes and fails too.
+	flags, n := binary.Uvarint(b)
+	if flags&^partitionedFlag != 0 {
+		return false
+	}
+	p.partitioned, b = flags == partitionedFlag, b[max(n, 0):]
+	for _, dst := range [...]*blockPlace{&p.filter, &p.fragments, &p.prefix} {
+		off, n1 := binary.Uvarint(b)
+		// When the first varint fails, Uvarint decodes the same bytes for the
+		// second and fails again, so n2 reports either failure.
+		size, n2 := binary.Uvarint(b[max(n1, 0):])
+		at := max(n1, 0) + max(n2, 0)
+		//dokimi:mutate-skip lcr-right,ror-boundary: a varint that fails leaves a length of 0 and a CRC32C of continuation bytes, which tail refuses for a missing part, and a block that ends at a CRC32C does not have the length of the name
+		if n2 <= 0 || len(b) < at+crcLen {
+			return false
+		}
+		*dst, b = blockPlace{off: off, n: size, crc: binary.BigEndian.Uint32(b[at:])}, b[at+crcLen:]
+	}
+	length, n := binary.Uvarint(b)
+	//nolint:gosec // G115: n is at most len(b)
+	if n <= 0 || length != uint64(len(b)-n) {
+		return false
+	}
+	p.name = string(b[n:])
+
+	return true
+}
+
+// filterBuild is a filter that a [Writer] builds over the hashes of the
+// distinct keys of a table, or of their prefixes. In partitions, it keeps
+// the finished partitions until Close.
+type filterBuild struct {
+	// hashes are the hashes of the filter, or of its current partition.
+	hashes []uint64
+
+	// parts contains the finished partitions with their trailers, in their
+	// order.
+	parts []byte
+
+	// meta contains a record of each finished partition: the length of its
+	// last key or prefix as a varint, that key or prefix, the stored length
+	// of the partition as a varint and its CRC32C as a uint32.
+	meta []byte
+
+	// top bounds the bytes of the entries of the top-level index of the
+	// partitions.
+	top uint64
+}
+
 // Writer writes a table to a [Sink] from entries in the order of [Compare].
 // It writes each data block when the block ends, and the last data block,
 // the filter, the index and the footer at [Writer.Close]. Each write takes
 // the context of the call that makes it. With the PartitionSize of
 // [WriterOptions], the Writer cuts the index and the filter into partitions
-// as the entries arrive, and keeps the partitions until Close.
+// as the entries arrive, and keeps the partitions until Close. With the
+// Prefix of WriterOptions it also builds a filter of the prefixes of the
+// keys, and [Writer.AddRangeDelete] adds the fragments of range tombstones,
+// which it keeps until Close in a block of their own.
 //
 // The data blocks follow one another from the start of the table. A block
 // contains its entries, then the offset of each restart point as a uint32,
@@ -371,15 +581,17 @@ type blockPlace struct {
 // # Allocation contract
 //
 // [NewWriter] allocates the Writer. The first [Writer.Add] allocates a copy
-// of its key. Add otherwise allocates only to grow the buffers of the current
-// block, the index and the hashes of the filter, so it does not allocate once
-// they have room. Close allocates the encoding of the filter, the scratch of
-// its builder, the growth of the buffer of the table for the filter and the
-// index, and the largest key of the summary. [Writer.Reset] keeps every
-// buffer for the next table while [Writer.Footprint] is within the
-// MaxRetained of [WriterOptions], so a Writer that writes many tables of one
-// size allocates the two keys of each summary once its buffers have grown. A
-// table after a release of the buffers allocates their growth again.
+// of its key, and the first [Writer.AddRangeDelete] a copy of its start. Add
+// and AddRangeDelete otherwise allocate only to grow the buffers of the
+// current block, the index, the hashes of the filters and the fragments, so
+// they do not allocate once those have room. Close allocates the encoding of
+// the filter, the scratch of its builder, the growth of the buffer of the
+// table for the filter and the index, and the largest key and the end of the
+// last fragment of the summary. [Writer.Reset] keeps every buffer for the
+// next table while [Writer.Footprint] is within the MaxRetained of
+// [WriterOptions], so a Writer that writes many tables of one size allocates
+// the keys of each summary once its buffers have grown. A table after a
+// release of the buffers allocates their growth again.
 type Writer struct {
 	// w receives the bytes of the table.
 	w Sink
@@ -388,7 +600,10 @@ type Writer struct {
 	// later call returns it.
 	err error
 
-	// builder builds the filter at Close.
+	// prefix is the Prefix of the options, or nil.
+	prefix PrefixExtractor
+
+	// builder builds the filters.
 	builder filter.FuseBuilder
 
 	// out contains the current data block, and at Close the rest of the
@@ -411,25 +626,35 @@ type Writer struct {
 	index         []byte
 	indexRestarts []uint32
 
-	// hashes are the hashes of the distinct keys of the filter, or of the
-	// current filter partition.
-	hashes []uint64
+	// indexParts contains the finished index partitions with their trailers,
+	// in their order.
+	indexParts []byte
 
-	// filterParts and indexParts contain the finished filter partitions and
-	// index partitions with their trailers, each kind in its order.
-	filterParts, indexParts []byte
+	// indexMeta contains a record of each finished index partition: the
+	// length of the internal key of its last entry as a varint, that key, the
+	// stored length of the partition as a varint, its CRC32C as a uint32, and
+	// the number of data blocks up to the end of the partition as a varint.
+	indexMeta []byte
 
-	// filterMeta and indexMeta contain a record of each finished partition:
-	// the length of its key as a varint, the key, the stored length of the
-	// partition as a varint and its CRC32C as a uint32. The key of a filter
-	// partition is its last key. The key of an index partition is the
-	// internal key of its last entry, and its record ends with the number
-	// of data blocks up to the end of the partition as a varint.
-	filterMeta, indexMeta []byte
+	// prefixLast is the last distinct prefix of the keys, which prefixed
+	// reports.
+	prefixLast []byte
 
-	// smallest is the key of the first entry, and smallestSeq its sequence.
-	smallest    []byte
-	smallestSeq uint64
+	// frags contains the entries of the block of fragments, and fragRestarts
+	// their offsets. Every entry is a restart point. fragLast is the internal
+	// key of the last entry, the start of the last fragment and its sequence,
+	// and fragEnd the end of the last fragment.
+	frags             []byte
+	fragRestarts      []uint32
+	fragLast, fragEnd []byte
+
+	// smallest is the key of the first entry, and fragStart the start of the
+	// first fragment. Both are copies for the summary.
+	smallest, fragStart []byte
+
+	// keys is the filter of the keys of the table, and prefixes the filter of
+	// their prefixes.
+	keys, prefixes filterBuild
 
 	// blockSize, restartInterval, filterBits, maxRetained and partitionSize
 	// are options of the Writer after NewWriter applied the defaults.
@@ -450,20 +675,29 @@ type Writer struct {
 	// blocks is the number of finished data blocks.
 	blocks uint64
 
-	// indexTop and filterTop bound the bytes of the entries of the top-level
-	// index of the index and of the filter.
-	indexTop, filterTop uint64
+	// indexTop bounds the bytes of the entries of the top-level index of the
+	// index.
+	indexTop uint64
 
 	// size is the number of bytes that w accepted.
 	size int64
 
-	// entries, minSeq and maxSeq describe the entries that Add added.
-	entries        int64
-	minSeq, maxSeq uint64
+	// entries is the number of entries that Add added, and fragCount the
+	// number of fragments that AddRangeDelete added. minSeq and maxSeq are
+	// the lowest and the highest sequence of both, and smallestSeq is the
+	// sequence of the first entry.
+	entries, fragCount          int64
+	minSeq, maxSeq, smallestSeq uint64
 
 	// compression is the codec of the data blocks.
 	compression Compression
+
+	// prefixed reports whether a key had a prefix, which prefixLast then
+	// contains.
+	prefixed bool
 }
+
+var _ RangeDeleter = (*Writer)(nil)
 
 // NewWriter returns a [Writer] that writes a table to w under opts. It
 // checks FilterBits with [filter.FuseSize], so the Writer accepts every
@@ -475,6 +709,8 @@ type Writer struct {
 //     RestartInterval, an invalid Compression, a FilterBits that is neither
 //     0 nor a width of fingerprints, a negative MaxRetained, a negative
 //     PartitionSize or a PartitionSize above 2^32 - 1 returns [ErrOptions].
+//   - A Prefix without FilterBits, or whose Name is empty, returns
+//     ErrOptions.
 //
 // # Allocation contract
 //
@@ -486,6 +722,7 @@ func NewWriter(w Sink, opts WriterOptions) (*Writer, error) {
 
 	wr := &Writer{
 		w:               w,
+		prefix:          opts.Prefix,
 		blockSize:       cmp.Or(opts.BlockSize, defaultBlockSize),
 		restartInterval: cmp.Or(opts.RestartInterval, defaultRestartInterval),
 		compression:     opts.Compression,
@@ -506,7 +743,9 @@ func NewWriter(w Sink, opts WriterOptions) (*Writer, error) {
 // entry ends the block. With a PartitionSize, a distinct key after the most
 // keys of a filter partition ends the partition, and a data block that
 // brings the current index partition to PartitionSize bytes ends that
-// partition.
+// partition. With a Prefix, a distinct key whose prefix differs from the
+// prefix before it adds a hash to the filter of prefixes, and ends a full
+// partition of it.
 //
 // Error modes:
 //
@@ -515,6 +754,9 @@ func NewWriter(w Sink, opts WriterOptions) (*Writer, error) {
 //     [ErrTooLarge], and the Writer is unchanged.
 //   - An entry at or before the previous entry returns [ErrOrder], and the
 //     Writer is unchanged.
+//   - A prefix that is not a byte prefix of key, or that is before the
+//     prefix of an earlier key, returns [ErrPrefix], and the Writer is
+//     unchanged.
 //   - An error of the Sink, such as the error of ctx at the end of a wait,
 //     returns an error that wraps it, and every later call returns the same
 //     error. A write of fewer bytes without an error returns an error that
@@ -526,17 +768,18 @@ func NewWriter(w Sink, opts WriterOptions) (*Writer, error) {
 // # Allocation contract
 //
 // Zero-alloc when the buffers of the current block, the index, the hashes
-// of the filter and the partitions have room. Otherwise Add allocates their
-// growth, and an end of a filter partition can grow the scratch of the
-// builder of the filter. The first Add also allocates a copy of its key for
-// the summary.
+// of the filters and the partitions have room, apart from what Prefix
+// allocates. Otherwise Add allocates their growth, and an end of a filter
+// partition can grow the scratch of the builder of the filter. The first Add
+// also allocates a copy of its key for the summary.
 func (w *Writer) Add(ctx context.Context, key []byte, seq uint64, value []byte) error {
 	if w.err != nil {
 		return w.err
 	}
-	//dokimi:mutate-skip ror-boundary: a key at the bound has 4 GiB, and Add keeps three copies of it, which no test allocates
+	//dokimi:mutate-skip lcr-left,lcr-right,ror-boundary,ror-false,sbr-delete: a key of 4 GiB passes both bounds, and Add keeps three copies of a key that passes the check, which no test allocates
 	if uint64(len(w.index))+uint64(len(key)) > math.MaxUint32-maxIndexOverhead ||
-		max(w.indexTop, w.filterTop)+uint64(len(key)) > math.MaxUint32-seqLen-maxTopOverhead {
+		//dokimi:mutate-skip ror-boundary,ror-false: the bound of a top-level index differs from the bound of the index only for an index near 4 GiB, which no test writes
+		max(w.indexTop, w.keys.top, w.prefixes.top)+uint64(len(key)) > math.MaxUint32-seqLen-maxTopOverhead {
 
 		return ErrTooLarge
 	}
@@ -548,16 +791,49 @@ func (w *Writer) Add(ctx context.Context, key []byte, seq uint64, value []byte) 
 			return ErrOrder
 		}
 		distinct = !bytes.Equal(key, w.last[:n])
-	} else {
-		w.smallest, w.smallestSeq, w.minSeq, w.maxSeq = append([]byte{}, key...), seq, seq, seq
+	}
+
+	// A key of the last key has its prefix. A new prefix follows the last
+	// one, so the keys of a prefix are consecutive.
+	var prefix []byte
+	fresh := false
+	if w.prefix != nil && distinct {
+		if p, ok := w.prefix.Prefix(key); ok {
+			if !bytes.HasPrefix(key, p) {
+				return ErrPrefix
+			}
+			order := 1
+			if w.prefixed {
+				order = bytes.Compare(p, w.prefixLast)
+			}
+			if order < 0 {
+				return ErrPrefix
+			}
+			prefix, fresh = p, order > 0
+		}
+	}
+
+	if w.entries == 0 {
+		w.smallest, w.smallestSeq = append([]byte{}, key...), seq
+	}
+	if w.entries == 0 && w.fragCount == 0 {
+		w.minSeq, w.maxSeq = seq, seq
 	}
 	if w.filterBits != 0 && distinct {
 		// A filter partition ends at the previous key, which is distinct from
 		// key.
-		if w.partitionSize != 0 && len(w.hashes) == w.filterKeys {
-			w.err = w.finishFilterPartition(w.last[:len(w.last)-seqLen])
+		if w.partitionSize != 0 && len(w.keys.hashes) == w.filterKeys {
+			w.err = w.finishFilterPartition(&w.keys, w.last[:len(w.last)-seqLen])
 		}
-		w.hashes = append(w.hashes, xxh3.Hash(key))
+		w.keys.hashes = append(w.keys.hashes, xxh3.Hash(key))
+	}
+	if fresh {
+		// A partition of prefixes ends at the prefix before prefix.
+		if w.partitionSize != 0 && len(w.prefixes.hashes) == w.filterKeys {
+			w.err = cmp.Or(w.err, w.finishFilterPartition(&w.prefixes, w.prefixLast))
+		}
+		w.prefixes.hashes = append(w.prefixes.hashes, xxh3.Hash(prefix))
+		w.prefixLast, w.prefixed = append(w.prefixLast[:0], prefix...), true
 	}
 	w.minSeq, w.maxSeq = min(w.minSeq, seq), max(w.maxSeq, seq)
 
@@ -587,6 +863,70 @@ func (w *Writer) Add(ctx context.Context, key []byte, seq uint64, value []byte) 
 	return w.err
 }
 
+// AddRangeDelete adds the fragment of a range tombstone of the keys from
+// start up to end, which the fragment excludes, at the sequence seq. The
+// fragment must follow the fragment before it, as [RangeDeleter] states: the
+// same start and the same end with a lower sequence, or a start at or after
+// the end before it. A [Fragmenter] turns tombstones that overlap into such
+// fragments. AddRangeDelete copies start and end, and keeps the fragments in
+// the block of fragments, which Close writes. A table with a fragment has
+// format version 3. The sequence counts toward the lowest and the highest
+// sequence of the table.
+//
+// Error modes:
+//
+//   - A start at or after its end returns [ErrRange], and the Writer is
+//     unchanged.
+//   - A fragment that could bring the block of fragments past 2^32 - 1 bytes
+//     returns [ErrTooLarge], and the Writer is unchanged.
+//   - A fragment that does not follow the fragment before it returns
+//     [ErrOrder], and the Writer is unchanged.
+//   - The error of an earlier write of the Writer, and [ErrClosed] after
+//     Close.
+//
+// # Allocation contract
+//
+// Zero-alloc when the buffers of the fragments have room. The first
+// AddRangeDelete also allocates a copy of its start for the summary.
+func (w *Writer) AddRangeDelete(_ context.Context, start, end []byte, seq uint64) error {
+	if w.err != nil {
+		return w.err
+	}
+	if bytes.Compare(start, end) >= 0 {
+		return ErrRange
+	}
+	size := uint64(len(w.frags)) + uint64(len(start)) + uint64(len(end))
+	//dokimi:mutate-skip ror-boundary,ror-false,sbr-delete: a fragment at the bound has 4 GiB, and AddRangeDelete keeps three copies of a start that passes the check, which no test allocates
+	if size > math.MaxUint32-maxIndexOverhead {
+		return ErrTooLarge
+	}
+	if w.fragCount != 0 {
+		n := len(w.fragLast) - seqLen
+		same := bytes.Equal(start, w.fragLast[:n]) && bytes.Equal(end, w.fragEnd)
+		if same && seq >= binary.BigEndian.Uint64(w.fragLast[n:]) {
+			return ErrOrder
+		}
+		if !same && bytes.Compare(start, w.fragEnd) < 0 {
+			return ErrOrder
+		}
+	} else {
+		w.fragStart = append([]byte{}, start...)
+	}
+	if w.entries == 0 && w.fragCount == 0 {
+		w.minSeq, w.maxSeq = seq, seq
+	}
+	w.minSeq, w.maxSeq = min(w.minSeq, seq), max(w.maxSeq, seq)
+
+	w.fragLast = binary.BigEndian.AppendUint64(append(w.fragLast[:0], start...), seq)
+	//nolint:gosec // G115: AddRangeDelete keeps the block of fragments below 2^32 - 1 bytes
+	w.fragRestarts = append(w.fragRestarts, uint32(len(w.frags)))
+	w.frags = appendEntry(w.frags, w.fragLast, end, 0)
+	w.fragEnd = append(w.fragEnd[:0], end...)
+	w.fragCount++
+
+	return nil
+}
+
 // Close writes the last data block, the filter, the index and the footer
 // with one write under ctx, and returns the summary of the table. After the
 // write it releases the buffers of w when [Writer.Footprint] exceeds the
@@ -613,10 +953,10 @@ func (w *Writer) Add(ctx context.Context, key []byte, seq uint64, value []byte) 
 //   - the version 1 and the CRC32C of the first 68 bytes, as uint32
 //   - the magic number 0xf65ba2ce515d9bd3
 //
-// With a PartitionSize, Close writes format version 2. The data blocks are
-// followed by the filter partitions, the index partitions, the top-level
-// index of the filter and the top-level index of the index, each with a
-// trailer.
+// With a PartitionSize, Close cuts the index and the filter into partitions,
+// in format version 2. The data blocks are followed by the filter
+// partitions, the index partitions, the top-level index of the filter and
+// the top-level index of the index, each with a trailer.
 //
 //   - An index partition has the layout of the index block, with the entries
 //     of consecutive data blocks.
@@ -634,6 +974,33 @@ func (w *Writer) Add(ctx context.Context, key []byte, seq uint64, value []byte) 
 //     fields state the top-level index of the index, and its filter fields
 //     the top-level index of the filter.
 //
+// A table with a Prefix or with a fragment of [Writer.AddRangeDelete] has
+// format version 3. It has the index and the filter of version 1, or of
+// version 2 with a PartitionSize, and the parts of version 3 among them.
+//
+//   - Without partitions, the data blocks are followed by the block of
+//     fragments, the filter block, the prefix filter block, the index block
+//     and the block of places.
+//   - With partitions, the data blocks are followed by the filter
+//     partitions, the prefix filter partitions, the index partitions, the
+//     block of fragments, the top-level index of the filter, the top-level
+//     index of the prefix filter, the top-level index of the index and the
+//     block of places.
+//   - The block of fragments has the layout of the index block. Its entry
+//     for a fragment and one of its sequences has the internal key of the
+//     start of the fragment and the sequence, and the end as its value.
+//   - The filter of prefixes has the layout of the filter of the keys over
+//     the distinct prefixes. Its top-level index has the last prefix of each
+//     partition with the sequence 0.
+//   - The block of places has the flags as a varint, with bit 0 set for a
+//     table in partitions. Then the places of the filter, the block of
+//     fragments and the filter of prefixes follow, each as the offset and
+//     the length as varints and the CRC32C as a uint32, or three zeros. Then
+//     the length of the name of the Prefix as a varint and the name follow.
+//   - The footer has the layout of version 1 with the version 3. Its index
+//     fields state the index block or the top-level index of the index, and
+//     its filter fields the block of places.
+//
 // Error modes:
 //
 //   - An error of the Sink, such as the error of ctx at the end of a wait,
@@ -647,7 +1014,8 @@ func (w *Writer) Add(ctx context.Context, key []byte, seq uint64, value []byte) 
 //
 // Allocates the encoding of the filter, the scratch of its builder, the
 // growth of the buffer of the table for the filter, the index and the
-// partitions, and the largest key of the summary.
+// partitions, and the largest key and the end of the last fragment of the
+// summary.
 func (w *Writer) Close(ctx context.Context) (Summary, error) {
 	if w.err != nil {
 		return Summary{}, w.err
@@ -658,23 +1026,37 @@ func (w *Writer) Close(ctx context.Context) (Summary, error) {
 
 	//nolint:gosec // G115: the size is not negative
 	size := uint64(w.size)
-	var index, filter blockPlace
+	var index blockPlace
+	p := places{partitioned: w.partitionSize != 0}
 	var err error
-	version := uint32(formatVersion)
 	if w.partitionSize == 0 {
+		p.fragments = w.appendFragments(size)
+		var prefixErr error
 		if w.filterBits != 0 {
-			start := len(w.out)
-			//dokimi:mutate-skip ror-true: the builder refuses only more hashes than fit 2^32 fingerprints and a set that no seed peels, which no test writes
-			if w.out, err = w.builder.Append(w.out, w.hashes, w.filterBits); err == nil {
-				filter = w.sealPlace(size, start)
-			}
+			p.filter, err = w.appendFilter(size, w.keys.hashes)
 		}
+		if w.prefix != nil {
+			p.prefix, prefixErr = w.appendFilter(size, w.prefixes.hashes)
+		}
+		//dokimi:mutate-skip sbr-delete: the builder refuses only more hashes than fit 2^32 fingerprints and a set that no seed peels, which no test writes
+		err = cmp.Or(err, prefixErr)
 		start := len(w.out)
 		w.out = appendIndex(w.out, w.index, w.indexRestarts)
 		index = w.sealPlace(size, start)
 	} else {
+		index, err = w.appendPartitions(size, &p)
+	}
+	version, filter := uint32(formatVersion), p.filter
+	if w.partitionSize != 0 {
 		version = partitionedVersion
-		index, filter, err = w.appendPartitions(size)
+	}
+	if w.prefix != nil || w.fragCount != 0 {
+		if w.prefix != nil {
+			p.name = w.prefix.Name()
+		}
+		start := len(w.out)
+		w.out = p.append(w.out)
+		version, filter = placedVersion, w.sealPlace(size, start)
 	}
 
 	be := binary.BigEndian
@@ -705,10 +1087,14 @@ func (w *Writer) Close(ctx context.Context) (Summary, error) {
 	sum := Summary{
 		Entries: w.entries, Size: w.size, MinSeq: w.minSeq, MaxSeq: w.maxSeq,
 		SmallestKey: w.smallest, SmallestSeq: w.smallestSeq,
+		RangeDeletes: w.fragCount, RangeDeleteStart: w.fragStart,
 	}
 	if w.entries != 0 {
 		n := len(w.last) - seqLen
 		sum.LargestKey, sum.LargestSeq = append([]byte{}, w.last[:n]...), binary.BigEndian.Uint64(w.last[n:])
+	}
+	if w.fragCount != 0 {
+		sum.RangeDeleteEnd = append([]byte{}, w.fragEnd...)
 	}
 	w.retain()
 
@@ -723,32 +1109,39 @@ func (w *Writer) Close(ctx context.Context) (Summary, error) {
 // Reset keeps the buffers of w and the scratch of its filter builder while
 // [Writer.Footprint] is within MaxRetained of [WriterOptions], or for a
 // MaxRetained of 0, and releases them otherwise. A Writer that kept its
-// buffers after a table writes a table of no more entries and no longer keys
-// and values without growing them. The [Summary] that Close returned before
-// remains valid, because its keys are copies.
+// buffers after a table writes a table of no more entries and fragments and
+// no longer keys, values and fragments without growing them. The [Summary]
+// that Close returned before remains valid, because its keys are copies.
 //
 // # Allocation contract
 //
 // Zero-alloc. A table that a Writer writes after Reset allocates the copies
-// of its smallest key and its largest key, and the growth of a buffer that
-// the table needs.
+// of its smallest key, its largest key and the bounds of its fragments, and
+// the growth of a buffer that the table needs.
 func (w *Writer) Reset(dst Sink) {
 	w.retain()
 	*w = Writer{
-		w:               dst,
-		builder:         w.builder,
-		out:             w.out[:0],
-		restarts:        w.restarts[:0],
-		last:            w.last[:0],
-		cur:             w.cur[:0],
-		scratch:         w.scratch[:0],
-		index:           w.index[:0],
-		indexRestarts:   w.indexRestarts[:0],
-		hashes:          w.hashes[:0],
-		filterParts:     w.filterParts[:0],
+		w:             dst,
+		prefix:        w.prefix,
+		builder:       w.builder,
+		out:           w.out[:0],
+		restarts:      w.restarts[:0],
+		last:          w.last[:0],
+		cur:           w.cur[:0],
+		scratch:       w.scratch[:0],
+		index:         w.index[:0],
+		indexRestarts: w.indexRestarts[:0],
+		keys:          filterBuild{hashes: w.keys.hashes[:0], parts: w.keys.parts[:0], meta: w.keys.meta[:0]},
+		prefixes: filterBuild{
+			hashes: w.prefixes.hashes[:0], parts: w.prefixes.parts[:0], meta: w.prefixes.meta[:0],
+		},
 		indexParts:      w.indexParts[:0],
-		filterMeta:      w.filterMeta[:0],
 		indexMeta:       w.indexMeta[:0],
+		prefixLast:      w.prefixLast[:0],
+		frags:           w.frags[:0],
+		fragRestarts:    w.fragRestarts[:0],
+		fragLast:        w.fragLast[:0],
+		fragEnd:         w.fragEnd[:0],
 		blockSize:       w.blockSize,
 		restartInterval: w.restartInterval,
 		filterBits:      w.filterBits,
@@ -761,21 +1154,23 @@ func (w *Writer) Reset(dst Sink) {
 
 // Footprint returns the bytes of memory that the buffers of w take: the
 // capacity of the buffers of the current block, of its keys, of the
-// compressed block, of the index, of the hashes of the filter and of the
-// partitions, and the scratch of the filter builder that
-// [filter.FuseBuilder.Footprint] returns. It does not count the keys of a
-// [Summary], because Close returns copies of them. A new Writer and a Writer
-// that released its buffers return 0.
+// compressed block, of the index, of the hashes and the partitions of the
+// filters, of the last prefix and of the fragments, and the scratch of the
+// filter builder that [filter.FuseBuilder.Footprint] returns. It does not
+// count the smallest key and the start of the first fragment, because Close
+// returns them in the [Summary]. A new Writer and a Writer that released its
+// buffers return 0.
 //
 // # Allocation contract
 //
 // Zero-alloc.
 func (w *Writer) Footprint() int {
-	n := cap(w.out) + cap(w.last) + cap(w.cur) + cap(w.scratch) + cap(w.index)
-	n += cap(w.filterParts) + cap(w.indexParts) + cap(w.filterMeta) + cap(w.indexMeta)
-	n += 4 * (cap(w.restarts) + cap(w.indexRestarts))
+	n := cap(w.out) + cap(w.last) + cap(w.cur) + cap(w.scratch) + cap(w.index) + cap(w.prefixLast)
+	n += cap(w.keys.parts) + cap(w.keys.meta) + cap(w.prefixes.parts) + cap(w.prefixes.meta)
+	n += cap(w.indexParts) + cap(w.indexMeta) + cap(w.frags) + cap(w.fragLast) + cap(w.fragEnd)
+	n += 4 * (cap(w.restarts) + cap(w.indexRestarts) + cap(w.fragRestarts))
 
-	return n + 8*cap(w.hashes) + w.builder.Footprint()
+	return n + 8*(cap(w.keys.hashes)+cap(w.prefixes.hashes)) + w.builder.Footprint()
 }
 
 // retain releases the buffers of w and the scratch of its filter builder
@@ -786,8 +1181,9 @@ func (w *Writer) retain() {
 		return
 	}
 	w.out, w.restarts, w.last, w.cur, w.scratch = nil, nil, nil, nil, nil
-	w.index, w.indexRestarts, w.hashes = nil, nil, nil
-	w.filterParts, w.indexParts, w.filterMeta, w.indexMeta = nil, nil, nil, nil
+	w.index, w.indexRestarts, w.indexParts, w.indexMeta = nil, nil, nil, nil
+	w.keys, w.prefixes, w.prefixLast = filterBuild{}, filterBuild{}, nil
+	w.frags, w.fragRestarts, w.fragLast, w.fragEnd = nil, nil, nil, nil
 	w.builder = filter.FuseBuilder{}
 }
 
@@ -832,52 +1228,96 @@ func (w *Writer) finishIndexPartition() {
 	w.index, w.indexRestarts = w.index[:0], w.indexRestarts[:0]
 }
 
-// finishFilterPartition ends the current filter partition, whose last key is
-// last. It appends the encoding of a filter of the hashes of the partition
-// with its trailer to filterParts, and its record to filterMeta, and empties
-// the hashes. It returns the error of a builder that refuses the hashes, and
-// then appends nothing.
-func (w *Writer) finishFilterPartition(last []byte) error {
-	start := len(w.filterParts)
-	parts, err := w.builder.Append(w.filterParts, w.hashes, w.filterBits)
-	w.filterParts = parts
+// finishFilterPartition ends the current partition of the filter f, whose
+// last key or prefix is last. It appends the encoding of a filter of the
+// hashes of the partition with its trailer to the partitions of f, and its
+// record to the records of f, and empties the hashes. It returns the error of
+// a builder that refuses the hashes, and then appends nothing.
+func (w *Writer) finishFilterPartition(f *filterBuild, last []byte) error {
+	start := len(f.parts)
+	parts, err := w.builder.Append(f.parts, f.hashes, w.filterBits)
+	f.parts = parts
 	//dokimi:mutate-skip ror-true: the builder refuses only more hashes than fit 2^32 fingerprints and a set that no seed peels, which no test writes
 	if err == nil {
-		n, sum := w.seal(&w.filterParts, start, NoCompression)
-		w.filterMeta = appendRecord(w.filterMeta, last, n, sum)
-		w.filterTop += uint64(len(last)) + seqLen + maxTopOverhead
+		n, sum := w.seal(&f.parts, start, NoCompression)
+		f.meta = appendRecord(f.meta, last, n, sum)
+		//dokimi:mutate-skip sbr-delete: the bound of a top-level index of a filter refuses only a key next to a top-level index near 4 GiB, which no test writes
+		f.top += uint64(len(last)) + maxFilterTopOverhead
 	}
-	w.hashes = w.hashes[:0]
+	f.hashes = f.hashes[:0]
 
 	return err
 }
 
-// appendPartitions ends the last partitions at Close of a table of format
-// version 2. It appends the filter partitions, the index partitions and the
-// two top-level indexes to out, where size bytes of the table precede out.
-// It returns the places of the top-level index of the index and of the
-// filter, and the error of a filter partition that the builder refuses.
-func (w *Writer) appendPartitions(size uint64) (index, filter blockPlace, err error) {
+// appendPartitions ends the last partitions at Close of a table in
+// partitions. It appends the filter partitions, the partitions of the filter
+// of prefixes, the index partitions, the block of fragments and the
+// top-level indexes of the filter, of the filter of prefixes and of the
+// index to out, where size bytes of the table precede out. It sets the
+// places of the filter, the block of fragments and the filter of prefixes in
+// p. It returns the place of the top-level index of the index, and the
+// first error of a filter partition that the builder refuses.
+func (w *Writer) appendPartitions(size uint64, p *places) (blockPlace, error) {
 	if len(w.indexRestarts) != 0 {
 		w.finishIndexPartition()
 	}
-	if w.filterBits != 0 && len(w.hashes) != 0 {
-		err = w.finishFilterPartition(w.last[:len(w.last)-seqLen])
+	var err, prefixErr error
+	if len(w.keys.hashes) != 0 {
+		err = w.finishFilterPartition(&w.keys, w.last[:len(w.last)-seqLen])
+	}
+	if len(w.prefixes.hashes) != 0 {
+		prefixErr = w.finishFilterPartition(&w.prefixes, w.prefixLast)
 	}
 
 	// The partitions follow the last data block.
 	off := size + uint64(len(w.out))
-	w.out = append(w.out, w.filterParts...)
+	w.out = append(w.out, w.keys.parts...)
+	w.out = append(w.out, w.prefixes.parts...)
 	w.out = append(w.out, w.indexParts...)
+	p.fragments = w.appendFragments(size)
 	if w.filterBits != 0 {
 		start := len(w.out)
-		w.out = w.appendTop(w.out, w.filterMeta, off, false)
-		filter = w.sealPlace(size, start)
+		w.out = w.appendTop(w.out, w.keys.meta, off, false)
+		p.filter = w.sealPlace(size, start)
+	}
+	off += uint64(len(w.keys.parts))
+	if w.prefix != nil {
+		start := len(w.out)
+		w.out = w.appendTop(w.out, w.prefixes.meta, off, false)
+		p.prefix = w.sealPlace(size, start)
 	}
 	start := len(w.out)
-	w.out = w.appendTop(w.out, w.indexMeta, off+uint64(len(w.filterParts)), true)
+	w.out = w.appendTop(w.out, w.indexMeta, off+uint64(len(w.prefixes.parts)), true)
 
-	return w.sealPlace(size, start), filter, err
+	return w.sealPlace(size, start), cmp.Or(err, prefixErr)
+}
+
+// appendFilter appends the filter block of hashes with its trailer to out,
+// where size bytes of the table precede out, and returns its place. It
+// returns the error of a builder that refuses the hashes, and then appends
+// nothing.
+func (w *Writer) appendFilter(size uint64, hashes []uint64) (place blockPlace, err error) {
+	start := len(w.out)
+	//dokimi:mutate-skip ror-true: the builder refuses only more hashes than fit 2^32 fingerprints and a set that no seed peels, which no test writes
+	if w.out, err = w.builder.Append(w.out, hashes, w.filterBits); err == nil {
+		place = w.sealPlace(size, start)
+	}
+
+	return place, err
+}
+
+// appendFragments appends the block of fragments with its trailer to out,
+// where size bytes of the table precede out, and returns its place. The
+// block has the layout of an index block. A table without fragments has no
+// block of fragments, and appendFragments returns the zero place.
+func (w *Writer) appendFragments(size uint64) blockPlace {
+	if w.fragCount == 0 {
+		return blockPlace{}
+	}
+	start := len(w.out)
+	w.out = appendIndex(w.out, w.frags, w.fragRestarts)
+
+	return w.sealPlace(size, start)
 }
 
 // appendTop appends a top-level index over the partitions whose records meta

@@ -76,6 +76,25 @@ const (
 	footerVersion   = 64
 	// partitionedVersion is the format version of a table with partitions.
 	partitionedVersion = 2
+	// placedVersion is the format version of a table with a block of places.
+	placedVersion = 3
+	// partitionedFlag is the flag of the block of places of a table with
+	// partitions.
+	partitionedFlag = 1
+)
+
+// The names of the extractions of prefixes of the cases.
+const (
+	// firstSix is the name of goldenPrefix.
+	firstSix = "first 6 bytes"
+
+	// firstSixAgain is the name of an extraction of the first 6 bytes that a
+	// Reader of goldenPrefix takes for another extraction.
+	firstSixAgain = "first 6 bytes again"
+
+	// firstBytes is the name of the extractions of the first bytes of a key
+	// that the generators draw, and of the extractions of the pinned tables.
+	firstBytes = "first bytes"
 )
 
 // The names of the actions of the machines of a cursor and a merge: the six
@@ -107,6 +126,29 @@ var oneEntryParts = sstable.WriterOptions{BlockSize: 1, FilterBits: 8, Partition
 // longEntries are the options of the tables of long entries: blocks of
 // several entries with a restart point every 4 entries.
 var longEntries = sstable.WriterOptions{BlockSize: largeBlocks, RestartInterval: everyFourth}
+
+// goldenPrefix is the extraction of the prefixes of the tables of format
+// version 3 of most cases: the first 6 bytes of a key, such as "key 01" of
+// the keys from key 010 to key 019.
+var goldenPrefix = fixedPrefix{name: firstSix, n: 6}
+
+// prefixParts are the options of a table in partitions whose filter of the
+// six prefixes of the golden keys has three partitions of two prefixes. The
+// encoding of three hashes of 8 bits takes 42 bytes.
+var prefixParts = sstable.WriterOptions{
+	BlockSize: smallBlocks, RestartInterval: everyFourth, FilterBits: 8, PartitionSize: 40, Prefix: goldenPrefix,
+}
+
+// goldenDeletes are the fragments of the golden tables of format version 3:
+// the fragments of the tombstones from key 010 up to key 020 at 9, from key
+// 015 up to key 030 at 7, and from key 040 up to key 041 at 3.
+var goldenDeletes = []rangeDelete{
+	{start: []byte("key 010"), end: []byte("key 015"), seq: 9},
+	{start: []byte("key 015"), end: []byte("key 020"), seq: 9},
+	{start: []byte("key 015"), end: []byte("key 020"), seq: 7},
+	{start: []byte("key 020"), end: []byte("key 030"), seq: 7},
+	{start: []byte("key 040"), end: []byte("key 041"), seq: 3},
+}
 
 // castagnoli is the table of CRC32C, the checksum of the blocks and the
 // footer of a table.
@@ -156,6 +198,19 @@ var settings = []struct {
 		opts: sstable.WriterOptions{
 			BlockSize: smallBlocks, RestartInterval: everyFourth, Compression: sstable.SnappyCompression,
 			FilterBits: 8, PartitionSize: partitionBytes,
+		},
+	},
+	{
+		name: "with a filter of prefixes",
+		opts: sstable.WriterOptions{
+			BlockSize: smallBlocks, RestartInterval: everyFourth, FilterBits: 8, Prefix: goldenPrefix,
+		},
+	},
+	{
+		name: "in partitions with a filter of prefixes",
+		opts: sstable.WriterOptions{
+			BlockSize: smallBlocks, RestartInterval: everyFourth, FilterBits: 8, PartitionSize: partitionBytes,
+			Prefix: goldenPrefix,
 		},
 	},
 }
@@ -214,11 +269,73 @@ var uniform = prop.Composite(func(c *prop.Case) []entry {
 	return es
 })
 
+// fragments generates the fragments of a table in the order of RangeDeleter:
+// fragments between consecutive bounds of up to 12 drawn bounds, so most of
+// them end at the start of the next one. Most bounds come from keys, and the
+// others have up to 300 random bytes. Each fragment has up to three distinct
+// sequences, from the highest to the lowest, and a gap between two bounds has
+// none.
+var fragments = prop.Composite(func(c *prop.Case) []rangeDelete {
+	bound := prop.OneOf(prop.SampledFrom(keys...), prop.Bytes(prop.MaxSize(300)))
+	n := c.Draw(prop.Integer(0, 12), "bounds")
+	bounds := make([][]byte, 0, n)
+	for range n {
+		bounds = append(bounds, c.Draw(bound, "bound"))
+	}
+	slices.SortFunc(bounds, bytes.Compare)
+	bounds = slices.CompactFunc(bounds, bytes.Equal)
+	var fs []rangeDelete
+	for i := 1; i < len(bounds); i++ {
+		seqs := make([]uint64, 0, 3)
+		for range c.Draw(prop.Integer(0, 3), "sequences") {
+			seqs = append(seqs, c.Draw(prop.OneOf(prop.Integer[uint64](0, 5), prop.Integer[uint64](0, 1<<63)), "seq"))
+		}
+		slices.Sort(seqs)
+		for _, seq := range slices.Backward(slices.Compact(seqs)) {
+			fs = append(fs, rangeDelete{start: bounds[i-1], end: bounds[i], seq: seq})
+		}
+	}
+
+	return fs
+})
+
 // entry is an entry of a table: a key, a sequence and a value.
 type entry struct {
 	key   []byte
 	seq   uint64
 	value []byte
+}
+
+// rangeDelete is a range tombstone or a fragment of one: the keys from start
+// up to end, which it excludes, at seq.
+type rangeDelete struct {
+	start, end []byte
+	seq        uint64
+}
+
+// fixedPrefix is a PrefixExtractor whose prefix of a key is the first n
+// bytes of the key. A key of fewer bytes has no prefix. The extraction has
+// the name name.
+type fixedPrefix struct {
+	name string
+	n    int
+}
+
+var _ sstable.PrefixExtractor = fixedPrefix{}
+
+// Name returns the name of the extraction.
+func (p fixedPrefix) Name() string {
+	return p.name
+}
+
+// Prefix returns the first n bytes of key, and reports false for a key of
+// fewer bytes.
+func (p fixedPrefix) Prefix(key []byte) ([]byte, bool) {
+	if len(key) < p.n {
+		return nil, false
+	}
+
+	return key[:p.n], true
 }
 
 // mapCache is a BlockCache over a map. It counts the calls of Get and Add,
@@ -260,10 +377,11 @@ func (c *mapCache) Add(ctx context.Context, id, offset uint64, block []byte) {
 
 // place is the offset and the stored length of a block of a table, without
 // its trailer. parent contains the CRC32C that the parent of the block
-// states: the index entry of a data block, or the footer for the filter
-// block and the index block. parent is a part of the bytes of the table.
+// states: the index entry of a data block, the block of places for the
+// parts that it places, or the footer for the index block and the filter
+// block or the block of places. parent is a part of the bytes of the table.
 // last is the key of the last entry of a data block, as its index entry
-// states it, and nil for the filter block and the index block.
+// states it, and nil for the other blocks.
 type place struct {
 	off, n int
 	parent []byte
@@ -274,32 +392,36 @@ type place struct {
 // of the table and seals it again, so that its checksums pass and a read
 // runs the checks of the layout.
 type layout struct {
-	data   []byte
-	blocks []place // the data blocks, in their order
-	filter place   // the filter block or the top-level index of the filter, or a place of length 0
-	index  place   // the index block or the top-level index of the index
+	data      []byte
+	blocks    []place // the data blocks, in their order
+	filter    place   // the filter block or the top-level index of the filter, or a place of length 0
+	prefix    place   // the filter block of prefixes or its top-level index, or a place of length 0
+	fragments place   // the block of fragments, or a place of length 0
+	index     place   // the index block or the top-level index of the index
+	places    place   // the block of places of format version 3, or a place of length 0
 
-	// filterParts and indexParts are the partitions of a table of format
-	// version 2, in their order. The last key of a filter partition has no
-	// sequence.
-	filterParts, indexParts []place
+	// filterParts, prefixParts and indexParts are the partitions of a table
+	// in partitions, in their order. The last key of a partition of a filter
+	// has no sequence.
+	filterParts, prefixParts, indexParts []place
 }
 
-// newLayout writes a table of the entries under opts, and reads the places
-// of its blocks from its footer and its index. Every entry of an index is a
-// restart point. Its value is the offset and the length of its block as two
-// varints, followed by the CRC32C of the block. A table of format version 2
-// has an index partition for each entry of the top-level index of the
-// index, and a filter partition for each entry of the top-level index of the
-// filter.
-func newLayout(tb assert.TB, opts sstable.WriterOptions, es []entry) *layout {
+// newLayout writes a table of the entries and the fragments under opts, and
+// reads the places of its blocks from its footer, its block of places and
+// its index. Every entry of an index is a restart point. Its value is the
+// offset and the length of its block as two varints, followed by the CRC32C
+// of the block. A table in partitions has a partition for each entry of
+// each top-level index.
+func newLayout(tb assert.TB, opts sstable.WriterOptions, es []entry, dels ...rangeDelete) *layout {
 	tb.Helper()
 
-	return parseLayout(writeTable(tb, opts, es))
+	return parseLayout(writeTable(tb, opts, es, dels...))
 }
 
 // parseLayout reads the places of the blocks of the table data, as newLayout
-// does.
+// does. The block of places of a table of format version 3 has the flags as
+// a varint, then three places of an offset and a length as varints and a
+// CRC32C: the filter, the block of fragments and the filter of prefixes.
 func parseLayout(data []byte) *layout {
 	f := data[len(data)-footerLen:]
 	be := binary.BigEndian
@@ -314,11 +436,27 @@ func parseLayout(data []byte) *layout {
 			parent: f[footerIndexCRC : footerIndexCRC+crcLen],
 		},
 	}
+	version := be.Uint32(f[footerVersion:])
+	partitioned := version == partitionedVersion
+	if version == placedVersion {
+		l.places, l.filter = l.filter, place{}
+		block := data[l.places.off : l.places.off+l.places.n]
+		flags, n := binary.Uvarint(block)
+		partitioned, block = flags == partitionedFlag, block[n:]
+		for _, p := range []*place{&l.filter, &l.fragments, &l.prefix} {
+			off, n1 := binary.Uvarint(block)
+			size, n2 := binary.Uvarint(block[n1:])
+			*p, block = place{off: int(off), n: int(size), parent: block[n1+n2 : n1+n2+crcLen]}, block[n1+n2+crcLen:]
+		}
+	}
 	indexes := []place{l.index}
-	if be.Uint32(f[footerVersion:]) == partitionedVersion {
+	if partitioned {
 		l.indexParts = indexPlaces(data, l.index)
 		if l.filter.n != 0 {
 			l.filterParts = indexPlaces(data, l.filter)
+		}
+		if l.prefix.n != 0 {
+			l.prefixParts = indexPlaces(data, l.prefix)
 		}
 		indexes = l.indexParts
 	}
@@ -356,10 +494,12 @@ func indexPlaces(data []byte, index place) []place {
 // so a case can change the CRC32C that a parent states and seal the table.
 // seal takes the places that newLayout read before the case changed the
 // table. It seals the data blocks first, because an index is their parent,
-// and the partitions before their top-level indexes.
+// the partitions before their top-level indexes, and the block of places
+// after the parts that it places.
 func (l *layout) seal() {
 	be := binary.BigEndian
-	for _, b := range slices.Concat(l.blocks, l.filterParts, l.indexParts, []place{l.filter, l.index}) {
+	parts := []place{l.filter, l.prefix, l.fragments, l.index, l.places}
+	for _, b := range slices.Concat(l.blocks, l.filterParts, l.prefixParts, l.indexParts, parts) {
 		if b.n == 0 {
 			continue
 		}
@@ -497,9 +637,9 @@ func warmReader(tb assert.TB, data []byte) *sstable.Reader {
 	return r
 }
 
-// writeTable writes the entries into a table under opts and returns the
-// bytes of the table.
-func writeTable(tb assert.TB, opts sstable.WriterOptions, es []entry) []byte {
+// writeTable writes the entries and the fragments into a table under opts
+// and returns the bytes of the table.
+func writeTable(tb assert.TB, opts sstable.WriterOptions, es []entry, dels ...rangeDelete) []byte {
 	tb.Helper()
 
 	ctx := assert.Context(tb)
@@ -508,6 +648,9 @@ func writeTable(tb assert.TB, opts sstable.WriterOptions, es []entry) []byte {
 	assert.NoError(tb, err, "NewWriter accepts the options")
 	for _, e := range es {
 		assert.NoError(tb, w.Add(ctx, e.key, e.seq, e.value), "Add adds each entry in order")
+	}
+	for _, d := range dels {
+		assert.NoError(tb, w.AddRangeDelete(ctx, d.start, d.end, d.seq), "AddRangeDelete adds each fragment in order")
 	}
 	_, err = w.Close(ctx)
 	assert.NoError(tb, err, "Close writes the table")
@@ -585,8 +728,10 @@ func restartEntry(p []byte) (ikey, value []byte) {
 }
 
 // readAll reads every block of a table through a cursor and every key
-// through Get under ctx, and returns the first error.
-func readAll(ctx context.Context, r *sstable.Reader, es []entry) error {
+// through Get under ctx, and returns the first error. With an extraction of
+// prefixes, it also asks MayContainPrefix for the prefix of each key, so it
+// reads every partition of the filter of prefixes.
+func readAll(ctx context.Context, r *sstable.Reader, es []entry, prefix sstable.PrefixExtractor) error {
 	it := r.NewIter(sstable.IterOptions{})
 	defer it.Close()
 	if _, err := scanAll(ctx, it); err != nil {
@@ -594,6 +739,17 @@ func readAll(ctx context.Context, r *sstable.Reader, es []entry) error {
 	}
 	for _, e := range es {
 		if _, _, _, err := r.Get(ctx, e.key, e.seq, nil); err != nil {
+			return err
+		}
+		var p []byte
+		ok := false
+		if prefix != nil {
+			p, ok = prefix.Prefix(e.key)
+		}
+		if !ok {
+			continue
+		}
+		if _, err := r.MayContainPrefix(ctx, p); err != nil {
 			return err
 		}
 	}
