@@ -8,6 +8,7 @@ import (
 	"math"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.thesmos.sh/core/clock"
@@ -75,7 +76,8 @@ func (p Priority) Valid() bool {
 
 // Limiter admits units of work at a rate, as a token bucket. The bucket
 // gains Rate units per second up to Burst, and each call takes units from
-// it. A new Limiter starts with a full bucket.
+// it. A new Limiter starts with a full bucket. [Limiter.SetRate] changes the
+// Rate and the Burst, and the bucket keeps its units up to the new Burst.
 //
 // The Limiter keeps the bucket as the generic cell rate algorithm does:
 // one time, due, at which the bucket would be empty once it covered every
@@ -107,17 +109,18 @@ func (p Priority) Valid() bool {
 //
 // # Concurrency
 //
-// Safe for concurrent use. One mutex guards due, the queues and the count
-// of the grants to calls of PriorityHigh. A call locks it to join or leave
-// a queue, to take its units and to choose the head, and never while it
-// waits.
+// Safe for concurrent use. One mutex guards the Rate, the Burst, due, the
+// queues and the count of the grants to calls of PriorityHigh. A call locks
+// it to read the Rate and the Burst, to join or leave a queue, to take its
+// units and to choose the head, and never while it waits. [Limiter.Burst]
+// reads a copy of the Burst from an atomic, and takes no lock.
 //
 // # Allocation contract
 //
-// [Limiter.AllowN] and [Limiter.Burst] do not allocate, and neither does a
-// call of [Limiter.WaitN] or WaitNPriority that does not wait. A call that
-// waits allocates its place in its queue and its channel, and a timer
-// through [clock.Clock.NewTimer] each time it becomes the head.
+// [Limiter.AllowN], [Limiter.SetRate] and [Limiter.Burst] do not allocate,
+// and neither does a call of [Limiter.WaitN] or WaitNPriority that does not
+// wait. A call that waits allocates its place in its queue and its channel,
+// and a timer through [clock.Clock.NewTimer] each time it becomes the head.
 type Limiter struct {
 	clock clock.Clock
 
@@ -145,7 +148,7 @@ type Limiter struct {
 	dueRem int64
 
 	// fill and fillRem are the time in which an empty bucket gains Burst
-	// units: fill plus fillRem Rate-ths of a nanosecond.
+	// units: fill plus fillRem Rate-ths of a nanosecond. A write locks mu.
 	fill    time.Duration
 	fillRem int64
 
@@ -153,23 +156,38 @@ type Limiter struct {
 	// a call of PriorityNormal waited. A write locks mu.
 	highs int
 
-	// rate and burst are the Rate and Burst of the configuration. A rate
-	// of zero means no limit, and burst is then zero.
+	// rate and burst are the Rate and the Burst of the configuration or of
+	// the last SetRate. A rate of zero means no limit, and burst, due and
+	// fill then have no meaning. A read and a write lock mu.
 	rate, burst int64
+
+	// limit is the Burst that Burst returns, and zero while no limit
+	// applies. NewLimiter and SetRate store it with the burst, and Burst
+	// loads it without the lock.
+	limit atomic.Int64
 }
 
 // waiter is a call of [Limiter.WaitNPriority] that waits for its units.
 type waiter struct {
-	// wake receives a value when the call becomes the head or stops being
-	// the head. It has room for one value, so a send under the mutex never
-	// blocks.
+	// wake receives a value when the call becomes the head, stops being the
+	// head or ends. It has room for one value, so a send under the mutex
+	// never blocks.
 	wake chan struct{}
+
+	// err is the result of a call that [Limiter.SetRate] ended. It is nil
+	// for a grant at a Rate of zero, and [ErrUnits] for more units than the
+	// new Burst. A write locks mu.
+	err error
 
 	// n is the number of units of the call.
 	n int64
 
 	// priority is the priority of the call.
 	priority Priority
+
+	// done reports that SetRate removed the call from its queue, and that
+	// err is its result. A write locks mu.
+	done bool
 }
 
 // NewLimiter returns a Limiter over cfg, with a full bucket. A Rate of
@@ -200,6 +218,7 @@ func NewLimiter(cfg LimiterConfig) (*Limiter, error) {
 	}
 
 	l.burst = cfg.Burst
+	l.limit.Store(cfg.Burst)
 	l.fill, l.fillRem = l.cost(cfg.Burst)
 
 	return l, nil
@@ -225,18 +244,14 @@ func (l *Limiter) AllowN(n int64) bool {
 		return false
 	}
 
-	if l.rate == 0 || n == 0 {
+	if n == 0 {
 		return true
-	}
-
-	if n > l.burst {
-		return false
 	}
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	return l.head == nil && l.claim(n) <= 0
+	return l.rate == 0 || n <= l.burst && l.head == nil && l.claim(n) <= 0
 }
 
 // WaitN takes n units at [PriorityNormal], and waits until the Limiter
@@ -261,15 +276,17 @@ func (l *Limiter) WaitN(ctx context.Context, n int64) error {
 //     unwrapped, whatever n and p are.
 //   - A negative n returns [ErrUnits], classified
 //     [go.thesmos.sh/core/errs.Invalid].
-//   - An n above Burst returns ErrUnits. The caller splits such work into
-//     calls of at most Burst units.
 //   - A p other than [PriorityNormal] and [PriorityHigh] returns
 //     [ErrPriority], classified errs.Invalid.
+//   - An n above Burst returns ErrUnits. The caller splits such work into
+//     calls of at most Burst units.
 //   - A ctx that ends while the call waits returns the context's error,
 //     unwrapped.
+//   - A [Limiter.SetRate] to a Burst below n while the call waits returns
+//     ErrUnits.
 //
 // With a Rate of zero, and for an n of zero, WaitNPriority returns nil at
-// once.
+// once. A SetRate to a Rate of zero returns nil to a call that waits.
 //
 // # Allocation contract
 //
@@ -281,7 +298,7 @@ func (l *Limiter) WaitNPriority(ctx context.Context, n int64, p Priority) error 
 		return err
 	}
 
-	if n < 0 || l.rate > 0 && n > l.burst {
+	if n < 0 {
 		return ErrUnits
 	}
 
@@ -289,12 +306,17 @@ func (l *Limiter) WaitNPriority(ctx context.Context, n int64, p Priority) error 
 		return ErrPriority
 	}
 
-	if l.rate == 0 || n == 0 {
+	if n == 0 {
 		return nil
 	}
 
 	l.mu.Lock()
-	if l.head == nil && l.claim(n) <= 0 {
+	if l.rate > 0 && n > l.burst {
+		l.mu.Unlock()
+
+		return ErrUnits
+	}
+	if l.rate == 0 || l.head == nil && l.claim(n) <= 0 {
 		l.mu.Unlock()
 
 		return nil
@@ -307,38 +329,145 @@ func (l *Limiter) WaitNPriority(ctx context.Context, n int64, p Priority) error 
 	return l.wait(ctx, w)
 }
 
-// Burst returns the Burst of the configuration. One call of
-// [Limiter.AllowN] or [Limiter.WaitNPriority] takes at most that many
-// units, so a caller splits work into calls of min(left, l.Burst()) units.
+// SetRate changes the Rate and the Burst of l to rate and burst, which
+// follow the rules of [LimiterConfig]. The bucket keeps the units that it
+// has at the time of the call, up to the new Burst, and gains rate units per
+// second from then on. A larger Burst fills at the new rate as well. A
+// policy that sets the same rate at every interval admits the units of one
+// Limiter, without a burst at each change.
+//
+// The waiting calls keep their places in their queues, and the head waits
+// for the units that it lacks at the new rate. A waiting call of more units
+// than burst returns [ErrUnits], because the bucket never contains them. A
+// rate of zero means no limit, so every waiting call returns nil. A change
+// from a rate of zero starts with a full bucket, as [NewLimiter] does.
+//
+// A Clock that moves back can leave the bucket below empty. SetRate keeps
+// the time at which such a bucket is empty, and the bucket gains units at
+// the new rate after that time.
+//
+// Error modes, each classified [go.thesmos.sh/core/errs.Invalid], and each
+// of which leaves l unchanged:
+//
+//   - A negative rate returns [ErrConfig].
+//   - A positive rate with a burst below 1 or above 4,611,686,018 returns
+//     ErrConfig.
+//   - A positive rate returns ErrConfig for the zero Limiter, which has no
+//     Clock.
+//
+// # Allocation contract
+//
+// Zero alloc.
+func (l *Limiter) SetRate(rate, burst int64) error {
+	if rate < 0 || rate > 0 && (burst < 1 || burst > maxBurst) {
+		return ErrConfig
+	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	if rate > 0 && l.clock == nil {
+		return ErrConfig
+	}
+
+	for p := range l.queues {
+		l.queues[p] = slices.DeleteFunc(l.queues[p], func(w *waiter) bool {
+			if rate > 0 && w.n <= burst {
+				return false
+			}
+			w.done = true
+			if rate > 0 {
+				w.err = ErrUnits
+			}
+			select {
+			case w.wake <- struct{}{}:
+			default:
+			}
+
+			return true
+		})
+	}
+	if len(l.queues[PriorityNormal]) == 0 {
+		l.highs = 0
+	}
+	// A head computes its wait again under the new configuration.
+	l.head = nil
+	l.choose()
+
+	if rate == 0 {
+		l.rate = 0
+		l.limit.Store(0)
+
+		return nil
+	}
+
+	// owed is the number of nanounits that the bucket lacks at now. below is
+	// the time until a bucket below empty is empty, rounded up to a whole
+	// nanosecond. A bucket without a limit is full.
+	now := l.now()
+	var owed int64
+	var below time.Duration
+	if l.rate > 0 {
+		below = l.due - l.fill - now
+		if l.dueRem > l.fillRem {
+			below++
+		}
+		if below > 0 {
+			owed = l.burst * nanounits
+		} else if l.due >= now {
+			owed = int64(l.due-now)*l.rate + l.dueRem
+		}
+		owed = max(owed+(burst-l.burst)*nanounits, 0)
+	}
+
+	l.rate, l.burst = rate, burst
+	l.limit.Store(burst)
+	l.fill, l.fillRem = l.cost(burst)
+	l.due = addSaturated(addSaturated(now, max(below, 0)), time.Duration(owed/rate))
+	l.dueRem = owed % rate
+
+	return nil
+}
+
+// Burst returns the Burst of the configuration or of the last
+// [Limiter.SetRate]. One call of [Limiter.AllowN] or [Limiter.WaitNPriority]
+// takes at most that many units, so a caller splits work into calls of
+// min(left, l.Burst()) units. A SetRate between Burst and the call can lower
+// the Burst. WaitNPriority then returns [ErrUnits] and AllowN reports false,
+// and the caller reads Burst again.
 //
 // A Limiter with a Rate of zero takes any number of units in one call, and
 // so does the zero Limiter. Burst returns [math.MaxInt64] for both, so the
 // loop needs no case for a Limiter without a limit.
 //
-// Burst takes no lock, because [NewLimiter] sets the burst once.
+// Burst takes no lock. It loads the copy of the Burst that NewLimiter and
+// SetRate store in an atomic.
 //
 // # Allocation contract
 //
 // Zero alloc.
 func (l *Limiter) Burst() int64 {
-	if l.rate == 0 {
-		return math.MaxInt64
+	if b := l.limit.Load(); b > 0 {
+		return b
 	}
 
-	return l.burst
+	return math.MaxInt64
 }
 
-// wait waits until the waiting call w takes its units or ctx ends. While w
-// is the head, it waits on a timer for the time in which the bucket gains
-// the units that it lacks, and then takes them. A timer that ends before
-// the bucket covers the units, because the Clock moved back, leads to
-// another timer. While w is not the head, it waits on its channel. The end
-// of ctx ends either wait.
+// wait waits until the waiting call w takes its units, SetRate ends it or
+// ctx ends. While w is the head, it waits on a timer for the time in which
+// the bucket gains the units that it lacks, and then takes them. A timer
+// that ends before the bucket covers the units, because the Clock moved
+// back, leads to another timer. While w is not the head, it waits on its
+// channel. The end of ctx ends either wait.
 //
-// A wake reports that w became the head or stopped being the head, and a
-// grant to another call can have moved due in between. Each pass of the
-// loop therefore ends with a wake or the end of its timer, and stops its
-// timer, and the next pass computes the wait of a head again.
+// A wake reports that w became the head, stopped being the head or ended,
+// and a grant to another call can have moved due meanwhile. Each pass of the
+// loop ends with a wake, the end of its timer or the end of ctx, and stops
+// its timer. The next pass first returns the result of a call that SetRate
+// ended. It then returns the error of an ended ctx, and otherwise computes
+// the wait of a head again. A call that SetRate ended returns the result of
+// SetRate also when its ctx has ended.
 func (l *Limiter) wait(ctx context.Context, w *waiter) error {
 	for {
 		l.mu.Lock()
@@ -347,6 +476,17 @@ func (l *Limiter) wait(ctx context.Context, w *waiter) error {
 		select {
 		case <-w.wake:
 		default:
+		}
+		if w.done {
+			l.mu.Unlock()
+
+			return w.err
+		}
+		if err := ctx.Err(); err != nil {
+			l.leave(w)
+			l.mu.Unlock()
+
+			return err
 		}
 		var (
 			t    clock.Timer
@@ -369,14 +509,6 @@ func (l *Limiter) wait(ctx context.Context, w *waiter) error {
 		case <-tick:
 		case <-w.wake:
 		case <-ctx.Done():
-			l.mu.Lock()
-			l.leave(w)
-			l.mu.Unlock()
-			if t != nil {
-				t.Stop()
-			}
-
-			return ctx.Err()
 		}
 		if t != nil {
 			t.Stop()

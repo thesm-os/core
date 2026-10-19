@@ -31,6 +31,8 @@ var (
 	// useless or permanently closed, so the constructor refuses it when
 	// the caller wires the primitive. [Failover] returns it for an empty
 	// list of targets, a negative start, and a target named twice.
+	// [Limiter.SetRate] returns it for a rate and a burst that
+	// [NewLimiter] refuses, and for a positive rate of the zero Limiter.
 	// Classifies as Invalid.
 	ErrConfig = errs.WithClass(errors.New("resilience: invalid configuration"), errs.Invalid)
 
@@ -58,8 +60,9 @@ var (
 
 	// ErrUnits is returned by [Limiter.WaitN] and [Limiter.WaitNPriority]
 	// for a negative number of units, and for a number above the limiter's
-	// burst, which its bucket never contains. A caller splits such work into
-	// calls of at most the burst. Classifies as Invalid.
+	// burst, which its bucket never contains. A waiting call returns it when
+	// [Limiter.SetRate] lowers the burst below its units. A caller splits
+	// such work into calls of at most the burst. Classifies as Invalid.
 	ErrUnits = errs.WithClass(errors.New("resilience: units outside 0 to the limiter's burst"), errs.Invalid)
 
 	// ErrPriority is returned by Limiter.WaitNPriority for a priority other

@@ -130,5 +130,6 @@ Start from [`docs/templates/ADR.md`](../templates/ADR.md).
 | [0070](0070-a-cursor-checks-its-context-before-each-block.md) | A Cursor Checks Its Context Before Each Block | Accepted |
 | [0071](0071-a-writer-keeps-a-bounded-workspace.md) | A Writer Keeps a Bounded Workspace | Accepted |
 | [0072](0072-a-cursor-reads-ahead-on-request.md) | A Cursor Reads Ahead on Request | Accepted |
+| [0073](0073-a-limiter-changes-its-rate-in-place.md) | A Limiter Changes Its Rate in Place | Accepted |
 
 [nygard]: https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions

@@ -58,8 +58,8 @@ var limiterRates = prop.OneOf(
 )
 
 // limiterContract is the contract of limiterSteps.
-const limiterContract = "every call must take its units when an exact model of the bucket, the queues and " +
-	"the share grants them"
+const limiterContract = "every call must return when an exact model of the bucket, the queues, the share and " +
+	"the changes of rate returns it"
 
 // timedClock is a fake clock that records every timer that it creates, so a
 // case observes how long a head waits, that a call that does not wait
@@ -244,12 +244,14 @@ func (g *grantLog) calls() []returned {
 // limiterCall is one call of a Limiter in the machine of limiterSteps.
 // start and end are nanoseconds since originUTC, and end is -1 while the
 // call waits. ok reports whether the call returned nil, and returned that
-// the machine received the result from done. A call of WaitNPriority has
+// the machine received the result from done. err is the error of a call
+// that a SetRate ended or whose context ended. A call of WaitNPriority has
 // the channel of its result and the cancellation of its context.
 type limiterCall struct {
 	n, start, end int64
 	priority      resilience.Priority
 	ok, returned  bool
+	err           error
 
 	done   chan error
 	cancel context.CancelFunc
@@ -1012,8 +1014,364 @@ func TestLimiter(t *testing.T) {
 		})
 	})
 
+	t.Run("SetRate", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns ErrConfig for a negative rate", func(t *testing.T) {
+			t.Parallel()
+			l := newLimiter(t, resilience.LimiterConfig{Clock: fake.New(originUTC), Rate: 10, Burst: 10})
+			prop.ErrorIs(t, func(rate int64) error { return l.SetRate(rate, 5) }, resilience.ErrConfig,
+				"SetRate must refuse a negative rate",
+				prop.Using(prop.Integer[int64](math.MinInt64, -1)), prop.Example(int64(-1)))
+			expect.Equal(t, errs.Classify(l.SetRate(-1, 5)), errs.Invalid, "ErrConfig must classify as Invalid")
+			expect.Equal(t, l.Burst(), int64(10), "a refused SetRate must keep the burst")
+			expect.True(t, l.AllowN(10), "a refused SetRate must keep the units of the bucket")
+		})
+
+		t.Run("returns ErrConfig for a burst below 1 at a positive rate", func(t *testing.T) {
+			t.Parallel()
+			l := newLimiter(t, resilience.LimiterConfig{Clock: fake.New(originUTC), Rate: 10, Burst: 10})
+			prop.ErrorIs(t, func(burst int64) error { return l.SetRate(20, burst) }, resilience.ErrConfig,
+				"SetRate must refuse a burst below 1",
+				prop.Using(prop.Integer[int64](math.MinInt64, 0)), prop.Example(int64(0)))
+			expect.Equal(t, l.Burst(), int64(10), "a refused SetRate must keep the burst")
+			expect.True(t, l.AllowN(10), "a refused SetRate must keep the units of the bucket")
+		})
+
+		t.Run("returns ErrConfig for a burst above 4,611,686,018", func(t *testing.T) {
+			t.Parallel()
+			l := newLimiter(t, resilience.LimiterConfig{Clock: fake.New(originUTC), Rate: 10, Burst: 10})
+			prop.ErrorIs(t, func(burst int64) error { return l.SetRate(20, burst) }, resilience.ErrConfig,
+				"SetRate must refuse a burst above the largest",
+				prop.Using(prop.Integer[int64](maxBurst+1, math.MaxInt64)), prop.Example(int64(maxBurst+1)))
+			expect.Equal(t, l.Burst(), int64(10), "a refused SetRate must keep the burst")
+			expect.True(t, l.AllowN(10), "a refused SetRate must keep the units of the bucket")
+		})
+
+		t.Run("returns ErrConfig for a positive rate of the zero Limiter", func(t *testing.T) {
+			t.Parallel()
+			var l resilience.Limiter
+			expect.ErrorIs(t, l.SetRate(10, 10), resilience.ErrConfig,
+				"the zero Limiter must refuse a positive rate because it has no Clock")
+			expect.Equal(t, l.Burst(), int64(math.MaxInt64), "a refused SetRate must keep the Limiter without a limit")
+		})
+
+		t.Run("returns nil for a rate of zero of the zero Limiter", func(t *testing.T) {
+			t.Parallel()
+			var l resilience.Limiter
+			assert.NoError(t, l.SetRate(0, 0), "the zero Limiter must accept a rate of zero")
+			assert.True(t, l.AllowN(math.MaxInt64), "the zero Limiter must admit any number of units")
+		})
+
+		t.Run("returns nil for a burst of 4,611,686,018", func(t *testing.T) {
+			t.Parallel()
+			c := fake.New(originUTC)
+			l := newLimiter(t, resilience.LimiterConfig{Clock: c, Rate: 1, Burst: 1})
+			assert.NoError(t, l.SetRate(1, maxBurst), "SetRate must accept the largest burst")
+			c.Advance(maxBurst * time.Second)
+			assert.True(t, l.AllowN(maxBurst), "the bucket must fill to the largest burst")
+		})
+
+		t.Run("admits the units of one Limiter when a policy sets the same rate every 100 ms", func(t *testing.T) {
+			t.Parallel()
+			// A background job takes chunks of 64 KiB at 1,000,000 units a
+			// second with a burst of one second, for 10 seconds of the fake
+			// clock. The loop of a step stops after 16 chunks, one more than a
+			// full bucket admits.
+			const rate, chunk = 1_000_000, 64 << 10
+			admit := func(every time.Duration) int64 {
+				c := fake.New(originUTC)
+				l := newLimiter(t, resilience.LimiterConfig{Clock: c, Rate: rate, Burst: rate})
+				var admitted int64
+				for elapsed := time.Millisecond; elapsed <= 10*time.Second; elapsed += time.Millisecond {
+					c.Advance(time.Millisecond)
+					if every > 0 && elapsed%every == 0 {
+						assert.NoError(t, l.SetRate(rate, rate), "SetRate must accept the rate")
+					}
+					for i := 0; i < 16 && l.AllowN(chunk); i++ {
+						admitted += chunk
+					}
+				}
+
+				return admitted
+			}
+			assert.Equal(t, admit(100*time.Millisecond), admit(0), "a SetRate of the same rate must keep the bucket")
+		})
+
+		t.Run("keeps the units that the bucket has", func(t *testing.T) {
+			t.Parallel()
+			c := fake.New(originUTC)
+			l := drained(t, c)
+			c.Advance(200 * time.Millisecond)
+			assert.NoError(t, l.SetRate(20, 10), "SetRate must accept the rate")
+			assert.True(t, l.AllowN(2), "the bucket must keep the 2 units that it gained at rate 10")
+			assert.False(t, l.AllowN(1), "the bucket must not gain units at the change")
+		})
+
+		t.Run("keeps the units of the bucket at 2 units per nanosecond", func(t *testing.T) {
+			t.Parallel()
+			l := newLimiter(t, resilience.LimiterConfig{Clock: fake.New(originUTC), Rate: 2_000_000_000, Burst: 3})
+			assert.True(t, l.AllowN(2), "a full bucket of 3 units must admit 2")
+			assert.NoError(t, l.SetRate(2_000_000_000, 3), "SetRate must accept the rate")
+			assert.True(t, l.AllowN(1), "the bucket must keep its last unit")
+			assert.False(t, l.AllowN(1), "the bucket must not gain a unit at the change")
+		})
+
+		t.Run("admits a unit at the first nanosecond after its exact cost", func(t *testing.T) {
+			t.Parallel()
+			c := fake.New(originUTC)
+			l := newLimiter(t, resilience.LimiterConfig{Clock: c, Rate: 3, Burst: 3})
+			assert.True(t, l.AllowN(3), "a full bucket must have Burst units")
+			assert.NoError(t, l.SetRate(3, 3), "SetRate must accept the rate")
+
+			c.Advance(333_333_333 * time.Nanosecond)
+			assert.False(t, l.AllowN(1), "333,333,333 ns must add less than a unit at rate 3")
+
+			c.Advance(time.Nanosecond)
+			assert.True(t, l.AllowN(1), "333,333,334 ns must add a unit at rate 3")
+		})
+
+		t.Run("adds units at the new rate", func(t *testing.T) {
+			t.Parallel()
+			c := fake.New(originUTC)
+			l := drained(t, c)
+			assert.NoError(t, l.SetRate(20, 10), "SetRate must accept the rate")
+
+			c.Advance(49 * time.Millisecond)
+			assert.False(t, l.AllowN(1), "49 ms must add less than a unit at rate 20")
+
+			c.Advance(time.Millisecond)
+			assert.True(t, l.AllowN(1), "50 ms must add a unit at rate 20")
+		})
+
+		t.Run("adds the units of a larger burst at the new rate", func(t *testing.T) {
+			t.Parallel()
+			c := fake.New(originUTC)
+			l := newLimiter(t, resilience.LimiterConfig{Clock: c, Rate: 10, Burst: 10})
+			c.Advance(time.Second)
+			assert.NoError(t, l.SetRate(10, 20), "SetRate must accept the burst")
+			assert.False(t, l.AllowN(11), "a larger burst must not add units at the change")
+
+			c.Advance(time.Second)
+			assert.True(t, l.AllowN(20), "the bucket must gain the units of the larger burst at rate 10")
+		})
+
+		t.Run("caps the units of the bucket at a smaller burst", func(t *testing.T) {
+			t.Parallel()
+			l := newLimiter(t, resilience.LimiterConfig{Clock: fake.New(originUTC), Rate: 10, Burst: 10})
+			assert.NoError(t, l.SetRate(10, 4), "SetRate must accept the burst")
+			assert.True(t, l.AllowN(4), "a full bucket must keep the units of the smaller burst")
+			assert.False(t, l.AllowN(1), "the bucket must have no more units than the smaller burst")
+		})
+
+		t.Run("fills the bucket for a change from a rate of zero", func(t *testing.T) {
+			t.Parallel()
+			l := newLimiter(t, resilience.LimiterConfig{Clock: fake.New(originUTC)})
+			assert.NoError(t, l.SetRate(10, 10), "SetRate must accept the rate")
+			assert.True(t, l.AllowN(10), "a Limiter without a limit must start a full bucket")
+			assert.False(t, l.AllowN(1), "the new bucket must have no more units than its burst")
+		})
+
+		t.Run("admits every call for a rate of zero", func(t *testing.T) {
+			t.Parallel()
+			l := drained(t, fake.New(originUTC))
+			assert.NoError(t, l.SetRate(0, 0), "SetRate must accept a rate of zero")
+			assert.True(t, l.AllowN(math.MaxInt64), "a rate of zero must admit any number of units")
+		})
+
+		t.Run("keeps the time at which a bucket below empty is empty", func(t *testing.T) {
+			t.Parallel()
+			// The bucket is empty at originUTC. A clock that moves back by a
+			// second leaves it a second below empty.
+			c := fake.New(originUTC)
+			l := drained(t, c)
+			c.Set(originUTC.Add(-time.Second))
+			assert.NoError(t, l.SetRate(20, 10), "SetRate must accept the rate")
+
+			c.Set(originUTC.Add(49 * time.Millisecond))
+			assert.False(t, l.AllowN(1), "the bucket must have no unit until originUTC")
+
+			c.Set(originUTC.Add(50 * time.Millisecond))
+			assert.True(t, l.AllowN(1), "the bucket must gain a unit 50 ms after originUTC at rate 20")
+		})
+
+		t.Run("rounds the time at which a bucket below empty is empty up to a whole nanosecond", func(t *testing.T) {
+			t.Parallel()
+			// At Rate 3 the bucket lacks 2 of its 3 units for 666,666,666.67
+			// ns. A clock that moves back by a second leaves it below empty
+			// until 333,333,333.33 ns before originUTC, and SetRate keeps
+			// that time as 333,333,333 ns. Its unit at 10^9 units a second
+			// then takes 1 ns.
+			c := fake.New(originUTC)
+			l := newLimiter(t, resilience.LimiterConfig{Clock: c, Rate: 3, Burst: 3})
+			assert.True(t, l.AllowN(2), "a full bucket of 3 units must admit 2")
+			c.Set(originUTC.Add(-time.Second))
+			assert.NoError(t, l.SetRate(1_000_000_000, 1), "SetRate must accept the rate")
+
+			c.Set(originUTC.Add(-333_333_333 * time.Nanosecond))
+			assert.False(t, l.AllowN(1), "the bucket must have no unit until the next whole nanosecond")
+
+			c.Set(originUTC.Add(-333_333_332 * time.Nanosecond))
+			assert.True(t, l.AllowN(1), "the bucket must gain its unit 1 ns after the whole nanosecond")
+		})
+
+		t.Run("returns nil to every waiting call for a rate of zero", func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				c := &timedClock{Clock: fake.New(originUTC)}
+				l := drained(t, c)
+				g := &grantLog{l: l, clk: c}
+				normal := g.start(t.Context(), 5, resilience.PriorityNormal)
+				high := g.start(t.Context(), 5, resilience.PriorityHigh)
+
+				assert.NoError(t, l.SetRate(0, 0), "SetRate must accept a rate of zero")
+				synctest.Wait()
+				assert.Equal(t, g.calls(), []returned{{call: normal}, {call: high}},
+					"a rate of zero must grant every waiting call at once")
+				assert.Equal(t, c.pending(), 0, "the head must stop its timer")
+			})
+		})
+
+		t.Run("returns ErrUnits to a waiting call of more units than the new burst", func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				c := &timedClock{Clock: fake.New(originUTC)}
+				l := drained(t, c)
+				g := &grantLog{l: l, clk: c}
+				large := g.start(t.Context(), 5, resilience.PriorityNormal)
+				fits := g.start(t.Context(), 4, resilience.PriorityNormal)
+
+				assert.NoError(t, l.SetRate(10, 4), "SetRate must accept the burst")
+				synctest.Wait()
+				assert.Equal(t, c.durations(), []time.Duration{500 * time.Millisecond, 400 * time.Millisecond},
+					"the call of the new burst must wait 400 ms for its 4 units as the head")
+				assert.Equal(t, c.pending(), 1, "the call that returns ErrUnits must stop its timer")
+
+				c.Advance(400 * time.Millisecond)
+				synctest.Wait()
+				assert.Equal(t, g.calls(), []returned{
+					{call: large, err: resilience.ErrUnits},
+					{call: fits, at: 400 * time.Millisecond},
+				}, "the call above the new burst must return ErrUnits before the next call takes its units")
+			})
+		})
+
+		t.Run("waits for the units that the head lacks at the new rate", func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				c := &timedClock{Clock: fake.New(originUTC)}
+				l := drained(t, c)
+				g := &grantLog{l: l, clk: c}
+				head := g.start(t.Context(), 5, resilience.PriorityNormal)
+				c.Advance(200 * time.Millisecond)
+				synctest.Wait()
+
+				// The bucket has 2 units, so the head lacks 3, which take
+				// 100 ms at rate 30.
+				assert.NoError(t, l.SetRate(30, 10), "SetRate must accept the rate")
+				synctest.Wait()
+				assert.Equal(t, c.durations(), []time.Duration{500 * time.Millisecond, 100 * time.Millisecond},
+					"the head must wait on a timer of the new rate")
+				assert.Equal(t, c.pending(), 1, "the head must stop the timer of the old rate")
+
+				c.Advance(100 * time.Millisecond)
+				synctest.Wait()
+				assert.Equal(t, g.calls(), []returned{{call: head, at: 300 * time.Millisecond}},
+					"the head must take its units at the new rate")
+			})
+		})
+
+		t.Run("keeps the count of the grants to calls of PriorityHigh while a call of PriorityNormal waits",
+			func(t *testing.T) {
+				t.Parallel()
+				synctest.Test(t, func(t *testing.T) {
+					c := fake.New(originUTC)
+					l := oneUnit(t, c)
+					g := &grantLog{l: l, clk: c}
+					normal := g.start(t.Context(), 1, resilience.PriorityNormal)
+					highs := make([]int, 0, 12)
+					for range 12 {
+						highs = append(highs, g.start(t.Context(), 1, resilience.PriorityHigh))
+					}
+					want := make([]returned, 0, 13)
+					for i := range 5 {
+						c.Advance(100 * time.Millisecond)
+						synctest.Wait()
+						want = append(want, returned{call: highs[i], at: time.Duration(i+1) * 100 * time.Millisecond})
+					}
+
+					// The calls of PriorityHigh took five grants, so the call of
+					// PriorityNormal takes the fifth grant after SetRate.
+					assert.NoError(t, l.SetRate(10, 1), "SetRate must accept the rate")
+					synctest.Wait()
+					order := slices.Concat(highs[5:shareRun], []int{normal}, highs[shareRun:])
+					for i, call := range order {
+						c.Advance(100 * time.Millisecond)
+						synctest.Wait()
+						want = append(want, returned{call: call, at: time.Duration(6+i) * 100 * time.Millisecond})
+					}
+					assert.Equal(t, g.calls(), want, "SetRate must keep the share of the call of PriorityNormal")
+				})
+			})
+
+		t.Run("starts the share again when it ends every call of PriorityNormal", func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				c := fake.New(originUTC)
+				l := newLimiter(t, resilience.LimiterConfig{Clock: c, Rate: 10, Burst: 2})
+				assert.True(t, l.AllowN(2), "a full bucket must have Burst units")
+				g := &grantLog{l: l, clk: c}
+				gone := g.start(t.Context(), 2, resilience.PriorityNormal)
+				highs := make([]int, 0, 15)
+				for range 15 {
+					highs = append(highs, g.start(t.Context(), 1, resilience.PriorityHigh))
+				}
+				want := make([]returned, 0, 17)
+				for i := range 5 {
+					c.Advance(100 * time.Millisecond)
+					synctest.Wait()
+					want = append(want, returned{call: highs[i], at: time.Duration(i+1) * 100 * time.Millisecond})
+				}
+
+				// The call of PriorityNormal leaves after five grants to calls
+				// of PriorityHigh. It started before the call of the fifth.
+				assert.NoError(t, l.SetRate(10, 1), "SetRate must accept the burst")
+				synctest.Wait()
+				ended := returned{call: gone, at: 500 * time.Millisecond, err: resilience.ErrUnits}
+				want = slices.Insert(want, 4, ended)
+
+				// The call of PriorityNormal that starts now waits for nine
+				// grants to calls of PriorityHigh, not for the four that the
+				// count of the ended call had left.
+				normal := g.start(t.Context(), 1, resilience.PriorityNormal)
+				order := slices.Concat(highs[5:5+shareRun], []int{normal}, highs[5+shareRun:])
+				for i, call := range order {
+					c.Advance(100 * time.Millisecond)
+					synctest.Wait()
+					want = append(want, returned{call: call, at: time.Duration(6+i) * 100 * time.Millisecond})
+				}
+				assert.Equal(t, g.calls(), want, "the count of the grants must start again without a waiting call")
+			})
+		})
+	})
+
 	t.Run("Burst", func(t *testing.T) {
 		t.Parallel()
+
+		t.Run("returns the burst of the last SetRate", func(t *testing.T) {
+			t.Parallel()
+			l := newLimiter(t, resilience.LimiterConfig{Clock: fake.New(originUTC), Rate: 10, Burst: 7})
+			assert.NoError(t, l.SetRate(20, 3), "SetRate must accept the burst")
+			assert.Equal(t, l.Burst(), int64(3), "Burst must return the burst of the last SetRate")
+		})
+
+		t.Run("returns math.MaxInt64 after a SetRate of a rate of zero", func(t *testing.T) {
+			t.Parallel()
+			l := newLimiter(t, resilience.LimiterConfig{Clock: fake.New(originUTC), Rate: 10, Burst: 7})
+			assert.NoError(t, l.SetRate(0, 3), "SetRate must accept a rate of zero")
+			assert.Equal(t, l.Burst(), int64(math.MaxInt64),
+				"a Limiter without a limit must take any number of units in one call")
+		})
 
 		t.Run("returns the Burst of the configuration", func(t *testing.T) {
 			t.Parallel()
@@ -1060,9 +1418,9 @@ func TestLimiter(t *testing.T) {
 }
 
 // TestLimiterAllocs checks the allocation contract of AllowN, of the calls
-// of WaitN and WaitNPriority that do not wait and of Burst. MaxAllocs counts
-// the allocations of the whole process, so the test does not run in
-// parallel.
+// of WaitN and WaitNPriority that do not wait, of SetRate and of Burst.
+// MaxAllocs counts the allocations of the whole process, so the test does
+// not run in parallel.
 func TestLimiterAllocs(t *testing.T) {
 	ctx := t.Context()
 
@@ -1103,6 +1461,14 @@ func TestLimiterAllocs(t *testing.T) {
 		})
 	})
 
+	t.Run("SetRate", func(t *testing.T) {
+		l := newLimiter(t, resilience.LimiterConfig{Clock: fake.New(originUTC), Rate: 10, Burst: 10})
+
+		var err error
+		expect.MaxAllocs(t, func() { err = l.SetRate(20, 10) }, 0, "SetRate must not allocate")
+		assert.NoError(t, err, "the test must measure an accepted SetRate")
+	})
+
 	t.Run("Burst", func(t *testing.T) {
 		l := newLimiter(t, resilience.LimiterConfig{Clock: fake.New(originUTC), Rate: 10, Burst: 7})
 
@@ -1113,8 +1479,8 @@ func TestLimiterAllocs(t *testing.T) {
 }
 
 // BenchmarkLimiter reports the cost of AllowN, of the calls of WaitN and
-// WaitNPriority that do not wait and of Burst, and fails when one
-// allocates.
+// WaitNPriority that do not wait, of SetRate and of Burst, and fails when
+// one allocates.
 func BenchmarkLimiter(b *testing.B) {
 	ctx := b.Context()
 
@@ -1170,6 +1536,21 @@ func BenchmarkLimiter(b *testing.B) {
 
 			assert.NoError(b, err, "the benchmark must measure an admitted call")
 		})
+	})
+
+	b.Run("SetRate", func(b *testing.B) {
+		l := newLimiter(b, resilience.LimiterConfig{Clock: fake.New(originUTC), Rate: 10, Burst: 10})
+
+		var err error
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			err = l.SetRate(20, 10)
+		}
+
+		assert.NoError(b, err, "the benchmark must measure an accepted SetRate")
 	})
 
 	b.Run("Burst", func(b *testing.B) {
@@ -1237,25 +1618,31 @@ func oneUnit(tb testing.TB, c clock.Clock) *resilience.Limiter {
 
 // limiterSteps runs the steps of a machine over a Limiter on a fake clock,
 // inside the synctest bubble of its test. The actions are an AllowN, a
-// WaitNPriority at a drawn priority, the cancellation of a waiting call, and
-// an advance of the clock by a few nanoseconds, or to the end of the timer
-// of the head and a few nanoseconds past it. At most maxWaiting calls wait
-// at once. Every action ends with synctest.Wait, so each call that the
-// Limiter grants has returned.
+// WaitNPriority at a drawn priority, the cancellation of a waiting call, a
+// SetRate of a drawn Rate and Burst, and an advance of the clock by a few
+// nanoseconds, or to the end of the timer of the head and a few nanoseconds
+// past it. At most maxWaiting calls wait at once. Every action ends with
+// synctest.Wait, so each call that the Limiter grants or ends has returned.
 //
 // A model keeps the time of the generic cell rate algorithm as an exact
 // big.Rat of nanoseconds, the queue of each priority, the head, the end of
 // the timer of the head and the count of the grants to calls of
-// PriorityHigh. After every step the invariant checks that the calls that
-// returned are the calls that the model granted or cancelled, that the
-// timers of the Limiter are the timers of the heads of the model, and that
-// the head has the only timer that no Stop stopped before its deadline.
+// PriorityHigh. A SetRate keeps the units of the bucket of the model up to
+// the new Burst. It ends each waiting call of more units than the new Burst
+// with ErrUnits, and grants every waiting call at a Rate of zero. The clock
+// never moves back, so the bucket of the model is never below empty. After
+// every step the invariant checks that the calls that returned are the
+// calls that the model granted or ended, that the timers of the Limiter are
+// the timers of the heads of the model, and that the head has the only
+// timer that no Stop stopped before its deadline.
 //
 // The invariant also takes each window from a time s to the time of the
 // clock, both included. It checks that the units of the calls that returned
-// nil in the window do not exceed the Rate times the length of the window
-// plus Burst. A window of length 0 contains the calls of one instant, so the
-// check also bounds the units that a full bucket admits at once.
+// nil in the window do not exceed the Burst at the start of s plus each
+// Rate times the time in which it applied. A window of length 0 contains
+// the calls of one instant, so the check also bounds the units that a full
+// bucket admits at once. A window in which a Rate of zero applied has no
+// bound.
 func limiterSteps(c *prop.Case) {
 	rate := c.Draw(limiterRates, "rate")
 	burst := c.Draw(prop.Integer[int64](1, 16), "burst")
@@ -1265,6 +1652,10 @@ func limiterSteps(c *prop.Case) {
 
 	ctx, cancel := context.WithCancel(c.Context())
 	c.Cleanup(cancel)
+
+	// config is a Rate and a Burst of the Limiter, which apply from the time
+	// at, in nanoseconds since originUTC.
+	type config struct{ at, rate, burst int64 }
 
 	var (
 		calls  []*limiterCall
@@ -1277,13 +1668,43 @@ func limiterSteps(c *prop.Case) {
 		// while a call of PriorityNormal waited.
 		highs  int
 		timers []time.Duration
+		// configs are the configuration of NewLimiter and of each SetRate,
+		// in the order of the calls.
+		configs = []config{{rate: rate, burst: burst}}
 	)
 
 	// model is the time of the bucket in nanoseconds since originUTC, and
-	// fill is the time in which an empty bucket gains Burst units.
+	// fill is the time in which an empty bucket gains Burst units. rate is
+	// zero while no limit applies, and burst is then the Burst of the last
+	// positive Rate, which bounds the units of the calls of the actions.
 	model := new(big.Rat)
 	fill := big.NewRat(burst*nsPerSecond, rate)
 	now := func() int64 { return int64(clk.Time().Sub(originUTC)) }
+
+	// window returns the most nanounits that the bucket admits from the start
+	// of the instant s to the time at: the Burst that applies at the start of
+	// s, plus each Rate times the time in which it applies. It reports false
+	// when a Rate of zero applies in the window.
+	window := func(s, at int64) (int64, bool) {
+		first, rest := configs[0], configs[1:]
+		for len(rest) > 0 && rest[0].at < s {
+			first, rest = rest[0], rest[1:]
+		}
+		if first.rate == 0 {
+			return 0, false
+		}
+
+		bound, from, cur := first.burst*nsPerSecond, s, first
+		for _, cfg := range rest {
+			if cfg.rate == 0 {
+				return 0, false
+			}
+			bound += cur.rate * (cfg.at - from)
+			from, cur = cfg.at, cfg
+		}
+
+		return bound + cur.rate*(at-from), true
+	}
 
 	// lack returns the model's time once it covered n more units at the
 	// time of the clock, and the time in which the bucket gains the units of
@@ -1367,12 +1788,16 @@ func limiterSteps(c *prop.Case) {
 				Input: func(c *prop.Case, _ struct{}) any { return c.Draw(prop.Integer[int64](0, burst+1), "n") },
 				Run: func(c *prop.Case, _ int, in any) {
 					n := in.(int64)
-					after, wait := lack(n)
-					fits := n == 0 || n <= burst && head == nil && wait.Sign() <= 0
+					fits := n == 0 || rate == 0
+					if !fits && n <= burst && head == nil {
+						after, wait := lack(n)
+						if fits = wait.Sign() <= 0; fits {
+							model.Set(after)
+						}
+					}
 					assert.Equal(c, l.AllowN(n), fits,
 						"AllowN must admit the calls that the exact bucket covers while no call waits")
 					if fits && n > 0 {
-						model.Set(after)
 						at := now()
 						calls = append(calls, &limiterCall{n: n, start: at, end: at, ok: true, returned: true})
 					}
@@ -1399,11 +1824,13 @@ func limiterSteps(c *prop.Case) {
 					go func() { call.done <- l.WaitNPriority(callCtx, call.n, call.priority) }()
 					synctest.Wait()
 
-					after, wait := lack(call.n)
-					if call.n == 0 || head == nil && wait.Sign() <= 0 {
-						if call.n > 0 {
-							model.Set(after)
-						}
+					if call.n == 0 || rate == 0 {
+						call.end, call.ok = call.start, true
+
+						return
+					}
+					if after, wait := lack(call.n); head == nil && wait.Sign() <= 0 {
+						model.Set(after)
 						call.end, call.ok = call.start, true
 
 						return
@@ -1423,7 +1850,68 @@ func limiterSteps(c *prop.Case) {
 					call.cancel()
 					synctest.Wait()
 					leave(call)
-					call.end = now()
+					call.end, call.err = now(), context.Canceled
+					settle()
+				},
+			},
+			{
+				Name: "SetRate",
+				Input: func(c *prop.Case, _ struct{}) any {
+					give := resilience.LimiterConfig{Burst: c.Draw(prop.Integer[int64](1, 16), "burst")}
+					if !c.Draw(prop.SampledFrom(false, false, false, true), "no limit") {
+						give.Rate = c.Draw(limiterRates, "rate")
+					}
+
+					return give
+				},
+				Run: func(c *prop.Case, _ int, in any) {
+					give := in.(resilience.LimiterConfig)
+					assert.NoError(c, l.SetRate(give.Rate, give.Burst), "SetRate must accept the configuration")
+					synctest.Wait()
+
+					at := now()
+					configs = append(configs, config{at: at, rate: give.Rate, burst: give.Burst})
+					for p := range queues {
+						queues[p] = slices.DeleteFunc(queues[p], func(call *limiterCall) bool {
+							if give.Rate > 0 && call.n <= give.Burst {
+								return false
+							}
+							call.end, call.ok = at, give.Rate == 0
+							if !call.ok {
+								call.err = resilience.ErrUnits
+							}
+
+							return true
+						})
+					}
+					if len(queues[resilience.PriorityNormal]) == 0 {
+						highs = 0
+					}
+					head = nil
+					if give.Rate == 0 {
+						rate = 0
+
+						return
+					}
+
+					// owed is the number of units that the bucket lacks. The
+					// bucket keeps the units that it has, up to the new Burst,
+					// and a bucket without a limit is full.
+					owed := new(big.Rat)
+					if rate > 0 {
+						if model.Cmp(big.NewRat(at, 1)) > 0 {
+							owed.Sub(model, big.NewRat(at, 1))
+							owed.Mul(owed, big.NewRat(rate, nsPerSecond))
+						}
+						owed.Add(owed, big.NewRat(give.Burst-burst, 1))
+						if owed.Sign() < 0 {
+							owed.SetInt64(0)
+						}
+					}
+					rate, burst = give.Rate, give.Burst
+					fill = big.NewRat(burst*nsPerSecond, rate)
+					model.Mul(owed, big.NewRat(nsPerSecond, rate))
+					model.Add(model, big.NewRat(at, 1))
 					settle()
 				},
 			},
@@ -1466,7 +1954,7 @@ func limiterSteps(c *prop.Case) {
 				if err := <-call.done; call.ok {
 					assert.NoError(c, err, "a call that the model grants must return nil")
 				} else {
-					assert.ErrorIs(c, err, context.Canceled, "a cancelled call must return the error of its context")
+					assert.ErrorIs(c, err, call.err, "a call that leaves must return the error of the model")
 				}
 			}
 
@@ -1480,6 +1968,10 @@ func limiterSteps(c *prop.Case) {
 				if s < 0 {
 					continue
 				}
+				bound, ok := window(s, at)
+				if !ok {
+					continue
+				}
 
 				var units int64
 				for _, call := range calls {
@@ -1489,9 +1981,8 @@ func limiterSteps(c *prop.Case) {
 				}
 
 				// The values stay below 2^53, so InRange compares them exactly.
-				bound := rate*(at-s) + burst*nsPerSecond
 				assert.InRange(c, units*nsPerSecond, 0, float64(bound),
-					"the units of a window must not exceed the Rate times its length plus Burst")
+					"the units of a window must not exceed the Burst at its start plus the units of each Rate")
 			}
 		},
 	})
