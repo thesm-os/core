@@ -187,7 +187,6 @@ func (o WriterOptions) MaxSize(entries, keyBytes, valueBytes int64, longest int)
 
 	// keysOf returns the most bytes that the keys of c distinct entries
 	// take: c keys of the longest length, and at most the bytes of every key.
-	l = min(l, keys)
 	keysOf := func(c uint64) uint64 {
 		if l != 0 && c > keys/l {
 			return keys
@@ -196,6 +195,10 @@ func (o WriterOptions) MaxSize(entries, keyBytes, valueBytes int64, longest int)
 		return c * l
 	}
 	keys = keysOf(n)
+	// A table of no entries has no values.
+	if n == 0 {
+		values = 0
+	}
 
 	// An entry has three varints, its internal key and its value. A varint
 	// of a length takes one byte, and at most one more for each 128 bytes of
@@ -204,11 +207,8 @@ func (o WriterOptions) MaxSize(entries, keyBytes, valueBytes int64, longest int)
 	// for their count, and a trailer.
 	ikeys := keys + seqLen*n
 	data := ikeys + values + 3*n + ikeys/128 + values/128
-	blocks := uint64(0)
-	if n != 0 {
-		//nolint:gosec // G115: check refuses a negative BlockSize
-		blocks = min(n, data/uint64(cmp.Or(o.BlockSize, defaultBlockSize))+1)
-	}
+	//nolint:gosec // G115: check refuses a negative BlockSize
+	blocks := min(n, data/uint64(cmp.Or(o.BlockSize, defaultBlockSize))+1)
 	//nolint:gosec // G115: check refuses a negative RestartInterval
 	data += 4*min(n, n/uint64(cmp.Or(o.RestartInterval, defaultRestartInterval))+blocks) + (4+trailerLen)*blocks
 
@@ -216,12 +216,10 @@ func (o WriterOptions) MaxSize(entries, keyBytes, valueBytes int64, longest int)
 	// block, and the offset and the length of the block. The first block is
 	// at the offset 0, whose varint takes one byte. Each other offset and
 	// each length takes at most the bytes of the varint of the data blocks.
+	// A table of no entries has no data, so its varint takes one byte too.
 	placeLen := uint64(bits.Len64(data|1)+6) / 7 //nolint:gosec // G115: Len64 returns at most 64
 	last := keysOf(blocks) + seqLen*blocks
-	index := last + last/128 + (3+crcLen+2*placeLen)*blocks
-	if blocks != 0 {
-		index -= placeLen - 1
-	}
+	index := last + last/128 + (3+crcLen+2*placeLen)*blocks - (placeLen - 1)
 
 	// The filter of format version 1 is one block of the hashes of every
 	// key. Format version 2 cuts it into partitions of at most the keys of
@@ -256,13 +254,8 @@ func (o WriterOptions) MaxSize(entries, keyBytes, valueBytes int64, longest int)
 	// An index partition ends at the entry that brings its entries to
 	// PartitionSize bytes. It has a uint32 for the count of its entries and a
 	// trailer.
-	parts := uint64(0)
-	if blocks != 0 {
-		//nolint:gosec // G115: check refuses a negative PartitionSize
-		parts = min(blocks, index/uint64(o.PartitionSize)+1)
-	}
-	//nolint:gosec // G115: Len64 returns at most 64
-	partLen := uint64(bits.Len64((index+4*blocks+(4+trailerLen)*parts)|1)+6) / 7
+	//nolint:gosec // G115: check refuses a negative PartitionSize
+	parts := min(blocks, index/uint64(o.PartitionSize)+1)
 	size += (4 + trailerLen) * parts
 
 	// An entry of a top-level index has the internal key of the last entry
@@ -272,18 +265,19 @@ func (o WriterOptions) MaxSize(entries, keyBytes, valueBytes int64, longest int)
 	// each entry and one for their count, and a trailer.
 	partKeys := keysOf(parts) + seqLen*parts
 	blocksLen := uint64(bits.Len64(blocks|1)+6) / 7 //nolint:gosec // G115: Len64 returns at most 64
-	size += partKeys + partKeys/128 + (3+crcLen+4+partLen+blocksLen)*parts + 4 + trailerLen
-	tops := parts
+	size += partKeys + partKeys/128 + (3+crcLen+4+blocksLen)*parts + 4 + trailerLen
+	tops := 2 * parts
 	if o.FilterBits != 0 {
 		filterKeys := keysOf(fparts) + seqLen*fparts
 		size += filterKeys + filterKeys/128 + (3+crcLen+4+fpartLen)*fparts + 4 + trailerLen
 		tops += fparts
 	}
 
-	// The offset of each partition is below the size of the table, so the
-	// varint of a bound of the size bounds the varint of each offset. The
-	// bound with varints of 10 bytes bounds the size, and so does each bound
-	// with the varints of the bound before it.
+	// The offset of each partition and the length of each index partition
+	// are below the size of the table, so the varint of a bound of the size
+	// bounds the varint of each of them. The bound with varints of 10 bytes
+	// bounds the size, and so does each bound with the varints of the bound
+	// before it.
 	offLen := uint64(binary.MaxVarintLen64)
 	for {
 		total := size + offLen*tops
@@ -1028,7 +1022,10 @@ func partitionKeys(size, bits int) int {
 	lo, hi := 1, int(min(int64(size)*8/int64(bits)+1, math.MaxInt32))
 	for hi-lo > 1 {
 		mid := lo + (hi-lo)/2
-		if n, err := filter.MaxFuseSize(mid, bits); err != nil || n > size {
+		//dokimi:mutate-skip lcr-right,ror-false: the search stays below 2^31 keys, and MaxFuseSize refuses only more keys than fit 2^32 fingerprints
+		if n, err := filter.MaxFuseSize(mid, bits); err != nil ||
+			n > size {
+
 			hi = mid
 		} else {
 			lo = mid

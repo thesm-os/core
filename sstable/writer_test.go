@@ -111,6 +111,16 @@ var pinned = []entry{
 	{key: bytes.Repeat([]byte{'c'}, 192), seq: 1, value: bytes.Repeat([]byte{'z'}, 128)},
 }
 
+// pinnedLong are the pinned entries of the tables of two blocks and of two
+// index partitions. Their keys of 120, 160 and 160 bytes share no prefix, and
+// a cut after the second entry ends each block and each partition at a key
+// of the longest length.
+var pinnedLong = []entry{
+	{key: bytes.Repeat([]byte{'a'}, 120), seq: 1, value: bytes.Repeat([]byte{'x'}, 128)},
+	{key: bytes.Repeat([]byte{'b'}, 160), seq: 1, value: bytes.Repeat([]byte{'y'}, 128)},
+	{key: bytes.Repeat([]byte{'c'}, 160), seq: 1, value: bytes.Repeat([]byte{'z'}, 128)},
+}
+
 // writerOptions generates the options of the tables of the checks of
 // MaxSize: both codecs, filters of 0, 4, 8 and 16 bits, and both format
 // versions, with the defaults of BlockSize and RestartInterval included.
@@ -297,6 +307,16 @@ func TestWriter(t *testing.T) {
 					giveEntries: pinned,
 				},
 				{
+					name:        "returns the size of a table of two blocks",
+					giveOpts:    sstable.WriterOptions{BlockSize: 432, RestartInterval: 1},
+					giveEntries: pinnedLong,
+				},
+				{
+					name:        "returns the size of a table of two index partitions",
+					giveOpts:    sstable.WriterOptions{BlockSize: 1, RestartInterval: 1, PartitionSize: 300},
+					giveEntries: pinnedLong,
+				},
+				{
 					name:        "returns the size of a table in partitions of one entry",
 					giveOpts:    sstable.WriterOptions{BlockSize: 1, RestartInterval: 1, PartitionSize: 1},
 					giveEntries: pinned,
@@ -367,6 +387,31 @@ func TestWriter(t *testing.T) {
 				assert.NoError(t, err, "MaxSize accepts the options")
 				assert.Equal(t, bound, int64(len(writeTable(t, settings[5].opts, nil))),
 					"MaxSize returns the size of a table of no entries")
+			})
+
+			t.Run("returns the size of a table of no entries for any counts of bytes", func(t *testing.T) {
+				t.Parallel()
+				bound, err := settings[5].opts.MaxSize(0, 100, 1000, 50)
+				assert.NoError(t, err, "MaxSize accepts the options")
+				assert.Equal(t, bound, int64(len(writeTable(t, settings[5].opts, nil))),
+					"MaxSize returns the size of a table of no entries")
+			})
+
+			t.Run("counts at most longest bytes for each key", func(t *testing.T) {
+				t.Parallel()
+				opts := settings[5].opts
+				bound, err := opts.MaxSize(3, 1000, 384, 200)
+				assert.NoError(t, err, "MaxSize accepts the counts")
+				capped, err := opts.MaxSize(3, 600, 384, 200)
+				assert.NoError(t, err, "MaxSize accepts the capped counts")
+				assert.Equal(t, bound, capped, "MaxSize counts at most longest bytes for each of three keys")
+			})
+
+			t.Run("returns a bound below math.MaxInt64 for counts of 2^48", func(t *testing.T) {
+				t.Parallel()
+				bound, err := sstable.WriterOptions{}.MaxSize(1<<48, 1<<48, 1<<48, 1<<20)
+				assert.NoError(t, err, "MaxSize accepts the counts")
+				assert.NotEqual(t, bound, int64(math.MaxInt64), "MaxSize bounds counts of 2^48")
 			})
 
 			for _, tt := range refusedOptions {
@@ -732,6 +777,30 @@ func TestWriter(t *testing.T) {
 					assert.InRange(c, counts[len(counts)-1], 1, float64(most),
 						"the last partition has at most as many keys as the first")
 				})
+		})
+
+		t.Run("ends a filter partition at a count that takes exactly PartitionSize bytes", func(t *testing.T) {
+			t.Parallel()
+			size, err := filter.MaxFuseSize(100, 8)
+			assert.NoError(t, err, "MaxFuseSize measures 100 keys")
+			// most is the largest count up to which every count fits size bytes.
+			most := 100
+			for {
+				n, err := filter.MaxFuseSize(most+1, 8)
+				assert.NoError(t, err, "MaxFuseSize measures one key more")
+				if n > size {
+					break
+				}
+				most++
+			}
+			es := make([]entry, 0, 3*most)
+			for i := range uint32(3 * most) {
+				es = append(es, entry{key: binary.BigEndian.AppendUint32(nil, i), seq: 1})
+			}
+			l := newLayout(t, sstable.WriterOptions{FilterBits: 8, PartitionSize: size}, es)
+			assert.NotEmpty(t, l.filterParts, "the table has filter partitions")
+			assert.Equal(t, int(binary.BigEndian.Uint32(l.filterParts[0].last))+1, most,
+				"the first partition has the most keys up to which every count fits PartitionSize")
 		})
 
 		t.Run("keeps a filter partition of fewer keys than the first within PartitionSize", func(t *testing.T) {
