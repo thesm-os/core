@@ -3,7 +3,7 @@
 
 module go.thesmos.sh/core
 
-go 1.27.2
+go 1.27.3
 
 require (
 	go.dokimi.dev/assert v0.3.0
