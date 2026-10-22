@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.31.1
+
+### Patch Changes
+
+- cee6198: Update core to Go 1.27.3, fixing crypto/x509 vuln.
+
 ## 0.31.0
 
 ### Minor Changes
