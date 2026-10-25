@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.32.0
+
+### Minor Changes
+
+- 9371549: Add `arena.Aligned` to return n zeroed bytes at an address that is a multiple of an alignment.
+
 ## 0.31.1
 
 ### Patch Changes
