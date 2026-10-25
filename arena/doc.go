@@ -7,7 +7,8 @@
 // allocates byte slices from slabs and takes single slices back for reuse.
 // [RefSlabs] allocates as Slabs does and returns positions instead of
 // slices. [Bump] is a fixed array that goroutines reserve in ranges without
-// locks.
+// locks. [Aligned] returns a byte slice at an address that is a multiple of
+// an alignment.
 //
 // # Arena
 //
@@ -74,6 +75,16 @@
 // memtable of [go.thesmos.sh/core/skiplist] keeps its nodes and its bytes in
 // two Bumps. [NewBumpWithArray] builds a Bump over an array of the caller.
 //
+// # Aligned
+//
+// A write with direct I/O needs a buffer at an address that is a multiple of
+// the memory alignment of its file. The Go specification gives a []byte from
+// make the alignment of a byte. [Aligned] allocates align-1 bytes beyond the
+// slice and returns the slice from the first multiple of align. It reads the address of the allocation through
+// [reflect.Value.Pointer] and uses the address as an integer alone. A pool
+// of aligned buffers calls Aligned in the constructor of a
+// [go.thesmos.sh/core/pool.Bounded].
+//
 // # Pool integration
 //
 // [Arena.Reset] satisfies [pool.Resettable], so a pool of arenas is one
@@ -112,4 +123,7 @@
 //
 // [NewBump] allocates the Bump and its array, and [NewBumpWithArray]
 // allocates the Bump alone. No method of a Bump allocates.
+//
+// [Aligned] makes one allocation of n+align-1 bytes, and none for an n of 0
+// or below.
 package arena
