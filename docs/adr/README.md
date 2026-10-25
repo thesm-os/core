@@ -131,5 +131,6 @@ Start from [`docs/templates/ADR.md`](../templates/ADR.md).
 | [0071](0071-a-writer-keeps-a-bounded-workspace.md) | A Writer Keeps a Bounded Workspace | Accepted |
 | [0072](0072-a-cursor-reads-ahead-on-request.md) | A Cursor Reads Ahead on Request | Accepted |
 | [0073](0073-a-limiter-changes-its-rate-in-place.md) | A Limiter Changes Its Rate in Place | Accepted |
+| [0074](0074-aligned-reads-addresses-through-reflect.md) | Aligned Reads Addresses Through reflect | Accepted |
 
 [nygard]: https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions
