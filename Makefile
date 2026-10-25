@@ -5,9 +5,9 @@
 # targets as prerequisites of the targets below. CI runs make check-<language> per language. It
 # runs lint-common and lint-github in jobs of their own. Every target runs its tools through ergon
 # tool run, which installs the version that .ergon.yaml names. make help lists the targets in
-# groups. A line ##@ <name> starts a group: the common targets, the targets of the GitHub files,
-# then the targets of each language, and the targets of .ergon/local/Makefile after a line of its
-# own.
+# groups. A line ##@ <name> starts a group: the common targets, the targets of the GitHub files and
+# of spec, then the targets of each language, and the targets of .ergon/local/Makefile after a line
+# of its own.
 
 .DEFAULT_GOAL := check
 
@@ -93,8 +93,7 @@ GO_BENCH_ARGS ?= -benchmem
 GO_MUTATE_WORKERS ?= 1
 GO_MUTATE_TIMEOUT ?= 0s
 GO_MUTATE_ARGS ?=
-GO_GENERATE_COMMAND ?= go generate
-GO_GENERATE_ARGS ?= -run 'go tool kanon'
+GO_GENERATE_COMMANDS ?= go generate -run 'go tool kanon' $(GO_PATHS)
 GO_AUDIT_ARGS ?=
 
 # The files of two runs of bench-go that benchstat-go compares.
@@ -102,8 +101,8 @@ GO_BENCH_OLD ?=
 GO_BENCH_NEW ?=
 
 # The run of the generators in every module, which generate-go and verify-generate-go run.
-GO_GENERATE = $(GO) list -m -f '{{.Dir}}' | while IFS= read -r dir; do echo "$(GO_GENERATE_COMMAND) $$dir"; \
-	(cd "$$dir" && $(GO_GENERATE_COMMAND) $(GO_GENERATE_ARGS) $(GO_PATHS)) || exit 1; done
+GO_GENERATE = $(GO) list -m -f '{{.Dir}}' | while IFS= read -r dir; do echo "generate $$dir"; \
+	(cd "$$dir" && $(GO_GENERATE_COMMANDS)) || exit 1; done
 
 .PHONY: fmt-go lint-go test-go race-go fuzz-go bench-go benchstat-go mutate-go generate-go verify-generate-go audit-go check-go
 fmt: fmt-go
