@@ -60,6 +60,9 @@ artifacts/
 # Dependency directories
 vendor/
 
+# The state directory of a dokimi run, whose manifest is not committed
+.dokimi/
+
 # Agents
 superpowers/
 docs/superpowers/

@@ -296,6 +296,7 @@ go:
   # targets.
   generate:
     commands:
+      - [go, run, go.dokimi.dev/dokimi/cmd/dokimi@v0.3.0, run]
       - [go, generate, -run, go tool kanon]
   # audit-go runs govulncheck with args in every module.
   audit:
