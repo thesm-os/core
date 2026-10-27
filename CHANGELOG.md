@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.33.0
+
+### Minor Changes
+
+- 914d810: **Breaking:** Replace `blobtest.AssertStore` and its options with the dokimi suites and doubles of `blob.Store` and `blob.RangeReader`.
+- dee68cb: **Breaking:** Replace `castest.AssertStore` and its options with the dokimi suite of `cas.Store` and the doubles of `cas.Store` and `cas.Streamer`.
+- 0ef1fae: **Breaking:** Replace the testkit contracts, model, benchmark and builders of `coretest/clocktest` with the dokimi suites, doubles and builders of `clock`.
+- 341a206: **Breaking:** Replace the testkit contracts, benchmarks and doubles of the XOF, AEAD, Keeper and signature interfaces in `coretest/cryptotest` with dokimi suites and doubles.
+- ef261c8: **Breaking:** Replace the testkit contract, model, benchmark and double of `crypto.Hasher` in `coretest/cryptotest` with a dokimi suite and double.
+- ef261c8: **Breaking:** Delete `SampleDigest`, `SampleUnaryRole`, `SampleBinaryRole` and `SampleBytes` from `coretest/cryptotest`.
+- 230f2ac: **Breaking:** Replace the testkit contract, model, benchmark and double of `crypto.MAC` in `coretest/cryptotest` with a dokimi suite and double.
+- 230f2ac: **Breaking:** Replace the testkit contract and double of `crypto.Stream` in `coretest/cryptotest` with a dokimi double.
+- 85855aa: **Breaking:** Replace the testkit contract, model and benchmark of `coretest/idtest` with the dokimi suite and double of `id.Generator`.
+- f9d8609: **Breaking:** Replace the testkit contract, model and benchmark of `coretest/randtest` with the dokimi suite and double of `rand.Rand`.
+- 01b399c: **Breaking:** Replace the testkit contracts, benchmarks and doubles of `coretest/telemetrytest` with the dokimi suites and doubles of `telemetry`.
+
+### Patch Changes
+
+- 743b2b0: Drop `go.thesmos.sh/testkit` from the requirements of `go.thesmos.sh/core`.
+- 8cc1201: Assert the fencing laws of `epochtest.AssertFencedWriter` with `go.dokimi.dev/assert` in place of testkit.
+- e999abc: Require `go.dokimi.dev/assert` v0.10.0.
+
 ## 0.32.0
 
 ### Minor Changes
