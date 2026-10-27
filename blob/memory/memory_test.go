@@ -16,10 +16,10 @@ import (
 	"go.dokimi.dev/assert/expect"
 	"go.dokimi.dev/assert/history"
 	"go.dokimi.dev/assert/prop"
+	"go.dokimi.dev/conform"
 
 	"go.thesmos.sh/core/blob"
 	"go.thesmos.sh/core/blob/memory"
-	"go.thesmos.sh/core/clock"
 	"go.thesmos.sh/core/clock/fake"
 	"go.thesmos.sh/core/coretest/blobtest"
 	"go.thesmos.sh/core/errs"
@@ -72,24 +72,6 @@ const (
 type write struct {
 	key string
 	put bool
-}
-
-// TestMemoryStoreConformance runs the conformance suite with every
-// option. The storage of a memory Store is the Store itself, so a
-// reopen returns it unchanged and a crash comes after write returns.
-func TestMemoryStoreConformance(t *testing.T) {
-	t.Parallel()
-
-	blobtest.AssertStore(t,
-		func(c clock.Clock) blob.Store { return memory.New(c) },
-		blobtest.WithReopen(func(_ *testing.T, s blob.Store) blob.Store { return s }),
-		blobtest.WithCrash(func(_ *testing.T, s blob.Store, write func()) blob.Store {
-			write()
-
-			return s
-		}),
-		blobtest.WithRangeReader(),
-	)
 }
 
 func TestStore(t *testing.T) {
@@ -415,4 +397,25 @@ func filled(tb testing.TB, n int) *memory.Store {
 	}
 
 	return s
+}
+
+// newStore returns an empty Store over a fake clock at the Unix epoch. The
+// conformance tests of the package run the suites of blob.Store and
+// blob.RangeReader on it.
+func newStore() *memory.Store {
+	return memory.New(fake.New(time.Unix(0, 0).UTC()))
+}
+
+// storeOptions returns the doors of the conformance test of blob.Store. The
+// storage of a Store is the Store itself, so a restart returns it unchanged
+// and a crash comes after call returns.
+func storeOptions() []blobtest.StoreOption {
+	return []blobtest.StoreOption{
+		conform.Restartable(func(_ *blobtest.StoreHandle, s blob.Store) blob.Store { return s }),
+		conform.Crashable(func(_ *blobtest.StoreHandle, s blob.Store, call func()) blob.Store {
+			call()
+
+			return s
+		}),
+	}
 }

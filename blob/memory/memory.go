@@ -102,6 +102,9 @@ func (*reader) Close() error {
 //   - Get allocates one reader and does not copy the body.
 //   - ReadRange, Stat and Delete allocate nothing on their happy paths.
 //   - List allocates the page snapshot.
+//
+//dokimi:subject blob.Store new=newStore options=storeOptions
+//dokimi:subject blob.RangeReader new=newStore
 type Store struct {
 	c   clock.Clock
 	m   btree.Map[string, object]

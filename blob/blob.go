@@ -240,6 +240,10 @@ type PutOptions struct {
 // Implementations must be safe for concurrent use. The backend orders
 // concurrent writes to one key, and a conditional write makes that order
 // matter to the caller.
+//
+//dokimi:stub
+//dokimi:suite
+//dokimi:out path=../coretest/blobtest/
 type Store interface {
 	// Put stores the object under key, and reads r to EOF.
 	//
@@ -293,6 +297,10 @@ type Store interface {
 //
 // The same requirements as [Store]. Concurrent ReadRange calls on one
 // key are safe, as parallel [io.ReaderAt.ReadAt] calls are.
+//
+//dokimi:stub
+//dokimi:suite
+//dokimi:out path=../coretest/blobtest/
 type RangeReader interface {
 	// ReadRange reads len(dst) bytes of the object under key, starting
 	// at byte off, into dst. It returns the number of bytes read and the
