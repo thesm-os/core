@@ -15,12 +15,10 @@ import (
 	"go.thesmos.sh/core/telemetry"
 )
 
-// The names of the spans of the cases.
+// The names of the spans and the events of the cases.
 const (
-	tracerName telemetry.InstrumentName = "test.library"
-	spanName   telemetry.SpanName       = "test.operation"
-	childName  telemetry.SpanName       = "test.child"
-	eventName  telemetry.EventName      = "test.event"
+	childName telemetry.SpanName  = "test.child"
+	eventName telemetry.EventName = "test.event"
 )
 
 // remote is a remote parent of the cases, as a propagator extracts it.
@@ -29,22 +27,6 @@ var remote = telemetry.SpanContext{
 	SpanID:     "00f067aa0ba902b7",
 	TraceState: "vendor=1",
 	Sampled:    true,
-}
-
-func TestRecorderTracerContract(t *testing.T) {
-	t.Parallel()
-	telemetrytest.AssertTracerContract(t, func() telemetry.Tracer {
-		return telemetrytest.NewRecorder().Tracer(tracerName)
-	}, telemetrytest.TracerContractAssertions()...)
-}
-
-func TestRecorderSpanContract(t *testing.T) {
-	t.Parallel()
-	telemetrytest.AssertSpanContract(t, func() telemetry.Span {
-		_, s := telemetrytest.NewRecorder().Tracer(tracerName).Start(t.Context(), spanName)
-
-		return s
-	}, telemetrytest.SpanContractAssertions()...)
 }
 
 func TestRecorderTracer(t *testing.T) {

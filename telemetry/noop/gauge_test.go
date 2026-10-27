@@ -8,7 +8,6 @@ import (
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/expect"
-	"go.thesmos.sh/testkit/bench"
 
 	"go.thesmos.sh/core/coretest/telemetrytest"
 	"go.thesmos.sh/core/telemetry"
@@ -18,10 +17,12 @@ import (
 // gaugeSpec is the specification of the gauges of the cases.
 var gaugeSpec = telemetry.InstrumentSpec{Name: "n"}
 
-func TestNoopGaugeContract(t *testing.T) {
+// TestGaugeConformsToGauge applies the checks of the suite of telemetry.Gauge
+// to the gauge of a Reporter.
+func TestGaugeConformsToGauge(t *testing.T) {
 	t.Parallel()
-	telemetrytest.AssertGaugeContract(t, func() telemetry.Gauge { return noop.New().Gauge(gaugeSpec) },
-		telemetrytest.GaugeContractAssertions()...)
+
+	telemetrytest.RunGaugeSuite(t, func() telemetry.Gauge { return noop.New().Gauge(gaugeSpec) })
 }
 
 // TestGaugeAllocs checks that no method of the gauge allocates. MaxAllocs
@@ -49,15 +50,4 @@ func TestGaugeAllocs(t *testing.T) {
 	t.Run("Release", func(t *testing.T) {
 		expect.MaxAllocs(t, func() { g.Release() }, 0, "Release must not allocate")
 	})
-}
-
-func BenchmarkNoopGauge(b *testing.B) {
-	telemetrytest.BenchmarkGaugeContract(b, func() telemetry.Gauge { return noop.New().Gauge(gaugeSpec) },
-		telemetrytest.GaugeBenchOnSet(bench.MutatorAllocsWithin[telemetry.Gauge, float64](1.0, 0)),
-		telemetrytest.GaugeBenchOnAdd(bench.MutatorAllocsWithin[telemetry.Gauge, float64](0.1, 0)),
-		telemetrytest.GaugeBenchOnWith(bench.PureAllocsWithin[telemetry.Gauge, telemetry.Gauge](0)),
-		telemetrytest.GaugeBenchOnRelease(telemetrytest.ReleaseAllocsWithin(
-			func(g telemetry.Gauge) telemetry.Gauge { return g.With(nil) }, 0,
-		)),
-	)
 }

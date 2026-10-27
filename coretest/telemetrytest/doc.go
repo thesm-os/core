@@ -18,44 +18,38 @@
 // a Records as the handler of its logger. It then reads what the package
 // emitted.
 //
-// # Contract suites and stubs
+// # Suites
 //
-// testkit generates a contract suite, a stub and a benchmark suite for
-// each interface: Counter, Gauge, Histogram, Reporter, Span and Tracer. A
-// generated file has the suffix .gen.go. Each file *_spec.go lists the
-// assertions of one contract.
+// Every implementation of an interface of telemetry passes the same checks.
+// [RunReporterSuite], [RunTracerSuite], [RunSpanSuite], [RunCounterSuite],
+// [RunGaugeSuite] and [RunHistogramSuite] apply the checks of a suite to a new
+// value of a factory, one value for each check. The checks state that a call
+// returns without a panic, that a constructor returns a value that is not nil,
+// and that Release of a bound instrument returns while other goroutines emit
+// through it. Under the race detector the last check also fails on a data race.
 //
-// The package has no model suites. The methods of the instruments return
-// no value that a model could compare with a reference, so the contract
-// suites under the race detector cover them.
+// # Planted defects
+//
+// Each check has a planted defect: the double of an interface with a call that
+// breaks the law of the check. A defect keeps its other calls on a no-op
+// implementation of [go.thesmos.sh/core/telemetry/noop]. The test of a suite
+// runs each check on every defect. A check fails on its own defect at the
+// assertion of its statement, and it passes on the defects of the other
+// checks.
+//
+// # Doubles
+//
+// [ReporterStub], [TracerStub], [SpanStub], [CounterStub], [GaugeStub] and
+// [HistogramStub] are recording doubles. Each method returns the result of a
+// function that a With option sets, such as [WithCounterAdd], a fixed result,
+// or the result of the implementation that a DelegateTo option names, such as
+// [CounterStubDelegateTo].
+//
+// # Dependency position
+//
+// Imports bytes, cmp, context, encoding/binary, encoding/hex, log/slog, math,
+// math/rand/v2, slices, sync, sync/atomic, testing and time of the standard
+// library, go.dokimi.dev/assert, go.dokimi.dev/assert/history,
+// go.dokimi.dev/assert/prop, go.dokimi.dev/conform and go.dokimi.dev/stub, and
+// go.thesmos.sh/core/telemetry and go.thesmos.sh/core/telemetry/noop.
 package telemetrytest
-
-// Counter
-//go:generate testkit stub -p go.thesmos.sh/core/telemetry -o counter_stub.gen.go Counter
-//go:generate testkit suite -p go.thesmos.sh/core/telemetry -o counter_spec.gen.go Counter
-//go:generate testkit bench -p go.thesmos.sh/core/telemetry -o counter_bench.gen.go Counter
-
-// Gauge
-//go:generate testkit stub -p go.thesmos.sh/core/telemetry -o gauge_stub.gen.go Gauge
-//go:generate testkit suite -p go.thesmos.sh/core/telemetry -o gauge_spec.gen.go Gauge
-//go:generate testkit bench -p go.thesmos.sh/core/telemetry -o gauge_bench.gen.go Gauge
-
-// Histogram
-//go:generate testkit stub -p go.thesmos.sh/core/telemetry -o histogram_stub.gen.go Histogram
-//go:generate testkit suite -p go.thesmos.sh/core/telemetry -o histogram_spec.gen.go Histogram
-//go:generate testkit bench -p go.thesmos.sh/core/telemetry -o histogram_bench.gen.go Histogram
-
-// Reporter
-//go:generate testkit stub -p go.thesmos.sh/core/telemetry -o reporter_stub.gen.go Reporter
-//go:generate testkit suite -p go.thesmos.sh/core/telemetry -o reporter_spec.gen.go Reporter
-//go:generate testkit bench -p go.thesmos.sh/core/telemetry -o reporter_bench.gen.go Reporter
-
-// Span
-//go:generate testkit stub -p go.thesmos.sh/core/telemetry -o span_stub.gen.go Span
-//go:generate testkit suite -p go.thesmos.sh/core/telemetry -o span_spec.gen.go Span
-//go:generate testkit bench -p go.thesmos.sh/core/telemetry -o span_bench.gen.go Span
-
-// Tracer
-//go:generate testkit stub -p go.thesmos.sh/core/telemetry -o tracer_stub.gen.go Tracer
-//go:generate testkit suite -p go.thesmos.sh/core/telemetry -o tracer_spec.gen.go Tracer
-//go:generate testkit bench -p go.thesmos.sh/core/telemetry -o tracer_bench.gen.go Tracer

@@ -100,6 +100,10 @@ type SpanContext struct {
 // # Allocation contract
 //
 // Outside the zero-allocation contract — see [Tracer].
+//
+//dokimi:stub
+//dokimi:suite
+//dokimi:out path=../coretest/telemetrytest/
 type Span interface {
 	// End records the end of the span. When err is non-nil, the
 	// span's status is set to error with err's message.

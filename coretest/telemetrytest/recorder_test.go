@@ -16,45 +16,11 @@ import (
 	"go.thesmos.sh/core/telemetry"
 )
 
-// The instruments of the cases.
-const (
-	counterName   telemetry.InstrumentName = "test.counter"
-	gaugeName     telemetry.InstrumentName = "test.gauge"
-	histogramName telemetry.InstrumentName = "test.histogram"
-)
-
 // The attributes of the cases.
 var (
 	region = telemetry.AttrString("region", "eu")
 	tier   = telemetry.AttrInt("tier", 2)
 )
-
-func TestRecorderReporterContract(t *testing.T) {
-	t.Parallel()
-	telemetrytest.AssertReporterContract(t, func() telemetry.Reporter { return telemetrytest.NewRecorder() },
-		telemetrytest.ReporterContractAssertions()...)
-}
-
-func TestRecorderCounterContract(t *testing.T) {
-	t.Parallel()
-	telemetrytest.AssertCounterContract(t, func() telemetry.Counter {
-		return telemetrytest.NewRecorder().Counter(telemetry.InstrumentSpec{Name: counterName})
-	}, telemetrytest.CounterContractAssertions()...)
-}
-
-func TestRecorderGaugeContract(t *testing.T) {
-	t.Parallel()
-	telemetrytest.AssertGaugeContract(t, func() telemetry.Gauge {
-		return telemetrytest.NewRecorder().Gauge(telemetry.InstrumentSpec{Name: gaugeName})
-	}, telemetrytest.GaugeContractAssertions()...)
-}
-
-func TestRecorderHistogramContract(t *testing.T) {
-	t.Parallel()
-	telemetrytest.AssertHistogramContract(t, func() telemetry.Histogram {
-		return telemetrytest.NewRecorder().Histogram(telemetry.InstrumentSpec{Name: histogramName})
-	}, telemetrytest.HistogramContractAssertions()...)
-}
 
 func TestRecorder(t *testing.T) {
 	t.Parallel()

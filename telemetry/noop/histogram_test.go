@@ -8,7 +8,6 @@ import (
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/expect"
-	"go.thesmos.sh/testkit/bench"
 
 	"go.thesmos.sh/core/coretest/telemetrytest"
 	"go.thesmos.sh/core/telemetry"
@@ -18,11 +17,12 @@ import (
 // histogramSpec is the specification of the histograms of the cases.
 var histogramSpec = telemetry.InstrumentSpec{Name: "n", Bounds: []float64{1, 10, 100}}
 
-func TestNoopHistogramContract(t *testing.T) {
+// TestHistogramConformsToHistogram applies the checks of the suite of
+// telemetry.Histogram to the histogram of a Reporter.
+func TestHistogramConformsToHistogram(t *testing.T) {
 	t.Parallel()
-	telemetrytest.AssertHistogramContract(t,
-		func() telemetry.Histogram { return noop.New().Histogram(histogramSpec) },
-		telemetrytest.HistogramContractAssertions()...)
+
+	telemetrytest.RunHistogramSuite(t, func() telemetry.Histogram { return noop.New().Histogram(histogramSpec) })
 }
 
 // TestHistogramAllocs checks that no method of the histogram allocates.
@@ -46,15 +46,4 @@ func TestHistogramAllocs(t *testing.T) {
 	t.Run("Release", func(t *testing.T) {
 		expect.MaxAllocs(t, func() { h.Release() }, 0, "Release must not allocate")
 	})
-}
-
-func BenchmarkNoopHistogram(b *testing.B) {
-	telemetrytest.BenchmarkHistogramContract(b,
-		func() telemetry.Histogram { return noop.New().Histogram(histogramSpec) },
-		telemetrytest.HistogramBenchOnRecord(bench.MutatorAllocsWithin[telemetry.Histogram, float64](1.0, 0)),
-		telemetrytest.HistogramBenchOnWith(bench.PureAllocsWithin[telemetry.Histogram, telemetry.Histogram](0)),
-		telemetrytest.HistogramBenchOnRelease(telemetrytest.ReleaseAllocsWithin(
-			func(h telemetry.Histogram) telemetry.Histogram { return h.With(nil) }, 0,
-		)),
-	)
 }

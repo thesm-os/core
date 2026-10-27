@@ -8,7 +8,6 @@ import (
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/expect"
-	"go.thesmos.sh/testkit/bench"
 
 	"go.thesmos.sh/core/coretest/telemetrytest"
 	"go.thesmos.sh/core/telemetry"
@@ -18,10 +17,12 @@ import (
 // counterSpec is the specification of the counters of the cases.
 var counterSpec = telemetry.InstrumentSpec{Name: "n"}
 
-func TestNoopCounterContract(t *testing.T) {
+// TestCounterConformsToCounter applies the checks of the suite of
+// telemetry.Counter to the counter of a Reporter.
+func TestCounterConformsToCounter(t *testing.T) {
 	t.Parallel()
-	telemetrytest.AssertCounterContract(t, func() telemetry.Counter { return noop.New().Counter(counterSpec) },
-		telemetrytest.CounterContractAssertions()...)
+
+	telemetrytest.RunCounterSuite(t, func() telemetry.Counter { return noop.New().Counter(counterSpec) })
 }
 
 // TestCounterAllocs checks that no method of the counter allocates.
@@ -45,14 +46,4 @@ func TestCounterAllocs(t *testing.T) {
 	t.Run("Release", func(t *testing.T) {
 		expect.MaxAllocs(t, func() { c.Release() }, 0, "Release must not allocate")
 	})
-}
-
-func BenchmarkNoopCounter(b *testing.B) {
-	telemetrytest.BenchmarkCounterContract(b, func() telemetry.Counter { return noop.New().Counter(counterSpec) },
-		telemetrytest.CounterBenchOnAdd(bench.MutatorAllocsWithin[telemetry.Counter, int64](1, 0)),
-		telemetrytest.CounterBenchOnWith(bench.PureAllocsWithin[telemetry.Counter, telemetry.Counter](0)),
-		telemetrytest.CounterBenchOnRelease(telemetrytest.ReleaseAllocsWithin(
-			func(c telemetry.Counter) telemetry.Counter { return c.With(nil) }, 0,
-		)),
-	)
 }

@@ -37,6 +37,10 @@ package telemetry
 // Implementations must be safe for concurrent use; consumers share
 // one Reporter and its instruments across many goroutines. The
 // returned [Span] from [Tracer.Start] is single-goroutine.
+//
+//dokimi:stub
+//dokimi:suite
+//dokimi:out path=../coretest/telemetrytest/
 type Reporter interface {
 	// Counter returns a counter instrument matching spec.
 	// Subsequent calls with the same [InstrumentSpec.Name] on the

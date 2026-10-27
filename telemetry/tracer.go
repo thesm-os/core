@@ -23,6 +23,10 @@ type SpanName string
 // by design — the OTel SDK records into a span buffer, samplers
 // may emit, exporters batch. Library code emits a span per
 // request, not per loop iteration.
+//
+//dokimi:stub
+//dokimi:suite
+//dokimi:out path=../coretest/telemetrytest/
 type Tracer interface {
 	// Start begins a new span as a child of the span carried in
 	// ctx (or as a root span if ctx carries no span). Returns a

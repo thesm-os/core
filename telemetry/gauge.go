@@ -35,20 +35,20 @@ import "context"
 //
 // [Gauge.Set], [Gauge.Add] and [Gauge.Release] are zero-alloc.
 // [Gauge.With] allocates.
+//
+//dokimi:stub
+//dokimi:suite
+//dokimi:out path=../coretest/telemetrytest/
 type Gauge interface {
 	// Set records value, an absolute value, against the bound attribute
 	// set. Set does not panic for any value. The backend of the
 	// implementation defines how Set treats NaN and an infinity.
-	//
-	//testkit:mutator
 	Set(ctx context.Context, value float64)
 
 	// Add records delta, a change: a positive delta increases the value,
 	// and a negative one decreases it. Add does not panic for any delta.
 	// The backend of the implementation defines how Add treats NaN and an
 	// infinity.
-	//
-	//testkit:mutator
 	Add(ctx context.Context, delta float64)
 
 	// With returns a Gauge of the same instrument, bound to attrs, with
@@ -58,7 +58,5 @@ type Gauge interface {
 	// Release ends this bound instrument, with the contract of
 	// [Counter.Release]. In a sum gauge, Release also removes the
 	// Gauge's value from the value of its attribute set.
-	//
-	//testkit:mutator
 	Release()
 }

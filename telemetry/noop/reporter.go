@@ -7,6 +7,8 @@ import "go.thesmos.sh/core/telemetry"
 
 // Reporter is a [telemetry.Reporter] that discards every signal.
 // The zero value is usable. Stateless and safe for concurrent use.
+//
+//dokimi:subject telemetry.Reporter new=New
 type Reporter struct{}
 
 // Compile-time interface check.

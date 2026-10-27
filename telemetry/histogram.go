@@ -12,14 +12,16 @@ import "context"
 //
 // [Histogram.Record] and [Histogram.Release] are zero-alloc.
 // [Histogram.With] allocates.
+//
+//dokimi:stub
+//dokimi:suite
+//dokimi:out path=../coretest/telemetrytest/
 type Histogram interface {
 	// Record adds value to the distribution of the bound attribute set.
 	// A caller records a non-negative value, as the OpenTelemetry API
 	// expects. Record does not panic for any value. The backend of the
 	// implementation defines how Record treats a negative value, NaN and
 	// an infinity.
-	//
-	//testkit:mutator
 	Record(ctx context.Context, value float64)
 
 	// With returns a Histogram of the same instrument, bound to attrs,
@@ -28,7 +30,5 @@ type Histogram interface {
 
 	// Release ends this bound instrument, with the contract of
 	// [Counter.Release].
-	//
-	//testkit:mutator
 	Release()
 }

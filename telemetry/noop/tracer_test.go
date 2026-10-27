@@ -22,15 +22,22 @@ const (
 	eventName  telemetry.EventName      = "event"
 )
 
-func TestNoopTracerContract(t *testing.T) {
+// TestTracerConformsToTracer applies the checks of the suite of
+// telemetry.Tracer to the tracer of a Reporter.
+func TestTracerConformsToTracer(t *testing.T) {
 	t.Parallel()
-	telemetrytest.AssertTracerContract(t, func() telemetry.Tracer { return noop.New().Tracer(tracerName) },
-		telemetrytest.TracerContractAssertions()...)
+
+	telemetrytest.RunTracerSuite(t, func() telemetry.Tracer { return noop.New().Tracer(tracerName) })
 }
 
-func TestNoopSpanContract(t *testing.T) {
+// TestSpanConformsToSpan applies the checks of the suite of telemetry.Span to
+// the span of the tracer of a Reporter.
+func TestSpanConformsToSpan(t *testing.T) {
 	t.Parallel()
-	telemetrytest.AssertSpanContract(t, newSpan, telemetrytest.SpanContractAssertions()...)
+
+	telemetrytest.RunSpanSuiteFromHandle(t, func(h *telemetrytest.SpanHandle) telemetry.Span {
+		return newSpan(h.Context())
+	})
 }
 
 func TestTracer(t *testing.T) {
@@ -64,7 +71,7 @@ func TestTracer(t *testing.T) {
 
 			t.Run("returns the zero SpanContext", func(t *testing.T) {
 				t.Parallel()
-				assert.Equal(t, newSpan().SpanContext(), telemetry.SpanContext{},
+				assert.Equal(t, newSpan(t.Context()).SpanContext(), telemetry.SpanContext{},
 					"a no-op span must have no trace identity")
 			})
 		})
@@ -77,7 +84,7 @@ func TestTracer(t *testing.T) {
 func TestTracerAllocs(t *testing.T) {
 	ctx := t.Context()
 	tr := noop.New().Tracer(tracerName)
-	sp := newSpan()
+	sp := newSpan(ctx)
 	attrs := []telemetry.Attr{telemetry.AttrString("k", "v")}
 
 	t.Run("Start", func(t *testing.T) {
@@ -107,18 +114,10 @@ func TestTracerAllocs(t *testing.T) {
 	})
 }
 
-func BenchmarkNoopTracer(b *testing.B) {
-	telemetrytest.BenchmarkTracerContract(b, func() telemetry.Tracer { return noop.New().Tracer(tracerName) })
-}
-
-func BenchmarkNoopSpan(b *testing.B) {
-	telemetrytest.BenchmarkSpanContract(b, newSpan)
-}
-
-// newSpan returns a span that the no-op tracer starts, for the contract
-// suite of a span and the cases of its methods.
-func newSpan() telemetry.Span {
-	_, sp := noop.New().Tracer(tracerName).Start(context.Background(), spanName)
+// newSpan returns a span that the no-op tracer starts under ctx, for the suite
+// of a span and the cases of its methods.
+func newSpan(ctx context.Context) telemetry.Span {
+	_, sp := noop.New().Tracer(tracerName).Start(ctx, spanName)
 
 	return sp
 }

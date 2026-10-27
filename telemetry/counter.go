@@ -34,14 +34,16 @@ import "context"
 //
 // [Counter.Add] and [Counter.Release] are zero-alloc. [Counter.With]
 // allocates.
+//
+//dokimi:stub
+//dokimi:suite
+//dokimi:out path=../coretest/telemetrytest/
 type Counter interface {
 	// Add increments the counter by value against the bound attribute
 	// set. A counter only increases, so Add discards a negative value.
 	// An implementation may report the discarded value through its own
 	// diagnostics, such as a rate-limited log line. Add does not panic
 	// for any value.
-	//
-	//testkit:mutator
 	Add(ctx context.Context, value int64)
 
 	// With returns a Counter of the same instrument, bound to attrs.
@@ -68,7 +70,5 @@ type Counter interface {
 	// from zero, with a new start time.
 	//
 	// Release does not allocate.
-	//
-	//testkit:mutator
 	Release()
 }
