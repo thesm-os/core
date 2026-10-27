@@ -47,4 +47,6 @@
 // [Clock.NewTimer] is a cold-path constructor and may allocate the
 // underlying timer struct and channel. [Instant] and [UTCReading] are
 // value types passed by value.
+//
+//dokimi:sentinel
 package clock

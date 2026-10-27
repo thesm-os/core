@@ -3,8 +3,6 @@
 
 package epoch
 
-//go:generate testkit sentinel -o errors.gen_test.go
-
 import "errors"
 
 // Sentinel errors returned by the fence checks and the binary encoding.

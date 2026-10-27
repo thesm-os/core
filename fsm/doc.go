@@ -47,4 +47,6 @@
 //
 // [Spec.Next], [Spec.Allows], [Spec.Terminal] and [Machine.Fire] do
 // not allocate. [Builder.Build] allocates the tables once.
+//
+//dokimi:sentinel
 package fsm

@@ -96,4 +96,6 @@
 // Imports errors, hash/maphash, sync, sync/atomic and time from the
 // standard library, and go.thesmos.sh/core/clock and
 // go.thesmos.sh/core/errs from this module.
+//
+//dokimi:sentinel
 package cache

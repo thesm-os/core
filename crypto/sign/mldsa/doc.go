@@ -49,4 +49,6 @@
 // standard library, and go.thesmos.sh/core/crypto,
 // go.thesmos.sh/core/crypto/sign, go.thesmos.sh/core/errs and
 // go.thesmos.sh/core/rand from this module.
+//
+//dokimi:sentinel
 package mldsa

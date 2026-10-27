@@ -70,4 +70,6 @@
 // [Class.AppendText] does not allocate into a buffer with room for the
 // name. [Classify], [Retryable] and [RetryAfter] are zero-allocation.
 // [WithClass] and [WithRetryAfter] allocate one wrapper.
+//
+//dokimi:sentinel
 package errs

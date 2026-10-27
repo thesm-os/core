@@ -35,4 +35,6 @@
 //
 // Unspecified. Every dispatch brackets a remote call, and the internal
 // map and slice churn is not the cost that governs.
+//
+//dokimi:sentinel
 package batch

@@ -119,4 +119,6 @@
 // this module do not allocate per call when the
 // [go.thesmos.sh/core/rand.Rand] and the [go.thesmos.sh/core/clock.Clock]
 // that they read do not.
+//
+//dokimi:sentinel
 package id

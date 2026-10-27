@@ -47,4 +47,6 @@
 // the pool has a cached value). [Pool.Get] / [ResetPool.Get]
 // allocate via the caller-supplied newFn when the pool is empty
 // or after garbage collection has evicted cached values.
+//
+//dokimi:sentinel
 package pool

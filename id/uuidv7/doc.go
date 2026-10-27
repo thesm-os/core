@@ -55,4 +55,6 @@
 //
 // The codecs of UUID accept a UUID of any version, as [Parse] does.
 // [UUID.Valid] reports whether a UUID is a UUIDv7.
+//
+//dokimi:sentinel
 package uuidv7

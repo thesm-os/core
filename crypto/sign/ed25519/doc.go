@@ -30,4 +30,6 @@
 // FIPS 186-5 (2023), so both modes work without modification.
 // FIPS-gated wrappers (hard-refusal-outside-FIPS-mode) live in
 // consumer modules, not here.
+//
+//dokimi:sentinel
 package ed25519

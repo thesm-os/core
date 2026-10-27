@@ -171,4 +171,6 @@
 // go.thesmos.sh/core/clock, go.thesmos.sh/core/errs,
 // go.thesmos.sh/core/net/internal/semconv and go.thesmos.sh/core/telemetry
 // from this module.
+//
+//dokimi:sentinel
 package httpserver

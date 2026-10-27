@@ -46,4 +46,6 @@
 // fmt, math/big, slices, sync and time from the standard library, and
 // go.thesmos.sh/core/clock, go.thesmos.sh/core/errs and
 // go.thesmos.sh/core/internal/der from this module.
+//
+//dokimi:sentinel
 package tsptest

@@ -42,4 +42,6 @@
 // Imports errors, fmt, sync/atomic, syscall and time from the standard
 // library, and go.thesmos.sh/core/clock and go.thesmos.sh/core/errs from
 // this module. It calls one system call and opens no file or socket.
+//
+//dokimi:sentinel
 package kernel

@@ -49,4 +49,6 @@
 // it. A copy in a backup opens for as long as its parent key exists.
 // Destroying the parent key through [crypto.Destroyer] erases every KEK
 // under it, including the copies in backups.
+//
+//dokimi:sentinel
 package kek

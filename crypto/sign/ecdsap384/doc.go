@@ -63,4 +63,6 @@
 // makes the derivation deterministic across builds and
 // languages — distinct from the variable-length PKIX encoding
 // returned by [Verifier.PublicKey].
+//
+//dokimi:sentinel
 package ecdsap384

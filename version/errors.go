@@ -3,8 +3,6 @@
 
 package version
 
-//go:generate testkit sentinel -o errors.gen_test.go
-
 import "errors"
 
 // Sentinel errors reporting the outcome of a conditional write that

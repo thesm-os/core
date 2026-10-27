@@ -30,4 +30,6 @@
 // zero-alloc. [WriteOptions] is a value type; pass by value.
 // [Versioned] is a generic value type; the underlying value
 // follows the consumer's allocation behaviour.
+//
+//dokimi:sentinel
 package version

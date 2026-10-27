@@ -168,4 +168,6 @@
 // math/bits, slices, sync, sync/atomic and time from the standard library,
 // and go.thesmos.sh/core/cache, go.thesmos.sh/core/clock and
 // go.thesmos.sh/core/errs from this module.
+//
+//dokimi:sentinel
 package telemetry

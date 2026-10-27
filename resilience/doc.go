@@ -45,4 +45,6 @@
 // Over HTTP a 5xx status arrives in a successful round trip, and over an
 // RPC protocol the status may arrive in a trailer after the body. [Call]
 // covers a dependency whose failure is an error.
+//
+//dokimi:sentinel
 package resilience

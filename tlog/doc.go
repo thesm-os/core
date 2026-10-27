@@ -131,4 +131,6 @@
 // [TileVerifier] allocates the buffer of each tile that it keeps once. A
 // [Prover] allocates nothing for a proof whose node tiles its cache
 // contains, and three objects for each tile that a proof reads.
+//
+//dokimi:sentinel
 package tlog

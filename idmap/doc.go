@@ -95,4 +95,6 @@
 // go.thesmos.sh/core/id/ksuid, go.thesmos.sh/core/id/ulid,
 // go.thesmos.sh/core/id/uuidv4 and go.thesmos.sh/core/id/uuidv7 from this
 // module.
+//
+//dokimi:sentinel
 package idmap

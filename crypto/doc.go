@@ -130,4 +130,6 @@
 // errors, while [encoding/binary], [crypto/cipher], [sync.Mutex] and the
 // slice and string operators panic on invariants that the programmer
 // supplies.
+//
+//dokimi:sentinel
 package crypto

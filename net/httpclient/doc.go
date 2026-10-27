@@ -144,4 +144,6 @@
 // go.thesmos.sh/core/errs, go.thesmos.sh/core/net/internal/semconv,
 // go.thesmos.sh/core/resilience and go.thesmos.sh/core/telemetry from this
 // module.
+//
+//dokimi:sentinel
 package httpclient

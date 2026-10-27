@@ -71,4 +71,6 @@
 // are zero-alloc atomic operations. [EventCount.Current] and
 // [EventCount.Wait] do not allocate. [EventCount.Advance] allocates one
 // channel when a waiter took the current one.
+//
+//dokimi:sentinel
 package epoch

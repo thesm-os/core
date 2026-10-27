@@ -103,4 +103,6 @@
 //
 // [Fixed64] has no mutable state. Every operation is a pure function
 // of its receiver and arguments and is safe for concurrent use.
+//
+//dokimi:sentinel
 package fixed

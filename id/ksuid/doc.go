@@ -51,4 +51,6 @@
 // struct that embeds KSUID encodes as the KSUID in kanon, JSON and gob. A map
 // keyed by such a struct hashes and compares 20 bytes. The zero KSUID means
 // no KSUID. Its binary form is no bytes, and its text is 27 zeros.
+//
+//dokimi:sentinel
 package ksuid

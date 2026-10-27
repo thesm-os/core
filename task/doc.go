@@ -94,4 +94,6 @@
 // with the number of elements. [Group.Go] starts one goroutine per task
 // and allocates the closure that starts it, and [Serve] starts one
 // goroutine per function. [Every] allocates one timer per wait.
+//
+//dokimi:sentinel
 package task

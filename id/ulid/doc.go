@@ -53,4 +53,6 @@
 // embeds ULID encodes as the ULID in kanon, JSON and gob. A map keyed by such
 // a struct hashes and compares 16 bytes. The zero ULID means no ULID. Its
 // binary form is no bytes, and its text is 26 zeros.
+//
+//dokimi:sentinel
 package ulid

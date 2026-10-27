@@ -3,8 +3,6 @@
 
 package resilience
 
-//go:generate testkit sentinel -o errors.gen_test.go
-
 import (
 	"errors"
 

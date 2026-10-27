@@ -188,4 +188,6 @@
 // sizes: four allocations for the example policy of tlog-policy.
 // [Policy.Reset] and the methods of [Rules] allocate nothing when they
 // reuse the memory of a build of the same size.
+//
+//dokimi:sentinel
 package sign

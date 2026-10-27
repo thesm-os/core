@@ -162,4 +162,6 @@
 // go.thesmos.sh/core/errs, go.thesmos.sh/core/note and
 // go.thesmos.sh/core/pool from this module, and, in the code that kanon
 // generates, io, go.thesmos.sh/kanon and go.thesmos.sh/kanon/wire.
+//
+//dokimi:sentinel
 package checkpoint
