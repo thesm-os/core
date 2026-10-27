@@ -8,7 +8,7 @@ import (
 	"encoding/asn1"
 	"testing"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
 )
 
 func TestOIDs(t *testing.T) {
@@ -51,10 +51,10 @@ func TestOIDs(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			oid, err := x509.ParseOID(tt.dotted)
-			testkit.NoError(t, err, "the dotted form must parse")
+			assert.NoError(t, err, "the dotted form must parse")
 			want, err := oid.AppendBinary(nil)
-			testkit.NoError(t, err, "the OID must encode")
-			testkit.Equal(t, tt.got, want, "the content must be the DER of the dotted form")
+			assert.NoError(t, err, "the OID must encode")
+			assert.Equal(t, tt.got, want, "the content must be the DER of the dotted form")
 		})
 	}
 
@@ -78,7 +78,7 @@ func TestOIDs(t *testing.T) {
 	for _, tt := range usages {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			testkit.True(t, tt.got.Equal(tt.want), "the identifier must be the one of RFC 5280")
+			assert.True(t, tt.got.Equal(tt.want), "the identifier must be the one of RFC 5280")
 		})
 	}
 }

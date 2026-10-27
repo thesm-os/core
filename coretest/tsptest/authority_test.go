@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
 
 	"go.thesmos.sh/core/clock/fake"
 	"go.thesmos.sh/core/coretest/tsptest"
@@ -65,8 +65,8 @@ func TestAuthority(t *testing.T) {
 				tt.edit(&cfg)
 
 				_, err := tsptest.New(cfg)
-				testkit.ErrorIs(t, err, tsptest.ErrConfig, "New must refuse the configuration")
-				testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrConfig must classify as Invalid")
+				assert.ErrorIs(t, err, tsptest.ErrConfig, "New must refuse the configuration")
+				assert.Equal(t, errs.Classify(err), errs.Invalid, "ErrConfig must classify as Invalid")
 			})
 		}
 
@@ -80,7 +80,7 @@ func TestAuthority(t *testing.T) {
 				Roots: a.Roots(), Intermediates: intermediates, CurrentTime: origin,
 				KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageTimeStamping},
 			})
-			testkit.NoError(t, err, "the authority's certificate must chain to the root for time stamping")
+			assert.NoError(t, err, "the authority's certificate must chain to the root for time stamping")
 		})
 
 		t.Run("returns a certificate valid from an hour before the clock's time", func(t *testing.T) {
@@ -89,8 +89,8 @@ func TestAuthority(t *testing.T) {
 			cfg.Validity = 2 * time.Hour
 			a := authority(t, cfg)
 
-			testkit.True(t, a.Leaf().NotBefore.Equal(origin.Add(-time.Hour)), "the validity must start an hour before")
-			testkit.True(t, a.Leaf().NotAfter.Equal(origin.Add(2*time.Hour)), "the validity must last the Config's")
+			assert.True(t, a.Leaf().NotBefore.Equal(origin.Add(-time.Hour)), "the validity must start an hour before")
+			assert.True(t, a.Leaf().NotAfter.Equal(origin.Add(2*time.Hour)), "the validity must last the Config's")
 		})
 	})
 
@@ -102,8 +102,8 @@ func TestAuthority(t *testing.T) {
 			a := authority(t, config())
 
 			info, err := verifier(t, a).Verify(stamp(t, a), tsp.SHA256, imprint)
-			testkit.NoError(t, err, "the token must verify")
-			testkit.True(t, info.Time.Time.Equal(origin), "genTime must be the clock's time")
+			assert.NoError(t, err, "the token must verify")
+			assert.True(t, info.Time.Time.Equal(origin), "genTime must be the clock's time")
 		})
 
 		t.Run("returns tokens of consecutive serial numbers", func(t *testing.T) {
@@ -113,8 +113,8 @@ func TestAuthority(t *testing.T) {
 
 			for _, want := range []byte{1, 2} {
 				info, err := v.Verify(stamp(t, a), tsp.SHA256, imprint)
-				testkit.NoError(t, err, "the token must verify")
-				testkit.Equal(t, info.Serial, []byte{want}, "the serial number must count the tokens")
+				assert.NoError(t, err, "the token must verify")
+				assert.Equal(t, info.Serial, []byte{want}, "the serial number must count the tokens")
 			}
 		})
 
@@ -123,12 +123,12 @@ func TestAuthority(t *testing.T) {
 			a := authority(t, config())
 
 			resp, err := a.Respond(rawRequest(false, false))
-			testkit.NoError(t, err, "the authority must respond")
+			assert.NoError(t, err, "the authority must respond")
 			tok, err := tsp.ParseResponse(resp, tsp.SHA256, imprint, nonce, x509.OID{})
-			testkit.NoError(t, err, "the response must grant a token")
+			assert.NoError(t, err, "the response must grant a token")
 
 			_, err = verifier(t, a).Verify(tok, tsp.SHA256, imprint)
-			testkit.ErrorIs(t, err, tsp.ErrCertificate, "a token without certificates must not verify")
+			assert.ErrorIs(t, err, tsp.ErrCertificate, "a token without certificates must not verify")
 		})
 
 		rejections := []struct {
@@ -141,7 +141,7 @@ func TestAuthority(t *testing.T) {
 				req: func(tb testing.TB) []byte {
 					tb.Helper()
 					req, err := tsp.AppendRequest(nil, tsp.SHA256, imprint, nonce, otherID)
-					testkit.NoError(tb, err, "AppendRequest must encode the request")
+					assert.NoError(tb, err, "AppendRequest must encode the request")
 
 					return req
 				},
@@ -157,20 +157,20 @@ func TestAuthority(t *testing.T) {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
 				resp, err := authority(t, config()).Respond(tt.req(t))
-				testkit.NoError(t, err, "the authority must respond")
+				assert.NoError(t, err, "the authority must respond")
 
 				_, err = tsp.ParseResponse(resp, tsp.SHA256, imprint, nonce, x509.OID{})
-				se := testkit.ErrorAs[*tsp.StatusError](t, err, "the response must grant no token")
-				testkit.Equal(t, se.Status, tsp.StatusRejection, "the status must be rejection")
-				testkit.Equal(t, se.FailInfo, uint32(1)<<tt.bit, "the failure bit must name the reason")
+				se := assert.ErrorAs[*tsp.StatusError](t, err, "the response must grant no token")
+				assert.Equal(t, se.Status, tsp.StatusRejection, "the status must be rejection")
+				assert.Equal(t, se.FailInfo, uint32(1)<<tt.bit, "the failure bit must name the reason")
 			})
 		}
 
 		t.Run("returns ErrRequest for a request that is not DER", func(t *testing.T) {
 			t.Parallel()
 			_, err := authority(t, config()).Respond([]byte{0x30, 0x81, 0x01, 0x00})
-			testkit.ErrorIs(t, err, tsptest.ErrRequest, "Respond must refuse the request")
-			testkit.Equal(t, errs.Classify(err), errs.Invalid, "ErrRequest must classify as Invalid")
+			assert.ErrorIs(t, err, tsptest.ErrRequest, "Respond must refuse the request")
+			assert.Equal(t, errs.Classify(err), errs.Invalid, "ErrRequest must classify as Invalid")
 		})
 	})
 
@@ -181,12 +181,12 @@ func TestAuthority(t *testing.T) {
 			t.Parallel()
 			a := authority(t, config())
 			tst, err := a.TSTInfo(request(t))
-			testkit.NoError(t, err, "TSTInfo must accept the request")
+			assert.NoError(t, err, "TSTInfo must accept the request")
 			tok, err := a.Token(tsptest.Spec{TSTInfo: tst})
-			testkit.NoError(t, err, "Token must build the token")
+			assert.NoError(t, err, "Token must build the token")
 
 			_, err = verifier(t, a).Verify(tok, tsp.SHA256, imprint)
-			testkit.NoError(t, err, "the token must verify")
+			assert.NoError(t, err, "the token must verify")
 		})
 
 		t.Run("returns ErrRequest for a request without a messageImprint", func(t *testing.T) {
@@ -197,7 +197,7 @@ func TestAuthority(t *testing.T) {
 			b.Close(seq)
 
 			_, err := authority(t, config()).TSTInfo(b.Bytes())
-			testkit.ErrorIs(t, err, tsptest.ErrRequest, "TSTInfo must refuse the request")
+			assert.ErrorIs(t, err, tsptest.ErrRequest, "TSTInfo must refuse the request")
 		})
 	})
 }
@@ -216,7 +216,7 @@ func authority(tb testing.TB, cfg tsptest.Config) *tsptest.Authority {
 	tb.Helper()
 
 	a, err := tsptest.New(cfg)
-	testkit.NoError(tb, err, "New must accept the configuration")
+	assert.NoError(tb, err, "New must accept the configuration")
 
 	return a
 }
@@ -229,7 +229,7 @@ func verifier(tb testing.TB, a *tsptest.Authority) *tsp.Verifier {
 	v, err := tsp.NewVerifier(tsp.VerifierConfig{
 		Roots: a.Roots(), Policies: []tsp.Policy{{ID: policyID, Accuracy: time.Second}},
 	})
-	testkit.NoError(tb, err, "NewVerifier must accept the configuration")
+	assert.NoError(tb, err, "NewVerifier must accept the configuration")
 
 	return v
 }
@@ -240,7 +240,7 @@ func request(tb testing.TB) []byte {
 	tb.Helper()
 
 	req, err := tsp.AppendRequest(nil, tsp.SHA256, imprint, nonce, x509.OID{})
-	testkit.NoError(tb, err, "AppendRequest must encode the request")
+	assert.NoError(tb, err, "AppendRequest must encode the request")
 
 	return req
 }
@@ -251,10 +251,10 @@ func stamp(tb testing.TB, a *tsptest.Authority) []byte {
 	tb.Helper()
 
 	resp, err := a.Respond(request(tb))
-	testkit.NoError(tb, err, "the authority must respond")
+	assert.NoError(tb, err, "the authority must respond")
 
 	tok, err := tsp.ParseResponse(resp, tsp.SHA256, imprint, nonce, x509.OID{})
-	testkit.NoError(tb, err, "the response must grant a token")
+	assert.NoError(tb, err, "the response must grant a token")
 
 	return tok
 }

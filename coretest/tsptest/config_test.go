@@ -6,7 +6,7 @@ package tsptest_test
 import (
 	"testing"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
 
 	"go.thesmos.sh/core/coretest/tsptest"
 )
@@ -29,7 +29,7 @@ func TestESS(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-				testkit.Equal(t, tt.give.Valid(), tt.want, "Valid must report whether the ESS is a constant")
+				assert.Equal(t, tt.give.Valid(), tt.want, "Valid must report whether the ESS is a constant")
 			})
 		}
 	})
@@ -53,7 +53,7 @@ func TestUsage(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-				testkit.Equal(t, tt.give.Valid(), tt.want, "Valid must report whether the Usage is a constant")
+				assert.Equal(t, tt.give.Valid(), tt.want, "Valid must report whether the Usage is a constant")
 			})
 		}
 	})

@@ -10,7 +10,7 @@ package epochtest
 import (
 	"testing"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
 
 	"go.thesmos.sh/core/epoch"
 	"go.thesmos.sh/core/errs"
@@ -22,7 +22,7 @@ import (
 // Open constructs a handle bound to fence epoch e against this
 // scope. Supersede advances the scope's authority out-of-band, as an
 // election would. Snapshot returns a fingerprint of the scope's
-// observable state, compared with testkit.Equal to assert rejection
+// observable state, compared with assert.Equal to assert rejection
 // without mutation — return whatever value captures every
 // write-visible effect.
 type FencedScope[H any] struct {
@@ -66,8 +66,8 @@ func AssertFencedWriter[H any](t *testing.T, sys FencedSystem[H]) {
 
 			t.Run("admitted at current epoch", func(t *testing.T) {
 				h, err := scope.Open(2)
-				testkit.NoError(t, err, "Open at the current epoch must succeed")
-				testkit.NoError(t, write(h), "a write at the current epoch must be admitted")
+				assert.NoError(t, err, "Open at the current epoch must succeed")
+				assert.NoError(t, write(h), "a write at the current epoch must be admitted")
 			})
 
 			t.Run("admitted at equal epoch after re-open", func(t *testing.T) {
@@ -75,39 +75,36 @@ func AssertFencedWriter[H any](t *testing.T, sys FencedSystem[H]) {
 				// the same authority, and one tenure performs many
 				// writes.
 				h, err := scope.Open(2)
-				testkit.NoError(t, err, "re-Open at the same epoch must succeed")
-				testkit.NoError(t, write(h), "a write at an equal epoch must be admitted")
+				assert.NoError(t, err, "re-Open at the same epoch must succeed")
+				assert.NoError(t, write(h), "a write at an equal epoch must be admitted")
 			})
 
 			t.Run("rejected without mutation once superseded", func(t *testing.T) {
 				stale, err := scope.Open(2)
-				testkit.NoError(t, err, "Open must succeed before supersession")
+				assert.NoError(t, err, "Open must succeed before supersession")
 
 				scope.Supersede(3)
 
-				before := scope.Snapshot()
-
-				werr := write(stale)
-
-				testkit.ErrorIs(t, werr, epoch.ErrFenced,
-					"a write through a superseded handle must return ErrFenced")
-				testkit.Equal(t, errs.Classify(werr), errs.Conflict,
-					"a fenced rejection must classify as Conflict")
-				testkit.Equal(t, scope.Snapshot(), before,
+				var werr error
+				assert.Pure(t, scope.Snapshot, func() { werr = write(stale) },
 					"a rejected write must mutate nothing")
+				assert.ErrorIs(t, werr, epoch.ErrFenced,
+					"a write through a superseded handle must return ErrFenced")
+				assert.Equal(t, errs.Classify(werr), errs.Conflict,
+					"a fenced rejection must classify as Conflict")
 			})
 
 			t.Run("fresh handle at the new epoch succeeds", func(t *testing.T) {
 				h, err := scope.Open(3)
-				testkit.NoError(t, err, "Open at the superseding epoch must succeed")
-				testkit.NoError(t, write(h),
+				assert.NoError(t, err, "Open at the superseding epoch must succeed")
+				assert.NoError(t, write(h),
 					"the new authority's writes must be admitted")
 			})
 
 			t.Run("zero-epoch handle bypasses fencing", func(t *testing.T) {
 				h, err := scope.Open(epoch.Zero)
-				testkit.NoError(t, err, "Open at Zero must succeed")
-				testkit.NoError(t, write(h),
+				assert.NoError(t, err, "Open at Zero must succeed")
+				assert.NoError(t, write(h),
 					"an unfenced write must be admitted regardless of the watermark")
 
 				// Not advancing is the other half of the bypass law:
@@ -115,13 +112,13 @@ func AssertFencedWriter[H any](t *testing.T, sys FencedSystem[H]) {
 				// an unfenced write, and the epoch below it must
 				// still be fenced.
 				cur, err := scope.Open(3)
-				testkit.NoError(t, err, "Open at the current epoch must succeed")
-				testkit.NoError(t, write(cur),
+				assert.NoError(t, err, "Open at the current epoch must succeed")
+				assert.NoError(t, write(cur),
 					"an unfenced write must not advance the watermark")
 
 				stale, err := scope.Open(2)
-				testkit.NoError(t, err, "Open below the watermark must construct")
-				testkit.ErrorIs(t, write(stale), epoch.ErrFenced,
+				assert.NoError(t, err, "Open below the watermark must construct")
+				assert.ErrorIs(t, write(stale), epoch.ErrFenced,
 					"an unfenced write must not reset the watermark either")
 			})
 		})
