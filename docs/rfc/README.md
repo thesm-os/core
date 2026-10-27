@@ -147,6 +147,7 @@ Start from [`docs/templates/RFC.md`](../templates/RFC.md).
 | [0077](0077-partitioned-index-and-filters.md) | Partitioned Index and Filters of a Table | Accepted |
 | [0078](0078-range-tombstones-and-prefix-filters.md) | Range Tombstones and Prefix Filters of a Table | Accepted |
 | [0079](0079-pinned-partitions-in-a-block-cache.md) | Pinned Partitions in a Block Cache | Accepted |
+| [0080](0080-test-generation-with-dokimi.md) | Test Generation with dokimi | Draft |
 
 ## Canonical first RFC
 
