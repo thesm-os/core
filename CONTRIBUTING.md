@@ -12,8 +12,8 @@ three constraints:
    core itself, `golang.org/x/sync` and the runtime packages of kanon.
    Test code can also import a closed list of test libraries. The
    depguard rules of `.golangci.yml` list both sets, and a change to
-   either set needs an ADR. See [ADR-0015][adr-0015] and
-   [ADR-0035][adr-0035].
+   either set needs an ADR. See [ADR-0015][adr-0015],
+   [ADR-0035][adr-0035] and [ADR-0075][adr-0075].
 2. **Exported API.** A change that removes or changes an exported
    identifier is a breaking change, and the changelog marks it as one.
 3. **License.** A pull request asserts that its author can license the
@@ -101,7 +101,7 @@ request from the changesets on `main`, and its merge releases core.
 ## Tests
 
 The [testing guide](docs/guides/testing.md) states how core's tests are
-written, named and measured. The [testkit guide](docs/guides/testkit.md)
+written, named and measured. The [dokimi guide](docs/guides/dokimi.md)
 describes the generated conformance suites in `coretest`.
 
 | Command | Runs |
@@ -113,10 +113,10 @@ describes the generated conformance suites in `coretest`.
 | `make mutate-go` | Mutation testing with dokimi-mutate-go, which runs for a long time |
 | `make lint` | golangci-lint with its format check, and ergon-go-vet, which checks the prefixes of error texts and the dates of skipped tests |
 | `make audit` | govulncheck |
-| `make generate` | The generators of kanon |
+| `make generate` | The generators of dokimi and kanon |
 | `make check-numbers` | The check that a change keeps every field number that `origin/main` records |
 | `make end-to-end` | The end-to-end tests behind the build tag `e2e` |
-| `make check` | The gate: lint, the unit tests, the race detector, the generated code of kanon and govulncheck |
+| `make check` | The gate: lint, the unit tests, the race detector, the generated code of dokimi and kanon, and govulncheck |
 | `ergon license fix` | The license header of every file |
 
 ## Commit messages
@@ -126,7 +126,7 @@ Commit messages follow [Conventional Commits][cc]:
 ```
 feat(crypto): seal and open a message in independent chunks
 fix(btree): replace the separator of a removed key with the next key
-test(rand): replace testkit with go.dokimi.dev/assert
+test(cas): run the suite of cas.Store on the memory store
 docs: accept checkpoint witnesses
 ```
 
@@ -153,10 +153,10 @@ GitHub's [guide to signing commits][sign] covers GPG and sigstore.
 - Each pull request needs an approving review from a
   [code owner](.github/CODEOWNERS) of the paths that it changes.
 - CI must pass: lint, the unit tests and the race tests on Linux, macOS
-  and Windows, the vulnerability scan, the generated code of kanon, the
-  field numbers that the base branch records, the commit messages, the
-  changesets, the license headers, the Markdown files and the managed
-  files.
+  and Windows, the vulnerability scan, the generated code of dokimi and
+  kanon, the field numbers that the base branch records, the commit
+  messages, the changesets, the license headers, the Markdown files and
+  the managed files.
 - A change to an exported type or a method signature also needs the
   approval of a core maintainer.
 
@@ -167,5 +167,6 @@ GitHub's [guide to signing commits][sign] covers GPG and sigstore.
 [adr-0015]: docs/adr/0015-dependency-free-x-modules-in-production.md
 [adr-0033]: docs/adr/0033-every-sentinel-has-a-class.md
 [adr-0035]: docs/adr/0035-core-imports-the-kanon-runtime.md
+[adr-0075]: docs/adr/0075-test-code-imports-the-runtime-of-dokimi.md
 [cc]: https://www.conventionalcommits.org/
 [sign]: https://docs.github.com/en/authentication/managing-commit-signature-verification/about-commit-signature-verification

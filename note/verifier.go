@@ -58,8 +58,6 @@ type Signer interface {
 	Verifier
 
 	// Sign returns the value of a signature line over text.
-	//
-	//testkit:nondeterministic
 	Sign(text []byte) ([]byte, error)
 
 	// AppendSign appends the value of a signature line over text to dst
@@ -67,7 +65,5 @@ type Signer interface {
 	// [sign.AppendSigner]: it reads text and writes dst only until it
 	// returns, and it returns dst unchanged with an error, which wraps
 	// context.Cause(ctx) when ctx ends first.
-	//
-	//testkit:nondeterministic
 	AppendSign(ctx context.Context, dst, text []byte) ([]byte, error)
 }

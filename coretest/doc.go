@@ -10,7 +10,11 @@
 // for rand, telemetrytest for telemetry, tsptest for crypto/tsp and
 // versiontest for version. Together they contain the conformance suites
 // that check an implementation against the contract of its interface,
-// the test doubles, benchmarks and models that testkit generates in files
-// with .gen in their names, and hand-written fixtures and assertion
-// bundles.
+// the test doubles of the interfaces, and fixtures.
+//
+// dokimi generates the doubles and the suites from the directives in the
+// doc comments of the interfaces. Each check of a suite is a hand-written
+// function of its kit, with a planted defect that the check must fail on.
+// The fencing suite of epochtest, the authority of tsptest and the
+// ordering traps of versiontest are hand-written.
 package coretest

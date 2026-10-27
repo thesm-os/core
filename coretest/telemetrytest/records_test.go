@@ -31,12 +31,12 @@ func TestRecords(t *testing.T) {
 		t.Run("returns a handler that log/slog accepts", func(t *testing.T) {
 			t.Parallel()
 			handlers := map[string]*telemetrytest.Records{}
-			slogtest.Run(t, func(t *testing.T) slog.Handler {
+			slogtest.Run(t, func(t *testing.T) slog.Handler { //nolint:thelper // a callback of slogtest.Run
 				h := telemetrytest.NewRecords(slog.LevelDebug)
 				handlers[t.Name()] = h
 
 				return h
-			}, func(t *testing.T) map[string]any {
+			}, func(t *testing.T) map[string]any { //nolint:thelper // a callback of slogtest.Run
 				records := handlers[t.Name()].All()
 				assert.Length(t, records, 1, "the case must log one record")
 

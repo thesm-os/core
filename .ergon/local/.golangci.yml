@@ -7,8 +7,8 @@ linters:
   settings:
     # Production code imports the stdlib, this module, golang.org/x modules without requirements
     # (ADR-0015) and the runtime packages of kanon (ADR-0035), each listed by name. Test code may
-    # also import kanon's conformance suite and the assertions it uses. Any other import fails lint.
-    # Adding a module to either list takes a new ADR.
+    # also import kanon, go.dokimi.dev/assert and conform, stub and fault, the runtime of dokimi
+    # (ADR-0075). Any other import fails lint. Adding a module to either list takes a new ADR.
     depguard:
       rules:
         main:
@@ -24,8 +24,8 @@ linters:
             - go.thesmos.sh/kanon$
             - go.thesmos.sh/kanon/wire$
         test:
-          # Files in coretest/ are non-_test.go but they are test infrastructure (hand-rolled spec,
-          # model and stub companions). Treat them as tests for import-allow purposes.
+          # The files of coretest/ are no _test.go files, but they are test infrastructure: the
+          # checks, the planted defects and the doubles of the kits. The rule treats them as tests.
           list-mode: strict
           files:
             - "$test"
@@ -34,9 +34,6 @@ linters:
             - $gostd
             - go.thesmos.sh/core
             - golang.org/x/sync
-            - go.thesmos.sh/testkit
-            - go.thesmos.sh/testkit/model
-            - pgregory.net/rapid
             - go.thesmos.sh/kanon
             - go.dokimi.dev/assert
             - go.dokimi.dev/conform
@@ -121,23 +118,12 @@ linters:
         linters: [forbidigo]
         text: "panic"
 
-      # The XxxCustom callbacks of a testkit suite take a *testing.T as their first argument, but
-      # they are no test helpers: each closure runs as the body of a t.Run subtest that
-      # AssertXxxContract sets up. t.Helper() would attribute a failure to the registration line
-      # instead of the failing line inside the closure.
-      - path: 'coretest/[a-z]+test/[a-z_]+\.(go)'
-        linters: [thelper]
-
-      # The helpers of cryptotest panic on an unsupported digest size, a programmer error: the
-      # caller passed a Sum function with the wrong return shape. The Failure semantics of the
-      # package permit a panic for a misuse by the caller.
-      - path: 'coretest/cryptotest/.*\.go'
-        linters: [forbidigo]
-        text: "panic"
-
-      # A planted defect of a suite of coretest panics in a call whose law states that the call
-      # does not panic, such as Add of a telemetry.Counter. The falsification of the check of the
-      # law fails the check on that panic.
+      # The kits of coretest panic in three places. A planted defect panics in a call whose law
+      # states that the call does not panic, such as Add of a telemetry.Counter, and the
+      # falsification of the check fails the check on that panic. The sound Hasher of cryptotest
+      # panics where the contract of crypto.Hasher states a panic, such as for a role of the other
+      # half. The helpers of cryptotest panic on a misuse by the caller, such as a Sum function that
+      # returns a digest of an unsupported size.
       - path: 'coretest/[a-z]+test/[a-z_]+\.go'
         linters: [forbidigo]
         text: "panic"
@@ -155,9 +141,9 @@ linters:
         linters: [gocritic]
         text: "unlambda"
 
-      # The Spec, stub and fixture structs of cryptotest exist once per test, so their pointer
-      # bytes do not matter.
-      - path: 'coretest/cryptotest/[a-z]+_(model|stub|fixtures)\.go'
+      # The stub and fixture structs of cryptotest exist once per test, so their pointer bytes do
+      # not matter.
+      - path: 'coretest/cryptotest/[a-z]+_(stub|fixtures)\.go'
         linters: [govet]
         text: "fieldalignment"
 
