@@ -45,8 +45,7 @@ Write an RFC when:
 - The proposal changes the contract shape (new interface, breaking
   method signature, new package).
 - Multiple plausible approaches deserve side-by-side comparison.
-- The change has cross-consumer implications (testkit + thesmos +
-  space all have to agree).
+- The change affects the consumers of core, so they all have to agree.
 - The motivation is load-bearing and will outlive the implementation
   (future contributors need to understand the WHY).
 
@@ -147,7 +146,7 @@ Start from [`docs/templates/RFC.md`](../templates/RFC.md).
 | [0077](0077-partitioned-index-and-filters.md) | Partitioned Index and Filters of a Table | Accepted |
 | [0078](0078-range-tombstones-and-prefix-filters.md) | Range Tombstones and Prefix Filters of a Table | Accepted |
 | [0079](0079-pinned-partitions-in-a-block-cache.md) | Pinned Partitions in a Block Cache | Accepted |
-| [0080](0080-test-generation-with-dokimi.md) | Test Generation with dokimi | Draft |
+| [0080](0080-test-generation-with-dokimi.md) | Test Generation with dokimi | Accepted |
 
 ## Canonical first RFC
 

@@ -2,13 +2,13 @@
 rfc: 0080
 title: Test Generation with dokimi
 author: Roy Klopper <roy.klopper@stealthscale.io>
-status: Draft
+status: Accepted
 created: 2026-10-27
 updated: 2026-10-27
 discussion: none
 supersedes: none
 superseded-by: none
-produces-adr: tbd
+produces-adr: ADR-0075
 ---
 
 <!--
@@ -110,17 +110,22 @@ generator, so `clock/clock.go` gives one `clock_stub.go` with the doubles of
 
 The directives are in the doc comments of the declarations, in the production
 packages. The 24 `//testkit:` directives of methods are deleted: 15
-`nondeterministic`, 7 `mutator` and 2 `sample`. A type whose drawn values an
-implementation refuses, such as the roles of the tagged hashes that the `sample`
-directives of RFC-0029 cover, gets its values through `//dokimi:sample` on the
-type or through `conform.Using`.
+`nondeterministic`, 7 `mutator` and 2 `sample`. A parameter whose drawn values an
+implementation refuses takes `//dokimi:sample` on the parameter, and every call
+that the suite generates for its method takes the sample. The roles of
+`HashTagged` and `CombineTagged`, which the `sample` directives of RFC-0029 cover,
+take 0x01 and 0x81. A type that the suite cannot build for one implementation,
+such as a `crypto.Digest` of the width of one hash, gets its values through
+`conform.Using` in the application.
 
 ### Checks
 
 Each entry of a bundle becomes a function of its kit whose doc comment opens with
 "<Name> checks that". Its directive is `//dokimi:check X.Method
-defect=<defect>`. The defect is a function of the kit. It returns the double of
-the interface with the calls that break the law:
+defect=<defect>`. Two suites of core declare an interface named `Store`, so the
+checks of `blob.Store` and `cas.Store` name the package too, as in
+`//dokimi:check blob.Store.Put defect=<defect>`. The defect is a function of the
+kit. It returns the double of the interface with the calls that break the law:
 
 ```go
 // ReturnsNonZero checks that Generate does not return the Zero ID.
@@ -144,9 +149,11 @@ func returnsZero(h *GeneratorHandle) id.Generator {
   of the implementation. The ID of a hash and the width of a ULID are such facts.
   A suite contains the laws that every implementation keeps.
 - An implementation that does not keep a law excuses its check.
-  `id/constant` excuses `Generator.Generate/returns-distinct-i-ds`, because a
-  constant Generator returns one ID. The identity spells the plural `IDs` as
-  `i-ds`. dokimasia/eidos#92 asks that the word splitter keep `IDs` whole.
+  `id/constant` excuses `Generator.Generate/returns-distinct-ids`, because a
+  constant Generator returns one ID.
+- A check that calls `Handle.Restart`, `Handle.Crash`, `Handle.Reference` or
+  `Handle.Second` gives its planted defect the same door: `restart=`, `crash=`,
+  `reference=` or `second=` beside `defect`, each a function of the kit.
 
 ### Models
 
@@ -157,25 +164,30 @@ MACs also pass the hash of the standard library as a reference.
 
 - The models of `Clock`, `Generator` and `Rand` pass no reference. Every method of
   `Generator` and `Rand` is nondeterministic, and every method of `Clock` apart
-  from `NewTimer`. The fuzz targets and the budgets of the generated suites make
-  random calls of each callable, and the suite of `Timer` checks the timers of
-  `NewTimer`. These models are deleted.
+  from `NewTimer`. The budgets of the subjects make random calls of each callable
+  that a model called, and the suite of `Timer` checks the timers of `NewTimer`.
+  These models are deleted.
 - The models of `Hasher` and `MAC` become property checks of their suites. A
-  check compares each drawn call of the subject with the same call of
-  `Handle.Reference`, and the application of each hash passes the hash of the
-  standard library through `conform.Reference`. The law of determinism becomes a
-  check that calls `Hash`, `HashTagged`, `CombineTagged` or `Sign` twice with one
-  drawn input. The law of a MAC becomes a check that `Verify` accepts the result
-  of `Sign`.
+  check compares `Hash` or `Sign` of drawn data with the same call of
+  `Handle.Reference`, and the application of each hash or MAC passes the hash or
+  the HMAC of the standard library through `conform.Reference`. Property checks
+  of the tagged layouts compare `HashTagged` and `CombineTagged` of drawn roles
+  and data with `Hash` of the subject. The law of determinism becomes a property
+  check that passes `Hash`, `HashTagged`, `CombineTagged` or `Sign` and one drawn
+  input to `assert.Deterministic`. The law of a MAC becomes a check that `Verify`
+  accepts the result of `Sign`.
 
 ### Budgets
 
 The bench plug-ins of core set 79 allocation ceilings in 21 tests, each of 0:
 `PureAllocsWithin`, `PredicateAllocsWithin`, `MutatorAllocsWithin` and the
 `ReleaseAllocsWithin` of `telemetrytest`. Each becomes `//dokimi:budget X.Method
-allocs=0` on the subject whose test passed it, because an implementation without
-a plug-in, such as `rand/crypto`, allocates. No budget states a latency, because
-a latency ceiling fails on a slower machine.
+allocs=0` on the subject whose test passed it. A budget on an interface would also
+apply to an implementation without a plug-in, such as the counter of
+`telemetrytest.Recorder`. Its Add appends to a series and allocates. A subject of
+an unexported type, such as an instrument of `telemetry/noop`, takes no `subject`
+directive, so its ceilings stay in its `Test<Unit>Allocs`. No budget states a
+latency, because a latency ceiling fails on a slower machine.
 
 ### Sentinels
 
@@ -191,9 +203,9 @@ keeps the class of each sentinel.
 
 | Kit | Design |
 |---|---|
-| `blobtest` | A suite of `blob.Store` and a suite of `blob.RangeReader`. `WithReopen` becomes `conform.Restartable`. `WithCrash` becomes the crash of a subject during a call, which dokimasia/dokimi-go#15 requests. A store that reads ranges takes a second `subject` directive in place of `WithRangeReader` |
-| `castest` | A suite of `cas.Store`. `WithReopen` and `WithCrash` move as in `blobtest`. `WithZeroAllocGet` becomes `//dokimi:budget Store.Get allocs=0` on the subject |
-| `cryptotest` | The suites of `AEAD` and `Keeper` move from hand-written functions to checks. The other interfaces move as in the components table |
+| `blobtest` | A suite of `blob.Store` and a suite of `blob.RangeReader`. `WithReopen` becomes `conform.Restartable`, and a check reopens its subject with `Handle.Restart`. `WithCrash` becomes `conform.Crashable`, and a check crashes its subject during a call with `Handle.Crash`. A store that reads ranges takes a second `subject` directive in place of `WithRangeReader` |
+| `castest` | A suite of `cas.Store`. `WithReopen` and `WithCrash` move as in `blobtest`. `WithZeroAllocGet` is deleted. A budget measures the generated calls of `Get`, which pass the zero digest to an empty store, so `TestStoreAllocs` of `cas/memory` keeps the ceiling of a Get of a stored value |
+| `cryptotest` | The suites of `AEAD` and `Keeper` move from hand-written functions to checks. The suites of the signature streams move to `StreamingSigner` and `StreamingVerifier`, whose checks call `NewSignStream` and `NewVerifyStream`. `XOFStream`, `SignStream`, `VerifyStream`, `Destroyer` and `KeyGenerator` keep doubles alone. The assertions of the optional capabilities of a Keeper and a Signer become functions on assert, such as `AssertDestroyerContract` |
 | `telemetrytest` | The recorder of the kit is the subject of the suites of `Reporter`, `Tracer`, `Span`, `Counter`, `Gauge` and `Histogram`. The tracer and the span are unexported types, so the test of the recorder applies each suite through a factory that returns the interface. The checks of the release of an instrument (RFC-0046) move from `release.go` to the suites of the instruments |
 | `epochtest` | `AssertFencedWriter` checks a generic `FencedSystem[H]` and no interface. Its assertions move to assert, and its exported API does not change |
 | `tsptest` | Its tests move to assert, and its sentinels to `//dokimi:sentinel` |
@@ -204,61 +216,101 @@ object absent or whole.
 
 ### Applications with options
 
-The directive `subject` takes `new` and `cases`, and its test passes only the
-excuses. A subject whose checks need `conform.Reference` or `conform.Restartable`
-needs a parameter that passes the options of its application.
-dokimasia/dokimi#31 requests it. The hashes, the MACs and the stores move after
-the release of that parameter, so no test of an implementation is written twice.
+The parameter `options` of `subject` names a function of the test package of the
+subject. The function returns the options of the application, and the generated
+conformance test, each benchmark and each fuzz target pass them to the suite:
+
+```go
+//dokimi:subject cas.Store new=newStore options=storeOptions
+type Store struct{ /* unexported */ }
+```
+
+```go
+func storeOptions() []conform.Option[cas.Store] {
+	return []conform.Option[cas.Store]{
+		conform.Restartable(func(_ *conform.Handle[cas.Store], s cas.Store) cas.Store { return s }),
+		conform.Crashable(func(_ *conform.Handle[cas.Store], s cas.Store, call func()) cas.Store {
+			call()
+
+			return s
+		}),
+	}
+}
+```
+
+The hashes and the MACs pass `conform.Reference` with the hash of the standard
+library. The generated calls of `CombineTagged` take two digests, so each hash
+also passes `conform.Using` with a digest of its width. The stores pass
+`conform.Restartable` and `conform.Crashable`. A store in
+memory keeps its objects across a restart and a crash, as RFC-0038 states for the
+in-memory references.
+
+The factory of `subject` takes no handle, so it has no seat to report an error to.
+A subject whose constructor returns an error applies its suite in a hand-written
+test through `Run<X>SuiteFromHandle`. The signers of `crypto/sign`, the Keepers of
+`crypto/kek` and `crypto/localkey`, and the AEADs of `crypto/aesgcm` are such
+subjects. Each passes `conform.Second`: a second AEAD or Keeper of the same key, or
+the Signer of the key of a verifier. A subject of an unexported type, such as the
+XOF of `crypto/shake`, applies its suite in a hand-written test too.
 
 ### Toolchain
 
-- `go.mod` moves `go.dokimi.dev/assert` from v0.3.0 to v0.9.0, adds
-  `go.dokimi.dev/conform` v0.6.0, `go.dokimi.dev/stub` v0.1.1 and
+- `go.mod` moves `go.dokimi.dev/assert` from v0.3.0 to v0.10.0, adds
+  `go.dokimi.dev/conform` v0.8.0, `go.dokimi.dev/stub` v0.1.1 and
   `go.dokimi.dev/fault` v0.2.0, and drops `go.thesmos.sh/testkit` in the last
   commit.
 - `.dokimi.yaml` at the root sets `version: 1`, `strict: true` and the policy
   `golang.width` of `"120"`, under the SPDX header.
-- `go.generate.commands` of `.ergon.yaml` runs a released dokimi before kanon:
-  `[go, run, go.dokimi.dev/dokimi/cmd/dokimi@<release>, run]`.
+- `go.generate.commands` of `.ergon.yaml` runs a pinned version of dokimi before
+  kanon: `[go, run, go.dokimi.dev/dokimi/cmd/dokimi@<version>, run]`.
   `verify-generate-go` then checks every generated file of dokimi on each change.
-  A change of the release regenerates every file in the same commit.
+  A change of the version regenerates every file in the same commit. The version
+  has the parameter `options` of `subject`, the word splitter of eidos-lang
+  v0.4.0, which spells `IDs` as `ids`, and the samples of parameters in the
+  generated calls. v0.2.2 has none of the three, and v0.3.0 lacks the samples of
+  parameters, so core pins the commit a673413 of the main branch of dokimi.
 - The `depguard` rule of tests in `.ergon/local/.golangci.yml` allows conform,
-  stub and fault, and drops testkit and `testkit/model`. The exclusion of the
-  callbacks of testkit's suites from `thelper` is deleted.
+  stub and fault, and drops testkit, `testkit/model` and rapid. The exclusion of
+  the callbacks of testkit's suites from `thelper` is deleted.
 - A guide to dokimi in core replaces `docs/guides/testkit.md`, and
   `docs/guides/testing.md` names dokimi.
-- The ADR of this RFC records the test-code allow-list. ADR-0015 states that a
-  change of that list takes an ADR.
+- ADR-0075 records the test-code allow-list. ADR-0015 states that a change of
+  that list takes an ADR.
 
 ### Doubles of the kits
 
 The doubles of dokimi keep the names of the doubles of testkit: `New<X>Stub`, the
-fields `On<Method>` with `Returns` and `Func`, the setters `With<X><Method>`, and
-the options `<X>StubStrict`, `<X>StubDelegateTo` and `<X>StubWithRandSource`.
+fields `On<Method>` with `Returns`, `Func`, `Faults`, `FaultsFor`, `Latency` and
+`Times`, the setters `With<X><Method>`, and the options `<X>StubStrict`,
+`<X>StubDelegateTo` and `<X>StubWithRandSource`.
 
 - `New<X>Stub` takes an `assert.TB`, which a `*testing.T` satisfies.
 - `<X>StubWithClock` takes an `assert.Clock` in place of a `clock.Clock`.
-- The `fault` directives of dokimi and `<X>StubWithLatency` replace testkit's
-  `Faults`, `FaultsFor`, `Latency` and `Times`.
+- `SetFault` of a field `On<Method>` takes a `fault.Fault` of
+  `go.dokimi.dev/fault` in place of a `testkit.Fault`.
 
 A test of a consumer that uses those parts changes, so the changeset of each kit
 is a breaking change.
 
 ### Order of the change
 
-1. Move assert to v0.9.0, and add conform, stub and fault.
+1. Move assert to v0.10.0. conform, stub and fault join `go.mod` in the commit
+   that first imports them, because `go mod tidy` drops a module that no package
+   imports.
 2. Add `.dokimi.yaml` and the command of dokimi in `go.generate.commands`.
 3. Move the 31 sentinel packages.
 4. Move `idtest`, `randtest`, `clocktest` with its builders, and `telemetrytest`
    with its recorder, one kit for each commit.
-5. Move the suites of `cryptotest` without a reference: `Stream`, `XOF`,
-   `XOFStream`, `AEAD`, `Keeper`, `Signer`, `Verifier`, `SignStream` and
-   `VerifyStream`.
-6. Move `Hasher`, `MAC`, `blobtest` and `castest` once dokimasia/dokimi#31 is
-   released. The crash checks of the stores also need dokimasia/dokimi-go#15.
+5. Move the suites of `cryptotest` without a reference: `XOF`, `AEAD`, `Keeper`,
+   `Signer`, `Verifier`, `StreamingSigner` and `StreamingVerifier`, with the
+   doubles of `XOFStream`, `Destroyer`, `KeyGenerator`, `SignStream` and
+   `VerifyStream`. The `depguard` rule of tests allows conform, stub and fault
+   from this step, because a hand-written application passes the options of
+   conform, and ADR-0075 records the list.
+6. Move `Hasher`, `MAC` and `Stream` with `conform.Reference`, and `blobtest` and
+   `castest` with `conform.Restartable` and `conform.Crashable`.
 7. Move `epochtest` and `tsptest`.
-8. Drop testkit from `go.mod`, from the lint rules and from the guides, and
-   write the ADR.
+8. Drop testkit from `go.mod`, from the lint rules and from the guides.
 
 ### Invariants
 
@@ -276,10 +328,12 @@ is a breaking change.
 
 | Quantity | Value |
 |---|---|
-| Declarations with a directive of dokimi | 25 interfaces and 2 builders |
+| Declarations with a directive of dokimi | 29 interfaces, 22 of them with a suite, and 2 builders |
 | Package clauses with `//dokimi:sentinel` | 31 |
-| Generated files of the kits | 70 in the probe: 17 doubles, 17 suites, 1 file of builders, and the spec of each |
-| Hand-written files that change | 61: 22 bundle files of the kits, 11 files of the hand-written kits and 28 tests of implementations |
+| Checks of the suites | 209 |
+| Subjects | 28, with 76 budgets and 2 excuses |
+| Generated files | 122. The kits have 71 of them: 17 files of doubles, 17 of suites, 1 of builders, the spec of each, and the sentinel test of `tsptest` |
+| Hand-written files that change | 236: 92 files of the kits, 41 tests of implementations and 103 production files whose doc comments change |
 
 ### Failure handling
 
@@ -289,20 +343,25 @@ is a breaking change.
 | A check passes on its planted defect | The test of the suite fails |
 | A planted defect fails another check | The test of the suite fails and lists the other check |
 | A subject breaks a law of its suite without an excuse | The conformance test of the subject fails |
-| A check calls `Handle.Restart` or `Handle.Reference` without its option | The check ends with a fault that wraps `conform.ErrOption` |
+| A check calls `Handle.Restart`, `Handle.Crash` or `Handle.Reference` without its option | The check ends with a fault that wraps `conform.ErrOption` |
 | An excuse names no check of the suite | dokimi refuses the directive with `DOKIMISUITE-0006` |
 
 ### Probe
 
-A probe ran on a copy of core at 9371549 with a local build of dokimi at a92d631,
-assert v0.9.0, conform v0.6.0, stub v0.1.1 and fault v0.2.0:
+A probe ran on a copy of core at 9371549 with assert v0.9.0, stub v0.1.1 and
+fault v0.2.0:
 
-- dokimi generated the doubles and the suites of the 25 interfaces and the 2
-  builders without a finding. The generated tests of every kit pass once the
-  hand-written files that still call testkit are set aside.
-- `id.Generator` moved whole. Its three checks pass on `id/ulid`, and
-  `id/constant` passes two of them and excuses the third. The test of the suite
+- A build of dokimi at a92d631 with conform v0.6.0 generated the doubles and the
+  suites of the 25 interfaces and the 2 builders without a finding. The generated
+  tests of every kit pass once the hand-written files that still call testkit are
+  set aside.
+- A build of dokimi at 638dce0 with conform v0.7.0 moved `id.Generator` whole.
+  Its three checks pass on `id/ulid`, and `id/constant` passes two of them and
+  excuses `Generator.Generate/returns-distinct-ids`. The test of the suite
   falsifies each check.
+- The same build bound `cas/memory` to the suite of `cas.Store` with
+  `options=storeOptions`. Its generated conformance test, its benchmark and its
+  fuzz targets pass `conform.Restartable` and `conform.Crashable` to the suite.
 - `//dokimi:sentinel` on `note` wrote `errors_sentinel_test.go`, whose four tests
   pass.
 - Against assert v0.9.0, every test binary of core compiles apart from the three
@@ -316,7 +375,7 @@ assert v0.9.0, conform v0.6.0, stub v0.1.1 and fault v0.2.0:
 |---|---|
 | 1 | The test of each suite falsifies every check on its planted defect |
 | 2 | The conformance test of each implementation passes every check that it does not excuse |
-| 3 | `Test<Impl>ConformsTo<X>Allocs` and the benchmarks state each allocation ceiling of today |
+| 3 | `Test<Impl>ConformsTo<X>Allocs`, the benchmarks and the `Test<Unit>Allocs` of an unexported subject state each allocation ceiling of today |
 | 4 | `TestErr<Name>` passes for each sentinel of the 31 packages |
 | 5 | `verify-generate-go` passes after `dokimi run` on a clean tree |
 | 6 | The tests of the implementations pass under the race detector, and dokimi-mutate-go detects every mutant of the production packages |
@@ -336,9 +395,9 @@ falsifies.
 Each kit would contain a hand-written double and a hand-written suite of each
 interface on assert.
 
-**Why not:** 25 interfaces need a double, a suite, a benchmark of each method and
-a fuzz target of each method. dokimi generates them from the declarations and
-keeps them equal to the declarations in CI.
+**Why not:** 29 interfaces need a double, and 22 of them need a suite, a
+benchmark of each method and a fuzz target of each method. dokimi generates them
+from the declarations and keeps them equal to the declarations in CI.
 
 ### C. Kits beside their packages
 
@@ -359,23 +418,22 @@ A hand-written check states the law of each method in one function.
 ### E. Hand-written applications of the subjects with options
 
 The hashes, the MACs and the stores would call `Run<X>Suite` with their options
-by hand before dokimasia/dokimi#31.
+by hand.
 
-**Why not:** each of those tests would be written twice: by hand, and again with
-the directive once the parameter exists.
+**Why not:** the parameter `options` of `subject` passes the same options to the
+generated conformance test, the benchmarks and the fuzz targets. A hand-written
+application writes each benchmark and each fuzz target again.
 
 ## Drawbacks
 
-- The doc comments of 25 interfaces, 2 structs and 31 package clauses contain
-  directives of dokimi.
+- The doc comments of 29 interfaces, 2 builders, 28 subjects and 31 package
+  clauses contain directives of dokimi.
 - Each law needs a planted defect. The 184 entries of the bundles become new test
   code, apart from the repeated entries and the facts of one implementation.
 - A consumer whose tests configure the doubles of a kit with the parts that
   change adapts its calls.
-- Step 6 depends on two requests to dokimi and dokimi-go. The identity of a check
-  with a plural initialism changes when dokimasia/eidos#92 is released.
-- assert moves from v0.3.0 to v0.9.0 across nine releases. Every test binary of
-  core compiles against v0.9.0, and the suites of core have not run against it.
+- assert moves from v0.3.0 to v0.10.0 across ten releases. A module that requires
+  core then builds against assert v0.10.0 or a later release.
 
 ## Open questions
 
@@ -388,14 +446,18 @@ None.
 ## References
 
 - ADR-0015, the test-code allow-list.
+- ADR-0075, the runtime of dokimi in the test-code allow-list.
 - RFC-0029, the `sample` directives of the tagged hashes.
 - RFC-0038, the conformance of durable adapters.
 - RFC-0046, released instruments.
 - `docs/guides/testkit.md` and `docs/guides/testing.md`.
 - dokimasia/dokimi, the Go guide,
   <https://github.com/dokimasia/dokimi/blob/main/docs/guides/go.md>.
+- dokimasia/dokimi, RFC-0008, the doors of a subject and of a planted defect,
+  <https://github.com/dokimasia/dokimi/blob/main/docs/rfc/0008-the-doors-of-a-subject-and-of-a-planted-defect.md>.
+- dokimasia/dokimi, RFC-0009, the options of the property run of a check,
+  <https://github.com/dokimasia/dokimi/blob/main/docs/rfc/0009-the-options-of-the-property-run-of-a-check.md>.
 - dokimasia/eidos, RFC-0016, Layout and routing,
   <https://github.com/dokimasia/eidos/blob/main/docs/rfc/0016-layout-and-routing.md>.
-- dokimasia/eidos#92, <https://github.com/dokimasia/eidos/issues/92>.
-- dokimasia/dokimi-go#15, <https://github.com/dokimasia/dokimi-go/issues/15>.
-- dokimasia/dokimi#31, <https://github.com/dokimasia/dokimi/issues/31>.
+- `go.dokimi.dev/conform` v0.8.0, `Restartable`, `Crashable`, `Reference` and
+  `Second`, <https://pkg.go.dev/go.dokimi.dev/conform@v0.8.0>.
