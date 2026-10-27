@@ -17,6 +17,10 @@ import "go.thesmos.sh/core/id"
 // # Allocation contract
 //
 // Zero alloc per [Generator.Generate].
+//
+//dokimi:subject id.Generator new=newGenerator
+//dokimi:excuse Generator.Generate/returns-distinct-ids reason="a constant Generator returns one ID on every call"
+//dokimi:budget Generator.Generate allocs=0
 type Generator struct {
 	value id.ID
 }

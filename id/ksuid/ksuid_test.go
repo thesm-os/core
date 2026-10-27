@@ -14,10 +14,8 @@ import (
 	"go.dokimi.dev/assert/expect"
 	"go.dokimi.dev/assert/history"
 	"go.dokimi.dev/assert/prop"
-	testkitbench "go.thesmos.sh/testkit/bench"
 
 	"go.thesmos.sh/core/clock/fake"
-	"go.thesmos.sh/core/coretest/idtest"
 	"go.thesmos.sh/core/id"
 	"go.thesmos.sh/core/id/ksuid"
 	"go.thesmos.sh/core/rand"
@@ -38,28 +36,11 @@ var origin = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 // seeds generates the seeds of the sources of the generators.
 var seeds = prop.Integer[rand.Seed](math.MinInt64, math.MaxInt64)
 
-// TestKSUIDGeneratorContract runs the contract suite of id.Generator with
-// a seeded source, whose entropy advances per call.
-func TestKSUIDGeneratorContract(t *testing.T) {
-	t.Parallel()
-	idtest.AssertGeneratorContract(t,
-		func() id.Generator { return ksuid.New(fake.New(origin), seeded.New(rand.Seed(1))) },
-		append(idtest.GeneratorContractAssertions(),
-			idtest.GeneratorSizeAssertion(id.Size160),
-		)...,
-	)
-}
-
-// TestKSUIDGeneratorModel runs the model test of id.Generator.
-func TestKSUIDGeneratorModel(t *testing.T) {
-	t.Parallel()
-	idtest.GeneratorModelTest(t, func() id.Generator { return ksuid.New(fake.New(origin), seeded.New(rand.Seed(1))) })
-}
-
-// FuzzKSUIDGeneratorModel runs the model test of id.Generator on the
-// inputs that a fuzzer finds.
-func FuzzKSUIDGeneratorModel(f *testing.F) {
-	idtest.GeneratorModelFuzz(f, func() id.Generator { return ksuid.New(fake.New(origin), seeded.New(rand.Seed(1))) })
+// newGenerator returns a Generator over a fake clock at origin and a seeded
+// source. The conformance test of the package runs the suite of id.Generator
+// on it.
+func newGenerator() *ksuid.Generator {
+	return ksuid.New(fake.New(origin), seeded.New(rand.Seed(1)))
 }
 
 func TestKSUID(t *testing.T) {
@@ -206,15 +187,6 @@ func TestKSUIDAllocs(t *testing.T) {
 		expect.MaxAllocs(t, func() { secs = ksuid.TimestampSeconds(u) }, 0, "TimestampSeconds must not allocate")
 		assert.Equal(t, secs, origin.Unix(), "the test must measure the seconds of the KSUID")
 	})
-}
-
-// BenchmarkKSUIDGenerator runs the benchmarks of the contract suite of
-// id.Generator.
-func BenchmarkKSUIDGenerator(b *testing.B) {
-	idtest.BenchmarkGeneratorContract(b,
-		func() id.Generator { return ksuid.New(fake.New(origin), seeded.New(rand.Seed(1))) },
-		idtest.GeneratorBenchOnGenerate(testkitbench.PureAllocsWithin[id.Generator, id.ID](0)),
-	)
 }
 
 // BenchmarkKSUID reports the cost of Generate over a seeded source and of

@@ -30,6 +30,9 @@ import (
 // [go.thesmos.sh/core/rand/pcg] and [go.thesmos.sh/core/rand/constant]
 // never allocate in Uint64, and [go.thesmos.sh/core/rand/crypto]
 // allocates only when its pool of scratch buffers is empty.
+//
+//dokimi:subject id.Generator new=newGenerator
+//dokimi:budget Generator.Generate allocs=0
 type Generator struct {
 	src rand.Rand
 }

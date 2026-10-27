@@ -7,6 +7,8 @@ go 1.27.3
 
 require (
 	go.dokimi.dev/assert v0.10.0
+	go.dokimi.dev/conform v0.8.0
+	go.dokimi.dev/stub v0.1.1
 	go.thesmos.sh/kanon v0.3.0
 	go.thesmos.sh/testkit v0.10.0
 )
@@ -14,6 +16,7 @@ require (
 require (
 	github.com/anishathalye/porcupine v1.1.0 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
+	go.dokimi.dev/fault v0.2.0 // indirect
 	pgregory.net/rapid v1.3.0 // indirect
 )
 

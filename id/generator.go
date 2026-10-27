@@ -20,11 +20,13 @@ package id
 // [id/uuidv4], [id/ksuid], [id/constant]) are safe for concurrent
 // use under the concurrency guarantees of the underlying
 // [rand.Rand] and [clock.Clock].
+//
+//dokimi:stub
+//dokimi:suite
+//dokimi:out path=../coretest/idtest/
 type Generator interface {
 	// Generate returns a fresh [ID]. Implementations must NOT
 	// return the [Zero] sentinel except via [id/constant] seeded
 	// explicitly with the zero value.
-	//
-	//testkit:nondeterministic
 	Generate() ID
 }

@@ -29,6 +29,9 @@ import (
 // the Uint64 of its source allocates: nothing for [rand/seeded],
 // [rand/pcg] and [rand/constant], and once per call for [rand/crypto],
 // whose Uint64 reads through an [io.Reader].
+//
+//dokimi:subject id.Generator new=newGenerator
+//dokimi:budget Generator.Generate allocs=0
 type Generator struct {
 	clk clock.Clock
 	rng rand.Rand

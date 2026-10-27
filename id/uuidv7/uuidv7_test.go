@@ -14,11 +14,9 @@ import (
 	"go.dokimi.dev/assert/expect"
 	"go.dokimi.dev/assert/history"
 	"go.dokimi.dev/assert/prop"
-	testkitbench "go.thesmos.sh/testkit/bench"
 
 	"go.thesmos.sh/core/clock/fake"
 	"go.thesmos.sh/core/clock/hlc"
-	"go.thesmos.sh/core/coretest/idtest"
 	"go.thesmos.sh/core/id"
 	"go.thesmos.sh/core/id/uuidv7"
 	"go.thesmos.sh/core/rand"
@@ -53,30 +51,11 @@ const (
 // 1870, or 0x74e.
 var exampleTime = time.Date(2023, 1, 1, 12, 34, 56, 123456700, time.UTC)
 
-// TestUUIDv7GeneratorContract runs the contract suite of id.Generator over
-// a fake clock and a seeded source.
-func TestUUIDv7GeneratorContract(t *testing.T) {
-	t.Parallel()
-	idtest.AssertGeneratorContract(t,
-		func() id.Generator { return uuidv7.New(fake.New(exampleTime), seeded.New(rand.Seed(1))) },
-		append(idtest.GeneratorContractAssertions(),
-			idtest.GeneratorSizeAssertion(id.Size128),
-		)...,
-	)
-}
-
-// TestUUIDv7GeneratorModel runs the model test of id.Generator.
-func TestUUIDv7GeneratorModel(t *testing.T) {
-	t.Parallel()
-	idtest.GeneratorModelTest(t,
-		func() id.Generator { return uuidv7.New(fake.New(exampleTime), seeded.New(rand.Seed(1))) })
-}
-
-// FuzzUUIDv7GeneratorModel runs the model test of id.Generator on the
-// inputs that a fuzzer finds.
-func FuzzUUIDv7GeneratorModel(f *testing.F) {
-	idtest.GeneratorModelFuzz(f,
-		func() id.Generator { return uuidv7.New(fake.New(exampleTime), seeded.New(rand.Seed(1))) })
+// newGenerator returns a Generator over a fake clock at exampleTime and a
+// seeded source. The conformance test of the package runs the suite of
+// id.Generator on it.
+func newGenerator() *uuidv7.Generator {
+	return uuidv7.New(fake.New(exampleTime), seeded.New(rand.Seed(1)))
 }
 
 func TestUUIDv7(t *testing.T) {
@@ -233,15 +212,6 @@ func TestUUIDv7Allocs(t *testing.T) {
 			assert.True(t, uuidv7.Valid(got), "the test must measure a UUIDv7")
 		})
 	})
-}
-
-// BenchmarkUUIDv7Generator runs the benchmarks of the contract suite of
-// id.Generator over the clock and the source that production callers
-// pass.
-func BenchmarkUUIDv7Generator(b *testing.B) {
-	idtest.BenchmarkGeneratorContract(b, func() id.Generator { return uuidv7.New(hlc.New(0), crypto.New()) },
-		idtest.GeneratorBenchOnGenerate(testkitbench.PureAllocsWithin[id.Generator, id.ID](0)),
-	)
 }
 
 // BenchmarkUUIDv7 reports the cost of Generate over the clock and the

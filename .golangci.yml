@@ -350,6 +350,12 @@ linters:
       - path: 'coretest/cryptotest/.*\.go'
         linters: [forbidigo]
         text: "panic"
+      # A planted defect of a suite of coretest panics in a call whose law states that the call
+      # does not panic, such as Add of a telemetry.Counter. The falsification of the check of the
+      # law fails the check on that panic.
+      - path: 'coretest/[a-z]+test/[a-z_]+\.go'
+        linters: [forbidigo]
+        text: "panic"
       # gocritic's unlambda reports func() hash.Hash { return sha256.New() } as replaceable with
       # sha256.New. The explicit function literal is clearer in an assignment to a struct field of
       # a typed function type.

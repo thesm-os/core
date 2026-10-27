@@ -13,9 +13,7 @@ import (
 	"go.dokimi.dev/assert/expect"
 	"go.dokimi.dev/assert/history"
 	"go.dokimi.dev/assert/prop"
-	testkitbench "go.thesmos.sh/testkit/bench"
 
-	"go.thesmos.sh/core/coretest/idtest"
 	"go.thesmos.sh/core/id"
 	"go.thesmos.sh/core/id/uuidv4"
 	"go.thesmos.sh/core/rand"
@@ -28,27 +26,10 @@ const (
 	rounds     = 20
 )
 
-// TestUUIDv4GeneratorContract runs the contract suite of id.Generator with
-// a seeded source.
-func TestUUIDv4GeneratorContract(t *testing.T) {
-	t.Parallel()
-	idtest.AssertGeneratorContract(t, func() id.Generator { return uuidv4.New(seeded.New(rand.Seed(1))) },
-		append(idtest.GeneratorContractAssertions(),
-			idtest.GeneratorSizeAssertion(id.Size128),
-		)...,
-	)
-}
-
-// TestUUIDv4GeneratorModel runs the model test of id.Generator.
-func TestUUIDv4GeneratorModel(t *testing.T) {
-	t.Parallel()
-	idtest.GeneratorModelTest(t, func() id.Generator { return uuidv4.New(seeded.New(rand.Seed(1))) })
-}
-
-// FuzzUUIDv4GeneratorModel runs the model test of id.Generator on the
-// inputs that a fuzzer finds.
-func FuzzUUIDv4GeneratorModel(f *testing.F) {
-	idtest.GeneratorModelFuzz(f, func() id.Generator { return uuidv4.New(seeded.New(rand.Seed(1))) })
+// newGenerator returns a Generator over a seeded source. The conformance test
+// of the package runs the suite of id.Generator on it.
+func newGenerator() *uuidv4.Generator {
+	return uuidv4.New(seeded.New(rand.Seed(1)))
 }
 
 func TestUUIDv4(t *testing.T) {
@@ -160,14 +141,6 @@ func TestUUIDv4Allocs(t *testing.T) {
 			assert.Equal(t, got.Size(), id.Size128, "the test must measure a UUIDv4")
 		})
 	})
-}
-
-// BenchmarkUUIDv4Generator runs the benchmarks of the contract suite of
-// id.Generator.
-func BenchmarkUUIDv4Generator(b *testing.B) {
-	idtest.BenchmarkGeneratorContract(b, func() id.Generator { return uuidv4.New(seeded.New(rand.Seed(1))) },
-		idtest.GeneratorBenchOnGenerate(testkitbench.PureAllocsWithin[id.Generator, id.ID](0)),
-	)
 }
 
 // BenchmarkUUIDv4 reports the cost of Generate over a seeded source, and

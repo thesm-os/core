@@ -10,15 +10,13 @@ import (
 	"go.dokimi.dev/assert/bench"
 	"go.dokimi.dev/assert/expect"
 	"go.dokimi.dev/assert/prop"
-	testkitbench "go.thesmos.sh/testkit/bench"
 
-	"go.thesmos.sh/core/coretest/idtest"
 	"go.thesmos.sh/core/id"
 	"go.thesmos.sh/core/id/constant"
 )
 
-// constantSampleID is the configured value of the Generator of the
-// contract suite.
+// constantSampleID is the configured value of the Generator of the suite
+// of id.Generator.
 var constantSampleID = id.New128([id.Size128]byte{
 	1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
 })
@@ -28,16 +26,10 @@ var validBytes = prop.SampledFrom(id.Size128, id.Size160, id.Size256).Bind(func(
 	return prop.Bytes(prop.MinSize(n), prop.MaxSize(n))
 })
 
-// TestConstantGeneratorContract runs the contract suite of id.Generator. A
-// constant Generator returns the same value on every call, so it opts out
-// of the distinctness assertion.
-func TestConstantGeneratorContract(t *testing.T) {
-	t.Parallel()
-	idtest.AssertGeneratorContract(t, func() id.Generator { return constant.New(constantSampleID) },
-		append(idtest.GeneratorAllowZeroAndDuplicates(),
-			idtest.GeneratorSizeAssertion(id.Size128),
-		)...,
-	)
+// newGenerator returns the Generator of constantSampleID. The conformance
+// test of the package runs the suite of id.Generator on it.
+func newGenerator() constant.Generator {
+	return constant.New(constantSampleID)
 }
 
 func TestGenerator(t *testing.T) {
@@ -78,14 +70,6 @@ func TestGeneratorAllocs(t *testing.T) {
 		expect.MaxAllocs(t, func() { got = g.Generate() }, 0, "Generate must not allocate")
 		assert.Equal(t, got, constantSampleID, "the test must measure the configured value")
 	})
-}
-
-// BenchmarkConstantGenerator runs the benchmarks of the contract suite of
-// id.Generator.
-func BenchmarkConstantGenerator(b *testing.B) {
-	idtest.BenchmarkGeneratorContract(b, func() id.Generator { return constant.New(constantSampleID) },
-		idtest.GeneratorBenchOnGenerate(testkitbench.PureAllocsWithin[id.Generator, id.ID](0)),
-	)
 }
 
 // BenchmarkGenerator reports the cost of Generate, and fails when it

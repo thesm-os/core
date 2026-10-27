@@ -62,6 +62,9 @@ const (
 // [rand.Rand.Uint64] do not. [go.thesmos.sh/core/clock/hlc.Clock] never
 // allocates in Now, and [go.thesmos.sh/core/rand/crypto.Rand] allocates in
 // Uint64 only when its pool of scratch buffers is empty.
+//
+//dokimi:subject id.Generator new=newGenerator
+//dokimi:budget Generator.Generate allocs=0
 type Generator struct {
 	clk clock.Clock
 	rng rand.Rand

@@ -36,6 +36,9 @@ const Epoch int64 = 1_400_000_000
 // [rand.Rand.Uint64] allocation contract: zero-alloc for
 // [rand/seeded], [rand/pcg], and [rand/constant]; one alloc per
 // call for [rand/crypto].
+//
+//dokimi:subject id.Generator new=newGenerator
+//dokimi:budget Generator.Generate allocs=0
 type Generator struct {
 	clk clock.Clock
 	rng rand.Rand
