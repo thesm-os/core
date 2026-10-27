@@ -14,159 +14,120 @@ import (
 	"go.thesmos.sh/core/coretest/clocktest"
 )
 
-// newPendingTimer returns a fresh pending [clock.Timer] from a
-// fake.Clock — the factory shape required by
-// [clocktest.AssertTimerContract].
-func newPendingTimer() clock.Timer { return fake.New(origin).NewTimer(time.Hour) }
-
-// --- testkit-driven contract layer ---
-
-func TestFakeTimer(t *testing.T) {
+// TestTimerConformsToTimer applies the checks of the suite of clock.Timer to a
+// pending Timer of an hour on a Clock at origin.
+func TestTimerConformsToTimer(t *testing.T) {
 	t.Parallel()
-	clocktest.AssertTimerContract(t, newPendingTimer, clocktest.TimerContractAssertions()...)
+
+	clocktest.RunTimerSuite(t, func() clock.Timer { return fake.New(origin).NewTimer(time.Hour) })
 }
 
-// --- fake-specific tests ---
-
-// TestNewTimer covers the virtual-time fire mechanism specific
-// to fake.Clock — Timer state transitions are covered by
-// [TestFakeTimer].
-func TestNewTimer(t *testing.T) {
+func TestTimer(t *testing.T) {
 	t.Parallel()
 
-	t.Run("fires when virtual time advances past deadline", func(t *testing.T) {
+	t.Run("NewTimer", func(t *testing.T) {
 		t.Parallel()
-		c := fake.New(origin)
-		tm := c.NewTimer(5 * time.Second)
-		c.Advance(6 * time.Second)
-		//dokimi:lint-skip completes-within: the tests of clock/fake use testkit until they move to assert
-		select {
-		case <-tm.C():
-		case <-time.After(time.Second):
-			t.Fatal("timer did not fire after Advance past deadline")
-		}
+
+		t.Run("returns a Timer that sends its tick once the virtual time passes its deadline", func(t *testing.T) {
+			t.Parallel()
+			c := fake.New(origin)
+			tm := c.NewTimer(5 * time.Second)
+			c.Advance(6 * time.Second)
+			assert.Length(t, tm.C(), 1, "the Timer of 5 s sends its tick once Advance passes 6 s")
+		})
+
+		t.Run("returns a Timer that sends no tick before its deadline", func(t *testing.T) {
+			t.Parallel()
+			c := fake.New(origin)
+			tm := c.NewTimer(time.Hour)
+			c.Advance(time.Second)
+			assert.Empty(t, tm.C(), "the Timer of an hour sends no tick after an Advance of a second")
+		})
 	})
 
-	t.Run("does not fire before deadline", func(t *testing.T) {
+	t.Run("Reset", func(t *testing.T) {
 		t.Parallel()
-		c := fake.New(origin)
-		tm := c.NewTimer(time.Hour)
-		c.Advance(time.Second)
-		select {
-		case <-tm.C():
-			t.Fatal("timer fired before deadline")
-		default:
-		}
+
+		t.Run("sends the tick at once for a duration of 0", func(t *testing.T) {
+			t.Parallel()
+			tm := fake.New(origin).NewTimer(time.Hour)
+			tm.Reset(0)
+			assert.Length(t, tm.C(), 1, "Reset(0) sends the tick at once")
+		})
+
+		t.Run("drops a tick that nobody received", func(t *testing.T) {
+			t.Parallel()
+			c := fake.New(origin)
+			tm := c.NewTimer(time.Second)
+			c.Advance(2 * time.Second)
+			tm.Reset(time.Hour)
+			assert.Empty(t, tm.C(), "Reset drops the tick of the earlier deadline")
+		})
+
+		t.Run("sends the tick at the deadline of the Reset", func(t *testing.T) {
+			t.Parallel()
+			c := fake.New(origin)
+			tm := c.NewTimer(time.Second)
+			c.Advance(2 * time.Second)
+			tm.Reset(time.Hour)
+			c.Advance(2 * time.Hour)
+			assert.Length(t, tm.C(), 1, "the Timer sends the tick of the Reset once Advance passes its deadline")
+		})
+
+		t.Run("returns true for a tick that nobody received", func(t *testing.T) {
+			t.Parallel()
+			c := fake.New(origin)
+			tm := c.NewTimer(time.Second)
+			c.Advance(2 * time.Second)
+			assert.True(t, tm.Reset(time.Hour),
+				"Reset of a Timer whose tick nobody received returns true, as on a time.Timer")
+		})
 	})
 
-	t.Run("Reset to past deadline fires immediately", func(t *testing.T) {
+	t.Run("Stop", func(t *testing.T) {
 		t.Parallel()
-		c := fake.New(origin)
-		tm := c.NewTimer(time.Hour)
-		tm.Reset(0)
-		//dokimi:lint-skip completes-within: the tests of clock/fake use testkit until they move to assert
-		select {
-		case <-tm.C():
-		case <-time.After(time.Second):
-			t.Fatal("Reset(0) timer did not fire immediately")
-		}
+
+		t.Run("returns true for a tick that nobody received", func(t *testing.T) {
+			t.Parallel()
+			c := fake.New(origin)
+			tm := c.NewTimer(time.Second)
+			c.Advance(2 * time.Second)
+			assert.True(t, tm.Stop(), "Stop of a Timer whose tick nobody received returns true, as on a time.Timer")
+		})
+
+		t.Run("drops a tick that nobody received", func(t *testing.T) {
+			t.Parallel()
+			c := fake.New(origin)
+			tm := c.NewTimer(time.Second)
+			c.Advance(2 * time.Second)
+			tm.Stop()
+			assert.Empty(t, tm.C(), "a receive after Stop finds no tick from before Stop")
+		})
+
+		t.Run("returns false for a tick that was received", func(t *testing.T) {
+			t.Parallel()
+			c := fake.New(origin)
+			tm := c.NewTimer(time.Second)
+			c.Advance(2 * time.Second)
+			<-tm.C()
+			assert.False(t, tm.Stop(), "Stop of a Timer whose tick was received returns false")
+		})
+
+		t.Run("returns false for a second call", func(t *testing.T) {
+			t.Parallel()
+			tm := fake.New(origin).NewTimer(time.Hour)
+			assert.True(t, tm.Stop(), "the first Stop of a pending Timer returns true")
+			assert.False(t, tm.Stop(), "the second Stop returns false")
+		})
+
+		t.Run("cancels the tick at the deadline of a Reset", func(t *testing.T) {
+			t.Parallel()
+			c := fake.New(origin)
+			tm := c.NewTimer(time.Hour)
+			tm.Reset(2 * time.Hour)
+			assert.True(t, tm.Stop(), "Stop of a Timer that Reset rescheduled returns true")
+			c.Advance(3 * time.Hour)
+			assert.Empty(t, tm.C(), "the stopped Timer sends no tick at the deadline of the Reset")
+		})
 	})
-
-	t.Run("Reset drains undrained prior fire", func(t *testing.T) {
-		t.Parallel()
-		// When a timer has fired but its channel has not been
-		// drained, Reset must clear the buffered tick before
-		// scheduling the new deadline. Otherwise the next fire
-		// would block on the full channel while holding the
-		// clock mutex.
-		c := fake.New(origin)
-		tm := c.NewTimer(time.Second)
-		c.Advance(2 * time.Second) // fires; channel has 1 buffered tick
-
-		tm.Reset(time.Hour) // drains the prior tick
-
-		// The reset must have removed the stale tick.
-		select {
-		case <-tm.C():
-			t.Fatal("Reset did not drain the prior fire — got stale tick")
-		default:
-		}
-
-		c.Advance(2 * time.Hour)
-		//dokimi:lint-skip completes-within: the tests of clock/fake use testkit until they move to assert
-		select {
-		case <-tm.C():
-		case <-time.After(time.Second):
-			t.Fatal("Reset+Advance timer did not fire on new deadline")
-		}
-	})
-
-	t.Run("Reset reports true for a tick that nobody received", func(t *testing.T) {
-		t.Parallel()
-		c := fake.New(origin)
-		tm := c.NewTimer(time.Second)
-		c.Advance(2 * time.Second)
-		assert.True(t, tm.Reset(time.Hour),
-			"Reset of a timer whose tick nobody received must report true, as on a time.Timer")
-	})
-
-	t.Run("Stop drops a tick that nobody received", func(t *testing.T) {
-		t.Parallel()
-		c := fake.New(origin)
-		tm := c.NewTimer(time.Second)
-		c.Advance(2 * time.Second)
-		assert.True(t, tm.Stop(), "Stop of a timer whose tick nobody received must report true, as on a time.Timer")
-		assert.Empty(t, tm.C(), "a receive after Stop must find no tick from before Stop")
-	})
-
-	t.Run("Stop reports false for a tick that was received", func(t *testing.T) {
-		t.Parallel()
-		c := fake.New(origin)
-		tm := c.NewTimer(time.Second)
-		c.Advance(2 * time.Second)
-		<-tm.C()
-		assert.False(t, tm.Stop(), "Stop of a timer whose tick was received must report false")
-	})
-
-	t.Run("Stop reports false for a second call", func(t *testing.T) {
-		t.Parallel()
-		tm := fake.New(origin).NewTimer(time.Hour)
-		assert.True(t, tm.Stop(), "the first Stop of a pending timer must report true")
-		assert.False(t, tm.Stop(), "the second Stop must report false")
-	})
-
-	t.Run("Stop cancels the tick at the deadline of a Reset", func(t *testing.T) {
-		t.Parallel()
-		c := fake.New(origin)
-		tm := c.NewTimer(time.Hour)
-		tm.Reset(2 * time.Hour)
-		assert.True(t, tm.Stop(), "Stop of a timer that Reset rescheduled must report true")
-		c.Advance(3 * time.Hour)
-		assert.Empty(t, tm.C(), "the stopped timer must not send a tick at the deadline of the Reset")
-	})
-}
-
-// TestFireWaiters verifies the partial-firing branch of
-// [fake.Clock.Advance]: only waiters whose deadlines fall within
-// the new time fire; later waiters stay pending. Internal-path
-// coverage; not part of the Timer contract.
-func TestFireWaiters(t *testing.T) {
-	t.Parallel()
-
-	c := fake.New(origin)
-	due := c.NewTimer(time.Second)
-	later := c.NewTimer(time.Hour)
-	c.Advance(2 * time.Second)
-
-	//dokimi:lint-skip completes-within: the tests of clock/fake use testkit until they move to assert
-	select {
-	case <-due.C():
-	case <-time.After(time.Second):
-		t.Fatal("due timer did not fire")
-	}
-	select {
-	case <-later.C():
-		t.Fatal("later timer fired prematurely")
-	default:
-	}
 }

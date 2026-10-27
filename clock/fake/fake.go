@@ -19,6 +19,11 @@ import (
 // instants between advances remain ordered.
 //
 // Clock is safe for concurrent use by multiple goroutines.
+//
+//dokimi:subject clock.Clock new=newClock
+//dokimi:budget Clock.Now allocs=0
+//dokimi:budget Clock.Time allocs=0
+//dokimi:budget Clock.Update allocs=0
 type Clock struct {
 	now     time.Time
 	waiters []*waiter

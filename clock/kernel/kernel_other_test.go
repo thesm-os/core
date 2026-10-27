@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
 
 	"go.thesmos.sh/core/clock/kernel"
 	"go.thesmos.sh/core/errs"
@@ -22,10 +22,10 @@ func TestReadKernel(t *testing.T) {
 	t.Run("returns an error classified Unsupported", func(t *testing.T) {
 		t.Parallel()
 		s, err := kernel.New(time.Second)
-		testkit.NoError(t, err, "New must accept a positive refresh")
+		assert.NoError(t, err, "New accepts a positive refresh")
 
 		_, err = s.ReadUTC()
-		testkit.ErrorIs(t, err, errors.ErrUnsupported, "reading the kernel must be unsupported off Linux")
-		testkit.Equal(t, errs.Classify(err), errs.Unsupported, "the error must classify as Unsupported")
+		assert.ErrorIs(t, err, errors.ErrUnsupported, "the read of the kernel is unsupported off Linux")
+		assert.Equal(t, errs.Classify(err), errs.Unsupported, "the error classifies as Unsupported")
 	})
 }

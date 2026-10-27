@@ -4,65 +4,42 @@
 package fake
 
 import (
-	"strings"
 	"testing"
 	"time"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/expect"
 )
 
-// Internal rather than in the fake_test package because the watchdog
-// bound is per-instance and unexported. Reaching it through an
-// export_test.go bridge would be the shape that defeats gobco's type
-// resolution and takes the whole branch-coverage run down with it.
+// TestAwaitWaitersGivesUp is an internal test, because the watchdog bound is a
+// field of the Clock that the package does not export.
 func TestAwaitWaitersGivesUp(t *testing.T) {
 	t.Parallel()
 
 	t.Run("panics when the waiters never arrive", func(t *testing.T) {
 		t.Parallel()
-
-		// No goroutine ever blocks on this clock, so the count stays
-		// at zero and only the watchdog can end the spin. Before it
-		// existed this call never returned, and the failure surfaced
-		// as the whole test binary hitting its deadline.
+		// No goroutine waits on this clock, so only the watchdog ends the
+		// wait.
 		c := New(time.Unix(0, 0))
 		c.awaitTimeout = 10 * time.Millisecond
 
-		testkit.Panics(t, func() { c.AwaitWaiters(1) },
-			"awaiting a waiter that never registers must panic, not hang")
+		assert.Panics(t, func() { c.AwaitWaiters(1) }, "AwaitWaiters of a waiter that never arrives panics")
 	})
 
-	t.Run("the panic names both counts", func(t *testing.T) {
+	t.Run("panics with both counts", func(t *testing.T) {
 		t.Parallel()
-
-		// The diagnosis is "how many did I expect, how many arrived".
-		// A bare "timed out" would leave the reader to guess whether
-		// the goroutine failed to start or n was simply too large.
 		c := New(time.Unix(0, 0))
 		c.awaitTimeout = 10 * time.Millisecond
 
-		var msg string
-
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					msg, _ = r.(string)
-				}
-			}()
-			c.AwaitWaiters(3)
-		}()
-
-		testkit.True(t, strings.Contains(msg, "AwaitWaiters(3)"),
-			"the panic must name the count awaited")
-		testkit.True(t, strings.Contains(msg, "0 waiter(s) registered"),
-			"the panic must name the count reached")
+		recovered := assert.Panics(t, func() { c.AwaitWaiters(3) }, "AwaitWaiters of waiters that never arrive panics")
+		msg, _ := recovered.(string)
+		expect.That(t, msg).
+			Contains("AwaitWaiters(3)", "the panic names the count that AwaitWaiters waited for").
+			Contains("0 waiter(s) registered", "the panic names the count of waiters that arrived")
 	})
 
-	t.Run("does not fire when the waiters do arrive", func(t *testing.T) {
+	t.Run("returns when the waiters arrive", func(t *testing.T) {
 		t.Parallel()
-
-		// The happy path must not be sensitive to the bound: a waiter
-		// that registers promptly returns long before it expires.
 		c := New(time.Unix(0, 0))
 		c.awaitTimeout = 10 * time.Millisecond
 
@@ -71,12 +48,10 @@ func TestAwaitWaitersGivesUp(t *testing.T) {
 		c.AwaitWaiters(1)
 	})
 
-	t.Run("a composed zero Clock falls back to the default bound", func(t *testing.T) {
+	t.Run("waits for the default bound on the zero Clock", func(t *testing.T) {
 		t.Parallel()
-
-		// No constructor produces this, but the field is unexported
-		// rather than unreachable. An unset bound must mean "the
-		// default", never "expire on the first check".
+		// No constructor returns a Clock without a bound, so the zero Clock
+		// stands for a Clock that a struct literal builds.
 		var c Clock
 
 		go func() { c.NewTimer(time.Second) }()

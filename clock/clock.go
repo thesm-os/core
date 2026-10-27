@@ -43,17 +43,17 @@ import "time"
 // [Clock.Now], [Clock.Time], and [Clock.Update] must not allocate.
 // [Clock.NewTimer] is the only constructor on the hot path and is
 // permitted to allocate.
+//
+//dokimi:stub
+//dokimi:suite
+//dokimi:out path=../coretest/clocktest/
 type Clock interface {
 	// Now returns the current HLC instant.
-	//
-	//testkit:nondeterministic
 	Now() Instant
 
 	// Time returns the current wall time. Equivalent to
 	// Now().Time(); exists as a first-class method because most
 	// callers only want the stdlib representation.
-	//
-	//testkit:nondeterministic
 	Time() time.Time
 
 	// NewTimer creates a Timer that fires after at least d has
@@ -63,8 +63,6 @@ type Clock interface {
 	// Update merges an observed peer instant into the local clock
 	// and returns the resulting instant, which is guaranteed to be
 	// causally after the observed instant for HLC implementations.
-	//
-	//testkit:nondeterministic
 	Update(observed Instant) Instant
 }
 
@@ -97,6 +95,10 @@ type Clock interface {
 // instance. Callers hold a Timer per logical wait and serialise
 // access at the call site. The underlying [time.Timer] in
 // production has the same constraint.
+//
+//dokimi:stub
+//dokimi:suite
+//dokimi:out path=../coretest/clocktest/
 type Timer interface {
 	// C returns the channel on which the tick is delivered.
 	C() <-chan time.Time

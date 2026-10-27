@@ -58,6 +58,9 @@ import (
 // # Allocation contract
 //
 // Instant is a comparable value type. Zero alloc.
+//
+//dokimi:builder
+//dokimi:out path=../coretest/clocktest/
 type Instant struct {
 	// Wall is Unix nanoseconds, the time since 1970-01-01T00:00:00Z.
 	Wall int64
@@ -281,6 +284,9 @@ func (i Instant) IsZero() bool {
 // # Allocation contract
 //
 // InstantRange is a value type. Zero alloc.
+//
+//dokimi:builder
+//dokimi:out path=../coretest/clocktest/
 type InstantRange struct {
 	// Since is the inclusive lower bound of the range. A zero
 	// [Instant] removes the lower bound, so the range contains every

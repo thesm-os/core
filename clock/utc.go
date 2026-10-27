@@ -55,7 +55,5 @@ type UTCSource interface {
 	// ReadUTC returns a reading. An error means the source could not
 	// be read at all. An unsynchronised clock is a reading with Synced
 	// false and a nil error.
-	//
-	//testkit:nondeterministic
 	ReadUTC() (UTCReading, error)
 }

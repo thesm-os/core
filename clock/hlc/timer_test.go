@@ -4,60 +4,54 @@
 package hlc_test
 
 import (
+	"context"
 	"testing"
 	"time"
 
-	"go.thesmos.sh/testkit"
+	"go.dokimi.dev/assert"
 
 	"go.thesmos.sh/core/clock"
 	"go.thesmos.sh/core/clock/hlc"
 	"go.thesmos.sh/core/coretest/clocktest"
 )
 
-// newPendingTimer returns a fresh pending [clock.Timer] from
-// an [hlc.Clock] — the factory shape required by
-// [clocktest.AssertTimerContract]. The hour-deadline keeps the
-// timer pending until assertions deliberately fire it
-// (typically via Reset(0)).
-func newPendingTimer() clock.Timer { return hlc.New(0).NewTimer(time.Hour) }
-
-// --- testkit-driven contract layer ---
-
-func TestHLCTimer(t *testing.T) {
+// TestTimerConformsToTimer applies the checks of the suite of clock.Timer to a
+// pending Timer of an hour.
+func TestTimerConformsToTimer(t *testing.T) {
 	t.Parallel()
-	clocktest.AssertTimerContract(t, newPendingTimer, clocktest.TimerContractAssertions()...)
+
+	clocktest.RunTimerSuite(t, func() clock.Timer { return hlc.New(0).NewTimer(time.Hour) })
 }
 
-// --- HLC-specific tests ---
-
-// TestNewTimer covers the real-time fire mechanism specific to
-// hlc.Clock — Timer state transitions are covered by
-// [TestHLCTimer].
-func TestNewTimer(t *testing.T) {
+func TestTimer(t *testing.T) {
 	t.Parallel()
 
-	t.Run("fires after duration", func(t *testing.T) {
+	t.Run("NewTimer", func(t *testing.T) {
 		t.Parallel()
-		c := hlc.New(0)
-		tm := c.NewTimer(10 * time.Millisecond)
-		//dokimi:lint-skip completes-within: the tests of clock/hlc use testkit until they move to assert
-		select {
-		case <-tm.C():
-		case <-time.After(time.Second):
-			t.Fatal("timer did not fire within 1s")
-		}
+
+		t.Run("returns a Timer that sends its tick after its duration", func(t *testing.T) {
+			t.Parallel()
+			tm := hlc.New(0).NewTimer(10 * time.Millisecond)
+			assert.CompletesWithin(t, time.Second, func(context.Context) error {
+				<-tm.C()
+
+				return nil
+			}, "the Timer of 10 ms sends its tick within a second")
+		})
 	})
 
-	t.Run("Reset reschedules to a real-time deadline", func(t *testing.T) {
+	t.Run("Reset", func(t *testing.T) {
 		t.Parallel()
-		c := hlc.New(0)
-		tm := c.NewTimer(time.Hour)
-		testkit.True(t, tm.Reset(10*time.Millisecond), "Reset on active timer must return true")
-		//dokimi:lint-skip completes-within: the tests of clock/hlc use testkit until they move to assert
-		select {
-		case <-tm.C():
-		case <-time.After(time.Second):
-			t.Fatal("reset timer did not fire on new deadline")
-		}
+
+		t.Run("sends the tick at the duration of the Reset", func(t *testing.T) {
+			t.Parallel()
+			tm := hlc.New(0).NewTimer(time.Hour)
+			assert.True(t, tm.Reset(10*time.Millisecond), "Reset of a pending Timer returns true")
+			assert.CompletesWithin(t, time.Second, func(context.Context) error {
+				<-tm.C()
+
+				return nil
+			}, "the Timer that Reset rescheduled to 10 ms sends its tick within a second")
+		})
 	})
 }

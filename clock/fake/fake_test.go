@@ -10,297 +10,236 @@ import (
 	"time"
 
 	"go.dokimi.dev/assert"
-	"go.thesmos.sh/testkit"
-	"go.thesmos.sh/testkit/bench"
+	"go.dokimi.dev/assert/expect"
 
 	"go.thesmos.sh/core/clock"
 	"go.thesmos.sh/core/clock/fake"
-	"go.thesmos.sh/core/coretest/clocktest"
 )
 
-// origin is the wall-time anchor for fake.Clock instances in
-// these tests. 2026-01-01 UTC matches the project's reference
-// year so failure messages line up visually with the codebase.
+// origin is the virtual time at which the tests start their Clocks,
+// 2026-01-01T00:00:00Z.
 var origin = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
-// newClock is the SUT factory shared by every testkit-driven
-// entry point: contract suite, model, fuzz target, bench.
-func newClock() clock.Clock { return fake.New(origin) }
-
-// --- testkit-driven contract layer ---
-
-func TestFakeClockContract(t *testing.T) {
-	t.Parallel()
-	clocktest.AssertClockContract(t, newClock, clocktest.ClockContractAssertions()...)
+// newClock returns a Clock at origin. The conformance test of the package runs
+// the suite of clock.Clock on it.
+func newClock() *fake.Clock {
+	return fake.New(origin)
 }
 
-// TestFakeClockModel — see TestHLCClockModel (clock/hlc); auto-
-// emitted action.Stress via //testkit:nondeterministic directives
-// on Clock.Now/Time/Update.
-func TestFakeClockModel(t *testing.T) {
-	t.Parallel()
-	clocktest.ClockModelTest(t, newClock)
-}
-
-// FuzzFakeClockModel — same property as [TestFakeClockModel]
-// via coverage-guided fuzzing.
-func FuzzFakeClockModel(f *testing.F) {
-	clocktest.ClockModelFuzz(f, newClock)
-}
-
-// BenchmarkFakeClock runs the standard Clock bench contract:
-// auto hot-path measurement for Now/Time/Update/NewTimer plus
-// PureAllocsWithin(0) gates for the documented zero-alloc
-// methods.
-func BenchmarkFakeClock(b *testing.B) {
-	clocktest.BenchmarkClockContract(b,
-		newClock,
-		clocktest.ClockBenchOnNow(bench.PureAllocsWithin[clock.Clock, clock.Instant](0)),
-		clocktest.ClockBenchOnTime(bench.PureAllocsWithin[clock.Clock, time.Time](0)),
-		clocktest.ClockBenchOnUpdate(bench.PureAllocsWithin[clock.Clock, clock.Instant](0)),
-	)
-}
-
-// --- fake-specific tests ---
-
-func TestNow(t *testing.T) {
+func TestClock(t *testing.T) {
 	t.Parallel()
 
-	t.Run("returns origin Wall on first call", func(t *testing.T) {
+	t.Run("Now", func(t *testing.T) {
 		t.Parallel()
-		c := fake.New(origin)
-		testkit.Equal(t, c.Now().Wall, origin.UnixNano(),
-			"first Now().Wall must equal origin")
-	})
 
-	t.Run("logical increments per call between advances", func(t *testing.T) {
-		t.Parallel()
-		c := fake.New(origin)
-		first := c.Now()
-		second := c.Now()
-		testkit.Equal(t, second.Logical, first.Logical+1,
-			"Logical must increment by exactly 1 per Now call")
-	})
+		t.Run("returns the wall of origin on the first call", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, fake.New(origin).Now().Wall, origin.UnixNano(),
+				"the first Instant of Now has the wall of origin")
+		})
 
-	t.Run("NewWithNode tags every instant with the configured node", func(t *testing.T) {
-		t.Parallel()
-		const node = clock.NodeID(7)
-		c := fake.NewWithNode(origin, node)
-		testkit.Equal(t, c.Now().Node, node, "Node must equal the configured value")
-	})
-}
-
-func TestTime(t *testing.T) {
-	t.Parallel()
-
-	t.Run("returns the configured origin", func(t *testing.T) {
-		t.Parallel()
-		c := fake.New(origin)
-		testkit.True(t, c.Time().Equal(origin), "Time() must equal the configured origin")
-	})
-
-	t.Run("advances the HLC state per call", func(t *testing.T) {
-		t.Parallel()
-		c := fake.New(origin)
-		c.Time() // logical=1
-		c.Time() // logical=2
-		// Next Now() bumps logical to 3, confirming Time
-		// advanced HLC state on each prior call.
-		testkit.Equal(t, c.Now().Logical, uint32(3),
-			"Logical must equal 3 after two Time() calls — Time must advance HLC state per Clock contract")
-	})
-}
-
-func TestAdvance(t *testing.T) {
-	t.Parallel()
-
-	t.Run("moves Wall forward by the given duration", func(t *testing.T) {
-		t.Parallel()
-		c := fake.New(origin)
-		c.Advance(5 * time.Second)
-		want := origin.Add(5 * time.Second)
-		testkit.True(t, c.Time().Equal(want), "Time() must equal origin + 5s")
-	})
-
-	t.Run("accumulates across calls", func(t *testing.T) {
-		t.Parallel()
-		c := fake.New(origin)
-		c.Advance(3 * time.Second)
-		c.Advance(2 * time.Second)
-		want := origin.Add(5 * time.Second)
-		testkit.True(t, c.Time().Equal(want),
-			"Time() must equal origin + 5s after accumulated Advance calls")
-	})
-
-	t.Run("non-positive duration leaves time and logical unchanged", func(t *testing.T) {
-		t.Parallel()
-		// Logical state must survive a no-op Advance — verifying
-		// time alone is insufficient because a `c.now.Add(0)` is
-		// still a no-op on Wall but resets logical via the
-		// fall-through path.
-		for _, d := range []time.Duration{0, -time.Second} {
+		t.Run("adds 1 to Logical on each call between advances", func(t *testing.T) {
+			t.Parallel()
 			c := fake.New(origin)
-			c.Now() // logical=1
-			c.Now() // logical=2
-			c.Advance(d)
-			got := c.Now() // logical=3 if Advance was a no-op
-			testkit.Equal(t, got.Wall, origin.UnixNano(),
-				"Wall must equal origin after non-positive Advance")
-			testkit.Equal(t, got.Logical, uint32(3),
-				"Logical must not reset after non-positive Advance")
+			first := c.Now()
+			assert.Equal(t, c.Now().Logical, first.Logical+1, "the second Now adds 1 to the Logical of the first")
+		})
+
+		t.Run("returns instants of the node of NewWithNode", func(t *testing.T) {
+			t.Parallel()
+			const node = clock.NodeID(7)
+			assert.Equal(t, fake.NewWithNode(origin, node).Now().Node, node,
+				"Now returns instants of the node of NewWithNode")
+		})
+	})
+
+	t.Run("Time", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns origin before an Advance", func(t *testing.T) {
+			t.Parallel()
+			assert.True(t, fake.New(origin).Time().Equal(origin), "Time returns origin before an Advance")
+		})
+
+		t.Run("adds 1 to Logical on each call", func(t *testing.T) {
+			t.Parallel()
+			c := fake.New(origin)
+			c.Time()
+			c.Time()
+			assert.Equal(t, c.Now().Logical, uint32(3), "the Now after two calls of Time returns Logical 3")
+		})
+	})
+
+	t.Run("Advance", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("moves the virtual time forward by d", func(t *testing.T) {
+			t.Parallel()
+			c := fake.New(origin)
+			c.Advance(5 * time.Second)
+			assert.True(t, c.Time().Equal(origin.Add(5*time.Second)), "Time returns origin plus 5 s")
+		})
+
+		t.Run("adds the durations of two calls", func(t *testing.T) {
+			t.Parallel()
+			c := fake.New(origin)
+			c.Advance(3 * time.Second)
+			c.Advance(2 * time.Second)
+			assert.True(t, c.Time().Equal(origin.Add(5*time.Second)), "Time returns origin plus 3 s plus 2 s")
+		})
+
+		tests := []struct {
+			name string
+			give time.Duration
+		}{
+			{name: "leaves the clock unchanged for a duration of 0", give: 0},
+			{name: "leaves the clock unchanged for a negative duration", give: -time.Second},
 		}
-	})
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				c := fake.New(origin)
+				c.Now()
+				c.Now()
+				c.Advance(tt.give)
+				got := c.Now()
+				expect.Equal(t, got.Wall, origin.UnixNano(), "Now keeps the wall of origin")
+				expect.Equal(t, got.Logical, uint32(3), "Now continues the Logical of the calls before Advance")
+			})
+		}
 
-	t.Run("resets logical when wall moves", func(t *testing.T) {
-		t.Parallel()
-		c := fake.New(origin)
-		c.Now()
-		c.Now()
-		c.Advance(time.Second)
-		testkit.Equal(t, c.Now().Logical, uint32(1),
-			"Logical must reset to 1 after Wall advances")
-	})
-}
-
-func TestSet(t *testing.T) {
-	t.Parallel()
-
-	target := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
-
-	t.Run("moves Time to the target", func(t *testing.T) {
-		t.Parallel()
-		c := fake.New(origin)
-		c.Set(target)
-		testkit.True(t, c.Time().Equal(target), "Time() must equal the Set target")
-	})
-
-	t.Run("restarts the logical counter", func(t *testing.T) {
-		t.Parallel()
-		c := fake.New(origin)
-		c.Now()
-		c.Now()
-		c.Set(target)
-		assert.Equal(t, c.Now().Logical, uint32(1), "the first Now after Set must have the logical 1")
-	})
-
-	t.Run("sends the tick of a timer whose deadline the target passes", func(t *testing.T) {
-		t.Parallel()
-		c := fake.New(origin)
-		tm := c.NewTimer(time.Hour)
-		c.Set(origin.Add(2 * time.Hour))
-		assert.Length(t, tm.C(), 1, "Set must send the tick of the timer whose deadline it passes")
-	})
-}
-
-func TestUpdate(t *testing.T) {
-	t.Parallel()
-
-	t.Run("local ahead increments local logical", func(t *testing.T) {
-		t.Parallel()
-		c := fake.New(origin)
-		// Observed wall is in 1970; local origin (2026) is ahead.
-		got := c.Update(clock.Instant{Wall: 1, Logical: 99, Node: 7})
-		testkit.Equal(t, got.Wall, origin.UnixNano(),
-			"Wall must remain at origin (local ahead of observed)")
-		testkit.Equal(t, got.Logical, uint32(1),
-			"Logical must equal 1 (local fresh, observed-Logical ignored when local Wall ahead)")
-	})
-
-	t.Run("observed ahead adopts observed.Logical+1", func(t *testing.T) {
-		t.Parallel()
-		c := fake.New(origin)
-		future := origin.Add(time.Hour).UnixNano()
-		got := c.Update(clock.Instant{Wall: future, Logical: 7, Node: 9})
-		testkit.Equal(t, got.Wall, future, "Wall must adopt observed.Wall when ahead")
-		testkit.Equal(t, got.Logical, uint32(8), "Logical must be observed.Logical+1")
-	})
-
-	t.Run("tied wall, observed logical higher: take observed+1", func(t *testing.T) {
-		t.Parallel()
-		c := fake.New(origin)
-		c.Now() // local logical = 1
-		got := c.Update(clock.Instant{Wall: origin.UnixNano(), Logical: 5, Node: 9})
-		// Logical is one more than the larger of the local 1 and the observed 5.
-		testkit.Equal(t, got.Logical, uint32(6),
-			"Logical must equal max(local=1, observed=5)+1")
-	})
-
-	t.Run("tied wall, local logical higher: take local+1", func(t *testing.T) {
-		t.Parallel()
-		c := fake.New(origin)
-		// Burn local logical past observed to exercise the
-		// max(local, observed) branch where local wins.
-		for range 10 {
+		t.Run("restarts Logical when the wall moves", func(t *testing.T) {
+			t.Parallel()
+			c := fake.New(origin)
 			c.Now()
-		}
-		got := c.Update(clock.Instant{Wall: origin.UnixNano(), Logical: 3, Node: 9})
-		// Logical is one more than the larger of the local 10 and the observed 3.
-		testkit.Equal(t, got.Logical, uint32(11),
-			"Logical must equal max(local=10, observed=3)+1")
-	})
-
-	t.Run("releases the clock for the call after it", func(t *testing.T) {
-		t.Parallel()
-		c := fake.New(origin)
-		c.Update(clock.Instant{Wall: 1, Logical: 1, Node: 7})
-		assert.CompletesWithin(t, time.Second, func(context.Context) error {
 			c.Now()
+			c.Advance(time.Second)
+			assert.Equal(t, c.Now().Logical, uint32(1), "the first Now after Advance returns Logical 1")
+		})
 
-			return nil
-		}, "Now after Update must not wait for the mutex of the clock")
+		t.Run("sends the tick of a Timer whose deadline it passes", func(t *testing.T) {
+			t.Parallel()
+			c := fake.New(origin)
+			due := c.NewTimer(time.Second)
+			c.Advance(2 * time.Second)
+			assert.Length(t, due.C(), 1, "Advance sends the tick of the Timer of a second")
+		})
+
+		t.Run("sends no tick of a Timer whose deadline it does not pass", func(t *testing.T) {
+			t.Parallel()
+			c := fake.New(origin)
+			later := c.NewTimer(time.Hour)
+			c.Advance(2 * time.Second)
+			assert.Empty(t, later.C(), "Advance of 2 s sends no tick of the Timer of an hour")
+		})
+	})
+
+	t.Run("Set", func(t *testing.T) {
+		t.Parallel()
+
+		target := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+
+		t.Run("moves the virtual time to t", func(t *testing.T) {
+			t.Parallel()
+			c := fake.New(origin)
+			c.Set(target)
+			assert.True(t, c.Time().Equal(target), "Time returns the time of Set")
+		})
+
+		t.Run("restarts Logical", func(t *testing.T) {
+			t.Parallel()
+			c := fake.New(origin)
+			c.Now()
+			c.Now()
+			c.Set(target)
+			assert.Equal(t, c.Now().Logical, uint32(1), "the first Now after Set returns Logical 1")
+		})
+
+		t.Run("sends the tick of a Timer whose deadline t passes", func(t *testing.T) {
+			t.Parallel()
+			c := fake.New(origin)
+			tm := c.NewTimer(time.Hour)
+			c.Set(origin.Add(2 * time.Hour))
+			assert.Length(t, tm.C(), 1, "Set sends the tick of the Timer whose deadline it passes")
+		})
+	})
+
+	t.Run("Update", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the next local Logical for a peer behind the clock", func(t *testing.T) {
+			t.Parallel()
+			got := fake.New(origin).Update(clock.Instant{Wall: 1, Logical: 99, Node: 7})
+			expect.Equal(t, got.Wall, origin.UnixNano(), "Update keeps the wall of a clock ahead of the peer")
+			expect.Equal(t, got.Logical, uint32(1), "Update returns the next local Logical, whatever the peer has")
+		})
+
+		t.Run("returns the Logical of a peer ahead plus 1", func(t *testing.T) {
+			t.Parallel()
+			future := origin.Add(time.Hour).UnixNano()
+			got := fake.New(origin).Update(clock.Instant{Wall: future, Logical: 7, Node: 9})
+			expect.Equal(t, got.Wall, future, "Update takes the wall of a peer ahead")
+			expect.Equal(t, got.Logical, uint32(8), "Update returns the Logical of the peer plus 1")
+		})
+
+		t.Run("returns the larger Logical of a peer at the same wall plus 1", func(t *testing.T) {
+			t.Parallel()
+			c := fake.New(origin)
+			c.Now()
+			got := c.Update(clock.Instant{Wall: origin.UnixNano(), Logical: 5, Node: 9})
+			assert.Equal(t, got.Logical, uint32(6), "Update returns the Logical 5 of the peer plus 1")
+		})
+
+		t.Run("returns the larger local Logical plus 1 for a peer at the same wall", func(t *testing.T) {
+			t.Parallel()
+			c := fake.New(origin)
+			for range 10 {
+				c.Now()
+			}
+			got := c.Update(clock.Instant{Wall: origin.UnixNano(), Logical: 3, Node: 9})
+			assert.Equal(t, got.Logical, uint32(11), "Update returns the local Logical 10 plus 1")
+		})
+
+		t.Run("releases the clock for the call after it", func(t *testing.T) {
+			t.Parallel()
+			c := fake.New(origin)
+			c.Update(clock.Instant{Wall: 1, Logical: 1, Node: 7})
+			assert.CompletesWithin(t, time.Second, func(context.Context) error {
+				c.Now()
+
+				return nil
+			}, "Now after Update does not wait for the mutex of the clock")
+		})
+	})
+
+	t.Run("AwaitWaiters", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns once n goroutines wait on the clock", func(t *testing.T) {
+			t.Parallel()
+			const n = 3
+			c := fake.New(origin)
+			var wg sync.WaitGroup
+			for range n {
+				wg.Go(func() { clock.Sleep(c, time.Hour) })
+			}
+			// Advance wakes every due waiter before it returns, so the bound
+			// of the wait only ends a test in which a sleeper never returns.
+			t.Cleanup(func() {
+				c.Advance(2 * time.Hour)
+				assert.CompletesWithin(t, 5*time.Second, func(context.Context) error {
+					wg.Wait()
+
+					return nil
+				}, "the sleepers return once Advance passes their deadlines")
+			})
+			c.AwaitWaiters(n)
+		})
 	})
 }
 
-func TestAwaitWaiters(t *testing.T) {
-	t.Parallel()
-
-	// Three goroutines block in Sleep; AwaitWaiters returns once
-	// all three have registered, eliminating the test's
-	// dependency on real-time pacing.
-	const n = 3
-	c := fake.New(origin)
-	var wg sync.WaitGroup
-	wg.Add(n)
-	for range n {
-		go func() {
-			defer wg.Done()
-			clock.Sleep(c, time.Hour)
-		}()
-	}
-	// Bounded rather than a bare wg.Wait(). The cleanup exists to
-	// release the sleepers, so it only blocks at all when something
-	// upstream is already broken — and an unbounded wait there turns
-	// that into the whole binary hanging until `go test -timeout`,
-	// reported against whichever test was running at the time.
-	//
-	// The interval is a watchdog, not a synchronisation budget:
-	// Advance wakes every due waiter before it returns, so the
-	// WaitGroup is already released by the time this runs.
-	t.Cleanup(func() {
-		c.Advance(2 * time.Hour)
-
-		drained := make(chan struct{})
-		go func() {
-			wg.Wait()
-			close(drained)
-		}()
-
-		const settle = 5 * time.Second
-
-		//dokimi:lint-skip completes-within: the tests of clock/fake use testkit until they move to assert
-		select {
-		case <-drained:
-		case <-time.After(settle):
-			t.Errorf("sleepers still blocked %s after advancing past every deadline",
-				settle)
-		}
-	})
-	c.AwaitWaiters(n)
-}
-
-// BenchmarkFakeAdvance is fake-specific — Advance is not part of
-// the [clock.Clock] interface, so it stays here rather than in
-// the generated bench contract.
+// BenchmarkFakeAdvance reports the cost of an Advance of a nanosecond on a
+// Clock without waiters.
 func BenchmarkFakeAdvance(b *testing.B) {
 	c := fake.New(origin)
 	b.ReportAllocs()

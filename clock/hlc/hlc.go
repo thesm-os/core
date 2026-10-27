@@ -20,6 +20,11 @@ import (
 // [Clock.Now], [Clock.Time], and [Clock.Update] are zero-allocation.
 // [Clock.NewTimer] allocates the wrapper struct and the underlying
 // [time.Timer].
+//
+//dokimi:subject clock.Clock new=newClock
+//dokimi:budget Clock.Now allocs=0
+//dokimi:budget Clock.Time allocs=0
+//dokimi:budget Clock.Update allocs=0
 type Clock struct {
 	nowFn   func() int64
 	wall    int64
