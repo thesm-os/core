@@ -18,7 +18,7 @@ import (
 	"go.dokimi.dev/assert/expect"
 	"go.dokimi.dev/assert/history"
 	"go.dokimi.dev/assert/prop"
-	"go.thesmos.sh/testkit/bench"
+	"go.dokimi.dev/conform"
 
 	"go.thesmos.sh/core/coretest/cryptotest"
 	"go.thesmos.sh/core/crypto"
@@ -47,8 +47,8 @@ const (
 // [crypto.IDSize].
 var sha256ID = crypto.ID{'s', 'h', 'a', '2', '5', '6', '/', 'v', '1'}
 
-// stdlibSpec describes the stdlib SHA-256 reference, used to
-// build the model's reference factory.
+// stdlibSpec is the spec of the SHA-256 of the standard library, the
+// reference of the conformance test.
 var stdlibSpec = cryptotest.StdlibHasherSpec{
 	Algorithm: crypto.AlgSHA256,
 	ID:        sha256ID,
@@ -62,36 +62,6 @@ var (
 	payload1 = []byte(`{"act":"infer","id":2}`)
 	payload2 = []byte(`{"act":"score","id":3}`)
 )
-
-// TestSHA256HasherContract runs the contract suite of crypto.Hasher with
-// the ID, the Algorithm and the digests of the standard library.
-func TestSHA256HasherContract(t *testing.T) {
-	t.Parallel()
-	cryptotest.AssertHasherContract(t, func() crypto.Hasher { return cryptosha256.New() },
-		append(cryptotest.HasherContractAssertions(),
-			cryptotest.HasherIDAssertion(sha256ID),
-			cryptotest.HasherAlgorithmAssertion(crypto.AlgSHA256),
-			cryptotest.HasherCrossStdlibAssertion(stdlibSpec.Sum),
-		)...,
-	)
-}
-
-// TestSHA256HasherModel drives random byte sequences through
-// both the SUT and a stdlib-backed reference, asserting byte-
-// exact equivalence on every Hash and tagged call.
-func TestSHA256HasherModel(t *testing.T) {
-	t.Parallel()
-	cryptotest.HasherModelTest(t, func() crypto.Hasher { return cryptosha256.New() },
-		cryptotest.HasherModelReference(func() crypto.Hasher {
-			return cryptotest.NewStdlibHasherStub(t, stdlibSpec)
-		}),
-		cryptotest.HasherModelExtraActions(
-			cryptotest.HasherHashAction(),
-			cryptotest.HasherHashTaggedAction(),
-			cryptotest.HasherCombineTaggedAction(),
-		),
-	)
-}
 
 // TestHasher pins the digests of the algorithm of record and of the
 // tagged layout, so a verifier written against them in another language
@@ -111,6 +81,24 @@ func TestHasher(t *testing.T) {
 		t.Run("returns the zero Hasher", func(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, cryptosha256.New(), cryptosha256.Hasher{}, "the zero Hasher must be usable as New")
+		})
+	})
+
+	t.Run("ID", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the ID of SHA-256", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, h.ID(), sha256ID, "ID must return the ID of SHA-256")
+		})
+	})
+
+	t.Run("Algorithm", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the name of SHA-256", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, h.Algorithm(), crypto.AlgSHA256, "Algorithm must return the name of SHA-256")
 		})
 	})
 
@@ -337,31 +325,14 @@ func TestHasherAllocs(t *testing.T) {
 	})
 }
 
-// BenchmarkSHA256Hasher runs the standard Hasher bench contract: a
-// hot-path measurement for every method, and PureAllocsWithin(0)
-// gates for the documented zero-alloc paths (Hash, the tagged pair,
-// Algorithm and ID).
-func BenchmarkSHA256Hasher(b *testing.B) {
-	cryptotest.BenchmarkHasherContract(b, func() crypto.Hasher { return cryptosha256.New() },
-		cryptotest.HasherBenchOnAlgorithm(bench.PureAllocsWithin[crypto.Hasher, crypto.Algorithm](0)),
-		cryptotest.HasherBenchOnID(bench.PureAllocsWithin[crypto.Hasher, crypto.ID](0)),
-		cryptotest.HasherBenchOnHash(bench.PureAllocsWithin[crypto.Hasher, crypto.Digest](0)),
-		cryptotest.HasherBenchOnHashTagged(bench.PureAllocsWithin[crypto.Hasher, crypto.Digest](0)),
-		cryptotest.HasherBenchOnCombineTagged(bench.PureAllocsWithin[crypto.Hasher, crypto.Digest](0)),
-	)
-}
-
-// FuzzSHA256HasherModel is the coverage-guided fuzz wrapper around the
-// model property, with the actions of TestSHA256HasherModel.
-func FuzzSHA256HasherModel(f *testing.F) {
-	cryptotest.HasherModelFuzz(f, func() crypto.Hasher { return cryptosha256.New() },
-		cryptotest.HasherModelReference(func() crypto.Hasher {
-			return cryptotest.NewStdlibHasherStub(f, stdlibSpec)
+// hasherOptions returns the options of the conformance test of Hasher: the
+// SHA-256 of the standard library as the reference, and a digest of SHA-256 as
+// the operand of each generated call of CombineTagged.
+func hasherOptions() []cryptotest.HasherOption {
+	return []cryptotest.HasherOption{
+		conform.Reference(func(h *cryptotest.HasherHandle) crypto.Hasher {
+			return cryptotest.NewStdlibHasherStub(h, stdlibSpec)
 		}),
-		cryptotest.HasherModelExtraActions(
-			cryptotest.HasherHashAction(),
-			cryptotest.HasherHashTaggedAction(),
-			cryptotest.HasherCombineTaggedAction(),
-		),
-	)
+		conform.Using[crypto.Hasher](prop.Just(cryptosha256.New().Hash(nil))),
+	}
 }

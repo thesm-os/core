@@ -16,7 +16,7 @@ import (
 	"go.dokimi.dev/assert/expect"
 	"go.dokimi.dev/assert/history"
 	"go.dokimi.dev/assert/prop"
-	"go.thesmos.sh/testkit/bench"
+	"go.dokimi.dev/conform"
 
 	"go.thesmos.sh/core/coretest/cryptotest"
 	"go.thesmos.sh/core/crypto"
@@ -43,7 +43,8 @@ var (
 	sha512ID = crypto.ID{'s', 'h', 'a', '5', '1', '2', '/', 'v', '1'}
 )
 
-// sha384Spec describes the stdlib SHA-384 reference of the model.
+// sha384Spec is the spec of the SHA-384 of the standard library, the
+// reference of the conformance test of Hasher384.
 var sha384Spec = cryptotest.StdlibHasherSpec{
 	Algorithm: crypto.AlgSHA384,
 	ID:        sha384ID,
@@ -51,7 +52,8 @@ var sha384Spec = cryptotest.StdlibHasherSpec{
 	NewHash:   func() hash.Hash { return sha512.New384() },
 }
 
-// sha512Spec describes the stdlib SHA-512 reference of the model.
+// sha512Spec is the spec of the SHA-512 of the standard library, the
+// reference of the conformance test of Hasher512.
 var sha512Spec = cryptotest.StdlibHasherSpec{
 	Algorithm: crypto.AlgSHA512,
 	ID:        sha512ID,
@@ -59,17 +61,19 @@ var sha512Spec = cryptotest.StdlibHasherSpec{
 	NewHash:   func() hash.Hash { return sha512.New() },
 }
 
-// hashers are the two Hashers of the package, with their FIPS 180-4
-// vectors of the empty message, of "abc" and of the message of two
-// blocks.
+// hashers are the two Hashers of the package, with the spec of their
+// reference and their FIPS 180-4 vectors of the empty message, of "abc" and
+// of the message of two blocks.
 var hashers = []struct {
 	name string
 	h    crypto.Hasher
+	spec cryptotest.StdlibHasherSpec
 	fips [3]string
 }{
 	{
 		name: "Hasher384",
 		h:    cryptosha512.New384(),
+		spec: sha384Spec,
 		fips: [3]string{
 			"38b060a751ac96384cd9327eb1b1e36a21fdb71114be07434c0cc7bf63f6e1da274edebfe76f65fbd51ad2f14898b95b",
 			"cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed8086072ba1e7cc2358baeca134c825a7",
@@ -79,6 +83,7 @@ var hashers = []struct {
 	{
 		name: "Hasher512",
 		h:    cryptosha512.New512(),
+		spec: sha512Spec,
 		fips: [3]string{
 			"cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce" +
 				"47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e",
@@ -88,66 +93,6 @@ var hashers = []struct {
 				"501d289e4900f7e4331b99dec4b5433ac7d329eeb6dd26545e96e55b874be909",
 		},
 	},
-}
-
-// TestSHA384HasherContract runs the contract suite of crypto.Hasher on
-// SHA-384 with its ID, its Algorithm and the digests of the standard
-// library.
-func TestSHA384HasherContract(t *testing.T) {
-	t.Parallel()
-	cryptotest.AssertHasherContract(t, func() crypto.Hasher { return cryptosha512.New384() },
-		append(cryptotest.HasherContractAssertions(),
-			cryptotest.HasherIDAssertion(sha384ID),
-			cryptotest.HasherAlgorithmAssertion(crypto.AlgSHA384),
-			cryptotest.HasherCrossStdlibAssertion(sha384Spec.Sum),
-		)...,
-	)
-}
-
-// TestSHA384HasherModel checks SHA-384 against the stdlib reference on
-// every Hash and tagged call.
-func TestSHA384HasherModel(t *testing.T) {
-	t.Parallel()
-	cryptotest.HasherModelTest(t, func() crypto.Hasher { return cryptosha512.New384() },
-		cryptotest.HasherModelReference(func() crypto.Hasher {
-			return cryptotest.NewStdlibHasherStub(t, sha384Spec)
-		}),
-		cryptotest.HasherModelExtraActions(
-			cryptotest.HasherHashAction(),
-			cryptotest.HasherHashTaggedAction(),
-			cryptotest.HasherCombineTaggedAction(),
-		),
-	)
-}
-
-// TestSHA512HasherContract runs the contract suite of crypto.Hasher on
-// SHA-512 with its ID, its Algorithm and the digests of the standard
-// library.
-func TestSHA512HasherContract(t *testing.T) {
-	t.Parallel()
-	cryptotest.AssertHasherContract(t, func() crypto.Hasher { return cryptosha512.New512() },
-		append(cryptotest.HasherContractAssertions(),
-			cryptotest.HasherIDAssertion(sha512ID),
-			cryptotest.HasherAlgorithmAssertion(crypto.AlgSHA512),
-			cryptotest.HasherCrossStdlibAssertion(sha512Spec.Sum),
-		)...,
-	)
-}
-
-// TestSHA512HasherModel checks SHA-512 against the stdlib reference on
-// every Hash and tagged call.
-func TestSHA512HasherModel(t *testing.T) {
-	t.Parallel()
-	cryptotest.HasherModelTest(t, func() crypto.Hasher { return cryptosha512.New512() },
-		cryptotest.HasherModelReference(func() crypto.Hasher {
-			return cryptotest.NewStdlibHasherStub(t, sha512Spec)
-		}),
-		cryptotest.HasherModelExtraActions(
-			cryptotest.HasherHashAction(),
-			cryptotest.HasherHashTaggedAction(),
-			cryptotest.HasherCombineTaggedAction(),
-		),
-	)
 }
 
 // TestSHA512 pins the FIPS 180-4 digests of both Hashers, the digests of
@@ -160,6 +105,25 @@ func TestSHA512(t *testing.T) {
 		t.Run(hasher.name, func(t *testing.T) {
 			t.Parallel()
 			h := hasher.h
+
+			t.Run("ID", func(t *testing.T) {
+				t.Parallel()
+
+				t.Run("returns the ID of the Hasher", func(t *testing.T) {
+					t.Parallel()
+					assert.Equal(t, h.ID(), hasher.spec.ID, "ID must return the ID of the Hasher")
+				})
+			})
+
+			t.Run("Algorithm", func(t *testing.T) {
+				t.Parallel()
+
+				t.Run("returns the name of the algorithm of the Hasher", func(t *testing.T) {
+					t.Parallel()
+					assert.Equal(t, h.Algorithm(), hasher.spec.Algorithm,
+						"Algorithm must return the name of the algorithm of the Hasher")
+				})
+			})
 
 			t.Run("NewStream", func(t *testing.T) {
 				t.Parallel()
@@ -271,56 +235,26 @@ func TestSHA512Allocs(t *testing.T) {
 	}
 }
 
-// BenchmarkSHA384Hasher runs the standard Hasher bench contract on
-// SHA-384.
-func BenchmarkSHA384Hasher(b *testing.B) {
-	cryptotest.BenchmarkHasherContract(b, func() crypto.Hasher { return cryptosha512.New384() },
-		cryptotest.HasherBenchOnAlgorithm(bench.PureAllocsWithin[crypto.Hasher, crypto.Algorithm](0)),
-		cryptotest.HasherBenchOnID(bench.PureAllocsWithin[crypto.Hasher, crypto.ID](0)),
-		cryptotest.HasherBenchOnHash(bench.PureAllocsWithin[crypto.Hasher, crypto.Digest](0)),
-		cryptotest.HasherBenchOnHashTagged(bench.PureAllocsWithin[crypto.Hasher, crypto.Digest](0)),
-		cryptotest.HasherBenchOnCombineTagged(bench.PureAllocsWithin[crypto.Hasher, crypto.Digest](0)),
-	)
-}
-
-// BenchmarkSHA512Hasher runs the standard Hasher bench contract on
-// SHA-512.
-func BenchmarkSHA512Hasher(b *testing.B) {
-	cryptotest.BenchmarkHasherContract(b, func() crypto.Hasher { return cryptosha512.New512() },
-		cryptotest.HasherBenchOnAlgorithm(bench.PureAllocsWithin[crypto.Hasher, crypto.Algorithm](0)),
-		cryptotest.HasherBenchOnID(bench.PureAllocsWithin[crypto.Hasher, crypto.ID](0)),
-		cryptotest.HasherBenchOnHash(bench.PureAllocsWithin[crypto.Hasher, crypto.Digest](0)),
-		cryptotest.HasherBenchOnHashTagged(bench.PureAllocsWithin[crypto.Hasher, crypto.Digest](0)),
-		cryptotest.HasherBenchOnCombineTagged(bench.PureAllocsWithin[crypto.Hasher, crypto.Digest](0)),
-	)
-}
-
-// FuzzSHA384HasherModel is the coverage-guided fuzz wrapper around the
-// model property of SHA-384.
-func FuzzSHA384HasherModel(f *testing.F) {
-	cryptotest.HasherModelFuzz(f, func() crypto.Hasher { return cryptosha512.New384() },
-		cryptotest.HasherModelReference(func() crypto.Hasher {
-			return cryptotest.NewStdlibHasherStub(f, sha384Spec)
+// hasher384Options returns the options of the conformance test of
+// Hasher384: the SHA-384 of the standard library as the reference, and a
+// digest of SHA-384 as the operand of each generated call of CombineTagged.
+func hasher384Options() []cryptotest.HasherOption {
+	return []cryptotest.HasherOption{
+		conform.Reference(func(h *cryptotest.HasherHandle) crypto.Hasher {
+			return cryptotest.NewStdlibHasherStub(h, sha384Spec)
 		}),
-		cryptotest.HasherModelExtraActions(
-			cryptotest.HasherHashAction(),
-			cryptotest.HasherHashTaggedAction(),
-			cryptotest.HasherCombineTaggedAction(),
-		),
-	)
+		conform.Using[crypto.Hasher](prop.Just(cryptosha512.New384().Hash(nil))),
+	}
 }
 
-// FuzzSHA512HasherModel is the coverage-guided fuzz wrapper around the
-// model property of SHA-512.
-func FuzzSHA512HasherModel(f *testing.F) {
-	cryptotest.HasherModelFuzz(f, func() crypto.Hasher { return cryptosha512.New512() },
-		cryptotest.HasherModelReference(func() crypto.Hasher {
-			return cryptotest.NewStdlibHasherStub(f, sha512Spec)
+// hasher512Options returns the options of the conformance test of
+// Hasher512: the SHA-512 of the standard library as the reference, and a
+// digest of SHA-512 as the operand of each generated call of CombineTagged.
+func hasher512Options() []cryptotest.HasherOption {
+	return []cryptotest.HasherOption{
+		conform.Reference(func(h *cryptotest.HasherHandle) crypto.Hasher {
+			return cryptotest.NewStdlibHasherStub(h, sha512Spec)
 		}),
-		cryptotest.HasherModelExtraActions(
-			cryptotest.HasherHashAction(),
-			cryptotest.HasherHashTaggedAction(),
-			cryptotest.HasherCombineTaggedAction(),
-		),
-	)
+		conform.Using[crypto.Hasher](prop.Just(cryptosha512.New512().Hash(nil))),
+	}
 }

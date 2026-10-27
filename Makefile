@@ -95,7 +95,7 @@ GO_MUTATE_WORKERS ?= 1
 GO_MUTATE_TIMEOUT ?= 0s
 GO_MUTATE_ARGS ?=
 GO_MUTATE_SKIP ?=
-GO_GENERATE_COMMANDS ?= go run go.dokimi.dev/dokimi/cmd/dokimi@v0.3.0 run $(GO_PATHS) && go generate -run 'go tool kanon' $(GO_PATHS)
+GO_GENERATE_COMMANDS ?= go run go.dokimi.dev/dokimi/cmd/dokimi@v0.3.1-0.20261027155412-a673413e422f run $(GO_PATHS) && go generate -run 'go tool kanon' $(GO_PATHS)
 GO_AUDIT_ARGS ?=
 
 # The files of two runs of bench-go that benchstat-go compares.

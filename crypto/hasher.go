@@ -101,6 +101,10 @@ func (id ID) String() string {
 // because the compiler cannot see the implementation. A caller that
 // must not allocate passes data that is already on the heap, such as a
 // reused buffer.
+//
+//dokimi:stub
+//dokimi:suite
+//dokimi:out path=../coretest/cryptotest/
 type Hasher interface {
 	// ID returns the implementation's stable build-local
 	// identifier.
@@ -134,9 +138,11 @@ type Hasher interface {
 	// payload share bytes with an interior node. Empty data is
 	// legal and gives the digest of the role byte alone, which
 	// collides with nothing shorter.
-	//
-	//testkit:sample SampleUnaryRole SampleBytes
-	HashTagged(r Role, data []byte) Digest
+	HashTagged(
+		//dokimi:sample value=0x01
+		r Role,
+		data []byte,
+	) Digest
 
 	// CombineTagged returns the [Digest] of left || right under r,
 	// a binary [Role]. Hot path for chain extension and Merkle
@@ -147,18 +153,17 @@ type Hasher interface {
 	// panics, and the zero [Digest] is a mismatch with its own
 	// diagnostic. A chain's first link is a unary role over one
 	// operand, so there is no sentinel to admit here.
-	//
-	//nolint:dupword // testkit directive: one builder per parameter, positional
-	//testkit:sample SampleBinaryRole SampleDigest SampleDigest
-	CombineTagged(r Role, left, right Digest) Digest
+	CombineTagged(
+		//dokimi:sample value=0x81
+		r Role,
+		left, right Digest,
+	) Digest
 
 	// NewStream returns a fresh [Stream] for inputs that do not fit
 	// in memory, or that compose several fields without
 	// concatenating them. It allocates the underlying hash state
 	// once, and [Stream.Write], [Stream.Sum] and [Stream.Reset] do
 	// not allocate after that.
-	//
-	//testkit:nondeterministic
 	NewStream() Stream
 }
 

@@ -37,6 +37,13 @@ var (
 )
 
 // Hasher256 implements [crypto.Hasher] using SHA3-256.
+//
+//dokimi:subject crypto.Hasher new=New256 options=hasher256Options
+//dokimi:budget Hasher.ID allocs=0
+//dokimi:budget Hasher.Algorithm allocs=0
+//dokimi:budget Hasher.Hash allocs=0
+//dokimi:budget Hasher.HashTagged allocs=0
+//dokimi:budget Hasher.CombineTagged allocs=0
 type Hasher256 struct{}
 
 // Compile-time interface check.
@@ -119,6 +126,13 @@ func (Hasher256) NewStream() crypto.Stream {
 }
 
 // Hasher384 implements [crypto.Hasher] using SHA3-384.
+//
+//dokimi:subject crypto.Hasher new=New384 options=hasher384Options
+//dokimi:budget Hasher.ID allocs=0
+//dokimi:budget Hasher.Algorithm allocs=0
+//dokimi:budget Hasher.Hash allocs=0
+//dokimi:budget Hasher.HashTagged allocs=0
+//dokimi:budget Hasher.CombineTagged allocs=0
 type Hasher384 struct{}
 
 // Compile-time interface check.
@@ -197,6 +211,13 @@ func (Hasher384) NewStream() crypto.Stream {
 }
 
 // Hasher512 implements [crypto.Hasher] using SHA3-512.
+//
+//dokimi:subject crypto.Hasher new=New512 options=hasher512Options
+//dokimi:budget Hasher.ID allocs=0
+//dokimi:budget Hasher.Algorithm allocs=0
+//dokimi:budget Hasher.Hash allocs=0
+//dokimi:budget Hasher.HashTagged allocs=0
+//dokimi:budget Hasher.CombineTagged allocs=0
 type Hasher512 struct{}
 
 // Compile-time interface check.

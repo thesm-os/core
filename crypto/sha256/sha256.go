@@ -42,6 +42,13 @@ const shortData = 2 * crypto.MaxDigestSize
 // [Hasher.CombineTagged] are zero-alloc; [Hasher.HashTagged] is
 // zero-alloc on the warm path. [Hasher.NewStream] allocates the
 // underlying [hash.Hash] once.
+//
+//dokimi:subject crypto.Hasher new=New options=hasherOptions
+//dokimi:budget Hasher.ID allocs=0
+//dokimi:budget Hasher.Algorithm allocs=0
+//dokimi:budget Hasher.Hash allocs=0
+//dokimi:budget Hasher.HashTagged allocs=0
+//dokimi:budget Hasher.CombineTagged allocs=0
 type Hasher struct{}
 
 // Compile-time interface check.

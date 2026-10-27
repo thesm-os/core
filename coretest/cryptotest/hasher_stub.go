@@ -13,6 +13,532 @@ import (
 	"go.thesmos.sh/core/crypto"
 )
 
+// HasherIDCall records one call of Hasher.ID.
+type HasherIDCall struct {
+	Result crypto.ID
+}
+
+// HasherAlgorithmCall records one call of Hasher.Algorithm.
+type HasherAlgorithmCall struct {
+	Result crypto.Algorithm
+}
+
+// HasherHashCall records one call of Hasher.Hash.
+type HasherHashCall struct {
+	Data   []byte
+	Result crypto.Digest
+}
+
+// HasherHashTaggedCall records one call of Hasher.HashTagged.
+type HasherHashTaggedCall struct {
+	R      crypto.Role
+	Data   []byte
+	Result crypto.Digest
+}
+
+// HasherCombineTaggedCall records one call of Hasher.CombineTagged.
+type HasherCombineTaggedCall struct {
+	R      crypto.Role
+	Left   crypto.Digest
+	Right  crypto.Digest
+	Result crypto.Digest
+}
+
+// HasherNewStreamCall records one call of Hasher.NewStream.
+type HasherNewStreamCall struct {
+	Result crypto.Stream
+}
+
+// HasherIDStub configures ID and records its calls. ID returns no error,
+// so a fault armed through it fails the test.
+type HasherIDStub struct {
+	*stub.MethodStub[HasherIDCall]
+
+	fn       func() crypto.ID
+	fallback *HasherIDReturn
+}
+
+// HasherIDReturn contains the fixed results of ID.
+type HasherIDReturn struct {
+	Result crypto.ID
+}
+
+// Returns sets the results of every call of ID. A function takes
+// precedence over them.
+func (s *HasherIDStub) Returns(result crypto.ID) *HasherIDStub {
+	s.fallback = &HasherIDReturn{Result: result}
+	return s
+}
+
+// Func sets the function that computes the results of ID from its
+// arguments.
+func (s *HasherIDStub) Func(fn func() crypto.ID) *HasherIDStub {
+	s.fn = fn
+	return s
+}
+
+// HasherAlgorithmStub configures Algorithm and records its calls.
+// Algorithm returns no error, so a fault armed through it fails the test.
+type HasherAlgorithmStub struct {
+	*stub.MethodStub[HasherAlgorithmCall]
+
+	fn       func() crypto.Algorithm
+	fallback *HasherAlgorithmReturn
+}
+
+// HasherAlgorithmReturn contains the fixed results of Algorithm.
+type HasherAlgorithmReturn struct {
+	Result crypto.Algorithm
+}
+
+// Returns sets the results of every call of Algorithm. A function takes
+// precedence over them.
+func (s *HasherAlgorithmStub) Returns(result crypto.Algorithm) *HasherAlgorithmStub {
+	s.fallback = &HasherAlgorithmReturn{Result: result}
+	return s
+}
+
+// Func sets the function that computes the results of Algorithm from its
+// arguments.
+func (s *HasherAlgorithmStub) Func(fn func() crypto.Algorithm) *HasherAlgorithmStub {
+	s.fn = fn
+	return s
+}
+
+// HasherHashStub configures Hash and records its calls. Hash returns no
+// error, so a fault armed through it fails the test.
+type HasherHashStub struct {
+	*stub.MethodStub[HasherHashCall]
+
+	fn       func([]byte) crypto.Digest
+	fallback *HasherHashReturn
+}
+
+// HasherHashReturn contains the fixed results of Hash.
+type HasherHashReturn struct {
+	Result crypto.Digest
+}
+
+// Returns sets the results of every call of Hash. A function takes
+// precedence over them.
+func (s *HasherHashStub) Returns(result crypto.Digest) *HasherHashStub {
+	s.fallback = &HasherHashReturn{Result: result}
+	return s
+}
+
+// Func sets the function that computes the results of Hash from its
+// arguments.
+func (s *HasherHashStub) Func(fn func([]byte) crypto.Digest) *HasherHashStub {
+	s.fn = fn
+	return s
+}
+
+// HasherHashTaggedStub configures HashTagged and records its calls.
+// HashTagged returns no error, so a fault armed through it fails the test.
+type HasherHashTaggedStub struct {
+	*stub.MethodStub[HasherHashTaggedCall]
+
+	fn       func(crypto.Role, []byte) crypto.Digest
+	fallback *HasherHashTaggedReturn
+}
+
+// HasherHashTaggedReturn contains the fixed results of HashTagged.
+type HasherHashTaggedReturn struct {
+	Result crypto.Digest
+}
+
+// Returns sets the results of every call of HashTagged. A function takes
+// precedence over them.
+func (s *HasherHashTaggedStub) Returns(result crypto.Digest) *HasherHashTaggedStub {
+	s.fallback = &HasherHashTaggedReturn{Result: result}
+	return s
+}
+
+// Func sets the function that computes the results of HashTagged from its
+// arguments.
+func (s *HasherHashTaggedStub) Func(fn func(crypto.Role, []byte) crypto.Digest) *HasherHashTaggedStub {
+	s.fn = fn
+	return s
+}
+
+// HasherCombineTaggedStub configures CombineTagged and records its calls.
+// CombineTagged returns no error, so a fault armed through it fails the
+// test.
+type HasherCombineTaggedStub struct {
+	*stub.MethodStub[HasherCombineTaggedCall]
+
+	fn       func(crypto.Role, crypto.Digest, crypto.Digest) crypto.Digest
+	fallback *HasherCombineTaggedReturn
+}
+
+// HasherCombineTaggedReturn contains the fixed results of CombineTagged.
+type HasherCombineTaggedReturn struct {
+	Result crypto.Digest
+}
+
+// Returns sets the results of every call of CombineTagged. A function
+// takes precedence over them.
+func (s *HasherCombineTaggedStub) Returns(result crypto.Digest) *HasherCombineTaggedStub {
+	s.fallback = &HasherCombineTaggedReturn{Result: result}
+	return s
+}
+
+// Func sets the function that computes the results of CombineTagged from
+// its arguments.
+func (s *HasherCombineTaggedStub) Func(
+	fn func(crypto.Role, crypto.Digest, crypto.Digest) crypto.Digest,
+) *HasherCombineTaggedStub {
+	s.fn = fn
+	return s
+}
+
+// HasherNewStreamStub configures NewStream and records its calls.
+// NewStream returns no error, so a fault armed through it fails the test.
+type HasherNewStreamStub struct {
+	*stub.MethodStub[HasherNewStreamCall]
+
+	fn       func() crypto.Stream
+	fallback *HasherNewStreamReturn
+}
+
+// HasherNewStreamReturn contains the fixed results of NewStream.
+type HasherNewStreamReturn struct {
+	Result crypto.Stream
+}
+
+// Returns sets the results of every call of NewStream. A function takes
+// precedence over them.
+func (s *HasherNewStreamStub) Returns(result crypto.Stream) *HasherNewStreamStub {
+	s.fallback = &HasherNewStreamReturn{Result: result}
+	return s
+}
+
+// Func sets the function that computes the results of NewStream from its
+// arguments.
+func (s *HasherNewStreamStub) Func(fn func() crypto.Stream) *HasherNewStreamStub {
+	s.fn = fn
+	return s
+}
+
+// The reference to stub.CompatV1 fails the build against another major
+// version of the runtime of doubles.
+var _ = stub.CompatV1
+
+// HasherStubOption configures a [HasherStub] at its construction.
+type HasherStubOption func(*HasherStub)
+
+// HasherStubStrict returns the option that makes an unconfigured method
+// fail the test instead of returning its zero value.
+func HasherStubStrict() HasherStubOption {
+	return func(s *HasherStub) { s.strict = true }
+}
+
+// HasherStubDelegateTo returns the option that passes each call to impl.
+// The double still records the call.
+func HasherStubDelegateTo(impl crypto.Hasher) HasherStubOption {
+	return func(s *HasherStub) {
+		s.OnID.Func(impl.ID)
+		s.OnAlgorithm.Func(impl.Algorithm)
+		s.OnHash.Func(impl.Hash)
+		s.OnHashTagged.Func(impl.HashTagged)
+		s.OnCombineTagged.Func(impl.CombineTagged)
+		s.OnNewStream.Func(impl.NewStream)
+	}
+}
+
+// HasherStubWithClock returns the option that sets the clock of the double
+// to clk. The double takes the latency, the windows of the faults and the
+// instants of the calls from clk. A latency on a controlled clock costs no
+// real time.
+func HasherStubWithClock(clk assert.Clock) HasherStubOption {
+	return func(s *HasherStub) { s.group.SetClock(clk) }
+}
+
+// HasherStubWithRandSource returns the option that sets the random source
+// of the probabilistic faults to src. A seeded source repeats the faults
+// of a run.
+func HasherStubWithRandSource(src rand.Source) HasherStubOption {
+	return func(s *HasherStub) { s.group.SetRandSource(src) }
+}
+
+// HasherStubBenchMode returns the option that turns the recording of calls
+// off. The methods still return their results.
+func HasherStubBenchMode() HasherStubOption {
+	return func(s *HasherStub) { s.group.BenchMode() }
+}
+
+// HasherStubWithLatency returns the option that makes every method sleep d
+// before it returns. Without HasherStubWithClock, d passes in real time.
+func HasherStubWithLatency(d time.Duration) HasherStubOption {
+	return func(s *HasherStub) { s.group.SetLatency(d) }
+}
+
+// WithHasherID returns the option that sets the function of ID.
+func WithHasherID(fn func() crypto.ID) HasherStubOption {
+	return func(s *HasherStub) { s.OnID.Func(fn) }
+}
+
+// WithHasherAlgorithm returns the option that sets the function of
+// Algorithm.
+func WithHasherAlgorithm(fn func() crypto.Algorithm) HasherStubOption {
+	return func(s *HasherStub) { s.OnAlgorithm.Func(fn) }
+}
+
+// WithHasherHash returns the option that sets the function of Hash.
+func WithHasherHash(fn func([]byte) crypto.Digest) HasherStubOption {
+	return func(s *HasherStub) { s.OnHash.Func(fn) }
+}
+
+// WithHasherHashTagged returns the option that sets the function of
+// HashTagged.
+func WithHasherHashTagged(fn func(crypto.Role, []byte) crypto.Digest) HasherStubOption {
+	return func(s *HasherStub) { s.OnHashTagged.Func(fn) }
+}
+
+// WithHasherCombineTagged returns the option that sets the function of
+// CombineTagged.
+func WithHasherCombineTagged(fn func(crypto.Role, crypto.Digest, crypto.Digest) crypto.Digest) HasherStubOption {
+	return func(s *HasherStub) { s.OnCombineTagged.Func(fn) }
+}
+
+// WithHasherNewStream returns the option that sets the function of
+// NewStream.
+func WithHasherNewStream(fn func() crypto.Stream) HasherStubOption {
+	return func(s *HasherStub) { s.OnNewStream.Func(fn) }
+}
+
+// HasherStub is a recording test double of Hasher. Each field On<Method>
+// configures its method. An unconfigured method records the call and
+// returns the zero values of its results.
+type HasherStub struct {
+	OnID            *HasherIDStub
+	OnAlgorithm     *HasherAlgorithmStub
+	OnHash          *HasherHashStub
+	OnHashTagged    *HasherHashTaggedStub
+	OnCombineTagged *HasherCombineTaggedStub
+	OnNewStream     *HasherNewStreamStub
+
+	// group contains the stub of each method.
+	group  *stub.Group
+	strict bool
+}
+
+// The compiler checks that HasherStub implements Hasher.
+var _ crypto.Hasher = (*HasherStub)(nil)
+
+// NewHasherStub returns a double of Hasher that reports its failures to tb
+// and applies opts. The double checks the expected counts of calls at the
+// end of the test. With a nil tb, the double reports nothing.
+func NewHasherStub(tb assert.TB, opts ...HasherStubOption) *HasherStub {
+	s := &HasherStub{
+		OnID: &HasherIDStub{MethodStub: stub.NewMethodStub[HasherIDCall](tb, "Hasher.ID")},
+		OnAlgorithm: &HasherAlgorithmStub{
+			MethodStub: stub.NewMethodStub[HasherAlgorithmCall](tb, "Hasher.Algorithm"),
+		},
+		OnHash: &HasherHashStub{MethodStub: stub.NewMethodStub[HasherHashCall](tb, "Hasher.Hash")},
+		OnHashTagged: &HasherHashTaggedStub{
+			MethodStub: stub.NewMethodStub[HasherHashTaggedCall](tb, "Hasher.HashTagged"),
+		},
+		OnCombineTagged: &HasherCombineTaggedStub{
+			MethodStub: stub.NewMethodStub[HasherCombineTaggedCall](tb, "Hasher.CombineTagged"),
+		},
+		OnNewStream: &HasherNewStreamStub{
+			MethodStub: stub.NewMethodStub[HasherNewStreamCall](tb, "Hasher.NewStream"),
+		},
+	}
+	s.group = stub.NewGroup(
+		s.OnID.MethodStub,
+		s.OnAlgorithm.MethodStub,
+		s.OnHash.MethodStub,
+		s.OnHashTagged.MethodStub,
+		s.OnCombineTagged.MethodStub,
+		s.OnNewStream.MethodStub,
+	)
+	for _, opt := range opts {
+		opt(s)
+	}
+	if s.strict {
+		s.group.StrictAll()
+	}
+	s.group.Bind(tb)
+	return s
+}
+
+// NewHasherStubDelayed returns a double whose methods sleep d on clk
+// before they return. It applies opts after the clock and the latency.
+func NewHasherStubDelayed(tb assert.TB, d time.Duration, clk assert.Clock, opts ...HasherStubOption) *HasherStub {
+	return NewHasherStub(tb, append([]HasherStubOption{
+		HasherStubWithClock(clk),
+		HasherStubWithLatency(d),
+	}, opts...)...)
+}
+
+// ResetCalls clears the recorded calls, the counters of the faults and the
+// expected counts. It keeps the functions, the fixed results and the faults.
+func (s *HasherStub) ResetCalls() {
+	s.group.Reset()
+}
+
+// invoke returns a call of the function of Func with the arguments, and nil
+// where no function is set.
+func (s *HasherIDStub) invoke() func() HasherIDReturn {
+	if s.fn == nil {
+		return nil
+	}
+	return func() HasherIDReturn {
+		r0 := s.fn()
+		return HasherIDReturn{Result: r0}
+	}
+}
+
+// ID records the call. An armed fault comes first, then the function of
+// Func, then the results of Returns, and then the zero values.
+func (s *HasherStub) ID() crypto.ID {
+	call := HasherIDCall{}
+	r := stub.Answer(s.OnID.MethodStub, &call, stub.Arms[HasherIDCall, HasherIDReturn]{
+		Invoke:   s.OnID.invoke(),
+		Fallback: s.OnID.fallback,
+		Stamp: func(c *HasherIDCall, r HasherIDReturn) {
+			c.Result = r.Result
+		},
+	})
+	return r.Result
+}
+
+// invoke returns a call of the function of Func with the arguments, and nil
+// where no function is set.
+func (s *HasherAlgorithmStub) invoke() func() HasherAlgorithmReturn {
+	if s.fn == nil {
+		return nil
+	}
+	return func() HasherAlgorithmReturn {
+		r0 := s.fn()
+		return HasherAlgorithmReturn{Result: r0}
+	}
+}
+
+// Algorithm records the call. An armed fault comes first, then the
+// function of Func, then the results of Returns, and then the zero values.
+func (s *HasherStub) Algorithm() crypto.Algorithm {
+	call := HasherAlgorithmCall{}
+	r := stub.Answer(s.OnAlgorithm.MethodStub, &call, stub.Arms[HasherAlgorithmCall, HasherAlgorithmReturn]{
+		Invoke:   s.OnAlgorithm.invoke(),
+		Fallback: s.OnAlgorithm.fallback,
+		Stamp: func(c *HasherAlgorithmCall, r HasherAlgorithmReturn) {
+			c.Result = r.Result
+		},
+	})
+	return r.Result
+}
+
+// invoke returns a call of the function of Func with the arguments, and nil
+// where no function is set.
+func (s *HasherHashStub) invoke(data []byte) func() HasherHashReturn {
+	if s.fn == nil {
+		return nil
+	}
+	return func() HasherHashReturn {
+		r0 := s.fn(data)
+		return HasherHashReturn{Result: r0}
+	}
+}
+
+// Hash records the call. An armed fault comes first, then the function of
+// Func, then the results of Returns, and then the zero values.
+func (s *HasherStub) Hash(data []byte) crypto.Digest {
+	call := HasherHashCall{Data: data}
+	r := stub.Answer(s.OnHash.MethodStub, &call, stub.Arms[HasherHashCall, HasherHashReturn]{
+		Invoke:   s.OnHash.invoke(data),
+		Fallback: s.OnHash.fallback,
+		Stamp: func(c *HasherHashCall, r HasherHashReturn) {
+			c.Result = r.Result
+		},
+	})
+	return r.Result
+}
+
+// invoke returns a call of the function of Func with the arguments, and nil
+// where no function is set.
+func (s *HasherHashTaggedStub) invoke(r crypto.Role, data []byte) func() HasherHashTaggedReturn {
+	if s.fn == nil {
+		return nil
+	}
+	return func() HasherHashTaggedReturn {
+		r0 := s.fn(r, data)
+		return HasherHashTaggedReturn{Result: r0}
+	}
+}
+
+// HashTagged records the call. An armed fault comes first, then the
+// function of Func, then the results of Returns, and then the zero values.
+func (s *HasherStub) HashTagged(r crypto.Role, data []byte) crypto.Digest {
+	call := HasherHashTaggedCall{R: r, Data: data}
+	r1 := stub.Answer(s.OnHashTagged.MethodStub, &call, stub.Arms[HasherHashTaggedCall, HasherHashTaggedReturn]{
+		Invoke:   s.OnHashTagged.invoke(r, data),
+		Fallback: s.OnHashTagged.fallback,
+		Stamp: func(c *HasherHashTaggedCall, r HasherHashTaggedReturn) {
+			c.Result = r.Result
+		},
+	})
+	return r1.Result
+}
+
+// invoke returns a call of the function of Func with the arguments, and nil
+// where no function is set.
+func (s *HasherCombineTaggedStub) invoke(r crypto.Role, left, right crypto.Digest) func() HasherCombineTaggedReturn {
+	if s.fn == nil {
+		return nil
+	}
+	return func() HasherCombineTaggedReturn {
+		r0 := s.fn(r, left, right)
+		return HasherCombineTaggedReturn{Result: r0}
+	}
+}
+
+// CombineTagged records the call. An armed fault comes first, then the
+// function of Func, then the results of Returns, and then the zero values.
+func (s *HasherStub) CombineTagged(r crypto.Role, left, right crypto.Digest) crypto.Digest {
+	call := HasherCombineTaggedCall{R: r, Left: left, Right: right}
+	r1 := stub.Answer(
+		s.OnCombineTagged.MethodStub,
+		&call,
+		stub.Arms[HasherCombineTaggedCall, HasherCombineTaggedReturn]{
+			Invoke:   s.OnCombineTagged.invoke(r, left, right),
+			Fallback: s.OnCombineTagged.fallback,
+			Stamp: func(c *HasherCombineTaggedCall, r HasherCombineTaggedReturn) {
+				c.Result = r.Result
+			},
+		},
+	)
+	return r1.Result
+}
+
+// invoke returns a call of the function of Func with the arguments, and nil
+// where no function is set.
+func (s *HasherNewStreamStub) invoke() func() HasherNewStreamReturn {
+	if s.fn == nil {
+		return nil
+	}
+	return func() HasherNewStreamReturn {
+		r0 := s.fn()
+		return HasherNewStreamReturn{Result: r0}
+	}
+}
+
+// NewStream records the call. An armed fault comes first, then the
+// function of Func, then the results of Returns, and then the zero values.
+func (s *HasherStub) NewStream() crypto.Stream {
+	call := HasherNewStreamCall{}
+	r := stub.Answer(s.OnNewStream.MethodStub, &call, stub.Arms[HasherNewStreamCall, HasherNewStreamReturn]{
+		Invoke:   s.OnNewStream.invoke(),
+		Fallback: s.OnNewStream.fallback,
+		Stamp: func(c *HasherNewStreamCall, r HasherNewStreamReturn) {
+			c.Result = r.Result
+		},
+	})
+	return r.Result
+}
+
 // StreamSumCall records one call of Stream.Sum.
 type StreamSumCall struct {
 	Result crypto.Digest
@@ -360,4 +886,4 @@ func (s *StreamStub) Write(p []byte) (n int, err error) {
 	return r.N, r.Err
 }
 
-// dokimi:provenance sha256:71e891ae09c478486252c451fc4c9f5967c176649dd745941fc08a806dca1e0c
+// dokimi:provenance sha256:4e621e4ce8362fe018cf86a3a7d0b7ed3ad6123c65b28e331e0e9bcc054de8f6
