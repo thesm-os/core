@@ -18,6 +18,9 @@ import (
 //
 // [Rand.Uint64] is zero-alloc. [Rand.Read] uses a stack-local
 // 8-byte buffer per call and is zero-alloc.
+//
+//dokimi:subject rand.Rand new=newRand
+//dokimi:budget Rand.Uint64 allocs=0
 type Rand struct {
 	rng  *mrand.Rand
 	seed rand.Seed

@@ -15,9 +15,7 @@ import (
 	"go.dokimi.dev/assert/expect"
 	"go.dokimi.dev/assert/history"
 	"go.dokimi.dev/assert/prop"
-	testkitbench "go.thesmos.sh/testkit/bench"
 
-	"go.thesmos.sh/core/coretest/randtest"
 	"go.thesmos.sh/core/rand"
 	"go.thesmos.sh/core/rand/seeded"
 )
@@ -29,25 +27,10 @@ const opUint64 = "uint64"
 // seeds generates every Seed.
 var seeds = prop.Integer[rand.Seed](math.MinInt64, math.MaxInt64)
 
-// TestSeededRandContract runs the contract suite of rand.Rand with the
-// assertions of distinct draws and of determinism under one seed.
-func TestSeededRandContract(t *testing.T) {
-	t.Parallel()
-	randtest.AssertRandContract(t, func() rand.Rand { return seeded.New(rand.Seed(1)) },
-		append(randtest.RandContractAssertions(),
-			randtest.RandUint64DistinctnessAssertion(),
-			randtest.RandSeedDeterminismAssertion(
-				func() rand.Rand { return seeded.New(rand.Seed(42)) },
-				func() rand.Rand { return seeded.New(rand.Seed(42)) },
-			),
-		)...,
-	)
-}
-
-// TestSeededRandModel runs the model test of the contract suite.
-func TestSeededRandModel(t *testing.T) {
-	t.Parallel()
-	randtest.RandModelTest(t, func() rand.Rand { return seeded.New(rand.Seed(1)) })
+// newRand returns a Rand of seed 1. The conformance test of the package runs
+// the suite of rand.Rand on it.
+func newRand() *seeded.Rand {
+	return seeded.New(rand.Seed(1))
 }
 
 func TestRand(t *testing.T) {
@@ -242,14 +225,6 @@ func TestRandAllocs(t *testing.T) {
 	})
 }
 
-// BenchmarkSeededRand runs the benchmarks of the contract suite of
-// rand.Rand.
-func BenchmarkSeededRand(b *testing.B) {
-	randtest.BenchmarkRandContract(b, func() rand.Rand { return seeded.New(rand.Seed(1)) },
-		randtest.RandBenchOnUint64(testkitbench.PureAllocsWithin[rand.Rand, uint64](0)),
-	)
-}
-
 // BenchmarkRand reports the cost of Uint64 and of a Read of 100 bytes,
 // and fails when either allocates.
 func BenchmarkRand(b *testing.B) {
@@ -281,10 +256,4 @@ func BenchmarkRand(b *testing.B) {
 
 		assert.Equal(b, n, len(p), "the benchmark must measure a read of p")
 	})
-}
-
-// FuzzSeededRandModel runs the model of the contract suite on the inputs
-// that a fuzzer finds.
-func FuzzSeededRandModel(f *testing.F) {
-	randtest.RandModelFuzz(f, func() rand.Rand { return seeded.New(rand.Seed(1)) })
 }

@@ -26,12 +26,14 @@ package rand
 //     itself is).
 //   - [seeded.Rand] is safe for concurrent use.
 //   - [fixed.Rand] is trivially safe for concurrent use (stateless).
+//
+//dokimi:stub
+//dokimi:suite
+//dokimi:out path=../coretest/randtest/
 type Rand interface {
 	// Uint64 returns a uniformly distributed 64-bit value.
 	//
 	// Allocation contract: zero alloc.
-	//
-	//testkit:nondeterministic
 	Uint64() uint64
 
 	// Read fills p with random bytes and returns the number of
@@ -43,8 +45,6 @@ type Rand interface {
 	// Cryptographic implementations may return an error if the
 	// underlying entropy source fails; non-cryptographic
 	// implementations should never return an error.
-	//
-	//testkit:nondeterministic
 	Read(p []byte) (n int, err error)
 }
 

@@ -34,6 +34,9 @@ import (
 // # Allocation contract
 //
 // [NewCounter] allocates the Counter. Uint64 and Read do not allocate.
+//
+//dokimi:subject rand.Rand new=newCounter
+//dokimi:budget Rand.Uint64 allocs=0
 type Counter struct {
 	// n is the number of draws so far.
 	n atomic.Uint64

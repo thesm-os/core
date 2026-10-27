@@ -21,6 +21,10 @@ import (
 // # Allocation contract
 //
 // Zero alloc.
+//
+//dokimi:subject rand.Rand new=newRand
+//dokimi:excuse Rand.Uint64/uint64-returns-distinct-values reason="a constant Rand returns one value on every call"
+//dokimi:budget Rand.Uint64 allocs=0
 type Rand struct {
 	value uint64
 }

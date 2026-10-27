@@ -60,6 +60,9 @@ var uint64BufPool = pool.NewPool(func() *[8]byte { return new([8]byte) })
 // Converting a Rand to [rand.Rand] does not allocate. A Rand is one
 // pointer wide, so the interface stores it directly, and a caller may
 // pass [New]'s result straight to a function taking a [rand.Rand].
+//
+//dokimi:subject rand.Rand new=New
+//dokimi:budget Rand.Uint64 allocs=0
 type Rand struct {
 	// src is nil for the default source. It is a pointer so that a
 	// Rand is pointer-shaped.

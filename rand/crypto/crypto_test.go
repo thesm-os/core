@@ -17,9 +17,7 @@ import (
 	"go.dokimi.dev/assert/expect"
 	"go.dokimi.dev/assert/history"
 	"go.dokimi.dev/assert/prop"
-	testkitbench "go.thesmos.sh/testkit/bench"
 
-	"go.thesmos.sh/core/coretest/randtest"
 	"go.thesmos.sh/core/rand"
 	"go.thesmos.sh/core/rand/crypto"
 	"go.thesmos.sh/core/rand/seeded"
@@ -37,25 +35,6 @@ var errSource = errors.New("entropy depleted")
 // sink receives a Rand converted to the interface, so the conversion
 // happens at run time and is measured.
 var sink rand.Rand
-
-// TestCryptoRandContract runs the contract suite of rand.Rand with the
-// assertion of distinct draws. crypto.Rand reads the CSPRNG of the
-// operating system, so the suite runs without its determinism
-// assertion.
-func TestCryptoRandContract(t *testing.T) {
-	t.Parallel()
-	randtest.AssertRandContract(t, func() rand.Rand { return crypto.New() },
-		append(randtest.RandContractAssertions(),
-			randtest.RandUint64DistinctnessAssertion(),
-		)...,
-	)
-}
-
-// TestCryptoRandModel runs the model test of the contract suite.
-func TestCryptoRandModel(t *testing.T) {
-	t.Parallel()
-	randtest.RandModelTest(t, func() rand.Rand { return crypto.New() })
-}
 
 func TestRand(t *testing.T) {
 	t.Parallel()
@@ -215,14 +194,6 @@ func TestRandAllocs(t *testing.T) {
 	}
 }
 
-// BenchmarkCryptoRand runs the benchmarks of the contract suite of
-// rand.Rand.
-func BenchmarkCryptoRand(b *testing.B) {
-	randtest.BenchmarkRandContract(b, func() rand.Rand { return crypto.New() },
-		randtest.RandBenchOnUint64(testkitbench.PureAllocsWithin[rand.Rand, uint64](0)),
-	)
-}
-
 // BenchmarkRand reports the cost of Uint64 and of a Read of 64 bytes from
 // the default source, and fails when either allocates.
 func BenchmarkRand(b *testing.B) {
@@ -254,10 +225,4 @@ func BenchmarkRand(b *testing.B) {
 
 		assert.Equal(b, n, len(p), "the benchmark must measure a read of p")
 	})
-}
-
-// FuzzCryptoRandModel runs the model of the contract suite on the inputs
-// that a fuzzer finds.
-func FuzzCryptoRandModel(f *testing.F) {
-	randtest.RandModelFuzz(f, func() rand.Rand { return crypto.New() })
 }

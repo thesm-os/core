@@ -14,9 +14,7 @@ import (
 	"go.dokimi.dev/assert/expect"
 	"go.dokimi.dev/assert/history"
 	"go.dokimi.dev/assert/prop"
-	testkitbench "go.thesmos.sh/testkit/bench"
 
-	"go.thesmos.sh/core/coretest/randtest"
 	"go.thesmos.sh/core/rand"
 	"go.thesmos.sh/core/rand/constant"
 )
@@ -25,18 +23,10 @@ import (
 // returns the Float64 of FromFloat64 of v.
 const exactDraws = 2048
 
-// TestCounterRandContract runs the contract suite of rand.Rand with the
-// assertions of distinct draws and of a deterministic stream.
-func TestCounterRandContract(t *testing.T) {
-	t.Parallel()
-	randtest.AssertRandContract(t, func() rand.Rand { return constant.NewCounter(0.5) },
-		append(randtest.RandContractAssertions(),
-			randtest.RandUint64DistinctnessAssertion(),
-			randtest.RandSeedDeterminismAssertion(
-				func() rand.Rand { return constant.NewCounter(0.25) },
-				func() rand.Rand { return constant.NewCounter(0.25) },
-			),
-		)...)
+// newCounter returns a Counter of 0.5. The conformance test of the package
+// runs the suite of rand.Rand on it.
+func newCounter() *constant.Counter {
+	return constant.NewCounter(0.5)
 }
 
 func TestCounter(t *testing.T) {
@@ -198,14 +188,6 @@ func TestCounterAllocs(t *testing.T) {
 		expect.MaxAllocs(t, func() { n, _ = c.Read(p) }, 0, "Read must not allocate")
 		assert.Equal(t, n, len(p), "the test must measure a read of p")
 	})
-}
-
-// BenchmarkCounterRand runs the benchmarks of the contract suite of
-// rand.Rand.
-func BenchmarkCounterRand(b *testing.B) {
-	randtest.BenchmarkRandContract(b, func() rand.Rand { return constant.NewCounter(0.5) },
-		randtest.RandBenchOnUint64(testkitbench.PureAllocsWithin[rand.Rand, uint64](0)),
-	)
 }
 
 // BenchmarkCounter reports the cost of Uint64 and of a Read of 100 bytes,

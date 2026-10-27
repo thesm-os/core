@@ -13,9 +13,7 @@ import (
 	"go.dokimi.dev/assert/bench"
 	"go.dokimi.dev/assert/expect"
 	"go.dokimi.dev/assert/prop"
-	testkitbench "go.thesmos.sh/testkit/bench"
 
-	"go.thesmos.sh/core/coretest/randtest"
 	"go.thesmos.sh/core/rand"
 	"go.thesmos.sh/core/rand/constant"
 )
@@ -28,13 +26,10 @@ const value uint64 = 0x0102030405060708
 // FromFloat64 clamps an input of 1 or more.
 const justBelowOne = 1.0 - 1.0/(1<<53)
 
-// TestConstantRandContract runs the contract suite of rand.Rand.
-// constant.Rand returns the same value forever, so the suite runs
-// without its distinctness assertion.
-func TestConstantRandContract(t *testing.T) {
-	t.Parallel()
-	randtest.AssertRandContract(t, func() rand.Rand { return constant.New(value) },
-		randtest.RandContractAssertions()...)
+// newRand returns the Rand of value. The conformance test of the package
+// runs the suite of rand.Rand on it.
+func newRand() constant.Rand {
+	return constant.New(value)
 }
 
 func TestRand(t *testing.T) {
@@ -149,14 +144,6 @@ func TestRandAllocs(t *testing.T) {
 		expect.MaxAllocs(t, func() { n, _ = r.Read(p) }, 0, "Read must not allocate")
 		assert.Equal(t, n, len(p), "the test must measure a read of p")
 	})
-}
-
-// BenchmarkConstantRand runs the benchmarks of the contract suite of
-// rand.Rand.
-func BenchmarkConstantRand(b *testing.B) {
-	randtest.BenchmarkRandContract(b, func() rand.Rand { return constant.New(value) },
-		randtest.RandBenchOnUint64(testkitbench.PureAllocsWithin[rand.Rand, uint64](0)),
-	)
 }
 
 // BenchmarkRand reports the cost of Uint64 and of a Read of 100 bytes,

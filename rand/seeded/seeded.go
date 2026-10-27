@@ -31,6 +31,9 @@ const blockSize = 32
 // The receiver contains all scratch (counter bytes, output buffer, HMAC
 // state), so [Rand.Read] and [Rand.Uint64] are zero-alloc after
 // construction.
+//
+//dokimi:subject rand.Rand new=newRand
+//dokimi:budget Rand.Uint64 allocs=0
 type Rand struct {
 	stream  crypto.Stream
 	seed    rand.Seed
