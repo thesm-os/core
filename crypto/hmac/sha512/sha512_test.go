@@ -5,10 +5,8 @@ package sha512_test
 
 import (
 	"bytes"
-	stdhmac "crypto/hmac"
 	stdsha512 "crypto/sha512"
 	"encoding/hex"
-	"hash"
 	"slices"
 	"strconv"
 	"testing"
@@ -18,7 +16,7 @@ import (
 	"go.dokimi.dev/assert/expect"
 	"go.dokimi.dev/assert/history"
 	"go.dokimi.dev/assert/prop"
-	"go.thesmos.sh/testkit/bench"
+	"go.dokimi.dev/conform"
 
 	"go.thesmos.sh/core/coretest/cryptotest"
 	"go.thesmos.sh/core/crypto"
@@ -37,27 +35,28 @@ var (
 	hmacSHA512ID = crypto.ID{'h', 'm', 'a', 'c', '-', 's', 'h', 'a', '5', '1', '2', '/', 'v', '1'}
 )
 
-// testKey is the shared HMAC key for SUT and reference. Both
-// sides must construct with the same key for byte-exact
-// equivalence.
+// testKey is the HMAC key of the MACs under test and of their references, so
+// both compute the same tags.
 var testKey = []byte("contract-test-key")
 
-// sha384Spec describes the stdlib HMAC-SHA-384 reference of the model.
+// sha384Spec is the HMAC-SHA-384 of the standard library under testKey, the
+// reference of the conformance test of MAC384.
 var sha384Spec = cryptotest.StdlibMACSpec{
 	Algorithm: crypto.AlgHMACSHA384,
 	ID:        hmacSHA384ID,
 	Size:      crypto.DigestSize384,
 	Key:       testKey,
-	NewHash:   func() hash.Hash { return stdsha512.New384() },
+	NewHash:   stdsha512.New384,
 }
 
-// sha512Spec describes the stdlib HMAC-SHA-512 reference of the model.
+// sha512Spec is the HMAC-SHA-512 of the standard library under testKey, the
+// reference of the conformance test of MAC512.
 var sha512Spec = cryptotest.StdlibMACSpec{
 	Algorithm: crypto.AlgHMACSHA512,
 	ID:        hmacSHA512ID,
 	Size:      crypto.DigestSize512,
 	Key:       testKey,
-	NewHash:   func() hash.Hash { return stdsha512.New() },
+	NewHash:   stdsha512.New,
 }
 
 // rfc4231Inputs are the keys and data of RFC 4231 cases 4.2, 4.3, 4.4,
@@ -83,16 +82,23 @@ var rfc4231Inputs = []struct {
 	},
 }
 
-// macs are the two MACs of the package, with their tags of the RFC 4231
-// inputs in the order of rfc4231Inputs.
+// macs are the two MACs of the package, with the ID, the Algorithm and the size
+// of each, and their tags of the RFC 4231 inputs in the order of
+// rfc4231Inputs.
 var macs = []struct {
-	name string
-	new  func(key []byte) crypto.MAC
-	want [5]string
+	name      string
+	new       func(key []byte) crypto.MAC
+	id        crypto.ID
+	algorithm crypto.Algorithm
+	size      int
+	want      [5]string
 }{
 	{
-		name: "MAC384",
-		new:  func(key []byte) crypto.MAC { return hmacsha512.NewSHA384(key) },
+		name:      "MAC384",
+		new:       func(key []byte) crypto.MAC { return hmacsha512.NewSHA384(key) },
+		id:        hmacSHA384ID,
+		algorithm: crypto.AlgHMACSHA384,
+		size:      crypto.DigestSize384,
 		want: [5]string{
 			"afd03944d84895626b0825f4ab46907f15f9dadbe4101ec682aa034c7cebc59cfaea9ea9076ede7f4af152e8b2fa9cb6",
 			"af45d2e376484031617f78d2b58a6b1b9c7ef464f5a01b47e42ec3736322445e8e2240ca5e69e2c78b3239ecfab21649",
@@ -102,8 +108,11 @@ var macs = []struct {
 		},
 	},
 	{
-		name: "MAC512",
-		new:  func(key []byte) crypto.MAC { return hmacsha512.NewSHA512(key) },
+		name:      "MAC512",
+		new:       func(key []byte) crypto.MAC { return hmacsha512.NewSHA512(key) },
+		id:        hmacSHA512ID,
+		algorithm: crypto.AlgHMACSHA512,
+		size:      crypto.DigestSize512,
 		want: [5]string{
 			"87aa7cdea5ef619d4ff0b4241a1d6cb02379f4e2ce4ec2787ad0b30545e17cde" +
 				"daa833b7d6b8a702038b274eaea3f4e4be9d914eeb61f1702e696c203a126854",
@@ -119,82 +128,40 @@ var macs = []struct {
 	},
 }
 
-// TestHMACSHA384Contract runs the contract suite of crypto.MAC on
-// HMAC-SHA-384 with its ID, its Algorithm, its size and the tags of the
-// standard library.
-func TestHMACSHA384Contract(t *testing.T) {
-	t.Parallel()
-	cryptotest.AssertMACContract(t, func() crypto.MAC { return hmacsha512.NewSHA384(testKey) },
-		append(cryptotest.MACContractAssertions(),
-			cryptotest.MACIDAssertion(hmacSHA384ID),
-			cryptotest.MACAlgorithmAssertion(crypto.AlgHMACSHA384),
-			cryptotest.MACSizeAssertion(crypto.DigestSize384),
-			cryptotest.MACCrossStdlibAssertion(func(data []byte) []byte {
-				h := stdhmac.New(stdsha512.New384, testKey)
-				_, _ = h.Write(data)
-
-				return h.Sum(nil)
-			}),
-		)...,
-	)
-}
-
-// TestHMACSHA384Model checks HMAC-SHA-384 against the stdlib reference
-// on every Sign and Verify.
-func TestHMACSHA384Model(t *testing.T) {
-	t.Parallel()
-	cryptotest.MACModelTest(t, func() crypto.MAC { return hmacsha512.NewSHA384(testKey) },
-		cryptotest.MACModelReference(func() crypto.MAC {
-			return cryptotest.NewStdlibMACStub(t, sha384Spec)
-		}),
-		cryptotest.MACModelExtraActions(
-			cryptotest.MACSignAction(),
-			cryptotest.MACVerifyAction(),
-		),
-	)
-}
-
-// TestHMACSHA512Contract runs the contract suite of crypto.MAC on
-// HMAC-SHA-512 with its ID, its Algorithm, its size and the tags of the
-// standard library.
-func TestHMACSHA512Contract(t *testing.T) {
-	t.Parallel()
-	cryptotest.AssertMACContract(t, func() crypto.MAC { return hmacsha512.NewSHA512(testKey) },
-		append(cryptotest.MACContractAssertions(),
-			cryptotest.MACIDAssertion(hmacSHA512ID),
-			cryptotest.MACAlgorithmAssertion(crypto.AlgHMACSHA512),
-			cryptotest.MACSizeAssertion(crypto.DigestSize512),
-			cryptotest.MACCrossStdlibAssertion(func(data []byte) []byte {
-				h := stdhmac.New(stdsha512.New, testKey)
-				_, _ = h.Write(data)
-
-				return h.Sum(nil)
-			}),
-		)...,
-	)
-}
-
-// TestHMACSHA512Model checks HMAC-SHA-512 against the stdlib reference
-// on every Sign and Verify.
-func TestHMACSHA512Model(t *testing.T) {
-	t.Parallel()
-	cryptotest.MACModelTest(t, func() crypto.MAC { return hmacsha512.NewSHA512(testKey) },
-		cryptotest.MACModelReference(func() crypto.MAC {
-			return cryptotest.NewStdlibMACStub(t, sha512Spec)
-		}),
-		cryptotest.MACModelExtraActions(
-			cryptotest.MACSignAction(),
-			cryptotest.MACVerifyAction(),
-		),
-	)
-}
-
 func TestSHA512(t *testing.T) {
 	t.Parallel()
 
 	for _, mac := range macs {
 		t.Run(mac.name, func(t *testing.T) {
 			t.Parallel()
+
+			t.Run("ID", func(t *testing.T) {
+				t.Parallel()
+
+				t.Run("returns the ID of the MAC", func(t *testing.T) {
+					t.Parallel()
+					assert.Equal(t, mac.new(testKey).ID(), mac.id, "ID must return the ID of the MAC")
+				})
+			})
+
+			t.Run("Algorithm", func(t *testing.T) {
+				t.Parallel()
+
+				t.Run("returns the name of the algorithm of the MAC", func(t *testing.T) {
+					t.Parallel()
+					assert.Equal(t, mac.new(testKey).Algorithm(), mac.algorithm,
+						"Algorithm must return the name of the algorithm of the MAC")
+				})
+			})
+
+			t.Run("Size", func(t *testing.T) {
+				t.Parallel()
+
+				t.Run("returns the size of a tag of the MAC", func(t *testing.T) {
+					t.Parallel()
+					assert.Equal(t, mac.new(testKey).Size(), mac.size, "Size must return the size of a tag of the MAC")
+				})
+			})
 
 			t.Run("New", func(t *testing.T) {
 				t.Parallel()
@@ -342,60 +309,34 @@ func TestSHA512Allocs(t *testing.T) {
 	}
 }
 
-// BenchmarkHMACSHA384 runs the benchmarks of the contract suite of
-// crypto.MAC on HMAC-SHA-384.
-func BenchmarkHMACSHA384(b *testing.B) {
-	cryptotest.BenchmarkMACContract(b, func() crypto.MAC { return hmacsha512.NewSHA384(testKey) },
-		cryptotest.MACBenchOnAlgorithm(bench.PureAllocsWithin[crypto.MAC, crypto.Algorithm](0)),
-		cryptotest.MACBenchOnID(bench.PureAllocsWithin[crypto.MAC, crypto.ID](0)),
-		cryptotest.MACBenchOnSize(bench.PureAllocsWithin[crypto.MAC, int](0)),
-		cryptotest.MACBenchOnSign(
-			bench.PureAllocsWithin[crypto.MAC, crypto.Digest](0),
-			bench.PureConcurrentThroughput[crypto.MAC, crypto.Digest](32),
-		),
-		cryptotest.MACBenchOnVerify(bench.PredicateAllocsWithin[crypto.MAC](0)),
-	)
+// newMAC384 returns the HMAC-SHA-384 under testKey. The conformance test of
+// the package runs the suite of crypto.MAC on it.
+func newMAC384() *hmacsha512.MAC384 {
+	return hmacsha512.NewSHA384(testKey)
 }
 
-// BenchmarkHMACSHA512 runs the benchmarks of the contract suite of
-// crypto.MAC on HMAC-SHA-512.
-func BenchmarkHMACSHA512(b *testing.B) {
-	cryptotest.BenchmarkMACContract(b, func() crypto.MAC { return hmacsha512.NewSHA512(testKey) },
-		cryptotest.MACBenchOnAlgorithm(bench.PureAllocsWithin[crypto.MAC, crypto.Algorithm](0)),
-		cryptotest.MACBenchOnID(bench.PureAllocsWithin[crypto.MAC, crypto.ID](0)),
-		cryptotest.MACBenchOnSize(bench.PureAllocsWithin[crypto.MAC, int](0)),
-		cryptotest.MACBenchOnSign(
-			bench.PureAllocsWithin[crypto.MAC, crypto.Digest](0),
-			bench.PureConcurrentThroughput[crypto.MAC, crypto.Digest](32),
-		),
-		cryptotest.MACBenchOnVerify(bench.PredicateAllocsWithin[crypto.MAC](0)),
-	)
-}
-
-// FuzzHMACSHA384Model is the coverage-guided fuzz wrapper around the
-// model property of HMAC-SHA-384.
-func FuzzHMACSHA384Model(f *testing.F) {
-	cryptotest.MACModelFuzz(f, func() crypto.MAC { return hmacsha512.NewSHA384(testKey) },
-		cryptotest.MACModelReference(func() crypto.MAC {
-			return cryptotest.NewStdlibMACStub(f, sha384Spec)
+// mac384Options returns the options of the conformance test of MAC384: the
+// HMAC-SHA-384 of the standard library under testKey as the reference.
+func mac384Options() []cryptotest.MACOption {
+	return []cryptotest.MACOption{
+		conform.Reference(func(h *cryptotest.MACHandle) crypto.MAC {
+			return cryptotest.NewStdlibMACStub(h, sha384Spec)
 		}),
-		cryptotest.MACModelExtraActions(
-			cryptotest.MACSignAction(),
-			cryptotest.MACVerifyAction(),
-		),
-	)
+	}
 }
 
-// FuzzHMACSHA512Model is the coverage-guided fuzz wrapper around the
-// model property of HMAC-SHA-512.
-func FuzzHMACSHA512Model(f *testing.F) {
-	cryptotest.MACModelFuzz(f, func() crypto.MAC { return hmacsha512.NewSHA512(testKey) },
-		cryptotest.MACModelReference(func() crypto.MAC {
-			return cryptotest.NewStdlibMACStub(f, sha512Spec)
+// newMAC512 returns the HMAC-SHA-512 under testKey. The conformance test of
+// the package runs the suite of crypto.MAC on it.
+func newMAC512() *hmacsha512.MAC512 {
+	return hmacsha512.NewSHA512(testKey)
+}
+
+// mac512Options returns the options of the conformance test of MAC512: the
+// HMAC-SHA-512 of the standard library under testKey as the reference.
+func mac512Options() []cryptotest.MACOption {
+	return []cryptotest.MACOption{
+		conform.Reference(func(h *cryptotest.MACHandle) crypto.MAC {
+			return cryptotest.NewStdlibMACStub(h, sha512Spec)
 		}),
-		cryptotest.MACModelExtraActions(
-			cryptotest.MACSignAction(),
-			cryptotest.MACVerifyAction(),
-		),
-	)
+	}
 }

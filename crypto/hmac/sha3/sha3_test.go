@@ -5,7 +5,6 @@ package sha3_test
 
 import (
 	"bytes"
-	stdhmac "crypto/hmac"
 	stdsha3 "crypto/sha3"
 	"encoding/hex"
 	"hash"
@@ -18,7 +17,7 @@ import (
 	"go.dokimi.dev/assert/expect"
 	"go.dokimi.dev/assert/history"
 	"go.dokimi.dev/assert/prop"
-	"go.thesmos.sh/testkit/bench"
+	"go.dokimi.dev/conform"
 
 	"go.thesmos.sh/core/coretest/cryptotest"
 	"go.thesmos.sh/core/crypto"
@@ -44,9 +43,8 @@ var (
 	}
 )
 
-// testKey is the shared HMAC key for SUT and reference. Both
-// sides must construct with the same key for byte-exact
-// equivalence.
+// testKey is the HMAC key of the MACs under test and of their references, so
+// both compute the same tags.
 var testKey = []byte("contract-test-key")
 
 // The stdlib SHA-3 constructors return *sha3.SHA3, and crypto/hmac.New
@@ -58,8 +56,7 @@ var (
 )
 
 // rfc4231Inputs are the keys and data of RFC 4231 cases 4.2, 4.3 and
-// 4.4. Case 4.5 truncates the output, which the MACs never do, and the
-// keys of cases 4.6 and 4.7 are in the sweep of the contract suite.
+// 4.4. Case 4.5 truncates the output, which the MACs never do.
 var rfc4231Inputs = []struct {
 	name string
 	key  []byte
@@ -70,8 +67,9 @@ var rfc4231Inputs = []struct {
 	{name: "4.4", key: bytes.Repeat([]byte{0xaa}, 20), data: bytes.Repeat([]byte{0xdd}, 50)},
 }
 
-// macs are the three MACs of the package, with the stdlib reference of
-// the model and their tags of the RFC 4231 inputs in the order of
+// macs are the three MACs of the package, with the spec of the HMAC of the
+// standard library under testKey, which is the reference of the conformance
+// test, and their tags of the RFC 4231 inputs in the order of
 // rfc4231Inputs. The tags come from crypto/hmac over crypto/sha3, and
 // match the NIST CAVP outputs of HMAC-SHA-3 for the same inputs.
 var macs = []struct {
@@ -124,59 +122,41 @@ var macs = []struct {
 	},
 }
 
-// TestHMACSHA3Contract runs the contract suite of crypto.MAC on each MAC
-// with its ID, its Algorithm, its size and the tags of the standard
-// library.
-func TestHMACSHA3Contract(t *testing.T) {
-	t.Parallel()
-
-	for _, mac := range macs {
-		t.Run(mac.name, func(t *testing.T) {
-			t.Parallel()
-			cryptotest.AssertMACContract(t, func() crypto.MAC { return mac.new(testKey) },
-				append(cryptotest.MACContractAssertions(),
-					cryptotest.MACIDAssertion(mac.spec.ID),
-					cryptotest.MACAlgorithmAssertion(mac.spec.Algorithm),
-					cryptotest.MACSizeAssertion(mac.spec.Size),
-					cryptotest.MACCrossStdlibAssertion(func(data []byte) []byte {
-						h := stdhmac.New(mac.spec.NewHash, testKey)
-						_, _ = h.Write(data)
-
-						return h.Sum(nil)
-					}),
-				)...,
-			)
-		})
-	}
-}
-
-// TestHMACSHA3Model checks each MAC against the stdlib reference on
-// every Sign and Verify.
-func TestHMACSHA3Model(t *testing.T) {
-	t.Parallel()
-
-	for _, mac := range macs {
-		t.Run(mac.name, func(t *testing.T) {
-			t.Parallel()
-			cryptotest.MACModelTest(t, func() crypto.MAC { return mac.new(testKey) },
-				cryptotest.MACModelReference(func() crypto.MAC {
-					return cryptotest.NewStdlibMACStub(t, mac.spec)
-				}),
-				cryptotest.MACModelExtraActions(
-					cryptotest.MACSignAction(),
-					cryptotest.MACVerifyAction(),
-				),
-			)
-		})
-	}
-}
-
 func TestSHA3(t *testing.T) {
 	t.Parallel()
 
 	for _, mac := range macs {
 		t.Run(mac.name, func(t *testing.T) {
 			t.Parallel()
+
+			t.Run("ID", func(t *testing.T) {
+				t.Parallel()
+
+				t.Run("returns the ID of the MAC", func(t *testing.T) {
+					t.Parallel()
+					assert.Equal(t, mac.new(testKey).ID(), mac.spec.ID, "ID must return the ID of the MAC")
+				})
+			})
+
+			t.Run("Algorithm", func(t *testing.T) {
+				t.Parallel()
+
+				t.Run("returns the name of the algorithm of the MAC", func(t *testing.T) {
+					t.Parallel()
+					assert.Equal(t, mac.new(testKey).Algorithm(), mac.spec.Algorithm,
+						"Algorithm must return the name of the algorithm of the MAC")
+				})
+			})
+
+			t.Run("Size", func(t *testing.T) {
+				t.Parallel()
+
+				t.Run("returns the size of a tag of the MAC", func(t *testing.T) {
+					t.Parallel()
+					assert.Equal(t, mac.new(testKey).Size(), mac.spec.Size,
+						"Size must return the size of a tag of the MAC")
+				})
+			})
 
 			t.Run("New", func(t *testing.T) {
 				t.Parallel()
@@ -323,63 +303,50 @@ func TestSHA3Allocs(t *testing.T) {
 	}
 }
 
-// BenchmarkHMACSHA3 runs the benchmarks of the contract suite of
-// crypto.MAC on each MAC.
-func BenchmarkHMACSHA3(b *testing.B) {
-	for _, mac := range macs {
-		b.Run(mac.name, func(b *testing.B) {
-			cryptotest.BenchmarkMACContract(b, func() crypto.MAC { return mac.new(testKey) },
-				cryptotest.MACBenchOnAlgorithm(bench.PureAllocsWithin[crypto.MAC, crypto.Algorithm](0)),
-				cryptotest.MACBenchOnID(bench.PureAllocsWithin[crypto.MAC, crypto.ID](0)),
-				cryptotest.MACBenchOnSize(bench.PureAllocsWithin[crypto.MAC, int](0)),
-				cryptotest.MACBenchOnSign(
-					bench.PureAllocsWithin[crypto.MAC, crypto.Digest](0),
-					bench.PureConcurrentThroughput[crypto.MAC, crypto.Digest](32),
-				),
-				cryptotest.MACBenchOnVerify(bench.PredicateAllocsWithin[crypto.MAC](0)),
-			)
-		})
+// newMAC256 returns the HMAC-SHA3-256 under testKey. The conformance test of
+// the package runs the suite of crypto.MAC on it.
+func newMAC256() *hmacsha3.MAC256 {
+	return hmacsha3.NewSHA3_256(testKey)
+}
+
+// mac256Options returns the options of the conformance test of MAC256: the
+// HMAC-SHA3-256 of the standard library under testKey as the reference.
+func mac256Options() []cryptotest.MACOption {
+	return []cryptotest.MACOption{
+		conform.Reference(func(h *cryptotest.MACHandle) crypto.MAC {
+			return cryptotest.NewStdlibMACStub(h, macs[0].spec)
+		}),
 	}
 }
 
-// FuzzHMACSHA3256Model is the coverage-guided fuzz wrapper around the
-// model property of HMAC-SHA3-256.
-func FuzzHMACSHA3256Model(f *testing.F) {
-	cryptotest.MACModelFuzz(f, func() crypto.MAC { return hmacsha3.NewSHA3_256(testKey) },
-		cryptotest.MACModelReference(func() crypto.MAC {
-			return cryptotest.NewStdlibMACStub(f, macs[0].spec)
-		}),
-		cryptotest.MACModelExtraActions(
-			cryptotest.MACSignAction(),
-			cryptotest.MACVerifyAction(),
-		),
-	)
+// newMAC384 returns the HMAC-SHA3-384 under testKey. The conformance test of
+// the package runs the suite of crypto.MAC on it.
+func newMAC384() *hmacsha3.MAC384 {
+	return hmacsha3.NewSHA3_384(testKey)
 }
 
-// FuzzHMACSHA3384Model is the coverage-guided fuzz wrapper around the
-// model property of HMAC-SHA3-384.
-func FuzzHMACSHA3384Model(f *testing.F) {
-	cryptotest.MACModelFuzz(f, func() crypto.MAC { return hmacsha3.NewSHA3_384(testKey) },
-		cryptotest.MACModelReference(func() crypto.MAC {
-			return cryptotest.NewStdlibMACStub(f, macs[1].spec)
+// mac384Options returns the options of the conformance test of MAC384: the
+// HMAC-SHA3-384 of the standard library under testKey as the reference.
+func mac384Options() []cryptotest.MACOption {
+	return []cryptotest.MACOption{
+		conform.Reference(func(h *cryptotest.MACHandle) crypto.MAC {
+			return cryptotest.NewStdlibMACStub(h, macs[1].spec)
 		}),
-		cryptotest.MACModelExtraActions(
-			cryptotest.MACSignAction(),
-			cryptotest.MACVerifyAction(),
-		),
-	)
+	}
 }
 
-// FuzzHMACSHA3512Model is the coverage-guided fuzz wrapper around the
-// model property of HMAC-SHA3-512.
-func FuzzHMACSHA3512Model(f *testing.F) {
-	cryptotest.MACModelFuzz(f, func() crypto.MAC { return hmacsha3.NewSHA3_512(testKey) },
-		cryptotest.MACModelReference(func() crypto.MAC {
-			return cryptotest.NewStdlibMACStub(f, macs[2].spec)
+// newMAC512 returns the HMAC-SHA3-512 under testKey. The conformance test of
+// the package runs the suite of crypto.MAC on it.
+func newMAC512() *hmacsha3.MAC512 {
+	return hmacsha3.NewSHA3_512(testKey)
+}
+
+// mac512Options returns the options of the conformance test of MAC512: the
+// HMAC-SHA3-512 of the standard library under testKey as the reference.
+func mac512Options() []cryptotest.MACOption {
+	return []cryptotest.MACOption{
+		conform.Reference(func(h *cryptotest.MACHandle) crypto.MAC {
+			return cryptotest.NewStdlibMACStub(h, macs[2].spec)
 		}),
-		cryptotest.MACModelExtraActions(
-			cryptotest.MACSignAction(),
-			cryptotest.MACVerifyAction(),
-		),
-	)
+	}
 }

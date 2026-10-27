@@ -38,6 +38,13 @@ var (
 // [MAC384.NewStream] is zero-alloc on the warm path; streams
 // are drawn from a per-MAC stream pool and returned via
 // [crypto.Stream.Close].
+//
+//dokimi:subject crypto.MAC new=newMAC384 options=mac384Options
+//dokimi:budget MAC.ID allocs=0
+//dokimi:budget MAC.Algorithm allocs=0
+//dokimi:budget MAC.Size allocs=0
+//dokimi:budget MAC.Sign allocs=0
+//dokimi:budget MAC.Verify allocs=0
 type MAC384 struct {
 	pool       *pool.Pool[*entry384]
 	streamPool *pool.Pool[*stream384]
@@ -122,6 +129,13 @@ func (m *MAC384) NewStream() crypto.Stream {
 
 // MAC512 implements [crypto.MAC] as HMAC-SHA-512 over a fixed
 // key. Allocation contract and concurrency mirror [MAC384].
+//
+//dokimi:subject crypto.MAC new=newMAC512 options=mac512Options
+//dokimi:budget MAC.ID allocs=0
+//dokimi:budget MAC.Algorithm allocs=0
+//dokimi:budget MAC.Size allocs=0
+//dokimi:budget MAC.Sign allocs=0
+//dokimi:budget MAC.Verify allocs=0
 type MAC512 struct {
 	pool       *pool.Pool[*entry512]
 	streamPool *pool.Pool[*stream512]

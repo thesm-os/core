@@ -194,6 +194,9 @@ type Hasher interface {
 // next [Hasher.NewStream] does not allocate while the pool is warm. A
 // slice passed to [Stream.Write] through this interface escapes to the
 // heap at the call site, as it does for [Hasher].
+//
+//dokimi:stub
+//dokimi:out path=../coretest/cryptotest/
 type Stream interface {
 	io.Writer
 

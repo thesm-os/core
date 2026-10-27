@@ -5,10 +5,8 @@ package sha256_test
 
 import (
 	"bytes"
-	stdhmac "crypto/hmac"
 	stdsha256 "crypto/sha256"
 	"encoding/hex"
-	"hash"
 	"slices"
 	"strconv"
 	"testing"
@@ -18,7 +16,7 @@ import (
 	"go.dokimi.dev/assert/expect"
 	"go.dokimi.dev/assert/history"
 	"go.dokimi.dev/assert/prop"
-	"go.thesmos.sh/testkit/bench"
+	"go.dokimi.dev/conform"
 
 	"go.thesmos.sh/core/coretest/cryptotest"
 	"go.thesmos.sh/core/crypto"
@@ -34,56 +32,51 @@ const (
 // hmacSHA256ID is the canonical build-local identifier.
 var hmacSHA256ID = crypto.ID{'h', 'm', 'a', 'c', '-', 's', 'h', 'a', '2', '5', '6', '/', 'v', '1'}
 
-// testKey is the shared HMAC key for SUT and reference. Both
-// sides must construct with the same key for byte-exact
-// equivalence.
+// testKey is the HMAC key of the MAC under test and of its reference, so both
+// compute the same tags.
 var testKey = []byte("contract-test-key")
 
-// stdlibSpec describes the stdlib HMAC-SHA-256 reference of the model.
+// stdlibSpec is the HMAC-SHA-256 of the standard library under testKey, the
+// reference of the conformance test.
 var stdlibSpec = cryptotest.StdlibMACSpec{
 	Algorithm: crypto.AlgHMACSHA256,
 	ID:        hmacSHA256ID,
 	Size:      crypto.DigestSize256,
 	Key:       testKey,
-	NewHash:   func() hash.Hash { return stdsha256.New() },
-}
-
-// TestHMACSHA256Contract runs the contract suite of crypto.MAC with the
-// ID, the Algorithm, the size and the tags of the standard library.
-func TestHMACSHA256Contract(t *testing.T) {
-	t.Parallel()
-	cryptotest.AssertMACContract(t, func() crypto.MAC { return hmacsha256.New(testKey) },
-		append(cryptotest.MACContractAssertions(),
-			cryptotest.MACIDAssertion(hmacSHA256ID),
-			cryptotest.MACAlgorithmAssertion(crypto.AlgHMACSHA256),
-			cryptotest.MACSizeAssertion(crypto.DigestSize256),
-			cryptotest.MACCrossStdlibAssertion(func(data []byte) []byte {
-				h := stdhmac.New(stdsha256.New, testKey)
-				_, _ = h.Write(data)
-
-				return h.Sum(nil)
-			}),
-		)...,
-	)
-}
-
-// TestHMACSHA256Model checks the MAC against the stdlib reference on
-// every Sign and Verify.
-func TestHMACSHA256Model(t *testing.T) {
-	t.Parallel()
-	cryptotest.MACModelTest(t, func() crypto.MAC { return hmacsha256.New(testKey) },
-		cryptotest.MACModelReference(func() crypto.MAC {
-			return cryptotest.NewStdlibMACStub(t, stdlibSpec)
-		}),
-		cryptotest.MACModelExtraActions(
-			cryptotest.MACSignAction(),
-			cryptotest.MACVerifyAction(),
-		),
-	)
+	NewHash:   stdsha256.New,
 }
 
 func TestMAC(t *testing.T) {
 	t.Parallel()
+
+	t.Run("ID", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the ID of HMAC-SHA-256", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, hmacsha256.New(testKey).ID(), hmacSHA256ID, "ID must return the ID of HMAC-SHA-256")
+		})
+	})
+
+	t.Run("Algorithm", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns AlgHMACSHA256", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, hmacsha256.New(testKey).Algorithm(), crypto.AlgHMACSHA256,
+				"Algorithm must return the name of HMAC-SHA-256")
+		})
+	})
+
+	t.Run("Size", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns DigestSize256", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, hmacsha256.New(testKey).Size(), crypto.DigestSize256,
+				"Size must return the size of a tag of HMAC-SHA-256")
+		})
+	})
 
 	t.Run("New", func(t *testing.T) {
 		t.Parallel()
@@ -263,31 +256,18 @@ func TestMACAllocs(t *testing.T) {
 	})
 }
 
-// BenchmarkHMACSHA256 runs the benchmarks of the contract suite of
-// crypto.MAC.
-func BenchmarkHMACSHA256(b *testing.B) {
-	cryptotest.BenchmarkMACContract(b, func() crypto.MAC { return hmacsha256.New(testKey) },
-		cryptotest.MACBenchOnAlgorithm(bench.PureAllocsWithin[crypto.MAC, crypto.Algorithm](0)),
-		cryptotest.MACBenchOnID(bench.PureAllocsWithin[crypto.MAC, crypto.ID](0)),
-		cryptotest.MACBenchOnSize(bench.PureAllocsWithin[crypto.MAC, int](0)),
-		cryptotest.MACBenchOnSign(
-			bench.PureAllocsWithin[crypto.MAC, crypto.Digest](0),
-			bench.PureConcurrentThroughput[crypto.MAC, crypto.Digest](32),
-		),
-		cryptotest.MACBenchOnVerify(bench.PredicateAllocsWithin[crypto.MAC](0)),
-	)
+// newMAC returns the MAC under testKey. The conformance test of the package
+// runs the suite of crypto.MAC on it.
+func newMAC() *hmacsha256.MAC {
+	return hmacsha256.New(testKey)
 }
 
-// FuzzHMACSHA256Model is the coverage-guided fuzz wrapper around the
-// model property.
-func FuzzHMACSHA256Model(f *testing.F) {
-	cryptotest.MACModelFuzz(f, func() crypto.MAC { return hmacsha256.New(testKey) },
-		cryptotest.MACModelReference(func() crypto.MAC {
-			return cryptotest.NewStdlibMACStub(f, stdlibSpec)
+// macOptions returns the options of the conformance test of the package: the
+// HMAC-SHA-256 of the standard library under testKey as the reference.
+func macOptions() []cryptotest.MACOption {
+	return []cryptotest.MACOption{
+		conform.Reference(func(h *cryptotest.MACHandle) crypto.MAC {
+			return cryptotest.NewStdlibMACStub(h, stdlibSpec)
 		}),
-		cryptotest.MACModelExtraActions(
-			cryptotest.MACSignAction(),
-			cryptotest.MACVerifyAction(),
-		),
-	)
+	}
 }

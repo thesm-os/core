@@ -38,6 +38,13 @@ var id = crypto.ID{'h', 'm', 'a', 'c', '-', 's', 'h', 'a', '2', '5', '6', '/', '
 // [MAC.NewStream] is zero-allocation on the warm path: streams
 // are drawn from a per-MAC [pool.Pool] of pre-keyed instances.
 // [crypto.Stream.Close] returns the stream to that pool.
+//
+//dokimi:subject crypto.MAC new=newMAC options=macOptions
+//dokimi:budget MAC.ID allocs=0
+//dokimi:budget MAC.Algorithm allocs=0
+//dokimi:budget MAC.Size allocs=0
+//dokimi:budget MAC.Sign allocs=0
+//dokimi:budget MAC.Verify allocs=0
 type MAC struct {
 	pool       *pool.Pool[*macEntry]
 	streamPool *pool.Pool[*stream]

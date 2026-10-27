@@ -85,6 +85,10 @@ package crypto
 // against the expected [Digest]. Plain `==` and [Digest.Equal]
 // are NOT constant-time and must not be used to compare a MAC
 // against untrusted input.
+//
+//dokimi:stub
+//dokimi:suite
+//dokimi:out path=../coretest/cryptotest/
 type MAC interface {
 	// ID returns the implementation's stable build-local
 	// identifier. Persisted alongside MAC outputs so the same
@@ -109,6 +113,8 @@ type MAC interface {
 	// underlying HMAC state once per call (stdlib constraint);
 	// for sustained throughput, use [MAC.NewStream] with
 	// [Stream.Reset] between messages.
+	//
+	//dokimi:mixin concurrent
 	Sign(data []byte) Digest
 
 	// Verify reports whether expected is the MAC of data under
@@ -123,7 +129,5 @@ type MAC interface {
 	// that don't fit in memory. Streaming verification is
 	// [Stream.Sum] followed by [Digest.ConstantTimeEqual]
 	// against the expected digest.
-	//
-	//testkit:nondeterministic
 	NewStream() Stream
 }

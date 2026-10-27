@@ -39,6 +39,13 @@ var (
 // MAC256 implements [crypto.MAC] as HMAC-SHA3-256 over a fixed
 // key. Allocation contract and concurrency mirror
 // [go.thesmos.sh/core/crypto/hmac/sha256.MAC].
+//
+//dokimi:subject crypto.MAC new=newMAC256 options=mac256Options
+//dokimi:budget MAC.ID allocs=0
+//dokimi:budget MAC.Algorithm allocs=0
+//dokimi:budget MAC.Size allocs=0
+//dokimi:budget MAC.Sign allocs=0
+//dokimi:budget MAC.Verify allocs=0
 type MAC256 struct {
 	pool       *pool.Pool[*entry256]
 	streamPool *pool.Pool[*stream256]
@@ -118,6 +125,13 @@ func (m *MAC256) NewStream() crypto.Stream {
 
 // MAC384 implements [crypto.MAC] as HMAC-SHA3-384 over a fixed
 // key.
+//
+//dokimi:subject crypto.MAC new=newMAC384 options=mac384Options
+//dokimi:budget MAC.ID allocs=0
+//dokimi:budget MAC.Algorithm allocs=0
+//dokimi:budget MAC.Size allocs=0
+//dokimi:budget MAC.Sign allocs=0
+//dokimi:budget MAC.Verify allocs=0
 type MAC384 struct {
 	pool       *pool.Pool[*entry384]
 	streamPool *pool.Pool[*stream384]
@@ -194,6 +208,13 @@ func (m *MAC384) NewStream() crypto.Stream {
 
 // MAC512 implements [crypto.MAC] as HMAC-SHA3-512 over a fixed
 // key.
+//
+//dokimi:subject crypto.MAC new=newMAC512 options=mac512Options
+//dokimi:budget MAC.ID allocs=0
+//dokimi:budget MAC.Algorithm allocs=0
+//dokimi:budget MAC.Size allocs=0
+//dokimi:budget MAC.Sign allocs=0
+//dokimi:budget MAC.Verify allocs=0
 type MAC512 struct {
 	pool       *pool.Pool[*entry512]
 	streamPool *pool.Pool[*stream512]
