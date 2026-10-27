@@ -110,6 +110,10 @@ var errReadMismatch = errors.New("cas: bytes read do not hash to the address the
 // of one address, exactly one reports wrote=true. The signal is an
 // accounting primitive, and counting a write twice charges twice for
 // whatever is metered against it.
+//
+//dokimi:stub
+//dokimi:suite
+//dokimi:out path=../coretest/castest/
 type Store interface {
 	// Hasher returns the algorithm this store's addresses are
 	// computed under.
@@ -167,6 +171,9 @@ type Store interface {
 //
 // The same requirements as [Store]. The returned reader is not safe
 // for concurrent use, and each goroutine reads its own.
+//
+//dokimi:stub
+//dokimi:out path=../coretest/castest/
 type Streamer interface {
 	// PutStream reads r to EOF, hashing as it reads, and commits
 	// the bytes under d only once they hash to d.

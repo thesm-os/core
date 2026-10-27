@@ -14,11 +14,11 @@ import (
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/bench"
 	"go.dokimi.dev/assert/expect"
+	"go.dokimi.dev/conform"
 
 	"go.thesmos.sh/core/cas"
 	"go.thesmos.sh/core/cas/memory"
 	"go.thesmos.sh/core/coretest/castest"
-	"go.thesmos.sh/core/crypto"
 	"go.thesmos.sh/core/crypto/sha256"
 )
 
@@ -68,31 +68,21 @@ func (c cancelOnRead) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// TestMemoryStoreConformance runs the conformance suite with every
-// option. The storage of a memory Store is the Store itself, so a reopen
-// returns it unchanged and a crash comes after write returns. The test
-// does not call t.Parallel, because [castest.WithZeroAllocGet] measures
-// with testing.AllocsPerRun.
-//
-//nolint:paralleltest // see above
-func TestMemoryStoreConformance(t *testing.T) {
-	castest.AssertStore(t,
-		func(h crypto.Hasher) cas.Store { return memory.New(h) },
-		castest.WithReopen(func(_ *testing.T, s cas.Store) cas.Store { return s }),
-		castest.WithCrash(func(_ *testing.T, s cas.Store, write func()) cas.Store {
-			write()
-
-			return s
-		}),
-		castest.WithZeroAllocGet(),
-	)
-}
-
 func TestStore(t *testing.T) {
 	t.Parallel()
 
 	h := sha256.New()
 	d := h.Hash([]byte(payload))
+
+	t.Run("Hasher", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the hasher of New", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, memory.New(h).Hasher().Algorithm(), h.Algorithm(),
+				"Hasher must return the hasher that New bound")
+		})
+	})
 
 	t.Run("Put", func(t *testing.T) {
 		t.Parallel()
@@ -326,4 +316,24 @@ func BenchmarkStore(b *testing.B) {
 			assert.False(b, wrote, "the benchmark must measure a present address")
 		})
 	})
+}
+
+// newStore returns an empty Store under SHA-256. The conformance test of the
+// package runs the suite of cas.Store on it.
+func newStore() *memory.Store {
+	return memory.New(sha256.New())
+}
+
+// storeOptions returns the doors of the conformance test of cas.Store. The
+// storage of a Store is the Store itself, so a restart returns it unchanged
+// and a crash comes after call returns.
+func storeOptions() []castest.StoreOption {
+	return []castest.StoreOption{
+		conform.Restartable(func(_ *castest.StoreHandle, s cas.Store) cas.Store { return s }),
+		conform.Crashable(func(_ *castest.StoreHandle, s cas.Store, call func()) cas.Store {
+			call()
+
+			return s
+		}),
+	}
 }

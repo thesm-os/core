@@ -87,6 +87,8 @@ func (*reader) Close() error {
 //
 // The hash of a verification follows the allocation contract of the
 // bound [crypto.Hasher], which is zero for every hasher of this module.
+//
+//dokimi:subject cas.Store new=newStore options=storeOptions
 type Store struct {
 	h  crypto.Hasher
 	m  map[crypto.Digest][]byte
