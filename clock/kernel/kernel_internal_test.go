@@ -123,6 +123,21 @@ func TestSource(t *testing.T) {
 			expect.Equal(t, maxError, 100*time.Microsecond, "the MaxError of the new call replaces the old one")
 		})
 
+		t.Run("calls the kernel once in each refresh interval", func(t *testing.T) {
+			t.Parallel()
+			k := newFakeKernel(status{maxError: time.Millisecond, synced: true})
+			s := newSource(time.Minute, k.read, k.time)
+
+			k.advance(time.Minute)
+			_, _ = mustRead(t, s)
+			_, _ = mustRead(t, s)
+			assert.Equal(t, k.calls.Load(), int32(2), "the reads of one interval call the kernel once")
+
+			k.advance(time.Minute)
+			_, _ = mustRead(t, s)
+			assert.Equal(t, k.calls.Load(), int32(3), "a read in the next interval calls the kernel again")
+		})
+
 		t.Run("returns an unsynchronised reading of an unsynchronised kernel", func(t *testing.T) {
 			t.Parallel()
 			k := newFakeKernel(status{maxError: time.Millisecond})

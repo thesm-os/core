@@ -37,8 +37,42 @@ func TestFromTimex(t *testing.T) {
 	})
 }
 
+func TestReadKernel(t *testing.T) {
+	t.Parallel()
+
+	t.Run("returns the status that adjtimex reports", func(t *testing.T) {
+		t.Parallel()
+		var tx syscall.Timex
+		state, err := syscall.Adjtimex(&tx)
+		assert.NoError(t, err, "adjtimex succeeds on Linux")
+		before := fromTimex(state, &tx)
+
+		got, err := readKernel()
+		assert.NoError(t, err, "readKernel succeeds on Linux")
+
+		state, err = syscall.Adjtimex(&tx)
+		assert.NoError(t, err, "adjtimex succeeds on Linux")
+		after := fromTimex(state, &tx)
+
+		assert.InRange(t, got.maxError, float64(before.maxError), float64(after.maxError),
+			"readKernel returns the maximum error that adjtimex reports around the call")
+	})
+}
+
 func TestReadWith(t *testing.T) {
 	t.Parallel()
+
+	t.Run("returns the status of a call that succeeds", func(t *testing.T) {
+		t.Parallel()
+		st, err := readWith(func(tx *syscall.Timex) (int, error) {
+			tx.Maxerror = 1500
+
+			return 0, nil
+		})
+		assert.NoError(t, err, "readWith returns no error for a call that succeeds")
+		assert.Equal(t, st, status{maxError: 1500 * time.Microsecond, synced: true},
+			"readWith returns the status of the Timex of the call")
+	})
 
 	t.Run("wraps the error of a failed call", func(t *testing.T) {
 		t.Parallel()

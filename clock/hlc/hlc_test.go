@@ -80,12 +80,12 @@ func TestClock(t *testing.T) {
 			{
 				name:                "returns the Logical of a peer ahead plus 1",
 				giveStartWall:       100,
-				giveStartNows:       1,
+				giveStartNows:       5,
 				givePhysicalWall:    100,
 				giveObservedWall:    200,
-				giveObservedLogical: 7,
+				giveObservedLogical: 2,
 				wantWall:            200,
-				wantLogical:         8,
+				wantLogical:         3,
 			},
 			{
 				name:                "returns the local Logical plus 1 for a peer behind the clock",
@@ -110,7 +110,7 @@ func TestClock(t *testing.T) {
 			{
 				name:                "returns Logical 1 for a source ahead of both walls",
 				giveStartWall:       50,
-				giveStartNows:       1,
+				giveStartNows:       3,
 				givePhysicalWall:    300,
 				giveObservedWall:    100,
 				giveObservedLogical: 5,
