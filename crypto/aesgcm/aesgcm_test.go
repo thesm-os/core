@@ -15,8 +15,11 @@ import (
 	"time"
 
 	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/bench"
+	"go.dokimi.dev/assert/expect"
 	"go.dokimi.dev/assert/history"
 	"go.dokimi.dev/assert/prop"
+	"go.dokimi.dev/conform"
 
 	"go.thesmos.sh/core/coretest/cryptotest"
 	"go.thesmos.sh/core/crypto"
@@ -47,9 +50,11 @@ var (
 	aesGCMR256ID = crypto.ID{'a', 'e', 's', '-', '2', '5', '6', '-', 'g', 'c', 'm', '-', 'r', '/', 'v', '1'}
 )
 
-// Shared keys for SUT and reference. Their lengths select the
-// construction, which the Algorithm assertions of the contract suites
-// confirm.
+// plaintextSize is the size of the plaintext that the allocation test and
+// the benchmark seal.
+const plaintextSize = 1024
+
+// The keys of the tests. Their lengths select the construction.
 var (
 	testKey128 = []byte("aesgcm-test-key1")
 	testKey256 = []byte("contract-test-key-256-bit-fixed!")
@@ -63,76 +68,58 @@ var badKeySizes = prop.Integer(0, 64).Filter(func(n int) bool {
 	return n != aesgcm.KeySize128 && n != aesgcm.KeySize256
 })
 
-// constructors are the two ways to build an AEAD, with the nonce size
-// and the overhead of each, which NIST SP 800-38D fixes.
+// constructors are the two ways to build an AEAD, with the ID of each key
+// size, and with the nonce size and the overhead that NIST SP 800-38D
+// fixes.
 var constructors = []struct {
 	name      string
 	build     func([]byte) (crypto.AEAD, error)
+	id128     crypto.ID
+	id256     crypto.ID
 	nonceSize int
 	overhead  int
 }{
-	{name: "New", build: aesgcm.New, nonceSize: 12, overhead: 16},
-	{name: "NewRandomNonce", build: aesgcm.NewRandomNonce, nonceSize: 0, overhead: 28},
+	{name: "New", build: aesgcm.New, id128: aesGCM128ID, id256: aesGCM256ID, nonceSize: 12, overhead: 16},
+	{
+		name:      "NewRandomNonce",
+		build:     aesgcm.NewRandomNonce,
+		id128:     aesGCMR128ID,
+		id256:     aesGCMR256ID,
+		nonceSize: 0,
+		overhead:  28,
+	},
 }
 
-// TestAES256GCMContract runs the contract suite of crypto.AEAD on
-// AES-256-GCM with caller nonces.
-func TestAES256GCMContract(t *testing.T) {
-	t.Parallel()
-
-	factory := func() crypto.AEAD { return mustBuild(t, aesgcm.New, testKey256) }
-	cryptotest.AssertAEADContract(t, factory,
-		append(cryptotest.AEADContractAssertions(),
-			cryptotest.AEADIDAssertion(aesGCM256ID),
-			cryptotest.AEADAlgorithmAssertion(crypto.AlgAES256GCM),
-			cryptotest.AEADCrossInstanceAssertion(factory),
-		)...,
-	)
+// keys are the two key sizes under the names of the constructions that
+// they select.
+var keys = []struct {
+	name string
+	key  []byte
+}{
+	{name: "AES-128-GCM", key: testKey128},
+	{name: "AES-256-GCM", key: testKey256},
 }
 
-// TestAES128GCMContract runs the contract suite of crypto.AEAD on
-// AES-128-GCM with caller nonces.
-func TestAES128GCMContract(t *testing.T) {
+// TestAEADConformsToAEAD applies the checks of the suite of crypto.AEAD to the
+// AEAD of each constructor at each key size. The second instance of a check is
+// another AEAD of the same constructor and key.
+func TestAEADConformsToAEAD(t *testing.T) {
 	t.Parallel()
 
-	factory := func() crypto.AEAD { return mustBuild(t, aesgcm.New, testKey128) }
-	cryptotest.AssertAEADContract(t, factory,
-		append(cryptotest.AEADContractAssertions(),
-			cryptotest.AEADIDAssertion(aesGCM128ID),
-			cryptotest.AEADAlgorithmAssertion(crypto.AlgAES128GCM),
-			cryptotest.AEADCrossInstanceAssertion(factory),
-		)...,
-	)
-}
+	for _, c := range constructors {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 
-// TestAES256GCMRandomNonceContract runs the contract suite of
-// crypto.AEAD on AES-256-GCM with module nonces.
-func TestAES256GCMRandomNonceContract(t *testing.T) {
-	t.Parallel()
+			for _, k := range keys {
+				t.Run(k.name, func(t *testing.T) {
+					t.Parallel()
 
-	factory := func() crypto.AEAD { return mustBuild(t, aesgcm.NewRandomNonce, testKey256) }
-	cryptotest.AssertAEADContract(t, factory,
-		append(cryptotest.AEADContractAssertions(),
-			cryptotest.AEADIDAssertion(aesGCMR256ID),
-			cryptotest.AEADAlgorithmAssertion(crypto.AlgAES256GCM),
-			cryptotest.AEADCrossInstanceAssertion(factory),
-		)...,
-	)
-}
-
-// TestAES128GCMRandomNonceContract runs the contract suite of
-// crypto.AEAD on AES-128-GCM with module nonces.
-func TestAES128GCMRandomNonceContract(t *testing.T) {
-	t.Parallel()
-
-	factory := func() crypto.AEAD { return mustBuild(t, aesgcm.NewRandomNonce, testKey128) }
-	cryptotest.AssertAEADContract(t, factory,
-		append(cryptotest.AEADContractAssertions(),
-			cryptotest.AEADIDAssertion(aesGCMR128ID),
-			cryptotest.AEADAlgorithmAssertion(crypto.AlgAES128GCM),
-			cryptotest.AEADCrossInstanceAssertion(factory),
-		)...,
-	)
+					newAEAD := func(h *cryptotest.AEADHandle) crypto.AEAD { return mustBuild(h, c.build, k.key) }
+					cryptotest.RunAEADSuiteFromHandle(t, newAEAD, conform.Second(newAEAD))
+				})
+			}
+		})
+	}
 }
 
 func TestAESGCM(t *testing.T) {
@@ -181,6 +168,14 @@ func TestAESGCM(t *testing.T) {
 				t.Parallel()
 				_, err := c.build(nil)
 				assert.ErrorIs(t, err, crypto.ErrKeySize, "a nil key must be refused")
+			})
+
+			t.Run("returns an AEAD with the ID of the constructor at the key size", func(t *testing.T) {
+				t.Parallel()
+				expect.Equal(t, mustBuild(t, c.build, testKey128).ID(), c.id128,
+					"the AEAD of a key of 16 bytes has the ID of the constructor at that size")
+				expect.Equal(t, mustBuild(t, c.build, testKey256).ID(), c.id256,
+					"the AEAD of a key of 32 bytes has the ID of the constructor at that size")
 			})
 
 			t.Run("returns an AEAD of the nonce size that NIST SP 800-38D fixes", func(t *testing.T) {
@@ -334,26 +329,86 @@ func TestFIPSOnlyMode(t *testing.T) {
 	})
 }
 
-// BenchmarkAESGCM runs the benchmarks of the contract suite of
-// crypto.AEAD at both key sizes, because AES-256 runs 14 rounds to the
-// 10 of AES-128, and with module nonces.
-func BenchmarkAESGCM(b *testing.B) {
-	b.Run("AES-128", func(b *testing.B) {
-		cryptotest.BenchmarkAEADContract(b, func() crypto.AEAD { return mustBuild(b, aesgcm.New, testKey128) })
-	})
-	b.Run("AES-256", func(b *testing.B) {
-		cryptotest.BenchmarkAEADContract(b, func() crypto.AEAD { return mustBuild(b, aesgcm.New, testKey256) })
-	})
-	b.Run("AES-256 random nonce", func(b *testing.B) {
-		cryptotest.BenchmarkAEADContract(b, func() crypto.AEAD {
-			return mustBuild(b, aesgcm.NewRandomNonce, testKey256)
+// TestAESGCMAllocs checks that Seal and Open of a plaintext of 1 KiB into a
+// buffer of enough capacity allocate nothing, for the AEAD of each
+// constructor at each key size. MaxAllocs counts the allocations of the
+// whole process, so the test does not run in parallel.
+func TestAESGCMAllocs(t *testing.T) {
+	for _, c := range constructors {
+		t.Run(c.name, func(t *testing.T) {
+			for _, k := range keys {
+				t.Run(k.name, func(t *testing.T) {
+					a := mustBuild(t, c.build, k.key)
+					nonce := make([]byte, a.NonceSize())
+					plaintext := make([]byte, plaintextSize)
+					sealed := a.Seal(nil, nonce, plaintext, nil)
+
+					t.Run("Seal", func(t *testing.T) {
+						dst := make([]byte, 0, len(sealed))
+						expect.MaxAllocs(t, func() { _ = a.Seal(dst, nonce, plaintext, nil) }, 0,
+							"Seal into a buffer of enough capacity does not allocate")
+					})
+
+					t.Run("Open", func(t *testing.T) {
+						dst := make([]byte, 0, plaintextSize)
+						var err error
+						expect.MaxAllocs(t, func() { _, err = a.Open(dst, nonce, sealed, nil) }, 0,
+							"Open into a buffer of enough capacity does not allocate")
+						assert.NoError(t, err, "the test measures an Open that succeeds")
+					})
+				})
+			}
 		})
-	})
+	}
+}
+
+// BenchmarkAESGCM measures Seal and Open of a plaintext of 1 KiB for the AEAD
+// of each constructor at each key size, because AES-256 runs 14 rounds to the
+// 10 of AES-128.
+func BenchmarkAESGCM(b *testing.B) {
+	for _, c := range constructors {
+		b.Run(c.name, func(b *testing.B) {
+			for _, k := range keys {
+				b.Run(k.name, func(b *testing.B) {
+					a := mustBuild(b, c.build, k.key)
+					nonce := make([]byte, a.NonceSize())
+					plaintext := make([]byte, plaintextSize)
+					sealed := a.Seal(nil, nonce, plaintext, nil)
+
+					b.Run("Seal", func(b *testing.B) {
+						dst := make([]byte, 0, len(sealed))
+						bc := bench.Start(b).MaxAllocs(0)
+						defer bc.End()
+
+						var got []byte
+						for bc.Loop() {
+							got = a.Seal(dst, nonce, plaintext, nil)
+						}
+
+						assert.Length(b, got, len(sealed), "the benchmark measures a Seal of the whole plaintext")
+					})
+
+					b.Run("Open", func(b *testing.B) {
+						dst := make([]byte, 0, plaintextSize)
+						bc := bench.Start(b).MaxAllocs(0)
+						defer bc.End()
+
+						var err error
+						for bc.Loop() {
+							_, err = a.Open(dst, nonce, sealed, nil)
+						}
+
+						assert.NoError(b, err, "the benchmark measures an Open that succeeds")
+					})
+				})
+			}
+		})
+	}
 }
 
 // mustBuild returns the AEAD that build makes from key. It fails tb when
 // build refuses the key.
-func mustBuild(tb testing.TB, build func([]byte) (crypto.AEAD, error), key []byte) crypto.AEAD {
+func mustBuild(tb assert.TB, build func([]byte) (crypto.AEAD, error), key []byte) crypto.AEAD {
 	tb.Helper()
 
 	a, err := build(key)

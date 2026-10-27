@@ -21,6 +21,7 @@ import (
 	"go.dokimi.dev/assert/expect"
 	"go.dokimi.dev/assert/history"
 	"go.dokimi.dev/assert/prop"
+	"go.dokimi.dev/conform"
 
 	"go.thesmos.sh/core/clock/fake"
 	"go.thesmos.sh/core/coretest/cryptotest"
@@ -84,21 +85,14 @@ func (s *keepingSource) Read(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// TestKeeperContract runs the contract suite of crypto.Keeper with a
-// second instance over the same root key and a Keeper of another root
-// key.
-func TestKeeperContract(t *testing.T) {
+// TestKeeperConformsToKeeper applies the checks of the suite of crypto.Keeper
+// to a Keeper of the root key. The second instance of a check is another
+// Keeper of the same root key.
+func TestKeeperConformsToKeeper(t *testing.T) {
 	t.Parallel()
 
-	factory := func() crypto.Keeper { return mustNew(t, testKeyID, rootKey) }
-	cryptotest.AssertKeeperContract(t, factory,
-		append(cryptotest.KeeperContractAssertions(),
-			cryptotest.KeeperCrossInstanceAssertion(factory),
-			cryptotest.KeeperForeignKeyAssertion(func() crypto.Keeper {
-				return mustNew(t, "local/other-root-key", otherKey)
-			}),
-		)...,
-	)
+	newKeeper := func(h *cryptotest.KeeperHandle) crypto.Keeper { return mustNew(h, testKeyID, rootKey) }
+	cryptotest.RunKeeperSuiteFromHandle(t, newKeeper, conform.Second(newKeeper))
 }
 
 // TestDestroyerContract runs the contract suite of crypto.Destroyer.
@@ -184,6 +178,14 @@ func TestKeeper(t *testing.T) {
 
 	t.Run("Unwrap", func(t *testing.T) {
 		t.Parallel()
+
+		t.Run("returns an error for material that a Keeper of another root key wrapped", func(t *testing.T) {
+			t.Parallel()
+			wrapped, err := mustNew(t, "local/other-root-key", otherKey).Wrap(t.Context(), []byte("data-key"))
+			assert.NoError(t, err, "Wrap must succeed")
+			_, err = mustNew(t, testKeyID, rootKey).Unwrap(t.Context(), wrapped)
+			assert.HasError(t, err, "material that another root key wrapped must not unwrap")
+		})
 
 		// Both AES-GCM constructions write the nonce at one offset.
 		t.Run("returns the data key of an envelope that aesgcm.New sealed under the root key", func(t *testing.T) {
@@ -595,7 +597,7 @@ func BenchmarkKeeper(b *testing.B) {
 // mustNew returns a Keeper over key, named keyID, with a cryptographic
 // random source and a fake clock at origin. It fails tb when New returns
 // an error.
-func mustNew(tb testing.TB, keyID string, key []byte) *localkey.Keeper {
+func mustNew(tb assert.TB, keyID string, key []byte) *localkey.Keeper {
 	tb.Helper()
 
 	k, err := localkey.New(keyID, key, randcrypto.New(), fake.New(origin))

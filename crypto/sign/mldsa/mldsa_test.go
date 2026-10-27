@@ -20,6 +20,7 @@ import (
 	"go.dokimi.dev/assert/expect"
 	"go.dokimi.dev/assert/history"
 	"go.dokimi.dev/assert/prop"
+	"go.dokimi.dev/conform"
 
 	"go.thesmos.sh/core/coretest/cryptotest"
 	"go.thesmos.sh/core/crypto"
@@ -84,55 +85,38 @@ func (s *keepingSource) Read(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// TestMLDSASignerContract runs the contract suite of sign.Signer for each
-// parameter set, with the Algorithm, the KeyID, the signatures and the
-// verification of the standard library, and the AppendSigner capability.
-func TestMLDSASignerContract(t *testing.T) {
+// TestVerifierConformsToVerifier applies the checks of the suite of
+// sign.Verifier to the Verifier of the fixed seed in each parameter set. The
+// second subject of a check is the Signer of that seed.
+func TestVerifierConformsToVerifier(t *testing.T) {
 	t.Parallel()
 
 	for _, tt := range paramSets {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			s := mustSigner(t, tt.p, testContext)
 
-			cryptotest.AssertSignerContract(t,
-				func() sign.Signer { return s },
-				append(cryptotest.SignerContractAssertions(),
-					cryptotest.SignerAlgorithmAssertion(tt.algorithm),
-					cryptotest.SignerKeyIDAssertion(stdlibKeyID(t, tt.std())),
-					cryptotest.SignerCrossStdlibVerifyAssertion(stdlibVerify(tt.std())),
-					cryptotest.SignerCrossStdlibSignAssertion(stdlibSign(t, tt.std())),
-					cryptotest.AppendSignerAssertion(),
-					cryptotest.AppendSignerContextAssertion(),
-				)...,
-			)
+			cryptotest.RunVerifierSuiteFromHandle(t,
+				func(h *cryptotest.VerifierHandle) *mldsa.Verifier { return mustSigner(h, tt.p, testContext).Verifier },
+				conform.Second(func(h *cryptotest.VerifierHandle) sign.Verifier {
+					return mustSigner(h, tt.p, testContext)
+				}))
 		})
 	}
 }
 
-// TestMLDSAVerifierContract runs the contract suite of sign.Verifier for
-// each parameter set, with the Algorithm and the signatures of the
-// standard library.
-func TestMLDSAVerifierContract(t *testing.T) {
+// TestSignerConformsToSigner applies the checks of the suite of sign.Signer and
+// the contract of sign.AppendSigner to the Signer of the fixed seed in each
+// parameter set.
+func TestSignerConformsToSigner(t *testing.T) {
 	t.Parallel()
 
 	for _, tt := range paramSets {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			s := mustSigner(t, tt.p, testContext)
-			msg := []byte("a message to verify")
-			sig, err := s.Sign(msg)
-			assert.NoError(t, err, "Sign must succeed")
-			sample := cryptotest.VerifierSample{Message: msg, Signature: sig}
 
-			cryptotest.AssertVerifierContract(t,
-				func() sign.Verifier { return s.Verifier },
-				append(cryptotest.VerifierContractAssertions(sample),
-					cryptotest.VerifierAlgorithmAssertion(tt.algorithm),
-					cryptotest.VerifierAcceptsAssertion(sample),
-					cryptotest.VerifierCrossStdlibAssertion(stdlibSign(t, tt.std())),
-				)...,
-			)
+			cryptotest.RunSignerSuiteFromHandle(t,
+				func(h *cryptotest.SignerHandle) *mldsa.Signer { return mustSigner(h, tt.p, testContext) })
+			cryptotest.AssertAppendSignerContract(t, mustSigner(t, tt.p, testContext))
 		})
 	}
 }
@@ -177,8 +161,47 @@ func TestMLDSA(t *testing.T) {
 			})
 		})
 
+		t.Run("Algorithm", func(t *testing.T) {
+			t.Parallel()
+
+			for _, tt := range paramSets {
+				t.Run("returns the name of "+tt.name, func(t *testing.T) {
+					t.Parallel()
+					assert.Equal(t, mustSigner(t, tt.p, testContext).Algorithm(), tt.algorithm,
+						"Algorithm returns the name of the parameter set")
+				})
+			}
+		})
+
+		t.Run("KeyID", func(t *testing.T) {
+			t.Parallel()
+
+			for _, tt := range paramSets {
+				t.Run("returns the KeyID of the public key of crypto/mldsa in "+tt.name, func(t *testing.T) {
+					t.Parallel()
+					assert.Equal(t, mustSigner(t, tt.p, testContext).KeyID(), stdlibKeyID(t, tt.std()),
+						"KeyID returns the KeyID of the public key that crypto/mldsa derives")
+				})
+			}
+		})
+
 		t.Run("Verify", func(t *testing.T) {
 			t.Parallel()
+
+			for _, tt := range paramSets {
+				t.Run("reports true for the signature of crypto/mldsa of any message in "+tt.name, func(t *testing.T) {
+					t.Parallel()
+					sk, err := stdmldsa.NewPrivateKey(tt.std(), seed())
+					assert.NoError(t, err, "crypto/mldsa accepts the seed")
+					v := mustSigner(t, tt.p, testContext).Verifier
+					prop.ForAll(t, "Verify accepts the signature of crypto/mldsa", func(pc *prop.Case) {
+						msg := pc.Draw(prop.Bytes(prop.MaxSize(256)), "msg")
+						sig, err := sk.Sign(nil, msg, &stdmldsa.Options{Context: testContext})
+						assert.NoError(pc, err, "crypto/mldsa signs the message")
+						assert.True(pc, v.Verify(msg, sig), "Verify accepts the signature of crypto/mldsa")
+					})
+				})
+			}
 
 			t.Run("reports false for a signature under another context", func(t *testing.T) {
 				t.Parallel()
@@ -379,6 +402,23 @@ func TestMLDSA(t *testing.T) {
 		// them.
 		t.Run("Sign", func(t *testing.T) {
 			t.Parallel()
+
+			for _, tt := range paramSets {
+				t.Run("returns a signature that crypto/mldsa verifies for any message in "+tt.name, func(t *testing.T) {
+					t.Parallel()
+					sk, err := stdmldsa.NewPrivateKey(tt.std(), seed())
+					assert.NoError(t, err, "crypto/mldsa accepts the seed")
+					s := mustSigner(t, tt.p, testContext)
+					prop.ForAll(t, "crypto/mldsa verifies the signature of Sign", func(pc *prop.Case) {
+						msg := pc.Draw(prop.Bytes(prop.MaxSize(256)), "msg")
+						sig, err := s.Sign(msg)
+						assert.NoError(pc, err, "Sign signs the message")
+						opts := &stdmldsa.Options{Context: testContext}
+						assert.NoError(pc, stdmldsa.Verify(sk.PublicKey(), msg, sig, opts),
+							"crypto/mldsa verifies the signature of Sign")
+					})
+				})
+			}
 
 			t.Run("returns signatures that the Verifier accepts to goroutines that sign at once", func(t *testing.T) {
 				t.Parallel()
@@ -695,7 +735,7 @@ func seed() []byte {
 
 // mustSigner returns the Signer of the fixed seed in parameter set p
 // under context. It fails tb when New refuses them.
-func mustSigner(tb testing.TB, p mldsa.Params, context string) *mldsa.Signer {
+func mustSigner(tb assert.TB, p mldsa.Params, context string) *mldsa.Signer {
 	tb.Helper()
 
 	s, err := mldsa.New(p, seed(), context)
@@ -719,34 +759,4 @@ func stdlibKeyID(tb testing.TB, params stdmldsa.Parameters) sign.KeyID {
 	copy(id[:], h[:sign.KeyIDSize])
 
 	return id
-}
-
-// stdlibVerify returns a function that verifies with crypto/mldsa
-// directly, under testContext.
-func stdlibVerify(params stdmldsa.Parameters) func(pub, msg, sig []byte) bool {
-	return func(pub, msg, sig []byte) bool {
-		pk, err := stdmldsa.NewPublicKey(params, pub)
-		if err != nil {
-			return false
-		}
-
-		return stdmldsa.Verify(pk, msg, sig, &stdmldsa.Options{Context: testContext}) == nil
-	}
-}
-
-// stdlibSign returns a function that signs with crypto/mldsa directly,
-// with the key of the fixed seed and under testContext. A failure of
-// crypto/mldsa fails tb.
-func stdlibSign(tb testing.TB, params stdmldsa.Parameters) func(msg []byte) []byte {
-	tb.Helper()
-
-	sk, err := stdmldsa.NewPrivateKey(params, seed())
-	assert.NoError(tb, err, "crypto/mldsa must accept the seed")
-
-	return func(msg []byte) []byte {
-		sig, err := sk.Sign(nil, msg, &stdmldsa.Options{Context: testContext})
-		assert.NoError(tb, err, "crypto/mldsa must sign")
-
-		return sig
-	}
 }

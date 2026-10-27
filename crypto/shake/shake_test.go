@@ -16,6 +16,7 @@ import (
 	"go.dokimi.dev/assert/bench"
 	"go.dokimi.dev/assert/expect"
 	"go.dokimi.dev/assert/history"
+	"go.dokimi.dev/assert/prop"
 
 	"go.thesmos.sh/core/coretest/cryptotest"
 	"go.thesmos.sh/core/crypto"
@@ -40,54 +41,48 @@ var (
 	shake256ID = crypto.ID{'s', 'h', 'a', 'k', 'e', '2', '5', '6', '/', 'v', '1'}
 )
 
-// constructions are the two constructors of the package, with the
-// output of 32 bytes for the empty message from the NIST FIPS 202
+// constructions are the two constructors of the package, with the ID,
+// the Algorithm and the function of the standard library of each, and
+// the output of 32 bytes for the empty message from the NIST FIPS 202
 // examples.
 var constructions = []struct {
-	name  string
-	xof   crypto.XOF
-	empty string
+	name      string
+	xof       crypto.XOF
+	id        crypto.ID
+	algorithm crypto.Algorithm
+	sum       func(data []byte, n int) []byte
+	empty     string
 }{
 	{
-		name:  "New128",
-		xof:   shake.New128(),
-		empty: "7f9c2ba4e88f827d616045507605853ed73b8093f6efbc88eb1a6eacfa66ef26",
+		name:      "New128",
+		xof:       shake.New128(),
+		id:        shake128ID,
+		algorithm: crypto.AlgSHAKE128,
+		sum:       stdsha3.SumSHAKE128,
+		empty:     "7f9c2ba4e88f827d616045507605853ed73b8093f6efbc88eb1a6eacfa66ef26",
 	},
 	{
-		name:  "New256",
-		xof:   shake.New256(),
-		empty: "46b9dd2b0ba88d13233b3feb743eeb243fcd52ea62b81b82b50c27646ed5762f",
+		name:      "New256",
+		xof:       shake.New256(),
+		id:        shake256ID,
+		algorithm: crypto.AlgSHAKE256,
+		sum:       stdsha3.SumSHAKE256,
+		empty:     "46b9dd2b0ba88d13233b3feb743eeb243fcd52ea62b81b82b50c27646ed5762f",
 	},
 }
 
-// TestSHAKE128Contract runs the contract suite of crypto.XOF on
-// SHAKE128 with its ID, its Algorithm and the output of the standard
-// library.
-func TestSHAKE128Contract(t *testing.T) {
+// TestXOFConformsToXOF applies the checks of the suite of crypto.XOF to the
+// XOF of each construction.
+func TestXOFConformsToXOF(t *testing.T) {
 	t.Parallel()
 
-	cryptotest.AssertXOFContract(t, shake.New128,
-		append(cryptotest.XOFContractAssertions(),
-			cryptotest.XOFIDAssertion(shake128ID),
-			cryptotest.XOFAlgorithmAssertion(crypto.AlgSHAKE128),
-			cryptotest.XOFCrossStdlibAssertion(stdsha3.SumSHAKE128),
-		)...,
-	)
-}
+	for _, c := range constructions {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 
-// TestSHAKE256Contract runs the contract suite of crypto.XOF on
-// SHAKE256 with its ID, its Algorithm and the output of the standard
-// library.
-func TestSHAKE256Contract(t *testing.T) {
-	t.Parallel()
-
-	cryptotest.AssertXOFContract(t, shake.New256,
-		append(cryptotest.XOFContractAssertions(),
-			cryptotest.XOFIDAssertion(shake256ID),
-			cryptotest.XOFAlgorithmAssertion(crypto.AlgSHAKE256),
-			cryptotest.XOFCrossStdlibAssertion(stdsha3.SumSHAKE256),
-		)...,
-	)
+			cryptotest.RunXOFSuite(t, func() crypto.XOF { return c.xof })
+		})
+	}
 }
 
 func TestSHAKE(t *testing.T) {
@@ -103,6 +98,33 @@ func TestSHAKE(t *testing.T) {
 				t.Parallel()
 				assert.Equal(t, hex.EncodeToString(squeeze(t, c.xof, nil)), c.empty,
 					"the output must match the FIPS 202 example")
+			})
+
+			t.Run("returns an XOF whose output matches the output of crypto/sha3", func(t *testing.T) {
+				t.Parallel()
+				prop.ForAll(t, "the stream squeezes the bytes that crypto/sha3 squeezes", func(pc *prop.Case) {
+					data := pc.Draw(prop.Bytes(prop.MaxSize(512)), "data")
+					n := pc.Draw(prop.Integer(1, 512), "n")
+
+					s := c.xof.NewXOFStream()
+					_, err := s.Write(data)
+					assert.NoError(pc, err, "Write absorbs the input")
+
+					out := make([]byte, n)
+					_, err = s.Read(out)
+					assert.NoError(pc, err, "Read squeezes the output")
+					assert.Equal(pc, out, c.sum(data, n), "the stream squeezes the bytes that crypto/sha3 squeezes")
+				})
+			})
+
+			t.Run("returns an XOF with the ID of the construction", func(t *testing.T) {
+				t.Parallel()
+				assert.Equal(t, c.xof.ID(), c.id, "ID returns the ID of the construction")
+			})
+
+			t.Run("returns an XOF with the Algorithm of the construction", func(t *testing.T) {
+				t.Parallel()
+				assert.Equal(t, c.xof.Algorithm(), c.algorithm, "Algorithm returns the Algorithm of the construction")
 			})
 
 			t.Run("returns an XOF whose stream reads every byte of p", func(t *testing.T) {

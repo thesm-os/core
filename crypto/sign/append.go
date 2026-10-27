@@ -25,8 +25,6 @@ type AppendSigner interface {
 	// AppendSign appends a signature over message to dst and returns the
 	// extended slice. It returns dst unchanged with an error, which wraps
 	// context.Cause(ctx) when ctx ends before the signature is available.
-	//
-	//testkit:nondeterministic
 	AppendSign(ctx context.Context, dst, message []byte) ([]byte, error)
 }
 

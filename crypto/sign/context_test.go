@@ -53,17 +53,15 @@ func (c *contextual) SignContext(ctx context.Context, message []byte) ([]byte, e
 	return c.Signer.Sign(message)
 }
 
-// TestContextSignerContract runs the contract suite of sign.Signer with
-// the assertion of the ContextSigner capability.
+// TestContextSignerContract applies the checks of the suite of sign.Signer and
+// the contract of sign.ContextSigner to the contextual signer of the test.
 func TestContextSignerContract(t *testing.T) {
 	t.Parallel()
 
-	cryptotest.AssertSignerContract(t,
-		func() sign.Signer { return &contextual{counting{Signer: newEd25519(t)}} },
-		append(cryptotest.SignerContractAssertions(),
-			cryptotest.ContextSignerAssertion(),
-		)...,
-	)
+	cryptotest.RunSignerSuiteFromHandle(t, func(h *cryptotest.SignerHandle) *contextual {
+		return &contextual{counting{Signer: newEd25519(h)}}
+	})
+	cryptotest.AssertContextSignerContract(t, &contextual{counting{Signer: newEd25519(t)}})
 }
 
 func TestContext(t *testing.T) {
@@ -152,7 +150,7 @@ func BenchmarkContext(b *testing.B) {
 
 // newEd25519 returns an Ed25519 signer over a new key. It fails tb when
 // Generate fails.
-func newEd25519(tb testing.TB) sign.Signer {
+func newEd25519(tb assert.TB) sign.Signer {
 	tb.Helper()
 
 	s, err := ed25519.Generate(randcrypto.New())

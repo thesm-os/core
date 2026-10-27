@@ -23,6 +23,7 @@ import (
 	"go.dokimi.dev/assert/expect"
 	"go.dokimi.dev/assert/history"
 	"go.dokimi.dev/assert/prop"
+	"go.dokimi.dev/conform"
 
 	"go.thesmos.sh/core/coretest/cryptotest"
 	"go.thesmos.sh/core/crypto"
@@ -51,71 +52,52 @@ const (
 //nolint:staticcheck // an invalid key is the subject of the tests
 var offCurve = &ecdsa.PublicKey{Curve: elliptic.P384(), X: big.NewInt(1), Y: big.NewInt(2)}
 
-// TestECDSAP384VerifierContract runs the contract suite of sign.Verifier
-// with the Algorithm, the KeyID and the signatures of the standard
-// library.
-func TestECDSAP384VerifierContract(t *testing.T) {
+// TestVerifierConformsToVerifier applies the checks of the suite of
+// sign.Verifier to the Verifier of the ECDSA P-384 key of cryptotest. The
+// second subject of a check is the Signer of that key.
+func TestVerifierConformsToVerifier(t *testing.T) {
 	t.Parallel()
-	fix := cryptotest.NewECDSAP384Sample()
-	signer := mustSigner(t, fix)
-	sample := cryptotest.VerifierSample{Message: fix.Message, Signature: fix.Signature}
 
-	cryptotest.AssertVerifierContract(t,
-		func() sign.Verifier { return signer.Verifier },
-		append(cryptotest.VerifierContractAssertions(sample),
-			cryptotest.VerifierAlgorithmAssertion(crypto.AlgECDSAP384),
-			cryptotest.VerifierKeyIDAssertion(fix.KeyID),
-			cryptotest.VerifierAcceptsAssertion(sample),
-			cryptotest.VerifierCrossStdlibAssertion(stdlibSign(t, fix.StdlibPriv)),
-		)...,
-	)
+	fix := cryptotest.NewECDSAP384Sample()
+	cryptotest.RunVerifierSuiteFromHandle(t,
+		func(h *cryptotest.VerifierHandle) *signecdsa.Verifier { return mustSigner(h, fix).Verifier },
+		conform.Second(func(h *cryptotest.VerifierHandle) sign.Verifier { return mustSigner(h, fix) }))
 }
 
-// TestECDSAP384SignerContract runs the contract suite of sign.Signer
-// with the Algorithm, the KeyID, the signatures and the verification of
-// the standard library, and the AppendSigner capability.
-func TestECDSAP384SignerContract(t *testing.T) {
+// TestVerifierConformsToStreamingVerifier applies the checks of the suite of
+// sign.StreamingVerifier to the Verifier of the ECDSA P-384 key of cryptotest.
+// The second subject of a check is the Signer of that key.
+func TestVerifierConformsToStreamingVerifier(t *testing.T) {
 	t.Parallel()
-	fix := cryptotest.NewECDSAP384Sample()
-	signer := mustSigner(t, fix)
 
-	cryptotest.AssertSignerContract(t,
-		func() sign.Signer { return signer },
-		append(cryptotest.SignerContractAssertions(),
-			cryptotest.SignerAlgorithmAssertion(crypto.AlgECDSAP384),
-			cryptotest.SignerKeyIDAssertion(fix.KeyID),
-			cryptotest.SignerCrossStdlibVerifyAssertion(stdlibVerify),
-			cryptotest.SignerCrossStdlibSignAssertion(stdlibSign(t, fix.StdlibPriv)),
-			cryptotest.AppendSignerAssertion(),
-			cryptotest.AppendSignerContextAssertion(),
-		)...,
-	)
+	fix := cryptotest.NewECDSAP384Sample()
+	cryptotest.RunStreamingVerifierSuiteFromHandle(t,
+		func(h *cryptotest.StreamingVerifierHandle) *signecdsa.Verifier { return mustSigner(h, fix).Verifier },
+		conform.Second(func(h *cryptotest.StreamingVerifierHandle) sign.StreamingVerifier {
+			return mustSigner(h, fix)
+		}))
 }
 
-// TestECDSAP384SignStreamContract runs the contract suite of
-// sign.SignStream.
-func TestECDSAP384SignStreamContract(t *testing.T) {
+// TestSignerConformsToSigner applies the checks of the suite of sign.Signer and
+// the contract of sign.AppendSigner to the Signer of the ECDSA P-384 key of
+// cryptotest.
+func TestSignerConformsToSigner(t *testing.T) {
 	t.Parallel()
-	signer := mustSigner(t, cryptotest.NewECDSAP384Sample())
 
-	cryptotest.AssertSignStreamContract(t,
-		func() sign.SignStream { return signer.NewSignStream() },
-		cryptotest.SignStreamContractAssertions(signer.Verify)...,
-	)
+	fix := cryptotest.NewECDSAP384Sample()
+	cryptotest.RunSignerSuiteFromHandle(t,
+		func(h *cryptotest.SignerHandle) *signecdsa.Signer { return mustSigner(h, fix) })
+	cryptotest.AssertAppendSignerContract(t, mustSigner(t, fix))
 }
 
-// TestECDSAP384VerifyStreamContract runs the contract suite of
-// sign.VerifyStream.
-func TestECDSAP384VerifyStreamContract(t *testing.T) {
+// TestSignerConformsToStreamingSigner applies the checks of the suite of
+// sign.StreamingSigner to the Signer of the ECDSA P-384 key of cryptotest.
+func TestSignerConformsToStreamingSigner(t *testing.T) {
 	t.Parallel()
-	fix := cryptotest.NewECDSAP384Sample()
-	signer := mustSigner(t, fix)
-	streamSample := cryptotest.VerifyStreamSample{Message: fix.Message, Signature: fix.Signature}
 
-	cryptotest.AssertVerifyStreamContract(t,
-		func() sign.VerifyStream { return signer.NewVerifyStream() },
-		cryptotest.VerifyStreamContractAssertions(streamSample)...,
-	)
+	fix := cryptotest.NewECDSAP384Sample()
+	cryptotest.RunStreamingSignerSuiteFromHandle(t,
+		func(h *cryptotest.StreamingSignerHandle) *signecdsa.Signer { return mustSigner(h, fix) })
 }
 
 func TestECDSAP384(t *testing.T) {
@@ -128,6 +110,26 @@ func TestECDSAP384(t *testing.T) {
 			t.Parallel()
 			_, ok := any(mustSigner(t, cryptotest.NewECDSAP384Sample()).Verifier).(sign.StreamingVerifier)
 			assert.True(t, ok, "an ECDSA P-384 Verifier must implement sign.StreamingVerifier")
+		})
+
+		t.Run("Algorithm", func(t *testing.T) {
+			t.Parallel()
+
+			t.Run("returns AlgECDSAP384", func(t *testing.T) {
+				t.Parallel()
+				assert.Equal(t, mustSigner(t, cryptotest.NewECDSAP384Sample()).Algorithm(), crypto.AlgECDSAP384,
+					"Algorithm returns the name of ECDSA P-384")
+			})
+		})
+
+		t.Run("KeyID", func(t *testing.T) {
+			t.Parallel()
+
+			t.Run("returns the KeyID of the public key", func(t *testing.T) {
+				t.Parallel()
+				fix := cryptotest.NewECDSAP384Sample()
+				assert.Equal(t, mustSigner(t, fix).KeyID(), fix.KeyID, "KeyID returns the KeyID of the public key")
+			})
 		})
 
 		t.Run("NewVerifyStream", func(t *testing.T) {
@@ -147,6 +149,19 @@ func TestECDSAP384(t *testing.T) {
 
 		t.Run("Verify", func(t *testing.T) {
 			t.Parallel()
+
+			t.Run("reports true for the signature of crypto/ecdsa of any message", func(t *testing.T) {
+				t.Parallel()
+				fix := cryptotest.NewECDSAP384Sample()
+				v := mustSigner(t, fix).Verifier
+				prop.ForAll(t, "Verify accepts the signature of crypto/ecdsa", func(pc *prop.Case) {
+					msg := pc.Draw(prop.Bytes(prop.MaxSize(256)), "msg")
+					digest := sha512.Sum384(msg)
+					sig, err := ecdsa.SignASN1(stdrand.Reader, fix.StdlibPriv, digest[:])
+					assert.NoError(pc, err, "crypto/ecdsa signs the digest")
+					assert.True(pc, v.Verify(msg, sig), "Verify accepts the signature of crypto/ecdsa")
+				})
+			})
 
 			t.Run("reports true for a valid signature to goroutines that verify at once", func(t *testing.T) {
 				t.Parallel()
@@ -320,6 +335,20 @@ func TestECDSAP384(t *testing.T) {
 		t.Run("Sign", func(t *testing.T) {
 			t.Parallel()
 
+			t.Run("returns a signature that crypto/ecdsa verifies for any message", func(t *testing.T) {
+				t.Parallel()
+				fix := cryptotest.NewECDSAP384Sample()
+				s := mustSigner(t, fix)
+				prop.ForAll(t, "crypto/ecdsa verifies the signature of Sign", func(pc *prop.Case) {
+					msg := pc.Draw(prop.Bytes(prop.MaxSize(256)), "msg")
+					sig, err := s.Sign(msg)
+					assert.NoError(pc, err, "Sign signs the message")
+					digest := sha512.Sum384(msg)
+					assert.True(pc, ecdsa.VerifyASN1(&fix.StdlibPriv.PublicKey, digest[:], sig),
+						"crypto/ecdsa verifies the signature of Sign")
+				})
+			})
+
 			t.Run("returns signatures that the Verifier accepts to goroutines that sign at once", func(t *testing.T) {
 				t.Parallel()
 				s := mustSigner(t, cryptotest.NewECDSAP384Sample())
@@ -424,38 +453,6 @@ func TestECDSAP384Allocs(t *testing.T) {
 	})
 }
 
-// BenchmarkECDSAP384Verifier runs the benchmarks of the contract suite
-// of sign.Verifier.
-func BenchmarkECDSAP384Verifier(b *testing.B) {
-	signer := mustSigner(b, cryptotest.NewECDSAP384Sample())
-	cryptotest.BenchmarkVerifierContract(b, func() sign.Verifier { return signer.Verifier })
-}
-
-// BenchmarkECDSAP384Signer runs the benchmarks of the contract suite of
-// sign.Signer.
-func BenchmarkECDSAP384Signer(b *testing.B) {
-	signer := mustSigner(b, cryptotest.NewECDSAP384Sample())
-	cryptotest.BenchmarkSignerContract(b, func() sign.Signer { return signer })
-}
-
-// BenchmarkECDSAP384SignStream runs the benchmarks of the contract suite
-// of sign.SignStream.
-func BenchmarkECDSAP384SignStream(b *testing.B) {
-	signer := mustSigner(b, cryptotest.NewECDSAP384Sample())
-	cryptotest.BenchmarkSignStreamContract(b,
-		func() sign.SignStream { return signer.NewSignStream() },
-	)
-}
-
-// BenchmarkECDSAP384VerifyStream runs the benchmarks of the contract
-// suite of sign.VerifyStream.
-func BenchmarkECDSAP384VerifyStream(b *testing.B) {
-	signer := mustSigner(b, cryptotest.NewECDSAP384Sample())
-	cryptotest.BenchmarkVerifyStreamContract(b,
-		func() sign.VerifyStream { return signer.NewVerifyStream() },
-	)
-}
-
 // BenchmarkECDSAP384 reports the cost of Resolve, and fails when it
 // allocates more than TestECDSAP384Allocs allows.
 func BenchmarkECDSAP384(b *testing.B) {
@@ -474,41 +471,9 @@ func BenchmarkECDSAP384(b *testing.B) {
 	})
 }
 
-// stdlibSign returns a function that signs msg with the ECDSA P-384 and
-// SHA-384 of the standard library under priv. The cross-stdlib
-// assertions use it as the reference. A signing error fails tb.
-func stdlibSign(tb testing.TB, priv *ecdsa.PrivateKey) func([]byte) []byte {
-	tb.Helper()
-
-	return func(msg []byte) []byte {
-		digest := sha512.Sum384(msg)
-		sig, err := ecdsa.SignASN1(stdrand.Reader, priv, digest[:])
-		assert.NoError(tb, err, "ecdsa.SignASN1 must sign")
-
-		return sig
-	}
-}
-
-// stdlibVerify reports whether sig is a valid ECDSA P-384 and SHA-384
-// signature over msg under the PKIX-encoded pub, verified by the
-// standard library.
-func stdlibVerify(pub, msg, sig []byte) bool {
-	parsed, err := x509.ParsePKIXPublicKey(pub)
-	if err != nil {
-		return false
-	}
-	pk, ok := parsed.(*ecdsa.PublicKey)
-	if !ok {
-		return false
-	}
-	digest := sha512.Sum384(msg)
-
-	return ecdsa.VerifyASN1(pk, digest[:], sig)
-}
-
 // mustSigner wraps the private key of fix in a Signer. It fails tb when
 // New refuses the key.
-func mustSigner(tb testing.TB, fix cryptotest.ECDSAP384Fixture) *signecdsa.Signer {
+func mustSigner(tb assert.TB, fix cryptotest.ECDSAP384Fixture) *signecdsa.Signer {
 	tb.Helper()
 
 	s, err := signecdsa.New(fix.StdlibPriv)

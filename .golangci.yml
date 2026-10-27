@@ -153,6 +153,9 @@ linters:
             - pgregory.net/rapid
             - go.thesmos.sh/kanon
             - go.dokimi.dev/assert
+            - go.dokimi.dev/conform
+            - go.dokimi.dev/stub
+            - go.dokimi.dev/fault
     exhaustive:
       default-signifies-exhaustive: true
       check:
@@ -356,6 +359,11 @@ linters:
       - path: 'coretest/[a-z]+test/[a-z_]+\.go'
         linters: [forbidigo]
         text: "panic"
+      # The sound implementations and the planted defects of a kit of coretest return the error
+      # of the standard library or of the implementation that they change, as the implementation
+      # that they stand for does. A check compares such an error with errors.Is, as a test does.
+      - path: 'coretest/[a-z]+test/[a-z_]+\.go'
+        linters: [wrapcheck]
       # gocritic's unlambda reports func() hash.Hash { return sha256.New() } as replaceable with
       # sha256.New. The explicit function literal is clearer in an assignment to a struct field of
       # a typed function type.

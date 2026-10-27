@@ -22,8 +22,6 @@ type ContextSigner interface {
 	// wrapping context.Cause(ctx) when ctx ends before the signature
 	// is available. Sign on the same value behaves as SignContext with
 	// a context that never ends.
-	//
-	//testkit:nondeterministic
 	SignContext(ctx context.Context, message []byte) ([]byte, error)
 }
 

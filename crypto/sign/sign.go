@@ -85,6 +85,10 @@ func (k KeyID) String() string {
 // allocates because [crypto/ecdsa.VerifyASN1] performs big.Int
 // arithmetic. Implementations document their own allocation
 // behaviour.
+//
+//dokimi:stub
+//dokimi:suite
+//dokimi:out path=../../coretest/cryptotest/
 type Verifier interface {
 	// KeyID returns the canonical key identifier for this
 	// Verifier's public key. Persist alongside signatures so
@@ -149,6 +153,10 @@ type Verifier interface {
 // SLH-DSA, Ed25519ph) additionally implement [StreamingSigner].
 // Ed25519 PureEdDSA does not — see the package documentation's
 // "Streaming" section.
+//
+//dokimi:stub
+//dokimi:suite
+//dokimi:out path=../../coretest/cryptotest/
 type Signer interface {
 	Verifier
 
@@ -162,8 +170,6 @@ type Signer interface {
 	// hashed externally to a Merkle root via
 	// [crypto.Hasher.NewStream] and the root signed as a normal
 	// small message.
-	//
-	//testkit:nondeterministic
 	Sign(message []byte) ([]byte, error)
 }
 
@@ -179,6 +185,10 @@ type Signer interface {
 // signing equation requires the message in two separate hash
 // computations, so a streaming API would force internal
 // buffering.
+//
+//dokimi:stub
+//dokimi:suite
+//dokimi:out path=../../coretest/cryptotest/
 type StreamingSigner interface {
 	Signer
 
@@ -213,6 +223,8 @@ type StreamingSigner interface {
 // [Signer.Sign]).
 //
 //nolint:revive // SignStream / VerifyStream is an intentional symmetric pair; renaming one breaks the symmetry, renaming both just trades stutter for verbosity.
+//dokimi:stub
+//dokimi:out path=../../coretest/cryptotest/
 type SignStream interface {
 	io.Writer
 
@@ -220,8 +232,6 @@ type SignStream interface {
 	// resulting digest, and returns the signature. After this
 	// call the stream is in the same state as a freshly-returned
 	// StreamingSigner.NewSignStream result and can be reused.
-	//
-	//testkit:nondeterministic
 	SignAndReset() ([]byte, error)
 }
 
@@ -233,6 +243,10 @@ type SignStream interface {
 //
 // Mirrors [StreamingSigner]: ECDSA P-384 satisfies it today,
 // PQ-signature implementations will, Ed25519 does not.
+//
+//dokimi:stub
+//dokimi:suite
+//dokimi:out path=../../coretest/cryptotest/
 type StreamingVerifier interface {
 	Verifier
 
@@ -258,6 +272,9 @@ type StreamingVerifier interface {
 //
 // Write and [VerifyStream.Verify] are zero-allocation in the
 // success path.
+//
+//dokimi:stub
+//dokimi:out path=../../coretest/cryptotest/
 type VerifyStream interface {
 	io.Writer
 

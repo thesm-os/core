@@ -31,6 +31,10 @@ import (
 // process boundary, and that round trip costs more than any
 // allocation. Only an in-memory implementation could meet an
 // allocation bound, so the interface does not set one.
+//
+//dokimi:stub
+//dokimi:suite
+//dokimi:out path=../coretest/cryptotest/
 type Keeper interface {
 	// KeyID names the wrapping key in the custodian's own form: a
 	// resource identifier, a slot number or a label. Persist it with
@@ -74,6 +78,9 @@ type Keeper interface {
 // cannot destroy cannot provide erasure. The failure belongs in
 // configuration, before the caller accepts a deletion request it
 // cannot honour.
+//
+//dokimi:stub
+//dokimi:out path=../coretest/cryptotest/
 type Destroyer interface {
 	Keeper
 
@@ -109,6 +116,9 @@ type Destroyer interface {
 // plaintext data key comes from the custodian's entropy source and not
 // the caller's. A caller that only encrypts can discard the plaintext
 // at once and keeps no key material it does not need.
+//
+//dokimi:stub
+//dokimi:out path=../coretest/cryptotest/
 type KeyGenerator interface {
 	Keeper
 

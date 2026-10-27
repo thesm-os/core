@@ -19,6 +19,7 @@ import (
 	"go.dokimi.dev/assert/expect"
 	"go.dokimi.dev/assert/history"
 	"go.dokimi.dev/assert/prop"
+	"go.dokimi.dev/conform"
 
 	"go.thesmos.sh/core/coretest/cryptotest"
 	"go.thesmos.sh/core/crypto"
@@ -73,51 +74,28 @@ var rfc8032Vectors = []struct {
 	},
 }
 
-// TestEd25519VerifierContract runs the contract suite of sign.Verifier
-// with the Algorithm, the KeyID and the signatures of the standard
-// library.
-func TestEd25519VerifierContract(t *testing.T) {
+// TestVerifierConformsToVerifier applies the checks of the suite of
+// sign.Verifier to the Verifier of the Ed25519 key of cryptotest. The second
+// subject of a check is the Signer of that key.
+func TestVerifierConformsToVerifier(t *testing.T) {
 	t.Parallel()
-	fix := cryptotest.NewEd25519Sample()
-	signer := mustSigner(t, fix)
-	sample := cryptotest.VerifierSample{Message: fix.Message, Signature: fix.Signature}
 
-	cryptotest.AssertVerifierContract(t,
-		func() sign.Verifier { return signer.Verifier },
-		append(cryptotest.VerifierContractAssertions(sample),
-			cryptotest.VerifierAlgorithmAssertion(crypto.AlgEd25519),
-			cryptotest.VerifierKeyIDAssertion(fix.KeyID),
-			cryptotest.VerifierAcceptsAssertion(sample),
-			cryptotest.VerifierCrossStdlibAssertion(func(msg []byte) []byte {
-				return stded25519.Sign(fix.StdlibPriv, msg)
-			}),
-		)...,
-	)
+	fix := cryptotest.NewEd25519Sample()
+	cryptotest.RunVerifierSuiteFromHandle(t,
+		func(h *cryptotest.VerifierHandle) *signed25519.Verifier { return mustSigner(h, fix).Verifier },
+		conform.Second(func(h *cryptotest.VerifierHandle) sign.Verifier { return mustSigner(h, fix) }))
 }
 
-// TestEd25519SignerContract runs the contract suite of sign.Signer with
-// the Algorithm, the KeyID, the signatures and the verification of the
-// standard library, and the AppendSigner capability.
-func TestEd25519SignerContract(t *testing.T) {
+// TestSignerConformsToSigner applies the checks of the suite of sign.Signer and
+// the contract of sign.AppendSigner to the Signer of the Ed25519 key of
+// cryptotest.
+func TestSignerConformsToSigner(t *testing.T) {
 	t.Parallel()
-	fix := cryptotest.NewEd25519Sample()
-	signer := mustSigner(t, fix)
 
-	cryptotest.AssertSignerContract(t,
-		func() sign.Signer { return signer },
-		append(cryptotest.SignerContractAssertions(),
-			cryptotest.SignerAlgorithmAssertion(crypto.AlgEd25519),
-			cryptotest.SignerKeyIDAssertion(fix.KeyID),
-			cryptotest.SignerCrossStdlibVerifyAssertion(func(pub, msg, sig []byte) bool {
-				return stded25519.Verify(stded25519.PublicKey(pub), msg, sig)
-			}),
-			cryptotest.SignerCrossStdlibSignAssertion(func(msg []byte) []byte {
-				return stded25519.Sign(fix.StdlibPriv, msg)
-			}),
-			cryptotest.AppendSignerAssertion(),
-			cryptotest.AppendSignerContextAssertion(),
-		)...,
-	)
+	fix := cryptotest.NewEd25519Sample()
+	cryptotest.RunSignerSuiteFromHandle(t,
+		func(h *cryptotest.SignerHandle) *signed25519.Signer { return mustSigner(h, fix) })
+	cryptotest.AssertAppendSignerContract(t, mustSigner(t, fix))
 }
 
 func TestEd25519(t *testing.T) {
@@ -135,8 +113,36 @@ func TestEd25519(t *testing.T) {
 			assert.False(t, ok, "an Ed25519 Verifier must not implement sign.StreamingVerifier")
 		})
 
+		t.Run("Algorithm", func(t *testing.T) {
+			t.Parallel()
+
+			t.Run("returns AlgEd25519", func(t *testing.T) {
+				t.Parallel()
+				assert.Equal(t, mustSigner(t, cryptotest.NewEd25519Sample()).Algorithm(), crypto.AlgEd25519,
+					"Algorithm returns the name of Ed25519")
+			})
+		})
+
+		t.Run("KeyID", func(t *testing.T) {
+			t.Parallel()
+
+			t.Run("returns the KeyID of the public key", func(t *testing.T) {
+				t.Parallel()
+				fix := cryptotest.NewEd25519Sample()
+				assert.Equal(t, mustSigner(t, fix).KeyID(), fix.KeyID, "KeyID returns the KeyID of the public key")
+			})
+		})
+
 		t.Run("Verify", func(t *testing.T) {
 			t.Parallel()
+
+			t.Run("reports true for the signature of crypto/ed25519 of any message", func(t *testing.T) {
+				t.Parallel()
+				fix := cryptotest.NewEd25519Sample()
+				v := mustSigner(t, fix).Verifier
+				prop.True(t, func(msg []byte) bool { return v.Verify(msg, stded25519.Sign(fix.StdlibPriv, msg)) },
+					"Verify accepts the signature of crypto/ed25519", prop.Using(prop.Bytes(prop.MaxSize(256))))
+			})
 
 			for _, tt := range rfc8032Vectors {
 				t.Run("reports true for the signature of RFC 8032 "+tt.name, func(t *testing.T) {
@@ -273,6 +279,19 @@ func TestEd25519(t *testing.T) {
 					assert.Equal(t, hex.EncodeToString(got), tt.sig, "Sign must match the signature of the vector")
 				})
 			}
+
+			t.Run("returns the signature of crypto/ed25519 for any message", func(t *testing.T) {
+				t.Parallel()
+				fix := cryptotest.NewEd25519Sample()
+				s := mustSigner(t, fix)
+				prop.ForAll(t, "Sign returns the signature of crypto/ed25519", func(pc *prop.Case) {
+					msg := pc.Draw(prop.Bytes(prop.MaxSize(256)), "msg")
+					sig, err := s.Sign(msg)
+					assert.NoError(pc, err, "Sign signs the message")
+					assert.Equal(pc, sig, stded25519.Sign(fix.StdlibPriv, msg),
+						"Sign returns the signature of crypto/ed25519")
+				})
+			})
 
 			t.Run("returns the signature of one call to goroutines that sign at once", func(t *testing.T) {
 				t.Parallel()
@@ -444,27 +463,43 @@ func TestEd25519Allocs(t *testing.T) {
 	})
 }
 
-// BenchmarkEd25519Verifier runs the benchmarks of the contract suite of
-// sign.Verifier.
-func BenchmarkEd25519Verifier(b *testing.B) {
-	signer := mustSigner(b, cryptotest.NewEd25519Sample())
-	cryptotest.BenchmarkVerifierContract(b, func() sign.Verifier { return signer.Verifier })
-}
-
-// BenchmarkEd25519Signer runs the benchmarks of the contract suite of
-// sign.Signer.
-func BenchmarkEd25519Signer(b *testing.B) {
-	signer := mustSigner(b, cryptotest.NewEd25519Sample())
-	cryptotest.BenchmarkSignerContract(b, func() sign.Signer { return signer })
-}
-
-// BenchmarkEd25519 reports the cost of AppendSign into a buffer with room
-// and of Resolve, and fails when either allocates more than
-// TestEd25519Allocs allows.
+// BenchmarkEd25519 reports the cost of Verify, of Sign, of AppendSign into a
+// buffer with room and of Resolve, and fails when one of them allocates more
+// than TestEd25519Allocs allows.
 func BenchmarkEd25519(b *testing.B) {
-	s := mustSigner(b, cryptotest.NewEd25519Sample())
+	fix := cryptotest.NewEd25519Sample()
+	s := mustSigner(b, fix)
+
+	b.Run("Verifier", func(b *testing.B) {
+		b.Run("Verify", func(b *testing.B) {
+			var ok bool
+
+			c := bench.Start(b).MaxAllocs(0)
+			defer c.End()
+
+			for c.Loop() {
+				ok = s.Verify(fix.Message, fix.Signature)
+			}
+
+			assert.True(b, ok, "the benchmark must measure a signature that verifies")
+		})
+	})
 
 	b.Run("Signer", func(b *testing.B) {
+		b.Run("Sign", func(b *testing.B) {
+			msg := []byte("payload")
+			var sig []byte
+
+			c := bench.Start(b).MaxAllocs(1)
+			defer c.End()
+
+			for c.Loop() {
+				sig, _ = s.Sign(msg)
+			}
+
+			assert.True(b, s.Verify(msg, sig), "the benchmark must measure a signature that verifies")
+		})
+
 		b.Run("AppendSign", func(b *testing.B) {
 			msg := []byte("payload")
 			buf := make([]byte, 0, stded25519.SignatureSize)
@@ -497,7 +532,7 @@ func BenchmarkEd25519(b *testing.B) {
 
 // mustSigner wraps the private key of fix in a Signer. It fails tb when
 // New refuses the key.
-func mustSigner(tb testing.TB, fix cryptotest.Ed25519Fixture) *signed25519.Signer {
+func mustSigner(tb assert.TB, fix cryptotest.Ed25519Fixture) *signed25519.Signer {
 	tb.Helper()
 
 	s, err := signed25519.New(fix.StdlibPriv)

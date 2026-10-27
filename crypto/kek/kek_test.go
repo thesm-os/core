@@ -24,6 +24,7 @@ import (
 	"go.dokimi.dev/assert/expect"
 	"go.dokimi.dev/assert/history"
 	"go.dokimi.dev/assert/prop"
+	"go.dokimi.dev/conform"
 
 	"go.thesmos.sh/core/clock/fake"
 	"go.thesmos.sh/core/coretest/cryptotest"
@@ -135,24 +136,23 @@ func (p *recordingParent) Unwrap(ctx context.Context, wrapped []byte) ([]byte, e
 	return record, err
 }
 
-// TestKeeperContract runs the contract suite of crypto.Keeper with a
-// second instance over the same record and a Keeper of another key ID.
-func TestKeeperContract(t *testing.T) {
+// TestKeeperConformsToKeeper applies the checks of the suite of crypto.Keeper
+// to a Keeper of a wrapped KEK. The second instance of a check is another
+// Keeper of the same record.
+func TestKeeperConformsToKeeper(t *testing.T) {
 	t.Parallel()
 
 	parent := newParent(t)
 	_, wrapped := mustGenerate(t, parent, randcrypto.New(), keyIDA)
-	_, other := mustGenerate(t, parent, randcrypto.New(), keyIDB)
 
-	factory := func() crypto.Keeper { return mustNew(t, parent, keyIDA, wrapped) }
-	cryptotest.AssertKeeperContract(t, factory,
-		append(cryptotest.KeeperContractAssertions(),
-			cryptotest.KeeperCrossInstanceAssertion(factory),
-			cryptotest.KeeperForeignKeyAssertion(func() crypto.Keeper {
-				return mustNew(t, parent, keyIDB, other)
-			}),
-		)...,
-	)
+	newKeeper := func(h *cryptotest.KeeperHandle) crypto.Keeper {
+		k, err := kek.New(h.Context(), parent, randcrypto.New(), keyIDA, wrapped)
+		assert.NoError(h, err, "New opens the record")
+		h.Cleanup(func() { _ = k.Close() })
+
+		return k
+	}
+	cryptotest.RunKeeperSuiteFromHandle(t, newKeeper, conform.Second(newKeeper))
 }
 
 func TestKeeper(t *testing.T) {
@@ -475,6 +475,17 @@ func TestKeeper(t *testing.T) {
 
 	t.Run("Unwrap", func(t *testing.T) {
 		t.Parallel()
+
+		t.Run("returns an error for a DEK that another KEK wrapped", func(t *testing.T) {
+			t.Parallel()
+			parent := newParent(t)
+			k, _ := mustGenerate(t, parent, randcrypto.New(), keyIDA)
+			other, _ := mustGenerate(t, parent, randcrypto.New(), keyIDB)
+			sealed, err := other.Wrap(t.Context(), dek)
+			assert.NoError(t, err, "Wrap must succeed")
+			_, err = k.Unwrap(t.Context(), sealed)
+			assert.HasError(t, err, "a DEK that another KEK wrapped must not unwrap")
+		})
 
 		t.Run("returns ErrCiphertextShort for material without an envelope after its salt", func(t *testing.T) {
 			t.Parallel()

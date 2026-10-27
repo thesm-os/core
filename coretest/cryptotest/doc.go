@@ -1,20 +1,68 @@
 // Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
-// Package cryptotest holds testkit-generated test infrastructure
-// for the crypto package's interface seams ([go.thesmos.sh/core/crypto.Hasher],
-// [go.thesmos.sh/core/crypto.MAC], [go.thesmos.sh/core/crypto.AEAD])
-// and consumer-facing assertion bundles. Generated artefacts have a
-// `.gen.go` suffix; hand-rolled assertion / fixture files do not.
+// Package cryptotest is the conformance suite of the interfaces of
+// [go.thesmos.sh/core/crypto] and [go.thesmos.sh/core/crypto/sign], with the
+// test doubles of each interface and the key fixtures of the signature
+// algorithms.
+//
+// # Suites
+//
+// Every implementation of an interface passes the same checks. [RunXOFSuite],
+// [RunAEADSuite], [RunKeeperSuite], [RunSignerSuite], [RunVerifierSuite],
+// [RunStreamingSignerSuite] and [RunStreamingVerifierSuite] apply each check of
+// a suite to a new value of a factory. The application of the suite of AEAD,
+// Keeper, Verifier or StreamingVerifier passes [go.dokimi.dev/conform.Second]:
+// a second AEAD or Keeper of the same key, or the Signer of the key of a
+// verifier.
+//
+// [AssertHasherContract], [AssertMACContract] and [AssertStreamContract] apply
+// the assertion bundles of the hashes and the MACs, such as
+// [HasherContractAssertions]. [AssertHasherModel] and [AssertMACModel] compare
+// random calls with the hash of the standard library.
+//
+// # Capabilities
+//
+// [AssertDestroyerContract], [AssertKeyGeneratorContract],
+// [AssertAADKeeperContract] and [AssertKeyCreatorContract] assert the optional
+// capabilities of a [crypto.Keeper]. [AssertContextSignerContract] and
+// [AssertAppendSignerContract] assert the optional capabilities of a
+// [sign.Signer].
+//
+// # Planted defects
+//
+// Each check of a suite has a planted defect: the double of an interface with a
+// call that breaks the law of the check. A defect keeps its other calls on an
+// implementation over the standard library: SHAKE128 of crypto/sha3,
+// AES-256-GCM of crypto/cipher, and Ed25519 and ECDSA P-384 over the keys of
+// [NewEd25519Sample] and [NewECDSAP384Sample]. The test of a suite runs each
+// check on every defect. A check fails on its own defect at the assertion of its
+// statement, and it passes on the defects of the other checks.
+//
+// # Doubles
+//
+// [XOFStub], [XOFStreamStub], [AEADStub], [KeeperStub], [DestroyerStub],
+// [KeyGeneratorStub], [SignerStub], [VerifierStub], [StreamingSignerStub],
+// [StreamingVerifierStub], [SignStreamStub] and [VerifyStreamStub] are
+// recording doubles. Each method returns the result of a function that a With
+// option sets, such as [WithAEADOpen], a fixed result, or the result of the
+// implementation that a DelegateTo option names, such as [AEADStubDelegateTo].
+// [HasherStub], [StreamStub] and [MACStub] are the doubles of the hashes and
+// the MACs. [NewStdlibHasherStub], [NewStdlibMACStub], [NewStdlibSignerStub]
+// and [NewStdlibVerifierStub] return doubles over the standard library.
+//
+// # Dependency position
+//
+// Imports bytes, context, crypto/aes, crypto/cipher, crypto/ecdsa,
+// crypto/ed25519, crypto/hmac, crypto/sha256, crypto/sha3, crypto/sha512,
+// crypto/subtle, crypto/x509, encoding/hex, errors, fmt, hash, io,
+// math/rand/v2, testing and time of the standard library, go.dokimi.dev/assert,
+// go.dokimi.dev/assert/prop, go.dokimi.dev/conform and go.dokimi.dev/stub,
+// go.thesmos.sh/testkit with its packages bench, bindings, clock, model,
+// model/action, model/law, rand, stub and suite, and
+// go.thesmos.sh/core/crypto, go.thesmos.sh/core/crypto/sign and
+// go.thesmos.sh/core/rand/crypto.
 package cryptotest
-
-// Digest is opaque (unexported fields by design — size-
-// discriminated via [crypto.NewDigest256] / [NewDigest384] /
-// [NewDigest512]) so testkit builder is not applicable. Canonical
-// algorithm-of-record fixture bytes (sign keypairs, sample
-// messages, sample signatures) live in sign_fixtures.go; consumer
-// tests wrap the stdlib bytes via their own constructors to avoid
-// an import cycle with the impl packages under test.
 
 // Hasher
 //go:generate testkit stub -p go.thesmos.sh/core/crypto -o hasher_stub.gen.go Hasher
@@ -31,62 +79,3 @@ package cryptotest
 //go:generate testkit suite -p go.thesmos.sh/core/crypto -o mac_spec.gen.go MAC
 //go:generate testkit bench -p go.thesmos.sh/core/crypto -o mac_bench.gen.go MAC
 //go:generate testkit model -p go.thesmos.sh/core/crypto -o mac_model.gen.go MAC
-
-// AEAD. No model layer: Seal draws a fresh nonce per call, so
-// successive outputs are not comparable against a reference.
-//
-// No generated suite either. [go.thesmos.sh/core/crypto.AEAD] embeds
-// [crypto/cipher.AEAD], whose Seal and Open are documented to panic
-// on a nonce that is not NonceSize() bytes. The suite generator emits
-// nil-safety subtests calling every method with all-nil arguments,
-// which that contract cannot satisfy — and the methods belong to the
-// standard library, so there is nowhere to put a directive
-// suppressing them. AssertAEADContract is hand-written in
-// aead_spec.go instead.
-//go:generate testkit stub -p go.thesmos.sh/core/crypto -o aead_stub.gen.go AEAD
-//go:generate testkit bench -p go.thesmos.sh/core/crypto -o aead_bench.gen.go AEAD
-
-// XOF
-//go:generate testkit stub -p go.thesmos.sh/core/crypto -o xof_stub.gen.go XOF
-//go:generate testkit suite -p go.thesmos.sh/core/crypto -o xof_spec.gen.go XOF
-//go:generate testkit bench -p go.thesmos.sh/core/crypto -o xof_bench.gen.go XOF
-
-// XOFStream
-//go:generate testkit stub -p go.thesmos.sh/core/crypto -o xofstream_stub.gen.go XOFStream
-//go:generate testkit suite -p go.thesmos.sh/core/crypto -o xofstream_spec.gen.go XOFStream
-
-// Keeper, Destroyer, KeyGenerator. Stubs only.
-//
-// The suite and bench generators read Unwrap(ctx, []byte) ([]byte,
-// error) as a keyed store lookup and emit
-// suite.ReaderContext[Impl, K, V] with K = []byte, which does not
-// satisfy comparable — so neither file compiles. Destroyer is worse:
-// Destroy alongside Unwrap makes the whole interface look
-// store-shaped. The generator has directives to declare that shape
-// (`deleter`, `keyfield`, `entry-id`) but none to deny it.
-//
-// AssertKeeperContract and the capability asserts are hand-written in
-// keeper_spec.go.
-//go:generate testkit stub -p go.thesmos.sh/core/crypto -o keeper_stub.gen.go Keeper
-//go:generate testkit stub -p go.thesmos.sh/core/crypto -o destroyer_stub.gen.go Destroyer
-//go:generate testkit stub -p go.thesmos.sh/core/crypto -o keygenerator_stub.gen.go KeyGenerator
-
-// Verifier
-//go:generate testkit stub -p go.thesmos.sh/core/crypto/sign -o verifier_stub.gen.go Verifier
-//go:generate testkit suite -p go.thesmos.sh/core/crypto/sign -o verifier_spec.gen.go Verifier
-//go:generate testkit bench -p go.thesmos.sh/core/crypto/sign -o verifier_bench.gen.go Verifier
-
-// Signer
-//go:generate testkit stub -p go.thesmos.sh/core/crypto/sign -o signer_stub.gen.go Signer
-//go:generate testkit suite -p go.thesmos.sh/core/crypto/sign -o signer_spec.gen.go Signer
-//go:generate testkit bench -p go.thesmos.sh/core/crypto/sign -o signer_bench.gen.go Signer
-
-// SignStream
-//go:generate testkit stub -p go.thesmos.sh/core/crypto/sign -o signstream_stub.gen.go SignStream
-//go:generate testkit suite -p go.thesmos.sh/core/crypto/sign -o signstream_spec.gen.go SignStream
-//go:generate testkit bench -p go.thesmos.sh/core/crypto/sign -o signstream_bench.gen.go SignStream
-
-// VerifyStream
-//go:generate testkit stub -p go.thesmos.sh/core/crypto/sign -o verifystream_stub.gen.go VerifyStream
-//go:generate testkit suite -p go.thesmos.sh/core/crypto/sign -o verifystream_spec.gen.go VerifyStream
-//go:generate testkit bench -p go.thesmos.sh/core/crypto/sign -o verifystream_bench.gen.go VerifyStream

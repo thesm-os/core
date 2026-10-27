@@ -27,6 +27,10 @@ import "io"
 //
 // [XOF.ID] and [XOF.Algorithm] allocate nothing. NewXOFStream
 // allocates the underlying sponge state once.
+//
+//dokimi:stub
+//dokimi:suite
+//dokimi:out path=../coretest/cryptotest/
 type XOF interface {
 	// ID is the build-local implementation identifier.
 	ID() ID
@@ -65,6 +69,9 @@ type XOF interface {
 // # Concurrency
 //
 // Not safe for concurrent use. One stream per goroutine.
+//
+//dokimi:stub
+//dokimi:out path=../coretest/cryptotest/
 type XOFStream interface {
 	// Write absorbs p. It returns [ErrXOFSqueezing] once Read has
 	// been called, and absorbs nothing in that case.

@@ -30,6 +30,10 @@ import (
 // # Concurrency
 //
 // Implementations must be safe for concurrent use.
+//
+//dokimi:stub
+//dokimi:suite
+//dokimi:out path=../coretest/cryptotest/
 type AEAD interface {
 	// Seal and Open panic when nonce is not NonceSize() bytes, as
 	// [cipher.AEAD] documents. That is inherited, not chosen: this

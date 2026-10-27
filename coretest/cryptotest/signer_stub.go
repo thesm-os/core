@@ -4,61 +4,59 @@
 package cryptotest
 
 import (
-	"testing"
+	"go.dokimi.dev/assert"
 
 	"go.thesmos.sh/core/crypto"
 	"go.thesmos.sh/core/crypto/sign"
 )
 
-// StdlibSignerSpec describes a stdlib-backed [sign.Signer]
-// reference. Used to parameterise [NewStdlibSignerStub] — the
-// per-impl test supplies the algorithm-of-record values plus the
-// stdlib Sign / Verify primitives keyed with the same key the
-// SUT was constructed with. Sign produces non-deterministic
-// signatures for ECDSA, so the model layer is left to the
-// per-impl test (see [SignerCrossStdlibVerifyAssertion]).
+// StdlibSignerSpec is the key and the functions of a [sign.Signer] over the
+// standard library, which [NewStdlibSignerStub] wraps. A test fills it with the
+// values of one key and with the Sign and the Verify of the standard library
+// under that key.
 type StdlibSignerSpec struct {
-	// Algorithm is the long-term cross-build algorithm name.
+	// Algorithm is the name of the algorithm that Algorithm returns.
 	Algorithm crypto.Algorithm
 
-	// KeyID is the canonical identifier for the keypair under
-	// the implementation's KeyID derivation rule.
+	// KeyID is the key ID that KeyID returns.
 	KeyID sign.KeyID
 
-	// PublicKey is the public-key bytes the companion's
-	// [sign.Signer.PublicKey] reports (the algorithm's canonical
-	// encoding — Ed25519 raw bytes, ECDSA P-384 PKIX DER).
+	// PublicKey is the encoding of the public key that PublicKey returns: the
+	// 32 bytes of an Ed25519 key, or the PKIX encoding of an ECDSA P-384 key.
 	PublicKey []byte
 
-	// Sign produces a stdlib-backed signature over msg under the
-	// configured key. Drives the companion's
-	// [sign.Signer.Sign] method.
+	// Sign returns the signature of msg under the key.
 	Sign func(msg []byte) ([]byte, error)
 
-	// Verify reports whether sig is a valid signature over msg
-	// under the same key. Drives the companion's
-	// [sign.Verifier.Verify] method.
+	// Verify reports whether sig is a signature of msg under the key.
 	Verify func(msg, sig []byte) bool
 }
 
-// stdlibSigner is a [sign.Signer] companion backed by stdlib
-// primitives.
+// stdlibSigner is the [sign.Signer] of a [StdlibSignerSpec]. Each method
+// returns a value of the spec or the result of a function of the spec.
 type stdlibSigner struct {
 	spec StdlibSignerSpec
 }
 
-func (s *stdlibSigner) KeyID() sign.KeyID               { return s.spec.KeyID }
-func (s *stdlibSigner) PublicKey() []byte               { return s.spec.PublicKey }
-func (s *stdlibSigner) Algorithm() crypto.Algorithm     { return s.spec.Algorithm }
-func (s *stdlibSigner) Sign(msg []byte) ([]byte, error) { return s.spec.Sign(msg) }
-func (s *stdlibSigner) Verify(msg, sig []byte) bool     { return s.spec.Verify(msg, sig) }
+// KeyID returns the key ID of the spec.
+func (s *stdlibSigner) KeyID() sign.KeyID { return s.spec.KeyID }
 
-// NewStdlibSignerStub returns a [SignerStub] delegating to a
-// stdlib-backed companion described by spec. The stub layer adds
-// recording / fault-injection hooks; the inner companion supplies
-// real behaviour via [StdlibSignerSpec.Sign] /
-// [StdlibSignerSpec.Verify].
-func NewStdlibSignerStub(tb testing.TB, spec StdlibSignerSpec) *SignerStub {
+// PublicKey returns the public key of the spec.
+func (s *stdlibSigner) PublicKey() []byte { return s.spec.PublicKey }
+
+// Algorithm returns the algorithm of the spec.
+func (s *stdlibSigner) Algorithm() crypto.Algorithm { return s.spec.Algorithm }
+
+// Sign returns the result of the Sign of the spec.
+func (s *stdlibSigner) Sign(msg []byte) ([]byte, error) { return s.spec.Sign(msg) }
+
+// Verify returns the result of the Verify of the spec.
+func (s *stdlibSigner) Verify(msg, sig []byte) bool { return s.spec.Verify(msg, sig) }
+
+// NewStdlibSignerStub returns a [SignerStub] that delegates each call to the
+// Signer of spec. The double records the calls, and the functions of spec
+// compute the signatures.
+func NewStdlibSignerStub(tb assert.TB, spec StdlibSignerSpec) *SignerStub {
 	return NewSignerStub(tb,
 		SignerStubDelegateTo(&stdlibSigner{spec: spec}),
 	)
