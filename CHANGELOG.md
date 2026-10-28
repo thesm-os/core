@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.33.1
+
+### Patch Changes
+
+- 0fd6bf0: Generate the doubles of the kits of `coretest` with dokimi v0.5.0.
+- 0fd6bf0: Require `go.dokimi.dev/stub` v0.2.0.
+
 ## 0.33.0
 
 ### Minor Changes
