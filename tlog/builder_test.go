@@ -4,12 +4,15 @@
 package tlog_test
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"math"
+	"runtime"
 	"slices"
 	"strconv"
 	"testing"
+	"weak"
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/bench"
@@ -61,12 +64,45 @@ type update struct {
 }
 
 // pending is an Update that the machine of TestBuilderModel computed, with
-// the Builder that computed it and the size of the tree that it computed
-// it from.
+// the Builder that computed it, the number of Resets before it and the size
+// of the tree that it computed it from.
 type pending struct {
-	u    *tlog.Update
-	b    *tlog.Builder
-	base int
+	u      *tlog.Update
+	b      *tlog.Builder
+	resets int
+	base   int
+}
+
+// clonedTiles is a TileReader over the tiles of m that returns each tile in
+// a buffer of its own, in place of the buffer of the call. It records the
+// room of each buffer that a call passes, and a weak pointer to each buffer
+// that it returns.
+type clonedTiles struct {
+	m *memTiles
+
+	// rooms is the capacity past the length of each buffer of the calls.
+	rooms []int
+
+	// clones are weak pointers to the first byte of each buffer that the
+	// calls returned.
+	clones []weak.Pointer[byte]
+}
+
+// ReadTiles reads tiles from m into new buffers. It records the room of each
+// buffer of dst and puts the new buffer in its place.
+func (r *clonedTiles) ReadTiles(ctx context.Context, tiles []tlog.Tile, dst [][]byte) error {
+	clones := make([][]byte, len(tiles))
+	if err := r.m.ReadTiles(ctx, tiles, clones); err != nil {
+		return err
+	}
+
+	for i, d := range clones {
+		r.rooms = append(r.rooms, cap(dst[i])-len(dst[i]))
+		r.clones = append(r.clones, weak.Make(&d[0]))
+		dst[i] = d
+	}
+
+	return nil
 }
 
 func TestBuilder(t *testing.T) {
@@ -140,6 +176,177 @@ func TestBuilder(t *testing.T) {
 			_, err := tlog.NewBuilder(t.Context(), h, 3, &memTiles{data: map[tlog.Tile][]byte{}})
 			assert.ErrorIs(t, err, errAbsent, "the error of the reader must be returned")
 		})
+	})
+
+	t.Run("Reset", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("gives the Builder the root of a published size of another tree", func(t *testing.T) {
+			t.Parallel()
+			// The tree of largeSize leaves has a partial tile at level 2, and the
+			// published tree of other leaves has none.
+			large := &memTiles{data: map[tlog.Tile][]byte{}}
+			b, err := tlog.NewBuilder(t.Context(), h, 0, large)
+			assert.NoError(t, err, "NewBuilder must succeed")
+			grow(t, b, large, all, largeSize)
+
+			m := &memTiles{data: map[tlog.Tile][]byte{}}
+			published, err := tlog.NewBuilder(t.Context(), h, 0, m)
+			assert.NoError(t, err, "NewBuilder must succeed")
+			grow(t, published, m, all[1:], 700, 300)
+
+			assert.NoError(t, b.Reset(t.Context(), h, publishedSize, m), "Reset must succeed")
+			expect.Equal(t, b.Size(), uint64(publishedSize), "Reset must give the Builder the published size")
+			expect.Equal(t, b.Root(), published.Root(), "Reset must give the Builder the published root")
+		})
+
+		t.Run("gives the Builder the empty tree for a size of zero", func(t *testing.T) {
+			t.Parallel()
+			m := &memTiles{data: map[tlog.Tile][]byte{}}
+			b, err := tlog.NewBuilder(t.Context(), h, 0, m)
+			assert.NoError(t, err, "NewBuilder must succeed")
+			grow(t, b, m, all, publishedSize)
+
+			assert.NoError(t, b.Reset(t.Context(), h, 0, m), "Reset must succeed")
+			expect.Equal(t, b.Size(), uint64(0), "Reset must give the Builder no leaves")
+			expect.Equal(t, b.Root(), h.Hash(nil), "Reset must give the Builder the root of the empty tree")
+		})
+
+		t.Run("does not read for a size of zero", func(t *testing.T) {
+			t.Parallel()
+			m := &memTiles{data: map[tlog.Tile][]byte{}}
+			b, err := tlog.NewBuilder(t.Context(), h, 0, m)
+			assert.NoError(t, err, "NewBuilder must succeed")
+
+			assert.NoError(t, b.Reset(t.Context(), h, 0, m), "Reset must succeed")
+			assert.Equal(t, m.calls, 0, "Reset must not read for a size of zero")
+		})
+
+		t.Run("reads the partial tiles of the right edge in one ReadTiles call", func(t *testing.T) {
+			t.Parallel()
+			m := &memTiles{data: map[tlog.Tile][]byte{}}
+			b, err := tlog.NewBuilder(t.Context(), h, 0, m)
+			assert.NoError(t, err, "NewBuilder must succeed")
+			grow(t, b, m, all, publishedSize)
+
+			// A tree of 1,000 leaves has a partial tile of 232 leaf hashes at
+			// level 0 and a partial tile of 3 hashes at level 1.
+			assert.NoError(t, b.Reset(t.Context(), h, publishedSize, m), "Reset must succeed")
+			expect.Equal(t, m.calls, 1, "Reset must read once")
+			expect.Equal(t, m.last, []tlog.Tile{{Index: 3, Width: 232}, {Level: 1, Width: 3}},
+				"Reset must read the partial tile of each level")
+		})
+
+		t.Run("passes ReadTiles a buffer with room for the widest partial tile", func(t *testing.T) {
+			t.Parallel()
+			m := &memTiles{data: map[tlog.Tile][]byte{}}
+			b, err := tlog.NewBuilder(t.Context(), h, 0, m)
+			assert.NoError(t, err, "NewBuilder must succeed")
+			grow(t, b, m, all, publishedSize)
+
+			r := &clonedTiles{m: m}
+			assert.NoError(t, b.Reset(t.Context(), h, publishedSize, r), "Reset must succeed")
+			assert.Length(t, r.rooms, 2, "Reset must read the two partial tiles")
+			widest := float64((fullWidth - 1) * h.Hash(nil).Size())
+			for _, room := range r.rooms {
+				expect.InRange(t, room, widest, math.Inf(1), "a buffer must have room for the widest partial tile")
+			}
+		})
+
+		t.Run("copies each tile that ReadTiles returns in a buffer of its own", func(t *testing.T) {
+			t.Parallel()
+			m := &memTiles{data: map[tlog.Tile][]byte{}}
+			published, err := tlog.NewBuilder(t.Context(), h, 0, m)
+			assert.NoError(t, err, "NewBuilder must succeed")
+			grow(t, published, m, all, publishedSize)
+
+			b, err := tlog.NewBuilder(t.Context(), h, 0, nil)
+			assert.NoError(t, err, "NewBuilder must succeed")
+			assert.NoError(t, b.Reset(t.Context(), h, publishedSize, &clonedTiles{m: m}), "Reset must succeed")
+			assert.Equal(t, b.Root(), published.Root(), "Reset must copy each tile into the Builder")
+		})
+
+		t.Run("does not keep a buffer that ReadTiles returns", func(t *testing.T) {
+			t.Parallel()
+			m := &memTiles{data: map[tlog.Tile][]byte{}}
+			b, err := tlog.NewBuilder(t.Context(), h, 0, m)
+			assert.NoError(t, err, "NewBuilder must succeed")
+			grow(t, b, m, all, publishedSize)
+
+			r := &clonedTiles{m: m}
+			assert.NoError(t, b.Reset(t.Context(), h, publishedSize, r), "Reset must succeed")
+			assert.Length(t, r.clones, 2, "ReadTiles must return the two partial tiles")
+			runtime.GC()
+			for _, clone := range r.clones {
+				expect.Nil(t, clone.Value(), "the Builder must not refer to a buffer that ReadTiles returned")
+			}
+			runtime.KeepAlive(b)
+		})
+
+		t.Run("gives the Builder the root of a tree of a hasher of larger digests", func(t *testing.T) {
+			t.Parallel()
+			h384 := coresha512.New384()
+			leaves384 := make([]crypto.Digest, publishedSize)
+			for i := range leaves384 {
+				leaves384[i] = tlog.LeafHash(h384, []byte("entry "+strconv.Itoa(i)))
+			}
+			m := &memTiles{data: map[tlog.Tile][]byte{}}
+			published, err := tlog.NewBuilder(t.Context(), h384, 0, m)
+			assert.NoError(t, err, "NewBuilder must succeed")
+			grow(t, published, m, leaves384, publishedSize)
+
+			b, err := tlog.NewBuilder(t.Context(), h, 0, nil)
+			assert.NoError(t, err, "NewBuilder must succeed")
+			assert.NoError(t, b.Reset(t.Context(), h384, publishedSize, m), "Reset must succeed")
+			assert.Equal(t, b.Root(), published.Root(), "Reset must give the Builder the root of the SHA-384 tree")
+		})
+
+		t.Run("gives the Builder the root of a tree of a hasher of smaller digests", func(t *testing.T) {
+			t.Parallel()
+			m := &memTiles{data: map[tlog.Tile][]byte{}}
+			published, err := tlog.NewBuilder(t.Context(), h, 0, m)
+			assert.NoError(t, err, "NewBuilder must succeed")
+			grow(t, published, m, all, publishedSize)
+
+			b, err := tlog.NewBuilder(t.Context(), coresha512.New384(), 0, nil)
+			assert.NoError(t, err, "NewBuilder must succeed")
+			assert.NoError(t, b.Reset(t.Context(), h, publishedSize, m), "Reset must succeed")
+			assert.Equal(t, b.Root(), published.Root(), "Reset must give the Builder the root of the SHA-256 tree")
+		})
+
+		tests := []struct {
+			name     string
+			giveData map[tlog.Tile][]byte
+			wantErr  error
+		}{
+			{
+				name:     "leaves the tree of size zero after tile data of the wrong length",
+				giveData: map[tlog.Tile][]byte{{Width: 3}: make([]byte, 2*h.Hash(nil).Size())},
+				wantErr:  tlog.ErrTileSize,
+			},
+			{
+				name:     "leaves the tree of size zero after an error of the reader",
+				giveData: map[tlog.Tile][]byte{},
+				wantErr:  errAbsent,
+			},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				m := &memTiles{data: map[tlog.Tile][]byte{}}
+				b, err := tlog.NewBuilder(t.Context(), h, 0, m)
+				assert.NoError(t, err, "NewBuilder must succeed")
+				grow(t, b, m, all, publishedSize)
+
+				assert.ErrorIs(t, b.Reset(t.Context(), h, 3, &memTiles{data: tt.giveData}), tt.wantErr,
+					"Reset must return the error of the read")
+				var u tlog.Update
+				assert.NoError(t, b.Integrate(all[:5], &u), "Integrate must succeed")
+				expect.Equal(t, b.Root(), h.Hash(nil), "a failed Reset must leave the root of the empty tree")
+				expect.Equal(t, u.Root(), tlog.Root(h, all[:5]),
+					"a failed Reset must leave the Builder the edge of the empty tree")
+			})
+		}
 	})
 
 	t.Run("Size", func(t *testing.T) {
@@ -394,6 +601,19 @@ func TestBuilder(t *testing.T) {
 			assert.NoError(t, b.Commit(&first), "Commit must succeed")
 			assert.ErrorIs(t, b.Commit(&second), tlog.ErrStale, "an Update of a superseded tree must be ErrStale")
 		})
+
+		t.Run("returns ErrStale for an Update from before a Reset to the same size", func(t *testing.T) {
+			t.Parallel()
+			m := &memTiles{data: map[tlog.Tile][]byte{}}
+			b, err := tlog.NewBuilder(t.Context(), h, 0, m)
+			assert.NoError(t, err, "NewBuilder must succeed")
+			grow(t, b, m, all, publishedSize)
+
+			var u tlog.Update
+			assert.NoError(t, b.Integrate(all[publishedSize:publishedSize+resumedBatch], &u), "Integrate must succeed")
+			assert.NoError(t, b.Reset(t.Context(), h, publishedSize, m), "Reset must succeed")
+			assert.ErrorIs(t, b.Commit(&u), tlog.ErrStale, "an Update from before a Reset must be ErrStale")
+		})
 	})
 
 	t.Run("Update", func(t *testing.T) {
@@ -476,16 +696,31 @@ func TestBuilder(t *testing.T) {
 				}
 				assert.Equal(t, n, 1, "the iteration must end at the break of the caller")
 			})
+
+			t.Run("yields the tiles of the batch after a Reset of the Builder to another hasher", func(t *testing.T) {
+				t.Parallel()
+				b, err := tlog.NewBuilder(t.Context(), h, 0, nil)
+				assert.NoError(t, err, "NewBuilder must succeed")
+
+				var u tlog.Update
+				assert.NoError(t, b.Integrate(all[:600], &u), "Integrate must succeed")
+				assert.Pure(t,
+					func() map[tlog.Tile][]byte { return tilesOf(&u) },
+					func() { err = b.Reset(t.Context(), coresha512.New384(), 0, nil) },
+					"a Reset of the Builder must not change the tiles of an Update")
+				assert.NoError(t, err, "Reset must succeed")
+			})
 		})
 	})
 }
 
 // TestBuilderModel checks a Builder against a model of the leaves that it
 // committed, through any sequence of calls of a writer: Integrate a batch,
-// store the tiles of an Update, Commit an Update after its tiles, and open
-// the Builder again at the committed size, as after a restart. Every Update
-// integrates a prefix of one list of leaves, so the stored tiles of any
-// Update agree with the tiles of every tree.
+// store the tiles of an Update, Commit an Update after its tiles, open the
+// Builder again at the committed size, as after a restart, and Reset the
+// Builder to a size that it committed. Every Update integrates a prefix of
+// one list of leaves, so the stored tiles of any Update agree with the tiles
+// of every tree.
 func TestBuilderModel(t *testing.T) {
 	t.Parallel()
 
@@ -511,7 +746,10 @@ func TestBuilderModel(t *testing.T) {
 			b, err := tlog.NewBuilder(c.Context(), h, 0, m)
 			assert.NoError(c, err, "NewBuilder must succeed")
 
-			committed := 0
+			committed, resets := 0, 0
+			// sizes are the sizes that the Builder committed, whose partial tiles
+			// m has.
+			sizes := []int{0}
 			var updates []pending
 			pick := func(c *prop.Case, _ struct{}) any {
 				last := len(updates) - 1
@@ -533,7 +771,7 @@ func TestBuilderModel(t *testing.T) {
 							assert.NoError(c, b.Integrate(all[committed:size], u), "Integrate must succeed")
 							assert.Equal(c, u.Size(), uint64(size), "the Update must add the batch to the tree")
 							assert.Equal(c, u.Root(), rootOf(size), "the Update must compute the root of its leaves")
-							updates = append(updates, pending{u: u, b: b, base: committed})
+							updates = append(updates, pending{u: u, b: b, resets: resets, base: committed})
 						},
 					},
 					{
@@ -550,7 +788,7 @@ func TestBuilderModel(t *testing.T) {
 							p := updates[in.(int)]
 							m.store(p.u)
 							commitErr := b.Commit(p.u)
-							if p.b != b || p.base != committed {
+							if p.b != b || p.resets != resets || p.base != committed {
 								c.Classify(staleUpdate)
 								assert.ErrorIs(c, commitErr, tlog.ErrStale,
 									"an Update of a superseded tree must be ErrStale")
@@ -560,6 +798,7 @@ func TestBuilderModel(t *testing.T) {
 							c.Classify(committedUpdate)
 							assert.NoError(c, commitErr, "Commit must accept an Update of the current tree")
 							committed = int(p.u.Size())
+							sizes = append(sizes, committed)
 						},
 					},
 					{
@@ -567,6 +806,20 @@ func TestBuilderModel(t *testing.T) {
 						Run: func(c *prop.Case, _ int, _ any) {
 							b, err = tlog.NewBuilder(c.Context(), h, uint64(committed), m)
 							assert.NoError(c, err, "NewBuilder must read the tiles of the committed tree")
+						},
+					},
+					{
+						Name: "reset",
+						Input: func(c *prop.Case, _ struct{}) any {
+							last := len(sizes) - 1
+
+							return sizes[c.Draw(prop.OneOf(prop.Just(last), prop.Integer(0, last)), "size")]
+						},
+						Run: func(c *prop.Case, _ int, in any) {
+							committed = in.(int)
+							resets++
+							assert.NoError(c, b.Reset(c.Context(), h, uint64(committed), m),
+								"Reset must read the tiles of a committed tree")
 						},
 					},
 				},
@@ -601,9 +854,28 @@ func TestBuilderAllocs(t *testing.T) {
 
 		t.Run("of a published size", func(t *testing.T) {
 			ctx := t.Context()
-			expect.MaxAllocs(t, func() { _, err = tlog.NewBuilder(ctx, h, publishedSize, m) }, 6,
-				"NewBuilder must allocate the Builder, its state, the two lists of ReadTiles and two tiles alone")
+			expect.MaxAllocs(t, func() { _, err = tlog.NewBuilder(ctx, h, publishedSize, m) }, 2,
+				"NewBuilder must allocate the Builder and its state alone")
 			assert.NoError(t, err, "the test must measure a Builder that NewBuilder returns")
+		})
+	})
+
+	t.Run("Reset", func(t *testing.T) {
+		rb, buildErr := tlog.NewBuilder(t.Context(), h, 0, nil)
+		assert.NoError(t, buildErr, "NewBuilder must succeed")
+
+		t.Run("of an empty tree", func(t *testing.T) {
+			ctx := t.Context()
+			expect.MaxAllocs(t, func() { err = rb.Reset(ctx, h, 0, nil) }, 0,
+				"Reset must keep the state of the Builder")
+			assert.NoError(t, err, "the test must measure a Reset that succeeds")
+		})
+
+		t.Run("of a published size", func(t *testing.T) {
+			ctx := t.Context()
+			expect.MaxAllocs(t, func() { err = rb.Reset(ctx, h, publishedSize, m) }, 0,
+				"Reset must read the tiles into the state of the Builder")
+			assert.NoError(t, err, "the test must measure a Reset that succeeds")
 		})
 	})
 
@@ -701,7 +973,7 @@ func BenchmarkBuilder(b *testing.B) {
 
 			var err error
 
-			c := bench.Start(b).MaxAllocs(6)
+			c := bench.Start(b).MaxAllocs(2)
 			defer c.End()
 
 			for c.Loop() {
@@ -709,6 +981,41 @@ func BenchmarkBuilder(b *testing.B) {
 			}
 
 			assert.NoError(b, err, "the benchmark must measure a Builder that NewBuilder returns")
+		})
+	})
+
+	b.Run("Reset", func(b *testing.B) {
+		rb, buildErr := tlog.NewBuilder(b.Context(), h, 0, nil)
+		assert.NoError(b, buildErr, "NewBuilder must succeed")
+
+		b.Run("of an empty tree", func(b *testing.B) {
+			ctx := b.Context()
+
+			var err error
+
+			c := bench.Start(b).MaxAllocs(0)
+			defer c.End()
+
+			for c.Loop() {
+				err = rb.Reset(ctx, h, 0, nil)
+			}
+
+			assert.NoError(b, err, "the benchmark must measure a Reset that succeeds")
+		})
+
+		b.Run("of a published size", func(b *testing.B) {
+			ctx := b.Context()
+
+			var err error
+
+			c := bench.Start(b).MaxAllocs(0)
+			defer c.End()
+
+			for c.Loop() {
+				err = rb.Reset(ctx, h, publishedSize, m)
+			}
+
+			assert.NoError(b, err, "the benchmark must measure a Reset that succeeds")
 		})
 	})
 

@@ -54,7 +54,9 @@
 // A writer integrates leaves with a [Builder], which keeps only the
 // partial tile at each level. [Builder.Integrate] computes the tiles a
 // batch adds into an [Update], and the writer stores them concurrently
-// and calls [Builder.Commit].
+// and calls [Builder.Commit]. [Builder.Reset] gives a Builder another
+// stored tree in the memory that it has, so a writer of many trees keeps a
+// bounded number of Builders.
 //
 // A reader builds a proof from stored tiles through a [TileReader], and
 // [BlobTiles] reads tiles from a [go.thesmos.sh/core/blob.Store].
@@ -90,9 +92,9 @@
 // A reader starts from a checkpoint and reads only tiles at or below its
 // size, so tiles written before a crash and not yet covered by a
 // checkpoint are invisible. Tile bytes are a function of the leaf
-// hashes, so a writer that resumes with [NewBuilder] at the last
-// published size and integrates the same leaves again writes the same
-// bytes to the same paths.
+// hashes, so a writer that resumes with [NewBuilder] or [Builder.Reset] at
+// the last published size and integrates the same leaves again writes the
+// same bytes to the same paths.
 //
 // # Trust
 //
@@ -126,7 +128,9 @@
 // Hashing, the in-memory roots and the verifiers allocate nothing on
 // the warm path. [Builder.Integrate] into a reused [Update] allocates
 // nothing once the Update has grown, and [TaggedTree.Reset] into a
-// reused TaggedTree allocates nothing once the tree has grown. The
+// reused TaggedTree allocates nothing once the tree has grown.
+// [Builder.Reset] allocates only what ReadTiles allocates, unless the
+// digests of its hasher need a larger state. The
 // prove functions borrow their tile buffers from a pool, and a
 // [TileVerifier] allocates the buffer of each tile that it keeps once. A
 // [Prover] allocates nothing for a proof whose node tiles its cache
