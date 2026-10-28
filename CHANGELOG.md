@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.34.0
+
+### Minor Changes
+
+- 8ede4a3: Add `resilience.MaxBurst` for the largest burst of a `Limiter`.
+- 6a55fbd: Add `tlog.Builder.Reset` to give a `Builder` another stored tree without allocating its state.
+
+### Patch Changes
+
+- 6a55fbd: Allocate only the `Builder` and its state in `tlog.NewBuilder`, beyond what `ReadTiles` allocates.
+
 ## 0.33.1
 
 ### Patch Changes
