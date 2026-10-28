@@ -27,9 +27,6 @@ import (
 	"go.thesmos.sh/core/resilience"
 )
 
-// maxBurst is the largest Burst that NewLimiter accepts.
-const maxBurst = 4_611_686_018
-
 // nsPerSecond is the number of nanoseconds in a second. A Rate in units per
 // second times a time in nanoseconds is nsPerSecond times the units.
 const nsPerSecond = int64(time.Second)
@@ -292,15 +289,16 @@ func TestLimiter(t *testing.T) {
 				prop.Using(prop.Integer[int64](math.MinInt64, 0)), prop.Example(int64(0)))
 		})
 
-		t.Run("returns ErrConfig for a Burst above 4,611,686,018", func(t *testing.T) {
+		t.Run("returns ErrConfig for a Burst above MaxBurst", func(t *testing.T) {
 			t.Parallel()
 			prop.ErrorIs(t, func(burst int64) error {
 				cfg := resilience.LimiterConfig{Clock: fake.New(originUTC), Rate: 1, Burst: burst}
 				_, err := resilience.NewLimiter(cfg)
 
 				return err
-			}, resilience.ErrConfig, "NewLimiter must refuse a Burst above the largest",
-				prop.Using(prop.Integer[int64](maxBurst+1, math.MaxInt64)), prop.Example(int64(maxBurst+1)))
+			}, resilience.ErrConfig, "NewLimiter must refuse a Burst above MaxBurst",
+				prop.Using(prop.Integer[int64](resilience.MaxBurst+1, math.MaxInt64)),
+				prop.Example(int64(resilience.MaxBurst+1)))
 		})
 
 		t.Run("returns a Limiter without a limit for a Rate of zero", func(t *testing.T) {
@@ -321,7 +319,7 @@ func TestLimiter(t *testing.T) {
 			burst int64
 		}{
 			{name: "returns a Limiter for a Burst of 1", burst: 1},
-			{name: "returns a Limiter for a Burst of 4,611,686,018", burst: maxBurst},
+			{name: "returns a Limiter for a Burst of MaxBurst", burst: resilience.MaxBurst},
 		}
 		for _, tt := range bursts {
 			t.Run(tt.name, func(t *testing.T) {
@@ -330,6 +328,11 @@ func TestLimiter(t *testing.T) {
 				assert.True(t, l.AllowN(tt.burst), "the bucket must have Burst units")
 			})
 		}
+
+		t.Run("uses 4,611,686,018 units as the largest Burst", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, int64(resilience.MaxBurst), 4_611_686_018, "MaxBurst must be 2^62 nanounits in whole units")
+		})
 	})
 
 	t.Run("Priority", func(t *testing.T) {
@@ -527,10 +530,10 @@ func TestLimiter(t *testing.T) {
 			// largest Duration, so the time of the second call passes it 1 s
 			// after the start.
 			c := fake.New(originUTC)
-			l := newLimiter(t, resilience.LimiterConfig{Clock: c, Rate: 1, Burst: maxBurst})
+			l := newLimiter(t, resilience.LimiterConfig{Clock: c, Rate: 1, Burst: resilience.MaxBurst})
 			c.Advance(time.Second)
-			assert.True(t, l.AllowN(maxBurst), "the largest bucket must have Burst units")
-			assert.False(t, l.AllowN(maxBurst), "units beyond the largest Duration must be refused")
+			assert.True(t, l.AllowN(resilience.MaxBurst), "the largest bucket must have Burst units")
+			assert.False(t, l.AllowN(resilience.MaxBurst), "units beyond the largest Duration must be refused")
 		})
 
 		t.Run("admits at most the units of the bucket across concurrent callers", func(t *testing.T) {
@@ -784,15 +787,15 @@ func TestLimiter(t *testing.T) {
 			// largest Duration, so the time of the call passes it 1 s after the
 			// start, and saturates at it.
 			c := &timedClock{Clock: fake.New(originUTC)}
-			l := newLimiter(t, resilience.LimiterConfig{Clock: c, Rate: 1, Burst: maxBurst})
+			l := newLimiter(t, resilience.LimiterConfig{Clock: c, Rate: 1, Burst: resilience.MaxBurst})
 			c.Advance(time.Second)
-			assert.True(t, l.AllowN(maxBurst), "the largest bucket must have Burst units")
+			assert.True(t, l.AllowN(resilience.MaxBurst), "the largest bucket must have Burst units")
 
 			ctx, cancel := context.WithCancel(bounded(t))
-			got := startWait(ctx, l, maxBurst)
+			got := startWait(ctx, l, resilience.MaxBurst)
 			c.AwaitWaiters(1)
 			assert.Equal(t, c.durations(),
-				[]time.Duration{time.Duration(math.MaxInt64) - maxBurst*time.Second - time.Second},
+				[]time.Duration{time.Duration(math.MaxInt64) - resilience.MaxBurst*time.Second - time.Second},
 				"the head must wait until the largest Duration less the time that fills the bucket")
 
 			cancel()
@@ -1038,12 +1041,13 @@ func TestLimiter(t *testing.T) {
 			expect.True(t, l.AllowN(10), "a refused SetRate must keep the units of the bucket")
 		})
 
-		t.Run("returns ErrConfig for a burst above 4,611,686,018", func(t *testing.T) {
+		t.Run("returns ErrConfig for a burst above MaxBurst", func(t *testing.T) {
 			t.Parallel()
 			l := newLimiter(t, resilience.LimiterConfig{Clock: fake.New(originUTC), Rate: 10, Burst: 10})
 			prop.ErrorIs(t, func(burst int64) error { return l.SetRate(20, burst) }, resilience.ErrConfig,
-				"SetRate must refuse a burst above the largest",
-				prop.Using(prop.Integer[int64](maxBurst+1, math.MaxInt64)), prop.Example(int64(maxBurst+1)))
+				"SetRate must refuse a burst above MaxBurst",
+				prop.Using(prop.Integer[int64](resilience.MaxBurst+1, math.MaxInt64)),
+				prop.Example(int64(resilience.MaxBurst+1)))
 			expect.Equal(t, l.Burst(), int64(10), "a refused SetRate must keep the burst")
 			expect.True(t, l.AllowN(10), "a refused SetRate must keep the units of the bucket")
 		})
@@ -1063,13 +1067,13 @@ func TestLimiter(t *testing.T) {
 			assert.True(t, l.AllowN(math.MaxInt64), "the zero Limiter must admit any number of units")
 		})
 
-		t.Run("returns nil for a burst of 4,611,686,018", func(t *testing.T) {
+		t.Run("returns nil for a burst of MaxBurst", func(t *testing.T) {
 			t.Parallel()
 			c := fake.New(originUTC)
 			l := newLimiter(t, resilience.LimiterConfig{Clock: c, Rate: 1, Burst: 1})
-			assert.NoError(t, l.SetRate(1, maxBurst), "SetRate must accept the largest burst")
-			c.Advance(maxBurst * time.Second)
-			assert.True(t, l.AllowN(maxBurst), "the bucket must fill to the largest burst")
+			assert.NoError(t, l.SetRate(1, resilience.MaxBurst), "SetRate must accept the largest burst")
+			c.Advance(resilience.MaxBurst * time.Second)
+			assert.True(t, l.AllowN(resilience.MaxBurst), "the bucket must fill to the largest burst")
 		})
 
 		t.Run("admits the units of one Limiter when a policy sets the same rate every 100 ms", func(t *testing.T) {
@@ -1377,7 +1381,7 @@ func TestLimiter(t *testing.T) {
 			t.Parallel()
 			prop.ForAll(t, "Burst must return the Burst of the configuration", func(pc *prop.Case) {
 				rate := pc.Draw(prop.Integer[int64](1, math.MaxInt64), "rate")
-				burst := pc.Draw(prop.Integer[int64](1, maxBurst), "burst")
+				burst := pc.Draw(prop.Integer[int64](1, resilience.MaxBurst), "burst")
 				cfg := resilience.LimiterConfig{Clock: fake.New(originUTC), Rate: rate, Burst: burst}
 				l, err := resilience.NewLimiter(cfg)
 				assert.NoError(pc, err, "NewLimiter must accept the config")

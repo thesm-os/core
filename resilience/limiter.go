@@ -14,17 +14,17 @@ import (
 	"go.thesmos.sh/core/clock"
 )
 
-// maxBurst is the largest Burst of a [Limiter]: 2^62 nanounits, where a
-// nanounit is a billionth of a unit. At a Rate of 1, a bucket of maxBurst
+// MaxBurst is the largest Burst of a [Limiter]: 2^62 nanounits, where a
+// nanounit is a billionth of a unit. At a Rate of 1, a bucket of MaxBurst
 // units fills in 2^62 nanoseconds, about 146 years. The time that the
 // bucket owes to waiting calls grows to the largest [time.Duration] only
 // once the calls have taken at least that long, and the Limiter then
 // saturates it instead of letting it wrap.
-const maxBurst = 4_611_686_018
+const MaxBurst = 4_611_686_018
 
 // nanounits is the number of nanounits in one unit. The cost of n units at
 // Rate r is n*nanounits/r nanoseconds, and n*nanounits fits an int64 for
-// every n up to maxBurst.
+// every n up to MaxBurst.
 const nanounits = 1_000_000_000
 
 // shareRun is the number of grants in a row to calls of [PriorityHigh]
@@ -49,7 +49,7 @@ type LimiterConfig struct {
 
 	// Burst is the capacity of the bucket: the most units that one call
 	// takes, and the most units that the bucket gains while no call takes
-	// any. It must be between 1 and 4,611,686,018 when Rate is positive.
+	// any. It must be between 1 and [MaxBurst] when Rate is positive.
 	Burst int64
 }
 
@@ -197,7 +197,7 @@ type waiter struct {
 //
 //   - A nil Clock returns [ErrConfig].
 //   - A negative Rate returns ErrConfig.
-//   - A positive Rate with a Burst below 1 or above 4,611,686,018 returns
+//   - A positive Rate with a Burst below 1 or above [MaxBurst] returns
 //     ErrConfig.
 //
 // # Allocation contract
@@ -213,7 +213,7 @@ func NewLimiter(cfg LimiterConfig) (*Limiter, error) {
 		return l, nil
 	}
 
-	if cfg.Burst < 1 || cfg.Burst > maxBurst {
+	if cfg.Burst < 1 || cfg.Burst > MaxBurst {
 		return nil, ErrConfig
 	}
 
@@ -350,7 +350,7 @@ func (l *Limiter) WaitNPriority(ctx context.Context, n int64, p Priority) error 
 // of which leaves l unchanged:
 //
 //   - A negative rate returns [ErrConfig].
-//   - A positive rate with a burst below 1 or above 4,611,686,018 returns
+//   - A positive rate with a burst below 1 or above [MaxBurst] returns
 //     ErrConfig.
 //   - A positive rate returns ErrConfig for the zero Limiter, which has no
 //     Clock.
@@ -359,7 +359,7 @@ func (l *Limiter) WaitNPriority(ctx context.Context, n int64, p Priority) error 
 //
 // Zero alloc.
 func (l *Limiter) SetRate(rate, burst int64) error {
-	if rate < 0 || rate > 0 && (burst < 1 || burst > maxBurst) {
+	if rate < 0 || rate > 0 && (burst < 1 || burst > MaxBurst) {
 		return ErrConfig
 	}
 
@@ -622,7 +622,7 @@ func (l *Limiter) now() time.Duration {
 
 // cost returns the time in which the bucket gains n units at the Limiter's
 // rate exactly: whole nanoseconds, and a remainder in Rate-ths of a
-// nanosecond that is below rate. n is between 0 and maxBurst and the rate
+// nanosecond that is below rate. n is between 0 and MaxBurst and the rate
 // is positive, so n*nanounits fits an int64.
 func (l *Limiter) cost(n int64) (time.Duration, int64) {
 	c := n * nanounits
