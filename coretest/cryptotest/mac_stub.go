@@ -377,11 +377,12 @@ func (s *MACIDStub) invoke() func() MACIDReturn {
 // Func, then the results of Returns, and then the zero values.
 func (s *MACStub) ID() crypto.ID {
 	call := MACIDCall{}
-	r := stub.Answer(s.OnID.MethodStub, &call, stub.Arms[MACIDCall, MACIDReturn]{
+	r := stub.Answer(s.OnID.MethodStub, call, stub.Arms[MACIDCall, MACIDReturn]{
 		Invoke:   s.OnID.invoke(),
 		Fallback: s.OnID.fallback,
-		Stamp: func(c *MACIDCall, r MACIDReturn) {
+		Stamp: func(c MACIDCall, r MACIDReturn) MACIDCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
@@ -403,11 +404,12 @@ func (s *MACAlgorithmStub) invoke() func() MACAlgorithmReturn {
 // function of Func, then the results of Returns, and then the zero values.
 func (s *MACStub) Algorithm() crypto.Algorithm {
 	call := MACAlgorithmCall{}
-	r := stub.Answer(s.OnAlgorithm.MethodStub, &call, stub.Arms[MACAlgorithmCall, MACAlgorithmReturn]{
+	r := stub.Answer(s.OnAlgorithm.MethodStub, call, stub.Arms[MACAlgorithmCall, MACAlgorithmReturn]{
 		Invoke:   s.OnAlgorithm.invoke(),
 		Fallback: s.OnAlgorithm.fallback,
-		Stamp: func(c *MACAlgorithmCall, r MACAlgorithmReturn) {
+		Stamp: func(c MACAlgorithmCall, r MACAlgorithmReturn) MACAlgorithmCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
@@ -429,11 +431,12 @@ func (s *MACSizeStub) invoke() func() MACSizeReturn {
 // Func, then the results of Returns, and then the zero values.
 func (s *MACStub) Size() int {
 	call := MACSizeCall{}
-	r := stub.Answer(s.OnSize.MethodStub, &call, stub.Arms[MACSizeCall, MACSizeReturn]{
+	r := stub.Answer(s.OnSize.MethodStub, call, stub.Arms[MACSizeCall, MACSizeReturn]{
 		Invoke:   s.OnSize.invoke(),
 		Fallback: s.OnSize.fallback,
-		Stamp: func(c *MACSizeCall, r MACSizeReturn) {
+		Stamp: func(c MACSizeCall, r MACSizeReturn) MACSizeCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
@@ -455,11 +458,12 @@ func (s *MACSignStub) invoke(data []byte) func() MACSignReturn {
 // Func, then the results of Returns, and then the zero values.
 func (s *MACStub) Sign(data []byte) crypto.Digest {
 	call := MACSignCall{Data: data}
-	r := stub.Answer(s.OnSign.MethodStub, &call, stub.Arms[MACSignCall, MACSignReturn]{
+	r := stub.Answer(s.OnSign.MethodStub, call, stub.Arms[MACSignCall, MACSignReturn]{
 		Invoke:   s.OnSign.invoke(data),
 		Fallback: s.OnSign.fallback,
-		Stamp: func(c *MACSignCall, r MACSignReturn) {
+		Stamp: func(c MACSignCall, r MACSignReturn) MACSignCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
@@ -481,11 +485,12 @@ func (s *MACVerifyStub) invoke(data, expected []byte) func() MACVerifyReturn {
 // of Func, then the results of Returns, and then the zero values.
 func (s *MACStub) Verify(data, expected []byte) bool {
 	call := MACVerifyCall{Data: data, Expected: expected}
-	r := stub.Answer(s.OnVerify.MethodStub, &call, stub.Arms[MACVerifyCall, MACVerifyReturn]{
+	r := stub.Answer(s.OnVerify.MethodStub, call, stub.Arms[MACVerifyCall, MACVerifyReturn]{
 		Invoke:   s.OnVerify.invoke(data, expected),
 		Fallback: s.OnVerify.fallback,
-		Stamp: func(c *MACVerifyCall, r MACVerifyReturn) {
+		Stamp: func(c MACVerifyCall, r MACVerifyReturn) MACVerifyCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
@@ -507,14 +512,15 @@ func (s *MACNewStreamStub) invoke() func() MACNewStreamReturn {
 // function of Func, then the results of Returns, and then the zero values.
 func (s *MACStub) NewStream() crypto.Stream {
 	call := MACNewStreamCall{}
-	r := stub.Answer(s.OnNewStream.MethodStub, &call, stub.Arms[MACNewStreamCall, MACNewStreamReturn]{
+	r := stub.Answer(s.OnNewStream.MethodStub, call, stub.Arms[MACNewStreamCall, MACNewStreamReturn]{
 		Invoke:   s.OnNewStream.invoke(),
 		Fallback: s.OnNewStream.fallback,
-		Stamp: func(c *MACNewStreamCall, r MACNewStreamReturn) {
+		Stamp: func(c MACNewStreamCall, r MACNewStreamReturn) MACNewStreamCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
 }
 
-// dokimi:provenance sha256:e1701dceac730013c80b37c94c010eb742a8b524e971e6acf1b0dd32074bd19f
+// dokimi:provenance sha256:26a20ded8bf07816fb6f0d5b4fa85b84fedea79c80034d7e706c3750fd58bc61

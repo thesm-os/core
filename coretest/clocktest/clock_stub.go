@@ -294,15 +294,16 @@ func (s *ClockNowStub) invoke() func() ClockNowReturn {
 // Func, then the results of Returns, and then the default results.
 func (s *ClockStub) Now() clock.Instant {
 	call := ClockNowCall{}
-	r := stub.Answer(s.OnNow.MethodStub, &call, stub.Arms[ClockNowCall, ClockNowReturn]{
+	r := stub.Answer(s.OnNow.MethodStub, call, stub.Arms[ClockNowCall, ClockNowReturn]{
 		Invoke:   s.OnNow.invoke(),
 		Fallback: s.OnNow.fallback,
 		Default: func() ClockNowReturn {
 			r0 := NewInstantBuilder().Build()
 			return ClockNowReturn{Result: r0}
 		},
-		Stamp: func(c *ClockNowCall, r ClockNowReturn) {
+		Stamp: func(c ClockNowCall, r ClockNowReturn) ClockNowCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
@@ -324,11 +325,12 @@ func (s *ClockTimeStub) invoke() func() ClockTimeReturn {
 // Func, then the results of Returns, and then the zero values.
 func (s *ClockStub) Time() time.Time {
 	call := ClockTimeCall{}
-	r := stub.Answer(s.OnTime.MethodStub, &call, stub.Arms[ClockTimeCall, ClockTimeReturn]{
+	r := stub.Answer(s.OnTime.MethodStub, call, stub.Arms[ClockTimeCall, ClockTimeReturn]{
 		Invoke:   s.OnTime.invoke(),
 		Fallback: s.OnTime.fallback,
-		Stamp: func(c *ClockTimeCall, r ClockTimeReturn) {
+		Stamp: func(c ClockTimeCall, r ClockTimeReturn) ClockTimeCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
@@ -350,11 +352,12 @@ func (s *ClockNewTimerStub) invoke(d time.Duration) func() ClockNewTimerReturn {
 // of Func, then the results of Returns, and then the zero values.
 func (s *ClockStub) NewTimer(d time.Duration) clock.Timer {
 	call := ClockNewTimerCall{D: d}
-	r := stub.Answer(s.OnNewTimer.MethodStub, &call, stub.Arms[ClockNewTimerCall, ClockNewTimerReturn]{
+	r := stub.Answer(s.OnNewTimer.MethodStub, call, stub.Arms[ClockNewTimerCall, ClockNewTimerReturn]{
 		Invoke:   s.OnNewTimer.invoke(d),
 		Fallback: s.OnNewTimer.fallback,
-		Stamp: func(c *ClockNewTimerCall, r ClockNewTimerReturn) {
+		Stamp: func(c ClockNewTimerCall, r ClockNewTimerReturn) ClockNewTimerCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
@@ -376,15 +379,16 @@ func (s *ClockUpdateStub) invoke(observed clock.Instant) func() ClockUpdateRetur
 // of Func, then the results of Returns, and then the default results.
 func (s *ClockStub) Update(observed clock.Instant) clock.Instant {
 	call := ClockUpdateCall{Observed: observed}
-	r := stub.Answer(s.OnUpdate.MethodStub, &call, stub.Arms[ClockUpdateCall, ClockUpdateReturn]{
+	r := stub.Answer(s.OnUpdate.MethodStub, call, stub.Arms[ClockUpdateCall, ClockUpdateReturn]{
 		Invoke:   s.OnUpdate.invoke(observed),
 		Fallback: s.OnUpdate.fallback,
 		Default: func() ClockUpdateReturn {
 			r0 := NewInstantBuilder().Build()
 			return ClockUpdateReturn{Result: r0}
 		},
-		Stamp: func(c *ClockUpdateCall, r ClockUpdateReturn) {
+		Stamp: func(c ClockUpdateCall, r ClockUpdateReturn) ClockUpdateCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
@@ -626,11 +630,12 @@ func (s *TimerCStub) invoke() func() TimerCReturn {
 // Func, then the results of Returns, and then the zero values.
 func (s *TimerStub) C() <-chan time.Time {
 	call := TimerCCall{}
-	r := stub.Answer(s.OnC.MethodStub, &call, stub.Arms[TimerCCall, TimerCReturn]{
+	r := stub.Answer(s.OnC.MethodStub, call, stub.Arms[TimerCCall, TimerCReturn]{
 		Invoke:   s.OnC.invoke(),
 		Fallback: s.OnC.fallback,
-		Stamp: func(c *TimerCCall, r TimerCReturn) {
+		Stamp: func(c TimerCCall, r TimerCReturn) TimerCCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
@@ -652,11 +657,12 @@ func (s *TimerResetStub) invoke(d time.Duration) func() TimerResetReturn {
 // Func, then the results of Returns, and then the zero values.
 func (s *TimerStub) Reset(d time.Duration) bool {
 	call := TimerResetCall{D: d}
-	r := stub.Answer(s.OnReset.MethodStub, &call, stub.Arms[TimerResetCall, TimerResetReturn]{
+	r := stub.Answer(s.OnReset.MethodStub, call, stub.Arms[TimerResetCall, TimerResetReturn]{
 		Invoke:   s.OnReset.invoke(d),
 		Fallback: s.OnReset.fallback,
-		Stamp: func(c *TimerResetCall, r TimerResetReturn) {
+		Stamp: func(c TimerResetCall, r TimerResetReturn) TimerResetCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
@@ -678,14 +684,15 @@ func (s *TimerStopStub) invoke() func() TimerStopReturn {
 // Func, then the results of Returns, and then the zero values.
 func (s *TimerStub) Stop() bool {
 	call := TimerStopCall{}
-	r := stub.Answer(s.OnStop.MethodStub, &call, stub.Arms[TimerStopCall, TimerStopReturn]{
+	r := stub.Answer(s.OnStop.MethodStub, call, stub.Arms[TimerStopCall, TimerStopReturn]{
 		Invoke:   s.OnStop.invoke(),
 		Fallback: s.OnStop.fallback,
-		Stamp: func(c *TimerStopCall, r TimerStopReturn) {
+		Stamp: func(c TimerStopCall, r TimerStopReturn) TimerStopCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
 }
 
-// dokimi:provenance sha256:691784e8ea30a3a007b54ef17ad6cfc5d8ca6cd3115357bc081afe43dcfd0250
+// dokimi:provenance sha256:5b06bc2806c8756a448002740cd5e4314bc7ac445635b6b6deaf346b86b4e4f2

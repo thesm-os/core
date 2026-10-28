@@ -173,14 +173,15 @@ func (s *GeneratorGenerateStub) invoke() func() GeneratorGenerateReturn {
 // of Func, then the results of Returns, and then the zero values.
 func (s *GeneratorStub) Generate() id.ID {
 	call := GeneratorGenerateCall{}
-	r := stub.Answer(s.OnGenerate.MethodStub, &call, stub.Arms[GeneratorGenerateCall, GeneratorGenerateReturn]{
+	r := stub.Answer(s.OnGenerate.MethodStub, call, stub.Arms[GeneratorGenerateCall, GeneratorGenerateReturn]{
 		Invoke:   s.OnGenerate.invoke(),
 		Fallback: s.OnGenerate.fallback,
-		Stamp: func(c *GeneratorGenerateCall, r GeneratorGenerateReturn) {
+		Stamp: func(c GeneratorGenerateCall, r GeneratorGenerateReturn) GeneratorGenerateCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
 }
 
-// dokimi:provenance sha256:da7e42623c18059cea193ed5ef4fbcd718d39672de01c967a452ddc2511118d8
+// dokimi:provenance sha256:ce1beecfbeaa63becd00a729f3888f5f4bcd1c1677458b5408e600ddacbc0cb7

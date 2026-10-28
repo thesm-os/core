@@ -261,7 +261,7 @@ func (s *SpanEndStub) invokeVoid(err error) func() struct{} {
 // Func, then the results of Returns, and then the zero values.
 func (s *SpanStub) End(err error) {
 	call := SpanEndCall{Err: err}
-	stub.Answer(s.OnEnd.MethodStub, &call, stub.Arms[SpanEndCall, struct{}]{
+	stub.Answer(s.OnEnd.MethodStub, call, stub.Arms[SpanEndCall, struct{}]{
 		Invoke: s.OnEnd.invokeVoid(err),
 	})
 }
@@ -283,7 +283,7 @@ func (s *SpanSetAttributesStub) invokeVoid(attrs []telemetry.Attr) func() struct
 // function of Func, then the results of Returns, and then the zero values.
 func (s *SpanStub) SetAttributes(attrs []telemetry.Attr) {
 	call := SpanSetAttributesCall{Attrs: attrs}
-	stub.Answer(s.OnSetAttributes.MethodStub, &call, stub.Arms[SpanSetAttributesCall, struct{}]{
+	stub.Answer(s.OnSetAttributes.MethodStub, call, stub.Arms[SpanSetAttributesCall, struct{}]{
 		Invoke: s.OnSetAttributes.invokeVoid(attrs),
 	})
 }
@@ -305,7 +305,7 @@ func (s *SpanAddEventStub) invokeVoid(name telemetry.EventName, attrs []telemetr
 // of Func, then the results of Returns, and then the zero values.
 func (s *SpanStub) AddEvent(name telemetry.EventName, attrs []telemetry.Attr) {
 	call := SpanAddEventCall{Name: name, Attrs: attrs}
-	stub.Answer(s.OnAddEvent.MethodStub, &call, stub.Arms[SpanAddEventCall, struct{}]{
+	stub.Answer(s.OnAddEvent.MethodStub, call, stub.Arms[SpanAddEventCall, struct{}]{
 		Invoke: s.OnAddEvent.invokeVoid(name, attrs),
 	})
 }
@@ -326,14 +326,15 @@ func (s *SpanSpanContextStub) invoke() func() SpanSpanContextReturn {
 // function of Func, then the results of Returns, and then the zero values.
 func (s *SpanStub) SpanContext() telemetry.SpanContext {
 	call := SpanSpanContextCall{}
-	r := stub.Answer(s.OnSpanContext.MethodStub, &call, stub.Arms[SpanSpanContextCall, SpanSpanContextReturn]{
+	r := stub.Answer(s.OnSpanContext.MethodStub, call, stub.Arms[SpanSpanContextCall, SpanSpanContextReturn]{
 		Invoke:   s.OnSpanContext.invoke(),
 		Fallback: s.OnSpanContext.fallback,
-		Stamp: func(c *SpanSpanContextCall, r SpanSpanContextReturn) {
+		Stamp: func(c SpanSpanContextCall, r SpanSpanContextReturn) SpanSpanContextCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
 }
 
-// dokimi:provenance sha256:207dedb7ddb94658a80fabbeb5e8408d0234505b445821e1dda2c7cc500c5b0d
+// dokimi:provenance sha256:5050a992432d19d88c87f3c99d514c190fa56960ddad01f67f229dbe28dd3a7d

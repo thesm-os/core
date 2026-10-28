@@ -404,11 +404,12 @@ func (s *AEADIDStub) invoke() func() AEADIDReturn {
 // Func, then the results of Returns, and then the zero values.
 func (s *AEADStub) ID() crypto.ID {
 	call := AEADIDCall{}
-	r := stub.Answer(s.OnID.MethodStub, &call, stub.Arms[AEADIDCall, AEADIDReturn]{
+	r := stub.Answer(s.OnID.MethodStub, call, stub.Arms[AEADIDCall, AEADIDReturn]{
 		Invoke:   s.OnID.invoke(),
 		Fallback: s.OnID.fallback,
-		Stamp: func(c *AEADIDCall, r AEADIDReturn) {
+		Stamp: func(c AEADIDCall, r AEADIDReturn) AEADIDCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
@@ -430,11 +431,12 @@ func (s *AEADAlgorithmStub) invoke() func() AEADAlgorithmReturn {
 // function of Func, then the results of Returns, and then the zero values.
 func (s *AEADStub) Algorithm() crypto.Algorithm {
 	call := AEADAlgorithmCall{}
-	r := stub.Answer(s.OnAlgorithm.MethodStub, &call, stub.Arms[AEADAlgorithmCall, AEADAlgorithmReturn]{
+	r := stub.Answer(s.OnAlgorithm.MethodStub, call, stub.Arms[AEADAlgorithmCall, AEADAlgorithmReturn]{
 		Invoke:   s.OnAlgorithm.invoke(),
 		Fallback: s.OnAlgorithm.fallback,
-		Stamp: func(c *AEADAlgorithmCall, r AEADAlgorithmReturn) {
+		Stamp: func(c AEADAlgorithmCall, r AEADAlgorithmReturn) AEADAlgorithmCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
@@ -456,11 +458,12 @@ func (s *AEADNonceSizeStub) invoke() func() AEADNonceSizeReturn {
 // function of Func, then the results of Returns, and then the zero values.
 func (s *AEADStub) NonceSize() int {
 	call := AEADNonceSizeCall{}
-	r := stub.Answer(s.OnNonceSize.MethodStub, &call, stub.Arms[AEADNonceSizeCall, AEADNonceSizeReturn]{
+	r := stub.Answer(s.OnNonceSize.MethodStub, call, stub.Arms[AEADNonceSizeCall, AEADNonceSizeReturn]{
 		Invoke:   s.OnNonceSize.invoke(),
 		Fallback: s.OnNonceSize.fallback,
-		Stamp: func(c *AEADNonceSizeCall, r AEADNonceSizeReturn) {
+		Stamp: func(c AEADNonceSizeCall, r AEADNonceSizeReturn) AEADNonceSizeCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
@@ -482,11 +485,12 @@ func (s *AEADOverheadStub) invoke() func() AEADOverheadReturn {
 // of Func, then the results of Returns, and then the zero values.
 func (s *AEADStub) Overhead() int {
 	call := AEADOverheadCall{}
-	r := stub.Answer(s.OnOverhead.MethodStub, &call, stub.Arms[AEADOverheadCall, AEADOverheadReturn]{
+	r := stub.Answer(s.OnOverhead.MethodStub, call, stub.Arms[AEADOverheadCall, AEADOverheadReturn]{
 		Invoke:   s.OnOverhead.invoke(),
 		Fallback: s.OnOverhead.fallback,
-		Stamp: func(c *AEADOverheadCall, r AEADOverheadReturn) {
+		Stamp: func(c AEADOverheadCall, r AEADOverheadReturn) AEADOverheadCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
@@ -508,11 +512,12 @@ func (s *AEADSealStub) invoke(dst, nonce, plaintext, additionalData []byte) func
 // Func, then the results of Returns, and then the zero values.
 func (s *AEADStub) Seal(dst, nonce, plaintext, additionalData []byte) []byte {
 	call := AEADSealCall{Dst: dst, Nonce: nonce, Plaintext: plaintext, AdditionalData: additionalData}
-	r := stub.Answer(s.OnSeal.MethodStub, &call, stub.Arms[AEADSealCall, AEADSealReturn]{
+	r := stub.Answer(s.OnSeal.MethodStub, call, stub.Arms[AEADSealCall, AEADSealReturn]{
 		Invoke:   s.OnSeal.invoke(dst, nonce, plaintext, additionalData),
 		Fallback: s.OnSeal.fallback,
-		Stamp: func(c *AEADSealCall, r AEADSealReturn) {
+		Stamp: func(c AEADSealCall, r AEADSealReturn) AEADSealCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
@@ -534,16 +539,17 @@ func (s *AEADOpenStub) invoke(dst, nonce, ciphertext, additionalData []byte) fun
 // Func, then the results of Returns, and then the zero values.
 func (s *AEADStub) Open(dst, nonce, ciphertext, additionalData []byte) ([]byte, error) {
 	call := AEADOpenCall{Dst: dst, Nonce: nonce, Ciphertext: ciphertext, AdditionalData: additionalData}
-	r := stub.Answer(s.OnOpen.MethodStub, &call, stub.Arms[AEADOpenCall, AEADOpenReturn]{
+	r := stub.Answer(s.OnOpen.MethodStub, call, stub.Arms[AEADOpenCall, AEADOpenReturn]{
 		Invoke:   s.OnOpen.invoke(dst, nonce, ciphertext, additionalData),
 		Fallback: s.OnOpen.fallback,
 		Fault:    func(err error) AEADOpenReturn { return AEADOpenReturn{Err: err} },
-		Stamp: func(c *AEADOpenCall, r AEADOpenReturn) {
+		Stamp: func(c AEADOpenCall, r AEADOpenReturn) AEADOpenCall {
 			c.Result = r.Result
 			c.Err = r.Err
+			return c
 		},
 	})
 	return r.Result, r.Err
 }
 
-// dokimi:provenance sha256:b559d009fff5290ef030a48b6d6ea97acbd2ebf6ed516ef54021aa2a40e3ca7b
+// dokimi:provenance sha256:47670df6c478d67ed55411ad1a56c70d10332072a40b1026d9e863f170e4778e

@@ -254,7 +254,7 @@ func (s *GaugeSetStub) invokeVoid(ctx context.Context, value float64) func() str
 // Func, then the results of Returns, and then the zero values.
 func (s *GaugeStub) Set(ctx context.Context, value float64) {
 	call := GaugeSetCall{Ctx: ctx, Value: value}
-	stub.Answer(s.OnSet.MethodStub, &call, stub.Arms[GaugeSetCall, struct{}]{
+	stub.Answer(s.OnSet.MethodStub, call, stub.Arms[GaugeSetCall, struct{}]{
 		Invoke: s.OnSet.invokeVoid(ctx, value),
 	})
 }
@@ -276,7 +276,7 @@ func (s *GaugeAddStub) invokeVoid(ctx context.Context, delta float64) func() str
 // Func, then the results of Returns, and then the zero values.
 func (s *GaugeStub) Add(ctx context.Context, delta float64) {
 	call := GaugeAddCall{Ctx: ctx, Delta: delta}
-	stub.Answer(s.OnAdd.MethodStub, &call, stub.Arms[GaugeAddCall, struct{}]{
+	stub.Answer(s.OnAdd.MethodStub, call, stub.Arms[GaugeAddCall, struct{}]{
 		Invoke: s.OnAdd.invokeVoid(ctx, delta),
 	})
 }
@@ -297,11 +297,12 @@ func (s *GaugeWithStub) invoke(attrs []telemetry.Attr) func() GaugeWithReturn {
 // Func, then the results of Returns, and then the zero values.
 func (s *GaugeStub) With(attrs []telemetry.Attr) telemetry.Gauge {
 	call := GaugeWithCall{Attrs: attrs}
-	r := stub.Answer(s.OnWith.MethodStub, &call, stub.Arms[GaugeWithCall, GaugeWithReturn]{
+	r := stub.Answer(s.OnWith.MethodStub, call, stub.Arms[GaugeWithCall, GaugeWithReturn]{
 		Invoke:   s.OnWith.invoke(attrs),
 		Fallback: s.OnWith.fallback,
-		Stamp: func(c *GaugeWithCall, r GaugeWithReturn) {
+		Stamp: func(c GaugeWithCall, r GaugeWithReturn) GaugeWithCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
@@ -324,9 +325,9 @@ func (s *GaugeReleaseStub) invokeVoid() func() struct{} {
 // of Func, then the results of Returns, and then the zero values.
 func (s *GaugeStub) Release() {
 	call := GaugeReleaseCall{}
-	stub.Answer(s.OnRelease.MethodStub, &call, stub.Arms[GaugeReleaseCall, struct{}]{
+	stub.Answer(s.OnRelease.MethodStub, call, stub.Arms[GaugeReleaseCall, struct{}]{
 		Invoke: s.OnRelease.invokeVoid(),
 	})
 }
 
-// dokimi:provenance sha256:3cae58abf544a43675cf133a6aeb796112c9ef3f6b570703efe49c012b7acad5
+// dokimi:provenance sha256:1073a2196b16a20b592d620ab306fb0623acf7dfef03d5be24fcaee4201674a5

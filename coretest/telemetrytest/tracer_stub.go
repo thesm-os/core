@@ -182,15 +182,16 @@ func (s *TracerStub) Start(
 	opts ...telemetry.SpanOption,
 ) (context.Context, telemetry.Span) {
 	call := TracerStartCall{Ctx: ctx, Name: name, Opts: opts}
-	r := stub.Answer(s.OnStart.MethodStub, &call, stub.Arms[TracerStartCall, TracerStartReturn]{
+	r := stub.Answer(s.OnStart.MethodStub, call, stub.Arms[TracerStartCall, TracerStartReturn]{
 		Invoke:   s.OnStart.invoke(ctx, name, opts...),
 		Fallback: s.OnStart.fallback,
-		Stamp: func(c *TracerStartCall, r TracerStartReturn) {
+		Stamp: func(c TracerStartCall, r TracerStartReturn) TracerStartCall {
 			c.Result0 = r.Result0
 			c.Result1 = r.Result1
+			return c
 		},
 	})
 	return r.Result0, r.Result1
 }
 
-// dokimi:provenance sha256:4b5ed966c31d75053281db13f72d479e5795c6359f006ec1f09031c4d52e44cd
+// dokimi:provenance sha256:8a8ff274264b90a264be26ad6ff4e6bd24b0dfa583266fbf1e4305aff9a12aa9

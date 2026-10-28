@@ -272,11 +272,12 @@ func (s *KeeperKeyIDStub) invoke() func() KeeperKeyIDReturn {
 // Func, then the results of Returns, and then the zero values.
 func (s *KeeperStub) KeyID() string {
 	call := KeeperKeyIDCall{}
-	r := stub.Answer(s.OnKeyID.MethodStub, &call, stub.Arms[KeeperKeyIDCall, KeeperKeyIDReturn]{
+	r := stub.Answer(s.OnKeyID.MethodStub, call, stub.Arms[KeeperKeyIDCall, KeeperKeyIDReturn]{
 		Invoke:   s.OnKeyID.invoke(),
 		Fallback: s.OnKeyID.fallback,
-		Stamp: func(c *KeeperKeyIDCall, r KeeperKeyIDReturn) {
+		Stamp: func(c KeeperKeyIDCall, r KeeperKeyIDReturn) KeeperKeyIDCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
@@ -298,13 +299,14 @@ func (s *KeeperWrapStub) invoke(ctx context.Context, dek []byte) func() KeeperWr
 // Func, then the results of Returns, and then the zero values.
 func (s *KeeperStub) Wrap(ctx context.Context, dek []byte) ([]byte, error) {
 	call := KeeperWrapCall{Ctx: ctx, Dek: dek}
-	r := stub.Answer(s.OnWrap.MethodStub, &call, stub.Arms[KeeperWrapCall, KeeperWrapReturn]{
+	r := stub.Answer(s.OnWrap.MethodStub, call, stub.Arms[KeeperWrapCall, KeeperWrapReturn]{
 		Invoke:   s.OnWrap.invoke(ctx, dek),
 		Fallback: s.OnWrap.fallback,
 		Fault:    func(err error) KeeperWrapReturn { return KeeperWrapReturn{Err: err} },
-		Stamp: func(c *KeeperWrapCall, r KeeperWrapReturn) {
+		Stamp: func(c KeeperWrapCall, r KeeperWrapReturn) KeeperWrapCall {
 			c.Result = r.Result
 			c.Err = r.Err
+			return c
 		},
 	})
 	return r.Result, r.Err
@@ -326,13 +328,14 @@ func (s *KeeperUnwrapStub) invoke(ctx context.Context, wrapped []byte) func() Ke
 // of Func, then the results of Returns, and then the zero values.
 func (s *KeeperStub) Unwrap(ctx context.Context, wrapped []byte) ([]byte, error) {
 	call := KeeperUnwrapCall{Ctx: ctx, Wrapped: wrapped}
-	r := stub.Answer(s.OnUnwrap.MethodStub, &call, stub.Arms[KeeperUnwrapCall, KeeperUnwrapReturn]{
+	r := stub.Answer(s.OnUnwrap.MethodStub, call, stub.Arms[KeeperUnwrapCall, KeeperUnwrapReturn]{
 		Invoke:   s.OnUnwrap.invoke(ctx, wrapped),
 		Fallback: s.OnUnwrap.fallback,
 		Fault:    func(err error) KeeperUnwrapReturn { return KeeperUnwrapReturn{Err: err} },
-		Stamp: func(c *KeeperUnwrapCall, r KeeperUnwrapReturn) {
+		Stamp: func(c KeeperUnwrapCall, r KeeperUnwrapReturn) KeeperUnwrapCall {
 			c.Result = r.Result
 			c.Err = r.Err
+			return c
 		},
 	})
 	return r.Result, r.Err
@@ -655,13 +658,14 @@ func (s *DestroyerDestroyStub) invoke(ctx context.Context, keyID string) func() 
 // of Func, then the results of Returns, and then the zero values.
 func (s *DestroyerStub) Destroy(ctx context.Context, keyID string) (time.Time, error) {
 	call := DestroyerDestroyCall{Ctx: ctx, KeyID: keyID}
-	r := stub.Answer(s.OnDestroy.MethodStub, &call, stub.Arms[DestroyerDestroyCall, DestroyerDestroyReturn]{
+	r := stub.Answer(s.OnDestroy.MethodStub, call, stub.Arms[DestroyerDestroyCall, DestroyerDestroyReturn]{
 		Invoke:   s.OnDestroy.invoke(ctx, keyID),
 		Fallback: s.OnDestroy.fallback,
 		Fault:    func(err error) DestroyerDestroyReturn { return DestroyerDestroyReturn{Err: err} },
-		Stamp: func(c *DestroyerDestroyCall, r DestroyerDestroyReturn) {
+		Stamp: func(c DestroyerDestroyCall, r DestroyerDestroyReturn) DestroyerDestroyCall {
 			c.Result = r.Result
 			c.Err = r.Err
+			return c
 		},
 	})
 	return r.Result, r.Err
@@ -683,11 +687,12 @@ func (s *DestroyerKeyIDStub) invoke() func() DestroyerKeyIDReturn {
 // Func, then the results of Returns, and then the zero values.
 func (s *DestroyerStub) KeyID() string {
 	call := DestroyerKeyIDCall{}
-	r := stub.Answer(s.OnKeyID.MethodStub, &call, stub.Arms[DestroyerKeyIDCall, DestroyerKeyIDReturn]{
+	r := stub.Answer(s.OnKeyID.MethodStub, call, stub.Arms[DestroyerKeyIDCall, DestroyerKeyIDReturn]{
 		Invoke:   s.OnKeyID.invoke(),
 		Fallback: s.OnKeyID.fallback,
-		Stamp: func(c *DestroyerKeyIDCall, r DestroyerKeyIDReturn) {
+		Stamp: func(c DestroyerKeyIDCall, r DestroyerKeyIDReturn) DestroyerKeyIDCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
@@ -709,13 +714,14 @@ func (s *DestroyerWrapStub) invoke(ctx context.Context, dek []byte) func() Destr
 // Func, then the results of Returns, and then the zero values.
 func (s *DestroyerStub) Wrap(ctx context.Context, dek []byte) ([]byte, error) {
 	call := DestroyerWrapCall{Ctx: ctx, Dek: dek}
-	r := stub.Answer(s.OnWrap.MethodStub, &call, stub.Arms[DestroyerWrapCall, DestroyerWrapReturn]{
+	r := stub.Answer(s.OnWrap.MethodStub, call, stub.Arms[DestroyerWrapCall, DestroyerWrapReturn]{
 		Invoke:   s.OnWrap.invoke(ctx, dek),
 		Fallback: s.OnWrap.fallback,
 		Fault:    func(err error) DestroyerWrapReturn { return DestroyerWrapReturn{Err: err} },
-		Stamp: func(c *DestroyerWrapCall, r DestroyerWrapReturn) {
+		Stamp: func(c DestroyerWrapCall, r DestroyerWrapReturn) DestroyerWrapCall {
 			c.Result = r.Result
 			c.Err = r.Err
+			return c
 		},
 	})
 	return r.Result, r.Err
@@ -737,13 +743,14 @@ func (s *DestroyerUnwrapStub) invoke(ctx context.Context, wrapped []byte) func()
 // of Func, then the results of Returns, and then the zero values.
 func (s *DestroyerStub) Unwrap(ctx context.Context, wrapped []byte) ([]byte, error) {
 	call := DestroyerUnwrapCall{Ctx: ctx, Wrapped: wrapped}
-	r := stub.Answer(s.OnUnwrap.MethodStub, &call, stub.Arms[DestroyerUnwrapCall, DestroyerUnwrapReturn]{
+	r := stub.Answer(s.OnUnwrap.MethodStub, call, stub.Arms[DestroyerUnwrapCall, DestroyerUnwrapReturn]{
 		Invoke:   s.OnUnwrap.invoke(ctx, wrapped),
 		Fallback: s.OnUnwrap.fallback,
 		Fault:    func(err error) DestroyerUnwrapReturn { return DestroyerUnwrapReturn{Err: err} },
-		Stamp: func(c *DestroyerUnwrapCall, r DestroyerUnwrapReturn) {
+		Stamp: func(c DestroyerUnwrapCall, r DestroyerUnwrapReturn) DestroyerUnwrapCall {
 			c.Result = r.Result
 			c.Err = r.Err
+			return c
 		},
 	})
 	return r.Result, r.Err
@@ -1086,15 +1093,16 @@ func (s *KeyGeneratorStub) GenerateKey(ctx context.Context, size int) (plaintext
 	call := KeyGeneratorGenerateKeyCall{Ctx: ctx, Size: size}
 	r := stub.Answer(
 		s.OnGenerateKey.MethodStub,
-		&call,
+		call,
 		stub.Arms[KeyGeneratorGenerateKeyCall, KeyGeneratorGenerateKeyReturn]{
 			Invoke:   s.OnGenerateKey.invoke(ctx, size),
 			Fallback: s.OnGenerateKey.fallback,
 			Fault:    func(err error) KeyGeneratorGenerateKeyReturn { return KeyGeneratorGenerateKeyReturn{Err: err} },
-			Stamp: func(c *KeyGeneratorGenerateKeyCall, r KeyGeneratorGenerateKeyReturn) {
+			Stamp: func(c KeyGeneratorGenerateKeyCall, r KeyGeneratorGenerateKeyReturn) KeyGeneratorGenerateKeyCall {
 				c.Plaintext = r.Plaintext
 				c.Wrapped = r.Wrapped
 				c.Err = r.Err
+				return c
 			},
 		},
 	)
@@ -1117,11 +1125,12 @@ func (s *KeyGeneratorKeyIDStub) invoke() func() KeyGeneratorKeyIDReturn {
 // Func, then the results of Returns, and then the zero values.
 func (s *KeyGeneratorStub) KeyID() string {
 	call := KeyGeneratorKeyIDCall{}
-	r := stub.Answer(s.OnKeyID.MethodStub, &call, stub.Arms[KeyGeneratorKeyIDCall, KeyGeneratorKeyIDReturn]{
+	r := stub.Answer(s.OnKeyID.MethodStub, call, stub.Arms[KeyGeneratorKeyIDCall, KeyGeneratorKeyIDReturn]{
 		Invoke:   s.OnKeyID.invoke(),
 		Fallback: s.OnKeyID.fallback,
-		Stamp: func(c *KeyGeneratorKeyIDCall, r KeyGeneratorKeyIDReturn) {
+		Stamp: func(c KeyGeneratorKeyIDCall, r KeyGeneratorKeyIDReturn) KeyGeneratorKeyIDCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
@@ -1143,13 +1152,14 @@ func (s *KeyGeneratorWrapStub) invoke(ctx context.Context, dek []byte) func() Ke
 // Func, then the results of Returns, and then the zero values.
 func (s *KeyGeneratorStub) Wrap(ctx context.Context, dek []byte) ([]byte, error) {
 	call := KeyGeneratorWrapCall{Ctx: ctx, Dek: dek}
-	r := stub.Answer(s.OnWrap.MethodStub, &call, stub.Arms[KeyGeneratorWrapCall, KeyGeneratorWrapReturn]{
+	r := stub.Answer(s.OnWrap.MethodStub, call, stub.Arms[KeyGeneratorWrapCall, KeyGeneratorWrapReturn]{
 		Invoke:   s.OnWrap.invoke(ctx, dek),
 		Fallback: s.OnWrap.fallback,
 		Fault:    func(err error) KeyGeneratorWrapReturn { return KeyGeneratorWrapReturn{Err: err} },
-		Stamp: func(c *KeyGeneratorWrapCall, r KeyGeneratorWrapReturn) {
+		Stamp: func(c KeyGeneratorWrapCall, r KeyGeneratorWrapReturn) KeyGeneratorWrapCall {
 			c.Result = r.Result
 			c.Err = r.Err
+			return c
 		},
 	})
 	return r.Result, r.Err
@@ -1171,16 +1181,17 @@ func (s *KeyGeneratorUnwrapStub) invoke(ctx context.Context, wrapped []byte) fun
 // of Func, then the results of Returns, and then the zero values.
 func (s *KeyGeneratorStub) Unwrap(ctx context.Context, wrapped []byte) ([]byte, error) {
 	call := KeyGeneratorUnwrapCall{Ctx: ctx, Wrapped: wrapped}
-	r := stub.Answer(s.OnUnwrap.MethodStub, &call, stub.Arms[KeyGeneratorUnwrapCall, KeyGeneratorUnwrapReturn]{
+	r := stub.Answer(s.OnUnwrap.MethodStub, call, stub.Arms[KeyGeneratorUnwrapCall, KeyGeneratorUnwrapReturn]{
 		Invoke:   s.OnUnwrap.invoke(ctx, wrapped),
 		Fallback: s.OnUnwrap.fallback,
 		Fault:    func(err error) KeyGeneratorUnwrapReturn { return KeyGeneratorUnwrapReturn{Err: err} },
-		Stamp: func(c *KeyGeneratorUnwrapCall, r KeyGeneratorUnwrapReturn) {
+		Stamp: func(c KeyGeneratorUnwrapCall, r KeyGeneratorUnwrapReturn) KeyGeneratorUnwrapCall {
 			c.Result = r.Result
 			c.Err = r.Err
+			return c
 		},
 	})
 	return r.Result, r.Err
 }
 
-// dokimi:provenance sha256:9c093f59b06f24249e3b2d9003a404374a4b8cd1ded15bb82d9daf4869e1a40d
+// dokimi:provenance sha256:6a7ed122f9464992fad448e60801281cabe50a10fc59698392fc58aba18e945f

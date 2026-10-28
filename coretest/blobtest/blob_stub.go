@@ -387,13 +387,14 @@ func (s *StorePutStub) invoke(
 // Func, then the results of Returns, and then the zero values.
 func (s *StoreStub) Put(ctx context.Context, key string, r io.Reader, opts blob.PutOptions) (blob.Info, error) {
 	call := StorePutCall{Ctx: ctx, Key: key, R: r, Opts: opts}
-	r2 := stub.Answer(s.OnPut.MethodStub, &call, stub.Arms[StorePutCall, StorePutReturn]{
+	r2 := stub.Answer(s.OnPut.MethodStub, call, stub.Arms[StorePutCall, StorePutReturn]{
 		Invoke:   s.OnPut.invoke(ctx, key, r, opts),
 		Fallback: s.OnPut.fallback,
 		Fault:    func(err error) StorePutReturn { return StorePutReturn{Err: err} },
-		Stamp: func(c *StorePutCall, r StorePutReturn) {
+		Stamp: func(c StorePutCall, r StorePutReturn) StorePutCall {
 			c.Result = r.Result
 			c.Err = r.Err
+			return c
 		},
 	})
 	return r2.Result, r2.Err
@@ -415,14 +416,15 @@ func (s *StoreGetStub) invoke(ctx context.Context, key string) func() StoreGetRe
 // Func, then the results of Returns, and then the zero values.
 func (s *StoreStub) Get(ctx context.Context, key string) (io.ReadCloser, blob.Info, error) {
 	call := StoreGetCall{Ctx: ctx, Key: key}
-	r := stub.Answer(s.OnGet.MethodStub, &call, stub.Arms[StoreGetCall, StoreGetReturn]{
+	r := stub.Answer(s.OnGet.MethodStub, call, stub.Arms[StoreGetCall, StoreGetReturn]{
 		Invoke:   s.OnGet.invoke(ctx, key),
 		Fallback: s.OnGet.fallback,
 		Fault:    func(err error) StoreGetReturn { return StoreGetReturn{Err: err} },
-		Stamp: func(c *StoreGetCall, r StoreGetReturn) {
+		Stamp: func(c StoreGetCall, r StoreGetReturn) StoreGetCall {
 			c.Result0 = r.Result0
 			c.Result1 = r.Result1
 			c.Err = r.Err
+			return c
 		},
 	})
 	return r.Result0, r.Result1, r.Err
@@ -444,13 +446,14 @@ func (s *StoreStatStub) invoke(ctx context.Context, key string) func() StoreStat
 // Func, then the results of Returns, and then the zero values.
 func (s *StoreStub) Stat(ctx context.Context, key string) (blob.Info, error) {
 	call := StoreStatCall{Ctx: ctx, Key: key}
-	r := stub.Answer(s.OnStat.MethodStub, &call, stub.Arms[StoreStatCall, StoreStatReturn]{
+	r := stub.Answer(s.OnStat.MethodStub, call, stub.Arms[StoreStatCall, StoreStatReturn]{
 		Invoke:   s.OnStat.invoke(ctx, key),
 		Fallback: s.OnStat.fallback,
 		Fault:    func(err error) StoreStatReturn { return StoreStatReturn{Err: err} },
-		Stamp: func(c *StoreStatCall, r StoreStatReturn) {
+		Stamp: func(c StoreStatCall, r StoreStatReturn) StoreStatCall {
 			c.Result = r.Result
 			c.Err = r.Err
+			return c
 		},
 	})
 	return r.Result, r.Err
@@ -472,12 +475,13 @@ func (s *StoreDeleteStub) invoke(ctx context.Context, key string, ifMatch versio
 // of Func, then the results of Returns, and then the zero values.
 func (s *StoreStub) Delete(ctx context.Context, key string, ifMatch version.Version) error {
 	call := StoreDeleteCall{Ctx: ctx, Key: key, IfMatch: ifMatch}
-	r := stub.Answer(s.OnDelete.MethodStub, &call, stub.Arms[StoreDeleteCall, StoreDeleteReturn]{
+	r := stub.Answer(s.OnDelete.MethodStub, call, stub.Arms[StoreDeleteCall, StoreDeleteReturn]{
 		Invoke:   s.OnDelete.invoke(ctx, key, ifMatch),
 		Fallback: s.OnDelete.fallback,
 		Fault:    func(err error) StoreDeleteReturn { return StoreDeleteReturn{Err: err} },
-		Stamp: func(c *StoreDeleteCall, r StoreDeleteReturn) {
+		Stamp: func(c StoreDeleteCall, r StoreDeleteReturn) StoreDeleteCall {
 			c.Err = r.Err
+			return c
 		},
 	})
 	return r.Err
@@ -499,13 +503,14 @@ func (s *StoreListStub) invoke(ctx context.Context, prefix string, p page.Page) 
 // Func, then the results of Returns, and then the zero values.
 func (s *StoreStub) List(ctx context.Context, prefix string, p page.Page) (page.Cursor[blob.Info], error) {
 	call := StoreListCall{Ctx: ctx, Prefix: prefix, P: p}
-	r := stub.Answer(s.OnList.MethodStub, &call, stub.Arms[StoreListCall, StoreListReturn]{
+	r := stub.Answer(s.OnList.MethodStub, call, stub.Arms[StoreListCall, StoreListReturn]{
 		Invoke:   s.OnList.invoke(ctx, prefix, p),
 		Fallback: s.OnList.fallback,
 		Fault:    func(err error) StoreListReturn { return StoreListReturn{Err: err} },
-		Stamp: func(c *StoreListCall, r StoreListReturn) {
+		Stamp: func(c StoreListCall, r StoreListReturn) StoreListCall {
 			c.Result = r.Result
 			c.Err = r.Err
+			return c
 		},
 	})
 	return r.Result, r.Err
@@ -713,17 +718,18 @@ func (s *RangeReaderStub) ReadRange(
 	ifMatch version.Version,
 ) (int, blob.Info, error) {
 	call := RangeReaderReadRangeCall{Ctx: ctx, Key: key, Off: off, Dst: dst, IfMatch: ifMatch}
-	r := stub.Answer(s.OnReadRange.MethodStub, &call, stub.Arms[RangeReaderReadRangeCall, RangeReaderReadRangeReturn]{
+	r := stub.Answer(s.OnReadRange.MethodStub, call, stub.Arms[RangeReaderReadRangeCall, RangeReaderReadRangeReturn]{
 		Invoke:   s.OnReadRange.invoke(ctx, key, off, dst, ifMatch),
 		Fallback: s.OnReadRange.fallback,
 		Fault:    func(err error) RangeReaderReadRangeReturn { return RangeReaderReadRangeReturn{Err: err} },
-		Stamp: func(c *RangeReaderReadRangeCall, r RangeReaderReadRangeReturn) {
+		Stamp: func(c RangeReaderReadRangeCall, r RangeReaderReadRangeReturn) RangeReaderReadRangeCall {
 			c.Result0 = r.Result0
 			c.Result1 = r.Result1
 			c.Err = r.Err
+			return c
 		},
 	})
 	return r.Result0, r.Result1, r.Err
 }
 
-// dokimi:provenance sha256:d1cc5bc9280bebcb074253650d25c56bab0718e5c05e13017a11567a769eea18
+// dokimi:provenance sha256:3bf69b59712ad8fbf766ca6f62a74293b63cb81e0377253d766d6810d050b275

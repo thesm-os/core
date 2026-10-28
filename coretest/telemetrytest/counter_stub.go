@@ -225,7 +225,7 @@ func (s *CounterAddStub) invokeVoid(ctx context.Context, value int64) func() str
 // Func, then the results of Returns, and then the zero values.
 func (s *CounterStub) Add(ctx context.Context, value int64) {
 	call := CounterAddCall{Ctx: ctx, Value: value}
-	stub.Answer(s.OnAdd.MethodStub, &call, stub.Arms[CounterAddCall, struct{}]{
+	stub.Answer(s.OnAdd.MethodStub, call, stub.Arms[CounterAddCall, struct{}]{
 		Invoke: s.OnAdd.invokeVoid(ctx, value),
 	})
 }
@@ -246,11 +246,12 @@ func (s *CounterWithStub) invoke(attrs []telemetry.Attr) func() CounterWithRetur
 // Func, then the results of Returns, and then the zero values.
 func (s *CounterStub) With(attrs []telemetry.Attr) telemetry.Counter {
 	call := CounterWithCall{Attrs: attrs}
-	r := stub.Answer(s.OnWith.MethodStub, &call, stub.Arms[CounterWithCall, CounterWithReturn]{
+	r := stub.Answer(s.OnWith.MethodStub, call, stub.Arms[CounterWithCall, CounterWithReturn]{
 		Invoke:   s.OnWith.invoke(attrs),
 		Fallback: s.OnWith.fallback,
-		Stamp: func(c *CounterWithCall, r CounterWithReturn) {
+		Stamp: func(c CounterWithCall, r CounterWithReturn) CounterWithCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
@@ -273,9 +274,9 @@ func (s *CounterReleaseStub) invokeVoid() func() struct{} {
 // of Func, then the results of Returns, and then the zero values.
 func (s *CounterStub) Release() {
 	call := CounterReleaseCall{}
-	stub.Answer(s.OnRelease.MethodStub, &call, stub.Arms[CounterReleaseCall, struct{}]{
+	stub.Answer(s.OnRelease.MethodStub, call, stub.Arms[CounterReleaseCall, struct{}]{
 		Invoke: s.OnRelease.invokeVoid(),
 	})
 }
 
-// dokimi:provenance sha256:0233beb831b0f630d3bf7a666c63eb76d102e8aa9373bcb5df7ca4986ad52d4d
+// dokimi:provenance sha256:c4bb443c363b0268f78561934550ffee1ac0420b1cc14c0a2d11b1cd26cbdd4d

@@ -299,11 +299,12 @@ func (s *ReporterCounterStub) invoke(spec telemetry.InstrumentSpec) func() Repor
 // of Func, then the results of Returns, and then the zero values.
 func (s *ReporterStub) Counter(spec telemetry.InstrumentSpec) telemetry.Counter {
 	call := ReporterCounterCall{Spec: spec}
-	r := stub.Answer(s.OnCounter.MethodStub, &call, stub.Arms[ReporterCounterCall, ReporterCounterReturn]{
+	r := stub.Answer(s.OnCounter.MethodStub, call, stub.Arms[ReporterCounterCall, ReporterCounterReturn]{
 		Invoke:   s.OnCounter.invoke(spec),
 		Fallback: s.OnCounter.fallback,
-		Stamp: func(c *ReporterCounterCall, r ReporterCounterReturn) {
+		Stamp: func(c ReporterCounterCall, r ReporterCounterReturn) ReporterCounterCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
@@ -325,11 +326,12 @@ func (s *ReporterGaugeStub) invoke(spec telemetry.InstrumentSpec) func() Reporte
 // Func, then the results of Returns, and then the zero values.
 func (s *ReporterStub) Gauge(spec telemetry.InstrumentSpec) telemetry.Gauge {
 	call := ReporterGaugeCall{Spec: spec}
-	r := stub.Answer(s.OnGauge.MethodStub, &call, stub.Arms[ReporterGaugeCall, ReporterGaugeReturn]{
+	r := stub.Answer(s.OnGauge.MethodStub, call, stub.Arms[ReporterGaugeCall, ReporterGaugeReturn]{
 		Invoke:   s.OnGauge.invoke(spec),
 		Fallback: s.OnGauge.fallback,
-		Stamp: func(c *ReporterGaugeCall, r ReporterGaugeReturn) {
+		Stamp: func(c ReporterGaugeCall, r ReporterGaugeReturn) ReporterGaugeCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
@@ -351,11 +353,12 @@ func (s *ReporterHistogramStub) invoke(spec telemetry.InstrumentSpec) func() Rep
 // function of Func, then the results of Returns, and then the zero values.
 func (s *ReporterStub) Histogram(spec telemetry.InstrumentSpec) telemetry.Histogram {
 	call := ReporterHistogramCall{Spec: spec}
-	r := stub.Answer(s.OnHistogram.MethodStub, &call, stub.Arms[ReporterHistogramCall, ReporterHistogramReturn]{
+	r := stub.Answer(s.OnHistogram.MethodStub, call, stub.Arms[ReporterHistogramCall, ReporterHistogramReturn]{
 		Invoke:   s.OnHistogram.invoke(spec),
 		Fallback: s.OnHistogram.fallback,
-		Stamp: func(c *ReporterHistogramCall, r ReporterHistogramReturn) {
+		Stamp: func(c ReporterHistogramCall, r ReporterHistogramReturn) ReporterHistogramCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
@@ -377,14 +380,15 @@ func (s *ReporterTracerStub) invoke(name telemetry.InstrumentName) func() Report
 // of Func, then the results of Returns, and then the zero values.
 func (s *ReporterStub) Tracer(name telemetry.InstrumentName) telemetry.Tracer {
 	call := ReporterTracerCall{Name: name}
-	r := stub.Answer(s.OnTracer.MethodStub, &call, stub.Arms[ReporterTracerCall, ReporterTracerReturn]{
+	r := stub.Answer(s.OnTracer.MethodStub, call, stub.Arms[ReporterTracerCall, ReporterTracerReturn]{
 		Invoke:   s.OnTracer.invoke(name),
 		Fallback: s.OnTracer.fallback,
-		Stamp: func(c *ReporterTracerCall, r ReporterTracerReturn) {
+		Stamp: func(c ReporterTracerCall, r ReporterTracerReturn) ReporterTracerCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
 }
 
-// dokimi:provenance sha256:5039132b64ee2f33409675b0f36c2ff57247d84f85cf86e2135923b97910827c
+// dokimi:provenance sha256:957fd93e470aae9e1ddf792500206a1c3b80499bbdfb175865f744cb69dc921c

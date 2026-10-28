@@ -231,7 +231,7 @@ func (s *HistogramRecordStub) invokeVoid(ctx context.Context, value float64) fun
 // of Func, then the results of Returns, and then the zero values.
 func (s *HistogramStub) Record(ctx context.Context, value float64) {
 	call := HistogramRecordCall{Ctx: ctx, Value: value}
-	stub.Answer(s.OnRecord.MethodStub, &call, stub.Arms[HistogramRecordCall, struct{}]{
+	stub.Answer(s.OnRecord.MethodStub, call, stub.Arms[HistogramRecordCall, struct{}]{
 		Invoke: s.OnRecord.invokeVoid(ctx, value),
 	})
 }
@@ -252,11 +252,12 @@ func (s *HistogramWithStub) invoke(attrs []telemetry.Attr) func() HistogramWithR
 // Func, then the results of Returns, and then the zero values.
 func (s *HistogramStub) With(attrs []telemetry.Attr) telemetry.Histogram {
 	call := HistogramWithCall{Attrs: attrs}
-	r := stub.Answer(s.OnWith.MethodStub, &call, stub.Arms[HistogramWithCall, HistogramWithReturn]{
+	r := stub.Answer(s.OnWith.MethodStub, call, stub.Arms[HistogramWithCall, HistogramWithReturn]{
 		Invoke:   s.OnWith.invoke(attrs),
 		Fallback: s.OnWith.fallback,
-		Stamp: func(c *HistogramWithCall, r HistogramWithReturn) {
+		Stamp: func(c HistogramWithCall, r HistogramWithReturn) HistogramWithCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
@@ -279,9 +280,9 @@ func (s *HistogramReleaseStub) invokeVoid() func() struct{} {
 // of Func, then the results of Returns, and then the zero values.
 func (s *HistogramStub) Release() {
 	call := HistogramReleaseCall{}
-	stub.Answer(s.OnRelease.MethodStub, &call, stub.Arms[HistogramReleaseCall, struct{}]{
+	stub.Answer(s.OnRelease.MethodStub, call, stub.Arms[HistogramReleaseCall, struct{}]{
 		Invoke: s.OnRelease.invokeVoid(),
 	})
 }
 
-// dokimi:provenance sha256:dfd939ff06069a0ccd20f0d3ddf014e725747b4408209fc23160ca52415cbca3
+// dokimi:provenance sha256:04550adef9af0553ca568b83f168e56ad69db8dac9ee704a4d697ecc913c679d

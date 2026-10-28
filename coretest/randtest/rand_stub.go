@@ -223,11 +223,12 @@ func (s *RandUint64Stub) invoke() func() RandUint64Return {
 // of Func, then the results of Returns, and then the zero values.
 func (s *RandStub) Uint64() uint64 {
 	call := RandUint64Call{}
-	r := stub.Answer(s.OnUint64.MethodStub, &call, stub.Arms[RandUint64Call, RandUint64Return]{
+	r := stub.Answer(s.OnUint64.MethodStub, call, stub.Arms[RandUint64Call, RandUint64Return]{
 		Invoke:   s.OnUint64.invoke(),
 		Fallback: s.OnUint64.fallback,
-		Stamp: func(c *RandUint64Call, r RandUint64Return) {
+		Stamp: func(c RandUint64Call, r RandUint64Return) RandUint64Call {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
@@ -249,16 +250,17 @@ func (s *RandReadStub) invoke(p []byte) func() RandReadReturn {
 // Func, then the results of Returns, and then the zero values.
 func (s *RandStub) Read(p []byte) (n int, err error) {
 	call := RandReadCall{P: p}
-	r := stub.Answer(s.OnRead.MethodStub, &call, stub.Arms[RandReadCall, RandReadReturn]{
+	r := stub.Answer(s.OnRead.MethodStub, call, stub.Arms[RandReadCall, RandReadReturn]{
 		Invoke:   s.OnRead.invoke(p),
 		Fallback: s.OnRead.fallback,
 		Fault:    func(err error) RandReadReturn { return RandReadReturn{Err: err} },
-		Stamp: func(c *RandReadCall, r RandReadReturn) {
+		Stamp: func(c RandReadCall, r RandReadReturn) RandReadCall {
 			c.N = r.N
 			c.Err = r.Err
+			return c
 		},
 	})
 	return r.N, r.Err
 }
 
-// dokimi:provenance sha256:9549b5e2849594cbf92be3c187974197ead76644b0c618cc8bdff444e260edc7
+// dokimi:provenance sha256:4624bc2c2fea97246178d6427eae948a1f9585c0f81eccb667b33c1b6d67faba

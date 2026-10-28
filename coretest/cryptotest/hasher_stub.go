@@ -395,11 +395,12 @@ func (s *HasherIDStub) invoke() func() HasherIDReturn {
 // Func, then the results of Returns, and then the zero values.
 func (s *HasherStub) ID() crypto.ID {
 	call := HasherIDCall{}
-	r := stub.Answer(s.OnID.MethodStub, &call, stub.Arms[HasherIDCall, HasherIDReturn]{
+	r := stub.Answer(s.OnID.MethodStub, call, stub.Arms[HasherIDCall, HasherIDReturn]{
 		Invoke:   s.OnID.invoke(),
 		Fallback: s.OnID.fallback,
-		Stamp: func(c *HasherIDCall, r HasherIDReturn) {
+		Stamp: func(c HasherIDCall, r HasherIDReturn) HasherIDCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
@@ -421,11 +422,12 @@ func (s *HasherAlgorithmStub) invoke() func() HasherAlgorithmReturn {
 // function of Func, then the results of Returns, and then the zero values.
 func (s *HasherStub) Algorithm() crypto.Algorithm {
 	call := HasherAlgorithmCall{}
-	r := stub.Answer(s.OnAlgorithm.MethodStub, &call, stub.Arms[HasherAlgorithmCall, HasherAlgorithmReturn]{
+	r := stub.Answer(s.OnAlgorithm.MethodStub, call, stub.Arms[HasherAlgorithmCall, HasherAlgorithmReturn]{
 		Invoke:   s.OnAlgorithm.invoke(),
 		Fallback: s.OnAlgorithm.fallback,
-		Stamp: func(c *HasherAlgorithmCall, r HasherAlgorithmReturn) {
+		Stamp: func(c HasherAlgorithmCall, r HasherAlgorithmReturn) HasherAlgorithmCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
@@ -447,11 +449,12 @@ func (s *HasherHashStub) invoke(data []byte) func() HasherHashReturn {
 // Func, then the results of Returns, and then the zero values.
 func (s *HasherStub) Hash(data []byte) crypto.Digest {
 	call := HasherHashCall{Data: data}
-	r := stub.Answer(s.OnHash.MethodStub, &call, stub.Arms[HasherHashCall, HasherHashReturn]{
+	r := stub.Answer(s.OnHash.MethodStub, call, stub.Arms[HasherHashCall, HasherHashReturn]{
 		Invoke:   s.OnHash.invoke(data),
 		Fallback: s.OnHash.fallback,
-		Stamp: func(c *HasherHashCall, r HasherHashReturn) {
+		Stamp: func(c HasherHashCall, r HasherHashReturn) HasherHashCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
@@ -473,11 +476,12 @@ func (s *HasherHashTaggedStub) invoke(r crypto.Role, data []byte) func() HasherH
 // function of Func, then the results of Returns, and then the zero values.
 func (s *HasherStub) HashTagged(r crypto.Role, data []byte) crypto.Digest {
 	call := HasherHashTaggedCall{R: r, Data: data}
-	r1 := stub.Answer(s.OnHashTagged.MethodStub, &call, stub.Arms[HasherHashTaggedCall, HasherHashTaggedReturn]{
+	r1 := stub.Answer(s.OnHashTagged.MethodStub, call, stub.Arms[HasherHashTaggedCall, HasherHashTaggedReturn]{
 		Invoke:   s.OnHashTagged.invoke(r, data),
 		Fallback: s.OnHashTagged.fallback,
-		Stamp: func(c *HasherHashTaggedCall, r HasherHashTaggedReturn) {
+		Stamp: func(c HasherHashTaggedCall, r HasherHashTaggedReturn) HasherHashTaggedCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r1.Result
@@ -499,17 +503,14 @@ func (s *HasherCombineTaggedStub) invoke(r crypto.Role, left, right crypto.Diges
 // function of Func, then the results of Returns, and then the zero values.
 func (s *HasherStub) CombineTagged(r crypto.Role, left, right crypto.Digest) crypto.Digest {
 	call := HasherCombineTaggedCall{R: r, Left: left, Right: right}
-	r1 := stub.Answer(
-		s.OnCombineTagged.MethodStub,
-		&call,
-		stub.Arms[HasherCombineTaggedCall, HasherCombineTaggedReturn]{
-			Invoke:   s.OnCombineTagged.invoke(r, left, right),
-			Fallback: s.OnCombineTagged.fallback,
-			Stamp: func(c *HasherCombineTaggedCall, r HasherCombineTaggedReturn) {
-				c.Result = r.Result
-			},
+	r1 := stub.Answer(s.OnCombineTagged.MethodStub, call, stub.Arms[HasherCombineTaggedCall, HasherCombineTaggedReturn]{
+		Invoke:   s.OnCombineTagged.invoke(r, left, right),
+		Fallback: s.OnCombineTagged.fallback,
+		Stamp: func(c HasherCombineTaggedCall, r HasherCombineTaggedReturn) HasherCombineTaggedCall {
+			c.Result = r.Result
+			return c
 		},
-	)
+	})
 	return r1.Result
 }
 
@@ -529,11 +530,12 @@ func (s *HasherNewStreamStub) invoke() func() HasherNewStreamReturn {
 // function of Func, then the results of Returns, and then the zero values.
 func (s *HasherStub) NewStream() crypto.Stream {
 	call := HasherNewStreamCall{}
-	r := stub.Answer(s.OnNewStream.MethodStub, &call, stub.Arms[HasherNewStreamCall, HasherNewStreamReturn]{
+	r := stub.Answer(s.OnNewStream.MethodStub, call, stub.Arms[HasherNewStreamCall, HasherNewStreamReturn]{
 		Invoke:   s.OnNewStream.invoke(),
 		Fallback: s.OnNewStream.fallback,
-		Stamp: func(c *HasherNewStreamCall, r HasherNewStreamReturn) {
+		Stamp: func(c HasherNewStreamCall, r HasherNewStreamReturn) HasherNewStreamCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
@@ -804,11 +806,12 @@ func (s *StreamSumStub) invoke() func() StreamSumReturn {
 // Func, then the results of Returns, and then the zero values.
 func (s *StreamStub) Sum() crypto.Digest {
 	call := StreamSumCall{}
-	r := stub.Answer(s.OnSum.MethodStub, &call, stub.Arms[StreamSumCall, StreamSumReturn]{
+	r := stub.Answer(s.OnSum.MethodStub, call, stub.Arms[StreamSumCall, StreamSumReturn]{
 		Invoke:   s.OnSum.invoke(),
 		Fallback: s.OnSum.fallback,
-		Stamp: func(c *StreamSumCall, r StreamSumReturn) {
+		Stamp: func(c StreamSumCall, r StreamSumReturn) StreamSumCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
@@ -831,7 +834,7 @@ func (s *StreamResetStub) invokeVoid() func() struct{} {
 // Func, then the results of Returns, and then the zero values.
 func (s *StreamStub) Reset() {
 	call := StreamResetCall{}
-	stub.Answer(s.OnReset.MethodStub, &call, stub.Arms[StreamResetCall, struct{}]{
+	stub.Answer(s.OnReset.MethodStub, call, stub.Arms[StreamResetCall, struct{}]{
 		Invoke: s.OnReset.invokeVoid(),
 	})
 }
@@ -853,7 +856,7 @@ func (s *StreamCloseStub) invokeVoid() func() struct{} {
 // Func, then the results of Returns, and then the zero values.
 func (s *StreamStub) Close() {
 	call := StreamCloseCall{}
-	stub.Answer(s.OnClose.MethodStub, &call, stub.Arms[StreamCloseCall, struct{}]{
+	stub.Answer(s.OnClose.MethodStub, call, stub.Arms[StreamCloseCall, struct{}]{
 		Invoke: s.OnClose.invokeVoid(),
 	})
 }
@@ -874,16 +877,17 @@ func (s *StreamWriteStub) invoke(p []byte) func() StreamWriteReturn {
 // Func, then the results of Returns, and then the zero values.
 func (s *StreamStub) Write(p []byte) (n int, err error) {
 	call := StreamWriteCall{P: p}
-	r := stub.Answer(s.OnWrite.MethodStub, &call, stub.Arms[StreamWriteCall, StreamWriteReturn]{
+	r := stub.Answer(s.OnWrite.MethodStub, call, stub.Arms[StreamWriteCall, StreamWriteReturn]{
 		Invoke:   s.OnWrite.invoke(p),
 		Fallback: s.OnWrite.fallback,
 		Fault:    func(err error) StreamWriteReturn { return StreamWriteReturn{Err: err} },
-		Stamp: func(c *StreamWriteCall, r StreamWriteReturn) {
+		Stamp: func(c StreamWriteCall, r StreamWriteReturn) StreamWriteCall {
 			c.N = r.N
 			c.Err = r.Err
+			return c
 		},
 	})
 	return r.N, r.Err
 }
 
-// dokimi:provenance sha256:4e621e4ce8362fe018cf86a3a7d0b7ed3ad6123c65b28e331e0e9bcc054de8f6
+// dokimi:provenance sha256:a5d88a1297bd4194b3debafdaa0bfd0f1bd2489e83a3ea3a130de32dd061fc73

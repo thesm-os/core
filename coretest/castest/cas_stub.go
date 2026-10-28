@@ -323,11 +323,12 @@ func (s *StoreHasherStub) invoke() func() StoreHasherReturn {
 // of Func, then the results of Returns, and then the zero values.
 func (s *StoreStub) Hasher() crypto.Hasher {
 	call := StoreHasherCall{}
-	r := stub.Answer(s.OnHasher.MethodStub, &call, stub.Arms[StoreHasherCall, StoreHasherReturn]{
+	r := stub.Answer(s.OnHasher.MethodStub, call, stub.Arms[StoreHasherCall, StoreHasherReturn]{
 		Invoke:   s.OnHasher.invoke(),
 		Fallback: s.OnHasher.fallback,
-		Stamp: func(c *StoreHasherCall, r StoreHasherReturn) {
+		Stamp: func(c StoreHasherCall, r StoreHasherReturn) StoreHasherCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
@@ -349,13 +350,14 @@ func (s *StorePutStub) invoke(ctx context.Context, d crypto.Digest, data []byte)
 // Func, then the results of Returns, and then the zero values.
 func (s *StoreStub) Put(ctx context.Context, d crypto.Digest, data []byte) (wrote bool, err error) {
 	call := StorePutCall{Ctx: ctx, D: d, Data: data}
-	r := stub.Answer(s.OnPut.MethodStub, &call, stub.Arms[StorePutCall, StorePutReturn]{
+	r := stub.Answer(s.OnPut.MethodStub, call, stub.Arms[StorePutCall, StorePutReturn]{
 		Invoke:   s.OnPut.invoke(ctx, d, data),
 		Fallback: s.OnPut.fallback,
 		Fault:    func(err error) StorePutReturn { return StorePutReturn{Err: err} },
-		Stamp: func(c *StorePutCall, r StorePutReturn) {
+		Stamp: func(c StorePutCall, r StorePutReturn) StorePutCall {
 			c.Wrote = r.Wrote
 			c.Err = r.Err
+			return c
 		},
 	})
 	return r.Wrote, r.Err
@@ -377,13 +379,14 @@ func (s *StoreGetStub) invoke(ctx context.Context, d crypto.Digest, dst []byte) 
 // Func, then the results of Returns, and then the zero values.
 func (s *StoreStub) Get(ctx context.Context, d crypto.Digest, dst []byte) ([]byte, error) {
 	call := StoreGetCall{Ctx: ctx, D: d, Dst: dst}
-	r := stub.Answer(s.OnGet.MethodStub, &call, stub.Arms[StoreGetCall, StoreGetReturn]{
+	r := stub.Answer(s.OnGet.MethodStub, call, stub.Arms[StoreGetCall, StoreGetReturn]{
 		Invoke:   s.OnGet.invoke(ctx, d, dst),
 		Fallback: s.OnGet.fallback,
 		Fault:    func(err error) StoreGetReturn { return StoreGetReturn{Err: err} },
-		Stamp: func(c *StoreGetCall, r StoreGetReturn) {
+		Stamp: func(c StoreGetCall, r StoreGetReturn) StoreGetCall {
 			c.Result = r.Result
 			c.Err = r.Err
+			return c
 		},
 	})
 	return r.Result, r.Err
@@ -405,13 +408,14 @@ func (s *StoreHasStub) invoke(ctx context.Context, d crypto.Digest) func() Store
 // Func, then the results of Returns, and then the zero values.
 func (s *StoreStub) Has(ctx context.Context, d crypto.Digest) (bool, error) {
 	call := StoreHasCall{Ctx: ctx, D: d}
-	r := stub.Answer(s.OnHas.MethodStub, &call, stub.Arms[StoreHasCall, StoreHasReturn]{
+	r := stub.Answer(s.OnHas.MethodStub, call, stub.Arms[StoreHasCall, StoreHasReturn]{
 		Invoke:   s.OnHas.invoke(ctx, d),
 		Fallback: s.OnHas.fallback,
 		Fault:    func(err error) StoreHasReturn { return StoreHasReturn{Err: err} },
-		Stamp: func(c *StoreHasCall, r StoreHasReturn) {
+		Stamp: func(c StoreHasCall, r StoreHasReturn) StoreHasCall {
 			c.Result = r.Result
 			c.Err = r.Err
+			return c
 		},
 	})
 	return r.Result, r.Err
@@ -651,13 +655,14 @@ func (s *StreamerPutStreamStub) invoke(
 // function of Func, then the results of Returns, and then the zero values.
 func (s *StreamerStub) PutStream(ctx context.Context, d crypto.Digest, r io.Reader) (wrote bool, err error) {
 	call := StreamerPutStreamCall{Ctx: ctx, D: d, R: r}
-	r0 := stub.Answer(s.OnPutStream.MethodStub, &call, stub.Arms[StreamerPutStreamCall, StreamerPutStreamReturn]{
+	r0 := stub.Answer(s.OnPutStream.MethodStub, call, stub.Arms[StreamerPutStreamCall, StreamerPutStreamReturn]{
 		Invoke:   s.OnPutStream.invoke(ctx, d, r),
 		Fallback: s.OnPutStream.fallback,
 		Fault:    func(err error) StreamerPutStreamReturn { return StreamerPutStreamReturn{Err: err} },
-		Stamp: func(c *StreamerPutStreamCall, r StreamerPutStreamReturn) {
+		Stamp: func(c StreamerPutStreamCall, r StreamerPutStreamReturn) StreamerPutStreamCall {
 			c.Wrote = r.Wrote
 			c.Err = r.Err
+			return c
 		},
 	})
 	return r0.Wrote, r0.Err
@@ -679,16 +684,17 @@ func (s *StreamerGetStreamStub) invoke(ctx context.Context, d crypto.Digest) fun
 // function of Func, then the results of Returns, and then the zero values.
 func (s *StreamerStub) GetStream(ctx context.Context, d crypto.Digest) (io.ReadCloser, error) {
 	call := StreamerGetStreamCall{Ctx: ctx, D: d}
-	r := stub.Answer(s.OnGetStream.MethodStub, &call, stub.Arms[StreamerGetStreamCall, StreamerGetStreamReturn]{
+	r := stub.Answer(s.OnGetStream.MethodStub, call, stub.Arms[StreamerGetStreamCall, StreamerGetStreamReturn]{
 		Invoke:   s.OnGetStream.invoke(ctx, d),
 		Fallback: s.OnGetStream.fallback,
 		Fault:    func(err error) StreamerGetStreamReturn { return StreamerGetStreamReturn{Err: err} },
-		Stamp: func(c *StreamerGetStreamCall, r StreamerGetStreamReturn) {
+		Stamp: func(c StreamerGetStreamCall, r StreamerGetStreamReturn) StreamerGetStreamCall {
 			c.Result = r.Result
 			c.Err = r.Err
+			return c
 		},
 	})
 	return r.Result, r.Err
 }
 
-// dokimi:provenance sha256:9471eb9595e43f2efb9985d5eb03c009563d72399c0844a0e89e8ae8369acbdb
+// dokimi:provenance sha256:78aa36187e060a8158f0e8b3e700245dce92be51ed6ef80e5cdb27895974edbf

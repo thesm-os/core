@@ -300,11 +300,12 @@ func (s *VerifierKeyIDStub) invoke() func() VerifierKeyIDReturn {
 // Func, then the results of Returns, and then the zero values.
 func (s *VerifierStub) KeyID() sign.KeyID {
 	call := VerifierKeyIDCall{}
-	r := stub.Answer(s.OnKeyID.MethodStub, &call, stub.Arms[VerifierKeyIDCall, VerifierKeyIDReturn]{
+	r := stub.Answer(s.OnKeyID.MethodStub, call, stub.Arms[VerifierKeyIDCall, VerifierKeyIDReturn]{
 		Invoke:   s.OnKeyID.invoke(),
 		Fallback: s.OnKeyID.fallback,
-		Stamp: func(c *VerifierKeyIDCall, r VerifierKeyIDReturn) {
+		Stamp: func(c VerifierKeyIDCall, r VerifierKeyIDReturn) VerifierKeyIDCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
@@ -326,11 +327,12 @@ func (s *VerifierPublicKeyStub) invoke() func() VerifierPublicKeyReturn {
 // function of Func, then the results of Returns, and then the zero values.
 func (s *VerifierStub) PublicKey() []byte {
 	call := VerifierPublicKeyCall{}
-	r := stub.Answer(s.OnPublicKey.MethodStub, &call, stub.Arms[VerifierPublicKeyCall, VerifierPublicKeyReturn]{
+	r := stub.Answer(s.OnPublicKey.MethodStub, call, stub.Arms[VerifierPublicKeyCall, VerifierPublicKeyReturn]{
 		Invoke:   s.OnPublicKey.invoke(),
 		Fallback: s.OnPublicKey.fallback,
-		Stamp: func(c *VerifierPublicKeyCall, r VerifierPublicKeyReturn) {
+		Stamp: func(c VerifierPublicKeyCall, r VerifierPublicKeyReturn) VerifierPublicKeyCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
@@ -352,11 +354,12 @@ func (s *VerifierAlgorithmStub) invoke() func() VerifierAlgorithmReturn {
 // function of Func, then the results of Returns, and then the zero values.
 func (s *VerifierStub) Algorithm() crypto.Algorithm {
 	call := VerifierAlgorithmCall{}
-	r := stub.Answer(s.OnAlgorithm.MethodStub, &call, stub.Arms[VerifierAlgorithmCall, VerifierAlgorithmReturn]{
+	r := stub.Answer(s.OnAlgorithm.MethodStub, call, stub.Arms[VerifierAlgorithmCall, VerifierAlgorithmReturn]{
 		Invoke:   s.OnAlgorithm.invoke(),
 		Fallback: s.OnAlgorithm.fallback,
-		Stamp: func(c *VerifierAlgorithmCall, r VerifierAlgorithmReturn) {
+		Stamp: func(c VerifierAlgorithmCall, r VerifierAlgorithmReturn) VerifierAlgorithmCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
@@ -378,11 +381,12 @@ func (s *VerifierVerifyStub) invoke(message, signature []byte) func() VerifierVe
 // of Func, then the results of Returns, and then the zero values.
 func (s *VerifierStub) Verify(message, signature []byte) bool {
 	call := VerifierVerifyCall{Message: message, Signature: signature}
-	r := stub.Answer(s.OnVerify.MethodStub, &call, stub.Arms[VerifierVerifyCall, VerifierVerifyReturn]{
+	r := stub.Answer(s.OnVerify.MethodStub, call, stub.Arms[VerifierVerifyCall, VerifierVerifyReturn]{
 		Invoke:   s.OnVerify.invoke(message, signature),
 		Fallback: s.OnVerify.fallback,
-		Stamp: func(c *VerifierVerifyCall, r VerifierVerifyReturn) {
+		Stamp: func(c VerifierVerifyCall, r VerifierVerifyReturn) VerifierVerifyCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
@@ -732,13 +736,14 @@ func (s *SignerSignStub) invoke(message []byte) func() SignerSignReturn {
 // Func, then the results of Returns, and then the zero values.
 func (s *SignerStub) Sign(message []byte) ([]byte, error) {
 	call := SignerSignCall{Message: message}
-	r := stub.Answer(s.OnSign.MethodStub, &call, stub.Arms[SignerSignCall, SignerSignReturn]{
+	r := stub.Answer(s.OnSign.MethodStub, call, stub.Arms[SignerSignCall, SignerSignReturn]{
 		Invoke:   s.OnSign.invoke(message),
 		Fallback: s.OnSign.fallback,
 		Fault:    func(err error) SignerSignReturn { return SignerSignReturn{Err: err} },
-		Stamp: func(c *SignerSignCall, r SignerSignReturn) {
+		Stamp: func(c SignerSignCall, r SignerSignReturn) SignerSignCall {
 			c.Result = r.Result
 			c.Err = r.Err
+			return c
 		},
 	})
 	return r.Result, r.Err
@@ -760,11 +765,12 @@ func (s *SignerKeyIDStub) invoke() func() SignerKeyIDReturn {
 // Func, then the results of Returns, and then the zero values.
 func (s *SignerStub) KeyID() sign.KeyID {
 	call := SignerKeyIDCall{}
-	r := stub.Answer(s.OnKeyID.MethodStub, &call, stub.Arms[SignerKeyIDCall, SignerKeyIDReturn]{
+	r := stub.Answer(s.OnKeyID.MethodStub, call, stub.Arms[SignerKeyIDCall, SignerKeyIDReturn]{
 		Invoke:   s.OnKeyID.invoke(),
 		Fallback: s.OnKeyID.fallback,
-		Stamp: func(c *SignerKeyIDCall, r SignerKeyIDReturn) {
+		Stamp: func(c SignerKeyIDCall, r SignerKeyIDReturn) SignerKeyIDCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
@@ -786,11 +792,12 @@ func (s *SignerPublicKeyStub) invoke() func() SignerPublicKeyReturn {
 // function of Func, then the results of Returns, and then the zero values.
 func (s *SignerStub) PublicKey() []byte {
 	call := SignerPublicKeyCall{}
-	r := stub.Answer(s.OnPublicKey.MethodStub, &call, stub.Arms[SignerPublicKeyCall, SignerPublicKeyReturn]{
+	r := stub.Answer(s.OnPublicKey.MethodStub, call, stub.Arms[SignerPublicKeyCall, SignerPublicKeyReturn]{
 		Invoke:   s.OnPublicKey.invoke(),
 		Fallback: s.OnPublicKey.fallback,
-		Stamp: func(c *SignerPublicKeyCall, r SignerPublicKeyReturn) {
+		Stamp: func(c SignerPublicKeyCall, r SignerPublicKeyReturn) SignerPublicKeyCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
@@ -812,11 +819,12 @@ func (s *SignerAlgorithmStub) invoke() func() SignerAlgorithmReturn {
 // function of Func, then the results of Returns, and then the zero values.
 func (s *SignerStub) Algorithm() crypto.Algorithm {
 	call := SignerAlgorithmCall{}
-	r := stub.Answer(s.OnAlgorithm.MethodStub, &call, stub.Arms[SignerAlgorithmCall, SignerAlgorithmReturn]{
+	r := stub.Answer(s.OnAlgorithm.MethodStub, call, stub.Arms[SignerAlgorithmCall, SignerAlgorithmReturn]{
 		Invoke:   s.OnAlgorithm.invoke(),
 		Fallback: s.OnAlgorithm.fallback,
-		Stamp: func(c *SignerAlgorithmCall, r SignerAlgorithmReturn) {
+		Stamp: func(c SignerAlgorithmCall, r SignerAlgorithmReturn) SignerAlgorithmCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
@@ -838,11 +846,12 @@ func (s *SignerVerifyStub) invoke(message, signature []byte) func() SignerVerify
 // of Func, then the results of Returns, and then the zero values.
 func (s *SignerStub) Verify(message, signature []byte) bool {
 	call := SignerVerifyCall{Message: message, Signature: signature}
-	r := stub.Answer(s.OnVerify.MethodStub, &call, stub.Arms[SignerVerifyCall, SignerVerifyReturn]{
+	r := stub.Answer(s.OnVerify.MethodStub, call, stub.Arms[SignerVerifyCall, SignerVerifyReturn]{
 		Invoke:   s.OnVerify.invoke(message, signature),
 		Fallback: s.OnVerify.fallback,
-		Stamp: func(c *SignerVerifyCall, r SignerVerifyReturn) {
+		Stamp: func(c SignerVerifyCall, r SignerVerifyReturn) SignerVerifyCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
@@ -1267,12 +1276,13 @@ func (s *StreamingSignerStub) NewSignStream() sign.SignStream {
 	call := StreamingSignerNewSignStreamCall{}
 	r := stub.Answer(
 		s.OnNewSignStream.MethodStub,
-		&call,
+		call,
 		stub.Arms[StreamingSignerNewSignStreamCall, StreamingSignerNewSignStreamReturn]{
 			Invoke:   s.OnNewSignStream.invoke(),
 			Fallback: s.OnNewSignStream.fallback,
-			Stamp: func(c *StreamingSignerNewSignStreamCall, r StreamingSignerNewSignStreamReturn) {
+			Stamp: func(c StreamingSignerNewSignStreamCall, r StreamingSignerNewSignStreamReturn) StreamingSignerNewSignStreamCall {
 				c.Result = r.Result
+				return c
 			},
 		},
 	)
@@ -1295,13 +1305,14 @@ func (s *StreamingSignerSignStub) invoke(message []byte) func() StreamingSignerS
 // Func, then the results of Returns, and then the zero values.
 func (s *StreamingSignerStub) Sign(message []byte) ([]byte, error) {
 	call := StreamingSignerSignCall{Message: message}
-	r := stub.Answer(s.OnSign.MethodStub, &call, stub.Arms[StreamingSignerSignCall, StreamingSignerSignReturn]{
+	r := stub.Answer(s.OnSign.MethodStub, call, stub.Arms[StreamingSignerSignCall, StreamingSignerSignReturn]{
 		Invoke:   s.OnSign.invoke(message),
 		Fallback: s.OnSign.fallback,
 		Fault:    func(err error) StreamingSignerSignReturn { return StreamingSignerSignReturn{Err: err} },
-		Stamp: func(c *StreamingSignerSignCall, r StreamingSignerSignReturn) {
+		Stamp: func(c StreamingSignerSignCall, r StreamingSignerSignReturn) StreamingSignerSignCall {
 			c.Result = r.Result
 			c.Err = r.Err
+			return c
 		},
 	})
 	return r.Result, r.Err
@@ -1323,11 +1334,12 @@ func (s *StreamingSignerKeyIDStub) invoke() func() StreamingSignerKeyIDReturn {
 // Func, then the results of Returns, and then the zero values.
 func (s *StreamingSignerStub) KeyID() sign.KeyID {
 	call := StreamingSignerKeyIDCall{}
-	r := stub.Answer(s.OnKeyID.MethodStub, &call, stub.Arms[StreamingSignerKeyIDCall, StreamingSignerKeyIDReturn]{
+	r := stub.Answer(s.OnKeyID.MethodStub, call, stub.Arms[StreamingSignerKeyIDCall, StreamingSignerKeyIDReturn]{
 		Invoke:   s.OnKeyID.invoke(),
 		Fallback: s.OnKeyID.fallback,
-		Stamp: func(c *StreamingSignerKeyIDCall, r StreamingSignerKeyIDReturn) {
+		Stamp: func(c StreamingSignerKeyIDCall, r StreamingSignerKeyIDReturn) StreamingSignerKeyIDCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
@@ -1351,12 +1363,13 @@ func (s *StreamingSignerStub) PublicKey() []byte {
 	call := StreamingSignerPublicKeyCall{}
 	r := stub.Answer(
 		s.OnPublicKey.MethodStub,
-		&call,
+		call,
 		stub.Arms[StreamingSignerPublicKeyCall, StreamingSignerPublicKeyReturn]{
 			Invoke:   s.OnPublicKey.invoke(),
 			Fallback: s.OnPublicKey.fallback,
-			Stamp: func(c *StreamingSignerPublicKeyCall, r StreamingSignerPublicKeyReturn) {
+			Stamp: func(c StreamingSignerPublicKeyCall, r StreamingSignerPublicKeyReturn) StreamingSignerPublicKeyCall {
 				c.Result = r.Result
+				return c
 			},
 		},
 	)
@@ -1381,12 +1394,13 @@ func (s *StreamingSignerStub) Algorithm() crypto.Algorithm {
 	call := StreamingSignerAlgorithmCall{}
 	r := stub.Answer(
 		s.OnAlgorithm.MethodStub,
-		&call,
+		call,
 		stub.Arms[StreamingSignerAlgorithmCall, StreamingSignerAlgorithmReturn]{
 			Invoke:   s.OnAlgorithm.invoke(),
 			Fallback: s.OnAlgorithm.fallback,
-			Stamp: func(c *StreamingSignerAlgorithmCall, r StreamingSignerAlgorithmReturn) {
+			Stamp: func(c StreamingSignerAlgorithmCall, r StreamingSignerAlgorithmReturn) StreamingSignerAlgorithmCall {
 				c.Result = r.Result
+				return c
 			},
 		},
 	)
@@ -1409,11 +1423,12 @@ func (s *StreamingSignerVerifyStub) invoke(message, signature []byte) func() Str
 // of Func, then the results of Returns, and then the zero values.
 func (s *StreamingSignerStub) Verify(message, signature []byte) bool {
 	call := StreamingSignerVerifyCall{Message: message, Signature: signature}
-	r := stub.Answer(s.OnVerify.MethodStub, &call, stub.Arms[StreamingSignerVerifyCall, StreamingSignerVerifyReturn]{
+	r := stub.Answer(s.OnVerify.MethodStub, call, stub.Arms[StreamingSignerVerifyCall, StreamingSignerVerifyReturn]{
 		Invoke:   s.OnVerify.invoke(message, signature),
 		Fallback: s.OnVerify.fallback,
-		Stamp: func(c *StreamingSignerVerifyCall, r StreamingSignerVerifyReturn) {
+		Stamp: func(c StreamingSignerVerifyCall, r StreamingSignerVerifyReturn) StreamingSignerVerifyCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
@@ -1649,14 +1664,15 @@ func (s *SignStreamStub) SignAndReset() ([]byte, error) {
 	call := SignStreamSignAndResetCall{}
 	r := stub.Answer(
 		s.OnSignAndReset.MethodStub,
-		&call,
+		call,
 		stub.Arms[SignStreamSignAndResetCall, SignStreamSignAndResetReturn]{
 			Invoke:   s.OnSignAndReset.invoke(),
 			Fallback: s.OnSignAndReset.fallback,
 			Fault:    func(err error) SignStreamSignAndResetReturn { return SignStreamSignAndResetReturn{Err: err} },
-			Stamp: func(c *SignStreamSignAndResetCall, r SignStreamSignAndResetReturn) {
+			Stamp: func(c SignStreamSignAndResetCall, r SignStreamSignAndResetReturn) SignStreamSignAndResetCall {
 				c.Result = r.Result
 				c.Err = r.Err
+				return c
 			},
 		},
 	)
@@ -1679,13 +1695,14 @@ func (s *SignStreamWriteStub) invoke(p []byte) func() SignStreamWriteReturn {
 // Func, then the results of Returns, and then the zero values.
 func (s *SignStreamStub) Write(p []byte) (n int, err error) {
 	call := SignStreamWriteCall{P: p}
-	r := stub.Answer(s.OnWrite.MethodStub, &call, stub.Arms[SignStreamWriteCall, SignStreamWriteReturn]{
+	r := stub.Answer(s.OnWrite.MethodStub, call, stub.Arms[SignStreamWriteCall, SignStreamWriteReturn]{
 		Invoke:   s.OnWrite.invoke(p),
 		Fallback: s.OnWrite.fallback,
 		Fault:    func(err error) SignStreamWriteReturn { return SignStreamWriteReturn{Err: err} },
-		Stamp: func(c *SignStreamWriteCall, r SignStreamWriteReturn) {
+		Stamp: func(c SignStreamWriteCall, r SignStreamWriteReturn) SignStreamWriteCall {
 			c.N = r.N
 			c.Err = r.Err
+			return c
 		},
 	})
 	return r.N, r.Err
@@ -2056,12 +2073,13 @@ func (s *StreamingVerifierStub) NewVerifyStream() sign.VerifyStream {
 	call := StreamingVerifierNewVerifyStreamCall{}
 	r := stub.Answer(
 		s.OnNewVerifyStream.MethodStub,
-		&call,
+		call,
 		stub.Arms[StreamingVerifierNewVerifyStreamCall, StreamingVerifierNewVerifyStreamReturn]{
 			Invoke:   s.OnNewVerifyStream.invoke(),
 			Fallback: s.OnNewVerifyStream.fallback,
-			Stamp: func(c *StreamingVerifierNewVerifyStreamCall, r StreamingVerifierNewVerifyStreamReturn) {
+			Stamp: func(c StreamingVerifierNewVerifyStreamCall, r StreamingVerifierNewVerifyStreamReturn) StreamingVerifierNewVerifyStreamCall {
 				c.Result = r.Result
+				return c
 			},
 		},
 	)
@@ -2084,11 +2102,12 @@ func (s *StreamingVerifierKeyIDStub) invoke() func() StreamingVerifierKeyIDRetur
 // Func, then the results of Returns, and then the zero values.
 func (s *StreamingVerifierStub) KeyID() sign.KeyID {
 	call := StreamingVerifierKeyIDCall{}
-	r := stub.Answer(s.OnKeyID.MethodStub, &call, stub.Arms[StreamingVerifierKeyIDCall, StreamingVerifierKeyIDReturn]{
+	r := stub.Answer(s.OnKeyID.MethodStub, call, stub.Arms[StreamingVerifierKeyIDCall, StreamingVerifierKeyIDReturn]{
 		Invoke:   s.OnKeyID.invoke(),
 		Fallback: s.OnKeyID.fallback,
-		Stamp: func(c *StreamingVerifierKeyIDCall, r StreamingVerifierKeyIDReturn) {
+		Stamp: func(c StreamingVerifierKeyIDCall, r StreamingVerifierKeyIDReturn) StreamingVerifierKeyIDCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
@@ -2112,12 +2131,13 @@ func (s *StreamingVerifierStub) PublicKey() []byte {
 	call := StreamingVerifierPublicKeyCall{}
 	r := stub.Answer(
 		s.OnPublicKey.MethodStub,
-		&call,
+		call,
 		stub.Arms[StreamingVerifierPublicKeyCall, StreamingVerifierPublicKeyReturn]{
 			Invoke:   s.OnPublicKey.invoke(),
 			Fallback: s.OnPublicKey.fallback,
-			Stamp: func(c *StreamingVerifierPublicKeyCall, r StreamingVerifierPublicKeyReturn) {
+			Stamp: func(c StreamingVerifierPublicKeyCall, r StreamingVerifierPublicKeyReturn) StreamingVerifierPublicKeyCall {
 				c.Result = r.Result
+				return c
 			},
 		},
 	)
@@ -2142,12 +2162,13 @@ func (s *StreamingVerifierStub) Algorithm() crypto.Algorithm {
 	call := StreamingVerifierAlgorithmCall{}
 	r := stub.Answer(
 		s.OnAlgorithm.MethodStub,
-		&call,
+		call,
 		stub.Arms[StreamingVerifierAlgorithmCall, StreamingVerifierAlgorithmReturn]{
 			Invoke:   s.OnAlgorithm.invoke(),
 			Fallback: s.OnAlgorithm.fallback,
-			Stamp: func(c *StreamingVerifierAlgorithmCall, r StreamingVerifierAlgorithmReturn) {
+			Stamp: func(c StreamingVerifierAlgorithmCall, r StreamingVerifierAlgorithmReturn) StreamingVerifierAlgorithmCall {
 				c.Result = r.Result
+				return c
 			},
 		},
 	)
@@ -2170,17 +2191,14 @@ func (s *StreamingVerifierVerifyStub) invoke(message, signature []byte) func() S
 // of Func, then the results of Returns, and then the zero values.
 func (s *StreamingVerifierStub) Verify(message, signature []byte) bool {
 	call := StreamingVerifierVerifyCall{Message: message, Signature: signature}
-	r := stub.Answer(
-		s.OnVerify.MethodStub,
-		&call,
-		stub.Arms[StreamingVerifierVerifyCall, StreamingVerifierVerifyReturn]{
-			Invoke:   s.OnVerify.invoke(message, signature),
-			Fallback: s.OnVerify.fallback,
-			Stamp: func(c *StreamingVerifierVerifyCall, r StreamingVerifierVerifyReturn) {
-				c.Result = r.Result
-			},
+	r := stub.Answer(s.OnVerify.MethodStub, call, stub.Arms[StreamingVerifierVerifyCall, StreamingVerifierVerifyReturn]{
+		Invoke:   s.OnVerify.invoke(message, signature),
+		Fallback: s.OnVerify.fallback,
+		Stamp: func(c StreamingVerifierVerifyCall, r StreamingVerifierVerifyReturn) StreamingVerifierVerifyCall {
+			c.Result = r.Result
+			return c
 		},
-	)
+	})
 	return r.Result
 }
 
@@ -2411,11 +2429,12 @@ func (s *VerifyStreamVerifyStub) invoke(sig []byte) func() VerifyStreamVerifyRet
 // of Func, then the results of Returns, and then the zero values.
 func (s *VerifyStreamStub) Verify(sig []byte) bool {
 	call := VerifyStreamVerifyCall{Sig: sig}
-	r := stub.Answer(s.OnVerify.MethodStub, &call, stub.Arms[VerifyStreamVerifyCall, VerifyStreamVerifyReturn]{
+	r := stub.Answer(s.OnVerify.MethodStub, call, stub.Arms[VerifyStreamVerifyCall, VerifyStreamVerifyReturn]{
 		Invoke:   s.OnVerify.invoke(sig),
 		Fallback: s.OnVerify.fallback,
-		Stamp: func(c *VerifyStreamVerifyCall, r VerifyStreamVerifyReturn) {
+		Stamp: func(c VerifyStreamVerifyCall, r VerifyStreamVerifyReturn) VerifyStreamVerifyCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
@@ -2437,16 +2456,17 @@ func (s *VerifyStreamWriteStub) invoke(p []byte) func() VerifyStreamWriteReturn 
 // Func, then the results of Returns, and then the zero values.
 func (s *VerifyStreamStub) Write(p []byte) (n int, err error) {
 	call := VerifyStreamWriteCall{P: p}
-	r := stub.Answer(s.OnWrite.MethodStub, &call, stub.Arms[VerifyStreamWriteCall, VerifyStreamWriteReturn]{
+	r := stub.Answer(s.OnWrite.MethodStub, call, stub.Arms[VerifyStreamWriteCall, VerifyStreamWriteReturn]{
 		Invoke:   s.OnWrite.invoke(p),
 		Fallback: s.OnWrite.fallback,
 		Fault:    func(err error) VerifyStreamWriteReturn { return VerifyStreamWriteReturn{Err: err} },
-		Stamp: func(c *VerifyStreamWriteCall, r VerifyStreamWriteReturn) {
+		Stamp: func(c VerifyStreamWriteCall, r VerifyStreamWriteReturn) VerifyStreamWriteCall {
 			c.N = r.N
 			c.Err = r.Err
+			return c
 		},
 	})
 	return r.N, r.Err
 }
 
-// dokimi:provenance sha256:56c7bca7b97044e005164a606ea1f77165fc37c0646f5f4f0d55e43527761d97
+// dokimi:provenance sha256:0494ff5254589fe9509f19e32cbb8e1743a24b3ddccd99792a653e6031e54c33

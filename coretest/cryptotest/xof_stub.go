@@ -252,11 +252,12 @@ func (s *XOFIDStub) invoke() func() XOFIDReturn {
 // Func, then the results of Returns, and then the zero values.
 func (s *XOFStub) ID() crypto.ID {
 	call := XOFIDCall{}
-	r := stub.Answer(s.OnID.MethodStub, &call, stub.Arms[XOFIDCall, XOFIDReturn]{
+	r := stub.Answer(s.OnID.MethodStub, call, stub.Arms[XOFIDCall, XOFIDReturn]{
 		Invoke:   s.OnID.invoke(),
 		Fallback: s.OnID.fallback,
-		Stamp: func(c *XOFIDCall, r XOFIDReturn) {
+		Stamp: func(c XOFIDCall, r XOFIDReturn) XOFIDCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
@@ -278,11 +279,12 @@ func (s *XOFAlgorithmStub) invoke() func() XOFAlgorithmReturn {
 // function of Func, then the results of Returns, and then the zero values.
 func (s *XOFStub) Algorithm() crypto.Algorithm {
 	call := XOFAlgorithmCall{}
-	r := stub.Answer(s.OnAlgorithm.MethodStub, &call, stub.Arms[XOFAlgorithmCall, XOFAlgorithmReturn]{
+	r := stub.Answer(s.OnAlgorithm.MethodStub, call, stub.Arms[XOFAlgorithmCall, XOFAlgorithmReturn]{
 		Invoke:   s.OnAlgorithm.invoke(),
 		Fallback: s.OnAlgorithm.fallback,
-		Stamp: func(c *XOFAlgorithmCall, r XOFAlgorithmReturn) {
+		Stamp: func(c XOFAlgorithmCall, r XOFAlgorithmReturn) XOFAlgorithmCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
@@ -304,11 +306,12 @@ func (s *XOFNewXOFStreamStub) invoke() func() XOFNewXOFStreamReturn {
 // function of Func, then the results of Returns, and then the zero values.
 func (s *XOFStub) NewXOFStream() crypto.XOFStream {
 	call := XOFNewXOFStreamCall{}
-	r := stub.Answer(s.OnNewXOFStream.MethodStub, &call, stub.Arms[XOFNewXOFStreamCall, XOFNewXOFStreamReturn]{
+	r := stub.Answer(s.OnNewXOFStream.MethodStub, call, stub.Arms[XOFNewXOFStreamCall, XOFNewXOFStreamReturn]{
 		Invoke:   s.OnNewXOFStream.invoke(),
 		Fallback: s.OnNewXOFStream.fallback,
-		Stamp: func(c *XOFNewXOFStreamCall, r XOFNewXOFStreamReturn) {
+		Stamp: func(c XOFNewXOFStreamCall, r XOFNewXOFStreamReturn) XOFNewXOFStreamCall {
 			c.Result = r.Result
+			return c
 		},
 	})
 	return r.Result
@@ -564,7 +567,7 @@ func (s *XOFStreamResetStub) invokeVoid() func() struct{} {
 // Func, then the results of Returns, and then the zero values.
 func (s *XOFStreamStub) Reset() {
 	call := XOFStreamResetCall{}
-	stub.Answer(s.OnReset.MethodStub, &call, stub.Arms[XOFStreamResetCall, struct{}]{
+	stub.Answer(s.OnReset.MethodStub, call, stub.Arms[XOFStreamResetCall, struct{}]{
 		Invoke: s.OnReset.invokeVoid(),
 	})
 }
@@ -585,13 +588,14 @@ func (s *XOFStreamWriteStub) invoke(p []byte) func() XOFStreamWriteReturn {
 // Func, then the results of Returns, and then the zero values.
 func (s *XOFStreamStub) Write(p []byte) (n int, err error) {
 	call := XOFStreamWriteCall{P: p}
-	r := stub.Answer(s.OnWrite.MethodStub, &call, stub.Arms[XOFStreamWriteCall, XOFStreamWriteReturn]{
+	r := stub.Answer(s.OnWrite.MethodStub, call, stub.Arms[XOFStreamWriteCall, XOFStreamWriteReturn]{
 		Invoke:   s.OnWrite.invoke(p),
 		Fallback: s.OnWrite.fallback,
 		Fault:    func(err error) XOFStreamWriteReturn { return XOFStreamWriteReturn{Err: err} },
-		Stamp: func(c *XOFStreamWriteCall, r XOFStreamWriteReturn) {
+		Stamp: func(c XOFStreamWriteCall, r XOFStreamWriteReturn) XOFStreamWriteCall {
 			c.N = r.N
 			c.Err = r.Err
+			return c
 		},
 	})
 	return r.N, r.Err
@@ -613,16 +617,17 @@ func (s *XOFStreamReadStub) invoke(p []byte) func() XOFStreamReadReturn {
 // Func, then the results of Returns, and then the zero values.
 func (s *XOFStreamStub) Read(p []byte) (n int, err error) {
 	call := XOFStreamReadCall{P: p}
-	r := stub.Answer(s.OnRead.MethodStub, &call, stub.Arms[XOFStreamReadCall, XOFStreamReadReturn]{
+	r := stub.Answer(s.OnRead.MethodStub, call, stub.Arms[XOFStreamReadCall, XOFStreamReadReturn]{
 		Invoke:   s.OnRead.invoke(p),
 		Fallback: s.OnRead.fallback,
 		Fault:    func(err error) XOFStreamReadReturn { return XOFStreamReadReturn{Err: err} },
-		Stamp: func(c *XOFStreamReadCall, r XOFStreamReadReturn) {
+		Stamp: func(c XOFStreamReadCall, r XOFStreamReadReturn) XOFStreamReadCall {
 			c.N = r.N
 			c.Err = r.Err
+			return c
 		},
 	})
 	return r.N, r.Err
 }
 
-// dokimi:provenance sha256:d51476689f61d6a6c4aed8dd5fc24595295d21a274e185b624530944941b112d
+// dokimi:provenance sha256:bb3adfffd83541ed637c47ea2c4ce193b5af684a0f7b4086be6413ab673a97e3
