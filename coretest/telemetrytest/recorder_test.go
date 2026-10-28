@@ -238,6 +238,54 @@ func TestRecorder(t *testing.T) {
 		})
 	})
 
+	t.Run("Bindings", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("counts each instrument that With returned for the attribute set in any order", func(t *testing.T) {
+			t.Parallel()
+			r := telemetrytest.NewRecorder()
+			g := r.Gauge(telemetry.InstrumentSpec{Name: gaugeName})
+			g.With([]telemetry.Attr{region, tier})
+			g.With([]telemetry.Attr{tier, region})
+			g.With([]telemetry.Attr{tier})
+			assert.Equal(t, r.Bindings(gaugeName, tier, region), 2,
+				"Bindings must count the two instruments of the attribute set")
+		})
+
+		t.Run("counts an instrument that Release ended", func(t *testing.T) {
+			t.Parallel()
+			r := telemetrytest.NewRecorder()
+			g := r.Gauge(telemetry.InstrumentSpec{Name: gaugeName})
+			g.With([]telemetry.Attr{region}).Release()
+			g.With([]telemetry.Attr{region})
+			assert.Equal(t, r.Bindings(gaugeName, region), 2,
+				"Bindings must count the released instrument and the instrument of the second With")
+		})
+
+		t.Run("does not count an instrument of a Recorder method", func(t *testing.T) {
+			t.Parallel()
+			r := telemetrytest.NewRecorder()
+			r.Histogram(telemetry.InstrumentSpec{Name: histogramName}).Record(t.Context(), 1)
+			assert.Equal(t, r.Bindings(histogramName), 0, "Bindings must count only the instruments that With returned")
+		})
+
+		t.Run("returns 0 for a name without an instrument", func(t *testing.T) {
+			t.Parallel()
+			r := telemetrytest.NewRecorder()
+			r.Counter(telemetry.InstrumentSpec{Name: counterName}).With([]telemetry.Attr{region})
+			assert.Equal(t, r.Bindings(gaugeName, region), 0,
+				"Bindings must return 0 for a name without an instrument")
+		})
+
+		t.Run("returns 0 for an attribute set without a series", func(t *testing.T) {
+			t.Parallel()
+			r := telemetrytest.NewRecorder()
+			r.Counter(telemetry.InstrumentSpec{Name: counterName}).With([]telemetry.Attr{region})
+			assert.Equal(t, r.Bindings(counterName, tier), 0,
+				"Bindings must return 0 for an attribute set without a series")
+		})
+	})
+
 	t.Run("keeps every value of emits on many goroutines", func(t *testing.T) {
 		t.Parallel()
 		const clients, adds = 4, 100

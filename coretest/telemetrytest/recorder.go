@@ -18,8 +18,8 @@ import (
 // emits: the spec of each instrument, every value of each series of an
 // instrument, and every span that ends. A test passes a Recorder as the
 // Reporter of the package, and reads the signals with [Recorder.Specs],
-// [Recorder.Values], [Recorder.Series], [Recorder.Bound] and
-// [Recorder.Spans].
+// [Recorder.Values], [Recorder.Series], [Recorder.Bound],
+// [Recorder.Bindings] and [Recorder.Spans].
 //
 // # Instruments and series
 //
@@ -43,6 +43,9 @@ import (
 // An instrument keeps no value after its Release. [Recorder.Bound] counts
 // the instruments of a series that With returned and that Release has not
 // ended, so a test detects a package that does not release what it binds.
+// [Recorder.Bindings] counts every instrument that With returned for a
+// series. A test then counts the bindings of a series, such as one for each
+// start of a component.
 //
 // # Spans
 //
@@ -93,6 +96,10 @@ type series struct {
 	// live is the number of the instruments of the series that With
 	// returned and that Release has not ended.
 	live int
+
+	// bindings is the number of the instruments of the series that With
+	// returned. It includes each instrument that Release ended.
+	bindings int
 }
 
 // bound is the state of one instrument value that a [Recorder] returns:
@@ -263,6 +270,34 @@ func (r *Recorder) Bound(name telemetry.InstrumentName, attrs ...telemetry.Attr)
 	return 0
 }
 
+// Bindings returns the number of the instruments that With returned for the
+// series of the instrument name with the attribute set attrs. The count
+// includes each instrument that Release ended. The order of attrs does not
+// matter. Bindings returns 0 for a name or an attribute set without a series.
+// An instrument that Counter, Gauge or Histogram returned does not count.
+//
+// A test checks that a package binds a series once for each start of a
+// component:
+//
+//	assert.Equal(t, rec.Bindings(unplacedName, cellAttr), 1,
+//		"the process must start one controller of the cell")
+//
+// # Allocation contract
+//
+// Bindings allocates a sorted copy of attrs.
+func (r *Recorder) Bindings(name telemetry.InstrumentName, attrs ...telemetry.Attr) int {
+	want := sortedAttrs(attrs)
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if s := r.findSeries(name, want); s != nil {
+		return s.bindings
+	}
+
+	return 0
+}
+
 // Spans returns every span that has ended, in the order of its End.
 //
 // # Allocation contract
@@ -377,6 +412,7 @@ func (b *bound) with(attrs []telemetry.Attr) *bound {
 
 	s := b.in.seriesOf(sorted)
 	s.live++
+	s.bindings++
 
 	return &bound{r: b.r, in: b.in, series: s, fromWith: true}
 }
