@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.35.0
+
+### Minor Changes
+
+- 13d08f4: Add `telemetrytest.Recorder.Bindings` to count every instrument that `With` binds to a series.
+
 ## 0.34.0
 
 ### Minor Changes
