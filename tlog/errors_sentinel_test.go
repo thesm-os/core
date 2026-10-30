@@ -29,6 +29,7 @@ func TestErrProof(t *testing.T) {
 		{"ErrLeafSize", tlog.ErrLeafSize},
 		{"ErrEntrySize", tlog.ErrEntrySize},
 		{"ErrBundle", tlog.ErrBundle},
+		{"ErrProofText", tlog.ErrProofText},
 		{"ErrStale", tlog.ErrStale},
 		{"ErrConfig", tlog.ErrConfig},
 	}
@@ -96,6 +97,7 @@ func TestErrRange(t *testing.T) {
 		{"ErrLeafSize", tlog.ErrLeafSize},
 		{"ErrEntrySize", tlog.ErrEntrySize},
 		{"ErrBundle", tlog.ErrBundle},
+		{"ErrProofText", tlog.ErrProofText},
 		{"ErrStale", tlog.ErrStale},
 		{"ErrConfig", tlog.ErrConfig},
 	}
@@ -163,6 +165,7 @@ func TestErrTilePath(t *testing.T) {
 		{"ErrLeafSize", tlog.ErrLeafSize},
 		{"ErrEntrySize", tlog.ErrEntrySize},
 		{"ErrBundle", tlog.ErrBundle},
+		{"ErrProofText", tlog.ErrProofText},
 		{"ErrStale", tlog.ErrStale},
 		{"ErrConfig", tlog.ErrConfig},
 	}
@@ -235,6 +238,7 @@ func TestErrTileSize(t *testing.T) {
 		{"ErrLeafSize", tlog.ErrLeafSize},
 		{"ErrEntrySize", tlog.ErrEntrySize},
 		{"ErrBundle", tlog.ErrBundle},
+		{"ErrProofText", tlog.ErrProofText},
 		{"ErrStale", tlog.ErrStale},
 		{"ErrConfig", tlog.ErrConfig},
 	}
@@ -307,6 +311,7 @@ func TestErrLeafSize(t *testing.T) {
 		{"ErrTileSize", tlog.ErrTileSize},
 		{"ErrEntrySize", tlog.ErrEntrySize},
 		{"ErrBundle", tlog.ErrBundle},
+		{"ErrProofText", tlog.ErrProofText},
 		{"ErrStale", tlog.ErrStale},
 		{"ErrConfig", tlog.ErrConfig},
 	}
@@ -379,6 +384,7 @@ func TestErrEntrySize(t *testing.T) {
 		{"ErrTileSize", tlog.ErrTileSize},
 		{"ErrLeafSize", tlog.ErrLeafSize},
 		{"ErrBundle", tlog.ErrBundle},
+		{"ErrProofText", tlog.ErrProofText},
 		{"ErrStale", tlog.ErrStale},
 		{"ErrConfig", tlog.ErrConfig},
 	}
@@ -451,6 +457,7 @@ func TestErrBundle(t *testing.T) {
 		{"ErrTileSize", tlog.ErrTileSize},
 		{"ErrLeafSize", tlog.ErrLeafSize},
 		{"ErrEntrySize", tlog.ErrEntrySize},
+		{"ErrProofText", tlog.ErrProofText},
 		{"ErrStale", tlog.ErrStale},
 		{"ErrConfig", tlog.ErrConfig},
 	}
@@ -507,6 +514,79 @@ func TestErrBundle(t *testing.T) {
 	})
 }
 
+// TestErrProofText checks the sentinel error ErrProofText. A caller
+// matches it with errors.Is and reads its message, so it has a message and
+// an identity of its own.
+func TestErrProofText(t *testing.T) {
+	t.Parallel()
+
+	others := []struct {
+		name string
+		err  error
+	}{
+		{"ErrProof", tlog.ErrProof},
+		{"ErrRange", tlog.ErrRange},
+		{"ErrTilePath", tlog.ErrTilePath},
+		{"ErrTileSize", tlog.ErrTileSize},
+		{"ErrLeafSize", tlog.ErrLeafSize},
+		{"ErrEntrySize", tlog.ErrEntrySize},
+		{"ErrBundle", tlog.ErrBundle},
+		{"ErrStale", tlog.ErrStale},
+		{"ErrConfig", tlog.ErrConfig},
+	}
+
+	t.Run("Error", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns a message", func(t *testing.T) {
+			t.Parallel()
+			assert.NotNil(t, tlog.ErrProofText, "ErrProofText is assigned")
+			assert.NotEqual(t, tlog.ErrProofText.Error(), "", "ErrProofText has a message")
+		})
+
+		t.Run("opens the message with the package prefix", func(t *testing.T) {
+			t.Parallel()
+			assert.HasPrefix(
+				t,
+				tlog.ErrProofText.Error(),
+				"tlog: ",
+				"the message of ErrProofText opens with the package prefix",
+			)
+		})
+
+		t.Run("returns a message of its own", func(t *testing.T) {
+			t.Parallel()
+			for _, other := range others {
+				expect.NotEqual(
+					t,
+					tlog.ErrProofText.Error(),
+					other.err.Error(),
+					"ErrProofText has the message of "+other.name,
+				)
+			}
+		})
+
+		t.Run("opens with the message of no other sentinel", func(t *testing.T) {
+			t.Parallel()
+			for _, other := range others {
+				expect.False(t, strings.HasPrefix(tlog.ErrProofText.Error(), other.err.Error()),
+					"the message of ErrProofText opens with the message of "+other.name)
+			}
+		})
+	})
+
+	t.Run("errors.Is", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("matches no other sentinel of the package", func(t *testing.T) {
+			t.Parallel()
+			for _, other := range others {
+				expect.ErrorIsNot(t, tlog.ErrProofText, other.err, "ErrProofText does not match "+other.name)
+			}
+		})
+	})
+}
+
 // TestErrStale checks the sentinel error ErrStale. A caller matches it
 // with errors.Is and reads its message, so it has a message and an
 // identity of its own.
@@ -524,6 +604,7 @@ func TestErrStale(t *testing.T) {
 		{"ErrLeafSize", tlog.ErrLeafSize},
 		{"ErrEntrySize", tlog.ErrEntrySize},
 		{"ErrBundle", tlog.ErrBundle},
+		{"ErrProofText", tlog.ErrProofText},
 		{"ErrConfig", tlog.ErrConfig},
 	}
 
@@ -591,6 +672,7 @@ func TestErrConfig(t *testing.T) {
 		{"ErrLeafSize", tlog.ErrLeafSize},
 		{"ErrEntrySize", tlog.ErrEntrySize},
 		{"ErrBundle", tlog.ErrBundle},
+		{"ErrProofText", tlog.ErrProofText},
 		{"ErrStale", tlog.ErrStale},
 	}
 
@@ -646,4 +728,4 @@ func TestErrConfig(t *testing.T) {
 	})
 }
 
-// dokimi:provenance sha256:b6e954ee0670217ee755dcfa0950cbebc6ab9311f68f0f5f8107471e9c72a0ed
+// dokimi:provenance sha256:20fe64ef4f3edf45d8ddeebd2d79ae00305fd621ef5b9ea8d1299932d0ff6869

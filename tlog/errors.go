@@ -45,6 +45,11 @@ var (
 	// [MaxBundleEntries] entries. It classifies as errs.Integrity.
 	ErrBundle = errs.WithClass(errors.New("tlog: malformed entry bundle"), errs.Integrity)
 
+	// ErrProofText is returned by [Proof.AppendText] and
+	// [Proof.UnmarshalText] for a proof that is not a C2SP tlog-proof. It
+	// classifies as errs.Invalid.
+	ErrProofText = errs.WithClass(errors.New("tlog: malformed tlog-proof"), errs.Invalid)
+
 	// ErrStale is returned by [Builder.Commit] for an [Update] that was
 	// not computed from the Builder's current tree. It classifies as
 	// errs.Conflict.
