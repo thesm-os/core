@@ -178,8 +178,11 @@ func New(h http.Handler, opts ...Option) (*Server, error) {
 //     Accept fails.
 //   - [ErrShutdown], joined with context.DeadlineExceeded, when the
 //     shutdown timeout elapses with requests in flight. Run then closes
-//     their connections. ErrShutdown joined with the error of closing a
-//     listener, when the close fails.
+//     their connections, and joins the error of that close. ErrShutdown
+//     joined with the error of closing a listener, when the close fails.
+//
+// A drain checks the result of http.Server.Serve after every shutdown, and
+// returns ErrServe for a failure of serving in place of ErrShutdown.
 func (s *Server) Run(ctx context.Context) error {
 	if !s.ran.CompareAndSwap(false, true) {
 		return ErrClosed
@@ -301,15 +304,13 @@ func (s *Server) drain(ctx context.Context, served <-chan error) error {
 	err := s.srv.Shutdown(ctx)
 	//dokimi:mutate-skip ror-true: Shutdown returns nil after its context ended only when the timer fires as the last connection closes, which no test can order
 	if err != nil {
-		// Shutdown returns once its context ends, and leaves the connections
-		// of the requests in flight open.
 		if ctx.Err() != nil {
-			_ = s.srv.Close()
-			//dokimi:mutate-skip sbr-delete: served has room for the result of serve, which then ends a moment after Run returns
-			<-served
-
-			return fmt.Errorf("%w: the timeout of %s elapsed: %w",
-				ErrShutdown, s.shutdownTimeout, context.DeadlineExceeded)
+			// Shutdown returns once its context ends, and leaves the
+			// connections of the requests in flight open for Close.
+			err = fmt.Errorf("%w: the timeout of %s elapsed: %w",
+				ErrShutdown, s.shutdownTimeout, errors.Join(context.DeadlineExceeded, s.srv.Close()))
+		} else {
+			err = fmt.Errorf("%w: %w", ErrShutdown, err)
 		}
 	}
 
@@ -317,11 +318,7 @@ func (s *Server) drain(ctx context.Context, served <-chan error) error {
 		return fmt.Errorf("%w: %w", ErrServe, serveErr)
 	}
 
-	if err != nil {
-		return fmt.Errorf("%w: %w", ErrShutdown, err)
-	}
-
-	return nil
+	return err
 }
 
 // expire returns a context of parent that ends when d elapses on the
