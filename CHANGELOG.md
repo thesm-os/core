@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.36.0
+
+### Minor Changes
+
+- 45f7405: Add `httpclient.Client.HTTPClient` to give a library that takes an `*http.Client` the guards of a `Client`.
+- 444affa: Add `tlog.Proof` to write and parse the C2SP tlog-proof of a record.
+
+### Patch Changes
+
+- e761b6d: Fix `httpserver.Server.Run` to join the error of `http.Server.Close` to the `ErrShutdown` of a drain that times out.
+- e761b6d: Fix `httpserver.Server.Run` to return `ErrServe` for a failure of serving during a drain that times out.
+
 ## 0.35.0
 
 ### Minor Changes
