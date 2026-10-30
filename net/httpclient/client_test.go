@@ -29,6 +29,7 @@ import (
 	"go.thesmos.sh/core/errs"
 	"go.thesmos.sh/core/net/httpclient"
 	"go.thesmos.sh/core/net/internal/semconv"
+	"go.thesmos.sh/core/resilience"
 	"go.thesmos.sh/core/telemetry"
 	"go.thesmos.sh/core/telemetry/noop"
 	"go.thesmos.sh/core/telemetry/w3c"
@@ -102,6 +103,12 @@ var loopback = httpclient.Options(httpclient.WithHosts("127.0.0.1"), httpclient.
 var failing = &net.Resolver{
 	PreferGo: true,
 	Dial:     func(context.Context, string, string) (net.Conn, error) { return nil, errDNS },
+}
+
+// doer is a client that a case sends its requests through: a Client, or the
+// http.Client that HTTPClient returns.
+type doer interface {
+	Do(req *http.Request) (*http.Response, error)
 }
 
 // span is a span stub that the tracer of a reporter started.
@@ -1397,11 +1404,235 @@ func TestClient(t *testing.T) {
 			expect.Equal(t, hits.Load(), int32(0), "the server must receive no request")
 		})
 	})
+
+	t.Run("HTTPClient", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns a client that sends a request to an admitted host", func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, body)
+			}))
+			t.Cleanup(srv.Close)
+
+			c, err := httpclient.New(dependency, required, loopback)
+			assert.NoError(t, err, "New must accept the options")
+
+			status, got, err := get(t, c.HTTPClient(), srv.URL)
+			assert.NoError(t, err, "the client must return the response")
+			expect.Equal(t, status, http.StatusOK, "the client must return the status of the response")
+			expect.Equal(t, got, body, "the client must return the body of the response")
+		})
+
+		t.Run("returns a client that returns ErrBlocked for a host that WithHosts does not admit", func(t *testing.T) {
+			t.Parallel()
+			c, err := httpclient.New(dependency, required, loopback)
+			assert.NoError(t, err, "New must accept the options")
+
+			_, _, err = get(t, c.HTTPClient(), "http://127.0.0.2/")
+			expect.ErrorIs(t, err, httpclient.ErrBlocked, "the client must refuse the host")
+			expect.Equal(t, errs.Classify(err), errs.Denied, "the refusal must classify as Denied")
+		})
+
+		t.Run("returns a client that returns ErrBlocked for an address that ReachPublic refuses", func(t *testing.T) {
+			t.Parallel()
+			var hits atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { hits.Add(1) }))
+			t.Cleanup(srv.Close)
+
+			c, err := httpclient.New(dependency, required, httpclient.WithHosts("127.0.0.1"))
+			assert.NoError(t, err, "New must accept the options")
+
+			_, _, err = get(t, c.HTTPClient(), srv.URL)
+			expect.ErrorIs(t, err, httpclient.ErrBlocked, "the dial of the client must check the address")
+			expect.Equal(t, hits.Load(), int32(0), "the server must receive no request")
+		})
+
+		t.Run("returns a client that follows 5 redirects", func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(redirector())
+			t.Cleanup(srv.Close)
+
+			c, err := httpclient.New(dependency, required, loopback)
+			assert.NoError(t, err, "New must accept the options")
+
+			status, _, err := get(t, c.HTTPClient(), srv.URL+"/redirect/5")
+			assert.NoError(t, err, "the client must follow the redirects")
+			assert.Equal(t, status, http.StatusOK, "the client must return the status after 5 redirects")
+		})
+
+		t.Run("returns a client that returns the sixth redirect response as it is", func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(redirector())
+			t.Cleanup(srv.Close)
+
+			c, err := httpclient.New(dependency, required, loopback)
+			assert.NoError(t, err, "New must accept the options")
+
+			status, _, err := get(t, c.HTTPClient(), srv.URL+"/redirect/6")
+			assert.NoError(t, err, "the client must return the redirect response")
+			assert.Equal(t, status, http.StatusFound, "the client must return the status of the sixth redirect")
+		})
+
+		t.Run("returns a client that returns ErrBlocked for a redirect to a host that WithHosts does not admit",
+			func(t *testing.T) {
+				t.Parallel()
+				srv := httptest.NewServer(http.RedirectHandler("http://127.0.0.2/", http.StatusFound))
+				t.Cleanup(srv.Close)
+
+				c, err := httpclient.New(dependency, required, loopback)
+				assert.NoError(t, err, "New must accept the options")
+
+				_, _, err = get(t, c.HTTPClient(), srv.URL)
+				assert.ErrorIs(t, err, httpclient.ErrBlocked, "the client must refuse the redirect")
+			})
+
+		t.Run("returns a client that returns ErrBlocked for a redirect from https to http", func(t *testing.T) {
+			t.Parallel()
+			plain := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+			t.Cleanup(plain.Close)
+
+			secure := httptest.NewTLSServer(http.RedirectHandler(plain.URL, http.StatusFound))
+			t.Cleanup(secure.Close)
+
+			transport, ok := secure.Client().Transport.(*http.Transport)
+			assert.True(t, ok, "the client of httptest must have an http.Transport")
+
+			c, err := httpclient.New(dependency, required, loopback, httpclient.WithTLS(transport.TLSClientConfig))
+			assert.NoError(t, err, "New must accept the options")
+
+			_, _, err = get(t, c.HTTPClient(), secure.URL)
+			assert.ErrorIs(t, err, httpclient.ErrBlocked, "the client must refuse the downgrade")
+		})
+
+		t.Run("returns a client that ends a request at the timeout", func(t *testing.T) {
+			t.Parallel()
+			release := make(chan struct{})
+			srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { <-release }))
+			t.Cleanup(srv.Close)
+			t.Cleanup(func() { close(release) })
+
+			c, err := httpclient.New(dependency, required, loopback, httpclient.WithTimeout(50*time.Millisecond))
+			assert.NoError(t, err, "New must accept the options")
+
+			_, _, err = get(t, c.HTTPClient(), srv.URL)
+			expect.ErrorIs(t, err, context.DeadlineExceeded, "the client must end the request at the timeout")
+			expect.Equal(t, errs.Classify(err), errs.Transient, "a request beyond its timeout must be Transient")
+		})
+
+		t.Run("returns a client that calls the function of WithPrepare", func(t *testing.T) {
+			t.Parallel()
+			tokens := make(chan string, 1)
+			srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+				tokens <- r.Header.Get("Authorization")
+			}))
+			t.Cleanup(srv.Close)
+
+			c, err := httpclient.New(dependency, required, loopback,
+				httpclient.WithPrepare(func(r *http.Request) error {
+					r.Header.Set("Authorization", "Bearer token")
+
+					return nil
+				}))
+			assert.NoError(t, err, "New must accept the options")
+
+			_, _, err = get(t, c.HTTPClient(), srv.URL)
+			assert.NoError(t, err, "the client must return the response")
+			assert.Equal(t, await(t, tokens, "the server must receive the request"), "Bearer token",
+				"the request must carry the header of the function of WithPrepare")
+		})
+
+		t.Run("returns a client that records the duration of a request", func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusNotFound)
+			}))
+			t.Cleanup(srv.Close)
+
+			r := newReporter(t)
+			c, err := httpclient.New(dependency, required, loopback, httpclient.WithReporter(r))
+			assert.NoError(t, err, "New must accept the options")
+
+			_, _, err = get(t, c.HTTPClient(), srv.URL)
+			assert.NoError(t, err, "the client must return the response")
+
+			sets := r.bound()
+			assert.Length(t, sets, 1, "the client must bind one set")
+			assert.Equal(t, sets[0].attrs, []telemetry.Attr{
+				telemetry.AttrString(semconv.RequestMethod, http.MethodGet),
+				telemetry.AttrString(semconv.ServerAddress, "127.0.0.1"),
+				telemetry.AttrInt(semconv.ServerPort, int64(port(t, srv.URL))),
+				telemetry.AttrInt(semconv.ResponseStatusCode, http.StatusNotFound),
+				telemetry.AttrString(semconv.ErrorType, "NotFound"),
+			}, "the set must have the attributes of the request")
+			sets[0].OnRecord.AssertCalledOnce(t, "the set must record the request")
+		})
+
+		t.Run("returns a client that logs a request that the classification refuses", func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusServiceUnavailable)
+			}))
+			t.Cleanup(srv.Close)
+
+			l := telemetrytest.NewRecords(slog.LevelDebug)
+			c, err := httpclient.New(dependency, required, loopback, httpclient.WithLogger(slog.New(l)))
+			assert.NoError(t, err, "New must accept the options")
+
+			status, _, err := get(t, c.HTTPClient(), srv.URL)
+			assert.NoError(t, err, "the client must return the response")
+			assert.Equal(t, status, http.StatusServiceUnavailable, "the client must return the status of the response")
+			assert.Length(t, l.All(), 1, "the client must log the failed request")
+		})
+
+		t.Run("returns a client that sends one attempt without the retrier", func(t *testing.T) {
+			t.Parallel()
+			var hits atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if hits.Add(1) == 1 {
+					w.WriteHeader(http.StatusServiceUnavailable)
+				}
+			}))
+			t.Cleanup(srv.Close)
+
+			retry := retrier(t, fake.New(origin))
+			c, err := httpclient.New(dependency, required, loopback, httpclient.WithRetrier(retry))
+			assert.NoError(t, err, "New must accept the options")
+
+			status, _, err := get(t, c.HTTPClient(), srv.URL)
+			assert.NoError(t, err, "the client must return the response")
+			expect.Equal(t, status, http.StatusServiceUnavailable, "the client must return the response of one attempt")
+			expect.Equal(t, hits.Load(), int32(1), "the server must receive one request")
+		})
+
+		t.Run("returns a client that sends a request through an open circuit", func(t *testing.T) {
+			t.Parallel()
+			var hits atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				hits.Add(1)
+				w.WriteHeader(http.StatusServiceUnavailable)
+			}))
+			t.Cleanup(srv.Close)
+
+			c, err := httpclient.New(dependency, required, loopback, httpclient.WithBreaker(breaker(t, 1)))
+			assert.NoError(t, err, "New must accept the options")
+
+			// The refused response of Do opens the circuit of the host.
+			_, _, err = get(t, c, srv.URL)
+			assert.NoError(t, err, "Do must return the refused response")
+			_, _, err = get(t, c, srv.URL)
+			assert.ErrorIs(t, err, resilience.ErrOpen, "the open circuit must refuse a second call of Do")
+
+			_, _, err = get(t, c.HTTPClient(), srv.URL)
+			assert.NoError(t, err, "the client must send the request through the open circuit")
+			assert.Equal(t, hits.Load(), int32(2), "the server must receive the call of Do and the request")
+		})
+	})
 }
 
 // get sends a GET of url with c.Do, and returns the status and the body of
 // its response, or the error of Do.
-func get(t *testing.T, c *httpclient.Client, url string) (int, string, error) {
+func get(t *testing.T, c doer, url string) (int, string, error) {
 	t.Helper()
 
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, url, http.NoBody)

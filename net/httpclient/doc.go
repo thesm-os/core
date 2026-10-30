@@ -10,7 +10,9 @@
 // a response that succeeded, and [Client.AppendFetch] appends it to a buffer
 // of the caller. [Client.AppendFetchBody] also sends the bytes of a buffer of
 // the caller as the request body, and reads none of them once it returns, so
-// the caller can reuse the buffer, such as a pooled one. Each Client has a
+// the caller can reuse the buffer, such as a pooled one. [Client.HTTPClient]
+// returns an *http.Client that sends each request through the guards of the
+// Client, for a library that takes an *http.Client. Each Client has a
 // transport of its own, never net/http's DefaultTransport, with a limit on
 // every phase of an attempt.
 //
@@ -66,7 +68,9 @@
 // whose caller cancelled it records no outcome in the circuit, and is not
 // retried. [WithPrepare] adds a function that prepares the request of each
 // attempt, such as one that signs it, and [WithClassify] replaces the
-// classification of the responses.
+// classification of the responses. The breaker and the retrier guard the
+// calls of a Client, and not the requests of the http.Client of HTTPClient,
+// which sends each request as one attempt.
 //
 // # Classification
 //
@@ -118,6 +122,10 @@
 //     room: 61 objects. The client allocates the first fence of the body of
 //     the attempt and its GetBody, and net/http allocates 4 objects over
 //     HTTP/1.1 for a request with a body.
+//
+// With Go 1.27.3, a GET through the http.Client of HTTPClient allocates 59
+// objects: the 55 of Do, and 4 objects of net/http's Client around the
+// transport.
 //
 // The tracer, the propagator, and the functions of WithPrepare and
 // WithClassify allocate on their own.

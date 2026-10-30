@@ -60,6 +60,13 @@ const (
 	// copies a body that it does not know to be in memory through a buffer.
 	appendFetchBodyAllocs = 61
 
+	// httpClientAllocs is the ceiling of a GET through the http.Client of
+	// HTTPClient: the 55 objects of Do, and 4 objects of net/http's Client
+	// around the transport. net/http copies the headers of the request and
+	// allocates the closure that copies them, copies its URL, and allocates
+	// the list of the requests of the call.
+	httpClientAllocs = 59
+
 	// patience bounds every wait of an internal case for its clients, above
 	// any correct wait, so a case fails where a defect would leave it
 	// waiting.
@@ -872,6 +879,29 @@ func TestClientAllocs(t *testing.T) {
 		})
 	})
 
+	t.Run("HTTPClient", func(t *testing.T) {
+		t.Run("of an untraced request", func(t *testing.T) {
+			client := piped(t, declared).HTTPClient()
+
+			var (
+				status int
+				errDo  error
+			)
+			expect.MaxAllocs(t, func() {
+				var resp *http.Response
+				if resp, errDo = client.Do(req); errDo != nil {
+					return
+				}
+
+				status = resp.StatusCode
+				_, _ = io.Copy(io.Discard, resp.Body)
+				_ = resp.Body.Close()
+			}, httpClientAllocs, "a request of HTTPClient must allocate as its documentation states")
+			assert.NoError(t, errDo, "the test must measure a request that succeeded")
+			assert.Equal(t, status, http.StatusOK, "the test must measure a response that succeeded")
+		})
+	})
+
 	t.Run("statusError", func(t *testing.T) {
 		t.Run("of a refused response without Retry-After", func(t *testing.T) {
 			c, err := New(dependency, required)
@@ -999,6 +1029,34 @@ func BenchmarkClient(b *testing.B) {
 
 			assert.NoError(b, errAppend, "the benchmark must measure a call that succeeded")
 			assert.Equal(b, string(got), payload, "the benchmark must measure a body that the client read")
+		})
+	})
+
+	b.Run("HTTPClient", func(b *testing.B) {
+		b.Run("of an untraced request", func(b *testing.B) {
+			client := piped(b, declared).HTTPClient()
+
+			var (
+				status int
+				errDo  error
+			)
+
+			c := bench.Start(b).Warmup(pipeWarmup).MaxAllocs(httpClientAllocs)
+			defer c.End()
+
+			for c.Loop() {
+				var resp *http.Response
+				if resp, errDo = client.Do(req); errDo != nil {
+					break
+				}
+
+				status = resp.StatusCode
+				_, _ = io.Copy(io.Discard, resp.Body)
+				_ = resp.Body.Close()
+			}
+
+			assert.NoError(b, errDo, "the benchmark must measure requests that succeeded")
+			assert.Equal(b, status, http.StatusOK, "the benchmark must measure a response that succeeded")
 		})
 	})
 

@@ -330,30 +330,7 @@ func New(name string, opts ...Option) (*Client, error) {
 // The tracer, the propagator, and the functions of WithPrepare and
 // WithClassify allocate on their own.
 func (c *Client) Do(req *http.Request) (*http.Response, error) {
-	k := &call{c: c, req: req}
-	resp, err := attempts(k, func(resp *http.Response, err error) (*http.Response, error) {
-		k.prev = resp
-
-		return resp, err
-	})
-
-	// When the breaker refuses the last attempt, the call returns no
-	// response, and the response of the attempt before it is still open.
-	if resp == nil && k.prev != nil {
-		discard(k.prev)
-	}
-
-	if resp == nil {
-		return nil, err
-	}
-
-	if err != nil && req.Context().Err() != nil {
-		discard(resp)
-
-		return nil, err
-	}
-
-	return resp, nil
+	return do(&call{c: c, req: req})
 }
 
 // Fetch sends req as Do does, and returns the body of a response that
@@ -453,6 +430,44 @@ func (c *Client) AppendFetchBody(dst []byte, req *http.Request, body []byte) ([]
 	}
 
 	return c.appendFetch(&call{c: c, req: req, body: body}, dst)
+}
+
+// HTTPClient returns an *http.Client that sends each request through the
+// guards of c, for a library that takes an *http.Client, such as the HTTP
+// transport of a Git client. Its transport sends each request as one attempt
+// of [Client.Do]:
+//
+//   - It admits the scheme and the host of the request and of each redirect,
+//     and refuses a redirect from https to http, with [ErrBlocked].
+//   - Each dial passes the address check of c.
+//   - The attempt has the limits of c and calls the function of
+//     [WithPrepare].
+//   - The attempt records the span, the duration and the log record that Do
+//     records. The classification of c sets the error type of the telemetry.
+//
+// The client follows at most 5 redirects, and returns the sixth redirect
+// response as it is. It returns a response whatever its status. The breaker
+// of [WithBreaker] and the retrier of [WithRetrier] guard Do alone.
+//
+// # Concurrency
+//
+// The client is safe for concurrent use, as c is.
+//
+// # Allocation contract
+//
+// HTTPClient allocates the http.Client. A request through it allocates as
+// an attempt of Do, and 4 objects of net/http's Client around the
+// transport: a copy of the headers of the request and the closure that
+// copies them, a copy of its URL, and the list of the requests of the call.
+// On a connection that the transport reuses, a GET allocates 59 objects with
+// Go 1.27.3.
+func (c *Client) HTTPClient() *http.Client {
+	return &http.Client{
+		Transport: guardedTransport{c},
+		// The transport follows each redirect through the client of c, which
+		// admits it, so this client returns a redirect response as it is.
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
 }
 
 // appendFetch sends the request of k under the guards of its client, and
@@ -621,7 +636,8 @@ func (a *attemptBody) end() {
 }
 
 // call is one call of [Client.Do], [Client.Fetch], [Client.AppendFetch] or
-// [Client.AppendFetchBody]: its request, the host and the port of its URL,
+// [Client.AppendFetchBody], or one request of the http.Client of
+// [Client.HTTPClient]: its request, the host and the port of its URL,
 // the response of the attempt before the current one, which the next
 // attempt discards, and the body bytes of AppendFetchBody.
 type call struct {
@@ -640,6 +656,52 @@ type call struct {
 	// sent reports that an attempt sent the request, so the next attempt
 	// sends the body that GetBody produces again.
 	sent bool
+
+	// direct reports a request of the http.Client of [Client.HTTPClient]. It
+	// sends one attempt, without the breaker and the retrier.
+	direct bool
+}
+
+// guardedTransport is the http.RoundTripper of the http.Client that
+// [Client.HTTPClient] returns.
+type guardedTransport struct {
+	c *Client
+}
+
+var _ http.RoundTripper = guardedTransport{}
+
+// RoundTrip sends req as one attempt of [Client.Do], without the breaker and
+// the retrier, and returns its response whatever its status.
+func (t guardedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return do(&call{c: t.c, req: req, direct: true})
+}
+
+// do sends the request of k as [Client.Do] describes, and returns the
+// response of the last attempt, whatever its status.
+func do(k *call) (*http.Response, error) {
+	resp, err := attempts(k, func(resp *http.Response, err error) (*http.Response, error) {
+		k.prev = resp
+
+		return resp, err
+	})
+
+	// When the breaker refuses the last attempt, the call returns no
+	// response, and the response of the attempt before it is still open.
+	if resp == nil && k.prev != nil {
+		discard(k.prev)
+	}
+
+	if resp == nil {
+		return nil, err
+	}
+
+	if err != nil && k.req.Context().Err() != nil {
+		discard(resp)
+
+		return nil, err
+	}
+
+	return resp, nil
 }
 
 // attempts sends the request of k under the guards of its client, as
@@ -736,9 +798,12 @@ func attempts[T any](k *call, read func(*http.Response, error) (T, error)) (T, e
 		err error
 	)
 
-	if c.retrier != nil && idempotent && (req.Body == nil || req.Body == http.NoBody || req.GetBody != nil) {
+	switch {
+	case k.direct:
+		v, err = attempt(ctx)
+	case c.retrier != nil && idempotent && (req.Body == nil || req.Body == http.NoBody || req.GetBody != nil):
 		v, err = resilience.Do(ctx, c.retrier, guarded)
-	} else {
+	default:
 		v, err = guarded(ctx)
 	}
 
