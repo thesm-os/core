@@ -51,7 +51,8 @@ func TestSliceCursor(t *testing.T) {
 			t.Parallel()
 			c := page.NewSliceCursor([]int{1, 2, 3, 4, 5}, "")
 			count := 0
-			for item := range c.Seq(t.Context()) {
+			for item, err := range c.Seq(t.Context()) {
+				assert.NoError(t, err, "the iteration must not fail")
 				count++
 				if item == 2 {
 					break
@@ -97,7 +98,10 @@ func TestSliceCursor(t *testing.T) {
 			c := page.NewSliceCursor([]int{1, 2}, "")
 			assert.Idempotent(t, func(struct{}) error { return c.Close() }, struct{}{}, func() []int {
 				var items []int
-				for item := range c.Seq(t.Context()) {
+				for item, err := range c.Seq(t.Context()) {
+					if err != nil {
+						return nil
+					}
 					items = append(items, item)
 				}
 
@@ -124,13 +128,18 @@ func TestSliceCursorAllocs(t *testing.T) {
 	t.Run("Seq", func(t *testing.T) {
 		c := page.NewSliceCursor(items, "")
 
-		var n int
+		var (
+			n    int
+			last error
+		)
 		expect.MaxAllocs(t, func() {
 			n = 0
-			for range c.Seq(ctx) {
+			for _, err := range c.Seq(ctx) {
+				last = err
 				n++
 			}
 		}, 0, "Seq must not allocate")
+		assert.NoError(t, last, "the test must measure items without an error")
 		assert.Equal(t, n, len(items), "the test must measure every item")
 	})
 
@@ -160,8 +169,8 @@ func BenchmarkSliceCursor(b *testing.B) {
 			ctx := b.Context()
 
 			var (
-				n   int
-				err error
+				n         int
+				err, last error
 			)
 
 			c := bench.Start(b).MaxAllocs(1)
@@ -170,12 +179,14 @@ func BenchmarkSliceCursor(b *testing.B) {
 			for c.Loop() {
 				cur := page.NewSliceCursor(items, "")
 				n = 0
-				for range cur.Seq(ctx) {
+				for _, itemErr := range cur.Seq(ctx) {
+					last = itemErr
 					n++
 				}
 				err = cur.Close()
 			}
 
+			assert.NoError(b, last, "the benchmark must measure items without an error")
 			assert.NoError(b, err, "the benchmark must measure a Close that succeeds")
 			assert.Equal(b, n, size.n, "the benchmark must measure every item")
 		})

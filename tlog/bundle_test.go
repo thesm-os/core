@@ -153,7 +153,8 @@ func TestBundle(t *testing.T) {
 		t.Run("stops when the caller stops", func(t *testing.T) {
 			t.Parallel()
 			n := 0
-			for range tlog.BundleEntries(bundle) {
+			for _, err := range tlog.BundleEntries(bundle) {
+				assert.NoError(t, err, "a well-formed bundle must iterate")
 				n++
 
 				break
@@ -197,12 +198,17 @@ func TestBundleAllocs(t *testing.T) {
 		bundle, err := tlog.AppendBundleEntry(nil, entry)
 		assert.NoError(t, err, "AppendBundleEntry must succeed")
 
-		n := 0
+		var (
+			n    int
+			last error
+		)
 		expect.MaxAllocs(t, func() {
-			for range tlog.BundleEntries(bundle) {
+			for _, err := range tlog.BundleEntries(bundle) {
+				last = err
 				n++
 			}
 		}, 0, "a range over BundleEntries must not allocate")
+		assert.NoError(t, last, "the test must measure entries that decode")
 		assert.NotEqual(t, n, 0, "the test must measure entries")
 	})
 
@@ -238,17 +244,22 @@ func BenchmarkBundle(b *testing.B) {
 		bundle, err := tlog.AppendBundleEntry(nil, entry)
 		assert.NoError(b, err, "AppendBundleEntry must succeed")
 
-		n := 0
+		var (
+			n    int
+			last error
+		)
 
 		c := bench.Start(b).MaxAllocs(0)
 		defer c.End()
 
 		for c.Loop() {
-			for range tlog.BundleEntries(bundle) {
+			for _, err := range tlog.BundleEntries(bundle) {
+				last = err
 				n++
 			}
 		}
 
+		assert.NoError(b, last, "the benchmark must measure entries that decode")
 		assert.NotEqual(b, n, 0, "the benchmark must measure entries")
 	})
 

@@ -85,8 +85,8 @@ func BenchmarkMapCursor(b *testing.B) {
 			ctx := b.Context()
 
 			var (
-				n   int
-				err error
+				n         int
+				err, last error
 			)
 
 			c := bench.Start(b).MaxAllocs(1)
@@ -95,12 +95,14 @@ func BenchmarkMapCursor(b *testing.B) {
 			for c.Loop() {
 				cur := page.NewMapCursor(entries, "")
 				n = 0
-				for range cur.Seq(ctx) {
+				for _, entryErr := range cur.Seq(ctx) {
+					last = entryErr
 					n++
 				}
 				err = cur.Close()
 			}
 
+			assert.NoError(b, last, "the benchmark must measure entries without an error")
 			assert.NoError(b, err, "the benchmark must measure a Close that succeeds")
 			assert.Equal(b, n, size.n, "the benchmark must measure every entry")
 		})
