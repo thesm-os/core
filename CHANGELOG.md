@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.37.0
+
+### Minor Changes
+
+- 7dc10a0: Add `skiplist.Config.SuffixBytes` to order the entries of a List by `sstable.CompareWithSuffix`.
+- 95c73eb: Add `sstable.CompareWithSuffix` to order entries whose keys end with a version.
+- 95c73eb: Add `sstable.ErrSuffix` for a table whose versions have another width than the `SuffixBytes` of the Reader.
+- 95c73eb: Add `sstable.FragmentBlock` and the fragment partitions of a table in partitions, which a Reader reads through its cache.
+- 95c73eb: Add `sstable.Merger.SuffixBytes` to merge sources whose keys end with a version.
+- 95c73eb: Add `SuffixBytes` to `sstable.WriterOptions` and `sstable.ReaderOptions` to order the entries of a table by `CompareWithSuffix`.
+- 95c73eb: Add `sstable.RangeDeleteIter.Err` to return the error of a read of a fragment partition.
+- 95c73eb: Add `sstable.Reader.Check` and `sstable.BlockDamage` to report each block of a table that fails its checks.
+- 95c73eb: **Breaking:** Pass the width of the versions to `sstable.NewFragmenter`.
+- 95c73eb: **Breaking:** Pass a context to each move of `sstable.RangeDeleteIter`.
+- 430be92: Pin the fragment partitions of a table of `blockcache.Cache.PinTable`.
+
 ## 0.36.0
 
 ### Minor Changes
