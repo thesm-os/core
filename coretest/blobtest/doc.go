@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package blobtest is the conformance suite of [blob.Store] and
-// [blob.RangeReader], with the test doubles of both interfaces.
+// [blob.RangeReader], with the test doubles of both interfaces and of
+// [blob.GetSigner] and [blob.CreateSigner].
 //
 // # Suites
 //
@@ -32,17 +33,17 @@
 //
 // # Doubles
 //
-// [StoreStub] and [RangeReaderStub] are recording doubles. Each method returns
-// the result of a function that a With option sets, such as [WithStorePut], a
-// fixed result, or the result of the implementation that [StoreStubDelegateTo]
-// or [RangeReaderStubDelegateTo] names.
+// [StoreStub], [RangeReaderStub], [GetSignerStub] and [CreateSignerStub] are
+// recording doubles. Each method returns the result of a function that a With
+// option sets, such as [WithStorePut], a fixed result, or the result of the
+// implementation of a DelegateTo option, such as [StoreStubDelegateTo].
 //
 // # Dependency position
 //
-// Imports bytes, context, errors, fmt, io, strconv, strings, sync, testing and
-// time of the standard library, go.dokimi.dev/assert, go.dokimi.dev/assert/prop,
-// go.dokimi.dev/conform and go.dokimi.dev/stub, and go.thesmos.sh/core/blob,
-// go.thesmos.sh/core/blob/memory, go.thesmos.sh/core/clock/fake,
-// go.thesmos.sh/core/errs, go.thesmos.sh/core/page and
-// go.thesmos.sh/core/version.
+// Imports bytes, context, errors, fmt, io, math/rand/v2, strconv, strings,
+// sync, testing and time of the standard library, go.dokimi.dev/assert,
+// go.dokimi.dev/assert/prop, go.dokimi.dev/conform and go.dokimi.dev/stub, and
+// go.thesmos.sh/core/blob, go.thesmos.sh/core/blob/memory,
+// go.thesmos.sh/core/clock/fake, go.thesmos.sh/core/errs,
+// go.thesmos.sh/core/page and go.thesmos.sh/core/version.
 package blobtest
