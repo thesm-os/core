@@ -7,6 +7,11 @@
 //
 // A Store keeps its objects in process memory, with no durability and no
 // capacity bound.
+//
+// A [Server] serves the objects of a Store over HTTP at a base URL. It
+// implements [blob.GetSigner] and [blob.CreateSigner], so a client without
+// the credentials of the store reads and creates objects through its signed
+// requests.
 package memory
 
 import (
@@ -40,6 +45,11 @@ var (
 	errBadContentType = errors.New("memory: content type is not a valid content type")
 	errAbsent         = errors.New("memory: object not present")
 	errBadOffset      = errors.New("memory: negative offset")
+	errNoStore        = errors.New("memory: a server has no store")
+	errBadBase        = errors.New("memory: the base URL is not absolute, or has a query or a fragment")
+	errBadExpiry      = errors.New("memory: the lifetime of a signed request is below one second or above the longest")
+	errNoContentType  = errors.New("memory: a signed create has no content type")
+	errBadSize        = errors.New("memory: the size of a signed create is below 1 or above the largest")
 )
 
 // object is a stored body and its metadata. No code writes to the body

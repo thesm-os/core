@@ -27,13 +27,27 @@
 // ranged reads finds the capability with [AsRangeReader] when it wires
 // the store, and refuses a store without it.
 //
+// # Signed requests
+//
+// A store whose backend signs HTTP requests implements the optional
+// capabilities [GetSigner] and [CreateSigner]. A client without the
+// credentials of the store sends a [SignedRequest] to the backend, so the
+// body does not pass through the process. A caller finds each capability
+// with [AsGetSigner] or [AsCreateSigner] when it wires the store.
+//
 // # Decorators
 //
-// A decorator that wraps a Store, for example to add tracing,
-// implements Unwrap() Store and returns the store it wraps.
-// [AsRangeReader] follows Unwrap to find a RangeReader behind any number
-// of decorators, so a decorator does not hide the capability of the
-// store it wraps.
+// A decorator that wraps a Store, for example to add tracing, implements
+// Unwrap() Store and returns the store it wraps. [AsRangeReader],
+// [AsGetSigner] and [AsCreateSigner] follow Unwrap through any number of
+// decorators.
+//
+// Each capability that an As function finds behind a decorator bypasses the
+// decorator. ReadRange calls the store that the decorator wraps, and the
+// backend serves a signed request without the process. A decorator does not
+// implement Unwrap when it changes the bytes that a store keeps or returns,
+// or which writes a store admits. An encrypting decorator and a quota are
+// examples.
 //
 // # Failure semantics
 //
@@ -45,7 +59,11 @@
 //   - A key that [ValidKey] rejects classifies as
 //     [go.thesmos.sh/core/errs.Invalid] on every method.
 //   - A content type that [ValidContentType] rejects classifies as
-//     [go.thesmos.sh/core/errs.Invalid] on [Store.Put].
+//     [go.thesmos.sh/core/errs.Invalid] on [Store.Put] and on
+//     [CreateSigner.SignCreate].
+//   - A lifetime that a signer refuses classifies as
+//     [go.thesmos.sh/core/errs.Invalid] on [GetSigner.SignGet] and on
+//     [CreateSigner.SignCreate]. So does a size that SignCreate refuses.
 //
 // The package defines no sentinel errors of its own.
 package blob
