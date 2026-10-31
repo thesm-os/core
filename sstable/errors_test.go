@@ -29,6 +29,7 @@ func TestErrors(t *testing.T) {
 		{name: "ErrTooLarge", give: sstable.ErrTooLarge, wantClass: errs.Invalid},
 		{name: "ErrRange", give: sstable.ErrRange, wantClass: errs.Invalid},
 		{name: "ErrPrefix", give: sstable.ErrPrefix, wantClass: errs.Invalid},
+		{name: "ErrSuffix", give: sstable.ErrSuffix, wantClass: errs.Invalid},
 		{name: "ErrCorrupt", give: sstable.ErrCorrupt, wantClass: errs.Integrity},
 	}
 

@@ -835,6 +835,11 @@ type blockCursor struct {
 	// after is the offset of the entry after the current one.
 	after int
 
+	// suffix is the width of the versions at the end of the keys of the
+	// block, which compare and restartCompare order as CompareWithSuffix
+	// orders them. init keeps it, so the owner of the cursor sets it once.
+	suffix int
+
 	// valid reports whether the cursor is on an entry.
 	valid bool
 }
@@ -1055,8 +1060,32 @@ func (c *blockCursor) restartCompare(i int, key []byte, seq uint64) (int, bool) 
 	}
 	//nolint:gosec // G115: unshared is at most len(p)
 	k := int(unshared) - seqLen
+	//dokimi:mutate-skip ror-false,sbr-delete: CompareWithSuffix of the width 0 orders as Compare, so the short path changes only the time
+	if c.suffix == 0 {
+		return Compare(p[:k], binary.BigEndian.Uint64(p[k:]), key, seq), true
+	}
 
-	return Compare(p[:k], binary.BigEndian.Uint64(p[k:]), key, seq), true
+	return CompareWithSuffix(p[:k], binary.BigEndian.Uint64(p[k:]), key, seq, c.suffix), true
+}
+
+// restartKey returns the internal key of the entry at the restart point i as
+// a part of the block, or nil for an entry whose header does not decode, that
+// shares a prefix with a key before it, or whose internal key does not fit
+// the entries or is shorter than a sequence. The entry of a restart offset
+// past the entries has 0 bytes. i is a restart point of the block.
+func (c *blockCursor) restartKey(i int) []byte {
+	p := c.block[min(int64(binary.BigEndian.Uint32(c.block[c.end+4*i:])), int64(c.end)):c.end]
+	shared, unshared, _, short := shortHeader(p)
+	n := 3
+	if !short {
+		shared, unshared, _, n = uvarints(p)
+	}
+	p = p[n:]
+	if shared != 0 || unshared > uint64(len(p)) || unshared < seqLen {
+		return nil
+	}
+
+	return p[:unshared:unshared]
 }
 
 // restartValue returns the value of the entry at the restart point i as a
@@ -1114,11 +1143,15 @@ func (c *blockCursor) decode(off int) bool {
 }
 
 // compare returns the order of the current entry and the entry (key, seq)
-// under Compare.
+// under CompareWithSuffix of the width of the versions of the cursor.
 func (c *blockCursor) compare(key []byte, seq uint64) int {
 	n := len(c.key) - seqLen
+	//dokimi:mutate-skip ror-false,sbr-delete: CompareWithSuffix of the width 0 orders as Compare, so the short path changes only the time
+	if c.suffix == 0 {
+		return Compare(c.key[:n], binary.BigEndian.Uint64(c.key[n:]), key, seq)
+	}
 
-	return Compare(c.key[:n], binary.BigEndian.Uint64(c.key[n:]), key, seq)
+	return CompareWithSuffix(c.key[:n], binary.BigEndian.Uint64(c.key[n:]), key, seq, c.suffix)
 }
 
 // shortHeader decodes the header of the entry at the start of p when the

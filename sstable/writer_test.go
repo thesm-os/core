@@ -78,8 +78,10 @@ var alone sync.Mutex
 
 // goldenFiles are the golden tables: the entries of goldenTable under the
 // zero options and under each setting of settings. The three in partitions
-// have format version 2. The last two have the fragments of goldenDeletes
-// and format version 3.
+// have format version 2. The tables with fragments have format version 3.
+// The table in partitions with fragments has fragment partitions. The last
+// two have the versioned entries of goldenTableOf and the fragments of
+// versionedGoldenDeletes.
 var goldenFiles = []struct {
 	name string
 	file string
@@ -99,8 +101,16 @@ var goldenFiles = []struct {
 		dels: goldenDeletes,
 	},
 	{
-		name: settings[8].name + " and fragments", file: "partitions-prefixes-fragments.sst", opts: settings[8].opts,
-		dels: goldenDeletes,
+		name: settings[8].name + " and fragment partitions", file: "partitions-prefixes-fragment-parts.sst",
+		opts: settings[8].opts, dels: goldenDeletes,
+	},
+	{
+		name: settings[7].name + " and versions", file: "prefixes-versions.sst", opts: versionedSettings[0],
+		dels: versionedGoldenDeletes,
+	},
+	{
+		name: settings[8].name + " and versions", file: "partitions-prefixes-versions.sst", opts: versionedSettings[1],
+		dels: versionedGoldenDeletes,
 	},
 }
 
@@ -130,6 +140,7 @@ var refusedOptions = []struct {
 		name: "returns ErrOptions for a Prefix with an empty name",
 		give: sstable.WriterOptions{FilterBits: 8, Prefix: fixedPrefix{n: 6}},
 	},
+	{name: "returns ErrOptions for a negative SuffixBytes", give: sstable.WriterOptions{SuffixBytes: -1}},
 }
 
 // pinned are the entries of the tables whose bytes MaxSize counts exactly.
@@ -161,6 +172,15 @@ var pinnedDeletes = []rangeDelete{
 	{start: bytes.Repeat([]byte{'a'}, 120), end: []byte("b"), seq: 8},
 	{start: bytes.Repeat([]byte{'b'}, 120), end: []byte("c"), seq: 7},
 }
+
+// pinnedPartition is the fragment of the tables in partitions whose bytes
+// MaxSize counts exactly. Its partition has one fragment, as many as the
+// bound counts for one call. Its empty start leaves the end alone in the
+// bytes of the calls, and the end is the key of the entry of the top-level
+// index of the fragments. The end of 128 bytes takes a varint of two bytes,
+// in the partition and with the sequence 0 in the top-level index, as the
+// bound counts them.
+var pinnedPartition = []rangeDelete{{start: []byte{}, end: bytes.Repeat([]byte{'b'}, 128), seq: 9}}
 
 // pinnedPrefix is the extraction of the pinned tables whose bytes MaxSize
 // counts exactly: the first 120 bytes of a key. Each of the first two pinned
@@ -345,6 +365,13 @@ func TestWriter(t *testing.T) {
 				prop.ForAll(t, "a table takes at most the bytes of MaxSize of its counts", func(c *prop.Case) {
 					opts := c.Draw(writerOptions, "options")
 					es, dels := c.Draw(sizedEntries, "entries"), c.Draw(fragments, "fragments")
+					if c.Draw(prop.Boolean(), "versions") {
+						opts.SuffixBytes = versionBytes
+						slices.SortFunc(es, func(a, b entry) int {
+							return sstable.CompareWithSuffix(a.key, a.seq, b.key, b.seq, versionBytes)
+						})
+						dels = c.Draw(versionedFragments, "fragments with versions")
+					}
 					bound, err := opts.MaxSize(countsOf(es, dels...))
 					assert.NoError(c, err, "MaxSize accepts the options")
 					assert.InRange(c, len(writeTable(c, opts, es, dels...)), 0, float64(bound),
@@ -477,18 +504,31 @@ func TestWriter(t *testing.T) {
 					giveEntries: pinned[:2],
 				},
 				{
-					name:        "returns the size of a table in partitions with fragments",
+					name:        "returns the size of a table in partitions with a fragment partition",
 					giveOpts:    sstable.WriterOptions{BlockSize: 1, RestartInterval: 1, PartitionSize: 1},
 					giveEntries: pinned,
-					giveDeletes: pinnedDeletes,
+					giveDeletes: pinnedPartition,
 				},
 				{
-					name: "returns the size of a table in partitions with a filter of prefixes and fragments",
+					name: "returns the size of a table in partitions with a filter of prefixes and a fragment partition",
 					giveOpts: sstable.WriterOptions{
 						BlockSize: 1, RestartInterval: 1, FilterBits: 8, PartitionSize: 1, Prefix: pinnedPrefix,
 					},
 					giveEntries: pinned[:2],
-					giveDeletes: pinnedDeletes,
+					giveDeletes: pinnedPartition,
+				},
+				{
+					name:        "returns the size of a table with versions",
+					giveOpts:    sstable.WriterOptions{BlockSize: 1, RestartInterval: 1, SuffixBytes: versionBytes},
+					giveEntries: pinned,
+				},
+				{
+					name: "returns the size of a table in partitions with versions and a fragment partition",
+					giveOpts: sstable.WriterOptions{
+						BlockSize: 1, RestartInterval: 1, PartitionSize: 1, SuffixBytes: versionBytes,
+					},
+					giveEntries: pinned,
+					giveDeletes: pinnedPartition,
 				},
 			}
 			for _, tt := range tests {
@@ -728,6 +768,104 @@ func TestWriter(t *testing.T) {
 			assert.Equal(t, prefix.calls, len(goldenKeys), "Add asks the extraction once for each key")
 		})
 
+		// Each case adds its entry after the key a at the version 5 and the
+		// sequence 2, in a table with versions of versionBytes bytes.
+		be := binary.BigEndian
+		versionsInOrder := []struct {
+			name string
+			give entry
+		}{
+			{
+				name: "adds a key that extends the key before it at a higher version",
+				give: entry{key: be.AppendUint64([]byte("a\x00"), 9), seq: 1},
+			},
+			{
+				name: "adds the key before it at a lower version",
+				give: entry{key: be.AppendUint64([]byte("a"), 4), seq: 3},
+			},
+			{
+				name: "adds the key and the version before it at a lower sequence",
+				give: entry{key: be.AppendUint64([]byte("a"), 5), seq: 1},
+			},
+		}
+		for _, tt := range versionsInOrder {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				w, err := sstable.NewWriter(discardSink{}, sstable.WriterOptions{SuffixBytes: versionBytes})
+				assert.NoError(t, err, "NewWriter accepts the width")
+				assert.NoError(t, w.Add(t.Context(), be.AppendUint64([]byte("a"), 5), 2, nil),
+					"Add adds the first entry")
+				assert.NoError(t, w.Add(t.Context(), tt.give.key, tt.give.seq, nil),
+					"Add takes the keys in the order of their bytes before their versions")
+			})
+		}
+
+		versionsOutOfOrder := []struct {
+			name string
+			give entry
+		}{
+			{
+				name: "returns ErrOrder for the key before it at a higher version",
+				give: entry{key: be.AppendUint64([]byte("a"), 9), seq: 1},
+			},
+			{
+				name: "returns ErrOrder for the key and the version before it at a higher sequence",
+				give: entry{key: be.AppendUint64([]byte("a"), 5), seq: 3},
+			},
+			{
+				name: "returns ErrOrder for a key before the key before it without their versions",
+				give: entry{key: be.AppendUint64(nil, 9), seq: 3},
+			},
+		}
+		for _, tt := range versionsOutOfOrder {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				w, err := sstable.NewWriter(discardSink{}, sstable.WriterOptions{SuffixBytes: versionBytes})
+				assert.NoError(t, err, "NewWriter accepts the width")
+				assert.NoError(t, w.Add(t.Context(), be.AppendUint64([]byte("a"), 5), 2, nil),
+					"Add adds the first entry")
+				assert.ErrorIs(t, w.Add(t.Context(), tt.give.key, tt.give.seq, nil), sstable.ErrOrder,
+					"Add refuses the entry")
+			})
+		}
+
+		t.Run("calls Prefix once for each distinct key without its version", func(t *testing.T) {
+			t.Parallel()
+			// The golden table with versions has two versions of each of its
+			// keys.
+			prefix := &countingPrefix{}
+			opts := sstable.WriterOptions{FilterBits: 8, Prefix: prefix, SuffixBytes: versionBytes}
+			writeTable(t, opts, goldenTableOf(opts))
+			assert.Equal(t, prefix.calls, len(goldenKeys), "Add asks the extraction once for each key")
+		})
+
+		t.Run("passes each key without its version to Prefix", func(t *testing.T) {
+			t.Parallel()
+			// The extraction maps the keys without their versions alone.
+			prefix := scriptedPrefix{"a": "a", "b": "b"}
+			es := []entry{
+				{key: be.AppendUint64([]byte("a"), 5), seq: 1},
+				{key: be.AppendUint64([]byte("b"), 5), seq: 1},
+			}
+			opts := sstable.WriterOptions{FilterBits: 16, Prefix: prefix, SuffixBytes: versionBytes}
+			r := openTable(t, writeTable(t, opts, es), sstable.ReaderOptions{Prefix: prefix, SuffixBytes: versionBytes})
+			may, err := r.MayContainPrefix(t.Context(), []byte("b"))
+			assert.NoError(t, err, "MayContainPrefix asks the filter of prefixes")
+			assert.True(t, may, "the filter of prefixes has the prefix of the key without its version")
+		})
+
+		t.Run("returns ErrPrefix for a prefix that includes a byte of the version", func(t *testing.T) {
+			t.Parallel()
+			// The prefix a\x00 is a byte prefix of the key a at the version 5, and
+			// not of a without its version.
+			prefix := scriptedPrefix{"a": "a\x00"}
+			w, err := sstable.NewWriter(discardSink{},
+				sstable.WriterOptions{FilterBits: 8, Prefix: prefix, SuffixBytes: versionBytes})
+			assert.NoError(t, err, "NewWriter accepts the options")
+			assert.ErrorIs(t, w.Add(t.Context(), be.AppendUint64([]byte("a"), 5), 1, nil), sstable.ErrPrefix,
+				"Add refuses the prefix")
+		})
+
 		t.Run("adds the hash of no prefix for a key without a prefix", func(t *testing.T) {
 			t.Parallel()
 			// The extraction maps a1 alone, so the table has one prefix.
@@ -850,6 +988,87 @@ func TestWriter(t *testing.T) {
 					"the refusal leaves the Writer unchanged")
 			})
 		}
+
+		// Each case adds its fragment after the fragment from b up to d at the
+		// version 5 and the sequence 5, in a table with versions.
+		be := binary.BigEndian
+		versioned := rangeDelete{start: be.AppendUint64([]byte("b"), 5), end: []byte("d"), seq: 5}
+		versionsInOrder := []struct {
+			name string
+			give rangeDelete
+		}{
+			{
+				name: "adds the fragment before at a lower version and a higher sequence",
+				give: rangeDelete{start: be.AppendUint64([]byte("b"), 4), end: []byte("d"), seq: 9},
+			},
+			{
+				name: "adds a fragment whose start without its version is before its end",
+				give: rangeDelete{start: be.AppendUint64([]byte("d"), 9), end: []byte("d\x00"), seq: 1},
+			},
+		}
+		for _, tt := range versionsInOrder {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				w, err := sstable.NewWriter(discardSink{}, sstable.WriterOptions{SuffixBytes: versionBytes})
+				assert.NoError(t, err, "NewWriter accepts the width")
+				assert.NoError(t, w.AddRangeDelete(t.Context(), versioned.start, versioned.end, versioned.seq),
+					"AddRangeDelete adds the first fragment")
+				assert.NoError(t, w.AddRangeDelete(t.Context(), tt.give.start, tt.give.end, tt.give.seq),
+					"AddRangeDelete takes the fragment")
+			})
+		}
+
+		versionsRefused := []struct {
+			name    string
+			give    rangeDelete
+			wantErr error
+		}{
+			{
+				name:    "returns ErrRange for a start without its version at its end",
+				give:    rangeDelete{start: be.AppendUint64([]byte("e"), 1), end: []byte("e"), seq: 1},
+				wantErr: sstable.ErrRange,
+			},
+			{
+				name:    "returns ErrOrder for the fragment before at a higher version",
+				give:    rangeDelete{start: be.AppendUint64([]byte("b"), 6), end: []byte("d"), seq: 1},
+				wantErr: sstable.ErrOrder,
+			},
+			{
+				name:    "returns ErrOrder for the fragment before at its version and its sequence",
+				give:    rangeDelete{start: be.AppendUint64([]byte("b"), 5), end: []byte("d"), seq: 5},
+				wantErr: sstable.ErrOrder,
+			},
+			{
+				name:    "returns ErrOrder for a start without its version before the end of the fragment before",
+				give:    rangeDelete{start: be.AppendUint64([]byte("c"), 9), end: []byte("e"), seq: 1},
+				wantErr: sstable.ErrOrder,
+			},
+		}
+		for _, tt := range versionsRefused {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				w, err := sstable.NewWriter(discardSink{}, sstable.WriterOptions{SuffixBytes: versionBytes})
+				assert.NoError(t, err, "NewWriter accepts the width")
+				assert.NoError(t, w.AddRangeDelete(t.Context(), versioned.start, versioned.end, versioned.seq),
+					"AddRangeDelete adds the first fragment")
+				assert.ErrorIs(t, w.AddRangeDelete(t.Context(), tt.give.start, tt.give.end, tt.give.seq), tt.wantErr,
+					"AddRangeDelete refuses the fragment")
+			})
+		}
+
+		t.Run("ends a fragment partition at the first fragment after PartitionSize bytes", func(t *testing.T) {
+			t.Parallel()
+			// Each entry of the golden fragments takes 25 bytes. The second entry
+			// brings the first partition to 50 bytes, and the third entry is a
+			// position of the fragment of the second. The fourth entry starts the
+			// next partition.
+			l := newLayout(t, sstable.WriterOptions{PartitionSize: 40}, nil, goldenDeletes...)
+			counts := make([]int, 0, len(l.fragmentParts))
+			for _, part := range l.fragmentParts {
+				counts = append(counts, len(restarts(l.data[part.off:part.off+part.n])))
+			}
+			assert.Equal(t, counts, []int{3, 2}, "the positions of one fragment are in one partition")
+		})
 
 		t.Run("returns ErrTooLarge for a fragment that does not fit the block of fragments", func(t *testing.T) {
 			t.Parallel()
@@ -993,6 +1212,27 @@ func TestWriter(t *testing.T) {
 			expect.Equal(t, r.Summary().Entries, int64(0), "the summary counts no entry")
 		})
 
+		t.Run("records the width of the versions of a table without fragments and prefixes", func(t *testing.T) {
+			t.Parallel()
+			l := newLayout(t, sstable.WriterOptions{SuffixBytes: versionBytes}, nil)
+			footer := l.data[len(l.data)-footerLen:]
+			expect.Equal(t, binary.BigEndian.Uint32(footer[footerVersion:]), uint32(placedVersion),
+				"a table with versions has format version 3")
+			places := l.data[l.places.off : l.places.off+l.places.n]
+			flags, _ := binary.Uvarint(places)
+			expect.Equal(t, flags, uint64(suffixFlag), "the block of places has the flag of versions")
+			expect.Equal(t, places[len(places)-1], byte(versionBytes), "the width follows the name")
+		})
+
+		t.Run("writes the fragments of a table in partitions into fragment partitions", func(t *testing.T) {
+			t.Parallel()
+			l := newLayout(t, partsOfOne, nil, goldenDeletes...)
+			flags, _ := binary.Uvarint(l.data[l.places.off:])
+			expect.Equal(t, flags, uint64(partitionedFlag|fragmentPartsFlag),
+				"the block of places has the flags of partitions and of fragment partitions")
+			expect.Length(t, l.fragmentParts, 4, "each of the four fragments takes a partition")
+		})
+
 		t.Run("returns ErrClosed for a second Close", func(t *testing.T) {
 			t.Parallel()
 			w, err := sstable.NewWriter(discardSink{}, sstable.WriterOptions{})
@@ -1060,7 +1300,8 @@ func TestWriter(t *testing.T) {
 		for _, tt := range goldenFiles {
 			t.Run("writes the bytes of the golden table for "+tt.name, func(t *testing.T) {
 				t.Parallel()
-				golden.Match(t, tt.file, writeTable(t, tt.opts, goldenTable(), tt.dels...), golden.ShouldUpdate())
+				golden.Match(t, tt.file, writeTable(t, tt.opts, goldenTableOf(tt.opts), tt.dels...),
+					golden.ShouldUpdate())
 			})
 		}
 

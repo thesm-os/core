@@ -5,6 +5,7 @@ package sstable_test
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/binary"
 	"errors"
@@ -79,8 +80,11 @@ const (
 	// placedVersion is the format version of a table with a block of places.
 	placedVersion = 3
 	// partitionedFlag is the flag of the block of places of a table with
-	// partitions.
-	partitionedFlag = 1
+	// partitions, fragmentPartsFlag the flag of a table with fragment
+	// partitions, and suffixFlag the flag of a table with versions.
+	partitionedFlag   = 1
+	fragmentPartsFlag = 2
+	suffixFlag        = 4
 )
 
 // The names of the extractions of prefixes of the cases.
@@ -150,6 +154,21 @@ var goldenDeletes = []rangeDelete{
 	{start: []byte("key 040"), end: []byte("key 041"), seq: 3},
 }
 
+// versionedGoldenDeletes are the fragments of goldenDeletes in the golden
+// tables with versions. The start of each fragment ends with the sequence of
+// the fragment as its version, so the positions of one fragment follow one
+// another by version.
+var versionedGoldenDeletes = func() []rangeDelete {
+	ds := make([]rangeDelete, 0, len(goldenDeletes))
+	for _, d := range goldenDeletes {
+		ds = append(ds, rangeDelete{
+			start: binary.BigEndian.AppendUint64(bytes.Clone(d.start), d.seq), end: d.end, seq: d.seq,
+		})
+	}
+
+	return ds
+}()
+
 // castagnoli is the table of CRC32C, the checksum of the blocks and the
 // footer of a table.
 var castagnoli = crc32.MakeTable(crc32.Castagnoli)
@@ -215,6 +234,18 @@ var settings = []struct {
 	},
 }
 
+// versionedSettings are the options of the golden tables with versions: the
+// settings with a filter of prefixes, without partitions and in partitions,
+// with versions of versionBytes bytes.
+var versionedSettings = func() []sstable.WriterOptions {
+	opts := []sstable.WriterOptions{settings[7].opts, settings[8].opts}
+	for i := range opts {
+		opts[i].SuffixBytes = versionBytes
+	}
+
+	return opts
+}()
+
 // keys are the keys that the generators draw most often. They share
 // prefixes, and the empty key comes first.
 var keys = [][]byte{
@@ -249,6 +280,30 @@ var entries = prop.Composite(func(c *prop.Case) []entry {
 		})
 	}
 	slices.SortFunc(es, func(a, b entry) int { return sstable.Compare(a.key, a.seq, b.key, b.seq) })
+
+	return slices.CompactFunc(es, func(a, b entry) bool { return bytes.Equal(a.key, b.key) && a.seq == b.seq })
+})
+
+// versionedEntries generates runs of up to 300 entries of a table with
+// versions of versionBytes bytes, in the order of CompareWithSuffix, without
+// two entries of one key and one sequence. Each key comes from keys, as
+// entries draws it, followed by a version up to 3, so a run repeats a key at
+// other versions and other sequences. The keys a and aa make a key that is a
+// prefix of another.
+var versionedEntries = prop.Composite(func(c *prop.Case) []entry {
+	n := c.Draw(prop.Integer(0, 300), "entries")
+	es := make([]entry, 0, n)
+	for range n {
+		es = append(es, entry{
+			key: binary.BigEndian.AppendUint64(bytes.Clone(c.Draw(prop.SampledFrom(keys...), "key")),
+				c.Draw(prop.Integer[uint64](0, 3), "version")),
+			seq:   c.Draw(prop.Integer[uint64](0, 3), "seq"),
+			value: c.Draw(prop.Bytes(prop.MaxSize(40)), "value"),
+		})
+	}
+	slices.SortFunc(es, func(a, b entry) int {
+		return sstable.CompareWithSuffix(a.key, a.seq, b.key, b.seq, versionBytes)
+	})
 
 	return slices.CompactFunc(es, func(a, b entry) bool { return bytes.Equal(a.key, b.key) && a.seq == b.seq })
 })
@@ -293,6 +348,44 @@ var fragments = prop.Composite(func(c *prop.Case) []rangeDelete {
 		slices.Sort(seqs)
 		for _, seq := range slices.Backward(slices.Compact(seqs)) {
 			fs = append(fs, rangeDelete{start: bounds[i-1], end: bounds[i], seq: seq})
+		}
+	}
+
+	return fs
+})
+
+// versionedFragments generates the fragments of a table with versions of
+// versionBytes bytes, between consecutive bounds of up to 12 drawn bounds as
+// fragments draws them. Each fragment has up to three distinct positions of
+// a version up to 9 and a sequence, which follow one another by version and
+// then by sequence from the highest to the lowest. The start of each
+// position ends with its version, and the end has no version.
+var versionedFragments = prop.Composite(func(c *prop.Case) []rangeDelete {
+	type position struct{ version, seq uint64 }
+
+	bound := prop.OneOf(prop.SampledFrom(keys...), prop.Bytes(prop.MaxSize(30)))
+	n := c.Draw(prop.Integer(0, 12), "bounds")
+	bounds := make([][]byte, 0, n)
+	for range n {
+		bounds = append(bounds, c.Draw(bound, "bound"))
+	}
+	slices.SortFunc(bounds, bytes.Compare)
+	bounds = slices.CompactFunc(bounds, bytes.Equal)
+	var fs []rangeDelete
+	for i := 1; i < len(bounds); i++ {
+		ps := make([]position, 0, 3)
+		for range c.Draw(prop.Integer(0, 3), "positions") {
+			ps = append(ps, position{
+				version: c.Draw(prop.Integer[uint64](0, 9), "version"), seq: c.Draw(prop.Integer[uint64](0, 5), "seq"),
+			})
+		}
+		slices.SortFunc(ps, func(a, b position) int {
+			return cmp.Or(cmp.Compare(b.version, a.version), cmp.Compare(b.seq, a.seq))
+		})
+		for _, p := range slices.Compact(ps) {
+			fs = append(fs, rangeDelete{
+				start: binary.BigEndian.AppendUint64(bytes.Clone(bounds[i-1]), p.version), end: bounds[i], seq: p.seq,
+			})
 		}
 	}
 
@@ -402,8 +495,9 @@ type layout struct {
 
 	// filterParts, prefixParts and indexParts are the partitions of a table
 	// in partitions, in their order. The last key of a partition of a filter
-	// has no sequence.
-	filterParts, prefixParts, indexParts []place
+	// has no sequence. fragmentParts are the fragment partitions of a table
+	// with them, whose last key is the end of their last fragment.
+	filterParts, prefixParts, indexParts, fragmentParts []place
 }
 
 // newLayout writes a table of the entries and the fragments under opts, and
@@ -437,12 +531,12 @@ func parseLayout(data []byte) *layout {
 		},
 	}
 	version := be.Uint32(f[footerVersion:])
-	partitioned := version == partitionedVersion
+	partitioned, fragmentParts := version == partitionedVersion, false
 	if version == placedVersion {
 		l.places, l.filter = l.filter, place{}
 		block := data[l.places.off : l.places.off+l.places.n]
 		flags, n := binary.Uvarint(block)
-		partitioned, block = flags == partitionedFlag, block[n:]
+		partitioned, fragmentParts, block = flags&partitionedFlag != 0, flags&fragmentPartsFlag != 0, block[n:]
 		for _, p := range []*place{&l.filter, &l.fragments, &l.prefix} {
 			off, n1 := binary.Uvarint(block)
 			size, n2 := binary.Uvarint(block[n1:])
@@ -457,6 +551,9 @@ func parseLayout(data []byte) *layout {
 		}
 		if l.prefix.n != 0 {
 			l.prefixParts = indexPlaces(data, l.prefix)
+		}
+		if fragmentParts {
+			l.fragmentParts = indexPlaces(data, l.fragments)
 		}
 		indexes = l.indexParts
 	}
@@ -499,7 +596,7 @@ func indexPlaces(data []byte, index place) []place {
 func (l *layout) seal() {
 	be := binary.BigEndian
 	parts := []place{l.filter, l.prefix, l.fragments, l.index, l.places}
-	for _, b := range slices.Concat(l.blocks, l.filterParts, l.prefixParts, l.indexParts, parts) {
+	for _, b := range slices.Concat(l.blocks, l.filterParts, l.prefixParts, l.indexParts, l.fragmentParts, parts) {
 		if b.n == 0 {
 			continue
 		}
@@ -605,6 +702,21 @@ func goldenTable() []entry {
 			seq:   seq,
 			value: []byte(strings.Repeat(fmt.Sprintf("value of %s at %d. ", key, seq), 1+i%3)),
 		})
+	}
+
+	return es
+}
+
+// goldenTableOf returns the entries of the golden table under opts: the
+// entries of goldenTable. Under a SuffixBytes each key ends with the
+// sequence of its entry as its version, so the entries keep their order.
+func goldenTableOf(opts sstable.WriterOptions) []entry {
+	es := goldenTable()
+	if opts.SuffixBytes == 0 {
+		return es
+	}
+	for i := range es {
+		es[i].key = binary.BigEndian.AppendUint64(es[i].key, es[i].seq)
 	}
 
 	return es
@@ -727,14 +839,24 @@ func restartEntry(p []byte) (ikey, value []byte) {
 	return p[:header[1]], p[header[1] : header[1]+header[2]]
 }
 
-// readAll reads every block of a table through a cursor and every key
-// through Get under ctx, and returns the first error. With an extraction of
-// prefixes, it also asks MayContainPrefix for the prefix of each key, so it
-// reads every partition of the filter of prefixes.
+// readAll reads every block of a table through a cursor, every fragment
+// partition through a cursor of fragments and every key through Get under
+// ctx, and returns the first error. With an extraction of prefixes, it also
+// asks MayContainPrefix for the prefix of each key, so it reads every
+// partition of the filter of prefixes.
 func readAll(ctx context.Context, r *sstable.Reader, es []entry, prefix sstable.PrefixExtractor) error {
 	it := r.NewIter(sstable.IterOptions{})
 	defer it.Close()
 	if _, err := scanAll(ctx, it); err != nil {
+		return err
+	}
+	frags := r.RangeDeletes()
+	defer frags.Close()
+	ok := frags.First(ctx)
+	for ok {
+		ok = frags.Next(ctx)
+	}
+	if err := frags.Err(); err != nil {
 		return err
 	}
 	for _, e := range es {

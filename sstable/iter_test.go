@@ -219,6 +219,38 @@ func TestIter(t *testing.T) {
 	t.Run("SeekGE", func(t *testing.T) {
 		t.Parallel()
 
+		t.Run("moves to the first entry not before the probe in a table with versions", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "SeekGE and Next yield the entries of a model in the order of CompareWithSuffix",
+				func(c *prop.Case) {
+					es := c.Draw(versionedEntries, "entries")
+					opts := c.Draw(prop.SampledFrom(settings[:7]...), "setting").opts
+					opts.SuffixBytes = versionBytes
+					it := openTable(c, writeTable(c, opts, es), sstable.ReaderOptions{SuffixBytes: versionBytes}).
+						NewIter(sstable.IterOptions{})
+					defer it.Close()
+					ctx := c.Context()
+					for range 10 {
+						probe := entry{
+							key: binary.BigEndian.AppendUint64(bytes.Clone(c.Draw(prop.SampledFrom(keys...), "key")),
+								c.Draw(prop.Integer[uint64](0, 4), "version")),
+							seq: c.Draw(prop.Integer[uint64](0, 4), "seq"),
+						}
+						i, _ := slices.BinarySearchFunc(es, probe, func(a, b entry) int {
+							return sstable.CompareWithSuffix(a.key, a.seq, b.key, b.seq, versionBytes)
+						})
+						var got []entry
+						for ok := it.SeekGE(ctx, probe.key, probe.seq); ok && len(got) < 3; ok = it.Next(ctx) {
+							got = append(got,
+								entry{key: bytes.Clone(it.Key()), seq: it.Seq(), value: bytes.Clone(it.Value())})
+						}
+						assert.NoError(c, it.Err(), "the cursor reads the table")
+						assert.Equal(c, got, es[i:min(i+3, len(es))], "the cursor yields the entries from the probe on",
+							assert.EquateEmpty())
+					}
+				})
+		})
+
 		for _, tt := range settings {
 			t.Run("moves to the first entry not before the probe in a table "+tt.name, func(t *testing.T) {
 				t.Parallel()
@@ -385,6 +417,40 @@ func TestIter(t *testing.T) {
 
 	t.Run("SeekLT", func(t *testing.T) {
 		t.Parallel()
+
+		t.Run("moves to the last entry before the probe in a table with versions", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "SeekLT and Prev yield the entries of a model in the order of CompareWithSuffix",
+				func(c *prop.Case) {
+					es := c.Draw(versionedEntries, "entries")
+					opts := c.Draw(prop.SampledFrom(settings[:7]...), "setting").opts
+					opts.SuffixBytes = versionBytes
+					it := openTable(c, writeTable(c, opts, es), sstable.ReaderOptions{SuffixBytes: versionBytes}).
+						NewIter(sstable.IterOptions{})
+					defer it.Close()
+					ctx := c.Context()
+					for range 10 {
+						probe := entry{
+							key: binary.BigEndian.AppendUint64(bytes.Clone(c.Draw(prop.SampledFrom(keys...), "key")),
+								c.Draw(prop.Integer[uint64](0, 4), "version")),
+							seq: c.Draw(prop.Integer[uint64](0, 4), "seq"),
+						}
+						i, _ := slices.BinarySearchFunc(es, probe, func(a, b entry) int {
+							return sstable.CompareWithSuffix(a.key, a.seq, b.key, b.seq, versionBytes)
+						})
+						var got []entry
+						for ok := it.SeekLT(ctx, probe.key, probe.seq); ok && len(got) < 3; ok = it.Prev(ctx) {
+							got = append(got,
+								entry{key: bytes.Clone(it.Key()), seq: it.Seq(), value: bytes.Clone(it.Value())})
+						}
+						assert.NoError(c, it.Err(), "the cursor reads the table")
+						want := slices.Clone(es[max(i-3, 0):i])
+						slices.Reverse(want)
+						assert.Equal(c, got, want, "the cursor yields the entries before the probe back",
+							assert.EquateEmpty())
+					}
+				})
+		})
 
 		for _, tt := range settings {
 			t.Run("moves to the last entry before the probe in a table "+tt.name, func(t *testing.T) {

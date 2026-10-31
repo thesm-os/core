@@ -515,6 +515,20 @@ func TestMerger(t *testing.T) {
 				})
 		})
 
+		t.Run("yields the union of sources with versions in the order of CompareWithSuffix", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "a merge with SuffixBytes yields the entries of its sources by CompareWithSuffix",
+				func(c *prop.Case) {
+					sources, want := drawVersioned(c)
+					m := sstable.Merger{SuffixBytes: versionBytes}
+					m.Reset(sources)
+					got, err := scanAll(c.Context(), &m)
+					assert.NoError(c, err, "the merge reads its sources")
+					assert.Equal(c, got, want, "the merge yields the sorted union", assert.EquateEmpty())
+					assert.NoError(c, m.Close(), "the merge closes its sources")
+				})
+		})
+
 		t.Run("interleaves a List with a table of the same entries", func(t *testing.T) {
 			t.Parallel()
 			es := goldenTable()
@@ -578,6 +592,35 @@ func TestMerger(t *testing.T) {
 				}
 				assert.Equal(c, got, wantEntries, "the merge yields the sorted union back", assert.EquateEmpty())
 			})
+		})
+
+		t.Run("turns back in the order of CompareWithSuffix", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "Prev after Next of a merge with SuffixBytes yields the entries before its place back",
+				func(c *prop.Case) {
+					sources, want := drawVersioned(c)
+					m := sstable.Merger{SuffixBytes: versionBytes}
+					m.Reset(sources)
+					if !m.First(c.Context()) {
+						assert.Empty(c, want, "First finds no entry in an empty union")
+
+						return
+					}
+					i := c.Draw(prop.Integer(0, len(want)-1), "place")
+					for range i {
+						assert.True(c, m.Next(c.Context()), "Next moves to the next entry of the union")
+					}
+					var got []entry
+					for ok := m.Prev(c.Context()); ok && len(got) < len(want); ok = m.Prev(c.Context()) {
+						got = append(got, entry{key: bytes.Clone(m.Key()), seq: m.Seq(), value: bytes.Clone(m.Value())})
+					}
+					assert.NoError(c, m.Err(), "the merge reads its sources")
+					back := slices.Clone(want[:i])
+					slices.Reverse(back)
+					assert.Equal(c, got, back, "Prev yields the entries of the union before the place back",
+						assert.EquateEmpty())
+					assert.NoError(c, m.Close(), "the merge closes its sources")
+				})
 		})
 
 		t.Run("interleaves a List with a table of the same entries", func(t *testing.T) {
@@ -1006,6 +1049,55 @@ func drawRuns(c *prop.Case, least int) ([][]entry, []sourced) {
 	})
 
 	return runs, union
+}
+
+// drawVersioned draws one to three runs of entries with versions of
+// versionBytes bytes, each as the cursor of a table or of a List with that
+// width. It returns the cursors with their union in the order of a merge: by
+// CompareWithSuffix, then by the number of the run. The value of each entry
+// starts with the number of its run.
+func drawVersioned(c *prop.Case) ([]sstable.Source, []entry) {
+	n := c.Draw(prop.Integer(1, 3), "sources")
+	sources := make([]sstable.Source, 0, n)
+	var union []sourced
+	for s := range n {
+		drawn := c.Draw(versionedEntries, "entries")
+		run := make([]entry, 0, len(drawn))
+		for _, e := range drawn {
+			e.value = append([]byte{byte(s)}, e.value...)
+			run = append(run, e)
+			union = append(union, sourced{entry: e, source: s})
+		}
+		if c.Draw(prop.Boolean(), "table") {
+			opts := c.Draw(prop.SampledFrom(settings[:7]...), "setting").opts
+			opts.SuffixBytes = versionBytes
+			r := openTable(c, writeTable(c, opts, run), sstable.ReaderOptions{SuffixBytes: versionBytes})
+			sources = append(sources, r.NewIter(sstable.IterOptions{}))
+
+			continue
+		}
+		l, err := skiplist.New(skiplist.Config{
+			DataBytes: listBytes, NodeBytes: listBytes, Seed: 1, SuffixBytes: versionBytes,
+		})
+		assert.NoError(c, err, "New returns a List")
+		for _, e := range run {
+			assert.NoError(c, l.Add(e.key, e.seq, e.value), "Add adds the entry of the run")
+		}
+		sources = append(sources, l.NewIter())
+	}
+	slices.SortStableFunc(union, func(a, b sourced) int {
+		if c := sstable.CompareWithSuffix(a.key, a.seq, b.key, b.seq, versionBytes); c != 0 {
+			return c
+		}
+
+		return a.source - b.source
+	})
+	want := make([]entry, 0, len(union))
+	for _, s := range union {
+		want = append(want, s.entry)
+	}
+
+	return sources, want
 }
 
 // sliceSources returns a sliceSource over each run.

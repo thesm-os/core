@@ -25,9 +25,10 @@ const (
 )
 
 // Merger is a [Source] over the merge of other sources. It yields the union
-// of their entries in the order of [Compare], and entries that compare equal
-// in the order of their sources. A move back yields them in the reverse
-// order. The zero Merger has no sources.
+// of their entries in the order of [CompareWithSuffix] of its SuffixBytes,
+// which is the order of [Compare] without versions. It yields entries that
+// compare equal in the order of their sources. A move back yields them in
+// the reverse order. The zero Merger has no sources and orders by Compare.
 //
 // A Merger keeps the sources that are on an entry in a binary heap, with the
 // key and the sequence of the entry of each source. The heap orders them by
@@ -65,6 +66,11 @@ type Merger struct {
 	// heap is a binary heap of the sources that are on an entry. Its top is
 	// the source of the current entry.
 	heap []mergeItem
+
+	// SuffixBytes is the width in bytes of the version at the end of each
+	// key of the sources, as the SuffixBytes of [WriterOptions] states. The
+	// sources of one Merger order their entries by the same width.
+	SuffixBytes int
 
 	// reverse reports whether the last move went back. The heap then orders
 	// the sources from the last entry of the union.
@@ -359,6 +365,8 @@ func (m *Merger) turn(ctx context.Context) bool {
 			continue
 		}
 		ok := s.SeekGE(ctx, key, seq)
+		// Two entries are equal at every width exactly when their keys and
+		// their sequences are equal, so Compare decides the equality.
 		//dokimi:mutate-skip ror-boundary: the loop skips the top, so j never equals top
 		before := ok && j < top.src && Compare(s.Key(), s.Seq(), key, seq) == 0
 		if m.reverse && before {
@@ -417,14 +425,22 @@ func (m *Merger) down(i int) {
 
 // less reports whether the source of a is before the source of b in the
 // order of the heap. Forward, a is before b when its entry is before the
-// entry of b by Compare, or equal to it with the source of a below the source
-// of b. Back, the order is the reverse. less compares the keys and the
-// sequences of the heap.
+// entry of b by CompareWithSuffix of SuffixBytes, or equal to it with the
+// source of a below the source of b. Back, the order is the reverse. less
+// compares the keys and the sequences of the heap. It calls Compare for the
+// width 0, which saves the call of CompareWithSuffix on each comparison.
 func (m *Merger) less(a, b *mergeItem) bool {
 	if m.reverse {
 		a, b = b, a
 	}
-	if c := Compare(a.key, a.seq, b.key, b.seq); c != 0 {
+	var c int
+	//dokimi:mutate-skip ror-false: CompareWithSuffix of the width 0 orders as Compare, so the short path changes only the time
+	if m.SuffixBytes == 0 {
+		c = Compare(a.key, a.seq, b.key, b.seq)
+	} else {
+		c = CompareWithSuffix(a.key, a.seq, b.key, b.seq, m.SuffixBytes)
+	}
+	if c != 0 {
 		//dokimi:mutate-skip ror-boundary: c is not 0 inside the branch
 		return c < 0
 	}

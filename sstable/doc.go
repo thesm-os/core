@@ -55,12 +55,19 @@
 // data blocks have the bytes of a table without partitions. A table in
 // partitions has format version 2, and a table without them version 1.
 //
+// The Writer also cuts the fragments of a table in partitions into fragment
+// partitions. A fragment partition ends at the first whole fragment after
+// PartitionSize bytes, so the positions of one fragment are in one
+// partition. The top-level index of the fragments has the end of the last
+// fragment of each partition.
+//
 // A Reader reads every version. Of a table without partitions it keeps the
-// index block and the filter block in memory. Of a table in partitions it
-// keeps the top-level indexes, so its memory grows with the number of
-// partitions and not with the number of keys. A lookup reads the filter
-// partition and the index partition of its key as it reads a data block,
-// through the cache.
+// index block, the filter block and the block of fragments in memory. Of a
+// table in partitions it keeps the top-level indexes, so its memory grows
+// with the number of partitions and not with the number of keys or
+// fragments. A lookup reads the filter partition and the index partition of
+// its key as it reads a data block, through the cache. A [RangeDeleteIter]
+// reads a fragment partition through the cache in the same way.
 //
 // # Range tombstones
 //
@@ -69,12 +76,13 @@
 // fragments of range tombstones in the order that [RangeDeleter] states, so
 // the fragments of a table do not overlap. A [Fragmenter] splits tombstones
 // that overlap at their overlap points, and passes the fragments to the
-// Writer. The Writer keeps the fragments in a block of fragments, and the
-// Reader keeps that block in memory. [Reader.RangeDeletes] returns a
-// [RangeDeleteIter] over the fragments, whose moves do not read a block. The
-// package does not apply a fragment to the entries that it covers. The
-// engine compares the sequence of each fragment with the sequences of those
-// entries.
+// Writer. [Reader.RangeDeletes] returns a [RangeDeleteIter] over the
+// fragments. The moves of a cursor of a table without fragment partitions do
+// not read a block. A move that needs a fragment partition reads it under the
+// context of the move. [RangeDeleteIter.Err] then returns the error of a read
+// that fails. The package does not apply a fragment to the entries that it
+// covers. The engine compares the sequence of each fragment with the
+// sequences of those entries.
 //
 // # Prefixes
 //
@@ -86,23 +94,54 @@
 // filter of prefixes only when the Prefix of its [ReaderOptions] has the
 // name of the extraction of the table.
 //
-// A table with fragments or with a filter of prefixes has format version 3.
-// Its footer states a block of places in place of the filter. That block
-// states the places of the filter, of the block of fragments and of the
-// filter of prefixes. A table of version 3 has the index and the filter of
+// A table with fragments, with a filter of prefixes or with versions has
+// format version 3. Its footer states a block of places in place of the
+// filter. That block states the places of the filter, of the fragments and of
+// the filter of prefixes, and the width of the versions. The place of the
+// fragments is the block of fragments, or the top-level index of the
+// fragment partitions. A table of version 3 has the index and the filter of
 // version 1, or of version 2 in partitions.
+//
+// # Versions
+//
+// With the SuffixBytes of WriterOptions, the last SuffixBytes bytes of each
+// key are its version. [CompareWithSuffix] orders such keys by their bytes
+// before the version, then by version from the highest to the lowest, then
+// by sequence. Every version of a key then sorts before a longer key that
+// starts with the bytes of the key. The filter of the keys and the Prefix of
+// the options take each key without its version, so [Reader.MayContain]
+// reports true for every version of a key of the table. [Reader.Get] matches
+// the whole key with its version.
+//
+// The start of a fragment of a table with versions ends with the version of
+// the fragment, and its end has no version. A Fragmenter of the same width
+// splits tombstones at their starts without their versions. A table records
+// its width, and [Open] returns [ErrSuffix] for a table whose width differs
+// from the SuffixBytes of [ReaderOptions]. A [Merger] with the same
+// SuffixBytes merges the sources in the same order.
+//
+// # Checks
+//
+// [Reader.Check] reads each data block of a table from the File. Of a table
+// in partitions it also reads each index partition, filter partition and
+// fragment partition. It calls a function of the caller with a [BlockDamage]
+// for each block that fails its checksum, its decompression or the checks of
+// its layout, and continues with the next block. A BlockDamage states the role and the place of the block, and the
+// bounds of its keys that the index states. Check reads each block from the
+// File and not from the cache, so it checks the bytes that the File stores.
 //
 // # Contexts
 //
 // Every call that can read or write a table takes the context of its
 // caller: [Open], [Reader.Get], [Reader.MayContain], [Reader.MayContainPrefix],
-// [Reader.Span], each move of a [Source], the methods of a [BlockCache],
-// [Writer.Add], [Writer.Close], and the methods of a [RangeDeleter] and of a
-// Fragmenter. The package passes the context to the File, the Sink and the
-// cache. A File or a Sink that waits ends its wait with the error of the
-// context. A move of an [Iter] that needs a block checks the context first,
-// so a scan stops at the next block after its context ended, also when the
-// cache contains the block. Next, Prev and SeekGE ignore the context when
+// [Reader.Span], [Reader.Check], each move of a [Source] and of a
+// RangeDeleteIter, the methods of a [BlockCache], [Writer.Add],
+// [Writer.Close], and the methods of a [RangeDeleter] and of a Fragmenter.
+// The package passes the context to the File, the Sink and the cache. A File
+// or a Sink that waits ends its wait with the error of the context. A move of
+// an [Iter] or of a RangeDeleteIter that needs a block checks the context
+// first, so a scan stops at the next block after its context ended, also
+// when the cache contains the block. Next, Prev and SeekGE ignore the context when
 // they move within the current block. A cursor of [IterOptions] with NoFill
 // takes the blocks that the cache contains and does not add the blocks that
 // it reads, so a scan of a compaction keeps the blocks of the reads in the
@@ -123,7 +162,7 @@
 // [go.thesmos.sh/core/cache.Cache].
 //
 // A Reader passes a LendingCache the [BlockRole] of each block: [DataBlock],
-// [IndexBlock] or [FilterBlock]. The cache can then count the lookups of the
+// [IndexBlock], [FilterBlock] or [FragmentBlock]. The cache can then count the lookups of the
 // data blocks apart from the lookups of the partitions. Readers of different
 // tables that share a cache need different identities in the CacheID of
 // their [ReaderOptions]. A Reader does not check the CRC32C of a block that
@@ -135,7 +174,8 @@
 // A [Source] is a cursor over a sorted run of entries that moves in both
 // directions. An [Iter] of a table and the cursor of a memtable are sources.
 // A [Merger] yields the union of any number of sources in the order of
-// Compare, from the first entry forward or from the last entry back.
+// CompareWithSuffix of its SuffixBytes, from the first entry forward or from
+// the last entry back. The order of the zero width is the order of Compare.
 // [Merger.Close] closes every source of the merge that implements io.Closer,
 // so an engine releases the cursors of a read with one call.
 //
@@ -147,8 +187,8 @@
 // # Errors
 //
 // The functions return [ErrOptions], [ErrOrder], [ErrClosed], [ErrTooLarge],
-// [ErrRange], [ErrPrefix] and [ErrCorrupt], and errors that wrap the errors
-// of the Sink and the File. A read or a write that ends with its context
+// [ErrRange], [ErrPrefix], [ErrSuffix] and [ErrCorrupt], and errors that wrap
+// the errors of the Sink and the File. A read or a write that ends with its context
 // returns an error that wraps the error of the context.
 //
 // # Allocation contract
@@ -171,6 +211,10 @@
 //     cursor with NoFill. A read through a LendingCache copies such a block
 //     into a Block from the pool, which allocates only when the pool of its
 //     class is empty.
+//   - Reader.Check of a table whose blocks pass their checks does not
+//     allocate once its pooled state has grown to the largest block and the
+//     largest partition, apart from what the function of the caller
+//     allocates.
 //   - [NewWriter], [NewFragmenter], Writer.Close and [Open] allocate the
 //     Writer, the Fragmenter or the Reader and their buffers.
 //     [Reader.Footprint] returns the bytes of the buffers that a Reader

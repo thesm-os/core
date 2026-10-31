@@ -15,9 +15,10 @@ var (
 	// refuses a BlockSize below 0 or above 2^32 - 1 and a negative
 	// RestartInterval. It also refuses an unknown Compression and a
 	// FilterBits that is neither 0 nor a width of the fingerprints of a
-	// [filter.Fuse], and a Prefix without FilterBits or with an empty name.
-	// [NewFragmenter] returns it for a nil [RangeDeleter]. It classifies as
-	// [errs.Invalid].
+	// [filter.Fuse], a Prefix without FilterBits or with an empty name, and a
+	// negative SuffixBytes. [NewFragmenter] returns it for a nil
+	// [RangeDeleter] and for a negative width of the versions. It classifies
+	// as [errs.Invalid].
 	ErrOptions = errs.WithClass(errors.New("sstable: invalid writer options"), errs.Invalid)
 
 	// ErrOrder is returned by [Writer.Add] for an entry at or before the
@@ -49,9 +50,16 @@ var (
 	// errs.Invalid.
 	ErrPrefix = errs.WithClass(errors.New("sstable: the prefix does not follow the prefix of its key"), errs.Invalid)
 
+	// ErrSuffix is returned by [Open] for a table whose versions have
+	// another width than the SuffixBytes of [ReaderOptions]. The keys of a
+	// table of format version 1 or 2, and of a table of version 3 without
+	// versions, have versions of 0 bytes. It classifies as errs.Invalid.
+	ErrSuffix = errs.WithClass(errors.New("sstable: the versions of the table have another width"), errs.Invalid)
+
 	// ErrCorrupt is returned by [Open], [Reader.Get], [Reader.Span],
-	// [Reader.MayContainPrefix] and the moves of an [Iter] for a table that
-	// fails a checksum, a decompression or its layout. It classifies as
-	// [errs.Integrity].
+	// [Reader.MayContainPrefix], [Reader.Check] and the moves of an [Iter] and
+	// of a [RangeDeleteIter] for a table that fails a checksum, a
+	// decompression or its layout. Each [BlockDamage] that Check reports has
+	// an error that wraps it. It classifies as [errs.Integrity].
 	ErrCorrupt = errs.WithClass(errors.New("sstable: corrupt table"), errs.Integrity)
 )

@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"encoding/binary"
 	"slices"
 	"strconv"
 	"testing"
@@ -45,12 +46,45 @@ var tombstones = prop.Composite(func(c *prop.Case) []rangeDelete {
 	return ts
 })
 
+// versionedTombstones generates the tombstones of tombstones with versions of
+// versionBytes bytes. The start of each tombstone ends with a version up to 3.
+// The tombstones are then in the order of their starts without their versions.
+var versionedTombstones = prop.Composite(func(c *prop.Case) []rangeDelete {
+	ts := c.Draw(tombstones, "tombstones")
+	for i := range ts {
+		version := c.Draw(prop.Integer[uint64](0, 3), "version")
+		ts[i].start = binary.BigEndian.AppendUint64(bytes.Clone(ts[i].start), version)
+	}
+
+	return ts
+})
+
 // example are the tombstones of the example of the package: from a up to e
 // at 9, from c up to g at 7 and from e up to i at 5.
 var example = []rangeDelete{
 	{start: []byte("a"), end: []byte("e"), seq: 9},
 	{start: []byte("c"), end: []byte("g"), seq: 7},
 	{start: []byte("e"), end: []byte("i"), seq: 5},
+}
+
+// versionedExample are tombstones with versions of versionBytes bytes: from a
+// at the version 2 up to e at 9, from c at the version 5 up to g at 7, and
+// from c at the version 1 up to e at 8.
+var versionedExample = []rangeDelete{
+	{start: binary.BigEndian.AppendUint64([]byte("a"), 2), end: []byte("e"), seq: 9},
+	{start: binary.BigEndian.AppendUint64([]byte("c"), 5), end: []byte("g"), seq: 7},
+	{start: binary.BigEndian.AppendUint64([]byte("c"), 1), end: []byte("e"), seq: 8},
+}
+
+// examples are the tombstones of the allocation contract of a Fragmenter,
+// with the width of their versions.
+var examples = []struct {
+	name   string
+	give   []rangeDelete
+	suffix int
+}{
+	{name: "of the example", give: example},
+	{name: "of the example with versions", give: versionedExample, suffix: versionBytes},
 }
 
 // fragmentRecorder is a RangeDeleter that keeps a copy of each fragment of
@@ -96,8 +130,15 @@ func TestFragmenter(t *testing.T) {
 
 		t.Run("returns ErrOptions for a nil RangeDeleter", func(t *testing.T) {
 			t.Parallel()
-			f, err := sstable.NewFragmenter(nil)
+			f, err := sstable.NewFragmenter(nil, 0)
 			expect.ErrorIs(t, err, sstable.ErrOptions, "NewFragmenter refuses a nil RangeDeleter")
+			expect.Nil(t, f, "NewFragmenter returns no Fragmenter")
+		})
+
+		t.Run("returns ErrOptions for a negative width of the versions", func(t *testing.T) {
+			t.Parallel()
+			f, err := sstable.NewFragmenter(discardDeleter{}, -1)
+			expect.ErrorIs(t, err, sstable.ErrOptions, "NewFragmenter refuses a negative width")
 			expect.Nil(t, f, "NewFragmenter returns no Fragmenter")
 		})
 	})
@@ -110,9 +151,15 @@ func TestFragmenter(t *testing.T) {
 			prop.ForAll(t, fragmentContract, fragmentSteps)
 		})
 
+		t.Run("passes fragments that cover each key with the versions of its tombstones", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "the fragments of a Fragmenter with versions cover each key with the positions of "+
+				"the tombstones that cover it", versionedFragmentSteps)
+		})
+
 		t.Run("passes the fragments of the example", func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, fragmentsOf(t, example), []rangeDelete{
+			assert.Equal(t, fragmentsOf(t, example, 0), []rangeDelete{
 				{start: []byte("a"), end: []byte("c"), seq: 9},
 				{start: []byte("c"), end: []byte("e"), seq: 9},
 				{start: []byte("c"), end: []byte("e"), seq: 7},
@@ -122,18 +169,30 @@ func TestFragmenter(t *testing.T) {
 			}, "the Fragmenter splits the tombstones at every start and every end")
 		})
 
+		t.Run("passes the positions of a fragment by version before sequence", func(t *testing.T) {
+			t.Parallel()
+			be := binary.BigEndian
+			assert.Equal(t, fragmentsOf(t, versionedExample, versionBytes), []rangeDelete{
+				{start: be.AppendUint64([]byte("a"), 2), end: []byte("c"), seq: 9},
+				{start: be.AppendUint64([]byte("c"), 5), end: []byte("e"), seq: 7},
+				{start: be.AppendUint64([]byte("c"), 2), end: []byte("e"), seq: 9},
+				{start: be.AppendUint64([]byte("c"), 1), end: []byte("e"), seq: 8},
+				{start: be.AppendUint64([]byte("e"), 5), end: []byte("g"), seq: 7},
+			}, "the Fragmenter splits the tombstones at their starts without their versions")
+		})
+
 		t.Run("passes one fragment for two tombstones of one sequence over the same keys", func(t *testing.T) {
 			t.Parallel()
 			twice := []rangeDelete{
 				{start: []byte("a"), end: []byte("c"), seq: 5}, {start: []byte("a"), end: []byte("c"), seq: 5},
 			}
-			assert.Equal(t, fragmentsOf(t, twice), twice[:1], "a fragment contains each sequence once")
+			assert.Equal(t, fragmentsOf(t, twice, 0), twice[:1], "a fragment contains each sequence once")
 		})
 
 		t.Run("copies its start and its end", func(t *testing.T) {
 			t.Parallel()
 			var rec fragmentRecorder
-			f, err := sstable.NewFragmenter(&rec)
+			f, err := sstable.NewFragmenter(&rec, 0)
 			assert.NoError(t, err, "NewFragmenter accepts the recorder")
 			start, end := []byte("a"), []byte("c")
 			assert.NoError(t, f.Add(t.Context(), start, end, 1), "Add adds the tombstone")
@@ -146,7 +205,7 @@ func TestFragmenter(t *testing.T) {
 		t.Run("passes its context to the RangeDeleter", func(t *testing.T) {
 			t.Parallel()
 			var rec fragmentRecorder
-			f, err := sstable.NewFragmenter(&rec)
+			f, err := sstable.NewFragmenter(&rec, 0)
 			assert.NoError(t, err, "NewFragmenter accepts the recorder")
 			assert.NoError(t, f.Add(t.Context(), []byte("a"), []byte("c"), 1), "Add adds the first tombstone")
 			ctx := context.WithValue(t.Context(), callKey{}, "Add")
@@ -183,7 +242,7 @@ func TestFragmenter(t *testing.T) {
 				first, next := rangeDelete{start: []byte("b"), end: []byte("d"), seq: 1},
 					rangeDelete{start: []byte("c"), end: []byte("e"), seq: 2}
 				var rec fragmentRecorder
-				f, err := sstable.NewFragmenter(&rec)
+				f, err := sstable.NewFragmenter(&rec, 0)
 				assert.NoError(t, err, "NewFragmenter accepts the recorder")
 				assert.NoError(t, f.Add(t.Context(), first.start, first.end, first.seq), "Add adds the first tombstone")
 				assert.ErrorIs(t, f.Add(t.Context(), tt.give.start, tt.give.end, tt.give.seq), tt.wantErr,
@@ -191,14 +250,14 @@ func TestFragmenter(t *testing.T) {
 				assert.NoError(t, f.Add(t.Context(), next.start, next.end, next.seq),
 					"Add adds a tombstone after the refusal")
 				assert.NoError(t, f.Flush(t.Context()), "Flush passes the fragments")
-				assert.Equal(t, rec.fragments, fragmentsOf(t, []rangeDelete{first, next}),
+				assert.Equal(t, rec.fragments, fragmentsOf(t, []rangeDelete{first, next}, 0),
 					"the refusal leaves the Fragmenter unchanged")
 			})
 		}
 
 		t.Run("returns ErrOrder for a start before the end of the last fragment after Flush", func(t *testing.T) {
 			t.Parallel()
-			f, err := sstable.NewFragmenter(discardDeleter{})
+			f, err := sstable.NewFragmenter(discardDeleter{}, 0)
 			assert.NoError(t, err, "NewFragmenter accepts the RangeDeleter")
 			assert.NoError(t, f.Add(t.Context(), []byte("a"), []byte("c"), 1), "Add adds the tombstone")
 			assert.NoError(t, f.Flush(t.Context()), "Flush passes the fragment")
@@ -214,7 +273,7 @@ func TestFragmenter(t *testing.T) {
 			wantCalls := []int{1, 2, 2, 3, 3, 3}
 			for ok, want := range wantCalls {
 				rec := fragmentRecorder{ok: ok, fail: true}
-				f, err := sstable.NewFragmenter(&rec)
+				f, err := sstable.NewFragmenter(&rec, 0)
 				assert.NoError(t, err, "NewFragmenter accepts the recorder")
 				got := -1
 				for call := range len(example) + 1 {
@@ -241,7 +300,7 @@ func TestFragmenter(t *testing.T) {
 		t.Run("takes a tombstone at the end of the last fragment after Flush", func(t *testing.T) {
 			t.Parallel()
 			var rec fragmentRecorder
-			f, err := sstable.NewFragmenter(&rec)
+			f, err := sstable.NewFragmenter(&rec, 0)
 			assert.NoError(t, err, "NewFragmenter accepts the recorder")
 			assert.NoError(t, f.Add(t.Context(), []byte("a"), []byte("c"), 1), "Add adds the first tombstone")
 			assert.NoError(t, f.Flush(t.Context()), "Flush passes the first fragment")
@@ -256,7 +315,7 @@ func TestFragmenter(t *testing.T) {
 		t.Run("returns the error of the RangeDeleter", func(t *testing.T) {
 			t.Parallel()
 			rec := fragmentRecorder{fail: true}
-			f, err := sstable.NewFragmenter(&rec)
+			f, err := sstable.NewFragmenter(&rec, 0)
 			assert.NoError(t, err, "NewFragmenter accepts the recorder")
 			assert.NoError(t, f.Add(t.Context(), []byte("a"), []byte("c"), 1), "Add keeps the tombstone")
 			assert.ErrorIs(t, f.Flush(t.Context()), errWrite, "Flush returns the error of the RangeDeleter")
@@ -269,7 +328,7 @@ func TestFragmenter(t *testing.T) {
 		t.Run("discards the tombstones", func(t *testing.T) {
 			t.Parallel()
 			var rec fragmentRecorder
-			f, err := sstable.NewFragmenter(&rec)
+			f, err := sstable.NewFragmenter(&rec, 0)
 			assert.NoError(t, err, "NewFragmenter accepts the recorder")
 			assert.NoError(t, f.Add(t.Context(), []byte("c"), []byte("e"), 1),
 				"Add adds the tombstone of the first table")
@@ -288,38 +347,46 @@ func TestFragmenter(t *testing.T) {
 // run in parallel.
 func TestFragmenterAllocs(t *testing.T) {
 	t.Run("Add", func(t *testing.T) {
-		f, err := sstable.NewFragmenter(discardDeleter{})
-		assert.NoError(t, err, "NewFragmenter accepts the RangeDeleter")
-		expect.MaxAllocs(t, func() {
-			f.Reset()
-			for _, d := range example {
-				err = cmp.Or(err, f.Add(t.Context(), d.start, d.end, d.seq))
-			}
-			err = cmp.Or(err, f.Flush(t.Context()))
-		}, 0, "Add and Flush do not allocate once the buffers of the tombstones have room")
-		assert.NoError(t, err, "the test measures calls that succeed")
+		for _, tt := range examples {
+			t.Run(tt.name, func(t *testing.T) {
+				f, err := sstable.NewFragmenter(discardDeleter{}, tt.suffix)
+				assert.NoError(t, err, "NewFragmenter accepts the RangeDeleter")
+				expect.MaxAllocs(t, func() {
+					f.Reset()
+					for _, d := range tt.give {
+						err = cmp.Or(err, f.Add(t.Context(), d.start, d.end, d.seq))
+					}
+					err = cmp.Or(err, f.Flush(t.Context()))
+				}, 0, "Add and Flush do not allocate once the buffers of the tombstones have room")
+				assert.NoError(t, err, "the test measures calls that succeed")
+			})
+		}
 	})
 }
 
 // BenchmarkFragmenter reports the cost of Add and Flush for the tombstones of
-// the example, and fails when they allocate.
+// the examples, and fails when they allocate.
 func BenchmarkFragmenter(b *testing.B) {
 	b.Run("Add", func(b *testing.B) {
-		f, err := sstable.NewFragmenter(discardDeleter{})
-		assert.NoError(b, err, "NewFragmenter accepts the RangeDeleter")
+		for _, tt := range examples {
+			b.Run(tt.name, func(b *testing.B) {
+				f, err := sstable.NewFragmenter(discardDeleter{}, tt.suffix)
+				assert.NoError(b, err, "NewFragmenter accepts the RangeDeleter")
 
-		c := bench.Start(b).MaxAllocs(0)
-		defer c.End()
+				c := bench.Start(b).MaxAllocs(0)
+				defer c.End()
 
-		for c.Loop() {
-			f.Reset()
-			for _, d := range example {
-				err = cmp.Or(err, f.Add(b.Context(), d.start, d.end, d.seq))
-			}
-			err = cmp.Or(err, f.Flush(b.Context()))
+				for c.Loop() {
+					f.Reset()
+					for _, d := range tt.give {
+						err = cmp.Or(err, f.Add(b.Context(), d.start, d.end, d.seq))
+					}
+					err = cmp.Or(err, f.Flush(b.Context()))
+				}
+
+				assert.NoError(b, err, "the benchmark measures calls that succeed")
+			})
 		}
-
-		assert.NoError(b, err, "the benchmark measures calls that succeed")
 	})
 }
 
@@ -333,7 +400,7 @@ func BenchmarkFragmenter(b *testing.B) {
 func fragmentSteps(c *prop.Case) {
 	ts := c.Draw(tombstones, "tombstones")
 	var rec fragmentRecorder
-	f, err := sstable.NewFragmenter(&rec)
+	f, err := sstable.NewFragmenter(&rec, 0)
 	assert.NoError(c, err, "NewFragmenter accepts the recorder")
 	for _, d := range ts {
 		assert.NoError(c, f.Add(c.Context(), d.start, d.end, d.seq),
@@ -381,14 +448,56 @@ func fragmentSteps(c *prop.Case) {
 	}
 }
 
-// fragmentsOf returns the fragments that a Fragmenter passes for the
-// tombstones ts.
-func fragmentsOf(tb assert.TB, ts []rangeDelete) []rangeDelete {
+// versionedFragmentSteps passes drawn tombstones with versions through a
+// Fragmenter of the width versionBytes into a recorder, and checks the
+// fragments. The fragments follow the order of RangeDeleter under that width.
+// Each key of keys, which contains every bound, has the distinct versions and
+// sequences of the tombstones that cover it in the fragments that cover it,
+// by version and then by sequence from the highest to the lowest.
+func versionedFragmentSteps(c *prop.Case) {
+	type position struct{ version, seq uint64 }
+
+	ts := c.Draw(versionedTombstones, "tombstones")
+	fs := fragmentsOf(c, ts, versionBytes)
+	assert.Pairwise(c, fs, func(earlier, later rangeDelete) bool {
+		e, l := earlier.start[:len(earlier.start)-versionBytes], later.start[:len(later.start)-versionBytes]
+		if bytes.Equal(e, l) && bytes.Equal(earlier.end, later.end) {
+			return sstable.CompareWithSuffix(later.start, later.seq, earlier.start, earlier.seq, versionBytes) > 0
+		}
+
+		return bytes.Compare(l, earlier.end) >= 0
+	}, "each fragment follows the fragment before it in the order of RangeDeleter")
+	for _, key := range keys {
+		var want, got []position
+		for _, d := range ts {
+			n := len(d.start) - versionBytes
+			if bytes.Compare(d.start[:n], key) <= 0 && bytes.Compare(key, d.end) < 0 {
+				want = append(want, position{version: binary.BigEndian.Uint64(d.start[n:]), seq: d.seq})
+			}
+		}
+		slices.SortFunc(want, func(a, b position) int {
+			return cmp.Or(cmp.Compare(b.version, a.version), cmp.Compare(b.seq, a.seq))
+		})
+		want = slices.Compact(want)
+		for _, g := range fs {
+			n := len(g.start) - versionBytes
+			if bytes.Compare(g.start[:n], key) <= 0 && bytes.Compare(key, g.end) < 0 {
+				got = append(got, position{version: binary.BigEndian.Uint64(g.start[n:]), seq: g.seq})
+			}
+		}
+		assert.Equal(c, got, want, "the fragments of a key have the versions and the sequences of its tombstones",
+			assert.EquateEmpty())
+	}
+}
+
+// fragmentsOf returns the fragments that a Fragmenter of the width
+// suffixBytes passes for the tombstones ts.
+func fragmentsOf(tb assert.TB, ts []rangeDelete, suffixBytes int) []rangeDelete {
 	tb.Helper()
 
 	ctx := assert.Context(tb)
 	var rec fragmentRecorder
-	f, err := sstable.NewFragmenter(&rec)
+	f, err := sstable.NewFragmenter(&rec, suffixBytes)
 	assert.NoError(tb, err, "NewFragmenter accepts the recorder")
 	for _, d := range ts {
 		assert.NoError(tb, f.Add(ctx, d.start, d.end, d.seq), "Add takes the tombstones in the order of their starts")

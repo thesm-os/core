@@ -66,3 +66,32 @@ func Compare(aKey []byte, aSeq uint64, bKey []byte, bSeq uint64) int {
 
 	return cmp.Compare(bSeq, aSeq)
 }
+
+// CompareWithSuffix returns -1, 0 or +1 for the order of the entry (aKey,
+// aSeq) and the entry (bKey, bSeq). The last suffixBytes bytes of each key
+// are its version. CompareWithSuffix orders the keys by their bytes before
+// their versions, in the order of bytes.Compare. It orders the versions of
+// one such key in the reverse order of bytes.Compare, so a version in
+// big-endian order orders as an unsigned integer from the highest to the
+// lowest. It orders the sequences of one key and version from the highest
+// to the lowest. A key of fewer than suffixBytes bytes has no bytes before
+// its version, so the order is total over every key. A suffixBytes of 0 or
+// below orders as [Compare] orders.
+//
+// # Allocation contract
+//
+// Zero-alloc.
+func CompareWithSuffix(aKey []byte, aSeq uint64, bKey []byte, bSeq uint64, suffixBytes int) int {
+	if suffixBytes <= 0 {
+		return Compare(aKey, aSeq, bKey, bSeq)
+	}
+	an, bn := max(len(aKey)-suffixBytes, 0), max(len(bKey)-suffixBytes, 0)
+	if c := bytes.Compare(aKey[:an], bKey[:bn]); c != 0 {
+		return c
+	}
+	if c := bytes.Compare(bKey[bn:], aKey[an:]); c != 0 {
+		return c
+	}
+
+	return cmp.Compare(bSeq, aSeq)
+}
