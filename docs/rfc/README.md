@@ -148,6 +148,7 @@ Start from [`docs/templates/RFC.md`](../templates/RFC.md).
 | [0079](0079-pinned-partitions-in-a-block-cache.md) | Pinned Partitions in a Block Cache | Accepted |
 | [0080](0080-test-generation-with-dokimi.md) | Test Generation with dokimi | Accepted |
 | [0081](0081-fragment-partitions-version-suffixes-and-checks.md) | Fragment Partitions, Version Suffixes and Checks of a Table | Accepted |
+| [0082](0082-signed-requests-on-named-object-storage.md) | Signed Requests on Named Object Storage | Accepted |
 
 ## Canonical first RFC
 
