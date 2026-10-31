@@ -144,9 +144,10 @@ Start from [`docs/templates/RFC.md`](../templates/RFC.md).
 | [0075](0075-blocks-that-a-cache-lends-to-readers.md) | Blocks That a Cache Lends to Readers | Accepted |
 | [0076](0076-lists-and-arenas-over-caller-memory.md) | Lists and Arenas over Caller Memory | Accepted |
 | [0077](0077-partitioned-index-and-filters.md) | Partitioned Index and Filters of a Table | Accepted |
-| [0078](0078-range-tombstones-and-prefix-filters.md) | Range Tombstones and Prefix Filters of a Table | Accepted |
+| [0078](0078-range-tombstones-and-prefix-filters.md) | Range Tombstones and Prefix Filters of a Table | Accepted, alternative K superseded by [ADR-0076](../adr/0076-fragment-partitions-are-read-through-the-cache.md) |
 | [0079](0079-pinned-partitions-in-a-block-cache.md) | Pinned Partitions in a Block Cache | Accepted |
 | [0080](0080-test-generation-with-dokimi.md) | Test Generation with dokimi | Accepted |
+| [0081](0081-fragment-partitions-version-suffixes-and-checks.md) | Fragment Partitions, Version Suffixes and Checks of a Table | Accepted |
 
 ## Canonical first RFC
 
