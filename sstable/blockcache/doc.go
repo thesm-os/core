@@ -31,9 +31,9 @@
 //
 // # Pins
 //
-// [Cache.PinTable] makes the Cache pin the index partitions and the filter
-// partitions of a table that AddBlock adds, while their footprints fit the
-// PinnedCapacity of [Config]. The pinned partitions count against the
+// [Cache.PinTable] makes the Cache pin the index partitions, the filter
+// partitions and the fragment partitions of a table that AddBlock adds, while
+// their footprints fit the PinnedCapacity of [Config]. The pinned partitions count against the
 // capacity, so the data blocks take the bytes that the pins leave. The
 // evictor does not remove a pinned partition until [Cache.UnpinTable], so a
 // table that readers use rarely does not read its partitions again. A

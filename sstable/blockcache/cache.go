@@ -33,9 +33,10 @@ type Config struct {
 // Unpin. It keeps a block by the identity of its table and its offset.
 // [Cache.NewID] issues the identities of the tables that share the cache.
 //
-// With [Cache.PinTable], a consumer selects a table whose index partitions and
-// filter partitions the Cache stores with a pin of [cache.Cache.SetPinned],
-// while their footprints fit the PinnedCapacity of [Config]. The evictor does
+// With [Cache.PinTable], a consumer selects a table whose index partitions,
+// filter partitions and fragment partitions the Cache stores with a pin of
+// [cache.Cache.SetPinned], while their footprints fit the PinnedCapacity of
+// [Config]. The evictor does
 // not remove a pinned partition until [Cache.UnpinTable]. The Cache keeps the
 // [cache.Pinned] of each pinned partition in a map of the pinned tables, by
 // its offset.
@@ -128,9 +129,9 @@ func (c *Cache) NewID() uint64 {
 	return c.ids.Add(1)
 }
 
-// PinTable makes the cache pin each index partition and filter partition of
-// the table id that AddBlock adds from now on, while the footprints of the
-// pinned partitions fit PinnedCapacity. The evictor does not remove a pinned
+// PinTable makes the cache pin each index partition, filter partition and
+// fragment partition of the table id that AddBlock adds from now on, while
+// the footprints of the pinned partitions fit PinnedCapacity. The evictor does not remove a pinned
 // partition until [Cache.UnpinTable] of id, and a partition beyond
 // PinnedCapacity enters the cache without a pin. A partition that the cache
 // contains before PinTable does not get a pin, so a consumer calls PinTable
@@ -190,11 +191,11 @@ func (c *Cache) Lend(_ context.Context, id, offset uint64, _ sstable.BlockRole) 
 // releases it once b leaves the cache. A block whose footprint exceeds the
 // capacity leaves at once.
 //
-// An index partition or a filter partition of a table of [Cache.PinTable]
-// enters with a pin when its footprint fits the rest of PinnedCapacity. When
-// the cache pins the partition at offset already, AddBlock does not store b,
-// so the cache keeps one pin and one block of each partition. A data block
-// and every other partition enter without a pin.
+// An index partition, a filter partition or a fragment partition of a table
+// of [Cache.PinTable] enters with a pin when its footprint fits the rest of
+// PinnedCapacity. When the cache pins the partition at offset already,
+// AddBlock does not store b, so the cache keeps one pin and one block of each
+// partition. A data block enters without a pin.
 //
 // # Allocation contract
 //

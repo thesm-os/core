@@ -261,6 +261,7 @@ func TestCache(t *testing.T) {
 		}{
 			{name: "pins an index partition that AddBlock adds after the call", give: sstable.IndexBlock},
 			{name: "pins a filter partition that AddBlock adds after the call", give: sstable.FilterBlock},
+			{name: "pins a fragment partition that AddBlock adds after the call", give: sstable.FragmentBlock},
 		}
 		for _, tt := range roles {
 			t.Run(tt.name, func(t *testing.T) {
