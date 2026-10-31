@@ -21,6 +21,10 @@ const (
 	nodeBytes = 1 << 16
 )
 
+// versionBytes is the width of the versions of the keys of the cases with
+// versions: a uint64 in big-endian order.
+const versionBytes = 8
+
 // The benchmarks add keys of 16 bytes with values of 100 bytes, and look up
 // keys in a List of benchEntries entries.
 const (

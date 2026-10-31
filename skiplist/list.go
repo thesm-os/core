@@ -33,7 +33,7 @@ const (
 	// wordSeqLow is the word of the low 32 bits of the sequence.
 	wordSeqLow = 4
 	// wordPrefixHigh is the word of the high 32 bits of the prefix of the
-	// key, which keyPrefix returns.
+	// key, which prefixOf returns.
 	wordPrefixHigh = 5
 	// wordPrefixLow is the word of the low 32 bits of the prefix of the key.
 	wordPrefixLow = 6
@@ -121,11 +121,22 @@ type Config struct {
 	// Seed is the seed of the hash of the heights of the nodes. A caller
 	// that does not know the seed cannot choose entries of one height.
 	Seed uint64
+
+	// SuffixBytes is the width in bytes of the version at the end of each
+	// key, from 0 up. The List orders its keys by their bytes before their
+	// versions, as bytes.Compare orders them, then by version in the reverse
+	// order of bytes.Compare, then by sequence from the highest to the
+	// lowest. That is the order of [go.thesmos.sh/core/sstable.CompareWithSuffix].
+	// A key of fewer bytes has no bytes before its version. 0 orders the keys
+	// by bytes.Compare.
+	SuffixBytes int
 }
 
 // List is an insert-only ordered map of entries: a skip list whose nodes
 // link without locks. It orders the entries by key, as bytes.Compare orders
-// keys, and for one key from the highest sequence to the lowest.
+// keys, and for one key from the highest sequence to the lowest. A List with
+// the SuffixBytes of [Config] orders the keys by their bytes before their
+// versions, and then by version from the highest to the lowest.
 //
 // A List keeps its node words in an [arena.Bump] of uint32 and its keys and
 // values in an arena.Bump of bytes. The arenas never grow or move, and both
@@ -175,6 +186,9 @@ type List struct {
 	// resets counts the calls of Reset. An Inserter and a cursor keep the
 	// count of their last call, and use no node of an earlier fill.
 	resets uint64
+
+	// suffix is the width of the versions at the end of the keys.
+	suffix int
 }
 
 // New returns an empty [List] with the arenas of cfg. The heights of its
@@ -188,6 +202,7 @@ type List struct {
 //     [ErrSize].
 //   - A Data shorter than DataBytes returns ErrSize, and so does a Nodes
 //     shorter than [NodeWords] of NodeBytes.
+//   - A negative SuffixBytes returns ErrSize.
 //
 // # Allocation contract
 //
@@ -196,7 +211,9 @@ type List struct {
 func New(cfg Config) (*List, error) {
 	// A capacity of 2^32 - 1 bytes or less has no bit set above its 32
 	// bits, so every offset and every length fits a word.
-	if cfg.DataBytes < 1 || cfg.NodeBytes < 1 || uint64(cfg.DataBytes)>>32 != 0 || uint64(cfg.NodeBytes)>>32 != 0 {
+	if cfg.DataBytes < 1 || cfg.NodeBytes < 1 || uint64(cfg.DataBytes)>>32 != 0 || uint64(cfg.NodeBytes)>>32 != 0 ||
+		cfg.SuffixBytes < 0 {
+
 		return nil, ErrSize
 	}
 	words := NodeWords(cfg.NodeBytes)
@@ -219,6 +236,7 @@ func New(cfg Config) (*List, error) {
 		nodeArena: arena.NewBumpWithArray(nodes[:words]),
 		secret0:   secret0,
 		secret1:   secret1,
+		suffix:    cfg.SuffixBytes,
 	}
 	l.data, l.nodes = l.dataArena.Values(), l.nodeArena.Values()
 	l.nodeArena.Reserve(headWords)
@@ -265,7 +283,7 @@ func New(cfg Config) (*List, error) {
 // Zero-alloc.
 func (l *List) Add(key []byte, seq uint64, value []byte) error {
 	var prev [maxHeight]uint32
-	_, _, err := l.insert(key, keyPrefix(key), seq, value, nil, &prev)
+	_, _, err := l.insert(key, l.prefixOf(key), seq, value, nil, &prev)
 
 	return err
 }
@@ -274,14 +292,14 @@ func (l *List) Add(key []byte, seq uint64, value []byte) error {
 // the entry (key, seq) when that entry has key. For a snapshot seq, it is
 // the newest version of key at or below seq. It reports false when the
 // first entry at or after (key, seq) has another key, or when no entry
-// follows. The value is valid until [List.Reset], and its capacity is its
-// length.
+// follows. Of a List with versions, key is the whole key with its version.
+// The value is valid until [List.Reset], and its capacity is its length.
 //
 // # Allocation contract
 //
 // Zero-alloc.
 func (l *List) Get(key []byte, seq uint64) ([]byte, uint64, bool) {
-	_, nd := l.search(key, keyPrefix(key), seq)
+	_, nd := l.search(key, l.prefixOf(key), seq)
 	if nd == 0 || !bytes.Equal(l.key(nd), key) {
 		return nil, 0, false
 	}
@@ -565,16 +583,28 @@ func (l *List) last() uint32 {
 
 // compare returns -1, 0 or +1 for the order of the entry (key, seq) and the
 // entry of the node nd: by key, then by sequence from the highest to the
-// lowest. prefix is the prefix of key. Keys whose prefixes differ order as
-// their prefixes order, so compare reads the key of nd only when the two
-// prefixes are equal.
+// lowest. Of a List with versions it orders the keys by their bytes before
+// their versions and then by version from the highest to the lowest. prefix
+// is the prefix of key that prefixOf returns. Keys whose prefixes differ
+// order as their prefixes order, so compare reads the key of nd only when
+// the two prefixes are equal.
 func (l *List) compare(key []byte, prefix, seq uint64, nd uint32) int {
 	np := uint64(l.nodes[nd+wordPrefixHigh])<<32 | uint64(l.nodes[nd+wordPrefixLow])
 	//dokimi:mutate-skip ror-false,sbr-delete: bytes.Compare of the whole keys returns the order of the prefixes too
 	if prefix != np {
 		return cmp.Compare(prefix, np)
 	}
-	if c := bytes.Compare(key, l.key(nd)); c != 0 {
+	k := l.key(nd)
+	//dokimi:mutate-skip ror-true: the order of a width of 0 is the order of the whole keys, so the long path changes only the time
+	if l.suffix != 0 {
+		an, bn := max(len(key)-l.suffix, 0), max(len(k)-l.suffix, 0)
+		if c := bytes.Compare(key[:an], k[:bn]); c != 0 {
+			return c
+		}
+		if c := bytes.Compare(k[bn:], key[an:]); c != 0 {
+			return c
+		}
+	} else if c := bytes.Compare(key, k); c != 0 {
 		return c
 	}
 
@@ -664,14 +694,14 @@ func splitmix64(state *uint64) uint64 {
 	return z ^ z>>31
 }
 
-// keyPrefix returns the prefix of key: its first 8 bytes as a big-endian
-// integer, padded with zero bytes for a key of fewer than 8 bytes. Two keys
-// whose prefixes differ order as their prefixes order. Two keys with equal
-// prefixes can differ in a later byte or in their length. It does not
-// allocate.
-func keyPrefix(key []byte) uint64 {
+// prefixOf returns the prefix of key without its version: the first 8 bytes
+// of the key without its version as a big-endian integer, padded with zero
+// bytes for fewer than 8 bytes. Two keys whose prefixes differ order as their
+// prefixes order. Two keys with equal prefixes can differ in a later byte, in
+// their length or in their versions. It does not allocate.
+func (l *List) prefixOf(key []byte) uint64 {
 	var b [8]byte
-	copy(b[:], key)
+	copy(b[:], key[:max(len(key)-l.suffix, 0)])
 
 	return binary.BigEndian.Uint64(b[:])
 }

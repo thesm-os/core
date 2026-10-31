@@ -5,11 +5,16 @@ package skiplist
 
 import (
 	"context"
+	"encoding/binary"
+	"slices"
 	"testing"
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/bench"
 	"go.dokimi.dev/assert/expect"
+	"go.dokimi.dev/assert/prop"
+
+	"go.thesmos.sh/core/sstable"
 )
 
 // iterEntries is the number of entries of the List of the benchmarks of a
@@ -110,6 +115,50 @@ func TestIter(t *testing.T) {
 			it := listOf(t, versions...).NewIter()
 			assert.False(t, it.SeekGE(t.Context(), []byte("d"), 0), "SeekGE finds no entry")
 			assert.Nil(t, it.Key(), "the cursor has no key")
+		})
+
+		t.Run("finds what a sorted model of keys with versions finds", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "a List with versions orders and seeks as CompareWithSuffix", func(c *prop.Case) {
+				key := prop.OneOf(prop.SampledFrom("", "a", "a\x00", "ab", "b"), prop.String(prop.MaxSize(10)))
+				l, err := New(Config{DataBytes: dataBytes, NodeBytes: nodeBytes, Seed: 1, SuffixBytes: versionBytes})
+				assert.NoError(c, err, "New returns a List with versions")
+				var es []entry
+				for range c.Draw(prop.Integer(0, 30), "entries") {
+					e := entry{
+						key: binary.BigEndian.AppendUint64([]byte(c.Draw(key, "key")),
+							c.Draw(prop.Integer[uint64](0, 3), "version")),
+						seq: c.Draw(prop.Integer[uint64](0, 3), "seq"),
+					}
+					if l.Add(e.key, e.seq, nil) == nil {
+						es = append(es, e)
+					}
+				}
+				slices.SortFunc(es, func(a, b entry) int {
+					return sstable.CompareWithSuffix(a.key, a.seq, b.key, b.seq, versionBytes)
+				})
+				it := l.NewIter()
+				assert.Equal(c, scan(c.Context(), it), es, "the cursor yields the entries in their order",
+					assert.EquateEmpty())
+				for range 10 {
+					target := entry{
+						key: binary.BigEndian.AppendUint64([]byte(c.Draw(key, "target")),
+							c.Draw(prop.Integer[uint64](0, 3), "target version")),
+						seq: c.Draw(prop.Integer[uint64](0, 3), "target seq"),
+					}
+					i, _ := slices.BinarySearchFunc(es, target, func(e, t entry) int {
+						return sstable.CompareWithSuffix(e.key, e.seq, t.key, t.seq, versionBytes)
+					})
+					if i == len(es) {
+						assert.False(c, it.SeekGE(c.Context(), target.key, target.seq), "SeekGE finds no entry")
+
+						continue
+					}
+					assert.True(c, it.SeekGE(c.Context(), target.key, target.seq), "SeekGE finds an entry")
+					assert.Equal(c, entry{key: it.Key(), seq: it.Seq(), value: it.Value()}, es[i],
+						"SeekGE moves to the first entry at or after the target", assert.EquateEmpty())
+				}
+			})
 		})
 
 		t.Run("moves forward from the current entry to a later entry", func(t *testing.T) {

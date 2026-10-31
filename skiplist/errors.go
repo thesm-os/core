@@ -21,7 +21,8 @@ var (
 	ErrExists = errs.WithClass(errors.New("skiplist: the entry exists"), errs.Invalid)
 
 	// ErrSize is returned by [New] for a capacity of an arena below 1 or
-	// above 2^32 - 1 bytes, and for memory of an arena that is shorter than
-	// the arena. It classifies as errs.Invalid.
-	ErrSize = errs.WithClass(errors.New("skiplist: the size of an arena is out of range"), errs.Invalid)
+	// above 2^32 - 1 bytes, for memory of an arena that is shorter than the
+	// arena, and for a negative width of the versions. It classifies as
+	// errs.Invalid.
+	ErrSize = errs.WithClass(errors.New("skiplist: a size of the config is out of range"), errs.Invalid)
 )

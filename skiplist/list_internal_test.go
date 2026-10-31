@@ -24,6 +24,7 @@ import (
 	"go.dokimi.dev/assert/stateful"
 
 	"go.thesmos.sh/core/hash/xxh3"
+	"go.thesmos.sh/core/sstable"
 )
 
 // The names of the calls that the machines make and record.
@@ -236,6 +237,10 @@ func TestList(t *testing.T) {
 				giveConfig: Config{
 					DataBytes: dataBytes, NodeBytes: nodeBytes, Nodes: make([]uint32, NodeWords(nodeBytes)-1),
 				},
+			},
+			{
+				name:       "returns ErrSize for a negative SuffixBytes",
+				giveConfig: Config{DataBytes: dataBytes, NodeBytes: nodeBytes, SuffixBytes: -1},
 			},
 		}
 		for _, tt := range tests {
@@ -810,10 +815,71 @@ func TestList(t *testing.T) {
 				assert.NoError(t, l.Add([]byte(tt.giveNode), 1, nil), "Add adds the entry of the node")
 				nd := l.nodes[nodeHeader]
 				key := []byte(tt.giveKey)
-				assert.Equal(t, l.compare(key, keyPrefix(key), tt.giveSeq, nd), tt.want,
+				assert.Equal(t, l.compare(key, l.prefixOf(key), tt.giveSeq, nd), tt.want,
 					"compare orders the entry against the entry of the node")
 			})
 		}
+
+		// Each key ends with a version of versionBytes bytes. The node has the
+		// key a at the version 5 and the sequence 1.
+		be := binary.BigEndian
+		versioned := []struct {
+			name    string
+			giveKey []byte
+			giveSeq uint64
+			want    int
+		}{
+			{
+				name:    "returns +1 for a key that extends the key of the node at a higher version",
+				giveKey: be.AppendUint64([]byte("a\x00"), 9), giveSeq: 1, want: 1,
+			},
+			{
+				name:    "returns -1 for the empty key at a higher version",
+				giveKey: be.AppendUint64(nil, 9), giveSeq: 1, want: -1,
+			},
+			{
+				name:    "returns -1 for the key of the node at a higher version",
+				giveKey: be.AppendUint64([]byte("a"), 9), giveSeq: 0, want: -1,
+			},
+			{
+				name:    "returns +1 for the key of the node at a lower version",
+				giveKey: be.AppendUint64([]byte("a"), 4), giveSeq: 2, want: 1,
+			},
+			{
+				name:    "returns -1 for the key and the version of the node with a higher sequence",
+				giveKey: be.AppendUint64([]byte("a"), 5), giveSeq: 2, want: -1,
+			},
+			{
+				name:    "returns 0 for the key, the version and the sequence of the node",
+				giveKey: be.AppendUint64([]byte("a"), 5), giveSeq: 1, want: 0,
+			},
+		}
+		for _, tt := range versioned {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				l, err := New(Config{DataBytes: dataBytes, NodeBytes: nodeBytes, Seed: 1, SuffixBytes: versionBytes})
+				assert.NoError(t, err, "New returns a List with versions")
+				assert.NoError(t, l.Add(be.AppendUint64([]byte("a"), 5), 1, nil), "Add adds the entry of the node")
+				nd := l.nodes[nodeHeader]
+				assert.Equal(t, l.compare(tt.giveKey, l.prefixOf(tt.giveKey), tt.giveSeq, nd), tt.want,
+					"compare orders the entry against the entry of the node")
+			})
+		}
+
+		t.Run("orders as sstable.CompareWithSuffix orders keys with versions", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "compare agrees with CompareWithSuffix", func(c *prop.Case) {
+				width := c.Draw(prop.Integer(0, 9), "width")
+				l, err := New(Config{DataBytes: dataBytes, NodeBytes: nodeBytes, Seed: 1, SuffixBytes: width})
+				assert.NoError(c, err, "New returns a List")
+				node := c.Draw(prop.Bytes(prop.MaxSize(18)), "key of the node")
+				key := c.Draw(prop.Bytes(prop.MaxSize(18)), "key")
+				seq := c.Draw(prop.Integer[uint64](0, 2), "seq")
+				assert.NoError(c, l.Add(node, 1, nil), "Add adds the entry of the node")
+				assert.Equal(c, l.compare(key, l.prefixOf(key), seq, l.nodes[nodeHeader]),
+					sstable.CompareWithSuffix(key, seq, node, 1, width), "compare orders the entries")
+			})
+		})
 	})
 
 	t.Run("returns what a sorted model returns under any sequence of calls", func(t *testing.T) {

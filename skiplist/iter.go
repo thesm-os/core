@@ -84,7 +84,7 @@ func (it *Iter) Last(context.Context) bool {
 // Zero-alloc.
 func (it *Iter) SeekGE(_ context.Context, key []byte, seq uint64) bool {
 	l := it.list
-	prefix := keyPrefix(key)
+	prefix := l.prefixOf(key)
 	// A cursor on no entry is on node 0, the head. Its words are those of
 	// the empty key at the sequence 0, and it links to the first entry.
 	if it.resets == l.resets && l.compare(key, prefix, seq, it.node) > 0 {
@@ -108,7 +108,7 @@ func (it *Iter) SeekGE(_ context.Context, key []byte, seq uint64) bool {
 //
 // Zero-alloc.
 func (it *Iter) SeekLT(_ context.Context, key []byte, seq uint64) bool {
-	it.node, _ = it.list.search(key, keyPrefix(key), seq)
+	it.node, _ = it.list.search(key, it.list.prefixOf(key), seq)
 	it.resets = it.list.resets
 
 	return it.node != 0

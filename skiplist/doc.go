@@ -12,6 +12,15 @@
 // the newest version at or below s. The sequence is opaque to the package.
 // An engine packs its sequence number and the kind of an entry into it.
 //
+// # Versions
+//
+// With the SuffixBytes of [Config], the last SuffixBytes bytes of each key
+// are its version. The List then orders its entries by the bytes of their
+// keys before the version, then by version from the highest to the lowest,
+// then by sequence, as [go.thesmos.sh/core/sstable.CompareWithSuffix] orders
+// them. Every version of a key then sorts before a longer key that starts
+// with the bytes of the key.
+//
 // # Memory
 //
 // A List keeps its nodes in an [arena.Bump] of uint32 words and its keys and
@@ -20,7 +29,8 @@
 // and one link per level, 38.3 bytes on average. Two of its words contain
 // the first 8 bytes of its key, so a search reads the key from the data
 // arena only when those bytes equal the first 8 bytes of the key that it
-// searches for. One word links the node back to a node before it at level
+// searches for. Of a List with versions they are the first 8 bytes of the
+// key without its version. One word links the node back to a node before it at level
 // 0. [Config] sets the capacity of each arena. The capacities are fixed, and
 // [List.Add] returns [ErrFull] for an entry that does not fit. An engine
 // then freezes the full List and adds the entry to a new one.

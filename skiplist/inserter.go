@@ -54,7 +54,7 @@ type Inserter struct {
 //
 // Zero-alloc.
 func (ins *Inserter) Add(l *List, key []byte, seq uint64, value []byte) error {
-	prefix := keyPrefix(key)
+	prefix := l.prefixOf(key)
 	var from *[maxHeight]uint32
 	if ins.list == l && ins.resets == l.resets && l.compare(key, prefix, seq, ins.prev[0]) > 0 {
 		from = &ins.prev
