@@ -107,6 +107,23 @@ func TestRangeDeleteIter(t *testing.T) {
 			assert.Equal(t, rangeDelete{start: it.Start(), end: it.End(), seq: it.Seq()}, goldenDeletes[0],
 				"First moves to the first fragment of the partition of the cache")
 		})
+
+		t.Run("adds a copy of a fragment partition to a BlockCache", func(t *testing.T) {
+			t.Parallel()
+			// The read of the last partition takes the buffers of the cursor that
+			// read the first partition before.
+			r := openTable(t, writeTable(t, partsOfOne, nil, goldenDeletes...),
+				sstable.ReaderOptions{Cache: &mapCache{}, CacheID: 1})
+			reader := r.RangeDeletes()
+			assert.True(t, reader.First(t.Context()), "First adds the first partition to the cache")
+			assert.True(t, reader.Last(t.Context()), "Last reads the last partition")
+			reader.Close()
+			it := r.RangeDeletes()
+			defer it.Close()
+			assert.True(t, it.First(t.Context()), "First takes the first partition from the cache")
+			assert.Equal(t, rangeDelete{start: it.Start(), end: it.End(), seq: it.Seq()}, goldenDeletes[0],
+				"the cache keeps the bytes of the first partition")
+		})
 	})
 
 	t.Run("Last", func(t *testing.T) {
@@ -122,6 +139,20 @@ func TestRangeDeleteIter(t *testing.T) {
 					goldenDeletes[len(goldenDeletes)-1], "Last moves to the last fragment at its lowest sequence")
 			})
 		}
+
+		t.Run("returns the error of a context that ended before a partition of the cache", func(t *testing.T) {
+			t.Parallel()
+			r := openTable(t, writeTable(t, partsOfOne, nil, goldenDeletes...),
+				sstable.ReaderOptions{Cache: &mapCache{}, CacheID: 1})
+			warmFragments(t, r)
+			it := r.RangeDeletes()
+			defer it.Close()
+			assert.True(t, it.First(t.Context()), "First takes the first partition from the cache")
+			ctx, cancel := context.WithCancel(t.Context())
+			cancel()
+			assert.False(t, it.Last(ctx), "Last stops at the context before the last partition")
+			assert.ErrorIs(t, it.Err(), context.Canceled, "Err returns the error of the context")
+		})
 	})
 
 	t.Run("SeekGE", func(t *testing.T) {
@@ -192,6 +223,20 @@ func TestRangeDeleteIter(t *testing.T) {
 			cancel()
 			assert.False(t, it.SeekGE(ctx, []byte("key 017")), "SeekGE needs a partition and stops")
 			assert.ErrorIs(t, it.Err(), context.Canceled, "Err returns the error of the context")
+		})
+
+		t.Run("reads the partition of the current position once", func(t *testing.T) {
+			t.Parallel()
+			data := writeTable(t, partsOfOne, nil, goldenDeletes...)
+			f := &countingFile{data: data}
+			r, err := sstable.Open(t.Context(), f, int64(len(data)), sstable.ReaderOptions{})
+			assert.NoError(t, err, "Open reads the table")
+			it := r.RangeDeletes()
+			defer it.Close()
+			assert.True(t, it.SeekGE(t.Context(), []byte("key 017")), "SeekGE reads the partition of the key")
+			reads := f.reads
+			assert.True(t, it.SeekGE(t.Context(), []byte("key 016")), "SeekGE finds a fragment of the same partition")
+			assert.Equal(t, f.reads, reads, "the second SeekGE reads no partition")
 		})
 
 		t.Run("ignores its context for fragments in memory", func(t *testing.T) {
@@ -404,6 +449,17 @@ func TestRangeDeleteIter(t *testing.T) {
 			defer it.Close()
 			assert.Nil(t, it.Start(), "a new cursor has no start")
 		})
+
+		t.Run("returns nil after a move that stops at its context", func(t *testing.T) {
+			t.Parallel()
+			it := fragmentCursor(t, partsOfOne, goldenDeletes)
+			defer it.Close()
+			assert.True(t, it.Last(t.Context()), "Last moves to the last partition")
+			ctx, cancel := context.WithCancel(t.Context())
+			cancel()
+			assert.False(t, it.First(ctx), "First stops at the context before the first partition")
+			assert.Nil(t, it.Start(), "the cursor is on no position")
+		})
 	})
 
 	t.Run("End", func(t *testing.T) {
@@ -452,6 +508,44 @@ func TestRangeDeleteIter(t *testing.T) {
 			assert.ErrorIs(t, it.Err(), sstable.ErrCorrupt, "Err returns ErrCorrupt")
 		})
 
+		t.Run("returns ErrCorrupt for a partition that starts before the end before it", func(t *testing.T) {
+			t.Parallel()
+			// The third partition has the fragment from key 020 up to key 030
+			// alone. Its start moves from key 020, the end of the partition before
+			// it, to a key before it.
+			l := newLayout(t, partsOfOne, nil, goldenDeletes...)
+			part := l.fragmentParts[2]
+			l.data[part.off+3+len("key 02")]--
+			l.seal()
+			it := openTable(t, l.data, sstable.ReaderOptions{}).RangeDeletes()
+			defer it.Close()
+			assert.False(t, it.SeekGE(t.Context(), []byte("key 025")), "SeekGE reads the changed partition")
+			assert.ErrorIs(t, it.Err(), sstable.ErrCorrupt, "Err returns ErrCorrupt")
+		})
+
+		t.Run("returns ErrCorrupt for a partition after a top-level entry that has no place", func(t *testing.T) {
+			t.Parallel()
+			// The second entry of the top-level index has no place. The third
+			// entry states the count 1 of its partition alone, the count that a
+			// cursor would take for a partition without a partition before it.
+			l := newLayout(t, partsOfOne, nil, goldenDeletes...)
+			top := l.data[l.fragments.off : l.fragments.off+l.fragments.n]
+			offsets := restarts(top)
+			_, before := restartEntry(top[offsets[1]:])
+			for i := range before {
+				before[i] = 0xff
+			}
+			_, value := restartEntry(top[offsets[2]:])
+			_, n1 := binary.Uvarint(value)
+			_, n2 := binary.Uvarint(value[n1:])
+			value[n1+n2] = 1
+			l.seal()
+			it := openTable(t, l.data, sstable.ReaderOptions{}).RangeDeletes()
+			defer it.Close()
+			assert.False(t, it.SeekGE(t.Context(), []byte("key 025")), "SeekGE reads the third partition")
+			assert.ErrorIs(t, it.Err(), sstable.ErrCorrupt, "Err returns ErrCorrupt")
+		})
+
 		// Each case changes the second fragment partition, the fragment from key
 		// 015 up to key 020 at the sequences 9 and 7, and seals the table.
 		tests := []struct {
@@ -459,19 +553,14 @@ func TestRangeDeleteIter(t *testing.T) {
 			giveChange func(l *layout, part place)
 		}{
 			{
-				name: "returns ErrCorrupt for a partition that starts before the end of the partition before",
-				giveChange: func(l *layout, part place) {
-					// The first start is key 015, and the end before is key 015.
-					l.data[part.off+3+len("key 01")]--
-				},
-			},
-			{
 				name: "returns ErrCorrupt for a partition whose last end differs from its top-level entry",
 				giveChange: func(l *layout, part place) {
-					// The second entry ends with the end key 020.
-					entries := restarts(l.data[part.off : part.off+part.n])
-					_, end := restartEntry(l.data[part.off+entries[1]:])
-					end[len(end)-1]++
+					// Both entries end at key 021 in place of key 020, so they are
+					// still one fragment.
+					for _, off := range restarts(l.data[part.off : part.off+part.n]) {
+						_, end := restartEntry(l.data[part.off+off:])
+						end[len(end)-1]++
+					}
 				},
 			},
 			{
@@ -561,6 +650,69 @@ func TestRangeDeleteIter(t *testing.T) {
 			})
 		}
 
+		// A cursor does not check a partition that the cache returns. The cache
+		// of each case contains every partition of the intact table under the
+		// identity of the changed table, so the search of the top-level index
+		// alone reads the changed entry.
+		cachedSearches := []struct {
+			name     string
+			giveSeek func(ctx context.Context, it *sstable.RangeDeleteIter) bool
+		}{
+			{
+				name: "returns ErrCorrupt for a SeekGE whose search reads a top-level entry that does not decode " +
+					"before a partition of the cache",
+				giveSeek: func(ctx context.Context, it *sstable.RangeDeleteIter) bool {
+					return it.SeekGE(ctx, []byte("key 017"))
+				},
+			},
+			{
+				name: "returns ErrCorrupt for a SeekLT whose search reads a top-level entry that does not decode " +
+					"before a partition of the cache",
+				giveSeek: func(ctx context.Context, it *sstable.RangeDeleteIter) bool {
+					return it.SeekLT(ctx, []byte("key 017"))
+				},
+			},
+		}
+		for _, tt := range cachedSearches {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				cache := &mapCache{}
+				data := writeTable(t, partsOfOne, nil, goldenDeletes...)
+				warmFragments(t, openTable(t, data, sstable.ReaderOptions{Cache: cache, CacheID: 1}))
+				l := parseLayout(bytes.Clone(data))
+				top := l.data[l.fragments.off : l.fragments.off+l.fragments.n]
+				top[restarts(top)[1]] = 1
+				l.seal()
+				it := openTable(t, l.data, sstable.ReaderOptions{Cache: cache, CacheID: 1}).RangeDeletes()
+				defer it.Close()
+				assert.False(t, tt.giveSeek(t.Context(), it), "the seek reads the changed entry")
+				assert.ErrorIs(t, it.Err(), sstable.ErrCorrupt, "Err returns ErrCorrupt")
+			})
+		}
+
+		t.Run("returns ErrCorrupt for a Next into a partition whose top-level entry has no place before a block "+
+			"of the cache at the offset 0", func(t *testing.T) {
+			t.Parallel()
+			// The cache contains the first data block of the table at the offset
+			// 0, which the place of an entry that does not decode would give.
+			l := newLayout(t, partsOfOne, goldenTable(), goldenDeletes...)
+			top := l.data[l.fragments.off : l.fragments.off+l.fragments.n]
+			_, value := restartEntry(top[restarts(top)[1]:])
+			for i := range value {
+				value[i] = 0xff
+			}
+			l.seal()
+			r := openTable(t, l.data, sstable.ReaderOptions{Cache: &mapCache{}, CacheID: 1})
+			entries := r.NewIter(sstable.IterOptions{})
+			assert.True(t, entries.First(t.Context()), "First adds the first data block to the cache")
+			assert.NoError(t, entries.Close(), "the cursor of the entries closes")
+			it := r.RangeDeletes()
+			defer it.Close()
+			assert.True(t, it.First(t.Context()), "First reads the first partition")
+			assert.False(t, it.Next(t.Context()), "Next reads the changed entry")
+			assert.ErrorIs(t, it.Err(), sstable.ErrCorrupt, "Err returns ErrCorrupt")
+		})
+
 		t.Run("returns an error that wraps the error of the File", func(t *testing.T) {
 			t.Parallel()
 			data := writeTable(t, partsOfOne, nil, goldenDeletes...)
@@ -574,16 +726,50 @@ func TestRangeDeleteIter(t *testing.T) {
 			assert.ErrorIs(t, it.Err(), errRead, "Err returns the error of the File")
 		})
 
-		t.Run("clears the error at a seek", func(t *testing.T) {
-			t.Parallel()
-			it := fragmentCursor(t, partsOfOne, goldenDeletes)
-			defer it.Close()
-			ctx, cancel := context.WithCancel(t.Context())
-			cancel()
-			assert.False(t, it.First(ctx), "First stops at the context")
-			assert.True(t, it.First(t.Context()), "First moves under a live context")
-			assert.NoError(t, it.Err(), "the move clears the error")
-		})
+		// Each case moves the cursor with a seek after a First that stopped at
+		// its context.
+		seeks := []struct {
+			name     string
+			giveSeek func(ctx context.Context, it *sstable.RangeDeleteIter) bool
+		}{
+			{
+				name:     "clears the error at First",
+				giveSeek: func(ctx context.Context, it *sstable.RangeDeleteIter) bool { return it.First(ctx) },
+			},
+			{
+				name:     "clears the error at Last",
+				giveSeek: func(ctx context.Context, it *sstable.RangeDeleteIter) bool { return it.Last(ctx) },
+			},
+			{
+				name: "clears the error at SeekGE",
+				giveSeek: func(ctx context.Context, it *sstable.RangeDeleteIter) bool {
+					return it.SeekGE(ctx, []byte("key 017"))
+				},
+			},
+			{
+				name: "clears the error at SeekLT",
+				giveSeek: func(ctx context.Context, it *sstable.RangeDeleteIter) bool {
+					return it.SeekLT(ctx, []byte("key 017"))
+				},
+			},
+		}
+		for _, tt := range seeks {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				// The cache contains every partition, so no read of the File sets
+				// the error of the cursor.
+				r := openTable(t, writeTable(t, partsOfOne, nil, goldenDeletes...),
+					sstable.ReaderOptions{Cache: &mapCache{}, CacheID: 1})
+				warmFragments(t, r)
+				it := r.RangeDeletes()
+				defer it.Close()
+				ctx, cancel := context.WithCancel(t.Context())
+				cancel()
+				assert.False(t, it.First(ctx), "First stops at the context")
+				assert.True(t, tt.giveSeek(t.Context(), it), "the seek moves under a live context")
+				assert.NoError(t, it.Err(), "the seek clears the error")
+			})
+		}
 	})
 
 	t.Run("Close", func(t *testing.T) {
@@ -599,6 +785,30 @@ func TestRangeDeleteIter(t *testing.T) {
 			defer first.Close()
 			defer second.Close()
 			assert.NotEqual(t, first, second, "the pool hands out the closed cursor once", assert.ByIdentity())
+		})
+
+		t.Run("releases a lent partition once after a move that stops at its context", func(t *testing.T) {
+			t.Parallel()
+			// A second release of the first partition would return its Block to
+			// the pool while the cache contains it. The read of the last
+			// partition would then take that Block, and the cache would lend the
+			// bytes of the last partition for the first.
+			r := openTable(t, writeTable(t, partsOfOne, nil, goldenDeletes...),
+				sstable.ReaderOptions{Cache: lendingCache(t, 16), CacheID: 1})
+			stopped := r.RangeDeletes()
+			assert.True(t, stopped.First(t.Context()), "First adds the first partition to the cache")
+			ctx, cancel := context.WithCancel(t.Context())
+			cancel()
+			assert.False(t, stopped.Last(ctx), "Last stops at the context")
+			stopped.Close()
+			last := r.RangeDeletes()
+			assert.True(t, last.Last(t.Context()), "Last reads the last partition")
+			last.Close()
+			it := r.RangeDeletes()
+			defer it.Close()
+			assert.True(t, it.First(t.Context()), "First takes the first partition from the cache")
+			assert.Equal(t, rangeDelete{start: it.Start(), end: it.End(), seq: it.Seq()}, goldenDeletes[0],
+				"the cache lends the bytes of the first partition")
 		})
 	})
 }
@@ -699,6 +909,21 @@ func BenchmarkRangeDeleteIter(b *testing.B) {
 			}
 		})
 	}
+}
+
+// warmFragments reads every fragment partition of r through a cursor under
+// the context of tb, so the cache of r contains each of them.
+func warmFragments(tb assert.TB, r *sstable.Reader) {
+	tb.Helper()
+
+	ctx := assert.Context(tb)
+	it := r.RangeDeletes()
+	defer it.Close()
+	ok := it.First(ctx)
+	for ok {
+		ok = it.Next(ctx)
+	}
+	assert.NoError(tb, it.Err(), "the cursor reads every fragment partition")
 }
 
 // fragmentCursor writes a table of the fragments dels without entries under

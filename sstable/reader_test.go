@@ -17,6 +17,7 @@ import (
 	"slices"
 	"strconv"
 	"testing"
+	"weak"
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/bench"
@@ -151,6 +152,28 @@ func (c *roleCache) Lend(ctx context.Context, id, offset uint64, role sstable.Bl
 func (c *roleCache) AddBlock(ctx context.Context, id, offset uint64, role sstable.BlockRole, b *sstable.Block) {
 	c.adds = append(c.adds, lookup{offset: offset, role: role})
 	c.Cache.AddBlock(ctx, id, offset, role, b)
+}
+
+// faultFile is a File over data that fails its read of the number fail with
+// errRead, and reads the bytes of every other read. A fail of 0 fails no
+// read.
+type faultFile struct {
+	data  []byte
+	fail  int
+	reads int
+}
+
+var _ sstable.File = (*faultFile)(nil)
+
+// ReadAt counts the read, and fails it when it is the read of the number
+// fail.
+func (f *faultFile) ReadAt(_ context.Context, p []byte, off int64) (int, error) {
+	f.reads++
+	if f.reads == f.fail {
+		return 0, errRead
+	}
+
+	return bytes.NewReader(f.data).ReadAt(p, off)
 }
 
 func TestReader(t *testing.T) {
@@ -501,8 +524,10 @@ func TestReader(t *testing.T) {
 				},
 			},
 			{
+				// The fragments have four partitions, so the first one that Open
+				// reads has another entry than the last one.
 				name:     "returns ErrCorrupt for a last entry of the top-level index of the fragments that does not decode",
-				giveOpts: settings[8].opts,
+				giveOpts: partsOfOne,
 				giveChange: func(l *layout) {
 					top := l.data[l.fragments.off : l.fragments.off+l.fragments.n]
 					offsets := restarts(top)
@@ -834,6 +859,23 @@ func TestReader(t *testing.T) {
 				assert.Nil(t, r, "Open returns no Reader")
 			})
 		}
+
+		t.Run("returns ErrSuffix for a Reader of the width -1 of a table of the width 2^64 - 1", func(t *testing.T) {
+			t.Parallel()
+			// The block of places of the golden table with versions without
+			// partitions ends with the name of goldenPrefix and the width in one
+			// byte. The case writes a name of 4 bytes and the varint of 10 bytes
+			// of 2^64 - 1 in their place, the width that a conversion of -1 to
+			// uint64 gives.
+			opts := versionedSettings[0]
+			l := newLayout(t, opts, goldenTableOf(opts), versionedGoldenDeletes...)
+			tail := l.data[l.places.off+l.places.n-len(firstSix)-2 : l.places.off+l.places.n]
+			binary.AppendUvarint(append(tail[:0], 4, 'f', 'i', 'r', 's'), math.MaxUint64)
+			l.seal()
+			_, err := sstable.Open(t.Context(), bytesFile(l.data), int64(len(l.data)),
+				sstable.ReaderOptions{SuffixBytes: -1})
+			assert.ErrorIs(t, err, sstable.ErrSuffix, "Open refuses the negative width of the Reader")
+		})
 
 		t.Run("reads the filter of prefixes only for a Reader of its extraction", func(t *testing.T) {
 			t.Parallel()
@@ -2213,16 +2255,26 @@ func TestReader(t *testing.T) {
 			}, "Check reports the partition, skips its data blocks and checks the data blocks after it")
 		})
 
-		t.Run("reports a damaged filter partition with the keys of its top-level entries", func(t *testing.T) {
+		t.Run("reports each damaged filter partition with the keys of its top-level entries", func(t *testing.T) {
 			t.Parallel()
+			// Open does not read a filter partition, so the case damages the
+			// first one too, which has no key before it.
 			l := newLayout(t, settings[5].opts, goldenTable())
-			part := l.filterParts[1]
-			l.data[part.off] ^= 0xff
+			assert.Length(t, l.filterParts, 2, "the golden table has two filter partitions")
+			first, second := l.filterParts[0], l.filterParts[1]
+			l.data[first.off] ^= 0xff
+			l.data[second.off] ^= 0xff
 			r := openTable(t, l.data, sstable.ReaderOptions{})
-			assert.Equal(t, checkAll(t, r), []sstable.BlockDamage{{
-				Err: sstable.ErrCorrupt, After: l.filterParts[0].last, Last: part.last,
-				Offset: int64(part.off), Size: int64(part.n + trailerLen), Role: sstable.FilterBlock,
-			}}, "Check reports the filter partition")
+			assert.Equal(t, checkAll(t, r), []sstable.BlockDamage{
+				{
+					Err: sstable.ErrCorrupt, Last: first.last,
+					Offset: int64(first.off), Size: int64(first.n + trailerLen), Role: sstable.FilterBlock,
+				},
+				{
+					Err: sstable.ErrCorrupt, After: first.last, Last: second.last,
+					Offset: int64(second.off), Size: int64(second.n + trailerLen), Role: sstable.FilterBlock,
+				},
+			}, "Check reports both filter partitions")
 		})
 
 		t.Run("reports a damaged partition of the filter of prefixes that the Reader reads", func(t *testing.T) {
@@ -2245,16 +2297,25 @@ func TestReader(t *testing.T) {
 			assert.Empty(t, checkAll(t, r), "Check reads no partition of the filter of prefixes")
 		})
 
-		t.Run("reports a damaged fragment partition with the ends of its top-level entries", func(t *testing.T) {
+		t.Run("reports each damaged fragment partition with the ends of its top-level entries", func(t *testing.T) {
 			t.Parallel()
+			// Open reads the first fragment partition, so the case leaves it
+			// intact.
 			l := newLayout(t, partsOfOne, goldenTable(), goldenDeletes...)
-			part := l.fragmentParts[2]
-			l.data[part.off] ^= 0xff
+			second, third := l.fragmentParts[1], l.fragmentParts[2]
+			l.data[second.off] ^= 0xff
+			l.data[third.off] ^= 0xff
 			r := openTable(t, l.data, sstable.ReaderOptions{})
-			assert.Equal(t, checkAll(t, r), []sstable.BlockDamage{{
-				Err: sstable.ErrCorrupt, After: l.fragmentParts[1].last, Last: part.last,
-				Offset: int64(part.off), Size: int64(part.n + trailerLen), Role: sstable.FragmentBlock,
-			}}, "Check reports the fragment partition")
+			assert.Equal(t, checkAll(t, r), []sstable.BlockDamage{
+				{
+					Err: sstable.ErrCorrupt, After: l.fragmentParts[0].last, Last: second.last,
+					Offset: int64(second.off), Size: int64(second.n + trailerLen), Role: sstable.FragmentBlock,
+				},
+				{
+					Err: sstable.ErrCorrupt, After: second.last, Last: third.last,
+					Offset: int64(third.off), Size: int64(third.n + trailerLen), Role: sstable.FragmentBlock,
+				},
+			}, "Check reports both fragment partitions")
 		})
 
 		t.Run("reports no block of a table of long keys in partitions", func(t *testing.T) {
@@ -2372,6 +2433,23 @@ func TestReader(t *testing.T) {
 					key[len("key ")]++
 				},
 			},
+			{
+				name: "reports an index partition whose first entry is not after the partition before it",
+				giveChange: func(part []byte, _ int) {
+					// The first entry moves from a key 0xy to the key 000, which is
+					// in the partition before it.
+					key, _ := restartEntry(part)
+					key[len("key 0")], key[len("key 00")] = '0', '0'
+				},
+			},
+			{
+				name: "reports an index partition with two equal entries",
+				giveChange: func(part []byte, entry int) {
+					first, _ := restartEntry(part)
+					second, _ := restartEntry(part[entry:])
+					copy(second, first)
+				},
+			},
 		}
 		for _, tt := range partChanges {
 			t.Run(tt.name, func(t *testing.T) {
@@ -2388,6 +2466,40 @@ func TestReader(t *testing.T) {
 				}}, "Check reports the changed partition")
 			})
 		}
+
+		t.Run("reports the index partitions of a top-level entry that states another count", func(t *testing.T) {
+			t.Parallel()
+			// The second entry of the top-level index of the index states one
+			// data block more, so its partition and the partition after it differ
+			// from their counts. The value of the entry has the offset, the
+			// length and the count of the partition as varints.
+			l := newLayout(t, settings[5].opts, goldenTable())
+			index := l.data[l.index.off : l.index.off+l.index.n]
+			_, value := restartEntry(index[restarts(index)[1]:])
+			_, n1 := binary.Uvarint(value)
+			_, n2 := binary.Uvarint(value[n1:])
+			value[n1+n2]++
+			l.seal()
+			got := checkAll(t, openTable(t, l.data, sstable.ReaderOptions{}))
+			assert.Length(t, got, 2, "Check reports two partitions")
+			expect.Equal(t, got[0].Offset, int64(l.indexParts[1].off), "Check reports the partition of the entry")
+			expect.Equal(t, got[1].Offset, int64(l.indexParts[2].off), "Check reports the partition after it")
+		})
+
+		t.Run("reports an index partition whose last entry differs from its top-level entry", func(t *testing.T) {
+			t.Parallel()
+			// The key of the second entry of the top-level index of the index
+			// takes the sequence below the sequence of the last entry of its
+			// partition.
+			l := newLayout(t, settings[5].opts, goldenTable())
+			index := l.data[l.index.off : l.index.off+l.index.n]
+			key, _ := restartEntry(index[restarts(index)[1]:])
+			key[len(key)-1]--
+			l.seal()
+			got := checkAll(t, openTable(t, l.data, sstable.ReaderOptions{}))
+			assert.NotEmpty(t, got, "Check reports a partition")
+			expect.Equal(t, got[0].Offset, int64(l.indexParts[1].off), "Check reports the partition of the entry")
+		})
 
 		// Each case changes the second entry of a top-level index, which Open
 		// does not read, and seals the table.
@@ -2416,6 +2528,17 @@ func TestReader(t *testing.T) {
 					}
 				},
 			},
+			{
+				name: "whose key is shorter than a sequence",
+				giveChange: func(entry []byte) {
+					// The key keeps its first 4 bytes, and the value follows them. The
+					// header of the entry has three varints of one byte.
+					_, value := restartEntry(entry)
+					v := bytes.Clone(value)
+					entry[1] = 4
+					copy(entry[3+4:], v)
+				},
+			},
 		}
 		for _, top := range tops {
 			for _, change := range entryChanges {
@@ -2434,20 +2557,54 @@ func TestReader(t *testing.T) {
 			}
 		}
 
-		t.Run("returns ErrCorrupt for an entry of the index block that does not decode", func(t *testing.T) {
+		t.Run("returns ErrCorrupt for a top-level key of the fragments longer than its index", func(t *testing.T) {
 			t.Parallel()
-			l := newLayout(t, oneEntry, goldenTable())
-			index := l.data[l.index.off : l.index.off+l.index.n]
-			_, value := restartEntry(index[restarts(index)[10]:])
-			// The varints of the place of the block do not end.
-			for i := range value {
-				value[i] = 0xff
-			}
+			// The top-level index of the four fragment partitions takes about 120
+			// bytes, so a key of 127 bytes at its second entry passes its end.
+			l := newLayout(t, partsOfOne, goldenTable(), goldenDeletes...)
+			index := l.data[l.fragments.off : l.fragments.off+l.fragments.n]
+			index[restarts(index)[1]+1] = 0x7f
 			l.seal()
-			r := openTable(t, l.data, sstable.ReaderOptions{})
-			err := r.Check(t.Context(), func(*sstable.BlockDamage) error { return nil })
-			assert.ErrorIs(t, err, sstable.ErrCorrupt, "Check cannot place the blocks after the entry")
+			err := openTable(t, l.data, sstable.ReaderOptions{}).
+				Check(t.Context(), func(*sstable.BlockDamage) error { return nil })
+			assert.ErrorIs(t, err, sstable.ErrCorrupt, "Check cannot place the partitions after the entry")
 		})
+
+		// Each case changes the entry 10 of the index block of a table of blocks
+		// of one entry, which Open does not read, and seals the table.
+		indexEntries := []struct {
+			name       string
+			giveChange func(entry []byte)
+		}{
+			{
+				// An entry at a restart point does not share bytes with the entry
+				// before it.
+				name:       "returns ErrCorrupt for an entry of the index block whose key does not decode",
+				giveChange: func(entry []byte) { entry[0] = 1 },
+			},
+			{
+				// The varints of the place of the block do not end.
+				name: "returns ErrCorrupt for an entry of the index block whose place does not decode",
+				giveChange: func(entry []byte) {
+					_, value := restartEntry(entry)
+					for i := range value {
+						value[i] = 0xff
+					}
+				},
+			},
+		}
+		for _, tt := range indexEntries {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				l := newLayout(t, oneEntry, goldenTable())
+				index := l.data[l.index.off : l.index.off+l.index.n]
+				tt.giveChange(index[restarts(index)[10]:])
+				l.seal()
+				r := openTable(t, l.data, sstable.ReaderOptions{})
+				err := r.Check(t.Context(), func(*sstable.BlockDamage) error { return nil })
+				assert.ErrorIs(t, err, sstable.ErrCorrupt, "Check cannot place the blocks after the entry")
+			})
+		}
 
 		t.Run("returns the error of fn", func(t *testing.T) {
 			t.Parallel()
@@ -2484,7 +2641,10 @@ func TestReader(t *testing.T) {
 
 		t.Run("returns the error of a context that ended", func(t *testing.T) {
 			t.Parallel()
-			r := openTable(t, writeTable(t, settings[5].opts, goldenTable()), sstable.ReaderOptions{})
+			// The File ignores the context, so Check checks it before each read.
+			data := writeTable(t, settings[5].opts, goldenTable())
+			r, err := sstable.Open(t.Context(), &countingFile{data: data}, int64(len(data)), sstable.ReaderOptions{})
+			assert.NoError(t, err, "Open reads the table")
 			assert.HonoursCancellation(t, func(ctx context.Context) error {
 				return r.Check(ctx, func(*sstable.BlockDamage) error { return nil })
 			}, "Check stops before its first read")
@@ -2494,8 +2654,10 @@ func TestReader(t *testing.T) {
 			t.Parallel()
 			// The table has index, filter and fragment partitions, and the
 			// Reader reads the partitions of its filter of prefixes.
+			// The File fails one read of each Check, so a Check that went on
+			// after the failed read would read the rest of the table.
 			data := writeTable(t, prefixParts, goldenTable(), goldenDeletes...)
-			f := &failingFile{data: data, ok: 1 << 30}
+			f := &faultFile{data: data}
 			r, err := sstable.Open(t.Context(), f, int64(len(data)), sstable.ReaderOptions{Prefix: goldenPrefix})
 			assert.NoError(t, err, "Open reads the table")
 			opened := f.reads
@@ -2503,7 +2665,7 @@ func TestReader(t *testing.T) {
 				"Check reads every block of the table")
 			reads := f.reads - opened
 			for read := range reads {
-				f.ok = f.reads + read
+				f.fail = f.reads + read + 1
 				err = r.Check(t.Context(), func(*sstable.BlockDamage) error { return nil })
 				expect.ErrorIs(t, err, errRead, "Check returns the error of the read "+strconv.Itoa(read+1))
 			}
@@ -2714,6 +2876,24 @@ func TestReaderAllocs(t *testing.T) {
 				expect.NotEqual(t, seqs, uint64(0), "the test measures the fragments of a key")
 			})
 		}
+
+		t.Run("takes the cursor that Open of a table with fragment partitions returns to the pool", func(t *testing.T) {
+			// The collections of each setup empty the pool of the cursors, and
+			// Open then returns the cursor that read its first fragment partition.
+			fragments := writeTable(t, partsOfOne, goldenTable(), goldenDeletes...)
+			var ok bool
+			expect.MaxAllocsWithSetup(t, func() *sstable.Reader {
+				runtime.GC()
+				runtime.GC()
+
+				return openTable(t, fragments, sstable.ReaderOptions{})
+			}, func(r *sstable.Reader) {
+				it := r.RangeDeletes()
+				ok = it.First(t.Context())
+				it.Close()
+			}, 0, "RangeDeletes takes the cursor that Open read the first fragment partition with")
+			expect.True(t, ok, "the test measures a First that finds a fragment")
+		})
 	})
 
 	t.Run("Check", func(t *testing.T) {
@@ -2743,6 +2923,20 @@ func TestReaderAllocs(t *testing.T) {
 				expect.Length(t, checkAll(t, r), tt.wantDamaged, "the test measures the damage of the table")
 			})
 		}
+
+		t.Run("returns its state to the pool without the Reader", func(t *testing.T) {
+			// After one collection the pool still contains the state of the last
+			// Check, so the Reader is gone only when the state drops it.
+			reader := func() weak.Pointer[sstable.Reader] {
+				r := openTable(t, data, sstable.ReaderOptions{})
+				assert.NoError(t, r.Check(t.Context(), func(*sstable.BlockDamage) error { return nil }),
+					"Check reads the table")
+
+				return weak.Make(r)
+			}()
+			runtime.GC()
+			assert.Nil(t, reader.Value(), "the state of Check in the pool does not keep the Reader")
+		})
 	})
 
 	t.Run("NewIter", func(t *testing.T) {

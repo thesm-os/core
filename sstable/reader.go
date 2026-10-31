@@ -480,10 +480,7 @@ func Open(ctx context.Context, file File, size int64, opts ReaderOptions) (*Read
 			return nil, err
 		}
 		if p.fragmentParts {
-			// A table without fragments has no top-level index of them.
-			if c.init(b); c.err != nil || c.count == 0 {
-				return nil, ErrCorrupt
-			}
+			// summarizeParts refuses a top-level index without entries.
 			rd.fragTop = b
 		} else {
 			if err := rd.summarizeBlock(b); err != nil {
@@ -849,19 +846,17 @@ func (r *Reader) Check(ctx context.Context, fn func(*BlockDamage) error) error {
 
 	ck.r, ck.fn = r, fn
 	ck.top.suffix, ck.index.suffix, ck.data.suffix = r.suffix, r.suffix, r.suffix
-	if err := ck.dataBlocks(ctx); err != nil || !r.partitioned {
+	if err := ck.dataBlocks(ctx); err != nil {
 		return err
 	}
-	for _, f := range [...]*tableFilter{&r.keys, &r.prefixes} {
-		if !f.ok {
-			continue
-		}
-		if err := ck.filterParts(ctx, f.index); err != nil {
+	// A table without partitions has no top-level index of a filter or of the
+	// fragments, and a Reader that does not read the filter of prefixes has no
+	// top-level index of it either. A missing top-level index has no
+	// partitions.
+	for _, index := range [...][]byte{r.keys.index, r.prefixes.index} {
+		if err := ck.filterParts(ctx, index); err != nil {
 			return err
 		}
-	}
-	if r.fragTop == nil {
-		return nil
 	}
 
 	return ck.fragmentParts(ctx)
@@ -1088,11 +1083,13 @@ func (ck *checker) dataBlocks(ctx context.Context) error {
 		if k == nil || !ok {
 			return ErrCorrupt
 		}
-		b, intact, err := ck.read(ctx, off, n, want, &ck.partRaw, &ck.partBuf)
+		b, err := ck.read(ctx, off, n, want, &ck.partRaw, &ck.partBuf)
 		if err != nil {
 			return err
 		}
-		if intact && upTo >= blocks && ck.checkIndex(b, after, k, upTo-blocks) {
+		// A count below the count before it makes the difference wrap, and
+		// checkIndex refuses the partition for its count of entries.
+		if ck.checkIndex(b, after, k, upTo-blocks) {
 			err = ck.indexBlocks(ctx, after)
 		} else {
 			err = ck.report(IndexBlock, off, n, after, k)
@@ -1120,11 +1117,11 @@ func (ck *checker) indexBlocks(ctx context.Context, after []byte) error {
 		if k == nil || !ok {
 			return ErrCorrupt
 		}
-		b, intact, err := ck.read(ctx, off, n, binary.BigEndian.Uint32(v[len(v)-crcLen:]), &ck.raw, &ck.buf)
+		b, err := ck.read(ctx, off, n, binary.BigEndian.Uint32(v[len(v)-crcLen:]), &ck.raw, &ck.buf)
 		if err != nil {
 			return err
 		}
-		if !intact || !ck.checkData(b, after, k) {
+		if !ck.checkData(b, after, k) {
 			if err := ck.report(DataBlock, off, n, after, k); err != nil {
 				return err
 			}
@@ -1140,16 +1137,16 @@ func (ck *checker) indexBlocks(ctx context.Context, after []byte) error {
 // offset 0. Each restart point is at the offset of an entry without a shared
 // prefix. The entries decode in the order of the table. The first entry is
 // after the internal key after when after is not nil. The last entry is the
-// internal key last of the index entry of the block.
+// internal key last of the index entry of the block. A block of no bytes and
+// a block without room for its restart points have no restart points.
 func (ck *checker) checkData(b, after, last []byte) bool {
 	c := &ck.data
-	if c.init(b); c.err != nil {
-		return false
-	}
+	c.init(b)
 	ck.prev, c.key = append(ck.prev[:0], after...), c.key[:0]
 	ordered := after != nil
 	restart := 0
 	for at := 0; at < c.end; at = c.after {
+		//dokimi:mutate-skip ror-boundary: each restart point is at an entry of 11 bytes or more, so the entries after the last one start above the count of the restart points
 		if restart < c.count && int(binary.BigEndian.Uint32(c.block[c.end+4*restart:])) == at {
 			c.key, restart = c.key[:0], restart+1
 		}
@@ -1173,12 +1170,13 @@ func (ck *checker) checkData(b, after, last []byte) bool {
 // entry is at a restart point after the entry before it in the bytes of b.
 // Each entry has the place of a data block. The first entry is after the
 // internal key after when after is not nil. The last entry is the internal
-// key last of the top-level entry of the partition. checkIndex leaves the
-// index cursor on b.
+// key last of the top-level entry of the partition. A partition of no bytes
+// and a partition without room for its restart points have no entries.
+// checkIndex leaves the index cursor on b.
 func (ck *checker) checkIndex(b, after, last []byte, blocks uint64) bool {
 	c := &ck.index
 	//nolint:gosec // G115: a block has fewer entries than bytes
-	if c.init(b); c.err != nil || uint64(c.count) != blocks {
+	if c.init(b); uint64(c.count) != blocks {
 		return false
 	}
 	ck.prev = append(ck.prev[:0], after...)
@@ -1217,15 +1215,12 @@ func (ck *checker) filterParts(ctx context.Context, index []byte) error {
 		if k == nil || !ok {
 			return ErrCorrupt
 		}
-		b, intact, err := ck.read(ctx, off, n, want, &ck.raw, &ck.buf)
+		b, err := ck.read(ctx, off, n, want, &ck.raw, &ck.buf)
 		if err != nil {
 			return err
 		}
-		if intact {
-			_, err = filter.ParseFuse(b)
-			intact = err == nil
-		}
-		if !intact {
+		// ParseFuse refuses a partition of no bytes.
+		if _, err := filter.ParseFuse(b); err != nil {
 			if err := ck.report(FilterBlock, off, n, after, k); err != nil {
 				return err
 			}
@@ -1246,15 +1241,15 @@ func (ck *checker) fragmentParts(ctx context.Context) error {
 	var after []byte
 	for p := range ck.top.count {
 		k := ck.top.restartKey(p)
-		off, n, _, want, ok := ck.r.partition(ck.top.restartValue(p), true)
+		off, n, count, want, ok := ck.r.partition(ck.top.restartValue(p), true)
 		if k == nil || !ok {
 			return ErrCorrupt
 		}
-		b, intact, err := ck.read(ctx, off, n, want, &ck.raw, &ck.buf)
+		b, err := ck.read(ctx, off, n, want, &ck.raw, &ck.buf)
 		if err != nil {
 			return err
 		}
-		if !intact || !checkPartition(ck.r, &ck.top, &ck.data, &ck.prev, b, p) {
+		if !checkPartition(ck.r, &ck.top, &ck.data, &ck.prev, b, p, count) {
 			if err := ck.report(FragmentBlock, off, n, after, k); err != nil {
 				return err
 			}
@@ -1268,23 +1263,28 @@ func (ck *checker) fragmentParts(ctx context.Context) error {
 // read reads the block of n stored bytes at off and its trailer from the
 // File under ctx into *raw, and returns the bytes of the block. It decodes a
 // compressed block into *buf. want is the CRC32C that the parent of the
-// block states. read reports false for a block that fails its checksum or
-// its decompression. It returns the error of a ctx that ended before the
-// read, and an error that wraps an error of the File.
-func (ck *checker) read(ctx context.Context, off, n uint64, want uint32, raw, buf *[]byte) ([]byte, bool, error) {
+// block states. read returns no bytes for a block that fails its checksum or
+// its decompression, and each check of a block refuses a block of no bytes.
+// It returns the error of a ctx that ended before the read, and an error that
+// wraps an error of the File.
+func (ck *checker) read(ctx context.Context, off, n uint64, want uint32, raw, buf *[]byte) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	//nolint:gosec // G115: the block lies inside a table whose size is an int64
 	size := int(n) + trailerLen
 	*raw = slices.Grow((*raw)[:0], size)[:size]
 	//nolint:gosec // G115: the block lies inside the table
 	if err := readAt(ctx, ck.r.f, *raw, int64(off)); err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	b, err := unseal(*raw, want, buf)
+	//dokimi:mutate-skip ror-false,sbr-delete: unseal returns no bytes with its error
+	if err != nil {
+		return nil, nil //nolint:nilerr // the damage of the block is the absence of its bytes, which the caller reports
+	}
 
-	return b, err == nil, nil
+	return b, nil
 }
 
 // report passes the damage of the block of n stored bytes at off with role

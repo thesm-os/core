@@ -541,6 +541,43 @@ func TestWriter(t *testing.T) {
 				})
 			}
 
+			// The fragments of each case start at the end of the fragment before
+			// them, and the bound of the ends counts each start of one byte as an
+			// end too. The length of each fragment partition and of the top-level
+			// index of the fragments is below 128 bytes, and takes one of the two
+			// bytes that the bound counts for it. The bound also counts the end of
+			// a fragment before the last fragment of its partition.
+			chained := []rangeDelete{
+				{start: []byte{}, end: []byte("a"), seq: 9},
+				{start: []byte("a"), end: []byte("b"), seq: 9},
+				{start: []byte("b"), end: []byte("c"), seq: 9},
+			}
+			closeParts := []struct {
+				name      string
+				giveOpts  sstable.WriterOptions
+				wantSlack int64
+			}{
+				{
+					name:      "returns the size of a table in fragment partitions of one fragment with its slack",
+					giveOpts:  sstable.WriterOptions{BlockSize: 1, RestartInterval: 1, PartitionSize: 1},
+					wantSlack: 2 + 3 + 1,
+				},
+				{
+					name:      "returns the size of a table in fragment partitions of two fragments with its slack",
+					giveOpts:  sstable.WriterOptions{BlockSize: 1, RestartInterval: 1, PartitionSize: 20},
+					wantSlack: 2 + 2 + 1 + 1,
+				},
+			}
+			for _, tt := range closeParts {
+				t.Run(tt.name, func(t *testing.T) {
+					t.Parallel()
+					bound, err := tt.giveOpts.MaxSize(countsOf(pinned, chained...))
+					assert.NoError(t, err, "MaxSize accepts the options")
+					size := int64(len(writeTable(t, tt.giveOpts, pinned, chained...)))
+					assert.Equal(t, bound, size+tt.wantSlack, "MaxSize exceeds the size of the table by its slack")
+				})
+			}
+
 			saturated := []struct {
 				name       string
 				giveCounts sstable.Counts
@@ -1068,6 +1105,18 @@ func TestWriter(t *testing.T) {
 				counts = append(counts, len(restarts(l.data[part.off:part.off+part.n])))
 			}
 			assert.Equal(t, counts, []int{3, 2}, "the positions of one fragment are in one partition")
+		})
+
+		t.Run("ends a fragment partition at the first fragment after exactly PartitionSize bytes", func(t *testing.T) {
+			t.Parallel()
+			// The first entry of the golden fragments takes 25 bytes, so a
+			// PartitionSize of 25 ends a partition after each fragment.
+			l := newLayout(t, sstable.WriterOptions{PartitionSize: 25}, nil, goldenDeletes...)
+			counts := make([]int, 0, len(l.fragmentParts))
+			for _, part := range l.fragmentParts {
+				counts = append(counts, len(restarts(l.data[part.off:part.off+part.n])))
+			}
+			assert.Equal(t, counts, []int{1, 2, 1, 1}, "each fragment takes a partition of its own")
 		})
 
 		t.Run("returns ErrTooLarge for a fragment that does not fit the block of fragments", func(t *testing.T) {

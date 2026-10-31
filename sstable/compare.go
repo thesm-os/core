@@ -82,6 +82,7 @@ func Compare(aKey []byte, aSeq uint64, bKey []byte, bSeq uint64) int {
 //
 // Zero-alloc.
 func CompareWithSuffix(aKey []byte, aSeq uint64, bKey []byte, bSeq uint64, suffixBytes int) int {
+	//dokimi:mutate-skip ror-boundary: the long path of the width 0 compares the whole keys and two empty versions, which orders as Compare
 	if suffixBytes <= 0 {
 		return Compare(aKey, aSeq, bKey, bSeq)
 	}

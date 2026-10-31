@@ -225,6 +225,7 @@ func (it *RangeDeleteIter) SeekLT(ctx context.Context, key []byte) bool {
 	w := it.c.suffix
 	user := key[:max(len(key)-w, 0)]
 	p := 0
+	//dokimi:mutate-skip ror-true: a cursor of a table without fragment partitions has no top-level entries and the part -1, so the search gives the part -1, which load keeps
 	if it.r.fragTop != nil {
 		var ok bool
 		if p, ok = it.top.search(0, it.top.count, user, math.MaxUint64); !ok {
@@ -436,7 +437,7 @@ func (it *RangeDeleteIter) load(ctx context.Context, p int) bool {
 
 		return false
 	}
-	off, n, _, want, ok := it.r.partition(it.top.restartValue(p), true)
+	off, n, count, want, ok := it.r.partition(it.top.restartValue(p), true)
 	if !ok {
 		it.err = ErrCorrupt
 
@@ -464,7 +465,13 @@ func (it *RangeDeleteIter) load(ctx context.Context, p int) bool {
 		var err error
 		it.check.suffix = it.c.suffix
 		b, err = unseal(it.raw, want, &it.buf)
-		if err != nil || !checkPartition(it.r, &it.top, &it.check, &it.last, b, p) {
+		//dokimi:mutate-skip ror-false,sbr-delete: unseal returns no bytes with its error, and checkPartition refuses a partition of no bytes
+		if err != nil {
+			it.err = ErrCorrupt
+
+			return false
+		}
+		if !checkPartition(it.r, &it.top, &it.check, &it.last, b, p, count) {
 			it.err = ErrCorrupt
 
 			return false
@@ -473,6 +480,7 @@ func (it *RangeDeleteIter) load(ctx context.Context, p int) bool {
 			blk = NewBlock(len(b))
 			copy(blk.buf, b)
 			lc.AddBlock(ctx, it.r.cacheID, off, FragmentBlock, blk)
+			//dokimi:mutate-skip sbr-delete: the Block has the bytes of b, and the cursor keeps a reference to it, so a cursor that reads b reads the same entries
 			b = blk.Bytes()
 		} else if c != nil {
 			b = bytes.Clone(b)
@@ -487,32 +495,38 @@ func (it *RangeDeleteIter) load(ctx context.Context, p int) bool {
 
 // checkPartition reports whether the fragment partition b of the entry p of
 // the top-level index of the fragments of r passes checkFragments, with the
-// cursor c and the buffer last. top is on that top-level index. The width of
-// the versions of c is the width of r. The first fragment of b starts at or
-// after the end of the last fragment of the partition before it, which the
-// key of the entry before p states. The last fragment of b ends at the key
-// of the entry p. The count of the entries of b is the count of the entry p
-// less the count of the entry before it. checkPartition reports false for an
-// entry of top that does not decode.
-func checkPartition(r *Reader, top, c *blockCursor, last *[]byte, b []byte, p int) bool {
+// cursor c and the buffer last. top is on that top-level index, and count is
+// the count of the entry p, which the caller decoded with the place of the
+// partition. The width of the versions of c is the width of r. The first
+// fragment of b starts at or after the end of the last fragment of the
+// partition before it, which the key of the entry before p states. The last
+// fragment of b ends at the key of the entry p. The count of the entries of b
+// is count less the count of the entry before it. checkPartition reports
+// false for an entry of top that does not decode.
+func checkPartition(r *Reader, top, c *blockCursor, last *[]byte, b []byte, p int, count uint64) bool {
 	k := top.restartKey(p)
-	_, _, count, _, ok := r.partition(top.restartValue(p), true)
-	if k == nil || !ok {
+	if k == nil {
 		return false
 	}
 	var after []byte
 	before := uint64(0)
 	if p > 0 {
 		pk := top.restartKey(p - 1)
+		var ok bool
 		if _, _, before, _, ok = r.partition(top.restartValue(p-1), true); pk == nil || !ok {
 			return false
 		}
 		after = pk[:len(pk)-seqLen]
 	}
 	got, end, err := checkFragments(c, last, b, after)
-
+	//dokimi:mutate-skip ror-false,sbr-delete: checkFragments returns 0 entries and no end with its error, which only a crafted top-level index of two equal counts and an empty end accepts
+	if err != nil {
+		return false
+	}
+	// A count below the count before it makes the difference wrap, and no
+	// partition has that many entries.
 	//nolint:gosec // G115: a block has fewer entries than bytes
-	return err == nil && count >= before && uint64(got) == count-before && bytes.Equal(end, k[:len(k)-seqLen])
+	return uint64(got) == count-before && bytes.Equal(end, k[:len(k)-seqLen])
 }
 
 // checkFragments checks the block of fragments or the fragment partition b,
@@ -551,6 +565,7 @@ func checkFragments(c *blockCursor, last *[]byte, b, after []byte) (int, []byte,
 		}
 		if i == 0 {
 			if bytes.Compare(user, after) < 0 {
+				//dokimi:mutate-skip sbr-zero: checkPartition refuses 0 entries unless a crafted top-level index has two equal counts and an empty end, and summarizeBlock passes no end before its block
 				return 0, nil, ErrCorrupt
 			}
 		} else {

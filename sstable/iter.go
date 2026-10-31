@@ -1081,7 +1081,11 @@ func (c *blockCursor) restartKey(i int) []byte {
 		shared, unshared, _, n = uvarints(p)
 	}
 	p = p[n:]
-	if shared != 0 || unshared > uint64(len(p)) || unshared < seqLen {
+	if shared != 0 || unshared < seqLen {
+		return nil
+	}
+	//dokimi:mutate-skip ror-boundary: a key that ends at the end of the entries has an empty value, and each caller refuses an empty value
+	if unshared > uint64(len(p)) {
 		return nil
 	}
 

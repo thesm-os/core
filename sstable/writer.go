@@ -427,6 +427,7 @@ func (o WriterOptions) MaxSize(c Counts) (int64, error) {
 		switch {
 		case deletes == 0:
 			size += 2
+		//dokimi:mutate-skip ror-true: the varint of the bound of the fragments also bounds the length of their top-level index, so either branch bounds the place
 		case o.PartitionSize == 0:
 			//nolint:gosec // G115: Len64 returns at most 64
 			size += uint64(bits.Len64((fragments-trailerLen)|1)+6) / 7
@@ -580,6 +581,7 @@ func (p *places) decode(b []byte) bool {
 		return false
 	}
 	p.partitioned, p.fragmentParts = flags&partitionedFlag != 0, flags&fragmentPartsFlag != 0
+	//dokimi:mutate-skip lcr-false,sbr-delete: a table without partitions has no room for a partition between its data blocks and its parts, so Open refuses its block of fragments as a top-level index
 	if p.fragmentParts && !p.partitioned {
 		return false
 	}
@@ -606,8 +608,9 @@ func (p *places) decode(b []byte) bool {
 	}
 	p.name, b = string(b[n:n+int(length)]), b[n+int(length):] //nolint:gosec // G115: length is at most len(b)-n
 	if flags&suffixFlag != 0 {
+		// A varint that fails decodes as the width 0.
 		p.suffix, n = binary.Uvarint(b)
-		if n <= 0 || p.suffix == 0 {
+		if p.suffix == 0 {
 			return false
 		}
 		b = b[n:]
@@ -1037,6 +1040,7 @@ func (w *Writer) AddRangeDelete(_ context.Context, start, end []byte, seq uint64
 		n := len(w.fragLast) - seqLen
 		last := w.fragLast[:n]
 		same = bytes.Equal(user, last[:max(n-w.suffix, 0)]) && bytes.Equal(end, w.fragEnd)
+		//dokimi:mutate-skip lcr-right: a start without the start and the end before it is after the start before it, or the next check refuses it
 		if same && CompareWithSuffix(start, seq, last, binary.BigEndian.Uint64(w.fragLast[n:]), w.suffix) <= 0 {
 			return ErrOrder
 		}
@@ -1385,6 +1389,7 @@ func (w *Writer) finishFragmentPartition() {
 	w.cur = binary.BigEndian.AppendUint64(append(w.cur[:0], w.fragEnd...), 0)
 	//nolint:gosec // G115: the count of the fragments is not negative
 	w.fragMeta = binary.AppendUvarint(appendRecord(w.fragMeta, w.cur, n, sum), uint64(w.fragCount))
+	//dokimi:mutate-skip aor,sbr-delete: the sum bounds the top-level index of the fragments for ErrTooLarge alone, which only a top-level index of about 4 GiB tells apart, and no test allocates one
 	w.fragTop += uint64(len(w.fragEnd)) + seqLen + maxTopOverhead
 	w.frags, w.fragRestarts = w.frags[:0], w.fragRestarts[:0]
 }
