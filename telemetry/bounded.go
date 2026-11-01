@@ -60,11 +60,12 @@ func (o Outcome) Valid() bool {
 // Record and Flush do not allocate, apart from what the Histogram's Record
 // allocates, which is nothing for the implementations of this module.
 type BoundedHistogram struct {
-	// last is the time of the previous Flush, or of NewBoundedHistogram.
-	last time.Time
-
 	histogram Histogram
 	clock     clock.Clock
+
+	// last is the Elapsed of the clock at the previous Flush, or at
+	// NewBoundedHistogram.
+	last time.Duration
 
 	// successes counts the calls of OutcomeSuccess, and mask is N-1.
 	successes atomic.Uint64
@@ -81,8 +82,8 @@ type BoundedHistogram struct {
 }
 
 // NewBoundedHistogram returns a BoundedHistogram of h that records at most
-// about perSecond values of successful calls per second, and reads the
-// time of each Flush from c.
+// about perSecond values of successful calls per second, and measures the
+// time between two flushes with the Elapsed of c.
 //
 // Error modes: a nil h or c, and a perSecond below 1, return [ErrConfig],
 // classified Invalid.
@@ -91,7 +92,7 @@ func NewBoundedHistogram(h Histogram, perSecond int, c clock.Clock) (*BoundedHis
 		return nil, ErrConfig
 	}
 
-	return &BoundedHistogram{histogram: h, clock: c, perSecond: float64(perSecond), last: c.Time()}, nil
+	return &BoundedHistogram{histogram: h, clock: c, perSecond: float64(perSecond), last: c.Elapsed()}, nil
 }
 
 // Record records v with ctx when o is not OutcomeSuccess, and records the
@@ -113,8 +114,9 @@ func (b *BoundedHistogram) Record(ctx context.Context, v float64, o Outcome) {
 // Flush recomputes N from the rate of the successful calls since the
 // previous Flush, and returns it: the smallest power of two that brings the
 // rate divided by N to the configured rate or below, at most 2^63. When the
-// clock has not advanced since the previous Flush, as a coarse or stepped
-// clock allows, Flush keeps N and returns it.
+// Elapsed of the clock has not advanced since the previous Flush, as a coarse
+// clock allows, Flush keeps N and returns it. A step of the wall time does
+// not change the rate.
 //
 // A caller flushes once per export interval, from one goroutine, and
 // reports N beside the histogram.
@@ -126,8 +128,8 @@ func (b *BoundedHistogram) Flush() uint64 {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	now := b.clock.Time()
-	elapsed := now.Sub(b.last).Seconds()
+	now := b.clock.Elapsed()
+	elapsed := (now - b.last).Seconds()
 	successes := b.successes.Load()
 
 	if elapsed <= 0 {

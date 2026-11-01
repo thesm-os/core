@@ -18,7 +18,7 @@ import (
 // RateLimitConfig configures a [RateLimitHandler]. Clock, Suppressed, Every
 // and Keys are required, and Subject is optional.
 type RateLimitConfig struct {
-	// Clock reads the time of each record that the handler limits.
+	// Clock measures the interval of each event with its Elapsed.
 	Clock clock.Clock
 
 	// Suppressed counts the records that the handler drops, one per
@@ -58,8 +58,9 @@ type RateLimitConfig struct {
 // names its event by its message alone.
 //
 // Two records of an event that the handler does not remember, handled at
-// once, may both pass. A clock that steps backward delays an event's
-// records until it passes the time of the event's last record again.
+// once, may both pass. A step of the wall time does not change the
+// interval of an event, because the handler measures it with
+// [clock.Clock.Elapsed].
 //
 // # Concurrency
 //
@@ -79,8 +80,8 @@ type RateLimitHandler struct {
 	clock      clock.Clock
 	suppressed Counter
 
-	// last maps the hash of an event to the Unix time, in nanoseconds, of
-	// its last passed record.
+	// last maps the hash of an event to the Elapsed of the clock, in
+	// nanoseconds, at its last passed record.
 	last *cache.Cache[uint64, *atomic.Int64]
 
 	// bound is the Subject value of a WithAttrs call, and isBound reports
@@ -151,7 +152,7 @@ func (h *RateLimitHandler) Handle(ctx context.Context, r slog.Record) error {
 	}
 
 	key := h.key(&r)
-	now := h.clock.Time().UnixNano()
+	now := int64(h.clock.Elapsed())
 
 	if last, ok := h.last.Get(key); ok {
 		prev := last.Load()

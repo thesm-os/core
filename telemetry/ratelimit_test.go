@@ -217,6 +217,20 @@ func TestRateLimitHandler(t *testing.T) {
 			assert.Equal(t, strings.Count(out.String(), "\n"), 2, "one record per interval must pass")
 		})
 
+		t.Run("passes a record of the event after the interval while the wall time steps back", func(t *testing.T) {
+			t.Parallel()
+			out := &bytes.Buffer{}
+			h, clk, _ := newRateLimit(t, slog.NewTextHandler(out, withoutTime))
+			logger := slog.New(h)
+
+			logger.Info(message, subjectKey, "a")
+			clk.Set(origin.Add(-time.Hour))
+			clk.Advance(every)
+			logger.Info(message, subjectKey, "a")
+
+			assert.Equal(t, strings.Count(out.String(), "\n"), 2, "a record must pass once the interval has passed")
+		})
+
 		t.Run("passes every record at LevelError", func(t *testing.T) {
 			t.Parallel()
 			out := &bytes.Buffer{}

@@ -231,6 +231,19 @@ func TestBoundedHistogram(t *testing.T) {
 			assert.Equal(t, b.Flush(), uint64(1), "the calls before the previous Flush must not count")
 		})
 
+		t.Run("measures the rate while the wall time steps back", func(t *testing.T) {
+			t.Parallel()
+			clk := fake.New(origin)
+			b := newBounded(t, &recordingHistogram{}, clk)
+			for range 2 * perSecond * 4 {
+				b.Record(t.Context(), 1, telemetry.OutcomeSuccess)
+			}
+
+			clk.Set(origin.Add(-time.Hour))
+			clk.Advance(interval)
+			assert.Equal(t, b.Flush(), uint64(4), "Flush must measure the rate over the time that the clock measured")
+		})
+
 		t.Run("returns the current N when the clock has not advanced", func(t *testing.T) {
 			t.Parallel()
 			clk := fake.New(origin)
