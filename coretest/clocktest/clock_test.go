@@ -6,6 +6,7 @@ package clocktest_test
 import (
 	"testing"
 
+	"go.thesmos.sh/core/clock"
 	"go.thesmos.sh/core/clock/hlc"
 	"go.thesmos.sh/core/coretest/clocktest"
 )
@@ -15,5 +16,5 @@ import (
 func TestClock(t *testing.T) {
 	t.Parallel()
 
-	clocktest.RunClockSuite(t, func() *hlc.Clock { return hlc.New(1) })
+	clocktest.RunClockSuite(t, func() *hlc.Clock { return hlc.New(1, clock.DefaultMaxOffset) })
 }

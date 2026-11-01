@@ -40,6 +40,7 @@ import (
     "fmt"
     "time"
 
+    "go.thesmos.sh/core/clock"
     "go.thesmos.sh/core/clock/fake"
     "go.thesmos.sh/core/clock/hlc"
     "go.thesmos.sh/core/id/uuidv7"
@@ -49,7 +50,7 @@ import (
 
 func main() {
     // In production, the IDs read the system clock and crypto/rand.
-    ids := uuidv7.New(hlc.New(1), crypto.New())
+    ids := uuidv7.New(hlc.New(1, clock.DefaultMaxOffset), crypto.New())
     fmt.Println(uuidv7.Format(ids.Generate()))
 
     // In a test, a virtual clock and a seeded source return the same IDs on every run.

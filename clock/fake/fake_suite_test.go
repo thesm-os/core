@@ -39,6 +39,12 @@ func TestClockConformsToClockAllocs(t *testing.T) {
 			},
 		),
 		conform.Ceilings(
+			clocktest.ClockChecks.Elapsed.Callable,
+			conform.Budget{
+				Allocs: new(uint64(0)),
+			},
+		),
+		conform.Ceilings(
 			clocktest.ClockChecks.Update.Callable,
 			conform.Budget{
 				Allocs: new(uint64(0)),
@@ -64,6 +70,12 @@ func BenchmarkClockConformsToClock(b *testing.B) {
 			},
 		),
 		conform.Ceilings(
+			clocktest.ClockChecks.Elapsed.Callable,
+			conform.Budget{
+				Allocs: new(uint64(0)),
+			},
+		),
+		conform.Ceilings(
 			clocktest.ClockChecks.Update.Callable,
 			conform.Budget{
 				Allocs: new(uint64(0)),
@@ -81,6 +93,13 @@ func BenchmarkClockConformsToClock(b *testing.B) {
 		clocktest.BenchClockSuite(
 			b,
 			clocktest.ClockChecks.Time.Callable,
+			func(*clocktest.ClockHandle) *fake.Clock { return newClock() },
+			opts...)
+	})
+	b.Run("Elapsed", func(b *testing.B) {
+		clocktest.BenchClockSuite(
+			b,
+			clocktest.ClockChecks.Elapsed.Callable,
 			func(*clocktest.ClockHandle) *fake.Clock { return newClock() },
 			opts...)
 	})
@@ -120,6 +139,16 @@ func FuzzClockConformsToClockTime(f *testing.F) {
 	)
 }
 
+// FuzzClockConformsToClockElapsed fuzzes the property checks of
+// Clock.Elapsed on Clock.
+func FuzzClockConformsToClockElapsed(f *testing.F) {
+	clocktest.FuzzClockSuite(
+		f,
+		clocktest.ClockChecks.Elapsed.Callable,
+		func(*clocktest.ClockHandle) *fake.Clock { return newClock() },
+	)
+}
+
 // FuzzClockConformsToClockNewTimer fuzzes the property checks of
 // Clock.NewTimer on Clock.
 func FuzzClockConformsToClockNewTimer(f *testing.F) {
@@ -140,4 +169,4 @@ func FuzzClockConformsToClockUpdate(f *testing.F) {
 	)
 }
 
-// dokimi:provenance sha256:817bf99a55aa2bb2b950ba0daf0a9313cff178a3e61593a2e42e18e6ac1c0c18
+// dokimi:provenance sha256:11ce81166da53d22c973d97911e264bd1fe0ad0dfdd92d0858d62faf44f4a162

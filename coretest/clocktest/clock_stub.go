@@ -23,6 +23,11 @@ type ClockTimeCall struct {
 	Result time.Time
 }
 
+// ClockElapsedCall records one call of Clock.Elapsed.
+type ClockElapsedCall struct {
+	Result time.Duration
+}
+
 // ClockNewTimerCall records one call of Clock.NewTimer.
 type ClockNewTimerCall struct {
 	D      time.Duration
@@ -33,6 +38,7 @@ type ClockNewTimerCall struct {
 type ClockUpdateCall struct {
 	Observed clock.Instant
 	Result   clock.Instant
+	Err      error
 }
 
 // ClockNowStub configures Now and records its calls. Now returns no error,
@@ -91,6 +97,34 @@ func (s *ClockTimeStub) Func(fn func() time.Time) *ClockTimeStub {
 	return s
 }
 
+// ClockElapsedStub configures Elapsed and records its calls. Elapsed
+// returns no error, so a fault armed through it fails the test.
+type ClockElapsedStub struct {
+	*stub.MethodStub[ClockElapsedCall]
+
+	fn       func() time.Duration
+	fallback *ClockElapsedReturn
+}
+
+// ClockElapsedReturn contains the fixed results of Elapsed.
+type ClockElapsedReturn struct {
+	Result time.Duration
+}
+
+// Returns sets the results of every call of Elapsed. A function takes
+// precedence over them.
+func (s *ClockElapsedStub) Returns(result time.Duration) *ClockElapsedStub {
+	s.fallback = &ClockElapsedReturn{Result: result}
+	return s
+}
+
+// Func sets the function that computes the results of Elapsed from its
+// arguments.
+func (s *ClockElapsedStub) Func(fn func() time.Duration) *ClockElapsedStub {
+	s.fn = fn
+	return s
+}
+
 // ClockNewTimerStub configures NewTimer and records its calls. NewTimer
 // returns no error, so a fault armed through it fails the test.
 type ClockNewTimerStub struct {
@@ -119,30 +153,31 @@ func (s *ClockNewTimerStub) Func(fn func(time.Duration) clock.Timer) *ClockNewTi
 	return s
 }
 
-// ClockUpdateStub configures Update and records its calls. Update returns
-// no error, so a fault armed through it fails the test.
+// ClockUpdateStub configures Update and records its calls. A fault armed
+// through it takes precedence over the function and the fixed results.
 type ClockUpdateStub struct {
 	*stub.MethodStub[ClockUpdateCall]
 
-	fn       func(clock.Instant) clock.Instant
+	fn       func(clock.Instant) (clock.Instant, error)
 	fallback *ClockUpdateReturn
 }
 
 // ClockUpdateReturn contains the fixed results of Update.
 type ClockUpdateReturn struct {
 	Result clock.Instant
+	Err    error
 }
 
-// Returns sets the results of every call of Update. A function takes
-// precedence over them.
-func (s *ClockUpdateStub) Returns(result clock.Instant) *ClockUpdateStub {
-	s.fallback = &ClockUpdateReturn{Result: result}
+// Returns sets the results of every call of Update. A function and an
+// injected fault take precedence over them.
+func (s *ClockUpdateStub) Returns(result clock.Instant, err error) *ClockUpdateStub {
+	s.fallback = &ClockUpdateReturn{Result: result, Err: err}
 	return s
 }
 
 // Func sets the function that computes the results of Update from its
-// arguments.
-func (s *ClockUpdateStub) Func(fn func(clock.Instant) clock.Instant) *ClockUpdateStub {
+// arguments. An injected fault takes precedence over it.
+func (s *ClockUpdateStub) Func(fn func(clock.Instant) (clock.Instant, error)) *ClockUpdateStub {
 	s.fn = fn
 	return s
 }
@@ -166,6 +201,7 @@ func ClockStubDelegateTo(impl clock.Clock) ClockStubOption {
 	return func(s *ClockStub) {
 		s.OnNow.Func(impl.Now)
 		s.OnTime.Func(impl.Time)
+		s.OnElapsed.Func(impl.Elapsed)
 		s.OnNewTimer.Func(impl.NewTimer)
 		s.OnUpdate.Func(impl.Update)
 	}
@@ -198,6 +234,14 @@ func ClockStubWithLatency(d time.Duration) ClockStubOption {
 	return func(s *ClockStub) { s.group.SetLatency(d) }
 }
 
+// ClockStubFailing returns the option that arms err on each method that
+// can fail. Each call of such a method then fails with err.
+func ClockStubFailing(err error) ClockStubOption {
+	return func(s *ClockStub) {
+		s.OnUpdate.Faults(err, 1)
+	}
+}
+
 // WithClockNow returns the option that sets the function of Now.
 func WithClockNow(fn func() clock.Instant) ClockStubOption {
 	return func(s *ClockStub) { s.OnNow.Func(fn) }
@@ -208,13 +252,18 @@ func WithClockTime(fn func() time.Time) ClockStubOption {
 	return func(s *ClockStub) { s.OnTime.Func(fn) }
 }
 
+// WithClockElapsed returns the option that sets the function of Elapsed.
+func WithClockElapsed(fn func() time.Duration) ClockStubOption {
+	return func(s *ClockStub) { s.OnElapsed.Func(fn) }
+}
+
 // WithClockNewTimer returns the option that sets the function of NewTimer.
 func WithClockNewTimer(fn func(time.Duration) clock.Timer) ClockStubOption {
 	return func(s *ClockStub) { s.OnNewTimer.Func(fn) }
 }
 
 // WithClockUpdate returns the option that sets the function of Update.
-func WithClockUpdate(fn func(clock.Instant) clock.Instant) ClockStubOption {
+func WithClockUpdate(fn func(clock.Instant) (clock.Instant, error)) ClockStubOption {
 	return func(s *ClockStub) { s.OnUpdate.Func(fn) }
 }
 
@@ -226,6 +275,7 @@ func WithClockUpdate(fn func(clock.Instant) clock.Instant) ClockStubOption {
 type ClockStub struct {
 	OnNow      *ClockNowStub
 	OnTime     *ClockTimeStub
+	OnElapsed  *ClockElapsedStub
 	OnNewTimer *ClockNewTimerStub
 	OnUpdate   *ClockUpdateStub
 
@@ -244,12 +294,14 @@ func NewClockStub(tb assert.TB, opts ...ClockStubOption) *ClockStub {
 	s := &ClockStub{
 		OnNow:      &ClockNowStub{MethodStub: stub.NewMethodStub[ClockNowCall](tb, "Clock.Now")},
 		OnTime:     &ClockTimeStub{MethodStub: stub.NewMethodStub[ClockTimeCall](tb, "Clock.Time")},
+		OnElapsed:  &ClockElapsedStub{MethodStub: stub.NewMethodStub[ClockElapsedCall](tb, "Clock.Elapsed")},
 		OnNewTimer: &ClockNewTimerStub{MethodStub: stub.NewMethodStub[ClockNewTimerCall](tb, "Clock.NewTimer")},
 		OnUpdate:   &ClockUpdateStub{MethodStub: stub.NewMethodStub[ClockUpdateCall](tb, "Clock.Update")},
 	}
 	s.group = stub.NewGroup(
 		s.OnNow.MethodStub,
 		s.OnTime.MethodStub,
+		s.OnElapsed.MethodStub,
 		s.OnNewTimer.MethodStub,
 		s.OnUpdate.MethodStub,
 	)
@@ -270,6 +322,12 @@ func NewClockStubDelayed(tb assert.TB, d time.Duration, clk assert.Clock, opts .
 		ClockStubWithClock(clk),
 		ClockStubWithLatency(d),
 	}, opts...)...)
+}
+
+// NewClockStubFailing returns a double on which each call of a method that
+// can fail fails with err. It applies opts after the failure.
+func NewClockStubFailing(tb assert.TB, err error, opts ...ClockStubOption) *ClockStub {
+	return NewClockStub(tb, append([]ClockStubOption{ClockStubFailing(err)}, opts...)...)
 }
 
 // ResetCalls clears the recorded calls, the counters of the faults and the
@@ -338,6 +396,33 @@ func (s *ClockStub) Time() time.Time {
 
 // invoke returns a call of the function of Func with the arguments, and nil
 // where no function is set.
+func (s *ClockElapsedStub) invoke() func() ClockElapsedReturn {
+	if s.fn == nil {
+		return nil
+	}
+	return func() ClockElapsedReturn {
+		r0 := s.fn()
+		return ClockElapsedReturn{Result: r0}
+	}
+}
+
+// Elapsed records the call. An armed fault comes first, then the function
+// of Func, then the results of Returns, and then the zero values.
+func (s *ClockStub) Elapsed() time.Duration {
+	call := ClockElapsedCall{}
+	r := stub.Answer(s.OnElapsed.MethodStub, call, stub.Arms[ClockElapsedCall, ClockElapsedReturn]{
+		Invoke:   s.OnElapsed.invoke(),
+		Fallback: s.OnElapsed.fallback,
+		Stamp: func(c ClockElapsedCall, r ClockElapsedReturn) ClockElapsedCall {
+			c.Result = r.Result
+			return c
+		},
+	})
+	return r.Result
+}
+
+// invoke returns a call of the function of Func with the arguments, and nil
+// where no function is set.
 func (s *ClockNewTimerStub) invoke(d time.Duration) func() ClockNewTimerReturn {
 	if s.fn == nil {
 		return nil
@@ -370,28 +455,30 @@ func (s *ClockUpdateStub) invoke(observed clock.Instant) func() ClockUpdateRetur
 		return nil
 	}
 	return func() ClockUpdateReturn {
-		r0 := s.fn(observed)
-		return ClockUpdateReturn{Result: r0}
+		r0, r1 := s.fn(observed)
+		return ClockUpdateReturn{Result: r0, Err: r1}
 	}
 }
 
 // Update records the call. An armed fault comes first, then the function
 // of Func, then the results of Returns, and then the default results.
-func (s *ClockStub) Update(observed clock.Instant) clock.Instant {
+func (s *ClockStub) Update(observed clock.Instant) (clock.Instant, error) {
 	call := ClockUpdateCall{Observed: observed}
 	r := stub.Answer(s.OnUpdate.MethodStub, call, stub.Arms[ClockUpdateCall, ClockUpdateReturn]{
 		Invoke:   s.OnUpdate.invoke(observed),
 		Fallback: s.OnUpdate.fallback,
+		Fault:    func(err error) ClockUpdateReturn { return ClockUpdateReturn{Err: err} },
 		Default: func() ClockUpdateReturn {
 			r0 := NewInstantBuilder().Build()
 			return ClockUpdateReturn{Result: r0}
 		},
 		Stamp: func(c ClockUpdateCall, r ClockUpdateReturn) ClockUpdateCall {
 			c.Result = r.Result
+			c.Err = r.Err
 			return c
 		},
 	})
-	return r.Result
+	return r.Result, r.Err
 }
 
 // TimerCCall records one call of Timer.C.
@@ -695,4 +782,4 @@ func (s *TimerStub) Stop() bool {
 	return r.Result
 }
 
-// dokimi:provenance sha256:5b06bc2806c8756a448002740cd5e4314bc7ac445635b6b6deaf346b86b4e4f2
+// dokimi:provenance sha256:a11df34e3f90b5e4b8e0f09a0eb0aea57d53ccbaf7a26499cd7009773498361a

@@ -4,20 +4,27 @@
 package hlc_test
 
 import (
+	"math"
 	"slices"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/expect"
 
 	"go.thesmos.sh/core/clock"
 	"go.thesmos.sh/core/clock/hlc"
+	"go.thesmos.sh/core/errs"
 )
+
+// maxOffset is the max offset of the clocks of the cases of Update.
+const maxOffset = time.Second
 
 // newClock returns a Clock of node 0 on the system clock. The conformance test
 // of the package runs the suite of clock.Clock on it.
 func newClock() *hlc.Clock {
-	return hlc.New(0)
+	return hlc.New(0, clock.DefaultMaxOffset)
 }
 
 func TestClock(t *testing.T) {
@@ -32,7 +39,7 @@ func TestClock(t *testing.T) {
 				node  = clock.NodeID(42)
 				calls = 100
 			)
-			c := hlc.New(node)
+			c := hlc.New(node, clock.DefaultMaxOffset)
 			nodes := make([]clock.NodeID, 0, calls)
 			for range calls {
 				nodes = append(nodes, c.Now().Node)
@@ -44,7 +51,7 @@ func TestClock(t *testing.T) {
 		t.Run("returns Logical 1 after the source advances", func(t *testing.T) {
 			t.Parallel()
 			now := int64(100)
-			c := hlc.NewWithSource(clock.NodeID(1), func() int64 { return now })
+			c := hlc.NewWithSource(clock.NodeID(1), maxOffset, func() int64 { return now })
 			for range 5 {
 				c.Now()
 			}
@@ -56,11 +63,51 @@ func TestClock(t *testing.T) {
 
 		t.Run("returns the next Logical while the source repeats its wall", func(t *testing.T) {
 			t.Parallel()
-			c := hlc.NewWithSource(clock.NodeID(1), func() int64 { return 100 })
+			c := hlc.NewWithSource(clock.NodeID(1), maxOffset, func() int64 { return 100 })
 			first := c.Now()
 			second := c.Now()
 			expect.Equal(t, second.Wall, first.Wall, "Now keeps the wall that the source repeats")
 			expect.Equal(t, second.Logical, first.Logical+1, "Now adds 1 to Logical on a repeated wall")
+		})
+
+		t.Run("moves the wall forward by a nanosecond after the last Logical", func(t *testing.T) {
+			t.Parallel()
+			c := hlc.NewWithSource(clock.NodeID(1), maxOffset, func() int64 { return 100 })
+			_, err := c.Update(clock.Instant{Wall: 100, Logical: math.MaxUint32 - 1, Node: 99})
+			assert.NoError(t, err, "Update must merge a peer at the wall of the clock")
+			got := c.Now()
+			expect.Equal(t, got.Wall, int64(101), "Now moves the wall forward by 1 ns after the last Logical")
+			expect.Equal(t, got.Logical, uint32(1), "Now starts Logical at 1 on the next wall")
+		})
+	})
+
+	t.Run("Elapsed", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns a duration that is not negative after New", func(t *testing.T) {
+			t.Parallel()
+			assert.InRange(t, hlc.New(0, clock.DefaultMaxOffset).Elapsed(), 0, math.MaxInt64,
+				"Elapsed must not be negative")
+		})
+
+		t.Run("advances by at least the duration of a Timer", func(t *testing.T) {
+			t.Parallel()
+			c := hlc.New(0, clock.DefaultMaxOffset)
+			before := c.Elapsed()
+			<-c.NewTimer(time.Millisecond).C()
+			assert.InRange(t, c.Elapsed()-before, float64(time.Millisecond), math.MaxInt64,
+				"Elapsed must advance by at least the duration of a Timer that fired")
+		})
+
+		t.Run("does not move back when the source steps back", func(t *testing.T) {
+			t.Parallel()
+			var wall atomic.Int64
+			wall.Store(int64(time.Hour))
+			c := hlc.NewWithSource(clock.NodeID(1), maxOffset, wall.Load)
+			before := c.Elapsed()
+			wall.Add(-int64(time.Hour))
+			assert.InRange(t, c.Elapsed(), float64(before), math.MaxInt64,
+				"Elapsed must not follow a step back of the source")
 		})
 	})
 
@@ -117,21 +164,100 @@ func TestClock(t *testing.T) {
 				wantWall:            300,
 				wantLogical:         1,
 			},
+			{
+				name:                "moves the wall forward by a nanosecond for a peer at the last Logical",
+				giveStartWall:       100,
+				giveStartNows:       2,
+				givePhysicalWall:    100,
+				giveObservedWall:    100,
+				giveObservedLogical: math.MaxUint32,
+				wantWall:            101,
+				wantLogical:         1,
+			},
+			{
+				name:                "merges a peer at the max offset ahead of the source",
+				giveStartWall:       100,
+				giveStartNows:       1,
+				givePhysicalWall:    100,
+				giveObservedWall:    100 + int64(maxOffset),
+				giveObservedLogical: 2,
+				wantWall:            100 + int64(maxOffset),
+				wantLogical:         3,
+			},
 		}
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
 				now := tt.giveStartWall
-				c := hlc.NewWithSource(clock.NodeID(1), func() int64 { return now })
+				c := hlc.NewWithSource(clock.NodeID(1), maxOffset, func() int64 { return now })
 				for range tt.giveStartNows {
 					c.Now()
 				}
 				now = tt.givePhysicalWall
-				got := c.Update(clock.Instant{Wall: tt.giveObservedWall, Logical: tt.giveObservedLogical, Node: 99})
+				peer := clock.Instant{Wall: tt.giveObservedWall, Logical: tt.giveObservedLogical, Node: 99}
+				got, err := c.Update(peer)
+				assert.NoError(t, err, "Update must merge a peer within the max offset")
 				expect.Equal(t, got.Wall, tt.wantWall, "Update returns the wall of the merge")
 				expect.Equal(t, got.Logical, tt.wantLogical, "Update returns the Logical of the merge")
 				expect.Equal(t, got.Node, clock.NodeID(1), "Update returns the node of the clock")
 			})
 		}
+
+		t.Run("returns ErrOffset for a peer beyond the max offset", func(t *testing.T) {
+			t.Parallel()
+			c := hlc.NewWithSource(clock.NodeID(1), maxOffset, func() int64 { return 100 })
+			got, err := c.Update(clock.Instant{Wall: 101 + int64(maxOffset), Logical: 1, Node: 99})
+			assert.ErrorIs(t, err, clock.ErrOffset, "Update must refuse a peer beyond the max offset")
+			expect.Equal(t, errs.Classify(err), errs.Integrity, "ErrOffset must classify as Integrity")
+			expect.Equal(t, got, clock.Instant{}, "Update must return the zero Instant with ErrOffset")
+		})
+
+		t.Run("keeps the clock for a refused peer", func(t *testing.T) {
+			t.Parallel()
+			c := hlc.NewWithSource(clock.NodeID(1), maxOffset, func() int64 { return 100 })
+			c.Now()
+			_, err := c.Update(clock.Instant{Wall: 101 + int64(maxOffset), Logical: 7, Node: 99})
+			assert.ErrorIs(t, err, clock.ErrOffset, "Update must refuse a peer beyond the max offset")
+			got := c.Now()
+			expect.Equal(t, got.Wall, int64(100), "a refused peer must not move the wall")
+			expect.Equal(t, got.Logical, uint32(2), "a refused peer must not move the Logical")
+		})
+
+		t.Run("returns ErrOffset for a peer ahead of the source for a negative max offset", func(t *testing.T) {
+			t.Parallel()
+			c := hlc.NewWithSource(clock.NodeID(1), -time.Second, func() int64 { return 100 })
+			_, err := c.Update(clock.Instant{Wall: 101, Logical: 1, Node: 99})
+			assert.ErrorIs(t, err, clock.ErrOffset, "a negative max offset must refuse every peer ahead")
+		})
+
+		t.Run("merges a peer at the largest wall for a source within the max offset of it", func(t *testing.T) {
+			t.Parallel()
+			c := hlc.NewWithSource(clock.NodeID(1), maxOffset, func() int64 { return math.MaxInt64 - 1 })
+			got, err := c.Update(clock.Instant{Wall: math.MaxInt64, Logical: 1, Node: 99})
+			assert.NoError(t, err, "Update must merge a peer within the max offset of the largest wall")
+			assert.Equal(t, got.Wall, int64(math.MaxInt64), "Update takes the largest wall of the peer")
+		})
+
+		t.Run("merges a peer at the source for a negative max offset", func(t *testing.T) {
+			t.Parallel()
+			c := hlc.NewWithSource(clock.NodeID(1), -time.Second, func() int64 { return 100 })
+			got, err := c.Update(clock.Instant{Wall: 100, Logical: 4, Node: 99})
+			assert.NoError(t, err, "a negative max offset must merge a peer at the source")
+			assert.Equal(t, got.Logical, uint32(5), "Update returns the Logical of the peer plus 1")
+		})
+	})
+}
+
+// TestClockAllocs checks the allocation contract of an Update that refuses its
+// peer. MaxAllocs counts the allocations of the whole process, so the test
+// does not run in parallel.
+func TestClockAllocs(t *testing.T) {
+	c := hlc.NewWithSource(clock.NodeID(1), maxOffset, func() int64 { return 100 })
+	peer := clock.Instant{Wall: 101 + int64(maxOffset), Logical: 1, Node: 99}
+
+	t.Run("Update", func(t *testing.T) {
+		var err error
+		expect.MaxAllocs(t, func() { _, err = c.Update(peer) }, 0, "an Update that refuses its peer must not allocate")
+		assert.ErrorIs(t, err, clock.ErrOffset, "the test must measure an Update that refuses its peer")
 	})
 }

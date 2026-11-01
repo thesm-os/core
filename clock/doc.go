@@ -17,11 +17,19 @@
 // caller that needs only wall time uses [Clock.Time] or [Instant.Time]
 // for the stdlib [time.Time] view.
 //
-// Implementations that do not need distributed causal ordering, such
-// as the fake clock used in tests, may treat [Clock.Update] as a no-op
-// and emit instants whose [Instant.Logical] field counts calls. The
-// interface contract is uniform, and the strength of the ordering
-// guarantee depends on the implementation.
+// [Clock.Update] refuses a peer instant whose wall is further ahead of
+// the physical time than the max offset of the clock, with [ErrOffset].
+// One peer with a clock far ahead then cannot move the clocks of its
+// peers ahead. An Instant whose Logical is 2^32 - 1 is followed by the
+// next nanosecond at Logical 1, so the instants of a clock keep their
+// order.
+//
+// # Durations
+//
+// [Clock.Elapsed] measures durations, and [Clock.Time] and [Clock.Now]
+// read instants. A step of the wall time, such as a correction of NTP,
+// moves the instants of a clock and leaves Elapsed unchanged. A
+// duration of Elapsed and an instant of Time do not mix.
 //
 // # UTC with an error bound
 //
@@ -43,8 +51,8 @@
 //
 // # Allocation contract
 //
-// [Clock.Now], [Clock.Time], and [Clock.Update] must not allocate.
-// [Clock.NewTimer] is a cold-path constructor and may allocate the
+// [Clock.Now], [Clock.Time], [Clock.Elapsed] and [Clock.Update] must
+// not allocate. [Clock.NewTimer] is a cold-path constructor and may allocate the
 // underlying timer struct and channel. [Instant] and [UTCReading] are
 // value types passed by value.
 //

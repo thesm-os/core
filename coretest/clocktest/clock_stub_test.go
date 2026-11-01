@@ -5,11 +5,13 @@
 package clocktest_test
 
 import (
+	"errors"
 	rand "math/rand/v2"
 	"testing"
 	"time"
 
 	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/expect"
 	"go.dokimi.dev/stub"
 	"go.thesmos.sh/core/clock"
 	"go.thesmos.sh/core/coretest/clocktest"
@@ -41,6 +43,19 @@ func clockStubTimePins() time.Time {
 	return want0
 }
 
+// clockStubElapsed calls Elapsed of s with the samples of its arguments.
+func clockStubElapsed(tb assert.TB, s *clocktest.ClockStub) time.Duration {
+	tb.Helper()
+	return s.Elapsed()
+}
+
+// clockStubElapsedPins returns the samples of the results of Elapsed.
+func clockStubElapsedPins() time.Duration {
+	var want0 time.Duration
+	want0 = time.Duration(1)
+	return want0
+}
+
 // clockStubNewTimerArgs returns the samples of the arguments of NewTimer.
 func clockStubNewTimerArgs(tb assert.TB) time.Duration {
 	tb.Helper()
@@ -65,17 +80,19 @@ func clockStubUpdateArgs(tb assert.TB) clock.Instant {
 }
 
 // clockStubUpdate calls Update of s with the samples of its arguments.
-func clockStubUpdate(tb assert.TB, s *clocktest.ClockStub) clock.Instant {
+func clockStubUpdate(tb assert.TB, s *clocktest.ClockStub) (clock.Instant, error) {
 	tb.Helper()
 	a0 := clockStubUpdateArgs(tb)
 	return s.Update(a0)
 }
 
-// clockStubUpdatePins returns the samples of the results of Update.
-func clockStubUpdatePins() clock.Instant {
+// clockStubUpdatePins returns the samples of the results of Update, with a
+// new error as its error result.
+func clockStubUpdatePins() (clock.Instant, error) {
 	var want0 clock.Instant
+	want1 := errors.New("Update-returns")
 	want0 = clock.Instant{Wall: 42}
-	return want0
+	return want0, want1
 }
 
 // clockStubNowSubject returns the subject of [stub.Behaviour] for Now. The
@@ -130,6 +147,30 @@ func clockStubTimeSubject(tb assert.TB) stub.Subject[clocktest.ClockTimeCall, cl
 	}
 }
 
+// clockStubElapsedSubject returns the subject of [stub.Behaviour] for
+// Elapsed. The subject calls a new double that reports to tb.
+func clockStubElapsedSubject(tb assert.TB) stub.Subject[clocktest.ClockElapsedCall, clocktest.ClockElapsedReturn] {
+	tb.Helper()
+	s := clocktest.NewClockStub(tb)
+	return stub.Subject[clocktest.ClockElapsedCall, clocktest.ClockElapsedReturn]{
+		Stub: s.OnElapsed.MethodStub,
+		Call: func() {
+			_ = clockStubElapsed(tb, s)
+		},
+		Result: func() clocktest.ClockElapsedReturn {
+			got0 := clockStubElapsed(tb, s)
+			return clocktest.ClockElapsedReturn{Result: got0}
+		},
+		Override: func(mark func()) {
+			s.OnElapsed.Func(func() time.Duration {
+				mark()
+				var z0 time.Duration
+				return z0
+			})
+		},
+	}
+}
+
 // clockStubNewTimerSubject returns the subject of [stub.Behaviour] for
 // NewTimer. The subject calls a new double that reports to tb.
 func clockStubNewTimerSubject(tb assert.TB) stub.Subject[clocktest.ClockNewTimerCall, clocktest.ClockNewTimerReturn] {
@@ -162,22 +203,27 @@ func clockStubUpdateSubject(tb assert.TB) stub.Subject[clocktest.ClockUpdateCall
 	return stub.Subject[clocktest.ClockUpdateCall, clocktest.ClockUpdateReturn]{
 		Stub: s.OnUpdate.MethodStub,
 		Call: func() {
-			_ = clockStubUpdate(tb, s)
+			_, _ = clockStubUpdate(tb, s)
 		},
 		Result: func() clocktest.ClockUpdateReturn {
-			got0 := clockStubUpdate(tb, s)
-			return clocktest.ClockUpdateReturn{Result: got0}
+			got0, got1 := clockStubUpdate(tb, s)
+			return clocktest.ClockUpdateReturn{Result: got0, Err: got1}
 		},
 		Default: func() clocktest.ClockUpdateReturn {
 			r0 := clocktest.NewInstantBuilder().Build()
 			return clocktest.ClockUpdateReturn{Result: r0}
 		},
 		Override: func(mark func()) {
-			s.OnUpdate.Func(func(_ clock.Instant) clock.Instant {
+			s.OnUpdate.Func(func(_ clock.Instant) (clock.Instant, error) {
 				mark()
 				var z0 clock.Instant
-				return z0
+				var z1 error
+				return z0, z1
 			})
+		},
+		Fails: func() error {
+			_, r1 := clockStubUpdate(tb, s)
+			return r1
 		},
 	}
 }
@@ -234,6 +280,21 @@ func TestClockStub(t *testing.T) {
 		})
 	})
 
+	t.Run("Elapsed", func(t *testing.T) {
+		t.Parallel()
+		stub.Behaviour(t, "Elapsed", clockStubElapsedSubject)
+
+		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
+			t.Parallel()
+			s := clocktest.NewClockStub(t)
+			var seen []clocktest.ClockElapsedCall
+			s.OnElapsed.OnRecord(func(c clocktest.ClockElapsedCall) { seen = append(seen, c) })
+			_ = clockStubElapsed(t, s)
+			_ = clockStubElapsed(t, s)
+			assert.Length(t, seen, 2, "OnRecord runs once for each call of Elapsed")
+		})
+	})
+
 	t.Run("NewTimer", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "NewTimer", clockStubNewTimerSubject)
@@ -265,7 +326,7 @@ func TestClockStub(t *testing.T) {
 		t.Run("records the arguments of the call", func(t *testing.T) {
 			t.Parallel()
 			s := clocktest.NewClockStub(t)
-			_ = clockStubUpdate(t, s)
+			_, _ = clockStubUpdate(t, s)
 			got := s.OnUpdate.AssertCalledOnce(t, "Update records the call")
 			a0 := clockStubUpdateArgs(t)
 			assert.Equal(t, got.Observed, a0, "the call records Observed")
@@ -276,8 +337,8 @@ func TestClockStub(t *testing.T) {
 			s := clocktest.NewClockStub(t)
 			var seen []clocktest.ClockUpdateCall
 			s.OnUpdate.OnRecord(func(c clocktest.ClockUpdateCall) { seen = append(seen, c) })
-			_ = clockStubUpdate(t, s)
-			_ = clockStubUpdate(t, s)
+			_, _ = clockStubUpdate(t, s)
+			_, _ = clockStubUpdate(t, s)
 			assert.Length(t, seen, 2, "OnRecord runs once for each call of Update")
 		})
 	})
@@ -324,6 +385,24 @@ func TestClockStub(t *testing.T) {
 			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Time")
 		})
 
+		t.Run("clears the recorded calls of Elapsed", func(t *testing.T) {
+			t.Parallel()
+			s := clocktest.NewClockStub(t)
+			_ = clockStubElapsed(t, s)
+			s.ResetCalls()
+			assert.Equal(t, s.OnElapsed.CallCount(), 0, "ResetCalls clears the calls of Elapsed")
+		})
+
+		t.Run("keeps the results of Returns of Elapsed", func(t *testing.T) {
+			t.Parallel()
+			s := clocktest.NewClockStub(t)
+			want0 := clockStubElapsedPins()
+			s.OnElapsed.Returns(want0)
+			s.ResetCalls()
+			got0 := clockStubElapsed(t, s)
+			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Elapsed")
+		})
+
 		t.Run("clears the recorded calls of NewTimer", func(t *testing.T) {
 			t.Parallel()
 			s := clocktest.NewClockStub(t)
@@ -335,7 +414,7 @@ func TestClockStub(t *testing.T) {
 		t.Run("clears the recorded calls of Update", func(t *testing.T) {
 			t.Parallel()
 			s := clocktest.NewClockStub(t)
-			_ = clockStubUpdate(t, s)
+			_, _ = clockStubUpdate(t, s)
 			s.ResetCalls()
 			assert.Equal(t, s.OnUpdate.CallCount(), 0, "ResetCalls clears the calls of Update")
 		})
@@ -343,11 +422,12 @@ func TestClockStub(t *testing.T) {
 		t.Run("keeps the results of Returns of Update", func(t *testing.T) {
 			t.Parallel()
 			s := clocktest.NewClockStub(t)
-			want0 := clockStubUpdatePins()
-			s.OnUpdate.Returns(want0)
+			want0, want1 := clockStubUpdatePins()
+			s.OnUpdate.Returns(want0, want1)
 			s.ResetCalls()
-			got0 := clockStubUpdate(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Update")
+			got0, got1 := clockStubUpdate(t, s)
+			expect.Equal(t, got0, want0, "ResetCalls keeps the Result of Update")
+			expect.ErrorIs(t, got1, want1, "ResetCalls keeps the error of Update")
 		})
 	})
 
@@ -355,6 +435,18 @@ func TestClockStub(t *testing.T) {
 		t.Parallel()
 		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) clockStubInstance {
 			return clockStubInstanceOf(tb, clocktest.NewClockStubDelayed(tb, d, clk))
+		})
+	})
+
+	t.Run("NewClockStubFailing", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("fails Update with its error", func(t *testing.T) {
+			t.Parallel()
+			want := errors.New("Update-failing")
+			s := clocktest.NewClockStubFailing(t, want)
+			_, r1 := clockStubUpdate(t, s)
+			assert.ErrorIs(t, r1, want, "Update fails with the error of NewClockStubFailing")
 		})
 	})
 
@@ -384,6 +476,14 @@ func TestClockStub(t *testing.T) {
 			inner.OnTime.AssertCalledOnce(t, "Time calls the implementation")
 		})
 
+		t.Run("passes Elapsed to the implementation", func(t *testing.T) {
+			t.Parallel()
+			inner := clocktest.NewClockStub(t)
+			s := clocktest.NewClockStub(t, clocktest.ClockStubDelegateTo(inner))
+			_ = clockStubElapsed(t, s)
+			inner.OnElapsed.AssertCalledOnce(t, "Elapsed calls the implementation")
+		})
+
 		t.Run("passes NewTimer to the implementation", func(t *testing.T) {
 			t.Parallel()
 			inner := clocktest.NewClockStub(t)
@@ -396,8 +496,18 @@ func TestClockStub(t *testing.T) {
 			t.Parallel()
 			inner := clocktest.NewClockStub(t)
 			s := clocktest.NewClockStub(t, clocktest.ClockStubDelegateTo(inner))
-			_ = clockStubUpdate(t, s)
+			_, _ = clockStubUpdate(t, s)
 			inner.OnUpdate.AssertCalledOnce(t, "Update calls the implementation")
+		})
+
+		t.Run("fails Update with the error of the implementation", func(t *testing.T) {
+			t.Parallel()
+			want := errors.New("Update-delegate")
+			inner := clocktest.NewClockStub(t)
+			inner.OnUpdate.Faults(want, 1)
+			s := clocktest.NewClockStub(t, clocktest.ClockStubDelegateTo(inner))
+			_, r1 := clockStubUpdate(t, s)
+			assert.ErrorIs(t, r1, want, "Update fails with the error of the implementation")
 		})
 	})
 
@@ -429,6 +539,18 @@ func TestClockStub(t *testing.T) {
 				tb,
 				clocktest.NewClockStub(tb, clocktest.ClockStubWithClock(clk), clocktest.ClockStubWithLatency(d)),
 			)
+		})
+	})
+
+	t.Run("ClockStubFailing", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("fails Update with its error", func(t *testing.T) {
+			t.Parallel()
+			want := errors.New("Update-failing")
+			s := clocktest.NewClockStub(t, clocktest.ClockStubFailing(want))
+			_, r1 := clockStubUpdate(t, s)
+			assert.ErrorIs(t, r1, want, "Update fails with the error of ClockStubFailing")
 		})
 	})
 
@@ -464,6 +586,22 @@ func TestClockStub(t *testing.T) {
 		})
 	})
 
+	t.Run("WithClockElapsed", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("sets the function of Elapsed", func(t *testing.T) {
+			t.Parallel()
+			called := false
+			s := clocktest.NewClockStub(t, clocktest.WithClockElapsed(func() time.Duration {
+				called = true
+				var z0 time.Duration
+				return z0
+			}))
+			_ = clockStubElapsed(t, s)
+			assert.True(t, called, "WithClockElapsed sets the function of Elapsed")
+		})
+	})
+
 	t.Run("WithClockNewTimer", func(t *testing.T) {
 		t.Parallel()
 
@@ -486,12 +624,13 @@ func TestClockStub(t *testing.T) {
 		t.Run("sets the function of Update", func(t *testing.T) {
 			t.Parallel()
 			called := false
-			s := clocktest.NewClockStub(t, clocktest.WithClockUpdate(func(_ clock.Instant) clock.Instant {
+			s := clocktest.NewClockStub(t, clocktest.WithClockUpdate(func(_ clock.Instant) (clock.Instant, error) {
 				called = true
 				var z0 clock.Instant
-				return z0
+				var z1 error
+				return z0, z1
 			}))
-			_ = clockStubUpdate(t, s)
+			_, _ = clockStubUpdate(t, s)
 			assert.True(t, called, "WithClockUpdate sets the function of Update")
 		})
 	})
@@ -559,6 +698,36 @@ func TestClockTimeStub(t *testing.T) {
 	})
 }
 
+// TestClockElapsedStub checks the methods of ClockElapsedStub, which
+// configures Elapsed.
+func TestClockElapsedStub(t *testing.T) {
+	t.Parallel()
+
+	t.Run("Returns", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("sets the results of each call of Elapsed", func(t *testing.T) {
+			t.Parallel()
+			s := clocktest.NewClockStub(t)
+			want0 := clockStubElapsedPins()
+			s.OnElapsed.Returns(want0)
+			got0 := clockStubElapsed(t, s)
+			assert.Equal(t, got0, want0, "Elapsed returns the Result that Returns sets")
+		})
+
+		t.Run("configures Elapsed for strict mode", func(t *testing.T) {
+			t.Parallel()
+			r := assert.NewRecorder()
+			s := clocktest.NewClockStub(r)
+			s.OnElapsed.Strict()
+			var want0 time.Duration
+			s.OnElapsed.Returns(want0)
+			_ = clockStubElapsed(t, s)
+			assert.False(t, r.Failed(), "strict mode accepts the call of Elapsed")
+		})
+	})
+}
+
 // TestClockNewTimerStub checks the methods of ClockNewTimerStub, which
 // configures NewTimer.
 func TestClockNewTimerStub(t *testing.T) {
@@ -609,12 +778,13 @@ func TestClockUpdateStub(t *testing.T) {
 		t.Run("sets the results of each call of Update", func(t *testing.T) {
 			t.Parallel()
 			s := clocktest.NewClockStub(t)
-			want0 := clockStubUpdatePins()
+			want0, want1 := clockStubUpdatePins()
 			assert.NotEqual(t, want0, clockStubUpdateSubject(t).Default().Result,
 				"the sample of Result differs from its default result")
-			s.OnUpdate.Returns(want0)
-			got0 := clockStubUpdate(t, s)
-			assert.Equal(t, got0, want0, "Update returns the Result that Returns sets")
+			s.OnUpdate.Returns(want0, want1)
+			got0, got1 := clockStubUpdate(t, s)
+			expect.Equal(t, got0, want0, "Update returns the Result that Returns sets")
+			expect.ErrorIs(t, got1, want1, "Update returns the error that Returns sets")
 		})
 
 		t.Run("configures Update for strict mode", func(t *testing.T) {
@@ -623,8 +793,9 @@ func TestClockUpdateStub(t *testing.T) {
 			s := clocktest.NewClockStub(r)
 			s.OnUpdate.Strict()
 			var want0 clock.Instant
-			s.OnUpdate.Returns(want0)
-			_ = clockStubUpdate(t, s)
+			var want1 error
+			s.OnUpdate.Returns(want0, want1)
+			_, _ = clockStubUpdate(t, s)
 			assert.False(t, r.Failed(), "strict mode accepts the call of Update")
 		})
 	})
@@ -636,12 +807,13 @@ func TestClockUpdateStub(t *testing.T) {
 			t.Parallel()
 			s := clocktest.NewClockStub(t)
 			var got0 clock.Instant
-			s.OnUpdate.Func(func(p0 clock.Instant) clock.Instant {
+			s.OnUpdate.Func(func(p0 clock.Instant) (clock.Instant, error) {
 				got0 = p0
 				var z0 clock.Instant
-				return z0
+				var z1 error
+				return z0, z1
 			})
-			_ = clockStubUpdate(t, s)
+			_, _ = clockStubUpdate(t, s)
 			a0 := clockStubUpdateArgs(t)
 			assert.Equal(t, got0, a0, "the function receives Observed")
 		})
@@ -1134,4 +1306,4 @@ func TestTimerStopStub(t *testing.T) {
 	})
 }
 
-// dokimi:provenance sha256:17dfacb0a441b9d85f81072558dc83ff4ea6e529488731940ad396afcd1e744f
+// dokimi:provenance sha256:3591d19ace6f68a5d75f2e9b4404aa3e81c6478a93d980c12d79c4855ca80288

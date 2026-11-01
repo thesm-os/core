@@ -5,6 +5,7 @@ package fake_test
 
 import (
 	"context"
+	"math"
 	"sync"
 	"testing"
 	"time"
@@ -50,6 +51,56 @@ func TestClock(t *testing.T) {
 			const node = clock.NodeID(7)
 			assert.Equal(t, fake.NewWithNode(origin, node).Now().Node, node,
 				"Now returns instants of the node of NewWithNode")
+		})
+
+		t.Run("moves the virtual time forward by a nanosecond after the last Logical", func(t *testing.T) {
+			t.Parallel()
+			c := fake.New(origin)
+			_, err := c.Update(clock.Instant{Wall: origin.UnixNano(), Logical: math.MaxUint32 - 1, Node: 9})
+			assert.NoError(t, err, "Update must merge a peer at the wall of the clock")
+			got := c.Now()
+			expect.Equal(t, got.Wall, origin.UnixNano()+1, "Now moves the wall forward by 1 ns after the last Logical")
+			expect.Equal(t, got.Logical, uint32(1), "Now starts Logical at 1 on the next wall")
+		})
+	})
+
+	t.Run("Elapsed", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns 0 after New", func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, fake.New(origin).Elapsed(), time.Duration(0), "Elapsed starts at 0")
+		})
+
+		t.Run("adds the duration of each Advance", func(t *testing.T) {
+			t.Parallel()
+			c := fake.New(origin)
+			c.Advance(3 * time.Second)
+			c.Advance(2 * time.Second)
+			assert.Equal(t, c.Elapsed(), 5*time.Second, "Elapsed returns the sum of the durations of Advance")
+		})
+
+		t.Run("returns 0 after an Advance of a negative duration", func(t *testing.T) {
+			t.Parallel()
+			c := fake.New(origin)
+			c.Advance(-time.Second)
+			assert.Equal(t, c.Elapsed(), time.Duration(0), "an Advance of a negative duration must not move Elapsed")
+		})
+
+		t.Run("does not change on a Set", func(t *testing.T) {
+			t.Parallel()
+			c := fake.New(origin)
+			c.Advance(time.Second)
+			c.Set(origin.Add(-time.Hour))
+			assert.Equal(t, c.Elapsed(), time.Second, "Set must change the wall time alone")
+		})
+
+		t.Run("does not change on an Update of a peer ahead", func(t *testing.T) {
+			t.Parallel()
+			c := fake.New(origin)
+			_, err := c.Update(clock.Instant{Wall: origin.Add(time.Millisecond).UnixNano(), Logical: 1, Node: 9})
+			assert.NoError(t, err, "Update must merge a peer a millisecond ahead")
+			assert.Equal(t, c.Elapsed(), time.Duration(0), "Update must change the wall time alone")
 		})
 	})
 
@@ -169,16 +220,18 @@ func TestClock(t *testing.T) {
 
 		t.Run("returns the next local Logical for a peer behind the clock", func(t *testing.T) {
 			t.Parallel()
-			got := fake.New(origin).Update(clock.Instant{Wall: 1, Logical: 99, Node: 7})
+			got, err := fake.New(origin).Update(clock.Instant{Wall: 1, Logical: 99, Node: 7})
+			assert.NoError(t, err, "Update must merge a peer behind the clock")
 			expect.Equal(t, got.Wall, origin.UnixNano(), "Update keeps the wall of a clock ahead of the peer")
 			expect.Equal(t, got.Logical, uint32(1), "Update returns the next local Logical, whatever the peer has")
 		})
 
 		t.Run("returns the Logical of a peer ahead plus 1", func(t *testing.T) {
 			t.Parallel()
-			future := origin.Add(time.Hour).UnixNano()
-			got := fake.New(origin).Update(clock.Instant{Wall: future, Logical: 7, Node: 9})
-			expect.Equal(t, got.Wall, future, "Update takes the wall of a peer ahead")
+			ahead := origin.Add(time.Millisecond).UnixNano()
+			got, err := fake.New(origin).Update(clock.Instant{Wall: ahead, Logical: 7, Node: 9})
+			assert.NoError(t, err, "Update must merge a peer a millisecond ahead")
+			expect.Equal(t, got.Wall, ahead, "Update takes the wall of a peer ahead")
 			expect.Equal(t, got.Logical, uint32(8), "Update returns the Logical of the peer plus 1")
 		})
 
@@ -186,7 +239,8 @@ func TestClock(t *testing.T) {
 			t.Parallel()
 			c := fake.New(origin)
 			c.Now()
-			got := c.Update(clock.Instant{Wall: origin.UnixNano(), Logical: 5, Node: 9})
+			got, err := c.Update(clock.Instant{Wall: origin.UnixNano(), Logical: 5, Node: 9})
+			assert.NoError(t, err, "Update must merge a peer at the wall of the clock")
 			assert.Equal(t, got.Logical, uint32(6), "Update returns the Logical 5 of the peer plus 1")
 		})
 
@@ -196,14 +250,61 @@ func TestClock(t *testing.T) {
 			for range 10 {
 				c.Now()
 			}
-			got := c.Update(clock.Instant{Wall: origin.UnixNano(), Logical: 3, Node: 9})
+			got, err := c.Update(clock.Instant{Wall: origin.UnixNano(), Logical: 3, Node: 9})
+			assert.NoError(t, err, "Update must merge a peer at the wall of the clock")
 			assert.Equal(t, got.Logical, uint32(11), "Update returns the local Logical 10 plus 1")
+		})
+
+		t.Run("moves the virtual time forward by a nanosecond for a peer at the last Logical", func(t *testing.T) {
+			t.Parallel()
+			peer := clock.Instant{Wall: origin.UnixNano(), Logical: math.MaxUint32, Node: 9}
+			got, err := fake.New(origin).Update(peer)
+			assert.NoError(t, err, "Update must merge a peer at the wall of the clock")
+			expect.Equal(t, got.Wall, origin.UnixNano()+1, "Update moves the wall forward by 1 ns")
+			expect.Equal(t, got.Logical, uint32(1), "Update starts Logical at 1 on the next wall")
+		})
+
+		t.Run("merges a peer at the max offset ahead", func(t *testing.T) {
+			t.Parallel()
+			ahead := origin.Add(clock.DefaultMaxOffset).UnixNano()
+			got, err := fake.New(origin).Update(clock.Instant{Wall: ahead, Logical: 1, Node: 9})
+			assert.NoError(t, err, "Update must merge a peer at the max offset")
+			assert.Equal(t, got.Wall, ahead, "Update takes the wall of a peer at the max offset")
+		})
+
+		t.Run("merges a peer at the largest wall for a virtual time within the max offset of it", func(t *testing.T) {
+			t.Parallel()
+			c := fake.New(time.Unix(0, math.MaxInt64-1).UTC())
+			got, err := c.Update(clock.Instant{Wall: math.MaxInt64, Logical: 1, Node: 9})
+			assert.NoError(t, err, "Update must merge a peer within the max offset of the largest wall")
+			assert.Equal(t, got.Wall, int64(math.MaxInt64), "Update takes the largest wall of the peer")
+		})
+
+		t.Run("returns ErrOffset for a peer beyond the max offset", func(t *testing.T) {
+			t.Parallel()
+			beyond := origin.Add(clock.DefaultMaxOffset + time.Nanosecond).UnixNano()
+			got, err := fake.New(origin).Update(clock.Instant{Wall: beyond, Logical: 1, Node: 9})
+			assert.ErrorIs(t, err, clock.ErrOffset, "Update must refuse a peer beyond the max offset")
+			expect.Equal(t, got, clock.Instant{}, "Update must return the zero Instant with ErrOffset")
+		})
+
+		t.Run("keeps the clock for a refused peer", func(t *testing.T) {
+			t.Parallel()
+			c := fake.New(origin)
+			c.Now()
+			beyond := origin.Add(time.Hour).UnixNano()
+			_, err := c.Update(clock.Instant{Wall: beyond, Logical: 7, Node: 9})
+			assert.ErrorIs(t, err, clock.ErrOffset, "Update must refuse a peer an hour ahead")
+			got := c.Now()
+			expect.Equal(t, got.Wall, origin.UnixNano(), "a refused peer must not move the wall")
+			expect.Equal(t, got.Logical, uint32(2), "a refused peer must not move the Logical")
 		})
 
 		t.Run("releases the clock for the call after it", func(t *testing.T) {
 			t.Parallel()
 			c := fake.New(origin)
-			c.Update(clock.Instant{Wall: 1, Logical: 1, Node: 7})
+			_, err := c.Update(clock.Instant{Wall: 1, Logical: 1, Node: 7})
+			assert.NoError(t, err, "Update must merge a peer behind the clock")
 			assert.CompletesWithin(t, time.Second, func(context.Context) error {
 				c.Now()
 
@@ -235,6 +336,20 @@ func TestClock(t *testing.T) {
 			})
 			c.AwaitWaiters(n)
 		})
+	})
+}
+
+// TestClockAllocs checks the allocation contract of an Update that refuses its
+// peer. MaxAllocs counts the allocations of the whole process, so the test
+// does not run in parallel.
+func TestClockAllocs(t *testing.T) {
+	c := fake.New(origin)
+	peer := clock.Instant{Wall: origin.Add(time.Hour).UnixNano(), Logical: 1, Node: 9}
+
+	t.Run("Update", func(t *testing.T) {
+		var err error
+		expect.MaxAllocs(t, func() { _, err = c.Update(peer) }, 0, "an Update that refuses its peer must not allocate")
+		assert.ErrorIs(t, err, clock.ErrOffset, "the test must measure an Update that refuses its peer")
 	})
 }
 

@@ -5,6 +5,7 @@ package fake
 
 import (
 	"fmt"
+	"math"
 	"runtime"
 	"slices"
 	"sync"
@@ -18,15 +19,26 @@ import (
 // each [Clock.Now], the logical counter increments so consecutive
 // instants between advances remain ordered.
 //
+// [Clock.Elapsed] is the sum of the durations of Advance. Set and
+// Update change the wall time alone, as a step of a wall clock leaves
+// a monotonic clock unchanged. [Clock.Update] refuses a peer instant
+// whose wall is more than [clock.DefaultMaxOffset] ahead of the
+// virtual time.
+//
 // Clock is safe for concurrent use by multiple goroutines.
 //
 //dokimi:subject clock.Clock new=newClock
 //dokimi:budget Clock.Now allocs=0
 //dokimi:budget Clock.Time allocs=0
+//dokimi:budget Clock.Elapsed allocs=0
 //dokimi:budget Clock.Update allocs=0
 type Clock struct {
 	now     time.Time
 	waiters []*waiter
+
+	// elapsed is the sum of the durations of Advance. Guarded by mu.
+	elapsed time.Duration
+
 	mu      sync.Mutex
 	logical uint32
 	node    clock.NodeID
@@ -71,7 +83,8 @@ func NewWithNode(origin time.Time, node clock.NodeID) *Clock {
 // Now returns the current virtual instant. Wall is the virtual
 // time's UnixNano value; Logical increments per call so consecutive
 // Now calls between Advance invocations return distinct, ordered
-// instants.
+// instants. After Logical 2^32 - 1 the virtual time moves forward by
+// a nanosecond and Logical starts again at 1.
 //
 // # Allocation contract
 //
@@ -79,7 +92,7 @@ func NewWithNode(origin time.Time, node clock.NodeID) *Clock {
 func (c *Clock) Now() clock.Instant {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.logical++
+	c.step(c.logical)
 	return clock.Instant{
 		Wall:    c.now.UnixNano(),
 		Logical: c.logical,
@@ -99,6 +112,19 @@ func (c *Clock) Time() time.Time {
 	return c.Now().Time()
 }
 
+// Elapsed returns the sum of the durations of [Clock.Advance] since
+// [New]. [Clock.Set] and [Clock.Update] do not change it.
+//
+// # Allocation contract
+//
+// Zero alloc.
+func (c *Clock) Elapsed() time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return c.elapsed
+}
+
 // Update merges an observed peer instant into the fake clock,
 // preserving the [clock.Clock] contract that the returned instant
 // is strictly causally after observed.
@@ -107,30 +133,51 @@ func (c *Clock) Time() time.Time {
 // would violate the contract when observed.Wall exceeds the
 // fake clock's wall. The merge here adopts observed.Wall when it is
 // ahead, so [Clock.Update] on a fake clock is safe to call from
-// the same code paths that drive a production HLC.
-func (c *Clock) Update(observed clock.Instant) clock.Instant {
+// the same code paths that drive a production HLC. A Logical of
+// 2^32 - 1 moves the virtual time forward by a nanosecond, as in
+// [Clock.Now].
+//
+// Error modes: an observed wall more than [clock.DefaultMaxOffset]
+// ahead of the virtual time returns [clock.ErrOffset], classified
+// [go.thesmos.sh/core/errs.Integrity], with the zero Instant, and the
+// clock is unchanged.
+func (c *Clock) Update(observed clock.Instant) (clock.Instant, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	localWall := c.now.UnixNano()
+
+	// limit is the latest peer wall that the clock merges: the virtual time
+	// plus the max offset, or the largest wall when the sum does not fit an
+	// int64.
+	limit := int64(math.MaxInt64)
+	//dokimi:mutate-skip ror-boundary: at the boundary the sum is the largest wall, which the limit has already
+	if localWall < math.MaxInt64-int64(clock.DefaultMaxOffset) {
+		limit = localWall + int64(clock.DefaultMaxOffset)
+	}
+
+	if observed.Wall > limit {
+		return clock.Instant{}, clock.ErrOffset
+	}
+
 	if observed.Wall > localWall {
 		c.now = time.Unix(0, observed.Wall)
-		c.logical = observed.Logical + 1
+		c.step(observed.Logical)
 	} else if observed.Wall == localWall {
-		c.logical = max(c.logical, observed.Logical) + 1
+		c.step(max(c.logical, observed.Logical))
 	} else {
-		c.logical++
+		c.step(c.logical)
 	}
 	return clock.Instant{
 		Wall:    c.now.UnixNano(),
 		Logical: c.logical,
 		Node:    c.node,
-	}
+	}, nil
 }
 
-// Advance moves virtual time forward by d and wakes every waiter
-// whose deadline has been reached. A non-positive d is a no-op:
-// virtual time only moves forward.
+// Advance moves virtual time forward by d, adds d to [Clock.Elapsed],
+// and wakes every waiter whose deadline has been reached. A
+// non-positive d is a no-op: virtual time only moves forward.
 //
 // Advance also resets the logical counter on the next [Clock.Now]
 // because virtual wall has moved.
@@ -141,6 +188,7 @@ func (c *Clock) Advance(d time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.now = c.now.Add(d)
+	c.elapsed += d
 	c.logical = 0
 	c.fireWaiters()
 }
@@ -150,7 +198,8 @@ func (c *Clock) Advance(d time.Duration) {
 // [Clock.Advance] for forward progress, and Set for a test that needs
 // virtual time at a specific calendar instant, such as 2030-01-01.
 // Setting time backward is allowed. It does not retract waiters that
-// have already fired.
+// have already fired. Set models a step of a wall clock, so it does
+// not change [Clock.Elapsed].
 func (c *Clock) Set(t time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -248,6 +297,21 @@ func (c *Clock) fireWaiters() {
 		w.fire(w.deadline)
 		return true
 	})
+}
+
+// step sets the Logical of c to the Logical after logical at the
+// virtual time. After Logical 2^32 - 1 it moves the virtual time
+// forward by a nanosecond and sets Logical 1. It does not change
+// [Clock.Elapsed]. Must be called with c.mu held.
+func (c *Clock) step(logical uint32) {
+	if logical == math.MaxUint32 {
+		c.now = c.now.Add(time.Nanosecond)
+		c.logical = 1
+
+		return
+	}
+
+	c.logical = logical + 1
 }
 
 // removeWaiter unregisters w from the pending list. Returns true if w

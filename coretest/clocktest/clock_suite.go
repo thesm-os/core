@@ -29,11 +29,13 @@ type (
 var ClockChecks = struct {
 	Now      clockNow
 	Time     clockTime
+	Elapsed  clockElapsed
 	NewTimer clockNewTimer
 	Update   clockUpdate
 }{
 	Now:      clockNow{"Clock.Now"},
 	Time:     clockTime{"Clock.Time"},
+	Elapsed:  clockElapsed{"Clock.Elapsed"},
 	NewTimer: clockNewTimer{"Clock.NewTimer"},
 	Update:   clockUpdate{"Clock.Update"},
 }
@@ -80,6 +82,24 @@ func (c clockTime) TimeReturnsUTC() conform.ID[clock.Clock] {
 	return c.Check("time-returns-utc")
 }
 
+// clockElapsed is the name of Clock.Elapsed, with the identities of its
+// checks.
+type clockElapsed struct {
+	conform.Callable[clock.Clock]
+}
+
+// ElapsedDoesNotDecrease returns the identity of the check that each of
+// 100 readings of Elapsed is at or above the reading before it.
+func (c clockElapsed) ElapsedDoesNotDecrease() conform.ID[clock.Clock] {
+	return c.Check("elapsed-does-not-decrease")
+}
+
+// ElapsedIsNotNegative returns the identity of the check that Elapsed does
+// not return a negative duration.
+func (c clockElapsed) ElapsedIsNotNegative() conform.ID[clock.Clock] {
+	return c.Check("elapsed-is-not-negative")
+}
+
 // clockNewTimer is the name of Clock.NewTimer, with the identities of its
 // checks.
 type clockNewTimer struct {
@@ -105,21 +125,43 @@ type clockUpdate struct {
 }
 
 // UpdateFollowsAPeerAhead returns the identity of the check that Update
-// returns an Instant after the Instant of a peer whose Wall is an hour
-// after the Wall of Now.
+// returns an Instant after the Instant of a peer whose Wall is a
+// millisecond after the Wall of Now.
 func (c clockUpdate) UpdateFollowsAPeerAhead() conform.ID[clock.Clock] {
 	return c.Check("update-follows-a-peer-ahead")
 }
 
 // UpdateKeepsTheNode returns the identity of the check that Update returns
-// an Instant of the Node of Now and not of the Node of the peer.
+// an Instant of the Node of Now and not of the Node of a peer at the Wall
+// of Now.
 func (c clockUpdate) UpdateKeepsTheNode() conform.ID[clock.Clock] {
 	return c.Check("update-keeps-the-node")
 }
 
+// UpdateKeepsTheWallForARefusedPeer returns the identity of the check that
+// the Instant of Now after an Update of a peer a year ahead happens before
+// the Instant of the peer.
+func (c clockUpdate) UpdateKeepsTheWallForARefusedPeer() conform.ID[clock.Clock] {
+	return c.Check("update-keeps-the-wall-for-a-refused-peer")
+}
+
+// UpdatePassesAPeerAtTheLastLogical returns the identity of the check that
+// Update returns an Instant after the Instant of a peer at the Wall of Now
+// with Logical 2^32 - 1.
+func (c clockUpdate) UpdatePassesAPeerAtTheLastLogical() conform.ID[clock.Clock] {
+	return c.Check("update-passes-a-peer-at-the-last-logical")
+}
+
+// UpdateRefusesAPeerAYearAhead returns the identity of the check that
+// Update returns an error that wraps ErrOffset for a peer whose Wall is a
+// year after the Wall of Now.
+func (c clockUpdate) UpdateRefusesAPeerAYearAhead() conform.ID[clock.Clock] {
+	return c.Check("update-refuses-a-peer-a-year-ahead")
+}
+
 // UpdateReturnsALaterInstant returns the identity of the check that Update
-// returns an Instant after the Instant of a peer at 2026-01-01T00:00:00Z
-// with Logical 99.
+// returns an Instant after the Instant of a peer at the Wall of Now with
+// Logical 99.
 func (c clockUpdate) UpdateReturnsALaterInstant() conform.ID[clock.Clock] {
 	return c.Check("update-returns-a-later-instant")
 }
@@ -161,6 +203,18 @@ func ClockSuite() conform.Suite[clock.Clock] {
 				Defect:    returnsLocalTime,
 			},
 			{
+				ID:        ClockChecks.Elapsed.ElapsedDoesNotDecrease(),
+				Statement: "each of 100 readings of Elapsed is at or above the reading before it",
+				Apply:     ElapsedDoesNotDecrease,
+				Defect:    countsElapsedDown,
+			},
+			{
+				ID:        ClockChecks.Elapsed.ElapsedIsNotNegative(),
+				Statement: "Elapsed does not return a negative duration",
+				Apply:     ElapsedIsNotNegative,
+				Defect:    startsElapsedBelowZero,
+			},
+			{
 				ID:        ClockChecks.NewTimer.NewTimerOfANegativeDurationSendsATick(),
 				Statement: "the Timer of a NewTimer of -1s sends its tick within a second",
 				Apply:     NewTimerOfANegativeDurationSendsATick,
@@ -174,19 +228,37 @@ func ClockSuite() conform.Suite[clock.Clock] {
 			},
 			{
 				ID:        ClockChecks.Update.UpdateFollowsAPeerAhead(),
-				Statement: "Update returns an Instant after the Instant of a peer whose Wall is an hour after the Wall of Now",
+				Statement: "Update returns an Instant after the Instant of a peer whose Wall is a millisecond after the Wall of Now",
 				Apply:     UpdateFollowsAPeerAhead,
 				Defect:    ignoresAPeerAhead,
 			},
 			{
 				ID:        ClockChecks.Update.UpdateKeepsTheNode(),
-				Statement: "Update returns an Instant of the Node of Now and not of the Node of the peer",
+				Statement: "Update returns an Instant of the Node of Now and not of the Node of a peer at the Wall of Now",
 				Apply:     UpdateKeepsTheNode,
 				Defect:    takesTheNodeOfAPeer,
 			},
 			{
+				ID:        ClockChecks.Update.UpdateKeepsTheWallForARefusedPeer(),
+				Statement: "the Instant of Now after an Update of a peer a year ahead happens before the Instant of the peer",
+				Apply:     UpdateKeepsTheWallForARefusedPeer,
+				Defect:    adoptsARefusedPeer,
+			},
+			{
+				ID:        ClockChecks.Update.UpdatePassesAPeerAtTheLastLogical(),
+				Statement: "Update returns an Instant after the Instant of a peer at the Wall of Now with Logical 2^32 - 1",
+				Apply:     UpdatePassesAPeerAtTheLastLogical,
+				Defect:    wrapsTheLogical,
+			},
+			{
+				ID:        ClockChecks.Update.UpdateRefusesAPeerAYearAhead(),
+				Statement: "Update returns an error that wraps ErrOffset for a peer whose Wall is a year after the Wall of Now",
+				Apply:     UpdateRefusesAPeerAYearAhead,
+				Defect:    followsAPeerAYearAhead,
+			},
+			{
 				ID:        ClockChecks.Update.UpdateReturnsALaterInstant(),
-				Statement: "Update returns an Instant after the Instant of a peer at 2026-01-01T00:00:00Z with Logical 99",
+				Statement: "Update returns an Instant after the Instant of a peer at the Wall of Now with Logical 99",
 				Apply:     UpdateReturnsALaterInstant,
 				Defect:    dropsTheLogicalOfAPeer,
 			},
@@ -201,6 +273,11 @@ func ClockSuite() conform.Suite[clock.Clock] {
 				Calls:    clockTimeCalls,
 				Over:     newClockOver,
 				Callable: ClockChecks.Time.Callable,
+			},
+			{
+				Calls:    clockElapsedCalls,
+				Over:     newClockOver,
+				Callable: ClockChecks.Elapsed.Callable,
 			},
 			{
 				Calls:    clockNewTimerCalls,
@@ -290,6 +367,15 @@ var clockTimeCalls = prop.Composite(func(*prop.Case) func(context.Context, clock
 	}
 })
 
+// clockElapsedCalls generates the calls of Clock.Elapsed with the inputs
+// that each case draws.
+var clockElapsedCalls = prop.Composite(func(*prop.Case) func(context.Context, clock.Clock) error {
+	return func(_ context.Context, subject clock.Clock) error {
+		_ = subject.Elapsed()
+		return nil
+	}
+})
+
 // clockNewTimerCalls generates the calls of Clock.NewTimer with the inputs
 // that each case draws.
 var clockNewTimerCalls = prop.Composite(func(c *prop.Case) func(context.Context, clock.Clock) error {
@@ -305,8 +391,8 @@ var clockNewTimerCalls = prop.Composite(func(c *prop.Case) func(context.Context,
 var clockUpdateCalls = prop.Composite(func(c *prop.Case) func(context.Context, clock.Clock) error {
 	observed := c.Draw(prop.Of[clock.Instant](), "observed")
 	return func(_ context.Context, subject clock.Clock) error {
-		_ = subject.Update(observed)
-		return nil
+		_, err := subject.Update(observed)
+		return err
 	}
 })
 
@@ -351,6 +437,12 @@ func (o clockOver) Time() (r0 time.Time) {
 	return r0
 }
 
+// Elapsed calls spend and returns its zero results.
+func (o clockOver) Elapsed() (r0 time.Duration) {
+	o.spend()
+	return r0
+}
+
 // NewTimer calls spend and returns its zero results.
 func (o clockOver) NewTimer(time.Duration) (r0 clock.Timer) {
 	o.spend()
@@ -358,9 +450,9 @@ func (o clockOver) NewTimer(time.Duration) (r0 clock.Timer) {
 }
 
 // Update calls spend and returns its zero results.
-func (o clockOver) Update(clock.Instant) (r0 clock.Instant) {
+func (o clockOver) Update(clock.Instant) (r0 clock.Instant, r1 error) {
 	o.spend()
-	return r0
+	return r0, r1
 }
 
 // newClockOver returns the planted defect of a ceiling of Clock, whose
@@ -637,4 +729,4 @@ func newTimerOver(_ *TimerHandle, spend func()) clock.Timer {
 	return timerOver{spend: spend}
 }
 
-// dokimi:provenance sha256:a6c4062816df440e70ace33104aecc6a761ef44c799756327ade33267d7c5edb
+// dokimi:provenance sha256:5e220876a0e4951df52458cf4a297124320773dfa860477d96eaf9ce8edd0543

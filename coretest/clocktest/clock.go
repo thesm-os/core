@@ -4,6 +4,8 @@
 package clocktest
 
 import (
+	"errors"
+	"math"
 	"time"
 
 	"go.dokimi.dev/assert"
@@ -13,8 +15,14 @@ import (
 )
 
 // samples is the number of calls of Now whose instants
-// NowReturnsAscendingInstants compares.
+// NowReturnsAscendingInstants compares, and the number of readings of Elapsed
+// that ElapsedDoesNotDecrease compares.
 const samples = 100
+
+// yearAhead is the time by which the peer of UpdateRefusesAPeerAYearAhead and
+// UpdateKeepsTheWallForARefusedPeer is ahead of the clock. No max offset of a
+// deployment comes near it.
+const yearAhead = 365 * 24 * time.Hour
 
 // eastOfUTC is the zone of the planted defect of TimeReturnsUTC, an hour east
 // of UTC.
@@ -68,33 +76,95 @@ func TimeReturnsNonZero(h *ClockHandle) {
 	assert.False(h, h.Subject().Time().IsZero(), h.Statement())
 }
 
+// ElapsedDoesNotDecrease checks that each of 100 readings of Elapsed is at or
+// above the reading before it.
+//
+//dokimi:check Clock.Elapsed defect=countsElapsedDown
+func ElapsedDoesNotDecrease(h *ClockHandle) {
+	c := h.Subject()
+	readings := make([]time.Duration, 0, samples)
+	for range samples {
+		readings = append(readings, c.Elapsed())
+	}
+	assert.Pairwise(h, readings, func(earlier, later time.Duration) bool { return earlier <= later },
+		h.Statement())
+}
+
+// ElapsedIsNotNegative checks that Elapsed does not return a negative duration.
+//
+//dokimi:check Clock.Elapsed defect=startsElapsedBelowZero
+func ElapsedIsNotNegative(h *ClockHandle) {
+	assert.InRange(h, h.Subject().Elapsed(), 0, math.MaxInt64, h.Statement())
+}
+
 // UpdateReturnsALaterInstant checks that Update returns an Instant after the
-// Instant of a peer at 2026-01-01T00:00:00Z with Logical 99.
+// Instant of a peer at the Wall of Now with Logical 99.
 //
 //dokimi:check Clock.Update defect=dropsTheLogicalOfAPeer
 func UpdateReturnsALaterInstant(h *ClockHandle) {
-	observed := NewInstantPeer().WithLogical(99).Build()
-	assert.True(h, observed.HappensBefore(h.Subject().Update(observed)), h.Statement())
+	c := h.Subject()
+	observed := NewInstantPeer().WithWall(c.Now().Wall).WithLogical(99).Build()
+	merged, err := c.Update(observed)
+	assert.NoError(h, err, "Update must merge a peer at the wall of Now")
+	assert.True(h, observed.HappensBefore(merged), h.Statement())
 }
 
 // UpdateKeepsTheNode checks that Update returns an Instant of the Node of Now
-// and not of the Node of the peer.
+// and not of the Node of a peer at the Wall of Now.
 //
 //dokimi:check Clock.Update defect=takesTheNodeOfAPeer
 func UpdateKeepsTheNode(h *ClockHandle) {
 	c := h.Subject()
-	node := c.Now().Node
-	assert.Equal(h, c.Update(NewInstantPeer().WithLogical(1).Build()).Node, node, h.Statement())
+	now := c.Now()
+	merged, err := c.Update(NewInstantPeer().WithWall(now.Wall).WithLogical(1).Build())
+	assert.NoError(h, err, "Update must merge a peer at the wall of Now")
+	assert.Equal(h, merged.Node, now.Node, h.Statement())
 }
 
 // UpdateFollowsAPeerAhead checks that Update returns an Instant after the
-// Instant of a peer whose Wall is an hour after the Wall of Now.
+// Instant of a peer whose Wall is a millisecond after the Wall of Now.
 //
 //dokimi:check Clock.Update defect=ignoresAPeerAhead
 func UpdateFollowsAPeerAhead(h *ClockHandle) {
 	c := h.Subject()
-	ahead := NewInstantPeer().WithWall(c.Now().Wall + int64(time.Hour)).Build()
-	assert.True(h, ahead.HappensBefore(c.Update(ahead)), h.Statement())
+	ahead := NewInstantPeer().WithWall(c.Now().Wall + int64(time.Millisecond)).Build()
+	merged, err := c.Update(ahead)
+	assert.NoError(h, err, "Update must merge a peer a millisecond ahead")
+	assert.True(h, ahead.HappensBefore(merged), h.Statement())
+}
+
+// UpdatePassesAPeerAtTheLastLogical checks that Update returns an Instant after
+// the Instant of a peer at the Wall of Now with Logical 2^32 - 1.
+//
+//dokimi:check Clock.Update defect=wrapsTheLogical
+func UpdatePassesAPeerAtTheLastLogical(h *ClockHandle) {
+	c := h.Subject()
+	peer := NewInstantPeer().WithWall(c.Now().Wall).WithLogical(math.MaxUint32).Build()
+	merged, err := c.Update(peer)
+	assert.NoError(h, err, "Update must merge a peer at the wall of Now")
+	assert.True(h, peer.HappensBefore(merged), h.Statement())
+}
+
+// UpdateRefusesAPeerAYearAhead checks that Update returns an error that wraps
+// ErrOffset for a peer whose Wall is a year after the Wall of Now.
+//
+//dokimi:check Clock.Update defect=followsAPeerAYearAhead
+func UpdateRefusesAPeerAYearAhead(h *ClockHandle) {
+	c := h.Subject()
+	_, err := c.Update(NewInstantPeer().WithWall(c.Now().Wall + int64(yearAhead)).Build())
+	assert.ErrorIs(h, err, clock.ErrOffset, h.Statement())
+}
+
+// UpdateKeepsTheWallForARefusedPeer checks that the Instant of Now after an
+// Update of a peer a year ahead happens before the Instant of the peer.
+//
+//dokimi:check Clock.Update defect=adoptsARefusedPeer
+func UpdateKeepsTheWallForARefusedPeer(h *ClockHandle) {
+	c := h.Subject()
+	ahead := NewInstantPeer().WithWall(c.Now().Wall + int64(yearAhead)).Build()
+	// UpdateRefusesAPeerAYearAhead checks the error of the Update.
+	_, _ = c.Update(ahead)
+	assert.True(h, c.Now().HappensBefore(ahead), h.Statement())
 }
 
 // NewTimerOfZeroSendsATick checks that the Timer of NewTimer(0) sends its tick
@@ -144,15 +214,35 @@ func returnsLocalTime(h *ClockHandle) clock.Clock {
 		WithClockTime(func() time.Time { return f.Time().In(eastOfUTC) }))
 }
 
+// countsElapsedDown returns the planted defect of ElapsedDoesNotDecrease: a
+// Clock whose Elapsed returns a shorter positive duration on each call.
+func countsElapsedDown(h *ClockHandle) clock.Clock {
+	var calls time.Duration
+
+	return NewClockStub(h, ClockStubDelegateTo(fake.New(reference)), WithClockElapsed(func() time.Duration {
+		calls++
+
+		return time.Hour - calls
+	}))
+}
+
+// startsElapsedBelowZero returns the planted defect of ElapsedIsNotNegative: a
+// Clock whose Elapsed returns -1s on every call.
+func startsElapsedBelowZero(h *ClockHandle) clock.Clock {
+	return NewClockStub(h, ClockStubDelegateTo(fake.New(reference)),
+		WithClockElapsed(func() time.Duration { return -time.Second }))
+}
+
 // dropsTheLogicalOfAPeer returns the planted defect of
 // UpdateReturnsALaterInstant: a Clock whose Update of a peer at the Wall of
-// the Clock returns the next Instant of Now, whatever the Logical of the peer.
+// the Clock returns the next Instant of Now, for each Logical of the peer below
+// 2^32 - 1.
 func dropsTheLogicalOfAPeer(h *ClockHandle) clock.Clock {
 	f := fake.New(reference)
 
-	return NewClockStub(h, ClockStubDelegateTo(f), WithClockUpdate(func(observed clock.Instant) clock.Instant {
-		if now := f.Now(); observed.Wall == now.Wall {
-			return now
+	return NewClockStub(h, ClockStubDelegateTo(f), WithClockUpdate(func(observed clock.Instant) (clock.Instant, error) {
+		if now := f.Now(); observed.Wall == now.Wall && observed.Logical < math.MaxUint32 {
+			return now, nil
 		}
 
 		return f.Update(observed)
@@ -164,26 +254,75 @@ func dropsTheLogicalOfAPeer(h *ClockHandle) clock.Clock {
 func takesTheNodeOfAPeer(h *ClockHandle) clock.Clock {
 	f := fake.New(reference)
 
-	return NewClockStub(h, ClockStubDelegateTo(f), WithClockUpdate(func(observed clock.Instant) clock.Instant {
-		merged := f.Update(observed)
+	return NewClockStub(h, ClockStubDelegateTo(f), WithClockUpdate(func(observed clock.Instant) (clock.Instant, error) {
+		merged, err := f.Update(observed)
 		merged.Node = observed.Node
 
-		return merged
+		return merged, err
 	}))
 }
 
 // ignoresAPeerAhead returns the planted defect of UpdateFollowsAPeerAhead: a
-// Clock whose Update of a peer ahead of the Clock returns the next Instant of
-// Now.
+// Clock whose Update of a peer ahead of the Clock, within the default max
+// offset, returns the next Instant of Now.
 func ignoresAPeerAhead(h *ClockHandle) clock.Clock {
 	f := fake.New(reference)
 
-	return NewClockStub(h, ClockStubDelegateTo(f), WithClockUpdate(func(observed clock.Instant) clock.Instant {
-		if now := f.Now(); observed.Wall > now.Wall {
-			return now
+	return NewClockStub(h, ClockStubDelegateTo(f), WithClockUpdate(func(observed clock.Instant) (clock.Instant, error) {
+		now := f.Now()
+		if observed.Wall > now.Wall && observed.Wall-now.Wall <= int64(clock.DefaultMaxOffset) {
+			return now, nil
 		}
 
 		return f.Update(observed)
+	}))
+}
+
+// wrapsTheLogical returns the planted defect of
+// UpdatePassesAPeerAtTheLastLogical: a Clock whose Update of a peer at the Wall
+// of the Clock with Logical 2^32 - 1 returns an Instant of Logical 0 at that
+// Wall.
+func wrapsTheLogical(h *ClockHandle) clock.Clock {
+	f := fake.New(reference)
+
+	return NewClockStub(h, ClockStubDelegateTo(f), WithClockUpdate(func(observed clock.Instant) (clock.Instant, error) {
+		if now := f.Now(); observed.Wall == now.Wall && observed.Logical == math.MaxUint32 {
+			return clock.Instant{Wall: now.Wall, Node: now.Node}, nil
+		}
+
+		return f.Update(observed)
+	}))
+}
+
+// followsAPeerAYearAhead returns the planted defect of
+// UpdateRefusesAPeerAYearAhead: a Clock whose Update of a peer beyond the
+// default max offset returns an Instant after the peer and no error.
+func followsAPeerAYearAhead(h *ClockHandle) clock.Clock {
+	f := fake.New(reference)
+
+	return NewClockStub(h, ClockStubDelegateTo(f), WithClockUpdate(func(observed clock.Instant) (clock.Instant, error) {
+		if now := f.Now(); observed.Wall-now.Wall > int64(clock.DefaultMaxOffset) {
+			return clock.Instant{Wall: observed.Wall, Logical: observed.Logical + 1, Node: now.Node}, nil
+		}
+
+		return f.Update(observed)
+	}))
+}
+
+// adoptsARefusedPeer returns the planted defect of
+// UpdateKeepsTheWallForARefusedPeer: a Clock whose Update of a peer beyond the
+// default max offset returns ErrOffset and moves the Clock to the Wall of the
+// peer.
+func adoptsARefusedPeer(h *ClockHandle) clock.Clock {
+	f := fake.New(reference)
+
+	return NewClockStub(h, ClockStubDelegateTo(f), WithClockUpdate(func(observed clock.Instant) (clock.Instant, error) {
+		merged, err := f.Update(observed)
+		if errors.Is(err, clock.ErrOffset) {
+			f.Set(time.Unix(0, observed.Wall).UTC())
+		}
+
+		return merged, err
 	}))
 }
 

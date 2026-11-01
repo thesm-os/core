@@ -5,9 +5,11 @@
 package clock_test
 
 import (
+	"strings"
 	"testing"
 
 	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/expect"
 	"go.thesmos.sh/core/clock"
 )
 
@@ -16,6 +18,13 @@ import (
 // an identity of its own.
 func TestErrInstantSize(t *testing.T) {
 	t.Parallel()
+
+	others := []struct {
+		name string
+		err  error
+	}{
+		{"ErrOffset", clock.ErrOffset},
+	}
 
 	t.Run("Error", func(t *testing.T) {
 		t.Parallel()
@@ -35,7 +44,103 @@ func TestErrInstantSize(t *testing.T) {
 				"the message of ErrInstantSize opens with the package prefix",
 			)
 		})
+
+		t.Run("returns a message of its own", func(t *testing.T) {
+			t.Parallel()
+			for _, other := range others {
+				expect.NotEqual(
+					t,
+					clock.ErrInstantSize.Error(),
+					other.err.Error(),
+					"ErrInstantSize has the message of "+other.name,
+				)
+			}
+		})
+
+		t.Run("opens with the message of no other sentinel", func(t *testing.T) {
+			t.Parallel()
+			for _, other := range others {
+				expect.False(t, strings.HasPrefix(clock.ErrInstantSize.Error(), other.err.Error()),
+					"the message of ErrInstantSize opens with the message of "+other.name)
+			}
+		})
+	})
+
+	t.Run("errors.Is", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("matches no other sentinel of the package", func(t *testing.T) {
+			t.Parallel()
+			for _, other := range others {
+				expect.ErrorIsNot(t, clock.ErrInstantSize, other.err, "ErrInstantSize does not match "+other.name)
+			}
+		})
 	})
 }
 
-// dokimi:provenance sha256:59564d958e8c9972392a20fd18428aed48624484c204dbf34448ce78ab94dab1
+// TestErrOffset checks the sentinel error ErrOffset. A caller matches it
+// with errors.Is and reads its message, so it has a message and an
+// identity of its own.
+func TestErrOffset(t *testing.T) {
+	t.Parallel()
+
+	others := []struct {
+		name string
+		err  error
+	}{
+		{"ErrInstantSize", clock.ErrInstantSize},
+	}
+
+	t.Run("Error", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns a message", func(t *testing.T) {
+			t.Parallel()
+			assert.NotNil(t, clock.ErrOffset, "ErrOffset is assigned")
+			assert.NotEqual(t, clock.ErrOffset.Error(), "", "ErrOffset has a message")
+		})
+
+		t.Run("opens the message with the package prefix", func(t *testing.T) {
+			t.Parallel()
+			assert.HasPrefix(
+				t,
+				clock.ErrOffset.Error(),
+				"clock: ",
+				"the message of ErrOffset opens with the package prefix",
+			)
+		})
+
+		t.Run("returns a message of its own", func(t *testing.T) {
+			t.Parallel()
+			for _, other := range others {
+				expect.NotEqual(
+					t,
+					clock.ErrOffset.Error(),
+					other.err.Error(),
+					"ErrOffset has the message of "+other.name,
+				)
+			}
+		})
+
+		t.Run("opens with the message of no other sentinel", func(t *testing.T) {
+			t.Parallel()
+			for _, other := range others {
+				expect.False(t, strings.HasPrefix(clock.ErrOffset.Error(), other.err.Error()),
+					"the message of ErrOffset opens with the message of "+other.name)
+			}
+		})
+	})
+
+	t.Run("errors.Is", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("matches no other sentinel of the package", func(t *testing.T) {
+			t.Parallel()
+			for _, other := range others {
+				expect.ErrorIsNot(t, clock.ErrOffset, other.err, "ErrOffset does not match "+other.name)
+			}
+		})
+	})
+}
+
+// dokimi:provenance sha256:ea78099e02e86879e7aaaae427baa35e61d6eab8ab4b2aa196c93298457952a3

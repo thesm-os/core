@@ -17,5 +17,5 @@ import (
 func TestTimer(t *testing.T) {
 	t.Parallel()
 
-	clocktest.RunTimerSuite(t, func() clock.Timer { return hlc.New(1).NewTimer(time.Hour) })
+	clocktest.RunTimerSuite(t, func() clock.Timer { return hlc.New(1, clock.DefaultMaxOffset).NewTimer(time.Hour) })
 }

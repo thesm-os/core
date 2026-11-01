@@ -15,6 +15,7 @@ import (
 	"go.dokimi.dev/assert/history"
 	"go.dokimi.dev/assert/prop"
 
+	"go.thesmos.sh/core/clock"
 	"go.thesmos.sh/core/clock/fake"
 	"go.thesmos.sh/core/clock/hlc"
 	"go.thesmos.sh/core/id"
@@ -219,7 +220,7 @@ func TestUUIDv7Allocs(t *testing.T) {
 func BenchmarkUUIDv7(b *testing.B) {
 	b.Run("Generator", func(b *testing.B) {
 		b.Run("Generate", func(b *testing.B) {
-			g := uuidv7.New(hlc.New(0), crypto.New())
+			g := uuidv7.New(hlc.New(0, clock.DefaultMaxOffset), crypto.New())
 			var got id.ID
 
 			c := bench.Start(b).MaxAllocs(0)

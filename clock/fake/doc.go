@@ -28,9 +28,18 @@
 // [Clock.Update] performs the standard HLC merge against the
 // observed peer instant — adopting the peer's wall and stepping
 // past its logical when the peer is ahead, otherwise stepping the
-// local logical. [Clock.Now] increments the logical counter on
-// every call so two consecutive Now() invocations between Advance
-// calls return distinct instants ordered by HappensBefore.
+// local logical. It refuses a peer more than
+// [go.thesmos.sh/core/clock.DefaultMaxOffset] ahead of the virtual
+// time with [go.thesmos.sh/core/clock.ErrOffset]. [Clock.Now]
+// increments the logical counter on every call so two consecutive
+// Now() invocations between Advance calls return distinct instants
+// ordered by HappensBefore.
+//
+// # Durations
+//
+// [Clock.Elapsed] is the sum of the durations of [Clock.Advance].
+// [Clock.Set] models a step of a wall clock, so a test steps the wall
+// time with Set and moves durations forward with Advance.
 //
 // # Waiter lifecycle
 //

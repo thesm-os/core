@@ -51,8 +51,8 @@ func (t *stoppingTimer) Stop() bool {
 // counts the calls of Stop that a helper makes, and measures the
 // allocations of the helper alone. A timer for a duration of zero or less
 // has its tick ready, and the timer of any other duration never fires. Now,
-// Time and Update return zero values. The zero stoppingClock is ready to
-// use. It is not safe for concurrent use.
+// Time, Elapsed and Update return zero values. The zero stoppingClock is
+// ready to use. It is not safe for concurrent use.
 type stoppingClock struct {
 	timer stoppingTimer
 }
@@ -63,8 +63,11 @@ func (*stoppingClock) Now() clock.Instant { return clock.Instant{} }
 // Time returns the zero time.
 func (*stoppingClock) Time() time.Time { return time.Time{} }
 
-// Update returns the zero Instant.
-func (*stoppingClock) Update(clock.Instant) clock.Instant { return clock.Instant{} }
+// Elapsed returns 0.
+func (*stoppingClock) Elapsed() time.Duration { return 0 }
+
+// Update returns the zero Instant and no error.
+func (*stoppingClock) Update(clock.Instant) (clock.Instant, error) { return clock.Instant{}, nil }
 
 // NewTimer returns the clock's timer, with a tick ready for a duration of
 // zero or less unless one is ready already. The first call allocates the

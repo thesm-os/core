@@ -20,7 +20,7 @@ import (
 func TestTimerConformsToTimer(t *testing.T) {
 	t.Parallel()
 
-	clocktest.RunTimerSuite(t, func() clock.Timer { return hlc.New(0).NewTimer(time.Hour) })
+	clocktest.RunTimerSuite(t, func() clock.Timer { return hlc.New(0, clock.DefaultMaxOffset).NewTimer(time.Hour) })
 }
 
 func TestTimer(t *testing.T) {
@@ -31,7 +31,7 @@ func TestTimer(t *testing.T) {
 
 		t.Run("returns a Timer that sends its tick after its duration", func(t *testing.T) {
 			t.Parallel()
-			tm := hlc.New(0).NewTimer(10 * time.Millisecond)
+			tm := hlc.New(0, clock.DefaultMaxOffset).NewTimer(10 * time.Millisecond)
 			assert.CompletesWithin(t, time.Second, func(context.Context) error {
 				<-tm.C()
 
@@ -45,7 +45,7 @@ func TestTimer(t *testing.T) {
 
 		t.Run("sends the tick at the duration of the Reset", func(t *testing.T) {
 			t.Parallel()
-			tm := hlc.New(0).NewTimer(time.Hour)
+			tm := hlc.New(0, clock.DefaultMaxOffset).NewTimer(time.Hour)
 			assert.True(t, tm.Reset(10*time.Millisecond), "Reset of a pending Timer returns true")
 			assert.CompletesWithin(t, time.Second, func(context.Context) error {
 				<-tm.C()
