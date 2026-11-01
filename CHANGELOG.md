@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.38.0
+
+### Minor Changes
+
+- 640796a: Add `blob.CreateSigner` and `blob.AsCreateSigner` to sign a PUT that creates one object of an exact size and content type.
+- 640796a: Add `blob.GetSigner` and `blob.AsGetSigner` to sign a GET of one object for a client without the credentials of the store.
+- 640796a: Add `blob.MaxSignedLifetime` and `blob.MaxCreateSize`, the bounds of a signed request that every backend accepts.
+- 640796a: Add `blob.SignedRequest`, a signed HTTP request whose text forms leave out the query of its URL.
+- b69a64a: Add `blobtest.GetSignerStub` and `blobtest.CreateSignerStub`, the doubles of the two signers of `blob`.
+- 6ceb682: Add `clock.DefaultMaxOffset` of 500 ms for a deployment whose clocks NTP keeps within that bound.
+- 6ceb682: Add the checks of `Elapsed` and of the max offset of `Update` to the suite of `clocktest`.
+- 640796a: Add `memory.Server` to serve the objects of a `memory.Store` over HTTP and sign requests for them.
+- 2d7bb3d: Add `telemetry.Link`, `telemetry.WithLinks` and `telemetry.Links` to link a span to other spans when it starts.
+- 2d7bb3d: Add `telemetrytest.Span.Links` with a copy of the links that the options of a span set.
+- 6ceb682: **Breaking:** Add `clock.Clock.Elapsed` to measure durations that a step of the wall time does not change.
+- 6ceb682: **Breaking:** Return `clock.ErrOffset` from `clock.Clock.Update` for a peer instant further ahead than the max offset of the clock.
+- 6ceb682: **Breaking:** Pass the max offset of the peer instants to `hlc.New` and `hlc.NewWithSource`.
+- a8fe945: **Breaking:** Start a call of `task.Quorum` only while the calls in flight and the calls that succeeded are fewer than the larger of k and `limit`.
+
+### Patch Changes
+
+- 2d7bb3d: Start the span of `TracerStartAppliesItsOptions` of `telemetrytest` with a link option.
+- 6ceb682: Fix `hlc.Clock` and `fake.Clock` to move the wall forward by a nanosecond after Logical 2^32 − 1 in place of a wrap to 0.
+- 7d4f4af: Fix `httpclient.Client` to measure the duration of a request with `clock.Clock.Elapsed`.
+- f956616: Fix `httpserver` to measure the duration of a request with `clock.Clock.Elapsed`.
+- d0259d4: Fix `resilience.Breaker` to time its open interval with `clock.Clock.Elapsed`.
+- d0259d4: Fix `resilience.Limiter` to measure its time with `clock.Clock.Elapsed`.
+- d0259d4: Fix `resilience.Retrier` to move its budget window with `clock.Clock.Elapsed`.
+- a8fe945: Fix `task.Quorum` to start a worker in place of one that `runtime.Goexit` ends.
+- 389de48: Fix `telemetry.BoundedHistogram` to measure the rate of each Flush with `clock.Clock.Elapsed`.
+- 389de48: Fix `telemetry.RateLimitHandler` to measure the interval of an event with `clock.Clock.Elapsed`.
+- de41002: Fix `witness.Server` to measure the time of a commit and the age of its state with `clock.Clock.Elapsed`.
+- 233be1f: Require `go.dokimi.dev/assert` v0.14.1.
+
 ## 0.37.0
 
 ### Minor Changes
