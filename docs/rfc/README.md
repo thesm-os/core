@@ -67,7 +67,7 @@ Start from [`docs/templates/RFC.md`](../templates/RFC.md).
 | RFC | Title | Status |
 |-----|-------|--------|
 | [0000](0000-rfc-process.md) | RFC Process | Accepted |
-| [0001](0001-clock-seam.md) | Clock Seam | Accepted |
+| [0001](0001-clock-seam.md) | Clock Seam | Accepted, the methods of Clock, the merge of Update and the rollover of Logical superseded by [RFC-0084](0084-durations-and-peer-instants-of-a-clock.md) |
 | [0002](0002-rand-seam.md) | Randomness Seam | Accepted |
 | [0003](0003-crypto-seam.md) | Cryptographic Hash Seam | Accepted |
 | [0004](0004-telemetry-seam.md) | Telemetry Seam | Accepted |
@@ -116,8 +116,8 @@ Start from [`docs/templates/RFC.md`](../templates/RFC.md).
 | [0047](0047-signed-notes-and-checkpoints.md) | Signed Notes and Checkpoints | Accepted |
 | [0048](0048-time-stamp-tokens.md) | RFC 3161 Time-Stamp Tokens | Accepted |
 | [0049](0049-bounded-cache.md) | Bounded Cache | Accepted |
-| [0050](0050-rate-limiter.md) | Rate Limiter | Accepted |
-| [0051](0051-bounded-hot-path-telemetry.md) | Bounded Telemetry on Hot Paths | Accepted |
+| [0050](0050-rate-limiter.md) | Rate Limiter | Accepted, the time of the Limiter superseded by [RFC-0084](0084-durations-and-peer-instants-of-a-clock.md) |
+| [0051](0051-bounded-hot-path-telemetry.md) | Bounded Telemetry on Hot Paths | Accepted, the time of a step of the clock superseded by [RFC-0084](0084-durations-and-peer-instants-of-a-clock.md) |
 | [0052](0052-failover.md) | Failover Between Redundant Dependencies | Accepted |
 | [0053](0053-http-servers-and-clients.md) | HTTP Servers and Clients | Accepted |
 | [0054](0054-checkpoint-witnesses.md) | Checkpoint Witnesses | Accepted |
@@ -150,6 +150,8 @@ Start from [`docs/templates/RFC.md`](../templates/RFC.md).
 | [0081](0081-fragment-partitions-version-suffixes-and-checks.md) | Fragment Partitions, Version Suffixes and Checks of a Table | Accepted |
 | [0082](0082-signed-requests-on-named-object-storage.md) | Signed Requests on Named Object Storage | Accepted |
 | [0083](0083-calls-beyond-a-quorum.md) | Calls Beyond a Quorum | Accepted |
+| [0084](0084-durations-and-peer-instants-of-a-clock.md) | Durations and Peer Instants of a Clock | Accepted |
+| [0085](0085-links-between-spans.md) | Links Between Spans | Accepted |
 
 ## Canonical first RFC
 
