@@ -328,6 +328,25 @@ func TestChain(t *testing.T) {
 				"the set must record the duration in seconds")
 		})
 
+		t.Run("records the duration of a request during which the wall time steps back", func(t *testing.T) {
+			t.Parallel()
+			clk := fake.New(origin)
+			clk.Advance(time.Hour)
+			mux := http.NewServeMux()
+			mux.HandleFunc(itemPattern, func(http.ResponseWriter, *http.Request) {
+				clk.Set(origin.Add(-time.Hour))
+				clk.Advance(elapsed)
+			})
+			f := newFixture(t, mux, httpserver.WithClock(clk))
+			assert.Equal(t, f.send(t, http.MethodGet, itemPath, http.NoBody, nil).status, http.StatusOK,
+				"the request must succeed")
+
+			sets := f.reporter.bound()
+			assert.Length(t, sets, 1, "the server must bind one set")
+			assert.Equal(t, sets[0].OnRecord.AssertCalledOnce(t, "the set must record once").Value, elapsed.Seconds(),
+				"the set must record the duration that the clock measured")
+		})
+
 		t.Run("records the set of a request that matched no route without the route", func(t *testing.T) {
 			t.Parallel()
 			f := newFixture(t, http.NewServeMux())

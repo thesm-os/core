@@ -143,7 +143,7 @@ func (c *chain) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// body has no declared length, such as a chunked body.
 	const unknownLength = -1
 
-	start := c.clock.Time()
+	start := c.clock.Elapsed()
 
 	e := &exchange{Context: r.Context(), w: w}
 	e.attrs = e.inline[:0]
@@ -182,14 +182,14 @@ func (c *chain) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // finish records the request after next returned or panicked with
 // recovered. It writes 500 for a panic before the handler wrote a header,
 // records the duration, writes the log record of the request and ends its
-// span.
+// span. start is the Elapsed of the clock when the request arrived.
 //
 // A panic with http.ErrAbortHandler, and a panic after the handler wrote
 // the header, abort the response: finish panics with http.ErrAbortHandler,
 // which net/http recovers without a log. net/http then closes the
 // connection, or resets the stream of HTTP/2, so the client does not read a
 // partial response as a complete one.
-func (c *chain) finish(e *exchange, r *http.Request, start time.Time, recovered any) {
+func (c *chain) finish(e *exchange, r *http.Request, start time.Duration, recovered any) {
 	panicked := recovered != nil
 
 	// net/http recognises the value of the panic, not an error that wraps
@@ -202,7 +202,7 @@ func (c *chain) finish(e *exchange, r *http.Request, start time.Time, recovered 
 	}
 
 	status := e.end(panicked)
-	elapsed := c.clock.Time().Sub(start)
+	elapsed := c.clock.Elapsed() - start
 
 	scheme := schemeHTTP
 	if r.TLS != nil {
