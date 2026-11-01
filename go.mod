@@ -6,7 +6,7 @@ module go.thesmos.sh/core
 go 1.27.3
 
 require (
-	go.dokimi.dev/assert v0.10.0
+	go.dokimi.dev/assert v0.14.1
 	go.dokimi.dev/conform v0.8.0
 	go.dokimi.dev/stub v0.2.0
 	go.thesmos.sh/kanon v0.3.0
