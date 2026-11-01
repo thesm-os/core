@@ -103,7 +103,7 @@ Start from [`docs/templates/RFC.md`](../templates/RFC.md).
 | [0034](0034-scheduled-key-destruction.md) | Scheduled Key Destruction | Accepted |
 | [0035](0035-context-aware-signing.md) | Context-Aware Signing | Accepted |
 | [0036](0036-utc-error-bounds.md) | UTC Readings with an Error Bound | Accepted |
-| [0037](0037-periodic-and-quorum-tasks.md) | Periodic and Quorum Tasks | Accepted |
+| [0037](0037-periodic-and-quorum-tasks.md) | Periodic and Quorum Tasks | Accepted, the start of the calls of Quorum superseded by [RFC-0083](0083-calls-beyond-a-quorum.md) |
 | [0038](0038-conformance-for-durable-adapters.md) | Conformance for Durable Adapters and Decorators | Accepted |
 | [0039](0039-signature-policies.md) | Signature Policies and Verifier Resolution | Accepted |
 | [0040](0040-ranged-blob-reads.md) | Ranged Reads on Named Object Storage | Accepted |
@@ -149,6 +149,7 @@ Start from [`docs/templates/RFC.md`](../templates/RFC.md).
 | [0080](0080-test-generation-with-dokimi.md) | Test Generation with dokimi | Accepted |
 | [0081](0081-fragment-partitions-version-suffixes-and-checks.md) | Fragment Partitions, Version Suffixes and Checks of a Table | Accepted |
 | [0082](0082-signed-requests-on-named-object-storage.md) | Signed Requests on Named Object Storage | Accepted |
+| [0083](0083-calls-beyond-a-quorum.md) | Calls Beyond a Quorum | Accepted |
 
 ## Canonical first RFC
 
