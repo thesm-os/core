@@ -7,10 +7,12 @@ import (
 	"context"
 	"errors"
 	"math"
+	"runtime"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/bench"
@@ -22,15 +24,39 @@ import (
 )
 
 // quorumAllocs is the number of allocations of one call of Quorum whose
-// calls all succeed, whatever the number of its elements: the derived
-// context, its state, the quorum and the closure that its goroutines
-// share.
-const quorumAllocs = 4
+// calls all succeed. For any number of elements, the call allocates the
+// derived context, its cancel function, the quorum, the channel of its
+// places and the closure that its goroutines share.
+const quorumAllocs = 5
 
-// TestQuorum covers the quorum decision. Each case starts every call at
-// once and keeps them at a barrier until all have started, so the order
-// in which results arrive fixes the decision. The rules Quorum shares with
-// the other functions of the package are in TestScope.
+// quorumRun is one call of Quorum that runs on a goroutine of its own.
+type quorumRun struct {
+	// done is a buffered channel of the error that Quorum returns.
+	done chan error
+
+	// calls contains the number of calls of each element.
+	calls []atomic.Int32
+}
+
+// startQuorum calls Quorum over n elements on a goroutine of its own. It
+// counts each call of an element before fn runs.
+func startQuorum(ctx context.Context, limit, k, n int, fn func(ctx context.Context, i int) error) *quorumRun {
+	r := &quorumRun{done: make(chan error, 1), calls: make([]atomic.Int32, n)}
+	go func() {
+		r.done <- task.Quorum(ctx, limit, k, indices(n), func(ctx context.Context, i, _ int) error {
+			r.calls[i].Add(1)
+
+			return fn(ctx, i)
+		})
+	}()
+
+	return r
+}
+
+// TestQuorum covers the decision of Quorum and the start of its calls. A
+// case that depends on the order of the results orders the calls with a
+// barrier or with synctest.Wait. The rules that Quorum shares with the
+// other functions of the package are in TestScope.
 func TestQuorum(t *testing.T) {
 	t.Parallel()
 
@@ -108,10 +134,172 @@ func TestQuorum(t *testing.T) {
 		})
 
 		assert.NoError(t, err, "one success must meet a quorum of one")
-		assert.Equal(t, runs.Load(), 1, "no element may be called after the quorum is met")
+		assert.Equal(t, runs.Load(), 1, "fn must not run after the quorum is met")
 	})
 
-	t.Run("returns the cause of ctx when a failure decides it after ctx ended", func(t *testing.T) {
+	t.Run("does not start a call beyond k while the calls in flight can meet the quorum", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			release := make(chan struct{})
+			r := startQuorum(t.Context(), 2, 2, 3, func(ctx context.Context, i int) error {
+				if i == 1 {
+					return awaitRelease(ctx, release)
+				}
+
+				return nil
+			})
+			synctest.Wait()
+			calls := r.calls[2].Load()
+			close(release)
+
+			assert.NoError(t, <-r.done, "two successes must meet a quorum of two")
+			assert.Equal(t, calls, 0, "a success must not start a call while the call in flight can meet the quorum")
+		})
+	})
+
+	t.Run("starts the next element in place of a failed call", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			r := startQuorum(t.Context(), 2, 2, 3, func(_ context.Context, i int) error {
+				if i == 1 {
+					return errBoom
+				}
+
+				return nil
+			})
+
+			assert.NoError(t, <-r.done, "the element after the failure must meet the quorum")
+			assert.Equal(t, r.calls[2].Load(), 1, "a failure must start the next element")
+		})
+	})
+
+	t.Run("runs at most limit minus k calls beyond the quorum", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			release := make(chan struct{})
+			r := startQuorum(t.Context(), 3, 2, 5, func(ctx context.Context, i int) error {
+				if i == 0 {
+					return nil
+				}
+
+				return awaitRelease(ctx, release)
+			})
+			synctest.Wait()
+			spare, beyond := r.calls[2].Load(), r.calls[3].Load()+r.calls[4].Load()
+			close(release)
+
+			assert.NoError(t, <-r.done, "the calls after the release must meet the quorum")
+			expect.Equal(t, spare, 1, "a limit of three must run one call beyond a quorum of two")
+			expect.Equal(t, beyond, 0, "a limit of three must not run a second call beyond a quorum of two")
+		})
+	})
+
+	t.Run("does not start a call beyond k when limit is below k", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			release := make(chan struct{})
+			r := startQuorum(t.Context(), 2, 3, 5, func(ctx context.Context, i int) error {
+				if i == 1 {
+					return awaitRelease(ctx, release)
+				}
+
+				return nil
+			})
+			synctest.Wait()
+			beyond := r.calls[3].Load() + r.calls[4].Load()
+			close(release)
+
+			assert.NoError(t, <-r.done, "three successes must meet a quorum of three")
+			assert.Equal(t, beyond, 0, "a quorum of three must not start a fourth call while a call is in flight")
+		})
+	})
+
+	t.Run("starts the next element in place of a call that ends by runtime.Goexit", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			r := startQuorum(t.Context(), 1, 1, 2, func(_ context.Context, i int) error {
+				if i == 0 {
+					runtime.Goexit()
+				}
+
+				return nil
+			})
+
+			assert.NoError(t, <-r.done, "the element after the exit must meet the quorum")
+			assert.Equal(t, r.calls[1].Load(), 1, "an exit must start the next element")
+		})
+	})
+
+	t.Run("returns ErrNoQuorum when every call ends by runtime.Goexit", func(t *testing.T) {
+		t.Parallel()
+		synctest.Test(t, func(t *testing.T) {
+			r := startQuorum(t.Context(), 1, 1, 2, func(context.Context, int) error {
+				runtime.Goexit()
+
+				return nil
+			})
+
+			assert.That(t, <-r.done).
+				ErrorIs(task.ErrNoQuorum, "two exits must make a quorum of one impossible").
+				ErrorIs(task.ErrExited, "each exit must be joined as ErrExited")
+		})
+	})
+
+	t.Run("starts a call only in a free place of the quorum", func(t *testing.T) {
+		t.Parallel()
+		prop.ForAll(t, "Quorum must start a call only in a free place of its quorum", func(c *prop.Case) {
+			n := c.Draw(prop.Integer(1, 8), "n")
+			k := c.Draw(prop.Integer(1, n), "k")
+			limit := c.Draw(prop.Integer(1, 10), "limit")
+			ok := c.Draw(prop.List(prop.Boolean(), prop.MinSize(n), prop.MaxSize(n)), "ok")
+
+			var (
+				mu                          sync.Mutex
+				calls, failed, peak         int
+				inFlight, succeeded, places int
+			)
+			err := task.Quorum(c.Context(), limit, k, indices(n), func(_ context.Context, i, _ int) error {
+				mu.Lock()
+				calls++
+				inFlight++
+				peak = max(peak, inFlight)
+				places = max(places, inFlight+succeeded)
+				mu.Unlock()
+				runtime.Gosched()
+
+				mu.Lock()
+				defer mu.Unlock()
+				inFlight--
+				if ok[i] {
+					succeeded++
+
+					return nil
+				}
+				failed++
+
+				return errBoom
+			})
+
+			free := min(max(k, limit), n)
+			expect.InRange(c, peak, 1, float64(limit), "at most limit calls may run at once")
+			expect.InRange(c, places, 1, float64(free), "the calls in flight and the successes must fit the places")
+			expect.InRange(c, calls, 1, float64(min(n, free+failed)),
+				"each call beyond the places must replace a failure")
+			want := 0
+			for _, s := range ok {
+				if s {
+					want++
+				}
+			}
+			if want >= k {
+				expect.NoError(c, err, "a quorum with k elements that succeed must be met")
+			} else {
+				expect.ErrorIs(c, err, task.ErrNoQuorum, "a quorum with fewer than k elements that succeed must fail")
+			}
+		})
+	})
+
+	t.Run("returns the cause of ctx when the quorum becomes impossible after ctx ended", func(t *testing.T) {
 		t.Parallel()
 		ctx, cancel := context.WithCancelCause(t.Context())
 		cause := errors.New("task_test: shutting down")
@@ -200,10 +388,9 @@ func TestQuorum(t *testing.T) {
 	})
 }
 
-// TestQuorumAllocs checks the allocation contract of Quorum: a fixed
-// number of allocations per call whose calls succeed, whatever the number
-// of elements. MaxAllocs counts the allocations of the whole process, so
-// the test does not run in parallel.
+// TestQuorumAllocs checks the allocation contract of Quorum over 64 and
+// 512 elements whose calls succeed. MaxAllocs counts the allocations of
+// the whole process, so the test does not run in parallel.
 func TestQuorumAllocs(t *testing.T) {
 	ctx := t.Context()
 	succeed := func(context.Context, int, int) error { return nil }
@@ -214,14 +401,14 @@ func TestQuorumAllocs(t *testing.T) {
 
 			var err error
 			expect.MaxAllocs(t, func() { err = task.Quorum(ctx, 1, n, items, succeed) }, quorumAllocs,
-				"Quorum must allocate a fixed amount, whatever the number of elements")
+				"the allocations of Quorum must not depend on the number of elements")
 			assert.NoError(t, err, "the test must measure a quorum that is met")
 		})
 	}
 }
 
-// BenchmarkQuorum measures one call that needs two immediate successes of
-// five, the shape of a witness quorum.
+// BenchmarkQuorum measures a quorum of two of five witnesses whose calls
+// succeed at once.
 func BenchmarkQuorum(b *testing.B) {
 	witnesses := indices(5)
 
@@ -254,5 +441,16 @@ func barrier(n int) func() {
 	return func() {
 		wg.Done()
 		wg.Wait()
+	}
+}
+
+// awaitRelease waits until release is closed and returns nil. It returns
+// the cause of ctx when ctx ends first.
+func awaitRelease(ctx context.Context, release <-chan struct{}) error {
+	select {
+	case <-release:
+		return nil
+	case <-ctx.Done():
+		return context.Cause(ctx)
 	}
 }
