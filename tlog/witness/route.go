@@ -326,7 +326,7 @@ func (s *Server) reload(ctx context.Context, h originHash) (*loaded, error) {
 // when the state is older than refreshAge and no refresh runs.
 func (s *Server) refreshIfStale() {
 	s.mu.RLock()
-	stale := s.clock.Time().Sub(s.st.synced) > refreshAge
+	stale := s.clock.Elapsed()-s.st.synced > refreshAge
 	s.mu.RUnlock()
 
 	if stale && s.refreshing.CompareAndSwap(false, true) {

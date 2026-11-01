@@ -506,7 +506,7 @@ func (s *Server) installed(
 	if s.st.version == v {
 		//dokimi:mutate-skip ror-true: take refuses no snapshot that build returned, and leaves the state unchanged when it refuses one
 		if s.st.take(snap, name, size, nil) == nil {
-			s.st.head, s.st.version, s.st.synced = h, nv, s.clock.Time()
+			s.st.head, s.st.version, s.st.synced = h, nv, s.clock.Elapsed()
 		}
 	}
 

@@ -92,10 +92,6 @@ type installed struct {
 //
 // Not safe for concurrent use. The mutex of the Server guards it.
 type state struct {
-	// synced is the time of the clock of the Server at which the state
-	// last matched the head of the store.
-	synced time.Time
-
 	// origins maps the hash of each origin to its state.
 	origins *btree.MapFunc[originHash, originState]
 
@@ -115,6 +111,10 @@ type state struct {
 
 	// snap is the installed snapshot that the state took last.
 	snap installed
+
+	// synced is the Elapsed of the clock of the Server at which the state
+	// last matched the head of the store.
+	synced time.Duration
 
 	// seq and time are the Seq and the Time of the head's record, and end
 	// its Offset plus the length of its encoding. All three are 0 for an

@@ -560,7 +560,7 @@ func TestSyncInternal(t *testing.T) {
 
 			_, err := s.sync(bounded(t), "")
 			assert.NoError(t, err, "sync must read the head")
-			assert.Equal(t, s.st.synced, f.clock.Time(), "sync must record the time of the reading")
+			assert.Equal(t, s.st.synced, f.clock.Elapsed(), "sync must record the time of the reading")
 		})
 
 		t.Run("catches up to a head whose snapshot changed and whose record did not", func(t *testing.T) {

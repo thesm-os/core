@@ -43,24 +43,66 @@ func TestRouteInternal(t *testing.T) {
 		return f, st, newInternalServer(tb, cfg)
 	}
 
+	// gate makes a refresh that starts wait in its read of the head until the
+	// cleanup, so its flag remains set when the case reads it.
+	gate := func(tb testing.TB, st *faulty) {
+		tb.Helper()
+
+		release := make(chan struct{})
+		tb.Cleanup(func() { close(release) })
+		st.get = func(key string) error {
+			if key == headKey {
+				<-release
+			}
+
+			return nil
+		}
+	}
+
+	t.Run("refreshIfStale", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("starts a refresh of a state older than refreshAge", func(t *testing.T) {
+			t.Parallel()
+			f, st, s := faultyServer(t)
+			gate(t, st)
+
+			f.clock.Advance(2 * refreshAge)
+			s.refreshIfStale()
+			assert.True(t, s.refreshing.Load(), "a state older than refreshAge must start a refresh")
+		})
+
+		t.Run("starts no refresh of a state younger than refreshAge", func(t *testing.T) {
+			t.Parallel()
+			f, st, s := faultyServer(t)
+			f.clock.Advance(time.Hour)
+			_, err := s.sync(bounded(t), "")
+			assert.NoError(t, err, "sync must read the head")
+			gate(t, st)
+
+			f.clock.Advance(refreshAge / 2)
+			s.refreshIfStale()
+			assert.False(t, s.refreshing.Load(), "a state younger than refreshAge must not start a refresh")
+		})
+
+		t.Run("starts no refresh after a step of the wall time", func(t *testing.T) {
+			t.Parallel()
+			f, st, s := faultyServer(t)
+			gate(t, st)
+
+			f.clock.Set(f.clock.Time().Add(2 * refreshAge))
+			s.refreshIfStale()
+			assert.False(t, s.refreshing.Load(), "a step of the wall time must not age the state")
+		})
+	})
+
 	t.Run("serveCheckpoint", func(t *testing.T) {
 		t.Parallel()
 
 		t.Run("starts no refresh of a stale state for a path that does not parse", func(t *testing.T) {
 			t.Parallel()
 			f, st, s := faultyServer(t)
-
-			// A refresh that starts waits in its read of the head until the
-			// cleanup, so its flag remains set when the case reads it.
-			gate := make(chan struct{})
-			t.Cleanup(func() { close(gate) })
-			st.get = func(key string) error {
-				if key == headKey {
-					<-gate
-				}
-
-				return nil
-			}
+			gate(t, st)
 
 			f.clock.Advance(2 * refreshAge)
 			rec := httptest.NewRecorder()

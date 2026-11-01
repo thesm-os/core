@@ -8,6 +8,7 @@ import (
 	"errors"
 	"log/slog"
 	"testing"
+	"time"
 
 	"go.dokimi.dev/assert"
 
@@ -52,6 +53,22 @@ func TestTelemetry(t *testing.T) {
 
 			assert.Length(t, m.Values(durationName), 1, "the commit must record its duration")
 			assert.Equal(t, m.Values(callsName), []float64{1}, "the commit must record its calls")
+		})
+
+		t.Run("records the duration of a commit that the clock measured", func(t *testing.T) {
+			t.Parallel()
+			const took = 50 * time.Millisecond
+			m, s, f := metered(t, l)
+			f.clock.Advance(time.Hour)
+			f.store.intercept(hook{op: opPut, prefix: "records/", before: func(context.Context, string) error {
+				f.clock.Advance(took)
+
+				return nil
+			}})
+
+			advance(t, s, l, l.update(t, 0, 5))
+			assert.Equal(t, m.Values(durationName), []float64{took.Seconds()},
+				"the commit must record the duration that the clock measured")
 		})
 
 		t.Run("records the class of the error of a failed commit", func(t *testing.T) {

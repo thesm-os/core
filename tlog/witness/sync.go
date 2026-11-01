@@ -121,7 +121,7 @@ func (s *Server) sync(ctx context.Context, own string) (bool, error) {
 		//dokimi:mutate-skip sbr-delete,ror-false: a state that reflects the head walks no object, and applyPlan of the empty plan sets the same head, version and count of origins and the time of the reading, or reads the head again after a commit
 		if v == b.version {
 			s.mu.Lock()
-			s.st.synced = s.clock.Time()
+			s.st.synced = s.clock.Elapsed()
 			s.mu.Unlock()
 
 			return seen, nil
@@ -179,7 +179,7 @@ func (s *Server) applyPlan(ctx context.Context, p *plan, h head, v, from version
 		s.st.apply(w.rec, w.key, w.size)
 	}
 
-	s.st.head, s.st.version, s.st.synced = h, v, s.clock.Time()
+	s.st.head, s.st.version, s.st.synced = h, v, s.clock.Elapsed()
 	s.metrics.origins.Set(ctx, float64(s.st.origins.Len()))
 
 	return true, nil

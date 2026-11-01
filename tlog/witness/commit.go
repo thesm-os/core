@@ -132,14 +132,14 @@ func (s *Server) commit() {
 // ends. The wait for the write of the commit before ends by the deadline
 // of that commit, which comes first.
 func (s *Server) commitCalls(b *batch) {
-	start := s.clock.Time()
+	start := s.clock.Elapsed()
 
 	ctx, cancel := context.WithTimeout(context.Background(), s.timeout+s.signTimeout)
 	defer cancel()
 
 	err := s.run(ctx, b)
 
-	s.metrics.recordCommit(ctx, s.clock.Time().Sub(start), len(b.calls), err)
+	s.metrics.recordCommit(ctx, s.clock.Elapsed()-start, len(b.calls), err)
 	s.account(ctx, b, err)
 
 	s.lmu.Lock()
@@ -538,7 +538,7 @@ func (s *Server) applyCommit(ctx context.Context, b *batch, bs base, recKey stri
 	}
 
 	s.st.apply(&b.rec, recKey, size)
-	s.st.version, s.st.synced = v, s.clock.Time()
+	s.st.version, s.st.synced = v, s.clock.Elapsed()
 	s.metrics.origins.Set(ctx, float64(s.st.origins.Len()))
 }
 
