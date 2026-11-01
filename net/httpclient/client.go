@@ -862,9 +862,9 @@ func (c *Client) send(
 		}
 	}
 
-	start := c.clock.Time()
+	start := c.clock.Elapsed()
 	resp, err := c.http.Do(r)
-	elapsed := c.clock.Time().Sub(start)
+	elapsed := c.clock.Elapsed() - start
 
 	if err != nil {
 		resp = nil

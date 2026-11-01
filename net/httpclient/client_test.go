@@ -590,6 +590,31 @@ func TestClient(t *testing.T) {
 			assert.Equal(t, attrs, sets[0].attrs, "the span must receive the attributes of the set")
 		})
 
+		t.Run("records the duration of an attempt during which the wall time steps back", func(t *testing.T) {
+			t.Parallel()
+			const took = 50 * time.Millisecond
+			clk := fake.New(origin)
+			clk.Advance(time.Hour)
+			srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+				clk.Set(origin.Add(-time.Hour))
+				clk.Advance(took)
+			}))
+			t.Cleanup(srv.Close)
+
+			r := newReporter(t)
+			opts := httpclient.Options(httpclient.WithReporter(r), httpclient.WithClock(clk))
+			c, err := httpclient.New(dependency, required, loopback, opts)
+			assert.NoError(t, err, "New must accept the options")
+
+			_, _, err = get(t, c, srv.URL)
+			assert.NoError(t, err, "Do must return the response")
+
+			sets := r.bound()
+			assert.Length(t, sets, 1, "the client must bind one set")
+			rec := sets[0].OnRecord.AssertCalledOnce(t, "the set must record the attempt")
+			assert.Equal(t, rec.Value, took.Seconds(), "the set must record the duration that the clock measured")
+		})
+
 		t.Run("records no error type for an attempt that succeeded", func(t *testing.T) {
 			t.Parallel()
 			srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
