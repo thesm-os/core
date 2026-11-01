@@ -153,8 +153,12 @@ func (e event) String() string {
 // deadline that the guards read and the actions update. b points at
 // the Breaker whose thresholds and clock the guards and actions use.
 type circuit struct {
-	openUntil time.Time
-	b         *Breaker
+	b *Breaker
+
+	// openUntil is the Elapsed of the clock at which the open interval
+	// ends.
+	openUntil time.Duration
+
 	failures  int
 	successes int
 
@@ -201,8 +205,9 @@ var circuitSpec = fsm.Must(fsm.NewBuilder[State, event, circuit](Closed).
 // atThreshold reports whether one more failure opens the circuit.
 func atThreshold(c *circuit) bool { return c.failures+1 >= c.b.failureThreshold }
 
-// elapsed reports whether the open interval has ended.
-func elapsed(c *circuit) bool { return !c.b.clock.Time().Before(c.openUntil) }
+// elapsed reports whether the open interval has ended. A step of the wall
+// time does not end it.
+func elapsed(c *circuit) bool { return c.b.clock.Elapsed() >= c.openUntil }
 
 // idle reports whether no probe is outstanding.
 func idle(c *circuit) bool { return !c.probing }
@@ -258,8 +263,8 @@ func claimProbe(c *circuit) {
 // circuit admits the next probe and keeps its counts.
 func releaseProbe(c *circuit) { c.probing = false }
 
-// reopen starts the open interval at the current time.
-func reopen(c *circuit) { c.openUntil = c.b.clock.Time().Add(c.b.openFor) }
+// reopen starts the open interval at the current Elapsed of the clock.
+func reopen(c *circuit) { c.openUntil = c.b.clock.Elapsed() + c.b.openFor }
 
 // reset clears the counters of a circuit that has closed. It keeps the
 // probe number, so the call of a probe from before the circuit closed

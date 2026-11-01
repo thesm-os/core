@@ -100,8 +100,9 @@ type Retrier struct {
 	clock clock.Clock
 	rand  rand.Rand
 
-	// start is the beginning of the bucket at cur.
-	start time.Time
+	// start is the Elapsed of the clock at the beginning of the bucket at
+	// cur.
+	start time.Duration
 
 	attempts      int
 	base          time.Duration
@@ -154,7 +155,7 @@ func NewRetrier(cfg RetryConfig) (*Retrier, error) {
 		minRetries:    cfg.MinRetries,
 		// A window shorter than the bucket count would divide to zero.
 		bucket: max(cfg.BudgetWindow/budgetBuckets, 1),
-		start:  cfg.Clock.Time(),
+		start:  cfg.Clock.Elapsed(),
 	}, nil
 }
 
@@ -347,14 +348,15 @@ func (r *Retrier) spend(attempt int) (time.Duration, bool) {
 }
 
 // roll moves the ring forward to the current bucket, and clears the buckets
-// that it passes. The caller locks r.mu.
+// that it passes. It measures the time with the Elapsed of the clock, so a
+// step of the wall time does not move the ring. The caller locks r.mu.
 func (r *Retrier) roll() {
-	steps := int(r.clock.Time().Sub(r.start) / r.bucket)
+	steps := int((r.clock.Elapsed() - r.start) / r.bucket)
 	if steps < 1 {
 		return
 	}
 
-	r.start = r.start.Add(time.Duration(steps) * r.bucket)
+	r.start += time.Duration(steps) * r.bucket
 
 	// After a full lap every bucket is stale, so roll goes round at most
 	// once.

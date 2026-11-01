@@ -546,7 +546,20 @@ func TestRetrier(t *testing.T) {
 			expect.Equal(t, *calls, 2, "the second retry must not run")
 		})
 
-		t.Run("keeps the calls of the window while the clock moves back", func(t *testing.T) {
+		t.Run("keeps the calls of the window after a step of the wall time past the window", func(t *testing.T) {
+			t.Parallel()
+			c := fake.New(originUTC)
+			r := newRetrier(t, c, noJitter, func(c *resilience.RetryConfig) { c.Budget = 0.5 })
+			prime(t, r, 3)
+
+			c.Set(originUTC.Add(2 * policy.BudgetWindow))
+			fn, calls := failFor(1, errTransient)
+			_, err := resilience.Do(bounded(t), r, fn)
+			expect.NoError(t, err, "the four calls of the window must afford the retry")
+			expect.Equal(t, *calls, 2, "the retry must run")
+		})
+
+		t.Run("keeps the calls of the window while the wall time steps back", func(t *testing.T) {
 			t.Parallel()
 			c := fake.New(originUTC)
 			r := newRetrier(t, c, noJitter, func(c *resilience.RetryConfig) { c.Budget = 0.5 })
@@ -641,10 +654,10 @@ func TestRetrier(t *testing.T) {
 			expect.Equal(t, *calls, 2, "the retry must run")
 		})
 
-		// The machine makes calls that fail up to twice, and moves the clock
-		// forward and back. Its model counts the calls and the retries of
-		// each bucket since the origin, up to the latest bucket that a call
-		// reached, which a clock that moves back leaves in place.
+		// The machine makes calls that fail up to twice, moves the clock
+		// forward and steps its wall time back. Its model counts the calls
+		// and the retries of each bucket of the Elapsed of the clock, which a
+		// step of the wall time does not move.
 		t.Run("retries a failure exactly when the window affords it", func(t *testing.T) {
 			t.Parallel()
 			prop.ForAll(t, "Do must retry a failure exactly when the calls of the window afford it",
@@ -681,7 +694,7 @@ func TestRetrier(t *testing.T) {
 								},
 								Run: func(c *prop.Case, _ int, in any) {
 									failures := in.(int)
-									cur = max(cur, int(clk.Time().Sub(originUTC)/bucket))
+									cur = int(clk.Elapsed() / bucket)
 									calls[cur]++
 									want := 1
 									for range failures {

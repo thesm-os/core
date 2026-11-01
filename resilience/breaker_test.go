@@ -193,6 +193,16 @@ func TestBreaker(t *testing.T) {
 			assert.False(t, b.Allow(target), "the circuit must refuse a call before the interval ends")
 		})
 
+		t.Run("refuses a call after a step of the wall time past the open interval", func(t *testing.T) {
+			t.Parallel()
+			c := fake.New(originUTC)
+			b := newBreaker(t, c)
+			trip(t, b)
+
+			c.Set(originUTC.Add(2 * openFor))
+			assert.False(t, b.Allow(target), "a step of the wall time must not end the open interval")
+		})
+
 		t.Run("admits a probe after the open interval", func(t *testing.T) {
 			t.Parallel()
 			c := fake.New(originUTC)

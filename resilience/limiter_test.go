@@ -433,16 +433,23 @@ func TestLimiter(t *testing.T) {
 			assert.False(t, l.AllowN(1), "a refilled bucket must have no more than Burst units")
 		})
 
-		t.Run("adds no units while the clock is behind the last refill", func(t *testing.T) {
+		t.Run("adds units while the wall time steps back", func(t *testing.T) {
 			t.Parallel()
 			c := fake.New(originUTC)
 			l := drained(t, c)
 
 			c.Set(originUTC.Add(-time.Hour))
-			assert.False(t, l.AllowN(1), "a clock that moved back must add no unit")
+			c.Advance(time.Second)
+			assert.True(t, l.AllowN(10), "a step back of the wall time must not stop the refill")
+		})
 
-			c.Set(originUTC.Add(time.Second))
-			assert.True(t, l.AllowN(10), "a clock past the last refill must add units again")
+		t.Run("adds no units after a step of the wall time", func(t *testing.T) {
+			t.Parallel()
+			c := fake.New(originUTC)
+			l := drained(t, c)
+
+			c.Set(originUTC.Add(time.Hour))
+			assert.False(t, l.AllowN(1), "a step forward of the wall time must not refill the bucket")
 		})
 
 		t.Run("reports true for an n of zero", func(t *testing.T) {
@@ -1183,40 +1190,18 @@ func TestLimiter(t *testing.T) {
 			assert.True(t, l.AllowN(math.MaxInt64), "a rate of zero must admit any number of units")
 		})
 
-		t.Run("keeps the time at which a bucket below empty is empty", func(t *testing.T) {
+		t.Run("refills at the new rate while the wall time steps back", func(t *testing.T) {
 			t.Parallel()
-			// The bucket is empty at originUTC. A clock that moves back by a
-			// second leaves it a second below empty.
 			c := fake.New(originUTC)
 			l := drained(t, c)
-			c.Set(originUTC.Add(-time.Second))
+			c.Set(originUTC.Add(-time.Hour))
 			assert.NoError(t, l.SetRate(20, 10), "SetRate must accept the rate")
 
-			c.Set(originUTC.Add(49 * time.Millisecond))
-			assert.False(t, l.AllowN(1), "the bucket must have no unit until originUTC")
+			c.Advance(49 * time.Millisecond)
+			assert.False(t, l.AllowN(1), "the bucket must have no unit before 50 ms at rate 20")
 
-			c.Set(originUTC.Add(50 * time.Millisecond))
-			assert.True(t, l.AllowN(1), "the bucket must gain a unit 50 ms after originUTC at rate 20")
-		})
-
-		t.Run("rounds the time at which a bucket below empty is empty up to a whole nanosecond", func(t *testing.T) {
-			t.Parallel()
-			// At Rate 3 the bucket lacks 2 of its 3 units for 666,666,666.67
-			// ns. A clock that moves back by a second leaves it below empty
-			// until 333,333,333.33 ns before originUTC, and SetRate keeps
-			// that time as 333,333,333 ns. Its unit at 10^9 units a second
-			// then takes 1 ns.
-			c := fake.New(originUTC)
-			l := newLimiter(t, resilience.LimiterConfig{Clock: c, Rate: 3, Burst: 3})
-			assert.True(t, l.AllowN(2), "a full bucket of 3 units must admit 2")
-			c.Set(originUTC.Add(-time.Second))
-			assert.NoError(t, l.SetRate(1_000_000_000, 1), "SetRate must accept the rate")
-
-			c.Set(originUTC.Add(-333_333_333 * time.Nanosecond))
-			assert.False(t, l.AllowN(1), "the bucket must have no unit until the next whole nanosecond")
-
-			c.Set(originUTC.Add(-333_333_332 * time.Nanosecond))
-			assert.True(t, l.AllowN(1), "the bucket must gain its unit 1 ns after the whole nanosecond")
+			c.Advance(time.Millisecond)
+			assert.True(t, l.AllowN(1), "the bucket must gain a unit 50 ms after SetRate at rate 20")
 		})
 
 		t.Run("returns nil to every waiting call for a rate of zero", func(t *testing.T) {
@@ -1683,7 +1668,7 @@ func limiterSteps(c *prop.Case) {
 	// positive Rate, which bounds the units of the calls of the actions.
 	model := new(big.Rat)
 	fill := big.NewRat(burst*nsPerSecond, rate)
-	now := func() int64 { return int64(clk.Time().Sub(originUTC)) }
+	now := func() int64 { return int64(clk.Elapsed()) }
 
 	// window returns the most nanounits that the bucket admits from the start
 	// of the instant s to the time at: the Burst that applies at the start of

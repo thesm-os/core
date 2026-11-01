@@ -101,8 +101,8 @@ func (p Priority) Valid() bool {
 // the head therefore becomes the head, unless that call has the tenth
 // grant. A call whose context ends leaves its queue, and took no units.
 //
-// The Limiter reads time from its Clock. A Clock that moves back adds no
-// units until its time passes the last time that the Limiter read.
+// The Limiter measures its time with the Elapsed of its Clock, so a step of
+// the wall time does not add or take units.
 //
 // The zero Limiter has a Rate of zero and admits every call, as
 // [NewLimiter] does for a Rate of zero.
@@ -124,10 +124,6 @@ func (p Priority) Valid() bool {
 type Limiter struct {
 	clock clock.Clock
 
-	// start is the time of the Limiter's construction. Every other time of
-	// the Limiter is a duration since start.
-	start time.Time
-
 	// head is the waiting call that the Limiter grants next, or nil when no
 	// call waits. A write locks mu.
 	head *waiter
@@ -138,7 +134,7 @@ type Limiter struct {
 
 	mu sync.Mutex
 
-	// due and dueRem are the duration since start at which the bucket would
+	// due and dueRem are the Elapsed of the Clock at which the bucket would
 	// be empty once it covered every unit taken so far: the theoretical
 	// arrival time of the generic cell rate algorithm. The time is due plus
 	// dueRem Rate-ths of a nanosecond, and dueRem is below rate. The bucket
@@ -208,7 +204,7 @@ func NewLimiter(cfg LimiterConfig) (*Limiter, error) {
 		return nil, ErrConfig
 	}
 
-	l := &Limiter{clock: cfg.Clock, start: cfg.Clock.Time(), rate: cfg.Rate}
+	l := &Limiter{clock: cfg.Clock, rate: cfg.Rate}
 	if cfg.Rate == 0 {
 		return l, nil
 	}
@@ -342,10 +338,6 @@ func (l *Limiter) WaitNPriority(ctx context.Context, n int64, p Priority) error 
 // rate of zero means no limit, so every waiting call returns nil. A change
 // from a rate of zero starts with a full bucket, as [NewLimiter] does.
 //
-// A Clock that moves back can leave the bucket below empty. SetRate keeps
-// the time at which such a bucket is empty, and the bucket gains units at
-// the new rate after that time.
-//
 // Error modes, each classified [go.thesmos.sh/core/errs.Invalid], and each
 // of which leaves l unchanged:
 //
@@ -401,20 +393,13 @@ func (l *Limiter) SetRate(rate, burst int64) error {
 		return nil
 	}
 
-	// owed is the number of nanounits that the bucket lacks at now. below is
-	// the time until a bucket below empty is empty, rounded up to a whole
-	// nanosecond. A bucket without a limit is full.
-	now := l.now()
+	// owed is the number of nanounits that the bucket lacks at now. A bucket
+	// without a limit is full. The Elapsed of the Clock never moves back, so
+	// the bucket lacks at most Burst units.
+	now := l.clock.Elapsed()
 	var owed int64
-	var below time.Duration
 	if l.rate > 0 {
-		below = l.due - l.fill - now
-		if l.dueRem > l.fillRem {
-			below++
-		}
-		if below > 0 {
-			owed = l.burst * nanounits
-		} else if l.due >= now {
+		if l.due >= now {
 			owed = int64(l.due-now)*l.rate + l.dueRem
 		}
 		owed = max(owed+(burst-l.burst)*nanounits, 0)
@@ -423,7 +408,7 @@ func (l *Limiter) SetRate(rate, burst int64) error {
 	l.rate, l.burst = rate, burst
 	l.limit.Store(burst)
 	l.fill, l.fillRem = l.cost(burst)
-	l.due = addSaturated(addSaturated(now, max(below, 0)), time.Duration(owed/rate))
+	l.due = addSaturated(now, time.Duration(owed/rate))
 	l.dueRem = owed % rate
 
 	return nil
@@ -579,7 +564,7 @@ func (l *Limiter) choose() {
 // nanosecond, so a timer of that time never ends before the bucket has
 // them. n is between 1 and Burst. The caller has locked the mutex.
 func (l *Limiter) claim(n int64) time.Duration {
-	now := l.now()
+	now := l.clock.Elapsed()
 	due, rem := l.after(now, n)
 	wait := due - l.fill - now
 	if rem > l.fillRem {
@@ -611,13 +596,6 @@ func (l *Limiter) after(now time.Duration, n int64) (time.Duration, int64) {
 	}
 
 	return due, rem + r
-}
-
-// now returns the duration since the Limiter's construction, read from its
-// Clock. It is negative while the Clock is behind the start, and
-// [time.Time.Sub] saturates it at the extremes of a Duration.
-func (l *Limiter) now() time.Duration {
-	return l.clock.Time().Sub(l.start)
 }
 
 // cost returns the time in which the bucket gains n units at the Limiter's
