@@ -13,6 +13,9 @@ import (
 	"go.thesmos.sh/core/telemetry"
 )
 
+// linkKey is the key of the attribute of a link of the cases.
+const linkKey = "test.link"
+
 // remote and other are span contexts that a propagator extracted from
 // other processes.
 var (
@@ -27,11 +30,19 @@ var (
 	}
 )
 
-// options are the options of the allocation ceilings: a kind and a remote
-// parent.
+// links are the links of the cases: one to the span of remote with an
+// attribute, and one to the span of other.
+var links = []telemetry.Link{
+	{SpanContext: remote, Attributes: []telemetry.Attr{telemetry.AttrInt(linkKey, 1)}},
+	{SpanContext: other},
+}
+
+// options are the options of the allocation ceilings: a kind, a remote
+// parent and links.
 var options = []telemetry.SpanOption{
 	telemetry.WithSpanKind(telemetry.SpanKindServer),
 	telemetry.WithRemoteParent(remote),
+	telemetry.WithLinks(links),
 }
 
 func TestSpanOption(t *testing.T) {
@@ -69,10 +80,18 @@ func TestSpanOption(t *testing.T) {
 				want: telemetry.SpanKindServer,
 			},
 			{
-				name: "returns the kind before WithRemoteParent, which sets none",
+				name: "returns the kind of an option before WithRemoteParent",
 				give: []telemetry.SpanOption{
 					telemetry.WithSpanKind(telemetry.SpanKindServer),
 					telemetry.WithRemoteParent(remote),
+				},
+				want: telemetry.SpanKindServer,
+			},
+			{
+				name: "returns the kind of an option before WithLinks",
+				give: []telemetry.SpanOption{
+					telemetry.WithSpanKind(telemetry.SpanKindServer),
+					telemetry.WithLinks(links),
 				},
 				want: telemetry.SpanKindServer,
 			},
@@ -99,12 +118,16 @@ func TestSpanOption(t *testing.T) {
 				name: "reports false for no options",
 			},
 			{
-				name: "reports false for WithSpanKind, which sets no parent",
+				name: "reports false for WithSpanKind",
 				give: []telemetry.SpanOption{telemetry.WithSpanKind(telemetry.SpanKindServer)},
 			},
 			{
 				name: "reports false for a parent with an empty TraceID",
 				give: []telemetry.SpanOption{telemetry.WithRemoteParent(telemetry.SpanContext{SpanID: remote.SpanID})},
+			},
+			{
+				name: "reports false for WithLinks",
+				give: []telemetry.SpanOption{telemetry.WithLinks(links)},
 			},
 			{
 				name:   "returns the parent of WithRemoteParent",
@@ -123,7 +146,7 @@ func TestSpanOption(t *testing.T) {
 				wantOK: true,
 			},
 			{
-				name: "returns the parent before WithSpanKind, which sets none",
+				name: "returns the parent of an option before WithSpanKind",
 				give: []telemetry.SpanOption{
 					telemetry.WithRemoteParent(remote),
 					telemetry.WithSpanKind(telemetry.SpanKindServer),
@@ -138,6 +161,57 @@ func TestSpanOption(t *testing.T) {
 				got, ok := telemetry.RemoteParent(tt.give)
 				expect.Equal(t, ok, tt.wantOK, "RemoteParent must report whether an option set a parent")
 				expect.Equal(t, got, tt.want, "RemoteParent must return the parent that the options set")
+			})
+		}
+	})
+
+	t.Run("Links", func(t *testing.T) {
+		t.Parallel()
+
+		tests := []struct {
+			name string
+			give []telemetry.SpanOption
+			want []telemetry.Link
+		}{
+			{
+				name: "returns nil for no options",
+			},
+			{
+				name: "returns nil for WithSpanKind",
+				give: []telemetry.SpanOption{telemetry.WithSpanKind(telemetry.SpanKindServer)},
+			},
+			{
+				name: "returns nil for WithLinks of an empty slice",
+				give: []telemetry.SpanOption{telemetry.WithLinks([]telemetry.Link{})},
+			},
+			{
+				name: "returns the slice of WithLinks",
+				give: []telemetry.SpanOption{telemetry.WithLinks(links)},
+				want: links,
+			},
+			{
+				name: "returns the slice of the last option that sets links",
+				give: []telemetry.SpanOption{
+					telemetry.WithLinks(links[1:]),
+					telemetry.WithLinks(links),
+					telemetry.WithLinks(nil),
+				},
+				want: links,
+			},
+			{
+				name: "returns the links of an option before WithRemoteParent",
+				give: []telemetry.SpanOption{
+					telemetry.WithLinks(links),
+					telemetry.WithRemoteParent(remote),
+				},
+				want: links,
+			},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				assert.Equal(t, telemetry.Links(tt.give), tt.want, "Links must return the slice that the options set",
+					assert.ByIdentity())
 			})
 		}
 	})
@@ -163,6 +237,12 @@ func TestSpanOptionAllocs(t *testing.T) {
 		assert.True(t, ok, "the test must measure an option of a parent")
 	})
 
+	t.Run("WithLinks", func(t *testing.T) {
+		expect.MaxAllocs(t, func() { opt = telemetry.WithLinks(links) }, 0, "WithLinks must not allocate")
+		assert.Length(t, telemetry.Links([]telemetry.SpanOption{opt}), len(links),
+			"the test must measure an option of links")
+	})
+
 	t.Run("ApplySpanOptions", func(t *testing.T) {
 		var kind telemetry.SpanKind
 		expect.MaxAllocs(t, func() { kind = telemetry.ApplySpanOptions(options) }, 0,
@@ -174,6 +254,12 @@ func TestSpanOptionAllocs(t *testing.T) {
 		var ok bool
 		expect.MaxAllocs(t, func() { _, ok = telemetry.RemoteParent(options) }, 0, "RemoteParent must not allocate")
 		assert.True(t, ok, "the test must measure an option that sets a parent")
+	})
+
+	t.Run("Links", func(t *testing.T) {
+		var got []telemetry.Link
+		expect.MaxAllocs(t, func() { got = telemetry.Links(options) }, 0, "Links must not allocate")
+		assert.Length(t, got, len(links), "the test must measure an option that sets links")
 	})
 }
 
@@ -206,6 +292,18 @@ func BenchmarkSpanOption(b *testing.B) {
 		assert.True(b, ok, "the benchmark must measure an option of a parent")
 	})
 
+	b.Run("WithLinks", func(b *testing.B) {
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			opt = telemetry.WithLinks(links)
+		}
+
+		assert.Length(b, telemetry.Links([]telemetry.SpanOption{opt}), len(links),
+			"the benchmark must measure an option of links")
+	})
+
 	b.Run("ApplySpanOptions", func(b *testing.B) {
 		var kind telemetry.SpanKind
 
@@ -230,5 +328,18 @@ func BenchmarkSpanOption(b *testing.B) {
 		}
 
 		assert.True(b, ok, "the benchmark must measure an option that sets a parent")
+	})
+
+	b.Run("Links", func(b *testing.B) {
+		var got []telemetry.Link
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			got = telemetry.Links(options)
+		}
+
+		assert.Length(b, got, len(links), "the benchmark must measure an option that sets links")
 	})
 }

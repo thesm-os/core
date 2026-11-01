@@ -25,6 +25,13 @@ const (
 // the calls of a planted defect that do not break its law.
 const tracerSoundName telemetry.InstrumentName = "test.sound"
 
+// tracerLinks are the links of the option of TracerStartAppliesItsOptions:
+// one link to a span of another trace.
+var tracerLinks = []telemetry.Link{{SpanContext: telemetry.SpanContext{
+	TraceID: "4bf92f3577b34da6a3ce929d0e0e4736",
+	SpanID:  "00f067aa0ba902b7",
+}}}
+
 // TracerStartReturnsNonNilResults checks that Start returns a context and a
 // span that are not nil.
 //
@@ -36,14 +43,15 @@ func TracerStartReturnsNonNilResults(h *TracerHandle) {
 	span.End(nil)
 }
 
-// TracerStartAppliesItsOptions checks that Start with a span kind option and
-// End of its span return without a panic.
+// TracerStartAppliesItsOptions checks that Start with a span kind option and a
+// link option and End of its span return without a panic.
 //
 //dokimi:check Tracer.Start defect=tracerStartPanicsForAnOption
 func TracerStartAppliesItsOptions(h *TracerHandle) {
 	tr := h.Subject()
 	assert.NotPanics(h, func() {
-		_, span := tr.Start(h.Context(), tracerOptionsName, telemetry.WithSpanKind(telemetry.SpanKindServer))
+		_, span := tr.Start(h.Context(), tracerOptionsName,
+			telemetry.WithSpanKind(telemetry.SpanKindServer), telemetry.WithLinks(tracerLinks))
 		span.End(nil)
 	}, h.Statement())
 }

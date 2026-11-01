@@ -50,8 +50,8 @@ func (c tracerStart) TracerStartAcceptsANilContext() conform.ID[telemetry.Tracer
 }
 
 // TracerStartAppliesItsOptions returns the identity of the check that
-// Start with a span kind option and End of its span return without a
-// panic.
+// Start with a span kind option and a link option and End of its span
+// return without a panic.
 func (c tracerStart) TracerStartAppliesItsOptions() conform.ID[telemetry.Tracer] {
 	return c.Check("tracer-start-applies-its-options")
 }
@@ -82,7 +82,7 @@ func TracerSuite() conform.Suite[telemetry.Tracer] {
 			},
 			{
 				ID:        TracerChecks.Start.TracerStartAppliesItsOptions(),
-				Statement: "Start with a span kind option and End of its span return without a panic",
+				Statement: "Start with a span kind option and a link option and End of its span return without a panic",
 				Apply:     TracerStartAppliesItsOptions,
 				Defect:    tracerStartPanicsForAnOption,
 			},
@@ -208,4 +208,4 @@ func newTracerOver(_ *TracerHandle, spend func()) telemetry.Tracer {
 	return tracerOver{spend: spend}
 }
 
-// dokimi:provenance sha256:28f2598d2945f1b6ac2a591244a83540ba04075f404647078a4c92aa7278528d
+// dokimi:provenance sha256:006a7b4fdb5205969c6ca6630ff7b7e97428215200112c9b60d1b5bd5dd17378

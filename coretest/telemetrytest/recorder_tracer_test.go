@@ -109,6 +109,17 @@ func TestRecorderTracer(t *testing.T) {
 			expect.Equal(t, span.Context.TraceState, remote.TraceState, "the span must carry the trace state")
 		})
 
+		t.Run("starts a span with a copy of the links of its options", func(t *testing.T) {
+			t.Parallel()
+			r := telemetrytest.NewRecorder()
+			links := []telemetry.Link{{SpanContext: remote}}
+			_, s := r.Tracer(tracerName).Start(t.Context(), spanName, telemetry.WithLinks(links))
+			s.End(nil)
+			expect.That(t, r.Spans()[0].Links).
+				Equal(links, "the span must have the links of its option").
+				NotEqual(links, "the span must keep a copy of the links", assert.ByIdentity())
+		})
+
 		t.Run("returns a nil context unchanged", func(t *testing.T) {
 			t.Parallel()
 			r := telemetrytest.NewRecorder()

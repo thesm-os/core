@@ -38,6 +38,10 @@ type Span struct {
 	// Events are the events of every AddEvent before End, in order.
 	Events []Event
 
+	// Links are a copy of the links that the options of Start set, and nil
+	// when no option sets links.
+	Links []telemetry.Link
+
 	// Kind is the kind that the options of Start set, and
 	// [telemetry.SpanKindInternal] when no option sets one.
 	Kind telemetry.SpanKind
@@ -82,16 +86,18 @@ func (r *Recorder) Tracer(telemetry.InstrumentName) telemetry.Tracer {
 }
 
 // Start starts a span of name, and returns a context with the span. The
-// span has the kind that opts set, and a parent: the remote parent that
-// opts set, or else the span of ctx. The span continues the trace of its
-// parent, and a span without a parent starts a new trace. The identity of
+// span has the kind and a copy of the links that opts set, and a parent:
+// the remote parent that opts set, or else the span of ctx. The span
+// continues the trace of its parent, and a span without a parent starts a
+// new trace. The identity of
 // the span derives from the number of the span in the Recorder, so the
 // identities of a test do not change from one run to the next. Start
 // returns a nil ctx unchanged.
 //
 // # Allocation contract
 //
-// Start allocates the span, its identity and the context that it returns.
+// Start allocates the span, its identity, the copy of its links and the
+// context that it returns.
 func (t tracer) Start(
 	ctx context.Context,
 	name telemetry.SpanName,
@@ -123,6 +129,7 @@ func (t tracer) Start(
 	s := &recordingSpan{r: t.r, span: Span{
 		Name:   name,
 		Kind:   kind,
+		Links:  slices.Clone(telemetry.Links(opts)),
 		Parent: parent,
 		Context: telemetry.SpanContext{
 			TraceID:    traceID,

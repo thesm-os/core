@@ -64,6 +64,10 @@
 // exporters batch. Library code emits a span per request, not per
 // iteration of a loop.
 //
+// [WithLinks] links a span to other spans when [Tracer.Start] creates it,
+// such as the span of a batch to the span of each caller that the batch
+// serves. A [Tracer] reads the links with [Links].
+//
 // # Propagation
 //
 // A [Propagator] moves a [SpanContext] across a process boundary through a
