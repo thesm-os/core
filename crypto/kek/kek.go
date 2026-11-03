@@ -195,17 +195,21 @@ func (k *Keeper) KeyID() string { return k.keyID }
 
 // Wrap seals dek under the keeper's wrapping key. The keeper derives a
 // wrapping key from the KEK and a salt read from r at its first Wrap,
-// and derives a new one after every 2^30 wraps. ctx is unused, because
-// Wrap does not call anything outside the process.
+// and derives a new one after every 2^30 wraps.
 //
-// Returns the error of r when a derivation reads a salt, and [ErrClosed]
-// after [Keeper.Close].
+// Returns the error of ctx when ctx has ended before the call, the error
+// of r when a derivation reads a salt, and [ErrClosed] after
+// [Keeper.Close].
 //
 // # Allocation contract
 //
 // One allocation for the returned slice, except in a call that derives a
 // wrapping key.
-func (k *Keeper) Wrap(_ context.Context, dek []byte) ([]byte, error) {
+func (k *Keeper) Wrap(ctx context.Context, dek []byte) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	k.mu.RLock()
 	defer k.mu.RUnlock()
 
@@ -231,10 +235,15 @@ func (k *Keeper) Wrap(_ context.Context, dek []byte) ([]byte, error) {
 // in any position, truncated, or wrapped under another KEK or another
 // keyID fails.
 //
-// Returns [crypto.ErrCiphertextShort] for material with no envelope after
-// its salt, before it derives anything, the errors of [crypto.Open], and
+// Returns the error of ctx when ctx has ended before the call,
+// [crypto.ErrCiphertextShort] for material with no envelope after its
+// salt, before it derives anything, the errors of [crypto.Open], and
 // [ErrClosed] after [Keeper.Close].
-func (k *Keeper) Unwrap(_ context.Context, wrapped []byte) ([]byte, error) {
+func (k *Keeper) Unwrap(ctx context.Context, wrapped []byte) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	k.mu.RLock()
 	defer k.mu.RUnlock()
 

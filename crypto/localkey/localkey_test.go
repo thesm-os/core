@@ -176,8 +176,48 @@ func TestKeeper(t *testing.T) {
 		})
 	})
 
+	t.Run("Wrap", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the error of a context that ended", func(t *testing.T) {
+			t.Parallel()
+			keeper := mustNew(t, testKeyID, rootKey)
+			assert.HonoursCancellation(t, func(ctx context.Context) error {
+				_, err := keeper.Wrap(ctx, []byte("data-key"))
+
+				return err
+			}, "Wrap must return the error of a context that ended")
+		})
+	})
+
+	t.Run("WrapAAD", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the error of a context that ended", func(t *testing.T) {
+			t.Parallel()
+			keeper := mustNew(t, testKeyID, rootKey)
+			assert.HonoursCancellation(t, func(ctx context.Context) error {
+				_, err := keeper.WrapAAD(ctx, []byte("data-key"), []byte("aad"))
+
+				return err
+			}, "WrapAAD must return the error of a context that ended")
+		})
+	})
+
 	t.Run("Unwrap", func(t *testing.T) {
 		t.Parallel()
+
+		t.Run("returns the error of a context that ended", func(t *testing.T) {
+			t.Parallel()
+			keeper := mustNew(t, testKeyID, rootKey)
+			wrapped, err := keeper.Wrap(t.Context(), []byte("data-key"))
+			assert.NoError(t, err, "Wrap must succeed")
+			assert.HonoursCancellation(t, func(ctx context.Context) error {
+				_, err := keeper.Unwrap(ctx, wrapped)
+
+				return err
+			}, "Unwrap must return the error of a context that ended")
+		})
 
 		t.Run("returns an error for material that a Keeper of another root key wrapped", func(t *testing.T) {
 			t.Parallel()
@@ -216,6 +256,22 @@ func TestKeeper(t *testing.T) {
 			assert.NoError(t, err, "Destroy must succeed")
 			_, err = keeper.Unwrap(t.Context(), []byte("wrapped"))
 			assert.Equal(t, errs.Classify(err), errs.Denied, "ErrKeyDestroyed must classify as Denied")
+		})
+	})
+
+	t.Run("UnwrapAAD", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the error of a context that ended", func(t *testing.T) {
+			t.Parallel()
+			keeper := mustNew(t, testKeyID, rootKey)
+			wrapped, err := keeper.WrapAAD(t.Context(), []byte("data-key"), []byte("aad"))
+			assert.NoError(t, err, "WrapAAD must succeed")
+			assert.HonoursCancellation(t, func(ctx context.Context) error {
+				_, err := keeper.UnwrapAAD(ctx, wrapped, []byte("aad"))
+
+				return err
+			}, "UnwrapAAD must return the error of a context that ended")
 		})
 	})
 

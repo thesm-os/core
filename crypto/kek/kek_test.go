@@ -471,10 +471,32 @@ func TestKeeper(t *testing.T) {
 			_, err := k.Wrap(t.Context(), dek)
 			assert.Equal(t, errs.Classify(err), errs.Invalid, "ErrClosed must classify as Invalid")
 		})
+
+		t.Run("returns the error of a context that ended", func(t *testing.T) {
+			t.Parallel()
+			k, _ := mustGenerate(t, newParent(t), randcrypto.New(), keyIDA)
+			assert.HonoursCancellation(t, func(ctx context.Context) error {
+				_, err := k.Wrap(ctx, dek)
+
+				return err
+			}, "Wrap must return the error of a context that ended")
+		})
 	})
 
 	t.Run("Unwrap", func(t *testing.T) {
 		t.Parallel()
+
+		t.Run("returns the error of a context that ended", func(t *testing.T) {
+			t.Parallel()
+			k, _ := mustGenerate(t, newParent(t), randcrypto.New(), keyIDA)
+			sealed, err := k.Wrap(t.Context(), dek)
+			assert.NoError(t, err, "Wrap must succeed")
+			assert.HonoursCancellation(t, func(ctx context.Context) error {
+				_, err := k.Unwrap(ctx, sealed)
+
+				return err
+			}, "Unwrap must return the error of a context that ended")
+		})
 
 		t.Run("returns an error for a DEK that another KEK wrapped", func(t *testing.T) {
 			t.Parallel()

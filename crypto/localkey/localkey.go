@@ -130,9 +130,13 @@ func (k *Keeper) Wrap(ctx context.Context, dek []byte) ([]byte, error) {
 // The standard library's FIPS 140-3 module generates a fresh 96-bit
 // nonce for each call, so wrapping one data key twice produces
 // different bytes. Random nonces are safe for at most 2^32 wraps under
-// one root key. Returns [crypto.ErrKeyDestroyed] after the key is
-// destroyed.
-func (k *Keeper) WrapAAD(_ context.Context, dek, aad []byte) ([]byte, error) {
+// one root key. Returns the error of ctx when ctx has ended before the
+// call, and [crypto.ErrKeyDestroyed] after the key is destroyed.
+func (k *Keeper) WrapAAD(ctx context.Context, dek, aad []byte) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	a, err := k.cipher()
 	if err != nil {
 		return nil, err
@@ -154,11 +158,15 @@ func (k *Keeper) Unwrap(ctx context.Context, wrapped []byte) ([]byte, error) {
 //
 // Material wrapped with other aad, corrupted in any position,
 // truncated, or wrapped under a different root key fails authentication
-// and returns an error, never wrong key material. Returns
-// [crypto.ErrKeyDestroyed] after the key is destroyed. That error is
-// distinct from a corruption failure, because the two have different
-// remedies.
-func (k *Keeper) UnwrapAAD(_ context.Context, wrapped, aad []byte) ([]byte, error) {
+// and returns an error, never wrong key material. Returns the error of
+// ctx when ctx has ended before the call, and [crypto.ErrKeyDestroyed]
+// after the key is destroyed. ErrKeyDestroyed is distinct from a
+// corruption failure, because the two have different remedies.
+func (k *Keeper) UnwrapAAD(ctx context.Context, wrapped, aad []byte) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	a, err := k.cipher()
 	if err != nil {
 		return nil, err
