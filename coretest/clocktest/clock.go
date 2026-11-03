@@ -250,15 +250,19 @@ func dropsTheLogicalOfAPeer(h *ClockHandle) clock.Clock {
 }
 
 // takesTheNodeOfAPeer returns the planted defect of UpdateKeepsTheNode: a Clock
-// whose Update returns an Instant of the Node of the peer.
+// whose Update of a peer that it does not refuse returns an Instant of the Node
+// of the peer.
 func takesTheNodeOfAPeer(h *ClockHandle) clock.Clock {
 	f := fake.New(reference)
 
 	return NewClockStub(h, ClockStubDelegateTo(f), WithClockUpdate(func(observed clock.Instant) (clock.Instant, error) {
 		merged, err := f.Update(observed)
+		if err != nil {
+			return merged, err
+		}
 		merged.Node = observed.Node
 
-		return merged, err
+		return merged, nil
 	}))
 }
 
