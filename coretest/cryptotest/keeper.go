@@ -337,14 +337,24 @@ type stdlibKeeper struct {
 // KeyID returns keeperSoundKeyID.
 func (stdlibKeeper) KeyID() string { return keeperSoundKeyID }
 
-// Wrap seals dek under a nonce that the AEAD draws.
-func (k stdlibKeeper) Wrap(_ context.Context, dek []byte) ([]byte, error) {
+// Wrap seals dek under a nonce that the AEAD draws, and returns the error of
+// ctx when ctx has ended before the call.
+func (k stdlibKeeper) Wrap(ctx context.Context, dek []byte) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	//nolint:gosec // G407: the AEAD of GCM with random nonces draws the nonce of each Seal
 	return k.aead.Seal(nil, nil, dek, nil), nil
 }
 
-// Unwrap opens the material of Wrap.
-func (k stdlibKeeper) Unwrap(_ context.Context, wrapped []byte) ([]byte, error) {
+// Unwrap opens the material of Wrap, and returns the error of ctx when ctx has
+// ended before the call.
+func (k stdlibKeeper) Unwrap(ctx context.Context, wrapped []byte) ([]byte, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+
 	return k.aead.Open(nil, nil, wrapped, nil)
 }
 
