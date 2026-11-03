@@ -327,21 +327,24 @@ type natural[K cmp.Ordered] struct{}
 // reports whether that key equals key. keys has at least one key and at
 // most maxItems keys, because a descent searches only leaves of a tree that
 // has a key, and no such leaf is empty.
+//
+// After the comparison with the last key, key sorts at or before the last
+// key, so the steps end at an index below len(keys) and keys[i] exists.
 func (natural[K]) search(keys []K, key K) (int, bool) {
 	n := len(keys)
-	//dokimi:mutate-skip sbr-delete: the steps return the same index and false for a key after the last key
 	if cmp.Less(keys[n-1], key) {
 		return n, false
 	}
 
 	i := 0
 	for k := range searchSteps {
+		//dokimi:mutate-skip ror-boundary: a step to the last key does not move, as key sorts at or before it
 		if j := i + maxChildren>>(k+1); j <= len(keys) && cmp.Less(keys[j-1], key) {
 			i = j
 		}
 	}
 
-	return i, i < len(keys) && !cmp.Less(key, keys[i])
+	return i, !cmp.Less(key, keys[i])
 }
 
 // route returns the number of keys at or before key. keys has at most
