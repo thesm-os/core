@@ -44,6 +44,10 @@ func (p Pinned[K, V]) Value() V {
 // pin removes another holder's pin, so the cache can then evict an entry
 // that is still in use.
 //
+// When this was the last pin of an entry that the evictor set aside, Unpin
+// adds the entry to the released entries without a lock. The next eviction
+// past the capacity moves it back to the main queue.
+//
 // When this was the last pin of the entry and the sum of the costs exceeds
 // the capacity, Unpin evicts down to the capacity as a Set does. It locks
 // the cache for the eviction, and passes the entries that it evicts to
@@ -59,9 +63,12 @@ func (p Pinned[K, V]) Unpin() {
 		return
 	}
 
-	last, left := p.e.unpin()
+	last, left, marked := p.e.unpin()
 	if last && left {
 		p.c.notify(p.e)
+	}
+	if marked && p.e.clearAside() {
+		p.c.release(p.e)
 	}
 	if last && p.c.total.Load() > p.c.capacity {
 		p.c.shrink()

@@ -57,21 +57,24 @@ type Config[K comparable, V any] struct {
 // evicted. A heap orders the entries that have an expiry time for
 // [Cache.Expire]. A Set allocates a new entry and links it into the index
 // and a queue, and into the heap when the entry has an expiry time. The
-// evictor removes entries from the oldest end of a queue. No code reuses
-// an entry, so a lookup that loaded an entry which has since left reads
-// the key and the value of that entry.
+// evictor removes entries from the oldest end of a queue, and sets a
+// pinned entry aside, out of both queues, until its last Unpin. No code
+// reuses an entry, so a lookup that loaded an entry which has since left
+// reads the key and the value of that entry.
 //
 // The zero Cache is not usable. [New] returns a Cache.
 //
 // # Concurrency
 //
-// Safe for concurrent use. Get and Pin take no lock, and a hit on an entry
-// that already counts three hits writes nothing. One mutex per Cache
-// serializes Set, SetPinned, Delete, Expire, a Get or Pin that finds an
-// expired entry, and the last [Pinned.Unpin] of an entry while the sum of
-// the costs exceeds the capacity. Len and Cost read atomic counters, and
-// take no lock. Capacity reads a field that New sets, and takes no lock
-// either.
+// Safe for concurrent use. Get and Pin take no lock. A hit on an entry that
+// already counts three hits does not write to the entry. One mutex per
+// Cache serializes Set, SetPinned, Delete, Expire, a Get or Pin that finds
+// an expired entry, and the last [Pinned.Unpin] of an entry while the sum
+// of the costs exceeds the capacity. The last Unpin of an entry that the
+// evictor set aside adds the entry to a list of released entries without
+// the lock. The next eviction past the capacity takes that list under the
+// lock. Len and Cost read atomic counters without the lock. Capacity reads
+// a field that New sets, also without the lock.
 //
 // # Allocation contract
 //
@@ -87,6 +90,12 @@ type Config[K comparable, V any] struct {
 type Cache[K comparable, V any] struct {
 	// index is the current index. A writer replaces it when it grows.
 	index atomic.Pointer[index[K, V]]
+
+	// released is the newest of the released entries: the entries that the
+	// evictor set aside and whose last pin has ended, linked through their
+	// next fields. A last Unpin adds an entry without the lock, and restore
+	// takes them all under it.
+	released atomic.Pointer[entry[K, V]]
 
 	// clock, cost and evicted are the Clock, Cost and Evicted of the Config.
 	// clock is nil in a cache whose entries do not expire.
@@ -535,16 +544,21 @@ func (c *Cache[K, V]) attach(e *entry[K, V]) {
 }
 
 // detach removes e, an entry of the cache, from the index and from its
-// queue, and subtracts its cost from the total. It does not mark e as
-// having left, which the caller does with leave or evict. The caller has
-// locked the mutex.
+// queue, and subtracts its cost from the total. An entry that the evictor
+// set aside is in neither queue, so detach sets its queueID to zero, and
+// restore then skips the entry. detach does not mark e as having left,
+// which the caller does with leave or evict. The caller has locked the
+// mutex.
 func (c *Cache[K, V]) detach(e *entry[K, V]) {
 	c.index.Load().remove(e, c.tomb)
 
-	if e.queue == inSmall {
+	switch e.queue {
+	case inSmall:
 		c.small.remove(e)
-	} else {
+	case inMain:
 		c.main.remove(e)
+	default:
+		e.queue = 0
 	}
 
 	if !e.expires.IsZero() {

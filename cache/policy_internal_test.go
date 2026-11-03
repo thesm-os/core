@@ -183,8 +183,9 @@ func TestGhost(t *testing.T) {
 	})
 }
 
-// TestExamine is in package cache because examine and evict are
-// unexported. Each case builds the queues by hand and examines them.
+// TestExamine is in package cache because examine, evict, restore and
+// release are unexported. Each case builds the queues by hand and examines
+// them.
 func TestExamine(t *testing.T) {
 	t.Parallel()
 
@@ -273,7 +274,7 @@ func TestExamine(t *testing.T) {
 			expect.Empty(t, keysOf(&gone), "nothing may leave")
 		})
 
-		t.Run("moves a pinned entry of the small queue to the main queue without hits", func(t *testing.T) {
+		t.Run("sets aside a pinned entry of the small queue without its hits", func(t *testing.T) {
 			t.Parallel()
 			c := policyCache(t, 10)
 			es := attachNew(c, "a")
@@ -281,12 +282,14 @@ func TestExamine(t *testing.T) {
 			es[0].freq.Store(3)
 			var gone victims[string, int]
 			c.examine(origin, nil, &gone, true)
-			expect.Equal(t, mainKeys(c), []string{"a"}, "the pinned entry must move to the main queue")
-			expect.Equal(t, es[0].freq.Load(), int32(0), "the entry must start the main queue without hits")
+			expect.Equal(t, es[0].queue, setAside, "the pinned entry must leave both queues")
+			expect.Equal(t, c.small.count, 0, "the small queue must lose the pinned entry")
+			expect.Empty(t, mainKeys(c), "the main queue must not receive the pinned entry")
+			expect.Equal(t, es[0].freq.Load(), int32(0), "the entry must lose the hits of the small queue")
 			expect.Empty(t, keysOf(&gone), "the pinned entry must not leave")
 		})
 
-		t.Run("takes one hit from a pinned entry of the main queue when it forces", func(t *testing.T) {
+		t.Run("sets aside a pinned entry of the main queue with a hit less", func(t *testing.T) {
 			t.Parallel()
 			c := policyCache(t, 20)
 			es := attachNew(c, "a", "b")
@@ -295,8 +298,22 @@ func TestExamine(t *testing.T) {
 			es[0].freq.Store(3)
 			var gone victims[string, int]
 			c.examine(origin, nil, &gone, true)
-			expect.Equal(t, mainKeys(c), []string{"b", "a"}, "the pinned entry must move to the head")
+			expect.Equal(t, es[0].queue, setAside, "the pinned entry must leave both queues")
+			expect.Equal(t, mainKeys(c), []string{"b"}, "the main queue must keep its other entry")
 			expect.Equal(t, es[0].freq.Load(), int32(2), "the entry must lose one hit")
+		})
+
+		t.Run("sets aside a pinned entry that was hit without forcing", func(t *testing.T) {
+			t.Parallel()
+			c := policyCache(t, 20)
+			es := attachNew(c, "a", "b")
+			toMain(c, es...)
+			es[0].pin()
+			es[0].freq.Store(2)
+			var gone victims[string, int]
+			c.examine(origin, nil, &gone, false)
+			expect.Equal(t, es[0].queue, setAside, "a pinned entry with hits must leave both queues")
+			expect.Equal(t, es[0].freq.Load(), int32(1), "the entry must lose one hit")
 		})
 
 		t.Run("takes no hit from a pinned entry of the main queue without hits", func(t *testing.T) {
@@ -307,7 +324,7 @@ func TestExamine(t *testing.T) {
 			es[0].pin()
 			var gone victims[string, int]
 			c.examine(origin, nil, &gone, false)
-			expect.Equal(t, mainKeys(c), []string{"b", "a"}, "the pinned entry must move to the head")
+			expect.Equal(t, es[0].queue, setAside, "the pinned entry must leave both queues")
 			expect.Equal(t, es[0].freq.Load(), int32(0), "an entry without hits must not lose one")
 		})
 
@@ -343,20 +360,87 @@ func TestExamine(t *testing.T) {
 			expect.Empty(t, keysOf(&gone), "the new entry must not leave")
 		})
 
-		t.Run("keeps a pinned entry when it forces", func(t *testing.T) {
+		t.Run("keeps a pinned entry that the Set added in the main queue", func(t *testing.T) {
+			t.Parallel()
+			c := policyCache(t, 10)
+			es := attachNew(c, "a")
+			es[0].pin()
+			var gone victims[string, int]
+			c.examine(origin, es[0], &gone, false)
+			expect.Equal(t, mainKeys(c), []string{"a"}, "the new entry must move to the main queue")
+			expect.Equal(t, es[0].state.Load(), int64(1), "the new entry must not have the mark of the evictor")
+		})
+
+		t.Run("sets aside a pinned entry when it forces", func(t *testing.T) {
 			t.Parallel()
 			c := policyCache(t, 10)
 			es := attachNew(c, "a")
 			es[0].pin()
 			var gone victims[string, int]
 			c.examine(origin, nil, &gone, true)
-			expect.Equal(t, mainKeys(c), []string{"a"}, "the pinned entry must move to the main queue")
+			expect.Equal(t, es[0].queue, setAside, "the pinned entry must leave both queues")
 			expect.Empty(t, keysOf(&gone), "the pinned entry must not leave")
 		})
 	})
 
 	t.Run("evict", func(t *testing.T) {
 		t.Parallel()
+
+		t.Run("sets aside every pinned entry of a Set past the capacity", func(t *testing.T) {
+			t.Parallel()
+			c := policyCache(t, 2)
+			es := attachNew(c, "a", "b", "c", "d")
+			for _, e := range es[:3] {
+				e.pin()
+			}
+			var gone victims[string, int]
+			c.evict(origin, es[3], &gone)
+			for _, e := range es[:3] {
+				expect.Equal(t, e.queue, setAside, "each pinned entry must leave both queues")
+			}
+			expect.Equal(t, mainKeys(c), []string{"d"}, "the main queue must keep the new entry alone")
+			expect.Equal(t, c.small.count, 0, "the small queue must be empty")
+			expect.Empty(t, keysOf(&gone), "no pinned entry may leave")
+		})
+
+		t.Run("stops once the queues have no entry", func(t *testing.T) {
+			t.Parallel()
+			c := policyCache(t, 1)
+			es := attachNew(c, "a", "b")
+			es[0].pin()
+			es[1].pin()
+			var gone victims[string, int]
+			assert.NotPanics(t, func() { c.evict(origin, nil, &gone) },
+				"evict must stop when it has set aside every entry of the queues")
+			expect.Equal(t, c.Cost(), int64(2), "the pinned entries must remain past the capacity")
+		})
+
+		t.Run("moves the released entries to the main queue past the capacity", func(t *testing.T) {
+			t.Parallel()
+			c := policyCache(t, 1)
+			es := attachNew(c, "a", "b")
+			c.small.remove(es[0])
+			es[0].queue = setAside
+			c.release(es[0])
+			es[1].pin()
+			var gone victims[string, int]
+			c.evict(origin, nil, &gone)
+			assert.Equal(t, keysOf(&gone), []string{"a"}, "the released entry must be evictable again")
+		})
+
+		t.Run("leaves the released entries aside at the capacity", func(t *testing.T) {
+			t.Parallel()
+			c := policyCache(t, 1)
+			es := attachNew(c, "a")
+			c.small.remove(es[0])
+			es[0].queue = setAside
+			c.release(es[0])
+			var gone victims[string, int]
+			c.evict(origin, nil, &gone)
+			expect.Equal(t, es[0].queue, setAside, "an eviction at the capacity must not take the released entries")
+			expect.Equal(t, c.released.Load(), es[0],
+				"the released entry must wait for the next eviction past the capacity", expect.ByIdentity())
+		})
 
 		t.Run("takes the hits of the main queue before it removes an entry", func(t *testing.T) {
 			t.Parallel()
@@ -384,6 +468,51 @@ func TestExamine(t *testing.T) {
 			var gone victims[string, int]
 			c.evict(origin, nil, &gone)
 			assert.Equal(t, keysOf(&gone), []string{"a", "b"}, "evict must stop at the capacity")
+		})
+	})
+
+	t.Run("restore", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("moves each released entry to the main queue", func(t *testing.T) {
+			t.Parallel()
+			c := policyCache(t, 10)
+			es := attachNew(c, "a", "b")
+			for _, e := range es {
+				c.small.remove(e)
+				e.queue = setAside
+				c.release(e)
+			}
+			c.restore()
+			expect.Permutation(t, mainKeys(c), []string{"a", "b"}, "the main queue must receive each released entry")
+			expect.Nil(t, c.released.Load(), "restore must take every released entry")
+		})
+
+		t.Run("skips a released entry that left the cache", func(t *testing.T) {
+			t.Parallel()
+			c := policyCache(t, 10)
+			es := attachNew(c, "a", "b")
+			c.small.remove(es[0])
+			es[0].queue = setAside
+			c.release(es[0])
+			c.detach(es[0])
+			c.restore()
+			expect.Empty(t, mainKeys(c), "the main queue must not receive an entry that left the cache")
+			expect.Equal(t, c.small.count, 1, "the small queue must keep its entry")
+		})
+	})
+
+	t.Run("release", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("links each released entry to the one before it", func(t *testing.T) {
+			t.Parallel()
+			c := policyCache(t, 10)
+			a, b := &entry[string, int]{key: "a"}, &entry[string, int]{key: "b"}
+			c.release(a)
+			c.release(b)
+			expect.Equal(t, c.released.Load(), b, "the last released entry must be first", expect.ByIdentity())
+			expect.Equal(t, b.next, a, "the last released entry must link to the one before it", expect.ByIdentity())
 		})
 	})
 }

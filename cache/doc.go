@@ -41,12 +41,17 @@
 // entry from the cache, and its holder keeps using the value until it calls
 // Unpin.
 //
+// The evictor sets a pinned entry that it examines aside, out of both
+// queues, so a Set past the capacity examines each pinned entry once per
+// pin. The first eviction past the capacity after the last Unpin of the
+// entry moves it back to the main queue.
+//
 // # Expiry
 //
-// An entry expires at the time that Set gives it, read through
-// [Config.Clock], and the zero time never expires. An expired entry is a
-// miss, and it leaves the cache at the next Get or Pin that finds it, when
-// the evictor examines it, or at the next [Cache.Expire].
+// An entry expires at the time that Set gives it, against the time of
+// [Config.Clock]. An entry with the zero time does not expire. An expired
+// entry is a miss. It leaves the cache at the next Get or Pin that finds
+// it, when the evictor examines it, or at the next [Cache.Expire].
 //
 // A Config without a Clock makes a cache for entries that do not expire.
 // Its Set panics for an expiry time other than zero, and its Expire returns

@@ -5,10 +5,12 @@ package cache
 
 import "time"
 
-// queueID names the queue of an entry. The zero queueID names no queue.
+// queueID names the queue of an entry. An entry whose queue is the zero
+// queueID is not in a queue.
 type queueID uint8
 
-// The two queues of S3-FIFO.
+// The queues of S3-FIFO, and the place of an entry that the evictor set
+// aside.
 const (
 	// inSmall is the queue that admits a new entry whose key the ghost
 	// does not remember.
@@ -18,6 +20,11 @@ const (
 	// the small queue, and of the new entries whose key the ghost
 	// remembers.
 	inMain queueID = 2
+
+	// setAside names an entry that the evictor found pinned and took out
+	// of both queues. The entry returns to the main queue at the first
+	// eviction past the capacity after its last unpin.
+	setAside queueID = 3
 )
 
 // queue is a FIFO queue of entries, linked through their prev and next
@@ -168,27 +175,36 @@ func (g *ghost) contains(h uint64) bool {
 	return g.count[h] != 0
 }
 
-// evict removes entries other than keep until the sum of the costs of the
-// entries of c is at most its capacity, or only pinned entries and keep
-// remain, and adds to gone each removed entry without a pin. keep is the
-// entry that the calling Set added, so a Set that finds every other entry
-// pinned stores its entry past the capacity. The next Set, or the last
-// Unpin of an entry, evicts it like any other. The last Unpin passes a nil
-// keep. The caller has locked the mutex, and reads now from the cache's
-// clock once for the call.
+// evict removes entries other than keep while the sum of the costs of the
+// entries of c exceeds its capacity, and adds to gone each removed entry
+// without a pin. It stops when the small and the main queue are empty, or
+// after a number of steps that it fixes when it starts. keep is the entry
+// that the calling Set added, so a Set that finds every other entry pinned
+// stores its entry past the capacity. The next Set, or the last Unpin of
+// an entry, evicts it like any other. The last Unpin passes a nil keep. The
+// caller has locked the mutex, and reads now from the cache's clock once
+// for the call.
 //
-// Each step examines one entry. A step moves an entry from the small queue
-// to the main queue, takes a hit from an entry of the main queue, or
-// removes the entry. With n entries, an entry that no reader hits
-// meanwhile leaves within (maxFreq+2)*n steps. Readers can keep hitting
-// entries while evict runs, so the steps after those force the removal of
-// each unpinned entry whatever its hits, two per entry. The number of
-// steps is fixed when evict starts, so evict returns even when every entry
-// is pinned.
+// Past the capacity, evict first moves the released entries back to the
+// main queue with restore. Each step then examines one entry. A step moves
+// an entry from the small queue to the main queue, takes a hit from an
+// entry of the main queue, sets a pinned entry aside, or removes the entry.
+// A pinned entry leaves both queues until its last Unpin, so a Set past the
+// capacity examines each pinned entry once per pin. With n entries in the
+// queues, an entry that readers do not hit meanwhile leaves within
+// (maxFreq+2)*n steps. Readers can keep hitting entries while evict runs,
+// so the steps after those force the removal of each unpinned entry
+// whatever its hits, two per entry.
 func (c *Cache[K, V]) evict(now time.Time, keep *entry[K, V], gone *victims[K, V]) {
+	if c.total.Load() <= c.capacity {
+		return
+	}
+
+	c.restore()
+
 	n := c.small.count + c.main.count
 	for i := range (maxFreq + 4) * n {
-		if c.total.Load() <= c.capacity {
+		if c.total.Load() <= c.capacity || c.small.tail == nil && c.main.tail == nil {
 			return
 		}
 
@@ -197,46 +213,89 @@ func (c *Cache[K, V]) evict(now time.Time, keep *entry[K, V], gone *victims[K, V
 	}
 }
 
+// restore moves each released entry, an entry that the evictor set aside
+// and whose last pin has ended since, to the head of the main queue. A Set
+// or Delete of its key can have removed such an entry from the cache, and
+// restore skips it. restore reads the list before it swaps it, so an
+// eviction without released entries writes nothing to the list. The caller
+// has locked the mutex.
+func (c *Cache[K, V]) restore() {
+	for c.released.Load() != nil {
+		for e := c.released.Swap(nil); e != nil; {
+			next := e.next
+			if e.queue == setAside {
+				c.main.push(e)
+			}
+
+			e = next
+		}
+	}
+}
+
 // examine examines the oldest entry of the small queue while the entries
 // of the small queue cost a tenth of the capacity or the main queue is
 // empty, and the oldest entry of the main queue otherwise. The caller has
 // locked the mutex, and calls examine only while the sum of the costs
-// exceeds the capacity, so the queue that examine examines contains an
-// entry of positive cost.
+// exceeds the capacity and a queue has an entry, so the queue that examine
+// examines has one.
 //
 // examine keeps keep and a pinned entry. Unless force is set, it also
-// keeps an entry that was hit and has not expired. A kept entry moves to
-// the head of the main queue: an entry from the small queue starts there
-// without hits, and an entry of the main queue loses one hit, which a
-// concurrent hit can restore. examine removes every other entry from the
-// cache, adds it to gone, and the ghost remembers the key of an entry that
-// it removed from the small queue.
+// keeps an entry that was hit and has not expired. A kept entry leaves its
+// queue. An entry from the small queue loses its hits, and an entry of the
+// main queue loses one hit. A concurrent hit can restore that hit. examine
+// then sets a pinned entry other than keep aside, out of both queues, and
+// moves every other kept entry to the head of the main queue. examine
+// removes every entry that it does not keep from the cache, adds it to
+// gone, and the ghost remembers the key of an entry that it removed from
+// the small queue.
 func (c *Cache[K, V]) examine(now time.Time, keep *entry[K, V], gone *victims[K, V], force bool) {
 	q := &c.main
 	if c.small.cost >= c.smallCapacity || c.main.tail == nil {
 		q = &c.small
 	}
 
-	// evict refuses a pinned entry, so the pins need no check of their own.
+	// evict refuses a pinned entry, so the pins do not need a check of their
+	// own.
 	e := q.tail
 	hit := e.freq.Load() > 0 && !force && !e.expired(now)
-	if e == keep || hit || !e.evict() {
-		q.remove(e)
+	if e != keep && !hit && e.evict() {
+		c.detach(e)
 		if q.id == inSmall {
-			e.freq.Store(0)
-		} else if e.freq.Load() > 0 {
-			e.freq.Add(-1)
+			c.ghost.add(e.hash, e.cost)
 		}
 
-		c.main.push(e)
+		gone.add(e)
 
 		return
 	}
 
-	c.detach(e)
+	q.remove(e)
 	if q.id == inSmall {
-		c.ghost.add(e.hash, e.cost)
+		e.freq.Store(0)
+	} else if e.freq.Load() > 0 {
+		e.freq.Add(-1)
 	}
 
-	gone.add(e)
+	if e != keep && e.markAside() {
+		e.queue = setAside
+
+		return
+	}
+
+	c.main.push(e)
+}
+
+// release adds e, an entry that the evictor set aside and whose last pin
+// has ended, to the released entries that the next eviction past the
+// capacity moves back to the main queue. It takes no lock. The caller has
+// cleared the aside bit of e with clearAside, so no other call adds e until
+// the evictor sets it aside again.
+func (c *Cache[K, V]) release(e *entry[K, V]) {
+	for {
+		head := c.released.Load()
+		e.next = head
+		if c.released.CompareAndSwap(head, e) {
+			return
+		}
+	}
 }

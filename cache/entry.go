@@ -14,10 +14,21 @@ import (
 // without a new hit.
 const maxFreq = 3
 
-// removed is the bit of an entry's state that marks an entry that has left
-// the cache. The bits below it count the pins of the entry, so a state of
-// exactly removed is an entry that has left and has no pin.
-const removed = 1 << 62
+// The bits of an entry's state above its count of pins.
+const (
+	// removed is the bit of an entry's state that marks an entry that has
+	// left the cache. A state of exactly removed is an entry that has left
+	// and has no pin.
+	removed = 1 << 62
+
+	// aside is the bit of an entry's state that marks an entry that the
+	// evictor set aside: it found the entry pinned and took it out of both
+	// queues. The last unpin of the entry clears the bit.
+	aside = 1 << 61
+
+	// pinMask selects the bits of an entry's state that count its pins.
+	pinMask = aside - 1
+)
 
 // entry is one key and value of a [Cache].
 //
@@ -25,8 +36,10 @@ const removed = 1 << 62
 // entry is in the index, so a lookup reads them without the lock: the
 // writer fills them before the atomic store that publishes the entry. The
 // fields prev, next, slot and queue are read and written only by the holder
-// of the cache's lock. state and freq are atomic, and both lookups and the
-// evictor change them.
+// of the cache's lock, with one exception. The last unpin of an entry that
+// the evictor set aside writes next, and the atomic operations of the list
+// of released entries order that write before the next read. state and freq
+// are atomic, and both lookups and the evictor change them.
 //
 // # Allocation contract
 //
@@ -39,7 +52,9 @@ type entry[K comparable, V any] struct {
 	expires time.Time
 
 	// prev links the entry to the next older entry of its queue, and next
-	// to the next newer one. Both are nil outside a queue.
+	// to the next newer one. Both are nil outside a queue, except that next
+	// links an entry that the evictor set aside, after its last unpin, to
+	// the next entry of the list of released entries of the cache.
 	prev, next *entry[K, V]
 
 	// slot is the position of the entry in the expiry heap of the cache,
@@ -52,15 +67,17 @@ type entry[K comparable, V any] struct {
 	// cost is the cost of the entry, at least 0.
 	cost int64
 
-	// state counts the pins of the entry, and has the removed bit set once
-	// the entry has left the cache.
+	// state counts the pins of the entry, has the removed bit set once the
+	// entry has left the cache, and the aside bit while the evictor has set
+	// the entry aside and a pin remains.
 	state atomic.Int64
 
 	// freq counts the hits of the entry since the evictor last examined
 	// it, from 0 to maxFreq.
 	freq atomic.Int32
 
-	// queue is the queue that contains the entry.
+	// queue is the queue that contains the entry, or setAside for an entry
+	// that the evictor set aside.
 	queue queueID
 }
 
@@ -99,21 +116,33 @@ func (e *entry[K, V]) pin() bool {
 }
 
 // unpin removes a pin from e, which has one. It reports whether that was
-// the last pin, and whether e has left the cache. The caller passes e to
-// the callback when both are true, and exactly one of leave, evict and
-// unpin reports such an entry.
-func (e *entry[K, V]) unpin() (last, left bool) {
+// the last pin, whether e has left the cache, and whether the last pin
+// ended while e had the aside bit. The caller passes e to the callback when
+// the first two are true, and exactly one of leave, evict and unpin reports
+// such an entry. The caller hands e back to the cache when the third is
+// true and clearAside reports the bit.
+func (e *entry[K, V]) unpin() (last, left, marked bool) {
 	s := e.state.Add(-1)
+	last = s&pinMask == 0
 
-	return s&^removed == 0, s&removed != 0
+	return last, s&removed != 0, last && s&aside != 0
+}
+
+// clearAside clears the aside bit of e, and reports whether this call
+// cleared it. Of the last unpins that race to hand e back to the cache,
+// exactly one clears the bit, so the cache receives e once for each time
+// that the evictor set it aside.
+func (e *entry[K, V]) clearAside() bool {
+	return e.state.And(^aside)&aside != 0
 }
 
 // leave marks e as having left the cache, and reports whether e had no
 // pin, so that the caller passes it to the callback. When e has pins, the
-// last unpin reports it instead. The caller calls leave once per entry,
-// after it took the entry out of the index.
+// last unpin reports it instead. The aside bit of an entry whose last pin
+// has ended counts as no pin. The caller calls leave once per entry, after
+// it took the entry out of the index.
 func (e *entry[K, V]) leave() bool {
-	return e.state.Or(removed) == 0
+	return e.state.Or(removed)&^aside == 0
 }
 
 // evict marks e as having left the cache when it has no pin, and reports
@@ -122,6 +151,23 @@ func (e *entry[K, V]) leave() bool {
 // pinned entry.
 func (e *entry[K, V]) evict() bool {
 	return e.state.CompareAndSwap(0, removed)
+}
+
+// markAside sets the aside bit of e when e has a pin, and reports whether
+// it did. A last unpin that races with it either comes first, and markAside
+// fails, or finds the bit and hands e back to the cache. The caller has
+// locked the mutex of the cache and taken e out of its queue.
+func (e *entry[K, V]) markAside() bool {
+	for {
+		s := e.state.Load()
+		if s&pinMask == 0 {
+			return false
+		}
+
+		if e.state.CompareAndSwap(s, s|aside) {
+			return true
+		}
+	}
 }
 
 // victims collects the entries that leave the cache while the mutex is

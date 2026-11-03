@@ -112,6 +112,20 @@ func TestPinned(t *testing.T) {
 			expect.Empty(t, r.got(), "no entry may leave at an Unpin that leaves a pin")
 		})
 
+		t.Run("keeps the cost past the capacity at the last Unpin of a deleted entry", func(t *testing.T) {
+			t.Parallel()
+			c, _, r := newCache(t, 1, nil)
+			pins := make([]cache.Pinned[string, int], 0, 4)
+			for _, k := range []string{"a", "b", "c", "d"} {
+				pins = append(pins, c.SetPinned(k, 1, time.Time{}))
+			}
+			c.Delete("a")
+			assert.NotPanics(t, pins[0].Unpin,
+				"the last Unpin of a deleted entry must not panic while pins fill the cache")
+			expect.Equal(t, c.Cost(), int64(3), "the pinned entries must remain past the capacity")
+			expect.Equal(t, r.got(), []string{"a"}, "the Unpin must pass the removed entry to Evicted")
+		})
+
 		t.Run("passes the entries that it evicts to Evicted after it releases the lock", func(t *testing.T) {
 			t.Parallel()
 			var c *cache.Cache[string, int]

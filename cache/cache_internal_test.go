@@ -48,5 +48,20 @@ func TestCacheQueues(t *testing.T) {
 			expect.Equal(t, c.main.cost, int64(1), "the main queue must lose the cost of the entry")
 			expect.Equal(t, mainKeys(c), []string{"c"}, "the main queue must keep its other entry")
 		})
+
+		t.Run("takes an entry that the evictor set aside out of the cache", func(t *testing.T) {
+			t.Parallel()
+			c := policyCache(t, 20)
+			es := attachNew(c, "a", "b")
+			c.small.remove(es[0])
+			es[0].queue = setAside
+			c.mu.Lock()
+			c.detach(es[0])
+			c.mu.Unlock()
+			expect.Equal(t, es[0].queue, queueID(0), "the entry must be of no queue")
+			expect.Equal(t, c.small.count, 1, "the small queue must keep its entry")
+			expect.Equal(t, c.Len(), 1, "Len must not count the entry")
+			expect.Equal(t, c.Cost(), int64(1), "Cost must not count the cost of the entry")
+		})
 	})
 }

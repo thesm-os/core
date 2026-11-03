@@ -966,6 +966,14 @@ func TestCacheAllocs(t *testing.T) {
 			i++
 		}, 1, "a Set of a new key that evicts an entry must allocate the entry")
 		assert.Equal(t, evicting.Len(), benchCapacity, "the test must measure Sets that evict")
+
+		filled := pinnedCache(t, keys[:benchCapacity])
+		j := 0
+		expect.MaxAllocs(t, func() {
+			filled.Set(keys[benchCapacity+j%benchCapacity], j, time.Time{})
+			j++
+		}, 1, "a Set of a new key while pinned entries fill the cache must allocate the entry")
+		assert.Equal(t, filled.Cost(), int64(benchCapacity+1), "the test must measure Sets past the capacity")
 	})
 
 	t.Run("SetPinned", func(t *testing.T) {
@@ -1155,6 +1163,21 @@ func BenchmarkCache(b *testing.B) {
 			assert.Equal(b, c.Len(), benchCapacity, "the benchmark must measure Sets that evict")
 		})
 
+		b.Run("of a new key while pinned entries fill the cache", func(b *testing.B) {
+			c := pinnedCache(b, keys[:benchCapacity])
+			i := 0
+
+			bc := bench.Start(b).MaxAllocs(1)
+			defer bc.End()
+
+			for bc.Loop() {
+				c.Set(keys[benchCapacity+i%benchCapacity], i, time.Time{})
+				i++
+			}
+
+			assert.Equal(b, c.Cost(), int64(benchCapacity+1), "the benchmark must measure Sets past the capacity")
+		})
+
 		b.Run("of a key with an expiry time that replaces its entry", func(b *testing.B) {
 			c := benchCache(b, keys[:benchCapacity])
 			expires := origin.Add(time.Hour)
@@ -1266,6 +1289,21 @@ func benchCache(tb testing.TB, keys []string) *cache.Cache[string, int] {
 	assert.NoError(tb, err, "New must accept the configuration")
 	for range 10 {
 		setAll(c, keys...)
+	}
+
+	return c
+}
+
+// pinnedCache returns a Cache of benchCapacity without Cost and without
+// Evicted, after a SetPinned of 1 under each key of keys whose pin it never
+// ends. Pinned entries fill the cache once keys has benchCapacity keys, so
+// each Set of a new key stores its entry past the capacity.
+func pinnedCache(tb testing.TB, keys []string) *cache.Cache[string, int] {
+	tb.Helper()
+	c, err := cache.New(cache.Config[string, int]{Clock: fake.New(origin), Capacity: benchCapacity})
+	assert.NoError(tb, err, "New must accept the configuration")
+	for _, k := range keys {
+		c.SetPinned(k, 1, time.Time{})
 	}
 
 	return c
