@@ -153,6 +153,12 @@ const (
 	// AlgAES256GCM is AES-256 in Galois/Counter Mode per NIST
 	// SP 800-38D, with a 96-bit nonce and a 128-bit tag.
 	AlgAES256GCM Algorithm = "aes-256-gcm"
+	// AlgXAES256GCM is XAES-256-GCM of C2SP: AES-256-GCM with a 128-bit
+	// tag under a key that the counter-mode KDF of NIST SP 800-108r1
+	// derives from the key and the first 96 bits of a 192-bit nonce. One
+	// key seals about 2^80 messages with random nonces at a collision
+	// risk of 2^-32.
+	AlgXAES256GCM Algorithm = "xaes-256-gcm"
 	// AlgChaCha20Poly1305 is ChaCha20-Poly1305 per RFC 8439, with a
 	// 96-bit nonce. Reserved and not implemented.
 	AlgChaCha20Poly1305 Algorithm = "chacha20-poly1305"

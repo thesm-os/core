@@ -208,9 +208,10 @@ func splitEnvelope(sealed []byte) (name, rest []byte, err error) {
 // construction and must never be done outside a test asserting that
 // property.
 //
-// Random 96-bit nonces are safe for any message volume a single key
-// will realistically see; the birthday bound is roughly 2^32 messages
-// per key for a 2^-32 collision probability.
+// A random 96-bit nonce bounds one key to about 2^32 messages for a
+// collision probability of 2^-32. Seal reads the first 96 bits of a
+// 192-bit nonce for an AEAD of [go.thesmos.sh/core/crypto/xaesgcm], and
+// one of its keys seals about 2^80 messages at the same risk.
 //
 // Returns [ErrAlgorithmSize] when a reports a name the header cannot
 // express, and whatever r returns when entropy fails. No output is

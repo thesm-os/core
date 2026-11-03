@@ -75,7 +75,7 @@ for concurrent use and its allocations in its
 | Errors | [`errs`][errs] | Eight error classes, such as `Transient` and `Invalid`, and `Classify`, which also recognises the sentinels of the standard library. |
 | Concurrency | [`task`][task], [`fsm`][fsm], [`batch`][batch] | Structured concurrency, finite state machines that are validated when they are built, and batched loads of concurrent callers. |
 | Resilience | [`resilience`][resilience] | Circuit breakers, bulkheads, retries within a budget with jittered backoff, token-bucket rate limits with priorities, and failover between redundant targets. |
-| Hashing and encryption | [`crypto`][crypto], [`crypto/sha256`][crypto/sha256], [`crypto/sha512`][crypto/sha512], [`crypto/sha3`][crypto/sha3], [`crypto/hmac/sha256`][crypto/hmac/sha256], [`crypto/hmac/sha512`][crypto/hmac/sha512], [`crypto/hmac/sha3`][crypto/hmac/sha3], [`crypto/aesgcm`][crypto/aesgcm], [`crypto/shake`][crypto/shake], [`crypto/kek`][crypto/kek], [`crypto/localkey`][crypto/localkey] | The `Hasher`, `MAC`, `AEAD`, `XOF` and `Keeper` interfaces with SHA-2, SHA-3, HMAC, AES-GCM and SHAKE, data keys wrapped under a key-encryption key, and domain-separated framing of hashed input. |
+| Hashing and encryption | [`crypto`][crypto], [`crypto/sha256`][crypto/sha256], [`crypto/sha512`][crypto/sha512], [`crypto/sha3`][crypto/sha3], [`crypto/hmac/sha256`][crypto/hmac/sha256], [`crypto/hmac/sha512`][crypto/hmac/sha512], [`crypto/hmac/sha3`][crypto/hmac/sha3], [`crypto/aesgcm`][crypto/aesgcm], [`crypto/xaesgcm`][crypto/xaesgcm], [`crypto/shake`][crypto/shake], [`crypto/kek`][crypto/kek], [`crypto/localkey`][crypto/localkey] | The `Hasher`, `MAC`, `AEAD`, `XOF` and `Keeper` interfaces with SHA-2, SHA-3, HMAC, AES-GCM, XAES-256-GCM and SHAKE, data keys wrapped under a key-encryption key, and domain-separated framing of hashed input. |
 | Stable hashing | [`hash/xxh3`][hash/xxh3] | XXH3-64, a hash that is not cryptographic and whose values are the same in every process and on every platform. |
 | Compression | [`compress/snappy`][compress/snappy] | Encoding and decoding of blocks in the Snappy format, with the same bytes as golang/snappy. |
 | Signatures | [`crypto/sign`][crypto/sign], [`crypto/sign/ed25519`][crypto/sign/ed25519], [`crypto/sign/ecdsap384`][crypto/sign/ecdsap384], [`crypto/sign/mldsa`][crypto/sign/mldsa], [`crypto/tsp`][crypto/tsp] | The `Signer` and `Verifier` interfaces with Ed25519, ECDSA P-384 and ML-DSA, threshold policies over sets of keys, and offline verification of RFC 3161 time stamps. |
@@ -175,6 +175,7 @@ and [NOTICE](NOTICE).
 [crypto/sign/ed25519]: https://pkg.go.dev/go.thesmos.sh/core/crypto/sign/ed25519
 [crypto/sign/mldsa]: https://pkg.go.dev/go.thesmos.sh/core/crypto/sign/mldsa
 [crypto/tsp]: https://pkg.go.dev/go.thesmos.sh/core/crypto/tsp
+[crypto/xaesgcm]: https://pkg.go.dev/go.thesmos.sh/core/crypto/xaesgcm
 [epoch]: https://pkg.go.dev/go.thesmos.sh/core/epoch
 [errs]: https://pkg.go.dev/go.thesmos.sh/core/errs
 [filter]: https://pkg.go.dev/go.thesmos.sh/core/filter
