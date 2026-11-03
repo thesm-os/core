@@ -1,39 +1,44 @@
 // Copyright ThesmOS B.V. 2026
 // SPDX-License-Identifier: Apache-2.0
 
-// Package fake provides a deterministic virtual-time [clock.Clock]
-// for tests.
+// Package fake provides a [clock.Clock] in virtual time for tests.
 //
-// Time does not advance on its own — only [Clock.Advance] (or [Clock.Set])
-// moves the clock forward. Goroutines blocked in
-// [clock.Sleep] / [clock.After] or waiting on a [clock.Timer] are
-// woken when virtual time reaches their deadline.
+// The virtual time moves only at [Clock.Advance] and [Clock.Set]. A
+// goroutine that blocks in [clock.Sleep], [clock.After] or [clock.Wait],
+// or on the channel of a [clock.Timer], wakes when the virtual time is
+// at or after its deadline.
 //
 // # Goroutine synchronisation
 //
-// Because virtual time and real time are decoupled, tests that
-// schedule a sleep on a goroutine and then advance the clock may
-// race: the test may call [Clock.Advance] before the goroutine has
-// registered its waiter. Use [Clock.AwaitWaiters] to block until at
-// least N waiters have registered, eliminating the race without
-// real-time sleeps:
+// A test that starts a goroutine which blocks on the clock, and then
+// advances the clock, races with that goroutine. The Advance can come
+// before the goroutine registers its waiter. [Clock.AwaitWaiters]
+// blocks until the clock has at least n waiters, so the test advances
+// the clock after the goroutine blocks:
 //
 //	clk := fake.New(time.Unix(0, 0))
 //	go func() { clock.Sleep(clk, 5*time.Second) }()
-//	clk.AwaitWaiters(1)            // deterministic; no real-time
-//	clk.Advance(6 * time.Second)   // wakes the goroutine
+//	clk.AwaitWaiters(1)
+//	clk.Advance(6 * time.Second)
+//
+// AwaitWaiters panics after two seconds of real time. [Clock.Waiters]
+// returns the number of waiters, so a test polls it with a bound of its
+// own for a goroutine that works before its first blocking clock call.
+// A test also reads the drop of the count after a waiter leaves, such
+// as the timer of a [clock.Wait] whose context ended.
 //
 // # HLC behaviour
 //
-// [Clock.Update] performs the standard HLC merge against the
-// observed peer instant — adopting the peer's wall and stepping
-// past its logical when the peer is ahead, otherwise stepping the
-// local logical. It refuses a peer more than
-// [go.thesmos.sh/core/clock.DefaultMaxOffset] ahead of the virtual
-// time with [go.thesmos.sh/core/clock.ErrOffset]. [Clock.Now]
-// increments the logical counter on every call so two consecutive
-// Now() invocations between Advance calls return distinct instants
-// ordered by HappensBefore.
+// [Clock.Update] merges the instant of a peer as a hybrid logical clock
+// does. For a peer ahead, it takes the wall of the peer and the Logical
+// after the Logical of the peer. For a peer at the same wall, it takes
+// the larger Logical plus 1. For a peer behind, it takes the next local
+// Logical. It refuses a peer more than
+// [go.thesmos.sh/core/clock.DefaultMaxOffset] ahead of the virtual time
+// with [go.thesmos.sh/core/clock.ErrOffset]. [Clock.Now] adds 1 to the
+// Logical on every call, so two calls of Now between two moves of the
+// virtual time return distinct instants that
+// [clock.Instant.HappensBefore] orders.
 //
 // # Durations
 //
@@ -43,14 +48,11 @@
 //
 // # Waiter lifecycle
 //
-// Each pending [Clock.NewTimer], [clock.Sleep], or [clock.After]
-// registers an internal waiter that is removed when the timer
-// fires (via [Clock.Advance] / [Clock.Set]) or is explicitly
-// stopped. Tests that abandon timers without [clock.Timer.Stop]
-// and without draining the channel after firing leave waiter
-// entries in the [Clock]'s internal slice. For the typical
-// per-test [Clock] this is harmless — the [Clock] itself is
-// short-lived. For long-lived simulation clocks, prefer to call
-// [clock.Timer.Stop] on cancellation paths to keep the slice
-// bounded.
+// Each pending timer of [Clock.NewTimer], [clock.Sleep], [clock.After]
+// and [clock.Wait] is a waiter. The clock removes the waiter when it
+// sends the tick of the timer, at an Advance or a Set to a time at or
+// after the deadline, and when the timer stops. A timer that a test
+// abandons before its deadline keeps its waiter. Code on a long-lived
+// clock of a simulation stops each timer on the paths that cancel it,
+// so the list of waiters remains bounded.
 package fake

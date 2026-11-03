@@ -337,6 +337,74 @@ func TestClock(t *testing.T) {
 			c.AwaitWaiters(n)
 		})
 	})
+
+	t.Run("Waiters", func(t *testing.T) {
+		t.Parallel()
+
+		tests := []struct {
+			name string
+			give func(c *fake.Clock)
+			want int
+		}{
+			{name: "returns 0 for a clock without timers", give: func(*fake.Clock) {}, want: 0},
+			{
+				name: "counts each pending timer",
+				give: func(c *fake.Clock) {
+					c.NewTimer(time.Hour)
+					c.NewTimer(time.Minute)
+				},
+				want: 2,
+			},
+			{
+				name: "does not count a timer of a duration that is not positive",
+				give: func(c *fake.Clock) { c.NewTimer(0) },
+				want: 0,
+			},
+			{
+				name: "does not count a timer whose deadline Advance passed",
+				give: func(c *fake.Clock) {
+					c.NewTimer(time.Second)
+					c.Advance(2 * time.Second)
+				},
+				want: 0,
+			},
+			{
+				name: "does not count a timer whose deadline Set passed",
+				give: func(c *fake.Clock) {
+					c.NewTimer(time.Hour)
+					c.Set(origin.Add(2 * time.Hour))
+				},
+				want: 0,
+			},
+			{
+				name: "does not count a stopped timer",
+				give: func(c *fake.Clock) { c.NewTimer(time.Hour).Stop() },
+				want: 0,
+			},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				c := fake.New(origin)
+				tt.give(c)
+				assert.Equal(t, c.Waiters(), tt.want, "Waiters must count the pending timers of the clock")
+			})
+		}
+
+		t.Run("does not count the timer of a Wait whose context ended", func(t *testing.T) {
+			t.Parallel()
+			c := fake.New(origin)
+			ctx, cancel := context.WithCancel(t.Context())
+			done := make(chan error, 1)
+			go func() { done <- clock.Wait(ctx, c, time.Hour) }()
+			c.AwaitWaiters(1)
+			cancel()
+			assert.CompletesWithin(t, 5*time.Second, func(context.Context) error {
+				return <-done
+			}, "Wait must return once its context ends")
+			assert.Equal(t, c.Waiters(), 0, "Waiters must not count the timer of a Wait that returned")
+		})
+	})
 }
 
 // TestClockAllocs checks the allocation contract of an Update that refuses its

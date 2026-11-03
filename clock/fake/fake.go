@@ -14,10 +14,10 @@ import (
 	"go.thesmos.sh/core/clock"
 )
 
-// Clock is a deterministic virtual-time [clock.Clock]. Time only
-// advances when callers invoke [Clock.Advance] or [Clock.Set]; on
-// each [Clock.Now], the logical counter increments so consecutive
-// instants between advances remain ordered.
+// Clock is a [clock.Clock] in virtual time. The virtual time moves
+// only at [Clock.Advance] and [Clock.Set]. Each [Clock.Now] adds 1 to
+// the logical counter, so the instants between two moves of the
+// virtual time are ordered.
 //
 // [Clock.Elapsed] is the sum of the durations of Advance. Set and
 // Update change the wall time alone, as a step of a wall clock leaves
@@ -25,7 +25,17 @@ import (
 // whose wall is more than [clock.DefaultMaxOffset] ahead of the
 // virtual time.
 //
-// Clock is safe for concurrent use by multiple goroutines.
+// Each pending timer of the clock is a waiter. [Clock.Waiters] counts
+// the waiters, and [Clock.AwaitWaiters] waits for them.
+//
+// # Concurrency
+//
+// Safe for concurrent use. One mutex per Clock guards the virtual time,
+// the logical counter, the elapsed time and the waiters.
+//
+// # Allocation contract
+//
+// Now, Time, Elapsed and Update do not allocate.
 //
 //dokimi:subject clock.Clock new=newClock
 //dokimi:budget Clock.Now allocs=0
@@ -33,20 +43,27 @@ import (
 //dokimi:budget Clock.Elapsed allocs=0
 //dokimi:budget Clock.Update allocs=0
 type Clock struct {
-	now     time.Time
+	// now is the virtual time. Guarded by mu.
+	now time.Time
+
+	// waiters are the pending timers, in the order of their
+	// registration. Guarded by mu.
 	waiters []*waiter
 
 	// elapsed is the sum of the durations of Advance. Guarded by mu.
 	elapsed time.Duration
 
-	mu      sync.Mutex
+	mu sync.Mutex
+
+	// logical is the Logical of the last instant, and node the NodeID
+	// of every instant. logical is guarded by mu.
 	logical uint32
 	node    clock.NodeID
 
-	// awaitTimeout overrides the [Clock.AwaitWaiters] watchdog.
-	// Zero means the default. It is per instance, so the watchdog's
-	// own test can shorten it without changing state that other
-	// tests read. This package's tests run in parallel.
+	// awaitTimeout is the bound of [Clock.AwaitWaiters]. Zero selects
+	// the default of two seconds. The internal test of the bound sets
+	// it on a Clock of its own, so the tests that run in parallel keep
+	// the default.
 	awaitTimeout time.Duration
 
 	// utcError is the MaxError that [Clock.ReadUTC] reports. Guarded
@@ -80,11 +97,12 @@ func NewWithNode(origin time.Time, node clock.NodeID) *Clock {
 	return &Clock{now: origin, node: node}
 }
 
-// Now returns the current virtual instant. Wall is the virtual
-// time's UnixNano value; Logical increments per call so consecutive
-// Now calls between Advance invocations return distinct, ordered
-// instants. After Logical 2^32 - 1 the virtual time moves forward by
-// a nanosecond and Logical starts again at 1.
+// Now returns the current virtual instant. Its Wall is the UnixNano of
+// the virtual time. Each call adds 1 to the Logical, and a move of the
+// virtual time starts it again at 1, so two calls between two moves
+// return distinct, ordered instants. After Logical 2^32 - 1, the
+// virtual time moves forward by a nanosecond and Logical starts again
+// at 1.
 //
 // # Allocation contract
 //
@@ -100,10 +118,9 @@ func (c *Clock) Now() clock.Instant {
 	}
 }
 
-// Time returns the current virtual time as a stdlib [time.Time]. It is
-// Now().Time(), so it advances the logical counter as [Clock.Now]
-// does, and the [clock.Clock] contract applies uniformly across
-// implementations.
+// Time returns the current virtual time as a [time.Time]. It returns
+// Now().Time(), so it adds 1 to the logical counter as [Clock.Now]
+// does.
 //
 // # Allocation contract
 //
@@ -125,17 +142,13 @@ func (c *Clock) Elapsed() time.Duration {
 	return c.elapsed
 }
 
-// Update merges an observed peer instant into the fake clock,
-// preserving the [clock.Clock] contract that the returned instant
-// is strictly causally after observed.
-//
-// Virtual time has no real peers, but a naive return of [Clock.Now]
-// would violate the contract when observed.Wall exceeds the
-// fake clock's wall. The merge here adopts observed.Wall when it is
-// ahead, so [Clock.Update] on a fake clock is safe to call from
-// the same code paths that drive a production HLC. A Logical of
-// 2^32 - 1 moves the virtual time forward by a nanosecond, as in
-// [Clock.Now].
+// Update merges the instant of a peer into the clock, and returns an
+// instant that happens after observed, as [clock.Clock] requires. For
+// a peer ahead of the virtual time, the clock takes the wall of the
+// peer and the Logical after the Logical of the peer. For a peer at
+// the wall of the clock, it takes the larger Logical plus 1. For a peer
+// behind, it takes the next local Logical. A Logical of 2^32 - 1 moves
+// the virtual time forward by a nanosecond, as in [Clock.Now].
 //
 // Error modes: an observed wall more than [clock.DefaultMaxOffset]
 // ahead of the virtual time returns [clock.ErrOffset], classified
@@ -175,12 +188,11 @@ func (c *Clock) Update(observed clock.Instant) (clock.Instant, error) {
 	}, nil
 }
 
-// Advance moves virtual time forward by d, adds d to [Clock.Elapsed],
-// and wakes every waiter whose deadline has been reached. A
-// non-positive d is a no-op: virtual time only moves forward.
-//
-// Advance also resets the logical counter on the next [Clock.Now]
-// because virtual wall has moved.
+// Advance moves the virtual time forward by d, adds d to
+// [Clock.Elapsed], and sends the tick of every waiter whose deadline is
+// at or before the new virtual time. A d that is not positive changes
+// nothing, so the virtual time moves only forward. Advance starts the
+// logical counter again, so the next [Clock.Now] returns Logical 1.
 func (c *Clock) Advance(d time.Duration) {
 	if d <= 0 {
 		return
@@ -193,13 +205,13 @@ func (c *Clock) Advance(d time.Duration) {
 	c.fireWaiters()
 }
 
-// Set replaces the virtual time with t. Like [Clock.Advance], Set
-// fires every waiter whose deadline has been reached. Use
-// [Clock.Advance] for forward progress, and Set for a test that needs
-// virtual time at a specific calendar instant, such as 2030-01-01.
-// Setting time backward is allowed. It does not retract waiters that
-// have already fired. Set models a step of a wall clock, so it does
-// not change [Clock.Elapsed].
+// Set replaces the virtual time with t, and sends the tick of every
+// waiter whose deadline is at or before t, as [Clock.Advance] does. A
+// test moves the clock forward with Advance, and uses Set for a
+// calendar instant such as 2030-01-01. t can be before the virtual
+// time, and Set does not take back a tick that the clock has sent. Set
+// starts the logical counter again. It models a step of a wall clock,
+// so it does not change [Clock.Elapsed].
 func (c *Clock) Set(t time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -208,56 +220,42 @@ func (c *Clock) Set(t time.Time) {
 	c.fireWaiters()
 }
 
-// AwaitWaiters blocks until at least n goroutines have registered
-// waiters with the clock (via [clock.Sleep], [clock.After], or
-// [Clock.NewTimer]). Use this instead of [time.Sleep] for
-// deterministic goroutine synchronisation in tests:
+// AwaitWaiters blocks until the clock has at least n waiters, as
+// [Clock.Waiters] counts them. A test calls it after it starts a
+// goroutine that blocks on the clock and before it advances the clock,
+// so the Advance sends the tick of that goroutine:
 //
 //	go func() { clock.Sleep(clk, 5*time.Second) }()
-//	clk.AwaitWaiters(1)            // deterministic — no real-time
+//	clk.AwaitWaiters(1)
 //	clk.Advance(6 * time.Second)
 //
-// AwaitWaiters yields to the scheduler between checks, so it costs
-// little when the goroutines are already running.
+// AwaitWaiters yields to the scheduler between two reads of the count.
 //
 // # Failure semantics
 //
-// Waiting for waiters that never arrive is a programmer error: the
-// awaited goroutines are not calling a blocking clock operation, or
-// n is larger than the number that ever will. AwaitWaiters panics
-// after a watchdog interval of two seconds.
+// AwaitWaiters panics when the count is still below n two seconds
+// after the call. The panic message contains n, the bound and the
+// count, and the panic fails the test that called AwaitWaiters. The
+// bound runs in real time, and no Advance moves it. The bound ends a
+// test whose goroutines never block on the clock before the deadline
+// of go test. It also ends a test whose n exceeds the number of
+// waiters that ever register.
 //
-// The interval bounds goroutines that will never register, not slow
-// ones. A correct wait completes in microseconds, because the awaited
-// goroutine only has to make its first blocking clock call. The
-// watchdog therefore cannot make a correct test flaky on a contended
-// runner, and it expires far inside any plausible `go test -timeout`.
-//
-// The panic reports the count registered and the count expected, and
-// it fails the test that called AwaitWaiters. A hang left to the
-// [testing] deadline would fail slowly and name whichever test was
-// running when the process died.
-//
-// The bound is real elapsed time, not virtual time. It measures the
-// test process's patience with goroutines that will not start, which
-// no amount of [Clock.Advance] can affect.
+// A goroutine that works before its first blocking clock call, such as
+// a loop that queries a database before it waits for its next round,
+// can take longer than the bound. A test of such a goroutine polls
+// Waiters with a bound of its own.
 //
 // # Concurrency
 //
-// Safe for concurrent use. The spin holds c.mu only for the length
-// of a slice read.
+// Safe for concurrent use. AwaitWaiters locks the mutex of the clock
+// only to read the count.
 func (c *Clock) AwaitWaiters(n int) {
-	// No constructor sets awaitTimeout, so every ordinary Clock uses the
-	// default. Only this package's watchdog test sets it, so the test
-	// does not spend the whole interval proving that the panic occurs.
-	//
-	// The default is set in the function body, where it has a coverage
-	// counter and mutation testing can reach its mutants. A package
-	// const has neither.
-	//
-	// Two seconds is six orders of magnitude above a correct
-	// registration. It also expires before the per-mutant budget of
-	// mutation testing, which is a small multiple of a suite's baseline.
+	// Only the internal test of the bound sets awaitTimeout. The default
+	// is a statement of the body, so it has a coverage counter and
+	// mutants. A package const would have neither. The budget of a mutant
+	// in a mutation run is a small multiple of the time of a suite, and
+	// two seconds expires before that budget.
 	bound := c.awaitTimeout
 	if bound <= 0 {
 		bound = 2 * time.Second
@@ -266,18 +264,15 @@ func (c *Clock) AwaitWaiters(n int) {
 	deadline := time.Now().Add(bound)
 
 	for {
-		c.mu.Lock()
-		count := len(c.waiters)
-		c.mu.Unlock()
-
+		count := c.Waiters()
 		if count >= n {
 			return
 		}
 
 		if time.Now().After(deadline) {
-			panic(fmt.Sprintf( //nolint:forbidigo // a hung test helper is a programmer error; see Failure semantics
-				"clock/fake: AwaitWaiters(%d) gave up after %s with %d waiter(s) registered — "+
-					"the awaited goroutines never called a blocking clock operation",
+			panic(fmt.Sprintf( //nolint:forbidigo // waiters that do not arrive fail the test of the caller
+				"fake: AwaitWaiters(%d) gave up after %s with %d waiter(s) registered: "+
+					"the awaited goroutines did not call a blocking clock operation in time",
 				n, bound, count,
 			))
 		}
@@ -286,9 +281,36 @@ func (c *Clock) AwaitWaiters(n int) {
 	}
 }
 
-// fireWaiters fires every waiter whose deadline is at or before
-// c.now and removes them from the pending list. Must be called
-// with c.mu held.
+// Waiters returns the number of waiters of the clock: the timers of
+// [Clock.NewTimer], [clock.Sleep], [clock.After] and [clock.Wait]
+// whose deadline the virtual time has not passed and that have not
+// stopped. A timer of a duration that is not positive is no waiter,
+// because its tick is sent at once.
+//
+// A test of a goroutine that works before its first blocking clock call
+// waits for the count with a bound of its own:
+//
+//	assert.EventuallyTrue(t, 30*time.Second, func() bool { return clk.Waiters() >= 2 }, msg)
+//
+// The count also drops when a waiter leaves, such as the timer of a
+// [clock.Wait] whose context ended. [Clock.AwaitWaiters] returns at a
+// count of at least n, so it cannot show the drop.
+//
+// # Concurrency
+//
+// Safe for concurrent use. A goroutine can register or stop a timer
+// right after the call, so the count can be out of date when Waiters
+// returns.
+func (c *Clock) Waiters() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return len(c.waiters)
+}
+
+// fireWaiters sends the tick of every waiter whose deadline is at or
+// before c.now, and removes those waiters from the list. The caller
+// has locked c.mu.
 func (c *Clock) fireWaiters() {
 	c.waiters = slices.DeleteFunc(c.waiters, func(w *waiter) bool {
 		if c.now.Before(w.deadline) {
@@ -302,7 +324,7 @@ func (c *Clock) fireWaiters() {
 // step sets the Logical of c to the Logical after logical at the
 // virtual time. After Logical 2^32 - 1 it moves the virtual time
 // forward by a nanosecond and sets Logical 1. It does not change
-// [Clock.Elapsed]. Must be called with c.mu held.
+// [Clock.Elapsed]. The caller has locked c.mu.
 func (c *Clock) step(logical uint32) {
 	if logical == math.MaxUint32 {
 		c.now = c.now.Add(time.Nanosecond)
@@ -314,9 +336,10 @@ func (c *Clock) step(logical uint32) {
 	c.logical = logical + 1
 }
 
-// removeWaiter unregisters w from the pending list. Returns true if w
-// was pending, which means it had not fired. Must be called with c.mu
-// held.
+// removeWaiter takes w out of the list of waiters, and reports whether
+// the list contained w. A waiter leaves the list when the clock sends
+// its tick, so true means that the clock has not sent the tick of w.
+// The caller has locked c.mu.
 func (c *Clock) removeWaiter(w *waiter) bool {
 	i := slices.Index(c.waiters, w)
 	if i < 0 {
