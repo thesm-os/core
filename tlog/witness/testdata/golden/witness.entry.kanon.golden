@@ -41,12 +41,13 @@ DecodeKanon/decodes an encoding that writes every field twice as the reference d
 DecodeKanon/decodes two concatenated encodings as the reference decode: 64 probes, digest b683c2cdb134e435
 DecodeKanon/decodes an encoding in a slab at its offset as the reference decode: 24 probes, digest de7b137bb397b95a
 DecodeKanon/decodes a field with a varint one byte longer than its shortest form as the reference decode: 54 probes, digest 92a7107e2e4c843
-DecodeKanon/decodes an encoding with two adjacent fields swapped as the reference decode: 34 probes, digest 6030a5b1418ff04d
+DecodeKanon/decodes an encoding with two adjacent fields swapped as the reference decode: 37 probes, digest b22cdd6c9ca77084
 DecodeKanon/decodes an encoding with two adjacent map entries swapped as the reference decode: 0 probes, digest cbf29ce484222325
-DecodeKanon/decodes an encoding with unknown fields at a field boundary as the reference decode: 75 probes, digest 9b1674153ef63323
-DecodeKanon/decodes an encoding with a field written at its zero value as the reference decode: 84 probes, digest 621f61f7dd43ce02
-DecodeKanon/decodes an encoding with a malformed tag at a field boundary as the reference decode: 225 probes, digest cb3b1504b805170
+DecodeKanon/decodes an encoding with unknown fields at a field boundary as the reference decode: 80 probes, digest 15305f60fcdb7074
+DecodeKanon/decodes an encoding with a field written at its zero value as the reference decode: 88 probes, digest ea2e72c110bd4f94
+DecodeKanon/decodes an encoding with a malformed tag at a field boundary as the reference decode: 240 probes, digest c39c348130b14f3c
 DecodeKanon/decodes an encoding with a float component of a map key of -0.0 as the reference decode: 0 probes, digest cbf29ce484222325
-DecodeKanon/decodes an encoding with a value written as zero bytes as the reference decode: 39 probes, digest 880dbc453b57bea7
+DecodeKanon/decodes an encoding with a value written as zero bytes as the reference decode: 42 probes, digest 752bdd5cec000d6d
 the samples that the encode allocation checks measure: 21 samples, digest aac924f01f7c7366
 the samples that the decode allocation check measures: 0 samples, digest cbf29ce484222325
+the samples that the decode allocation checks with the zero Options measure: 0 samples, digest cbf29ce484222325
