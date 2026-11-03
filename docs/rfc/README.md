@@ -152,6 +152,7 @@ Start from [`docs/templates/RFC.md`](../templates/RFC.md).
 | [0083](0083-calls-beyond-a-quorum.md) | Calls Beyond a Quorum | Accepted |
 | [0084](0084-durations-and-peer-instants-of-a-clock.md) | Durations and Peer Instants of a Clock | Accepted |
 | [0085](0085-links-between-spans.md) | Links Between Spans | Accepted |
+| [0086](0086-xaes-256-gcm.md) | XAES-256-GCM | Accepted |
 
 ## Canonical first RFC
 
