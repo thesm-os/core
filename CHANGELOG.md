@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.39.0
+
+### Minor Changes
+
+- 25bf796: Add `blobtest.Backend` to supply the backend of a store to the checks of its signed requests.
+- 25bf796: Add `blobtest.RunGetSignerSuite` and `blobtest.RunCreateSignerSuite` to check the signed requests of a store against its backend.
+- 78f7402: Add `crypto.AADKeyGenerator`, `crypto.AsAADKeyGenerator` and `crypto.GenerateKeyAAD` to generate a data key with associated data bound to its wrapped copy.
+- f51943b: Add `crypto.AlgXAES256GCM` for XAES-256-GCM of C2SP.
+- 78f7402: Add `crypto.ErrAADUnsupported` for a Keeper that does not bind associated data.
+- 55aea0d: Add `crypto.SealInputs` and `crypto.OpenInputs`, the inputs of the calls of `crypto.AEAD.Seal` and `Open` in the suite of AEAD.
+- 78f7402: Add `cryptotest.AssertAADKeyGeneratorContract` to assert the `crypto.AADKeyGenerator` capability.
+- a79da4d: Add `fake.Clock.Waiters` to count the pending timers of a fake clock.
+- 37ead90: Add `sstable.Iter.Reset` and `sstable.RangeDeleteIter.Reset` to set a kept cursor on a Reader without an allocation.
+- 78f7402: Add the doubles `cryptotest.AADKeeperStub` and `cryptotest.AADKeyGeneratorStub`.
+- f51943b: Add `xaesgcm.New`, an XAES-256-GCM `crypto.AEAD` whose keys seal about 2^80 messages with random nonces.
+- 37ead90: **Breaking:** Make `sstable.Reader.NewIter` and `Reader.RangeDeletes` return a new cursor that the caller keeps after `Close`.
+- 55aea0d: **Breaking:** Remove `New<Interface>StubDelayed` and `New<Interface>StubFailing` from the doubles of `coretest` in favour of the options of `New<Interface>Stub`.
+- 55aea0d: **Breaking:** Remove the checks of `cryptotest` that `Algorithm`, `KeyID` and `PublicKey` of a `sign.Signer` and a `sign.Verifier` return the same value on every call.
+- 78f7402: Implement `crypto.AADKeyGenerator` in `localkey.Keeper`.
+- 78f7402: Make `cryptotest.AssertKeyCreatorContract` require `crypto.AADKeyGenerator` of a created Keeper when the creator has it.
+- 55aea0d: **Breaking:** Remove `blobtest.StoreReturnsTheErrorOfADoneContext`.
+- 55aea0d: **Breaking:** Remove the checks of `telemetrytest` that `Counter.Add`, `Gauge.Set`, `Gauge.Add`, `Histogram.Record` of a negative value, `Span.SetAttributes` and `Span.AddEvent` return without a panic for an attribute or a finite value.
+
+### Patch Changes
+
+- 5baafda: Drop the bound of the leaf search of `btree.Map` that its comparison with the last key makes redundant.
+- 1624da9: Generate the kanon codecs with kanon v0.5.0, so a decode keeps the strings of its receiver that the input repeats.
+- 1624da9: Require `go.thesmos.sh/kanon` v0.5.0 and `go.dokimi.dev/assert` v0.16.0.
+- 37ead90: Fix a move of a closed `sstable.Iter` or `sstable.RangeDeleteIter` to set `sstable.ErrClosed` in place of a panic.
+- 37ead90: Fix a second `Close` of an `sstable.Iter` or `sstable.RangeDeleteIter` to leave the cursors of other goroutines unchanged.
+- 55aea0d: Excuse the check `StoreGetReaderFailsWithErrMismatch` for `memory.Store`, whose readers keep the bytes of their version.
+- 335d557: Fix the eviction of `cache.Cache` to examine each pinned entry once per pin while pinned entries fill the cache.
+- 8388562: Fix the planted defect of `clocktest.UpdateKeepsTheNode` to change the node of an `Update` that succeeds alone.
+- ef25a36: Fix the sound custodian of the planted defects of `cryptotest` to return the error of a context that ended.
+- a79da4d: Fix the panic message of `fake.Clock.AwaitWaiters` to name a slow goroutine as a cause.
+- ce1e028: Fix `kek.Keeper.Wrap` and `kek.Keeper.Unwrap` to return the error of a context that ended.
+- ce1e028: Fix `localkey.Keeper.WrapAAD` and `localkey.Keeper.UnwrapAAD`, and with them `Wrap` and `Unwrap`, to return the error of a context that ended.
+- 78f7402: Fix `localkey.Keeper.GenerateKey` to zero the data key when the source or the wrap fails.
+- 55aea0d: Fix the doc comment of `crypto.AppendOpen` to state that a failed open can overwrite the capacity of `dst`.
+- 55aea0d: Generate the suites of `coretest` with dokimi v0.9.1.
+- 55aea0d: Require `go.dokimi.dev/assert` v0.17.0, `go.dokimi.dev/conform` v0.13.1, `go.dokimi.dev/spec` v0.4.1 and `go.dokimi.dev/stub` v0.3.1.
+
 ## 0.38.0
 
 ### Minor Changes
