@@ -48,46 +48,7 @@ func TestAEADSuite(t *testing.T) {
 				},
 				Defect: func(*cryptotest.AEADHandle) crypto.AEAD { return &aeadSubject{} },
 			}),
-			conform.Excuse(
-				cryptotest.AEADChecks.ID.AEADIDIdentifiesTheImplementation(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.AEADChecks.Overhead.AEADSealedLengthIsTheEnvelope(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.AEADChecks.Seal.AEADSealDrawsAFreshNonce(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.AEADChecks.Open.AEADAuthenticatesTheAssociatedData(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.AEADChecks.Open.AEADOpensUnderASecondInstance(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.AEADChecks.Open.AEADOpensWithoutAssociatedData(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.AEADChecks.Open.AEADRefusesAModifiedCiphertext(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.AEADChecks.Open.AEADRefusesAModifiedNonce(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.AEADChecks.Open.AEADRefusesAModifiedTag(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.AEADChecks.Open.AEADRoundTripsAPlaintext(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[crypto.AEAD]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -109,63 +70,12 @@ func TestAEADSuite(t *testing.T) {
 				},
 				Defect: func(*cryptotest.AEADHandle) crypto.AEAD { return &aeadSubject{} },
 			}),
-			conform.Excuse(
-				cryptotest.AEADChecks.ID.AEADIDIdentifiesTheImplementation(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.AEADChecks.Overhead.AEADSealedLengthIsTheEnvelope(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.AEADChecks.Seal.AEADSealDrawsAFreshNonce(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.AEADChecks.Open.AEADAuthenticatesTheAssociatedData(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.AEADChecks.Open.AEADOpensUnderASecondInstance(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.AEADChecks.Open.AEADOpensWithoutAssociatedData(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.AEADChecks.Open.AEADRefusesAModifiedCiphertext(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.AEADChecks.Open.AEADRefusesAModifiedNonce(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.AEADChecks.Open.AEADRefusesAModifiedTag(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.AEADChecks.Open.AEADRoundTripsAPlaintext(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[crypto.AEAD]("the test applies the check of its option alone"),
 		)
 	})
 
 	t.Run("AEADChecks", func(t *testing.T) {
 		t.Parallel()
-		assert.Equal(
-			t,
-			string(cryptotest.AEADChecks.ID.AEADIDIdentifiesTheImplementation()),
-			"AEAD.ID/aeadid-identifies-the-implementation",
-			"the identity of the check joins the callable and the segment of the check",
-		)
-		assert.Equal(
-			t,
-			string(cryptotest.AEADChecks.Overhead.AEADSealedLengthIsTheEnvelope()),
-			"AEAD.Overhead/aead-sealed-length-is-the-envelope",
-			"the identity of the check joins the callable and the segment of the check",
-		)
 		assert.Equal(
 			t,
 			string(cryptotest.AEADChecks.Seal.AEADSealDrawsAFreshNonce()),
@@ -214,13 +124,29 @@ func TestAEADSuite(t *testing.T) {
 			"AEAD.Open/aead-round-trips-a-plaintext",
 			"the identity of the check joins the callable and the segment of the check",
 		)
+		assert.Equal(
+			t,
+			string(cryptotest.AEADChecks.ID.AEADIDIdentifiesTheImplementation()),
+			"AEAD.ID/aeadid-identifies-the-implementation",
+			"the identity of the check joins the callable and the segment of the check",
+		)
+		assert.Equal(
+			t,
+			string(cryptotest.AEADChecks.Overhead.AEADSealedLengthIsTheEnvelope()),
+			"AEAD.Overhead/aead-sealed-length-is-the-envelope",
+			"the identity of the check joins the callable and the segment of the check",
+		)
 	})
 }
 
+// aeadSuite is the suite of AEAD that the tests of the planted defect of a
+// ceiling apply.
+var aeadSuite = cryptotest.AEADSuite()
+
 // aeadIdle returns the planted defect of a ceiling of AEAD with a spend of
-// nothing, a subject that answers each call at once.
+// nothing. Each call of the defect returns its zero results at once.
 func aeadIdle(h *cryptotest.AEADHandle) crypto.AEAD {
-	return cryptotest.AEADSuite().Calls[0].Over(h, func() {})
+	return aeadSuite.Calls[0].Over(h, func() {})
 }
 
 // TestAEADSuiteBudgets applies the allocation ceilings of the suite of
@@ -235,248 +161,7 @@ func TestAEADSuiteBudgets(t *testing.T) {
 		conform.Ceilings(cryptotest.AEADChecks.Algorithm.Callable, conform.Budget{Allocs: new(uint64(0))}),
 		conform.Ceilings(cryptotest.AEADChecks.NonceSize.Callable, conform.Budget{Allocs: new(uint64(0))}),
 		conform.Ceilings(cryptotest.AEADChecks.Overhead.Callable, conform.Budget{Allocs: new(uint64(0))}),
-		conform.Ceilings(cryptotest.AEADChecks.Seal.Callable, conform.Budget{Allocs: new(uint64(0))}),
-		conform.Ceilings(cryptotest.AEADChecks.Open.Callable, conform.Budget{Allocs: new(uint64(0))}),
-		conform.Excuse(
-			cryptotest.AEADChecks.ID.AEADIDIdentifiesTheImplementation(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Overhead.AEADSealedLengthIsTheEnvelope(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Seal.AEADSealDrawsAFreshNonce(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Open.AEADAuthenticatesTheAssociatedData(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Open.AEADOpensUnderASecondInstance(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Open.AEADOpensWithoutAssociatedData(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Open.AEADRefusesAModifiedCiphertext(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Open.AEADRefusesAModifiedNonce(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Open.AEADRefusesAModifiedTag(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Open.AEADRoundTripsAPlaintext(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-	)
-}
-
-// FuzzAEADSuiteID registers the fuzz target of AEAD.ID on aeadIdle, with
-// every check of the suite excused.
-func FuzzAEADSuiteID(f *testing.F) {
-	cryptotest.FuzzAEADSuite(
-		f,
-		cryptotest.AEADChecks.ID.Callable,
-		aeadIdle,
-		conform.Excuse(
-			cryptotest.AEADChecks.ID.AEADIDIdentifiesTheImplementation(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Overhead.AEADSealedLengthIsTheEnvelope(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Seal.AEADSealDrawsAFreshNonce(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Open.AEADAuthenticatesTheAssociatedData(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Open.AEADOpensUnderASecondInstance(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Open.AEADOpensWithoutAssociatedData(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Open.AEADRefusesAModifiedCiphertext(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Open.AEADRefusesAModifiedNonce(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Open.AEADRefusesAModifiedTag(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Open.AEADRoundTripsAPlaintext(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-	)
-}
-
-// FuzzAEADSuiteAlgorithm registers the fuzz target of AEAD.Algorithm on
-// aeadIdle, with every check of the suite excused.
-func FuzzAEADSuiteAlgorithm(f *testing.F) {
-	cryptotest.FuzzAEADSuite(
-		f,
-		cryptotest.AEADChecks.Algorithm.Callable,
-		aeadIdle,
-		conform.Excuse(
-			cryptotest.AEADChecks.ID.AEADIDIdentifiesTheImplementation(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Overhead.AEADSealedLengthIsTheEnvelope(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Seal.AEADSealDrawsAFreshNonce(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Open.AEADAuthenticatesTheAssociatedData(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Open.AEADOpensUnderASecondInstance(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Open.AEADOpensWithoutAssociatedData(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Open.AEADRefusesAModifiedCiphertext(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Open.AEADRefusesAModifiedNonce(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Open.AEADRefusesAModifiedTag(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Open.AEADRoundTripsAPlaintext(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-	)
-}
-
-// FuzzAEADSuiteNonceSize registers the fuzz target of AEAD.NonceSize on
-// aeadIdle, with every check of the suite excused.
-func FuzzAEADSuiteNonceSize(f *testing.F) {
-	cryptotest.FuzzAEADSuite(
-		f,
-		cryptotest.AEADChecks.NonceSize.Callable,
-		aeadIdle,
-		conform.Excuse(
-			cryptotest.AEADChecks.ID.AEADIDIdentifiesTheImplementation(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Overhead.AEADSealedLengthIsTheEnvelope(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Seal.AEADSealDrawsAFreshNonce(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Open.AEADAuthenticatesTheAssociatedData(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Open.AEADOpensUnderASecondInstance(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Open.AEADOpensWithoutAssociatedData(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Open.AEADRefusesAModifiedCiphertext(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Open.AEADRefusesAModifiedNonce(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Open.AEADRefusesAModifiedTag(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Open.AEADRoundTripsAPlaintext(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-	)
-}
-
-// FuzzAEADSuiteOverhead registers the fuzz target of AEAD.Overhead on
-// aeadIdle, with every check of the suite excused.
-func FuzzAEADSuiteOverhead(f *testing.F) {
-	cryptotest.FuzzAEADSuite(
-		f,
-		cryptotest.AEADChecks.Overhead.Callable,
-		aeadIdle,
-		conform.Excuse(
-			cryptotest.AEADChecks.ID.AEADIDIdentifiesTheImplementation(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Overhead.AEADSealedLengthIsTheEnvelope(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Seal.AEADSealDrawsAFreshNonce(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Open.AEADAuthenticatesTheAssociatedData(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Open.AEADOpensUnderASecondInstance(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Open.AEADOpensWithoutAssociatedData(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Open.AEADRefusesAModifiedCiphertext(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Open.AEADRefusesAModifiedNonce(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Open.AEADRefusesAModifiedTag(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Open.AEADRoundTripsAPlaintext(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[crypto.AEAD]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -487,46 +172,7 @@ func FuzzAEADSuiteSeal(f *testing.F) {
 		f,
 		cryptotest.AEADChecks.Seal.Callable,
 		aeadIdle,
-		conform.Excuse(
-			cryptotest.AEADChecks.ID.AEADIDIdentifiesTheImplementation(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Overhead.AEADSealedLengthIsTheEnvelope(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Seal.AEADSealDrawsAFreshNonce(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Open.AEADAuthenticatesTheAssociatedData(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Open.AEADOpensUnderASecondInstance(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Open.AEADOpensWithoutAssociatedData(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Open.AEADRefusesAModifiedCiphertext(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Open.AEADRefusesAModifiedNonce(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Open.AEADRefusesAModifiedTag(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Open.AEADRoundTripsAPlaintext(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[crypto.AEAD]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -537,52 +183,63 @@ func FuzzAEADSuiteOpen(f *testing.F) {
 		f,
 		cryptotest.AEADChecks.Open.Callable,
 		aeadIdle,
-		conform.Excuse(
-			cryptotest.AEADChecks.ID.AEADIDIdentifiesTheImplementation(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Overhead.AEADSealedLengthIsTheEnvelope(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Seal.AEADSealDrawsAFreshNonce(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Open.AEADAuthenticatesTheAssociatedData(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Open.AEADOpensUnderASecondInstance(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Open.AEADOpensWithoutAssociatedData(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Open.AEADRefusesAModifiedCiphertext(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Open.AEADRefusesAModifiedNonce(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Open.AEADRefusesAModifiedTag(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.AEADChecks.Open.AEADRoundTripsAPlaintext(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[crypto.AEAD]("the planted defect of a ceiling returns the zero results of each call"),
+	)
+}
+
+// FuzzAEADSuiteID registers the fuzz target of AEAD.ID on aeadIdle, with
+// every check of the suite excused.
+func FuzzAEADSuiteID(f *testing.F) {
+	cryptotest.FuzzAEADSuite(
+		f,
+		cryptotest.AEADChecks.ID.Callable,
+		aeadIdle,
+		conform.ExcuseSuite[crypto.AEAD]("the planted defect of a ceiling returns the zero results of each call"),
+	)
+}
+
+// FuzzAEADSuiteAlgorithm registers the fuzz target of AEAD.Algorithm on
+// aeadIdle, with every check of the suite excused.
+func FuzzAEADSuiteAlgorithm(f *testing.F) {
+	cryptotest.FuzzAEADSuite(
+		f,
+		cryptotest.AEADChecks.Algorithm.Callable,
+		aeadIdle,
+		conform.ExcuseSuite[crypto.AEAD]("the planted defect of a ceiling returns the zero results of each call"),
+	)
+}
+
+// FuzzAEADSuiteNonceSize registers the fuzz target of AEAD.NonceSize on
+// aeadIdle, with every check of the suite excused.
+func FuzzAEADSuiteNonceSize(f *testing.F) {
+	cryptotest.FuzzAEADSuite(
+		f,
+		cryptotest.AEADChecks.NonceSize.Callable,
+		aeadIdle,
+		conform.ExcuseSuite[crypto.AEAD]("the planted defect of a ceiling returns the zero results of each call"),
+	)
+}
+
+// FuzzAEADSuiteOverhead registers the fuzz target of AEAD.Overhead on
+// aeadIdle, with every check of the suite excused.
+func FuzzAEADSuiteOverhead(f *testing.F) {
+	cryptotest.FuzzAEADSuite(
+		f,
+		cryptotest.AEADChecks.Overhead.Callable,
+		aeadIdle,
+		conform.ExcuseSuite[crypto.AEAD]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
 // BenchmarkAEADSuite measures each callable of the suite of AEAD on
 // aeadIdle.
 func BenchmarkAEADSuite(b *testing.B) {
+	b.Run("Seal", func(b *testing.B) {
+		cryptotest.BenchAEADSuite(b, cryptotest.AEADChecks.Seal.Callable, aeadIdle)
+	})
+	b.Run("Open", func(b *testing.B) {
+		cryptotest.BenchAEADSuite(b, cryptotest.AEADChecks.Open.Callable, aeadIdle)
+	})
 	b.Run("ID", func(b *testing.B) {
 		cryptotest.BenchAEADSuite(b, cryptotest.AEADChecks.ID.Callable, aeadIdle)
 	})
@@ -595,12 +252,6 @@ func BenchmarkAEADSuite(b *testing.B) {
 	b.Run("Overhead", func(b *testing.B) {
 		cryptotest.BenchAEADSuite(b, cryptotest.AEADChecks.Overhead.Callable, aeadIdle)
 	})
-	b.Run("Seal", func(b *testing.B) {
-		cryptotest.BenchAEADSuite(b, cryptotest.AEADChecks.Seal.Callable, aeadIdle)
-	})
-	b.Run("Open", func(b *testing.B) {
-		cryptotest.BenchAEADSuite(b, cryptotest.AEADChecks.Open.Callable, aeadIdle)
-	})
 }
 
-// dokimi:provenance sha256:cfe09ad21cb25e03f8e3e5345e504aa29480aee53f36808ed79113f847c3647b
+// dokimi:provenance sha256:e709fc96b91ecfc2f9bbaa7c63f7455f7c9b03ae279dc0fd8a368b82fb91b6d8

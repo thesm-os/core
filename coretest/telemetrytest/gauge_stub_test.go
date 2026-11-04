@@ -70,59 +70,82 @@ func gaugeStubRelease(tb assert.TB, s *telemetrytest.GaugeStub) {
 	s.Release()
 }
 
-// gaugeStubSetSubject returns the subject of [stub.Behaviour] for Set. The
-// subject calls a new double that reports to tb.
+// gaugeStubSetSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Set. The subject calls a new double that
+// reports to tb.
 func gaugeStubSetSubject(tb assert.TB) stub.Subject[telemetrytest.GaugeSetCall, struct{}] {
 	tb.Helper()
 	s := telemetrytest.NewGaugeStub(tb)
 	return stub.Subject[telemetrytest.GaugeSetCall, struct{}]{
-		Stub: s.OnSet.MethodStub,
+		Stub:  s.OnSet.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			gaugeStubSet(tb, s)
 		},
-		Override: func(mark func()) {
-			s.OnSet.Func(func(_ context.Context, _ float64) {
-				mark()
+		Arguments: func(tb assert.TB, c telemetrytest.GaugeSetCall) {
+			tb.Helper()
+			a0, a1 := gaugeStubSetArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.Value, a1, "the call records Value")
+		},
+		Override: func(seen func(telemetrytest.GaugeSetCall)) {
+			s.OnSet.Func(func(p0 context.Context, p1 float64) {
+				seen(telemetrytest.GaugeSetCall{Ctx: p0, Value: p1})
 			})
 		},
 	}
 }
 
-// gaugeStubAddSubject returns the subject of [stub.Behaviour] for Add. The
-// subject calls a new double that reports to tb.
+// gaugeStubAddSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Add. The subject calls a new double that
+// reports to tb.
 func gaugeStubAddSubject(tb assert.TB) stub.Subject[telemetrytest.GaugeAddCall, struct{}] {
 	tb.Helper()
 	s := telemetrytest.NewGaugeStub(tb)
 	return stub.Subject[telemetrytest.GaugeAddCall, struct{}]{
-		Stub: s.OnAdd.MethodStub,
+		Stub:  s.OnAdd.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			gaugeStubAdd(tb, s)
 		},
-		Override: func(mark func()) {
-			s.OnAdd.Func(func(_ context.Context, _ float64) {
-				mark()
+		Arguments: func(tb assert.TB, c telemetrytest.GaugeAddCall) {
+			tb.Helper()
+			a0, a1 := gaugeStubAddArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.Delta, a1, "the call records Delta")
+		},
+		Override: func(seen func(telemetrytest.GaugeAddCall)) {
+			s.OnAdd.Func(func(p0 context.Context, p1 float64) {
+				seen(telemetrytest.GaugeAddCall{Ctx: p0, Delta: p1})
 			})
 		},
 	}
 }
 
-// gaugeStubWithSubject returns the subject of [stub.Behaviour] for With.
-// The subject calls a new double that reports to tb.
+// gaugeStubWithSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for With. The subject calls a new double that
+// reports to tb.
 func gaugeStubWithSubject(tb assert.TB) stub.Subject[telemetrytest.GaugeWithCall, telemetrytest.GaugeWithReturn] {
 	tb.Helper()
 	s := telemetrytest.NewGaugeStub(tb)
 	return stub.Subject[telemetrytest.GaugeWithCall, telemetrytest.GaugeWithReturn]{
-		Stub: s.OnWith.MethodStub,
+		Stub:  s.OnWith.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = gaugeStubWith(tb, s)
+		},
+		Arguments: func(tb assert.TB, c telemetrytest.GaugeWithCall) {
+			tb.Helper()
+			a0 := gaugeStubWithArgs(tb)
+			assert.Equal(tb, c.Attrs, a0, "the call records Attrs")
 		},
 		Result: func() telemetrytest.GaugeWithReturn {
 			got0 := gaugeStubWith(tb, s)
 			return telemetrytest.GaugeWithReturn{Result: got0}
 		},
-		Override: func(mark func()) {
-			s.OnWith.Func(func(_ []telemetry.Attr) telemetry.Gauge {
-				mark()
+		Override: func(seen func(telemetrytest.GaugeWithCall)) {
+			s.OnWith.Func(func(p0 []telemetry.Attr) telemetry.Gauge {
+				seen(telemetrytest.GaugeWithCall{Attrs: p0})
 				var z0 telemetry.Gauge
 				return z0
 			})
@@ -130,19 +153,21 @@ func gaugeStubWithSubject(tb assert.TB) stub.Subject[telemetrytest.GaugeWithCall
 	}
 }
 
-// gaugeStubReleaseSubject returns the subject of [stub.Behaviour] for
-// Release. The subject calls a new double that reports to tb.
+// gaugeStubReleaseSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Release. The subject calls a new double that
+// reports to tb.
 func gaugeStubReleaseSubject(tb assert.TB) stub.Subject[telemetrytest.GaugeReleaseCall, struct{}] {
 	tb.Helper()
 	s := telemetrytest.NewGaugeStub(tb)
 	return stub.Subject[telemetrytest.GaugeReleaseCall, struct{}]{
-		Stub: s.OnRelease.MethodStub,
+		Stub:  s.OnRelease.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			gaugeStubRelease(tb, s)
 		},
-		Override: func(mark func()) {
+		Override: func(seen func(telemetrytest.GaugeReleaseCall)) {
 			s.OnRelease.Func(func() {
-				mark()
+				seen(telemetrytest.GaugeReleaseCall{})
 			})
 		},
 	}
@@ -161,7 +186,6 @@ func gaugeStubInstanceOf(tb assert.TB, s *telemetrytest.GaugeStub) gaugeStubInst
 		Call: func() {
 			gaugeStubSet(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -173,135 +197,44 @@ func TestGaugeStub(t *testing.T) {
 	t.Run("Set", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Set", gaugeStubSetSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewGaugeStub(t)
-			gaugeStubSet(t, s)
-			got := s.OnSet.AssertCalledOnce(t, "Set records the call")
-			a0, a1 := gaugeStubSetArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.Value, a1, "the call records Value")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewGaugeStub(t)
-			var seen []telemetrytest.GaugeSetCall
-			s.OnSet.OnRecord(func(c telemetrytest.GaugeSetCall) { seen = append(seen, c) })
-			gaugeStubSet(t, s)
-			gaugeStubSet(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Set")
-		})
 	})
 
 	t.Run("Add", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Add", gaugeStubAddSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewGaugeStub(t)
-			gaugeStubAdd(t, s)
-			got := s.OnAdd.AssertCalledOnce(t, "Add records the call")
-			a0, a1 := gaugeStubAddArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.Delta, a1, "the call records Delta")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewGaugeStub(t)
-			var seen []telemetrytest.GaugeAddCall
-			s.OnAdd.OnRecord(func(c telemetrytest.GaugeAddCall) { seen = append(seen, c) })
-			gaugeStubAdd(t, s)
-			gaugeStubAdd(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Add")
-		})
 	})
 
 	t.Run("With", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "With", gaugeStubWithSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewGaugeStub(t)
-			_ = gaugeStubWith(t, s)
-			got := s.OnWith.AssertCalledOnce(t, "With records the call")
-			a0 := gaugeStubWithArgs(t)
-			assert.Equal(t, got.Attrs, a0, "the call records Attrs")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewGaugeStub(t)
-			var seen []telemetrytest.GaugeWithCall
-			s.OnWith.OnRecord(func(c telemetrytest.GaugeWithCall) { seen = append(seen, c) })
-			_ = gaugeStubWith(t, s)
-			_ = gaugeStubWith(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of With")
-		})
 	})
 
 	t.Run("Release", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Release", gaugeStubReleaseSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewGaugeStub(t)
-			var seen []telemetrytest.GaugeReleaseCall
-			s.OnRelease.OnRecord(func(c telemetrytest.GaugeReleaseCall) { seen = append(seen, c) })
-			gaugeStubRelease(t, s)
-			gaugeStubRelease(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Release")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) gaugeStubInstance {
-			return gaugeStubInstanceOf(tb, telemetrytest.NewGaugeStub(tb))
-		})
 
-		t.Run("clears the recorded calls of Set", func(t *testing.T) {
+		t.Run("Set", func(t *testing.T) {
 			t.Parallel()
-			s := telemetrytest.NewGaugeStub(t)
-			gaugeStubSet(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnSet.CallCount(), 0, "ResetCalls clears the calls of Set")
+			stub.ResetBehaviour(t, "Set", gaugeStubSetSubject)
 		})
 
-		t.Run("clears the recorded calls of Add", func(t *testing.T) {
+		t.Run("Add", func(t *testing.T) {
 			t.Parallel()
-			s := telemetrytest.NewGaugeStub(t)
-			gaugeStubAdd(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnAdd.CallCount(), 0, "ResetCalls clears the calls of Add")
+			stub.ResetBehaviour(t, "Add", gaugeStubAddSubject)
 		})
 
-		t.Run("clears the recorded calls of With", func(t *testing.T) {
+		t.Run("With", func(t *testing.T) {
 			t.Parallel()
-			s := telemetrytest.NewGaugeStub(t)
-			_ = gaugeStubWith(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnWith.CallCount(), 0, "ResetCalls clears the calls of With")
+			stub.ResetBehaviour(t, "With", gaugeStubWithSubject)
 		})
 
-		t.Run("clears the recorded calls of Release", func(t *testing.T) {
+		t.Run("Release", func(t *testing.T) {
 			t.Parallel()
-			s := telemetrytest.NewGaugeStub(t)
-			gaugeStubRelease(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnRelease.CallCount(), 0, "ResetCalls clears the calls of Release")
-		})
-	})
-
-	t.Run("NewGaugeStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) gaugeStubInstance {
-			return gaugeStubInstanceOf(tb, telemetrytest.NewGaugeStubDelayed(tb, d, clk))
+			stub.ResetBehaviour(t, "Release", gaugeStubReleaseSubject)
 		})
 	})
 
@@ -442,91 +375,4 @@ func TestGaugeStub(t *testing.T) {
 	})
 }
 
-// TestGaugeSetStub checks the methods of GaugeSetStub, which configures
-// Set.
-func TestGaugeSetStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Set to the function", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewGaugeStub(t)
-			var got0 context.Context
-			var got1 float64
-			s.OnSet.Func(func(p0 context.Context, p1 float64) {
-				got0, got1 = p0, p1
-			})
-			gaugeStubSet(t, s)
-			a0, a1 := gaugeStubSetArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives Value")
-		})
-	})
-}
-
-// TestGaugeAddStub checks the methods of GaugeAddStub, which configures
-// Add.
-func TestGaugeAddStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Add to the function", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewGaugeStub(t)
-			var got0 context.Context
-			var got1 float64
-			s.OnAdd.Func(func(p0 context.Context, p1 float64) {
-				got0, got1 = p0, p1
-			})
-			gaugeStubAdd(t, s)
-			a0, a1 := gaugeStubAddArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives Delta")
-		})
-	})
-}
-
-// TestGaugeWithStub checks the methods of GaugeWithStub, which configures
-// With.
-func TestGaugeWithStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("configures With for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := telemetrytest.NewGaugeStub(r)
-			s.OnWith.Strict()
-			var want0 telemetry.Gauge
-			s.OnWith.Returns(want0)
-			_ = gaugeStubWith(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of With")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of With to the function", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewGaugeStub(t)
-			var got0 []telemetry.Attr
-			s.OnWith.Func(func(p0 []telemetry.Attr) telemetry.Gauge {
-				got0 = p0
-				var z0 telemetry.Gauge
-				return z0
-			})
-			_ = gaugeStubWith(t, s)
-			a0 := gaugeStubWithArgs(t)
-			assert.Equal(t, got0, a0, "the function receives Attrs")
-		})
-	})
-}
-
-// dokimi:provenance sha256:6247997a0ed5942aae0c805f534d6721560ae379a50457d18dcedc767828cbeb
+// dokimi:provenance sha256:b9559d145946d87a17369ec4dc87073abd88a5751de11b6152c09effe9256a04

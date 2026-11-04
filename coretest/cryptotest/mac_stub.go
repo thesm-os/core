@@ -346,15 +346,6 @@ func NewMACStub(tb assert.TB, opts ...MACStubOption) *MACStub {
 	return s
 }
 
-// NewMACStubDelayed returns a double whose methods sleep d on clk before
-// they return. It applies opts after the clock and the latency.
-func NewMACStubDelayed(tb assert.TB, d time.Duration, clk assert.Clock, opts ...MACStubOption) *MACStub {
-	return NewMACStub(tb, append([]MACStubOption{
-		MACStubWithClock(clk),
-		MACStubWithLatency(d),
-	}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *MACStub) ResetCalls() {
@@ -523,4 +514,4 @@ func (s *MACStub) NewStream() crypto.Stream {
 	return r.Result
 }
 
-// dokimi:provenance sha256:26a20ded8bf07816fb6f0d5b4fa85b84fedea79c80034d7e706c3750fd58bc61
+// dokimi:provenance sha256:b3b2bb428f4245a1dec06192dd41c266b6177dea470915360bf2d91c87f29292

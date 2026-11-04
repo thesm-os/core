@@ -54,41 +54,56 @@ func counterStubRelease(tb assert.TB, s *telemetrytest.CounterStub) {
 	s.Release()
 }
 
-// counterStubAddSubject returns the subject of [stub.Behaviour] for Add.
-// The subject calls a new double that reports to tb.
+// counterStubAddSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Add. The subject calls a new double that
+// reports to tb.
 func counterStubAddSubject(tb assert.TB) stub.Subject[telemetrytest.CounterAddCall, struct{}] {
 	tb.Helper()
 	s := telemetrytest.NewCounterStub(tb)
 	return stub.Subject[telemetrytest.CounterAddCall, struct{}]{
-		Stub: s.OnAdd.MethodStub,
+		Stub:  s.OnAdd.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			counterStubAdd(tb, s)
 		},
-		Override: func(mark func()) {
-			s.OnAdd.Func(func(_ context.Context, _ int64) {
-				mark()
+		Arguments: func(tb assert.TB, c telemetrytest.CounterAddCall) {
+			tb.Helper()
+			a0, a1 := counterStubAddArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.Value, a1, "the call records Value")
+		},
+		Override: func(seen func(telemetrytest.CounterAddCall)) {
+			s.OnAdd.Func(func(p0 context.Context, p1 int64) {
+				seen(telemetrytest.CounterAddCall{Ctx: p0, Value: p1})
 			})
 		},
 	}
 }
 
-// counterStubWithSubject returns the subject of [stub.Behaviour] for With.
-// The subject calls a new double that reports to tb.
+// counterStubWithSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for With. The subject calls a new double that
+// reports to tb.
 func counterStubWithSubject(tb assert.TB) stub.Subject[telemetrytest.CounterWithCall, telemetrytest.CounterWithReturn] {
 	tb.Helper()
 	s := telemetrytest.NewCounterStub(tb)
 	return stub.Subject[telemetrytest.CounterWithCall, telemetrytest.CounterWithReturn]{
-		Stub: s.OnWith.MethodStub,
+		Stub:  s.OnWith.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = counterStubWith(tb, s)
+		},
+		Arguments: func(tb assert.TB, c telemetrytest.CounterWithCall) {
+			tb.Helper()
+			a0 := counterStubWithArgs(tb)
+			assert.Equal(tb, c.Attrs, a0, "the call records Attrs")
 		},
 		Result: func() telemetrytest.CounterWithReturn {
 			got0 := counterStubWith(tb, s)
 			return telemetrytest.CounterWithReturn{Result: got0}
 		},
-		Override: func(mark func()) {
-			s.OnWith.Func(func(_ []telemetry.Attr) telemetry.Counter {
-				mark()
+		Override: func(seen func(telemetrytest.CounterWithCall)) {
+			s.OnWith.Func(func(p0 []telemetry.Attr) telemetry.Counter {
+				seen(telemetrytest.CounterWithCall{Attrs: p0})
 				var z0 telemetry.Counter
 				return z0
 			})
@@ -96,19 +111,21 @@ func counterStubWithSubject(tb assert.TB) stub.Subject[telemetrytest.CounterWith
 	}
 }
 
-// counterStubReleaseSubject returns the subject of [stub.Behaviour] for
-// Release. The subject calls a new double that reports to tb.
+// counterStubReleaseSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Release. The subject calls a new double that
+// reports to tb.
 func counterStubReleaseSubject(tb assert.TB) stub.Subject[telemetrytest.CounterReleaseCall, struct{}] {
 	tb.Helper()
 	s := telemetrytest.NewCounterStub(tb)
 	return stub.Subject[telemetrytest.CounterReleaseCall, struct{}]{
-		Stub: s.OnRelease.MethodStub,
+		Stub:  s.OnRelease.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			counterStubRelease(tb, s)
 		},
-		Override: func(mark func()) {
+		Override: func(seen func(telemetrytest.CounterReleaseCall)) {
 			s.OnRelease.Func(func() {
-				mark()
+				seen(telemetrytest.CounterReleaseCall{})
 			})
 		},
 	}
@@ -127,7 +144,6 @@ func counterStubInstanceOf(tb assert.TB, s *telemetrytest.CounterStub) counterSt
 		Call: func() {
 			counterStubAdd(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -139,102 +155,34 @@ func TestCounterStub(t *testing.T) {
 	t.Run("Add", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Add", counterStubAddSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewCounterStub(t)
-			counterStubAdd(t, s)
-			got := s.OnAdd.AssertCalledOnce(t, "Add records the call")
-			a0, a1 := counterStubAddArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.Value, a1, "the call records Value")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewCounterStub(t)
-			var seen []telemetrytest.CounterAddCall
-			s.OnAdd.OnRecord(func(c telemetrytest.CounterAddCall) { seen = append(seen, c) })
-			counterStubAdd(t, s)
-			counterStubAdd(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Add")
-		})
 	})
 
 	t.Run("With", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "With", counterStubWithSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewCounterStub(t)
-			_ = counterStubWith(t, s)
-			got := s.OnWith.AssertCalledOnce(t, "With records the call")
-			a0 := counterStubWithArgs(t)
-			assert.Equal(t, got.Attrs, a0, "the call records Attrs")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewCounterStub(t)
-			var seen []telemetrytest.CounterWithCall
-			s.OnWith.OnRecord(func(c telemetrytest.CounterWithCall) { seen = append(seen, c) })
-			_ = counterStubWith(t, s)
-			_ = counterStubWith(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of With")
-		})
 	})
 
 	t.Run("Release", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Release", counterStubReleaseSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewCounterStub(t)
-			var seen []telemetrytest.CounterReleaseCall
-			s.OnRelease.OnRecord(func(c telemetrytest.CounterReleaseCall) { seen = append(seen, c) })
-			counterStubRelease(t, s)
-			counterStubRelease(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Release")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) counterStubInstance {
-			return counterStubInstanceOf(tb, telemetrytest.NewCounterStub(tb))
-		})
 
-		t.Run("clears the recorded calls of Add", func(t *testing.T) {
+		t.Run("Add", func(t *testing.T) {
 			t.Parallel()
-			s := telemetrytest.NewCounterStub(t)
-			counterStubAdd(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnAdd.CallCount(), 0, "ResetCalls clears the calls of Add")
+			stub.ResetBehaviour(t, "Add", counterStubAddSubject)
 		})
 
-		t.Run("clears the recorded calls of With", func(t *testing.T) {
+		t.Run("With", func(t *testing.T) {
 			t.Parallel()
-			s := telemetrytest.NewCounterStub(t)
-			_ = counterStubWith(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnWith.CallCount(), 0, "ResetCalls clears the calls of With")
+			stub.ResetBehaviour(t, "With", counterStubWithSubject)
 		})
 
-		t.Run("clears the recorded calls of Release", func(t *testing.T) {
+		t.Run("Release", func(t *testing.T) {
 			t.Parallel()
-			s := telemetrytest.NewCounterStub(t)
-			counterStubRelease(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnRelease.CallCount(), 0, "ResetCalls clears the calls of Release")
-		})
-	})
-
-	t.Run("NewCounterStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) counterStubInstance {
-			return counterStubInstanceOf(tb, telemetrytest.NewCounterStubDelayed(tb, d, clk))
+			stub.ResetBehaviour(t, "Release", counterStubReleaseSubject)
 		})
 	})
 
@@ -359,67 +307,4 @@ func TestCounterStub(t *testing.T) {
 	})
 }
 
-// TestCounterAddStub checks the methods of CounterAddStub, which
-// configures Add.
-func TestCounterAddStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Add to the function", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewCounterStub(t)
-			var got0 context.Context
-			var got1 int64
-			s.OnAdd.Func(func(p0 context.Context, p1 int64) {
-				got0, got1 = p0, p1
-			})
-			counterStubAdd(t, s)
-			a0, a1 := counterStubAddArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives Value")
-		})
-	})
-}
-
-// TestCounterWithStub checks the methods of CounterWithStub, which
-// configures With.
-func TestCounterWithStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("configures With for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := telemetrytest.NewCounterStub(r)
-			s.OnWith.Strict()
-			var want0 telemetry.Counter
-			s.OnWith.Returns(want0)
-			_ = counterStubWith(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of With")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of With to the function", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewCounterStub(t)
-			var got0 []telemetry.Attr
-			s.OnWith.Func(func(p0 []telemetry.Attr) telemetry.Counter {
-				got0 = p0
-				var z0 telemetry.Counter
-				return z0
-			})
-			_ = counterStubWith(t, s)
-			a0 := counterStubWithArgs(t)
-			assert.Equal(t, got0, a0, "the function receives Attrs")
-		})
-	})
-}
-
-// dokimi:provenance sha256:0c6b8ff595f42fdf5dd75bbab63cf265b8e0d536cbb86b28f1ac7a96b55e9f81
+// dokimi:provenance sha256:dbd111b02dd2a0b7627d8469a12cc02ad4de251040ad56babeff53410c65d0fc

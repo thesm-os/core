@@ -22,15 +22,17 @@ func generatorStubGenerate(tb assert.TB, s *idtest.GeneratorStub) id.ID {
 	return s.Generate()
 }
 
-// generatorStubGenerateSubject returns the subject of [stub.Behaviour] for
-// Generate. The subject calls a new double that reports to tb.
+// generatorStubGenerateSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Generate. The subject calls a new double that
+// reports to tb.
 func generatorStubGenerateSubject(
 	tb assert.TB,
 ) stub.Subject[idtest.GeneratorGenerateCall, idtest.GeneratorGenerateReturn] {
 	tb.Helper()
 	s := idtest.NewGeneratorStub(tb)
 	return stub.Subject[idtest.GeneratorGenerateCall, idtest.GeneratorGenerateReturn]{
-		Stub: s.OnGenerate.MethodStub,
+		Stub:  s.OnGenerate.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = generatorStubGenerate(tb, s)
 		},
@@ -38,9 +40,9 @@ func generatorStubGenerateSubject(
 			got0 := generatorStubGenerate(tb, s)
 			return idtest.GeneratorGenerateReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Override: func(seen func(idtest.GeneratorGenerateCall)) {
 			s.OnGenerate.Func(func() id.ID {
-				mark()
+				seen(idtest.GeneratorGenerateCall{})
 				var z0 id.ID
 				return z0
 			})
@@ -61,7 +63,6 @@ func generatorStubInstanceOf(tb assert.TB, s *idtest.GeneratorStub) generatorStu
 		Call: func() {
 			_ = generatorStubGenerate(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -73,37 +74,14 @@ func TestGeneratorStub(t *testing.T) {
 	t.Run("Generate", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Generate", generatorStubGenerateSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := idtest.NewGeneratorStub(t)
-			var seen []idtest.GeneratorGenerateCall
-			s.OnGenerate.OnRecord(func(c idtest.GeneratorGenerateCall) { seen = append(seen, c) })
-			_ = generatorStubGenerate(t, s)
-			_ = generatorStubGenerate(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Generate")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) generatorStubInstance {
-			return generatorStubInstanceOf(tb, idtest.NewGeneratorStub(tb))
-		})
 
-		t.Run("clears the recorded calls of Generate", func(t *testing.T) {
+		t.Run("Generate", func(t *testing.T) {
 			t.Parallel()
-			s := idtest.NewGeneratorStub(t)
-			_ = generatorStubGenerate(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnGenerate.CallCount(), 0, "ResetCalls clears the calls of Generate")
-		})
-	})
-
-	t.Run("NewGeneratorStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) generatorStubInstance {
-			return generatorStubInstanceOf(tb, idtest.NewGeneratorStubDelayed(tb, d, clk))
+			stub.ResetBehaviour(t, "Generate", generatorStubGenerateSubject)
 		})
 	})
 
@@ -174,25 +152,4 @@ func TestGeneratorStub(t *testing.T) {
 	})
 }
 
-// TestGeneratorGenerateStub checks the methods of GeneratorGenerateStub,
-// which configures Generate.
-func TestGeneratorGenerateStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("configures Generate for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := idtest.NewGeneratorStub(r)
-			s.OnGenerate.Strict()
-			var want0 id.ID
-			s.OnGenerate.Returns(want0)
-			_ = generatorStubGenerate(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Generate")
-		})
-	})
-}
-
-// dokimi:provenance sha256:f4555de2e094d20ded0a0defc7ae6211fa7ebbb6b1f036516020ecc8fb239a29
+// dokimi:provenance sha256:e239a9a23bf05735fca746f1b854767055a08c6bd671c85cc5d2ab05c4cdab97

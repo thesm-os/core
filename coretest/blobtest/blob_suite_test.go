@@ -48,94 +48,7 @@ func TestStoreSuite(t *testing.T) {
 				},
 				Defect: func(*blobtest.StoreHandle) blob.Store { return &storeSubject{} },
 			}),
-			conform.Excuse(
-				blobtest.StoreChecks.Put.StoreKeepsAKeyAndALongerKey(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				blobtest.StoreChecks.Put.StoreKeepsEveryWriteAcrossARestart(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				blobtest.StoreChecks.Put.StoreLeavesEachKeyAsItWasOrWhole(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				blobtest.StoreChecks.Put.StorePutDescribesTheObject(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				blobtest.StoreChecks.Put.StorePutIfMatchGuardsItsVersion(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				blobtest.StoreChecks.Put.StorePutIfNoneMatchCreatesOnce(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				blobtest.StoreChecks.Put.StorePutIfNoneMatchGuardsItsVersion(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				blobtest.StoreChecks.Put.StorePutIssuesANewVersion(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				blobtest.StoreChecks.Put.StorePutLeavesTheObjectOnFailure(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				blobtest.StoreChecks.Put.StorePutNeverReusesAVersion(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				blobtest.StoreChecks.Put.StorePutRefusesAnInvalidContentType(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				blobtest.StoreChecks.Put.StorePutStoresAValidContentType(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				blobtest.StoreChecks.Put.StorePutStoresAnEmptyBody(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				blobtest.StoreChecks.Put.StoreRefusesAnInvalidKey(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				blobtest.StoreChecks.Get.StoreGetReaderFailsWithErrMismatch(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				blobtest.StoreChecks.Get.StoreGetReaderReturnsTheOpenedVersion(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				blobtest.StoreChecks.Get.StoreGetReturnsTheObject(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				blobtest.StoreChecks.Get.StoreReportsAbsenceAsNotFound(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				blobtest.StoreChecks.Stat.StoreStatDescribesTheObject(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				blobtest.StoreChecks.Delete.StoreDeleteFollowsTheConditionalTable(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				blobtest.StoreChecks.List.StoreListYieldsEveryKeyOnce(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				blobtest.StoreChecks.List.StoreReturnsTheErrorOfADoneContext(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[blob.Store]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -157,94 +70,7 @@ func TestStoreSuite(t *testing.T) {
 				},
 				Defect: func(*blobtest.StoreHandle) blob.Store { return &storeSubject{} },
 			}),
-			conform.Excuse(
-				blobtest.StoreChecks.Put.StoreKeepsAKeyAndALongerKey(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				blobtest.StoreChecks.Put.StoreKeepsEveryWriteAcrossARestart(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				blobtest.StoreChecks.Put.StoreLeavesEachKeyAsItWasOrWhole(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				blobtest.StoreChecks.Put.StorePutDescribesTheObject(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				blobtest.StoreChecks.Put.StorePutIfMatchGuardsItsVersion(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				blobtest.StoreChecks.Put.StorePutIfNoneMatchCreatesOnce(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				blobtest.StoreChecks.Put.StorePutIfNoneMatchGuardsItsVersion(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				blobtest.StoreChecks.Put.StorePutIssuesANewVersion(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				blobtest.StoreChecks.Put.StorePutLeavesTheObjectOnFailure(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				blobtest.StoreChecks.Put.StorePutNeverReusesAVersion(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				blobtest.StoreChecks.Put.StorePutRefusesAnInvalidContentType(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				blobtest.StoreChecks.Put.StorePutStoresAValidContentType(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				blobtest.StoreChecks.Put.StorePutStoresAnEmptyBody(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				blobtest.StoreChecks.Put.StoreRefusesAnInvalidKey(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				blobtest.StoreChecks.Get.StoreGetReaderFailsWithErrMismatch(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				blobtest.StoreChecks.Get.StoreGetReaderReturnsTheOpenedVersion(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				blobtest.StoreChecks.Get.StoreGetReturnsTheObject(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				blobtest.StoreChecks.Get.StoreReportsAbsenceAsNotFound(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				blobtest.StoreChecks.Stat.StoreStatDescribesTheObject(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				blobtest.StoreChecks.Delete.StoreDeleteFollowsTheConditionalTable(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				blobtest.StoreChecks.List.StoreListYieldsEveryKeyOnce(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				blobtest.StoreChecks.List.StoreReturnsTheErrorOfADoneContext(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[blob.Store]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -376,19 +202,17 @@ func TestStoreSuite(t *testing.T) {
 			"Store.List/store-list-yields-every-key-once",
 			"the identity of the check joins the callable and the segment of the check",
 		)
-		assert.Equal(
-			t,
-			string(blobtest.StoreChecks.List.StoreReturnsTheErrorOfADoneContext()),
-			"Store.List/store-returns-the-error-of-a-done-context",
-			"the identity of the check joins the callable and the segment of the check",
-		)
 	})
 }
 
+// storeSuite is the suite of Store that the tests of the planted defect of
+// a ceiling apply.
+var storeSuite = blobtest.StoreSuite()
+
 // storeIdle returns the planted defect of a ceiling of Store with a spend
-// of nothing, a subject that answers each call at once.
+// of nothing. Each call of the defect returns its zero results at once.
 func storeIdle(h *blobtest.StoreHandle) blob.Store {
-	return blobtest.StoreSuite().Calls[0].Over(h, func() {})
+	return storeSuite.Calls[0].Over(h, func() {})
 }
 
 // TestStoreSuiteBudgets applies the allocation ceilings of the suite of
@@ -404,94 +228,7 @@ func TestStoreSuiteBudgets(t *testing.T) {
 		conform.Ceilings(blobtest.StoreChecks.Stat.Callable, conform.Budget{Allocs: new(uint64(0))}),
 		conform.Ceilings(blobtest.StoreChecks.Delete.Callable, conform.Budget{Allocs: new(uint64(0))}),
 		conform.Ceilings(blobtest.StoreChecks.List.Callable, conform.Budget{Allocs: new(uint64(0))}),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StoreKeepsAKeyAndALongerKey(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StoreKeepsEveryWriteAcrossARestart(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StoreLeavesEachKeyAsItWasOrWhole(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutDescribesTheObject(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutIfMatchGuardsItsVersion(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutIfNoneMatchCreatesOnce(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutIfNoneMatchGuardsItsVersion(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutIssuesANewVersion(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutLeavesTheObjectOnFailure(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutNeverReusesAVersion(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutRefusesAnInvalidContentType(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutStoresAValidContentType(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutStoresAnEmptyBody(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StoreRefusesAnInvalidKey(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Get.StoreGetReaderFailsWithErrMismatch(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Get.StoreGetReaderReturnsTheOpenedVersion(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Get.StoreGetReturnsTheObject(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Get.StoreReportsAbsenceAsNotFound(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Stat.StoreStatDescribesTheObject(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Delete.StoreDeleteFollowsTheConditionalTable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.List.StoreListYieldsEveryKeyOnce(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.List.StoreReturnsTheErrorOfADoneContext(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[blob.Store]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -502,94 +239,7 @@ func FuzzStoreSuitePut(f *testing.F) {
 		f,
 		blobtest.StoreChecks.Put.Callable,
 		storeIdle,
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StoreKeepsAKeyAndALongerKey(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StoreKeepsEveryWriteAcrossARestart(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StoreLeavesEachKeyAsItWasOrWhole(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutDescribesTheObject(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutIfMatchGuardsItsVersion(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutIfNoneMatchCreatesOnce(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutIfNoneMatchGuardsItsVersion(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutIssuesANewVersion(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutLeavesTheObjectOnFailure(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutNeverReusesAVersion(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutRefusesAnInvalidContentType(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutStoresAValidContentType(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutStoresAnEmptyBody(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StoreRefusesAnInvalidKey(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Get.StoreGetReaderFailsWithErrMismatch(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Get.StoreGetReaderReturnsTheOpenedVersion(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Get.StoreGetReturnsTheObject(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Get.StoreReportsAbsenceAsNotFound(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Stat.StoreStatDescribesTheObject(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Delete.StoreDeleteFollowsTheConditionalTable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.List.StoreListYieldsEveryKeyOnce(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.List.StoreReturnsTheErrorOfADoneContext(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[blob.Store]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -600,94 +250,7 @@ func FuzzStoreSuiteGet(f *testing.F) {
 		f,
 		blobtest.StoreChecks.Get.Callable,
 		storeIdle,
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StoreKeepsAKeyAndALongerKey(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StoreKeepsEveryWriteAcrossARestart(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StoreLeavesEachKeyAsItWasOrWhole(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutDescribesTheObject(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutIfMatchGuardsItsVersion(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutIfNoneMatchCreatesOnce(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutIfNoneMatchGuardsItsVersion(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutIssuesANewVersion(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutLeavesTheObjectOnFailure(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutNeverReusesAVersion(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutRefusesAnInvalidContentType(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutStoresAValidContentType(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutStoresAnEmptyBody(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StoreRefusesAnInvalidKey(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Get.StoreGetReaderFailsWithErrMismatch(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Get.StoreGetReaderReturnsTheOpenedVersion(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Get.StoreGetReturnsTheObject(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Get.StoreReportsAbsenceAsNotFound(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Stat.StoreStatDescribesTheObject(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Delete.StoreDeleteFollowsTheConditionalTable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.List.StoreListYieldsEveryKeyOnce(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.List.StoreReturnsTheErrorOfADoneContext(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[blob.Store]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -698,94 +261,7 @@ func FuzzStoreSuiteStat(f *testing.F) {
 		f,
 		blobtest.StoreChecks.Stat.Callable,
 		storeIdle,
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StoreKeepsAKeyAndALongerKey(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StoreKeepsEveryWriteAcrossARestart(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StoreLeavesEachKeyAsItWasOrWhole(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutDescribesTheObject(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutIfMatchGuardsItsVersion(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutIfNoneMatchCreatesOnce(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutIfNoneMatchGuardsItsVersion(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutIssuesANewVersion(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutLeavesTheObjectOnFailure(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutNeverReusesAVersion(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutRefusesAnInvalidContentType(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutStoresAValidContentType(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutStoresAnEmptyBody(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StoreRefusesAnInvalidKey(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Get.StoreGetReaderFailsWithErrMismatch(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Get.StoreGetReaderReturnsTheOpenedVersion(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Get.StoreGetReturnsTheObject(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Get.StoreReportsAbsenceAsNotFound(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Stat.StoreStatDescribesTheObject(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Delete.StoreDeleteFollowsTheConditionalTable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.List.StoreListYieldsEveryKeyOnce(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.List.StoreReturnsTheErrorOfADoneContext(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[blob.Store]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -796,94 +272,7 @@ func FuzzStoreSuiteDelete(f *testing.F) {
 		f,
 		blobtest.StoreChecks.Delete.Callable,
 		storeIdle,
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StoreKeepsAKeyAndALongerKey(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StoreKeepsEveryWriteAcrossARestart(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StoreLeavesEachKeyAsItWasOrWhole(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutDescribesTheObject(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutIfMatchGuardsItsVersion(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutIfNoneMatchCreatesOnce(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutIfNoneMatchGuardsItsVersion(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutIssuesANewVersion(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutLeavesTheObjectOnFailure(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutNeverReusesAVersion(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutRefusesAnInvalidContentType(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutStoresAValidContentType(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutStoresAnEmptyBody(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StoreRefusesAnInvalidKey(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Get.StoreGetReaderFailsWithErrMismatch(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Get.StoreGetReaderReturnsTheOpenedVersion(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Get.StoreGetReturnsTheObject(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Get.StoreReportsAbsenceAsNotFound(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Stat.StoreStatDescribesTheObject(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Delete.StoreDeleteFollowsTheConditionalTable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.List.StoreListYieldsEveryKeyOnce(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.List.StoreReturnsTheErrorOfADoneContext(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[blob.Store]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -894,94 +283,7 @@ func FuzzStoreSuiteList(f *testing.F) {
 		f,
 		blobtest.StoreChecks.List.Callable,
 		storeIdle,
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StoreKeepsAKeyAndALongerKey(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StoreKeepsEveryWriteAcrossARestart(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StoreLeavesEachKeyAsItWasOrWhole(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutDescribesTheObject(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutIfMatchGuardsItsVersion(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutIfNoneMatchCreatesOnce(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutIfNoneMatchGuardsItsVersion(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutIssuesANewVersion(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutLeavesTheObjectOnFailure(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutNeverReusesAVersion(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutRefusesAnInvalidContentType(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutStoresAValidContentType(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StorePutStoresAnEmptyBody(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Put.StoreRefusesAnInvalidKey(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Get.StoreGetReaderFailsWithErrMismatch(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Get.StoreGetReaderReturnsTheOpenedVersion(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Get.StoreGetReturnsTheObject(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Get.StoreReportsAbsenceAsNotFound(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Stat.StoreStatDescribesTheObject(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.Delete.StoreDeleteFollowsTheConditionalTable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.List.StoreListYieldsEveryKeyOnce(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.StoreChecks.List.StoreReturnsTheErrorOfADoneContext(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[blob.Store]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -1041,26 +343,7 @@ func TestRangeReaderSuite(t *testing.T) {
 				},
 				Defect: func(*blobtest.RangeReaderHandle) blob.RangeReader { return &rangeReaderSubject{} },
 			}),
-			conform.Excuse(
-				blobtest.RangeReaderChecks.ReadRange.RangeReaderReadsLikeReadAt(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				blobtest.RangeReaderChecks.ReadRange.RangeReaderReadsOneVersion(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				blobtest.RangeReaderChecks.ReadRange.RangeReaderReadsTheVersionOfIfMatch(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				blobtest.RangeReaderChecks.ReadRange.RangeReaderRefusesABadRead(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				blobtest.RangeReaderChecks.ReadRange.RangeReaderReturnsTheErrorOfADoneContext(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[blob.RangeReader]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -1082,26 +365,7 @@ func TestRangeReaderSuite(t *testing.T) {
 				},
 				Defect: func(*blobtest.RangeReaderHandle) blob.RangeReader { return &rangeReaderSubject{} },
 			}),
-			conform.Excuse(
-				blobtest.RangeReaderChecks.ReadRange.RangeReaderReadsLikeReadAt(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				blobtest.RangeReaderChecks.ReadRange.RangeReaderReadsOneVersion(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				blobtest.RangeReaderChecks.ReadRange.RangeReaderReadsTheVersionOfIfMatch(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				blobtest.RangeReaderChecks.ReadRange.RangeReaderRefusesABadRead(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				blobtest.RangeReaderChecks.ReadRange.RangeReaderReturnsTheErrorOfADoneContext(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[blob.RangeReader]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -1140,10 +404,15 @@ func TestRangeReaderSuite(t *testing.T) {
 	})
 }
 
+// rangeReaderSuite is the suite of RangeReader that the tests of the
+// planted defect of a ceiling apply.
+var rangeReaderSuite = blobtest.RangeReaderSuite()
+
 // rangeReaderIdle returns the planted defect of a ceiling of RangeReader
-// with a spend of nothing, a subject that answers each call at once.
+// with a spend of nothing. Each call of the defect returns its zero
+// results at once.
 func rangeReaderIdle(h *blobtest.RangeReaderHandle) blob.RangeReader {
-	return blobtest.RangeReaderSuite().Calls[0].Over(h, func() {})
+	return rangeReaderSuite.Calls[0].Over(h, func() {})
 }
 
 // TestRangeReaderSuiteBudgets applies the allocation ceilings of the suite
@@ -1155,26 +424,7 @@ func TestRangeReaderSuiteBudgets(t *testing.T) {
 		t,
 		rangeReaderIdle,
 		conform.Ceilings(blobtest.RangeReaderChecks.ReadRange.Callable, conform.Budget{Allocs: new(uint64(0))}),
-		conform.Excuse(
-			blobtest.RangeReaderChecks.ReadRange.RangeReaderReadsLikeReadAt(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.RangeReaderChecks.ReadRange.RangeReaderReadsOneVersion(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.RangeReaderChecks.ReadRange.RangeReaderReadsTheVersionOfIfMatch(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.RangeReaderChecks.ReadRange.RangeReaderRefusesABadRead(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.RangeReaderChecks.ReadRange.RangeReaderReturnsTheErrorOfADoneContext(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[blob.RangeReader]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -1186,26 +436,7 @@ func FuzzRangeReaderSuiteReadRange(f *testing.F) {
 		f,
 		blobtest.RangeReaderChecks.ReadRange.Callable,
 		rangeReaderIdle,
-		conform.Excuse(
-			blobtest.RangeReaderChecks.ReadRange.RangeReaderReadsLikeReadAt(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.RangeReaderChecks.ReadRange.RangeReaderReadsOneVersion(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.RangeReaderChecks.ReadRange.RangeReaderReadsTheVersionOfIfMatch(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.RangeReaderChecks.ReadRange.RangeReaderRefusesABadRead(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			blobtest.RangeReaderChecks.ReadRange.RangeReaderReturnsTheErrorOfADoneContext(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[blob.RangeReader]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -1217,4 +448,4 @@ func BenchmarkRangeReaderSuite(b *testing.B) {
 	})
 }
 
-// dokimi:provenance sha256:bef49726521418edcd21aaf997fa17abc14ecae8322ae21e41a683fdf31c5543
+// dokimi:provenance sha256:2e57f73818f117fc287d5486c259fb450c48e01b2a7732b834133290a93394dc

@@ -151,23 +151,38 @@ func storeStubListPins() (page.Cursor[blob.Info], error) {
 	return want0, want1
 }
 
-// storeStubPutSubject returns the subject of [stub.Behaviour] for Put. The
-// subject calls a new double that reports to tb.
+// storeStubPutSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Put. The subject calls a new double that
+// reports to tb.
 func storeStubPutSubject(tb assert.TB) stub.Subject[blobtest.StorePutCall, blobtest.StorePutReturn] {
 	tb.Helper()
 	s := blobtest.NewStoreStub(tb)
 	return stub.Subject[blobtest.StorePutCall, blobtest.StorePutReturn]{
-		Stub: s.OnPut.MethodStub,
+		Stub:  s.OnPut.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = storeStubPut(tb, s)
+		},
+		Arguments: func(tb assert.TB, c blobtest.StorePutCall) {
+			tb.Helper()
+			a0, a1, a2, a3 := storeStubPutArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.Key, a1, "the call records Key")
+			expect.Equal(tb, c.R, a2, "the call records R")
+			expect.Equal(tb, c.Opts, a3, "the call records Opts")
 		},
 		Result: func() blobtest.StorePutReturn {
 			got0, got1 := storeStubPut(tb, s)
 			return blobtest.StorePutReturn{Result: got0, Err: got1}
 		},
-		Override: func(mark func()) {
-			s.OnPut.Func(func(_ context.Context, _ string, _ io.Reader, _ blob.PutOptions) (blob.Info, error) {
-				mark()
+		Returns: func() blobtest.StorePutReturn {
+			want0, want1 := storeStubPutPins()
+			s.OnPut.Returns(want0, want1)
+			return blobtest.StorePutReturn{Result: want0, Err: want1}
+		},
+		Override: func(seen func(blobtest.StorePutCall)) {
+			s.OnPut.Func(func(p0 context.Context, p1 string, p2 io.Reader, p3 blob.PutOptions) (blob.Info, error) {
+				seen(blobtest.StorePutCall{Ctx: p0, Key: p1, R: p2, Opts: p3})
 				var z0 blob.Info
 				var z1 error
 				return z0, z1
@@ -180,23 +195,36 @@ func storeStubPutSubject(tb assert.TB) stub.Subject[blobtest.StorePutCall, blobt
 	}
 }
 
-// storeStubGetSubject returns the subject of [stub.Behaviour] for Get. The
-// subject calls a new double that reports to tb.
+// storeStubGetSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Get. The subject calls a new double that
+// reports to tb.
 func storeStubGetSubject(tb assert.TB) stub.Subject[blobtest.StoreGetCall, blobtest.StoreGetReturn] {
 	tb.Helper()
 	s := blobtest.NewStoreStub(tb)
 	return stub.Subject[blobtest.StoreGetCall, blobtest.StoreGetReturn]{
-		Stub: s.OnGet.MethodStub,
+		Stub:  s.OnGet.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _, _ = storeStubGet(tb, s)
+		},
+		Arguments: func(tb assert.TB, c blobtest.StoreGetCall) {
+			tb.Helper()
+			a0, a1 := storeStubGetArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.Key, a1, "the call records Key")
 		},
 		Result: func() blobtest.StoreGetReturn {
 			got0, got1, got2 := storeStubGet(tb, s)
 			return blobtest.StoreGetReturn{Result0: got0, Result1: got1, Err: got2}
 		},
-		Override: func(mark func()) {
-			s.OnGet.Func(func(_ context.Context, _ string) (io.ReadCloser, blob.Info, error) {
-				mark()
+		Returns: func() blobtest.StoreGetReturn {
+			want0, want1, want2 := storeStubGetPins()
+			s.OnGet.Returns(want0, want1, want2)
+			return blobtest.StoreGetReturn{Result0: want0, Result1: want1, Err: want2}
+		},
+		Override: func(seen func(blobtest.StoreGetCall)) {
+			s.OnGet.Func(func(p0 context.Context, p1 string) (io.ReadCloser, blob.Info, error) {
+				seen(blobtest.StoreGetCall{Ctx: p0, Key: p1})
 				var z0 io.ReadCloser
 				var z1 blob.Info
 				var z2 error
@@ -210,23 +238,36 @@ func storeStubGetSubject(tb assert.TB) stub.Subject[blobtest.StoreGetCall, blobt
 	}
 }
 
-// storeStubStatSubject returns the subject of [stub.Behaviour] for Stat.
-// The subject calls a new double that reports to tb.
+// storeStubStatSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Stat. The subject calls a new double that
+// reports to tb.
 func storeStubStatSubject(tb assert.TB) stub.Subject[blobtest.StoreStatCall, blobtest.StoreStatReturn] {
 	tb.Helper()
 	s := blobtest.NewStoreStub(tb)
 	return stub.Subject[blobtest.StoreStatCall, blobtest.StoreStatReturn]{
-		Stub: s.OnStat.MethodStub,
+		Stub:  s.OnStat.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = storeStubStat(tb, s)
+		},
+		Arguments: func(tb assert.TB, c blobtest.StoreStatCall) {
+			tb.Helper()
+			a0, a1 := storeStubStatArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.Key, a1, "the call records Key")
 		},
 		Result: func() blobtest.StoreStatReturn {
 			got0, got1 := storeStubStat(tb, s)
 			return blobtest.StoreStatReturn{Result: got0, Err: got1}
 		},
-		Override: func(mark func()) {
-			s.OnStat.Func(func(_ context.Context, _ string) (blob.Info, error) {
-				mark()
+		Returns: func() blobtest.StoreStatReturn {
+			want0, want1 := storeStubStatPins()
+			s.OnStat.Returns(want0, want1)
+			return blobtest.StoreStatReturn{Result: want0, Err: want1}
+		},
+		Override: func(seen func(blobtest.StoreStatCall)) {
+			s.OnStat.Func(func(p0 context.Context, p1 string) (blob.Info, error) {
+				seen(blobtest.StoreStatCall{Ctx: p0, Key: p1})
 				var z0 blob.Info
 				var z1 error
 				return z0, z1
@@ -239,23 +280,37 @@ func storeStubStatSubject(tb assert.TB) stub.Subject[blobtest.StoreStatCall, blo
 	}
 }
 
-// storeStubDeleteSubject returns the subject of [stub.Behaviour] for
-// Delete. The subject calls a new double that reports to tb.
+// storeStubDeleteSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Delete. The subject calls a new double that
+// reports to tb.
 func storeStubDeleteSubject(tb assert.TB) stub.Subject[blobtest.StoreDeleteCall, blobtest.StoreDeleteReturn] {
 	tb.Helper()
 	s := blobtest.NewStoreStub(tb)
 	return stub.Subject[blobtest.StoreDeleteCall, blobtest.StoreDeleteReturn]{
-		Stub: s.OnDelete.MethodStub,
+		Stub:  s.OnDelete.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = storeStubDelete(tb, s)
+		},
+		Arguments: func(tb assert.TB, c blobtest.StoreDeleteCall) {
+			tb.Helper()
+			a0, a1, a2 := storeStubDeleteArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.Key, a1, "the call records Key")
+			expect.Equal(tb, c.IfMatch, a2, "the call records IfMatch")
 		},
 		Result: func() blobtest.StoreDeleteReturn {
 			got0 := storeStubDelete(tb, s)
 			return blobtest.StoreDeleteReturn{Err: got0}
 		},
-		Override: func(mark func()) {
-			s.OnDelete.Func(func(_ context.Context, _ string, _ version.Version) error {
-				mark()
+		Returns: func() blobtest.StoreDeleteReturn {
+			want0 := storeStubDeletePins()
+			s.OnDelete.Returns(want0)
+			return blobtest.StoreDeleteReturn{Err: want0}
+		},
+		Override: func(seen func(blobtest.StoreDeleteCall)) {
+			s.OnDelete.Func(func(p0 context.Context, p1 string, p2 version.Version) error {
+				seen(blobtest.StoreDeleteCall{Ctx: p0, Key: p1, IfMatch: p2})
 				var z0 error
 				return z0
 			})
@@ -267,23 +322,37 @@ func storeStubDeleteSubject(tb assert.TB) stub.Subject[blobtest.StoreDeleteCall,
 	}
 }
 
-// storeStubListSubject returns the subject of [stub.Behaviour] for List.
-// The subject calls a new double that reports to tb.
+// storeStubListSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for List. The subject calls a new double that
+// reports to tb.
 func storeStubListSubject(tb assert.TB) stub.Subject[blobtest.StoreListCall, blobtest.StoreListReturn] {
 	tb.Helper()
 	s := blobtest.NewStoreStub(tb)
 	return stub.Subject[blobtest.StoreListCall, blobtest.StoreListReturn]{
-		Stub: s.OnList.MethodStub,
+		Stub:  s.OnList.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = storeStubList(tb, s)
+		},
+		Arguments: func(tb assert.TB, c blobtest.StoreListCall) {
+			tb.Helper()
+			a0, a1, a2 := storeStubListArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.Prefix, a1, "the call records Prefix")
+			expect.Equal(tb, c.P, a2, "the call records P")
 		},
 		Result: func() blobtest.StoreListReturn {
 			got0, got1 := storeStubList(tb, s)
 			return blobtest.StoreListReturn{Result: got0, Err: got1}
 		},
-		Override: func(mark func()) {
-			s.OnList.Func(func(_ context.Context, _ string, _ page.Page) (page.Cursor[blob.Info], error) {
-				mark()
+		Returns: func() blobtest.StoreListReturn {
+			want0, want1 := storeStubListPins()
+			s.OnList.Returns(want0, want1)
+			return blobtest.StoreListReturn{Result: want0, Err: want1}
+		},
+		Override: func(seen func(blobtest.StoreListCall)) {
+			s.OnList.Func(func(p0 context.Context, p1 string, p2 page.Page) (page.Cursor[blob.Info], error) {
+				seen(blobtest.StoreListCall{Ctx: p0, Prefix: p1, P: p2})
 				var z0 page.Cursor[blob.Info]
 				var z1 error
 				return z0, z1
@@ -309,7 +378,6 @@ func storeStubInstanceOf(tb assert.TB, s *blobtest.StoreStub) storeStubInstance 
 		Call: func() {
 			_, _ = storeStubPut(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -321,280 +389,54 @@ func TestStoreStub(t *testing.T) {
 	t.Run("Put", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Put", storeStubPutSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := blobtest.NewStoreStub(t)
-			_, _ = storeStubPut(t, s)
-			got := s.OnPut.AssertCalledOnce(t, "Put records the call")
-			a0, a1, a2, a3 := storeStubPutArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.Key, a1, "the call records Key")
-			expect.Equal(t, got.R, a2, "the call records R")
-			expect.Equal(t, got.Opts, a3, "the call records Opts")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := blobtest.NewStoreStub(t)
-			var seen []blobtest.StorePutCall
-			s.OnPut.OnRecord(func(c blobtest.StorePutCall) { seen = append(seen, c) })
-			_, _ = storeStubPut(t, s)
-			_, _ = storeStubPut(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Put")
-		})
 	})
 
 	t.Run("Get", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Get", storeStubGetSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := blobtest.NewStoreStub(t)
-			_, _, _ = storeStubGet(t, s)
-			got := s.OnGet.AssertCalledOnce(t, "Get records the call")
-			a0, a1 := storeStubGetArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.Key, a1, "the call records Key")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := blobtest.NewStoreStub(t)
-			var seen []blobtest.StoreGetCall
-			s.OnGet.OnRecord(func(c blobtest.StoreGetCall) { seen = append(seen, c) })
-			_, _, _ = storeStubGet(t, s)
-			_, _, _ = storeStubGet(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Get")
-		})
 	})
 
 	t.Run("Stat", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Stat", storeStubStatSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := blobtest.NewStoreStub(t)
-			_, _ = storeStubStat(t, s)
-			got := s.OnStat.AssertCalledOnce(t, "Stat records the call")
-			a0, a1 := storeStubStatArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.Key, a1, "the call records Key")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := blobtest.NewStoreStub(t)
-			var seen []blobtest.StoreStatCall
-			s.OnStat.OnRecord(func(c blobtest.StoreStatCall) { seen = append(seen, c) })
-			_, _ = storeStubStat(t, s)
-			_, _ = storeStubStat(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Stat")
-		})
 	})
 
 	t.Run("Delete", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Delete", storeStubDeleteSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := blobtest.NewStoreStub(t)
-			_ = storeStubDelete(t, s)
-			got := s.OnDelete.AssertCalledOnce(t, "Delete records the call")
-			a0, a1, a2 := storeStubDeleteArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.Key, a1, "the call records Key")
-			expect.Equal(t, got.IfMatch, a2, "the call records IfMatch")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := blobtest.NewStoreStub(t)
-			var seen []blobtest.StoreDeleteCall
-			s.OnDelete.OnRecord(func(c blobtest.StoreDeleteCall) { seen = append(seen, c) })
-			_ = storeStubDelete(t, s)
-			_ = storeStubDelete(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Delete")
-		})
 	})
 
 	t.Run("List", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "List", storeStubListSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := blobtest.NewStoreStub(t)
-			_, _ = storeStubList(t, s)
-			got := s.OnList.AssertCalledOnce(t, "List records the call")
-			a0, a1, a2 := storeStubListArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.Prefix, a1, "the call records Prefix")
-			expect.Equal(t, got.P, a2, "the call records P")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := blobtest.NewStoreStub(t)
-			var seen []blobtest.StoreListCall
-			s.OnList.OnRecord(func(c blobtest.StoreListCall) { seen = append(seen, c) })
-			_, _ = storeStubList(t, s)
-			_, _ = storeStubList(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of List")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) storeStubInstance {
-			return storeStubInstanceOf(tb, blobtest.NewStoreStub(tb))
-		})
 
-		t.Run("clears the recorded calls of Put", func(t *testing.T) {
+		t.Run("Put", func(t *testing.T) {
 			t.Parallel()
-			s := blobtest.NewStoreStub(t)
-			_, _ = storeStubPut(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnPut.CallCount(), 0, "ResetCalls clears the calls of Put")
+			stub.ResetBehaviour(t, "Put", storeStubPutSubject)
 		})
 
-		t.Run("keeps the results of Returns of Put", func(t *testing.T) {
+		t.Run("Get", func(t *testing.T) {
 			t.Parallel()
-			s := blobtest.NewStoreStub(t)
-			want0, want1 := storeStubPutPins()
-			s.OnPut.Returns(want0, want1)
-			s.ResetCalls()
-			got0, got1 := storeStubPut(t, s)
-			expect.Equal(t, got0, want0, "ResetCalls keeps the Result of Put")
-			expect.ErrorIs(t, got1, want1, "ResetCalls keeps the error of Put")
+			stub.ResetBehaviour(t, "Get", storeStubGetSubject)
 		})
 
-		t.Run("clears the recorded calls of Get", func(t *testing.T) {
+		t.Run("Stat", func(t *testing.T) {
 			t.Parallel()
-			s := blobtest.NewStoreStub(t)
-			_, _, _ = storeStubGet(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnGet.CallCount(), 0, "ResetCalls clears the calls of Get")
+			stub.ResetBehaviour(t, "Stat", storeStubStatSubject)
 		})
 
-		t.Run("keeps the results of Returns of Get", func(t *testing.T) {
+		t.Run("Delete", func(t *testing.T) {
 			t.Parallel()
-			s := blobtest.NewStoreStub(t)
-			want0, want1, want2 := storeStubGetPins()
-			s.OnGet.Returns(want0, want1, want2)
-			s.ResetCalls()
-			_, got1, got2 := storeStubGet(t, s)
-			expect.Equal(t, got1, want1, "ResetCalls keeps the Result1 of Get")
-			expect.ErrorIs(t, got2, want2, "ResetCalls keeps the error of Get")
+			stub.ResetBehaviour(t, "Delete", storeStubDeleteSubject)
 		})
 
-		t.Run("clears the recorded calls of Stat", func(t *testing.T) {
+		t.Run("List", func(t *testing.T) {
 			t.Parallel()
-			s := blobtest.NewStoreStub(t)
-			_, _ = storeStubStat(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnStat.CallCount(), 0, "ResetCalls clears the calls of Stat")
-		})
-
-		t.Run("keeps the results of Returns of Stat", func(t *testing.T) {
-			t.Parallel()
-			s := blobtest.NewStoreStub(t)
-			want0, want1 := storeStubStatPins()
-			s.OnStat.Returns(want0, want1)
-			s.ResetCalls()
-			got0, got1 := storeStubStat(t, s)
-			expect.Equal(t, got0, want0, "ResetCalls keeps the Result of Stat")
-			expect.ErrorIs(t, got1, want1, "ResetCalls keeps the error of Stat")
-		})
-
-		t.Run("clears the recorded calls of Delete", func(t *testing.T) {
-			t.Parallel()
-			s := blobtest.NewStoreStub(t)
-			_ = storeStubDelete(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnDelete.CallCount(), 0, "ResetCalls clears the calls of Delete")
-		})
-
-		t.Run("keeps the results of Returns of Delete", func(t *testing.T) {
-			t.Parallel()
-			s := blobtest.NewStoreStub(t)
-			want0 := storeStubDeletePins()
-			s.OnDelete.Returns(want0)
-			s.ResetCalls()
-			got0 := storeStubDelete(t, s)
-			assert.ErrorIs(t, got0, want0, "ResetCalls keeps the error of Delete")
-		})
-
-		t.Run("clears the recorded calls of List", func(t *testing.T) {
-			t.Parallel()
-			s := blobtest.NewStoreStub(t)
-			_, _ = storeStubList(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnList.CallCount(), 0, "ResetCalls clears the calls of List")
-		})
-
-		t.Run("keeps the results of Returns of List", func(t *testing.T) {
-			t.Parallel()
-			s := blobtest.NewStoreStub(t)
-			want0, want1 := storeStubListPins()
-			s.OnList.Returns(want0, want1)
-			s.ResetCalls()
-			_, got1 := storeStubList(t, s)
-			assert.ErrorIs(t, got1, want1, "ResetCalls keeps the error of List")
-		})
-	})
-
-	t.Run("NewStoreStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) storeStubInstance {
-			return storeStubInstanceOf(tb, blobtest.NewStoreStubDelayed(tb, d, clk))
-		})
-	})
-
-	t.Run("NewStoreStubFailing", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("fails Put with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Put-failing")
-			s := blobtest.NewStoreStubFailing(t, want)
-			_, r1 := storeStubPut(t, s)
-			assert.ErrorIs(t, r1, want, "Put fails with the error of NewStoreStubFailing")
-		})
-
-		t.Run("fails Get with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Get-failing")
-			s := blobtest.NewStoreStubFailing(t, want)
-			_, _, r2 := storeStubGet(t, s)
-			assert.ErrorIs(t, r2, want, "Get fails with the error of NewStoreStubFailing")
-		})
-
-		t.Run("fails Stat with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Stat-failing")
-			s := blobtest.NewStoreStubFailing(t, want)
-			_, r1 := storeStubStat(t, s)
-			assert.ErrorIs(t, r1, want, "Stat fails with the error of NewStoreStubFailing")
-		})
-
-		t.Run("fails Delete with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Delete-failing")
-			s := blobtest.NewStoreStubFailing(t, want)
-			r0 := storeStubDelete(t, s)
-			assert.ErrorIs(t, r0, want, "Delete fails with the error of NewStoreStubFailing")
-		})
-
-		t.Run("fails List with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("List-failing")
-			s := blobtest.NewStoreStubFailing(t, want)
-			_, r1 := storeStubList(t, s)
-			assert.ErrorIs(t, r1, want, "List fails with the error of NewStoreStubFailing")
+			stub.ResetBehaviour(t, "List", storeStubListSubject)
 		})
 	})
 
@@ -874,277 +716,6 @@ func TestStoreStub(t *testing.T) {
 	})
 }
 
-// TestStorePutStub checks the methods of StorePutStub, which configures
-// Put.
-func TestStorePutStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Put", func(t *testing.T) {
-			t.Parallel()
-			s := blobtest.NewStoreStub(t)
-			want0, want1 := storeStubPutPins()
-			s.OnPut.Returns(want0, want1)
-			got0, got1 := storeStubPut(t, s)
-			expect.Equal(t, got0, want0, "Put returns the Result that Returns sets")
-			expect.ErrorIs(t, got1, want1, "Put returns the error that Returns sets")
-		})
-
-		t.Run("configures Put for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := blobtest.NewStoreStub(r)
-			s.OnPut.Strict()
-			var want0 blob.Info
-			var want1 error
-			s.OnPut.Returns(want0, want1)
-			_, _ = storeStubPut(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Put")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Put to the function", func(t *testing.T) {
-			t.Parallel()
-			s := blobtest.NewStoreStub(t)
-			var got0 context.Context
-			var got1 string
-			var got2 io.Reader
-			var got3 blob.PutOptions
-			s.OnPut.Func(func(p0 context.Context, p1 string, p2 io.Reader, p3 blob.PutOptions) (blob.Info, error) {
-				got0, got1, got2, got3 = p0, p1, p2, p3
-				var z0 blob.Info
-				var z1 error
-				return z0, z1
-			})
-			_, _ = storeStubPut(t, s)
-			a0, a1, a2, a3 := storeStubPutArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives Key")
-			expect.Equal(t, got2, a2, "the function receives R")
-			expect.Equal(t, got3, a3, "the function receives Opts")
-		})
-	})
-}
-
-// TestStoreGetStub checks the methods of StoreGetStub, which configures
-// Get.
-func TestStoreGetStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Get", func(t *testing.T) {
-			t.Parallel()
-			s := blobtest.NewStoreStub(t)
-			want0, want1, want2 := storeStubGetPins()
-			s.OnGet.Returns(want0, want1, want2)
-			_, got1, got2 := storeStubGet(t, s)
-			expect.Equal(t, got1, want1, "Get returns the Result1 that Returns sets")
-			expect.ErrorIs(t, got2, want2, "Get returns the error that Returns sets")
-		})
-
-		t.Run("configures Get for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := blobtest.NewStoreStub(r)
-			s.OnGet.Strict()
-			var want0 io.ReadCloser
-			var want1 blob.Info
-			var want2 error
-			s.OnGet.Returns(want0, want1, want2)
-			_, _, _ = storeStubGet(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Get")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Get to the function", func(t *testing.T) {
-			t.Parallel()
-			s := blobtest.NewStoreStub(t)
-			var got0 context.Context
-			var got1 string
-			s.OnGet.Func(func(p0 context.Context, p1 string) (io.ReadCloser, blob.Info, error) {
-				got0, got1 = p0, p1
-				var z0 io.ReadCloser
-				var z1 blob.Info
-				var z2 error
-				return z0, z1, z2
-			})
-			_, _, _ = storeStubGet(t, s)
-			a0, a1 := storeStubGetArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives Key")
-		})
-	})
-}
-
-// TestStoreStatStub checks the methods of StoreStatStub, which configures
-// Stat.
-func TestStoreStatStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Stat", func(t *testing.T) {
-			t.Parallel()
-			s := blobtest.NewStoreStub(t)
-			want0, want1 := storeStubStatPins()
-			s.OnStat.Returns(want0, want1)
-			got0, got1 := storeStubStat(t, s)
-			expect.Equal(t, got0, want0, "Stat returns the Result that Returns sets")
-			expect.ErrorIs(t, got1, want1, "Stat returns the error that Returns sets")
-		})
-
-		t.Run("configures Stat for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := blobtest.NewStoreStub(r)
-			s.OnStat.Strict()
-			var want0 blob.Info
-			var want1 error
-			s.OnStat.Returns(want0, want1)
-			_, _ = storeStubStat(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Stat")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Stat to the function", func(t *testing.T) {
-			t.Parallel()
-			s := blobtest.NewStoreStub(t)
-			var got0 context.Context
-			var got1 string
-			s.OnStat.Func(func(p0 context.Context, p1 string) (blob.Info, error) {
-				got0, got1 = p0, p1
-				var z0 blob.Info
-				var z1 error
-				return z0, z1
-			})
-			_, _ = storeStubStat(t, s)
-			a0, a1 := storeStubStatArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives Key")
-		})
-	})
-}
-
-// TestStoreDeleteStub checks the methods of StoreDeleteStub, which
-// configures Delete.
-func TestStoreDeleteStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Delete", func(t *testing.T) {
-			t.Parallel()
-			s := blobtest.NewStoreStub(t)
-			want0 := storeStubDeletePins()
-			s.OnDelete.Returns(want0)
-			got0 := storeStubDelete(t, s)
-			assert.ErrorIs(t, got0, want0, "Delete returns the error that Returns sets")
-		})
-
-		t.Run("configures Delete for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := blobtest.NewStoreStub(r)
-			s.OnDelete.Strict()
-			var want0 error
-			s.OnDelete.Returns(want0)
-			_ = storeStubDelete(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Delete")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Delete to the function", func(t *testing.T) {
-			t.Parallel()
-			s := blobtest.NewStoreStub(t)
-			var got0 context.Context
-			var got1 string
-			var got2 version.Version
-			s.OnDelete.Func(func(p0 context.Context, p1 string, p2 version.Version) error {
-				got0, got1, got2 = p0, p1, p2
-				var z0 error
-				return z0
-			})
-			_ = storeStubDelete(t, s)
-			a0, a1, a2 := storeStubDeleteArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives Key")
-			expect.Equal(t, got2, a2, "the function receives IfMatch")
-		})
-	})
-}
-
-// TestStoreListStub checks the methods of StoreListStub, which configures
-// List.
-func TestStoreListStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of List", func(t *testing.T) {
-			t.Parallel()
-			s := blobtest.NewStoreStub(t)
-			want0, want1 := storeStubListPins()
-			s.OnList.Returns(want0, want1)
-			_, got1 := storeStubList(t, s)
-			assert.ErrorIs(t, got1, want1, "List returns the error that Returns sets")
-		})
-
-		t.Run("configures List for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := blobtest.NewStoreStub(r)
-			s.OnList.Strict()
-			var want0 page.Cursor[blob.Info]
-			var want1 error
-			s.OnList.Returns(want0, want1)
-			_, _ = storeStubList(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of List")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of List to the function", func(t *testing.T) {
-			t.Parallel()
-			s := blobtest.NewStoreStub(t)
-			var got0 context.Context
-			var got1 string
-			var got2 page.Page
-			s.OnList.Func(func(p0 context.Context, p1 string, p2 page.Page) (page.Cursor[blob.Info], error) {
-				got0, got1, got2 = p0, p1, p2
-				var z0 page.Cursor[blob.Info]
-				var z1 error
-				return z0, z1
-			})
-			_, _ = storeStubList(t, s)
-			a0, a1, a2 := storeStubListArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives Prefix")
-			expect.Equal(t, got2, a2, "the function receives P")
-		})
-	})
-}
-
 // rangeReaderStubReadRangeArgs returns the samples of the arguments of
 // ReadRange.
 func rangeReaderStubReadRangeArgs(tb assert.TB) (context.Context, string, int64, []byte, version.Version) {
@@ -1181,25 +752,41 @@ func rangeReaderStubReadRangePins() (int, blob.Info, error) {
 }
 
 // rangeReaderStubReadRangeSubject returns the subject of [stub.Behaviour]
-// for ReadRange. The subject calls a new double that reports to tb.
+// and [stub.ResetBehaviour] for ReadRange. The subject calls a new double
+// that reports to tb.
 func rangeReaderStubReadRangeSubject(
 	tb assert.TB,
 ) stub.Subject[blobtest.RangeReaderReadRangeCall, blobtest.RangeReaderReadRangeReturn] {
 	tb.Helper()
 	s := blobtest.NewRangeReaderStub(tb)
 	return stub.Subject[blobtest.RangeReaderReadRangeCall, blobtest.RangeReaderReadRangeReturn]{
-		Stub: s.OnReadRange.MethodStub,
+		Stub:  s.OnReadRange.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _, _ = rangeReaderStubReadRange(tb, s)
+		},
+		Arguments: func(tb assert.TB, c blobtest.RangeReaderReadRangeCall) {
+			tb.Helper()
+			a0, a1, a2, a3, a4 := rangeReaderStubReadRangeArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.Key, a1, "the call records Key")
+			expect.Equal(tb, c.Off, a2, "the call records Off")
+			expect.Equal(tb, c.Dst, a3, "the call records Dst")
+			expect.Equal(tb, c.IfMatch, a4, "the call records IfMatch")
 		},
 		Result: func() blobtest.RangeReaderReadRangeReturn {
 			got0, got1, got2 := rangeReaderStubReadRange(tb, s)
 			return blobtest.RangeReaderReadRangeReturn{Result0: got0, Result1: got1, Err: got2}
 		},
-		Override: func(mark func()) {
+		Returns: func() blobtest.RangeReaderReadRangeReturn {
+			want0, want1, want2 := rangeReaderStubReadRangePins()
+			s.OnReadRange.Returns(want0, want1, want2)
+			return blobtest.RangeReaderReadRangeReturn{Result0: want0, Result1: want1, Err: want2}
+		},
+		Override: func(seen func(blobtest.RangeReaderReadRangeCall)) {
 			s.OnReadRange.Func(
-				func(_ context.Context, _ string, _ int64, _ []byte, _ version.Version) (int, blob.Info, error) {
-					mark()
+				func(p0 context.Context, p1 string, p2 int64, p3 []byte, p4 version.Version) (int, blob.Info, error) {
+					seen(blobtest.RangeReaderReadRangeCall{Ctx: p0, Key: p1, Off: p2, Dst: p3, IfMatch: p4})
 					var z0 int
 					var z1 blob.Info
 					var z2 error
@@ -1227,7 +814,6 @@ func rangeReaderStubInstanceOf(tb assert.TB, s *blobtest.RangeReaderStub) rangeR
 		Call: func() {
 			_, _, _ = rangeReaderStubReadRange(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -1239,74 +825,14 @@ func TestRangeReaderStub(t *testing.T) {
 	t.Run("ReadRange", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "ReadRange", rangeReaderStubReadRangeSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := blobtest.NewRangeReaderStub(t)
-			_, _, _ = rangeReaderStubReadRange(t, s)
-			got := s.OnReadRange.AssertCalledOnce(t, "ReadRange records the call")
-			a0, a1, a2, a3, a4 := rangeReaderStubReadRangeArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.Key, a1, "the call records Key")
-			expect.Equal(t, got.Off, a2, "the call records Off")
-			expect.Equal(t, got.Dst, a3, "the call records Dst")
-			expect.Equal(t, got.IfMatch, a4, "the call records IfMatch")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := blobtest.NewRangeReaderStub(t)
-			var seen []blobtest.RangeReaderReadRangeCall
-			s.OnReadRange.OnRecord(func(c blobtest.RangeReaderReadRangeCall) { seen = append(seen, c) })
-			_, _, _ = rangeReaderStubReadRange(t, s)
-			_, _, _ = rangeReaderStubReadRange(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of ReadRange")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) rangeReaderStubInstance {
-			return rangeReaderStubInstanceOf(tb, blobtest.NewRangeReaderStub(tb))
-		})
 
-		t.Run("clears the recorded calls of ReadRange", func(t *testing.T) {
+		t.Run("ReadRange", func(t *testing.T) {
 			t.Parallel()
-			s := blobtest.NewRangeReaderStub(t)
-			_, _, _ = rangeReaderStubReadRange(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnReadRange.CallCount(), 0, "ResetCalls clears the calls of ReadRange")
-		})
-
-		t.Run("keeps the results of Returns of ReadRange", func(t *testing.T) {
-			t.Parallel()
-			s := blobtest.NewRangeReaderStub(t)
-			want0, want1, want2 := rangeReaderStubReadRangePins()
-			s.OnReadRange.Returns(want0, want1, want2)
-			s.ResetCalls()
-			got0, got1, got2 := rangeReaderStubReadRange(t, s)
-			expect.Equal(t, got0, want0, "ResetCalls keeps the Result0 of ReadRange")
-			expect.Equal(t, got1, want1, "ResetCalls keeps the Result1 of ReadRange")
-			expect.ErrorIs(t, got2, want2, "ResetCalls keeps the error of ReadRange")
-		})
-	})
-
-	t.Run("NewRangeReaderStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) rangeReaderStubInstance {
-			return rangeReaderStubInstanceOf(tb, blobtest.NewRangeReaderStubDelayed(tb, d, clk))
-		})
-	})
-
-	t.Run("NewRangeReaderStubFailing", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("fails ReadRange with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("ReadRange-failing")
-			s := blobtest.NewRangeReaderStubFailing(t, want)
-			_, _, r2 := rangeReaderStubReadRange(t, s)
-			assert.ErrorIs(t, r2, want, "ReadRange fails with the error of NewRangeReaderStubFailing")
+			stub.ResetBehaviour(t, "ReadRange", rangeReaderStubReadRangeSubject)
 		})
 	})
 
@@ -1416,68 +942,4 @@ func TestRangeReaderStub(t *testing.T) {
 	})
 }
 
-// TestRangeReaderReadRangeStub checks the methods of
-// RangeReaderReadRangeStub, which configures ReadRange.
-func TestRangeReaderReadRangeStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of ReadRange", func(t *testing.T) {
-			t.Parallel()
-			s := blobtest.NewRangeReaderStub(t)
-			want0, want1, want2 := rangeReaderStubReadRangePins()
-			s.OnReadRange.Returns(want0, want1, want2)
-			got0, got1, got2 := rangeReaderStubReadRange(t, s)
-			expect.Equal(t, got0, want0, "ReadRange returns the Result0 that Returns sets")
-			expect.Equal(t, got1, want1, "ReadRange returns the Result1 that Returns sets")
-			expect.ErrorIs(t, got2, want2, "ReadRange returns the error that Returns sets")
-		})
-
-		t.Run("configures ReadRange for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := blobtest.NewRangeReaderStub(r)
-			s.OnReadRange.Strict()
-			var want0 int
-			var want1 blob.Info
-			var want2 error
-			s.OnReadRange.Returns(want0, want1, want2)
-			_, _, _ = rangeReaderStubReadRange(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of ReadRange")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of ReadRange to the function", func(t *testing.T) {
-			t.Parallel()
-			s := blobtest.NewRangeReaderStub(t)
-			var got0 context.Context
-			var got1 string
-			var got2 int64
-			var got3 []byte
-			var got4 version.Version
-			s.OnReadRange.Func(
-				func(p0 context.Context, p1 string, p2 int64, p3 []byte, p4 version.Version) (int, blob.Info, error) {
-					got0, got1, got2, got3, got4 = p0, p1, p2, p3, p4
-					var z0 int
-					var z1 blob.Info
-					var z2 error
-					return z0, z1, z2
-				},
-			)
-			_, _, _ = rangeReaderStubReadRange(t, s)
-			a0, a1, a2, a3, a4 := rangeReaderStubReadRangeArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives Key")
-			expect.Equal(t, got2, a2, "the function receives Off")
-			expect.Equal(t, got3, a3, "the function receives Dst")
-			expect.Equal(t, got4, a4, "the function receives IfMatch")
-		})
-	})
-}
-
-// dokimi:provenance sha256:5e79be1cc1cef1fd04c4c420eeca2349777d54a706fa379469208a63fe483172
+// dokimi:provenance sha256:5cac92acf41af6ed2ad0096ec8b3e497efe99b1394ce0cb40a0dc18460b7270e

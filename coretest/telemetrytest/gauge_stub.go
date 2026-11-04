@@ -222,15 +222,6 @@ func NewGaugeStub(tb assert.TB, opts ...GaugeStubOption) *GaugeStub {
 	return s
 }
 
-// NewGaugeStubDelayed returns a double whose methods sleep d on clk before
-// they return. It applies opts after the clock and the latency.
-func NewGaugeStubDelayed(tb assert.TB, d time.Duration, clk assert.Clock, opts ...GaugeStubOption) *GaugeStub {
-	return NewGaugeStub(tb, append([]GaugeStubOption{
-		GaugeStubWithClock(clk),
-		GaugeStubWithLatency(d),
-	}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *GaugeStub) ResetCalls() {
@@ -330,4 +321,4 @@ func (s *GaugeStub) Release() {
 	})
 }
 
-// dokimi:provenance sha256:1073a2196b16a20b592d620ab306fb0623acf7dfef03d5be24fcaee4201674a5
+// dokimi:provenance sha256:e76508f450f2e7b0f3a430723cd7a73a4f70188d956d57c9b655706c02f80722

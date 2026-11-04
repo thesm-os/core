@@ -10,6 +10,8 @@ import (
 
 	"go.dokimi.dev/assert/prop"
 	"go.dokimi.dev/conform"
+	"go.dokimi.dev/conform/probe"
+	"go.dokimi.dev/spec"
 	"go.thesmos.sh/core/crypto"
 	"go.thesmos.sh/core/crypto/sign"
 )
@@ -44,10 +46,16 @@ type verifierKeyID struct {
 	conform.Callable[sign.Verifier]
 }
 
-// VerifierKeyIDIsStable returns the identity of the check that KeyID
-// returns the same key ID on every call.
-func (c verifierKeyID) VerifierKeyIDIsStable() conform.ID[sign.Verifier] {
-	return c.Check("verifier-key-idis-stable")
+// Smoke returns the identity of the check that KeyID returns without a
+// panic for derived inputs.
+func (c verifierKeyID) Smoke() conform.ID[sign.Verifier] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that KeyID returns the
+// same value for the same inputs.
+func (c verifierKeyID) Deterministic() conform.ID[sign.Verifier] {
+	return c.Check("deterministic")
 }
 
 // verifierPublicKey is the name of Verifier.PublicKey, with the identities
@@ -56,10 +64,16 @@ type verifierPublicKey struct {
 	conform.Callable[sign.Verifier]
 }
 
-// VerifierPublicKeyIsStable returns the identity of the check that
-// PublicKey returns the same bytes on every call.
-func (c verifierPublicKey) VerifierPublicKeyIsStable() conform.ID[sign.Verifier] {
-	return c.Check("verifier-public-key-is-stable")
+// Smoke returns the identity of the check that PublicKey returns without a
+// panic for derived inputs.
+func (c verifierPublicKey) Smoke() conform.ID[sign.Verifier] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that PublicKey returns
+// the same value for the same inputs.
+func (c verifierPublicKey) Deterministic() conform.ID[sign.Verifier] {
+	return c.Check("deterministic")
 }
 
 // verifierAlgorithm is the name of Verifier.Algorithm, with the identities
@@ -68,10 +82,16 @@ type verifierAlgorithm struct {
 	conform.Callable[sign.Verifier]
 }
 
-// VerifierAlgorithmIsStable returns the identity of the check that
-// Algorithm returns the same name on every call.
-func (c verifierAlgorithm) VerifierAlgorithmIsStable() conform.ID[sign.Verifier] {
-	return c.Check("verifier-algorithm-is-stable")
+// Smoke returns the identity of the check that Algorithm returns without a
+// panic for derived inputs.
+func (c verifierAlgorithm) Smoke() conform.ID[sign.Verifier] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that Algorithm returns
+// the same value for the same inputs.
+func (c verifierAlgorithm) Deterministic() conform.ID[sign.Verifier] {
+	return c.Check("deterministic")
 }
 
 // verifierVerify is the name of Verifier.Verify, with the identities of
@@ -112,29 +132,172 @@ func (c verifierVerify) VerifierRefusesAnEmptySignature() conform.ID[sign.Verifi
 	return c.Check("verifier-refuses-an-empty-signature")
 }
 
+// Smoke returns the identity of the check that Verify returns without a
+// panic for derived inputs.
+func (c verifierVerify) Smoke() conform.ID[sign.Verifier] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that Verify returns the
+// same value for the same inputs.
+func (c verifierVerify) Deterministic() conform.ID[sign.Verifier] {
+	return c.Check("deterministic")
+}
+
 // VerifierSuite returns the checks of Verifier, and the calls and the
 // budgets of its callables.
 func VerifierSuite() conform.Suite[sign.Verifier] {
 	return conform.Suite[sign.Verifier]{
 		Declaration: "Verifier",
+		Package:     "go.thesmos.sh/core/crypto/sign",
+		Generator:   conform.Generator{Name: "dokimi", Version: "0.1.0"},
 		Checks: []conform.Check[sign.Verifier]{
 			{
-				ID:        VerifierChecks.KeyID.VerifierKeyIDIsStable(),
-				Statement: "KeyID returns the same key ID on every call",
-				Apply:     VerifierKeyIDIsStable,
-				Defect:    verifierAlternatesItsKeyID,
+				ID:          VerifierChecks.KeyID.Smoke(),
+				Statement:   "KeyID returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *VerifierHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().KeyID()
+						return nil
+					})
+				},
+				Defect: verifierKeyIDPanics,
 			},
 			{
-				ID:        VerifierChecks.PublicKey.VerifierPublicKeyIsStable(),
-				Statement: "PublicKey returns the same bytes on every call",
-				Apply:     VerifierPublicKeyIsStable,
-				Defect:    verifierAlternatesItsPublicKey,
+				ID:          VerifierChecks.KeyID.Deterministic(),
+				Statement:   "KeyID returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[sign.Verifier]{VerifierChecks.KeyID.Smoke()},
+				Apply: func(h *VerifierHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) (sign.KeyID, error) {
+						r0 := h.Subject().KeyID()
+						return r0, nil
+					})
+				},
+				Defect: verifierKeyIDDrifts,
 			},
 			{
-				ID:        VerifierChecks.Algorithm.VerifierAlgorithmIsStable(),
-				Statement: "Algorithm returns the same name on every call",
-				Apply:     VerifierAlgorithmIsStable,
-				Defect:    verifierAlternatesItsAlgorithm,
+				ID:          VerifierChecks.PublicKey.Smoke(),
+				Statement:   "PublicKey returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *VerifierHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().PublicKey()
+						return nil
+					})
+				},
+				Defect: verifierPublicKeyPanics,
+			},
+			{
+				ID:          VerifierChecks.PublicKey.Deterministic(),
+				Statement:   "PublicKey returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[sign.Verifier]{VerifierChecks.PublicKey.Smoke()},
+				Apply: func(h *VerifierHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) ([]byte, error) {
+						r0 := h.Subject().PublicKey()
+						return r0, nil
+					})
+				},
+				Defect: verifierPublicKeyDrifts,
+			},
+			{
+				ID:          VerifierChecks.Algorithm.Smoke(),
+				Statement:   "Algorithm returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *VerifierHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Algorithm()
+						return nil
+					})
+				},
+				Defect: verifierAlgorithmPanics,
+			},
+			{
+				ID:          VerifierChecks.Algorithm.Deterministic(),
+				Statement:   "Algorithm returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[sign.Verifier]{VerifierChecks.Algorithm.Smoke()},
+				Apply: func(h *VerifierHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) (crypto.Algorithm, error) {
+						r0 := h.Subject().Algorithm()
+						return r0, nil
+					})
+				},
+				Defect: verifierAlgorithmDrifts,
+			},
+			{
+				ID:          VerifierChecks.Verify.Smoke(),
+				Statement:   "Verify returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *VerifierHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Verify([]byte{1}, []byte{1})
+						return nil
+					})
+				},
+				Defect: verifierVerifyPanics,
+			},
+			{
+				ID:          VerifierChecks.Verify.Smoke().Generated(),
+				Statement:   "Verify returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *VerifierHandle, c *prop.Case) {
+					drawnMessage := c.Draw(prop.Of[[]byte](), "message")
+					drawnSignature := c.Draw(prop.Of[[]byte](), "signature")
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Verify(drawnMessage, drawnSignature)
+						return nil
+					})
+				},
+				Defect: verifierVerifyPanics,
+			},
+			{
+				ID:          VerifierChecks.Verify.Deterministic(),
+				Statement:   "Verify returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[sign.Verifier]{VerifierChecks.Verify.Smoke()},
+				Apply: func(h *VerifierHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) (bool, error) {
+						r0 := h.Subject().Verify([]byte{1}, []byte{1})
+						return r0, nil
+					})
+				},
+				Defect: verifierVerifyDrifts,
+			},
+			{
+				ID:          VerifierChecks.Verify.Deterministic().Generated(),
+				Statement:   "Verify returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Entails:     []conform.ID[sign.Verifier]{VerifierChecks.Verify.Smoke().Generated()},
+				Property: func(h *VerifierHandle, c *prop.Case) {
+					drawnMessage := c.Draw(prop.Of[[]byte](), "message")
+					drawnSignature := c.Draw(prop.Of[[]byte](), "signature")
+					probe.RepeatAgrees(h, func(ctx context.Context) (bool, error) {
+						r0 := h.Subject().Verify(drawnMessage, drawnSignature)
+						return r0, nil
+					})
+				},
+				Defect: verifierVerifyDrifts,
 			},
 			{
 				ID:        VerifierChecks.Verify.VerifierAcceptsASignatureOfItsKey(),
@@ -332,6 +495,162 @@ func newVerifierOver(_ *VerifierHandle, spend func()) sign.Verifier {
 	return verifierOver{spend: spend}
 }
 
+// verifierKeyIDPanicsDefect is the planted defect of a Verifier whose
+// KeyID panics.
+type verifierKeyIDPanicsDefect struct {
+	verifierOverEmbedded
+}
+
+// KeyID is the override of the planted defect.
+func (*verifierKeyIDPanicsDefect) KeyID() (r0 sign.KeyID) {
+	panic("the planted defect of a Verifier whose KeyID panics")
+}
+
+// verifierKeyIDPanics returns the planted defect of a Verifier whose KeyID
+// panics over a fresh subject.
+func verifierKeyIDPanics(h *VerifierHandle) sign.Verifier {
+	return &verifierKeyIDPanicsDefect{verifierOverEmbedded: h.Fresh()}
+}
+
+// verifierKeyIDDriftsDefect is the planted defect of a Verifier whose
+// KeyID returns another value on the repeat.
+type verifierKeyIDDriftsDefect struct {
+	verifierOverEmbedded
+	calls int
+}
+
+// KeyID is the override of the planted defect.
+func (d *verifierKeyIDDriftsDefect) KeyID() (r0 sign.KeyID) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = sign.KeyID{2}
+	}
+	return r0
+}
+
+// verifierKeyIDDrifts returns the planted defect of a Verifier whose KeyID
+// returns another value on the repeat over a fresh subject.
+func verifierKeyIDDrifts(h *VerifierHandle) sign.Verifier {
+	return &verifierKeyIDDriftsDefect{verifierOverEmbedded: h.Fresh()}
+}
+
+// verifierPublicKeyPanicsDefect is the planted defect of a Verifier whose
+// PublicKey panics.
+type verifierPublicKeyPanicsDefect struct {
+	verifierOverEmbedded
+}
+
+// PublicKey is the override of the planted defect.
+func (*verifierPublicKeyPanicsDefect) PublicKey() (r0 []byte) {
+	panic("the planted defect of a Verifier whose PublicKey panics")
+}
+
+// verifierPublicKeyPanics returns the planted defect of a Verifier whose
+// PublicKey panics over a fresh subject.
+func verifierPublicKeyPanics(h *VerifierHandle) sign.Verifier {
+	return &verifierPublicKeyPanicsDefect{verifierOverEmbedded: h.Fresh()}
+}
+
+// verifierPublicKeyDriftsDefect is the planted defect of a Verifier whose
+// PublicKey returns another value on the repeat.
+type verifierPublicKeyDriftsDefect struct {
+	verifierOverEmbedded
+	calls int
+}
+
+// PublicKey is the override of the planted defect.
+func (d *verifierPublicKeyDriftsDefect) PublicKey() (r0 []byte) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = []byte{2}
+	}
+	return r0
+}
+
+// verifierPublicKeyDrifts returns the planted defect of a Verifier whose
+// PublicKey returns another value on the repeat over a fresh subject.
+func verifierPublicKeyDrifts(h *VerifierHandle) sign.Verifier {
+	return &verifierPublicKeyDriftsDefect{verifierOverEmbedded: h.Fresh()}
+}
+
+// verifierAlgorithmPanicsDefect is the planted defect of a Verifier whose
+// Algorithm panics.
+type verifierAlgorithmPanicsDefect struct {
+	verifierOverEmbedded
+}
+
+// Algorithm is the override of the planted defect.
+func (*verifierAlgorithmPanicsDefect) Algorithm() (r0 crypto.Algorithm) {
+	panic("the planted defect of a Verifier whose Algorithm panics")
+}
+
+// verifierAlgorithmPanics returns the planted defect of a Verifier whose
+// Algorithm panics over a fresh subject.
+func verifierAlgorithmPanics(h *VerifierHandle) sign.Verifier {
+	return &verifierAlgorithmPanicsDefect{verifierOverEmbedded: h.Fresh()}
+}
+
+// verifierAlgorithmDriftsDefect is the planted defect of a Verifier whose
+// Algorithm returns another value on the repeat.
+type verifierAlgorithmDriftsDefect struct {
+	verifierOverEmbedded
+	calls int
+}
+
+// Algorithm is the override of the planted defect.
+func (d *verifierAlgorithmDriftsDefect) Algorithm() (r0 crypto.Algorithm) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = crypto.Algorithm("sha-384")
+	}
+	return r0
+}
+
+// verifierAlgorithmDrifts returns the planted defect of a Verifier whose
+// Algorithm returns another value on the repeat over a fresh subject.
+func verifierAlgorithmDrifts(h *VerifierHandle) sign.Verifier {
+	return &verifierAlgorithmDriftsDefect{verifierOverEmbedded: h.Fresh()}
+}
+
+// verifierVerifyPanicsDefect is the planted defect of a Verifier whose
+// Verify panics.
+type verifierVerifyPanicsDefect struct {
+	verifierOverEmbedded
+}
+
+// Verify is the override of the planted defect.
+func (*verifierVerifyPanicsDefect) Verify(p0, p1 []byte) (r0 bool) {
+	panic("the planted defect of a Verifier whose Verify panics")
+}
+
+// verifierVerifyPanics returns the planted defect of a Verifier whose
+// Verify panics over a fresh subject.
+func verifierVerifyPanics(h *VerifierHandle) sign.Verifier {
+	return &verifierVerifyPanicsDefect{verifierOverEmbedded: h.Fresh()}
+}
+
+// verifierVerifyDriftsDefect is the planted defect of a Verifier whose
+// Verify returns another value on the repeat.
+type verifierVerifyDriftsDefect struct {
+	verifierOverEmbedded
+	calls int
+}
+
+// Verify is the override of the planted defect.
+func (d *verifierVerifyDriftsDefect) Verify(p0, p1 []byte) (r0 bool) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = bool(true)
+	}
+	return r0
+}
+
+// verifierVerifyDrifts returns the planted defect of a Verifier whose
+// Verify returns another value on the repeat over a fresh subject.
+func verifierVerifyDrifts(h *VerifierHandle) sign.Verifier {
+	return &verifierVerifyDriftsDefect{verifierOverEmbedded: h.Fresh()}
+}
+
 // The suite refers to the compatibility witness of its runtime.
 var _ = conform.CompatV1
 
@@ -377,16 +696,28 @@ func (c signerSign) SignerSignsAnEmptyMessage() conform.ID[sign.Signer] {
 	return c.Check("signer-signs-an-empty-message")
 }
 
+// Smoke returns the identity of the check that Sign returns without a
+// panic for derived inputs.
+func (c signerSign) Smoke() conform.ID[sign.Signer] {
+	return c.Check("smoke")
+}
+
 // signerKeyID is the name of Signer.KeyID, with the identities of its
 // checks.
 type signerKeyID struct {
 	conform.Callable[sign.Signer]
 }
 
-// SignerKeyIDIsStable returns the identity of the check that KeyID returns
-// the same key ID on every call.
-func (c signerKeyID) SignerKeyIDIsStable() conform.ID[sign.Signer] {
-	return c.Check("signer-key-idis-stable")
+// Smoke returns the identity of the check that KeyID returns without a
+// panic for derived inputs.
+func (c signerKeyID) Smoke() conform.ID[sign.Signer] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that KeyID returns the
+// same value for the same inputs.
+func (c signerKeyID) Deterministic() conform.ID[sign.Signer] {
+	return c.Check("deterministic")
 }
 
 // signerPublicKey is the name of Signer.PublicKey, with the identities of
@@ -395,10 +726,16 @@ type signerPublicKey struct {
 	conform.Callable[sign.Signer]
 }
 
-// SignerPublicKeyIsStable returns the identity of the check that PublicKey
-// returns the same bytes on every call.
-func (c signerPublicKey) SignerPublicKeyIsStable() conform.ID[sign.Signer] {
-	return c.Check("signer-public-key-is-stable")
+// Smoke returns the identity of the check that PublicKey returns without a
+// panic for derived inputs.
+func (c signerPublicKey) Smoke() conform.ID[sign.Signer] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that PublicKey returns
+// the same value for the same inputs.
+func (c signerPublicKey) Deterministic() conform.ID[sign.Signer] {
+	return c.Check("deterministic")
 }
 
 // signerAlgorithm is the name of Signer.Algorithm, with the identities of
@@ -407,10 +744,16 @@ type signerAlgorithm struct {
 	conform.Callable[sign.Signer]
 }
 
-// SignerAlgorithmIsStable returns the identity of the check that Algorithm
-// returns the same name on every call.
-func (c signerAlgorithm) SignerAlgorithmIsStable() conform.ID[sign.Signer] {
-	return c.Check("signer-algorithm-is-stable")
+// Smoke returns the identity of the check that Algorithm returns without a
+// panic for derived inputs.
+func (c signerAlgorithm) Smoke() conform.ID[sign.Signer] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that Algorithm returns
+// the same value for the same inputs.
+func (c signerAlgorithm) Deterministic() conform.ID[sign.Signer] {
+	return c.Check("deterministic")
 }
 
 // signerVerify is the name of Signer.Verify, with the identities of its
@@ -438,12 +781,201 @@ func (c signerVerify) SignerRefusesASignatureOfAWrongLength() conform.ID[sign.Si
 	return c.Check("signer-refuses-a-signature-of-a-wrong-length")
 }
 
+// Smoke returns the identity of the check that Verify returns without a
+// panic for derived inputs.
+func (c signerVerify) Smoke() conform.ID[sign.Signer] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that Verify returns the
+// same value for the same inputs.
+func (c signerVerify) Deterministic() conform.ID[sign.Signer] {
+	return c.Check("deterministic")
+}
+
 // SignerSuite returns the checks of Signer, and the calls and the budgets
 // of its callables.
 func SignerSuite() conform.Suite[sign.Signer] {
 	return conform.Suite[sign.Signer]{
 		Declaration: "Signer",
+		Package:     "go.thesmos.sh/core/crypto/sign",
+		Generator:   conform.Generator{Name: "dokimi", Version: "0.1.0"},
 		Checks: []conform.Check[sign.Signer]{
+			{
+				ID:          SignerChecks.Sign.Smoke(),
+				Statement:   "Sign returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *SignerHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						_, err := h.Subject().Sign([]byte{1})
+						return err
+					})
+				},
+				Defect: signerSignPanics,
+			},
+			{
+				ID:          SignerChecks.Sign.Smoke().Generated(),
+				Statement:   "Sign returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *SignerHandle, c *prop.Case) {
+					drawnMessage := c.Draw(prop.Of[[]byte](), "message")
+					probe.Survives(h, func(ctx context.Context) error {
+						_, err := h.Subject().Sign(drawnMessage)
+						return err
+					})
+				},
+				Defect: signerSignPanics,
+			},
+			{
+				ID:          SignerChecks.KeyID.Smoke(),
+				Statement:   "KeyID returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *SignerHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().KeyID()
+						return nil
+					})
+				},
+				Defect: signerKeyIDPanics,
+			},
+			{
+				ID:          SignerChecks.KeyID.Deterministic(),
+				Statement:   "KeyID returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[sign.Signer]{SignerChecks.KeyID.Smoke()},
+				Apply: func(h *SignerHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) (sign.KeyID, error) {
+						r0 := h.Subject().KeyID()
+						return r0, nil
+					})
+				},
+				Defect: signerKeyIDDrifts,
+			},
+			{
+				ID:          SignerChecks.PublicKey.Smoke(),
+				Statement:   "PublicKey returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *SignerHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().PublicKey()
+						return nil
+					})
+				},
+				Defect: signerPublicKeyPanics,
+			},
+			{
+				ID:          SignerChecks.PublicKey.Deterministic(),
+				Statement:   "PublicKey returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[sign.Signer]{SignerChecks.PublicKey.Smoke()},
+				Apply: func(h *SignerHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) ([]byte, error) {
+						r0 := h.Subject().PublicKey()
+						return r0, nil
+					})
+				},
+				Defect: signerPublicKeyDrifts,
+			},
+			{
+				ID:          SignerChecks.Algorithm.Smoke(),
+				Statement:   "Algorithm returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *SignerHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Algorithm()
+						return nil
+					})
+				},
+				Defect: signerAlgorithmPanics,
+			},
+			{
+				ID:          SignerChecks.Algorithm.Deterministic(),
+				Statement:   "Algorithm returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[sign.Signer]{SignerChecks.Algorithm.Smoke()},
+				Apply: func(h *SignerHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) (crypto.Algorithm, error) {
+						r0 := h.Subject().Algorithm()
+						return r0, nil
+					})
+				},
+				Defect: signerAlgorithmDrifts,
+			},
+			{
+				ID:          SignerChecks.Verify.Smoke(),
+				Statement:   "Verify returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *SignerHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Verify([]byte{1}, []byte{1})
+						return nil
+					})
+				},
+				Defect: signerVerifyPanics,
+			},
+			{
+				ID:          SignerChecks.Verify.Smoke().Generated(),
+				Statement:   "Verify returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *SignerHandle, c *prop.Case) {
+					drawnMessage := c.Draw(prop.Of[[]byte](), "message")
+					drawnSignature := c.Draw(prop.Of[[]byte](), "signature")
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Verify(drawnMessage, drawnSignature)
+						return nil
+					})
+				},
+				Defect: signerVerifyPanics,
+			},
+			{
+				ID:          SignerChecks.Verify.Deterministic(),
+				Statement:   "Verify returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[sign.Signer]{SignerChecks.Verify.Smoke()},
+				Apply: func(h *SignerHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) (bool, error) {
+						r0 := h.Subject().Verify([]byte{1}, []byte{1})
+						return r0, nil
+					})
+				},
+				Defect: signerVerifyDrifts,
+			},
+			{
+				ID:          SignerChecks.Verify.Deterministic().Generated(),
+				Statement:   "Verify returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Entails:     []conform.ID[sign.Signer]{SignerChecks.Verify.Smoke().Generated()},
+				Property: func(h *SignerHandle, c *prop.Case) {
+					drawnMessage := c.Draw(prop.Of[[]byte](), "message")
+					drawnSignature := c.Draw(prop.Of[[]byte](), "signature")
+					probe.RepeatAgrees(h, func(ctx context.Context) (bool, error) {
+						r0 := h.Subject().Verify(drawnMessage, drawnSignature)
+						return r0, nil
+					})
+				},
+				Defect: signerVerifyDrifts,
+			},
 			{
 				ID:        SignerChecks.Sign.SignerSignaturesVerify(),
 				Statement: "Verify accepts the signature of Sign over a message",
@@ -455,24 +987,6 @@ func SignerSuite() conform.Suite[sign.Signer] {
 				Statement: "Verify accepts the signature of Sign over a nil message, for a nil and for an empty message",
 				Apply:     SignerSignsAnEmptyMessage,
 				Defect:    signerRefusesAnEmptyMessage,
-			},
-			{
-				ID:        SignerChecks.KeyID.SignerKeyIDIsStable(),
-				Statement: "KeyID returns the same key ID on every call",
-				Apply:     SignerKeyIDIsStable,
-				Defect:    signerAlternatesItsKeyID,
-			},
-			{
-				ID:        SignerChecks.PublicKey.SignerPublicKeyIsStable(),
-				Statement: "PublicKey returns the same bytes on every call",
-				Apply:     SignerPublicKeyIsStable,
-				Defect:    signerAlternatesItsPublicKey,
-			},
-			{
-				ID:        SignerChecks.Algorithm.SignerAlgorithmIsStable(),
-				Statement: "Algorithm returns the same name on every call",
-				Apply:     SignerAlgorithmIsStable,
-				Defect:    signerAlternatesItsAlgorithm,
 			},
 			{
 				ID:        SignerChecks.Verify.SignerRefusesAFlippedMessageBit(),
@@ -672,6 +1186,179 @@ func newSignerOver(_ *SignerHandle, spend func()) sign.Signer {
 	return signerOver{spend: spend}
 }
 
+// signerSignPanicsDefect is the planted defect of a Signer whose Sign
+// panics.
+type signerSignPanicsDefect struct {
+	signerOverEmbedded
+}
+
+// Sign is the override of the planted defect.
+func (*signerSignPanicsDefect) Sign(p0 []byte) (r0 []byte, r1 error) {
+	panic("the planted defect of a Signer whose Sign panics")
+}
+
+// signerSignPanics returns the planted defect of a Signer whose Sign
+// panics over a fresh subject.
+func signerSignPanics(h *SignerHandle) sign.Signer {
+	return &signerSignPanicsDefect{signerOverEmbedded: h.Fresh()}
+}
+
+// signerKeyIDPanicsDefect is the planted defect of a Signer whose KeyID
+// panics.
+type signerKeyIDPanicsDefect struct {
+	signerOverEmbedded
+}
+
+// KeyID is the override of the planted defect.
+func (*signerKeyIDPanicsDefect) KeyID() (r0 sign.KeyID) {
+	panic("the planted defect of a Signer whose KeyID panics")
+}
+
+// signerKeyIDPanics returns the planted defect of a Signer whose KeyID
+// panics over a fresh subject.
+func signerKeyIDPanics(h *SignerHandle) sign.Signer {
+	return &signerKeyIDPanicsDefect{signerOverEmbedded: h.Fresh()}
+}
+
+// signerKeyIDDriftsDefect is the planted defect of a Signer whose KeyID
+// returns another value on the repeat.
+type signerKeyIDDriftsDefect struct {
+	signerOverEmbedded
+	calls int
+}
+
+// KeyID is the override of the planted defect.
+func (d *signerKeyIDDriftsDefect) KeyID() (r0 sign.KeyID) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = sign.KeyID{2}
+	}
+	return r0
+}
+
+// signerKeyIDDrifts returns the planted defect of a Signer whose KeyID
+// returns another value on the repeat over a fresh subject.
+func signerKeyIDDrifts(h *SignerHandle) sign.Signer {
+	return &signerKeyIDDriftsDefect{signerOverEmbedded: h.Fresh()}
+}
+
+// signerPublicKeyPanicsDefect is the planted defect of a Signer whose
+// PublicKey panics.
+type signerPublicKeyPanicsDefect struct {
+	signerOverEmbedded
+}
+
+// PublicKey is the override of the planted defect.
+func (*signerPublicKeyPanicsDefect) PublicKey() (r0 []byte) {
+	panic("the planted defect of a Signer whose PublicKey panics")
+}
+
+// signerPublicKeyPanics returns the planted defect of a Signer whose
+// PublicKey panics over a fresh subject.
+func signerPublicKeyPanics(h *SignerHandle) sign.Signer {
+	return &signerPublicKeyPanicsDefect{signerOverEmbedded: h.Fresh()}
+}
+
+// signerPublicKeyDriftsDefect is the planted defect of a Signer whose
+// PublicKey returns another value on the repeat.
+type signerPublicKeyDriftsDefect struct {
+	signerOverEmbedded
+	calls int
+}
+
+// PublicKey is the override of the planted defect.
+func (d *signerPublicKeyDriftsDefect) PublicKey() (r0 []byte) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = []byte{2}
+	}
+	return r0
+}
+
+// signerPublicKeyDrifts returns the planted defect of a Signer whose
+// PublicKey returns another value on the repeat over a fresh subject.
+func signerPublicKeyDrifts(h *SignerHandle) sign.Signer {
+	return &signerPublicKeyDriftsDefect{signerOverEmbedded: h.Fresh()}
+}
+
+// signerAlgorithmPanicsDefect is the planted defect of a Signer whose
+// Algorithm panics.
+type signerAlgorithmPanicsDefect struct {
+	signerOverEmbedded
+}
+
+// Algorithm is the override of the planted defect.
+func (*signerAlgorithmPanicsDefect) Algorithm() (r0 crypto.Algorithm) {
+	panic("the planted defect of a Signer whose Algorithm panics")
+}
+
+// signerAlgorithmPanics returns the planted defect of a Signer whose
+// Algorithm panics over a fresh subject.
+func signerAlgorithmPanics(h *SignerHandle) sign.Signer {
+	return &signerAlgorithmPanicsDefect{signerOverEmbedded: h.Fresh()}
+}
+
+// signerAlgorithmDriftsDefect is the planted defect of a Signer whose
+// Algorithm returns another value on the repeat.
+type signerAlgorithmDriftsDefect struct {
+	signerOverEmbedded
+	calls int
+}
+
+// Algorithm is the override of the planted defect.
+func (d *signerAlgorithmDriftsDefect) Algorithm() (r0 crypto.Algorithm) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = crypto.Algorithm("sha-384")
+	}
+	return r0
+}
+
+// signerAlgorithmDrifts returns the planted defect of a Signer whose
+// Algorithm returns another value on the repeat over a fresh subject.
+func signerAlgorithmDrifts(h *SignerHandle) sign.Signer {
+	return &signerAlgorithmDriftsDefect{signerOverEmbedded: h.Fresh()}
+}
+
+// signerVerifyPanicsDefect is the planted defect of a Signer whose Verify
+// panics.
+type signerVerifyPanicsDefect struct {
+	signerOverEmbedded
+}
+
+// Verify is the override of the planted defect.
+func (*signerVerifyPanicsDefect) Verify(p0, p1 []byte) (r0 bool) {
+	panic("the planted defect of a Signer whose Verify panics")
+}
+
+// signerVerifyPanics returns the planted defect of a Signer whose Verify
+// panics over a fresh subject.
+func signerVerifyPanics(h *SignerHandle) sign.Signer {
+	return &signerVerifyPanicsDefect{signerOverEmbedded: h.Fresh()}
+}
+
+// signerVerifyDriftsDefect is the planted defect of a Signer whose Verify
+// returns another value on the repeat.
+type signerVerifyDriftsDefect struct {
+	signerOverEmbedded
+	calls int
+}
+
+// Verify is the override of the planted defect.
+func (d *signerVerifyDriftsDefect) Verify(p0, p1 []byte) (r0 bool) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = bool(true)
+	}
+	return r0
+}
+
+// signerVerifyDrifts returns the planted defect of a Signer whose Verify
+// returns another value on the repeat over a fresh subject.
+func signerVerifyDrifts(h *SignerHandle) sign.Signer {
+	return &signerVerifyDriftsDefect{signerOverEmbedded: h.Fresh()}
+}
+
 // The suite refers to the compatibility witness of its runtime.
 var _ = conform.CompatV1
 
@@ -733,10 +1420,22 @@ func (c streamingSignerNewSignStream) StreamingSignerStreamSignatureVerifies() c
 	return c.Check("streaming-signer-stream-signature-verifies")
 }
 
+// Smoke returns the identity of the check that NewSignStream returns
+// without a panic for derived inputs.
+func (c streamingSignerNewSignStream) Smoke() conform.ID[sign.StreamingSigner] {
+	return c.Check("smoke")
+}
+
 // streamingSignerSign is the name of StreamingSigner.Sign, with the
 // identities of its checks.
 type streamingSignerSign struct {
 	conform.Callable[sign.StreamingSigner]
+}
+
+// Smoke returns the identity of the check that Sign returns without a
+// panic for derived inputs.
+func (c streamingSignerSign) Smoke() conform.ID[sign.StreamingSigner] {
+	return c.Check("smoke")
 }
 
 // streamingSignerKeyID is the name of StreamingSigner.KeyID, with the
@@ -745,10 +1444,34 @@ type streamingSignerKeyID struct {
 	conform.Callable[sign.StreamingSigner]
 }
 
+// Smoke returns the identity of the check that KeyID returns without a
+// panic for derived inputs.
+func (c streamingSignerKeyID) Smoke() conform.ID[sign.StreamingSigner] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that KeyID returns the
+// same value for the same inputs.
+func (c streamingSignerKeyID) Deterministic() conform.ID[sign.StreamingSigner] {
+	return c.Check("deterministic")
+}
+
 // streamingSignerPublicKey is the name of StreamingSigner.PublicKey, with
 // the identities of its checks.
 type streamingSignerPublicKey struct {
 	conform.Callable[sign.StreamingSigner]
+}
+
+// Smoke returns the identity of the check that PublicKey returns without a
+// panic for derived inputs.
+func (c streamingSignerPublicKey) Smoke() conform.ID[sign.StreamingSigner] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that PublicKey returns
+// the same value for the same inputs.
+func (c streamingSignerPublicKey) Deterministic() conform.ID[sign.StreamingSigner] {
+	return c.Check("deterministic")
 }
 
 // streamingSignerAlgorithm is the name of StreamingSigner.Algorithm, with
@@ -757,10 +1480,34 @@ type streamingSignerAlgorithm struct {
 	conform.Callable[sign.StreamingSigner]
 }
 
+// Smoke returns the identity of the check that Algorithm returns without a
+// panic for derived inputs.
+func (c streamingSignerAlgorithm) Smoke() conform.ID[sign.StreamingSigner] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that Algorithm returns
+// the same value for the same inputs.
+func (c streamingSignerAlgorithm) Deterministic() conform.ID[sign.StreamingSigner] {
+	return c.Check("deterministic")
+}
+
 // streamingSignerVerify is the name of StreamingSigner.Verify, with the
 // identities of its checks.
 type streamingSignerVerify struct {
 	conform.Callable[sign.StreamingSigner]
+}
+
+// Smoke returns the identity of the check that Verify returns without a
+// panic for derived inputs.
+func (c streamingSignerVerify) Smoke() conform.ID[sign.StreamingSigner] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that Verify returns the
+// same value for the same inputs.
+func (c streamingSignerVerify) Deterministic() conform.ID[sign.StreamingSigner] {
+	return c.Check("deterministic")
 }
 
 // StreamingSignerSuite returns the checks of StreamingSigner, and the
@@ -768,7 +1515,198 @@ type streamingSignerVerify struct {
 func StreamingSignerSuite() conform.Suite[sign.StreamingSigner] {
 	return conform.Suite[sign.StreamingSigner]{
 		Declaration: "StreamingSigner",
+		Package:     "go.thesmos.sh/core/crypto/sign",
+		Generator:   conform.Generator{Name: "dokimi", Version: "0.1.0"},
 		Checks: []conform.Check[sign.StreamingSigner]{
+			{
+				ID:          StreamingSignerChecks.NewSignStream.Smoke(),
+				Statement:   "NewSignStream returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *StreamingSignerHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().NewSignStream()
+						return nil
+					})
+				},
+				Defect: streamingSignerNewSignStreamPanics,
+			},
+			{
+				ID:          StreamingSignerChecks.Sign.Smoke(),
+				Statement:   "Sign returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *StreamingSignerHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						_, err := h.Subject().Sign([]byte{1})
+						return err
+					})
+				},
+				Defect: streamingSignerSignPanics,
+			},
+			{
+				ID:          StreamingSignerChecks.Sign.Smoke().Generated(),
+				Statement:   "Sign returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *StreamingSignerHandle, c *prop.Case) {
+					drawnMessage := c.Draw(prop.Of[[]byte](), "message")
+					probe.Survives(h, func(ctx context.Context) error {
+						_, err := h.Subject().Sign(drawnMessage)
+						return err
+					})
+				},
+				Defect: streamingSignerSignPanics,
+			},
+			{
+				ID:          StreamingSignerChecks.KeyID.Smoke(),
+				Statement:   "KeyID returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *StreamingSignerHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().KeyID()
+						return nil
+					})
+				},
+				Defect: streamingSignerKeyIDPanics,
+			},
+			{
+				ID:          StreamingSignerChecks.KeyID.Deterministic(),
+				Statement:   "KeyID returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[sign.StreamingSigner]{StreamingSignerChecks.KeyID.Smoke()},
+				Apply: func(h *StreamingSignerHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) (sign.KeyID, error) {
+						r0 := h.Subject().KeyID()
+						return r0, nil
+					})
+				},
+				Defect: streamingSignerKeyIDDrifts,
+			},
+			{
+				ID:          StreamingSignerChecks.PublicKey.Smoke(),
+				Statement:   "PublicKey returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *StreamingSignerHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().PublicKey()
+						return nil
+					})
+				},
+				Defect: streamingSignerPublicKeyPanics,
+			},
+			{
+				ID:          StreamingSignerChecks.PublicKey.Deterministic(),
+				Statement:   "PublicKey returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[sign.StreamingSigner]{StreamingSignerChecks.PublicKey.Smoke()},
+				Apply: func(h *StreamingSignerHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) ([]byte, error) {
+						r0 := h.Subject().PublicKey()
+						return r0, nil
+					})
+				},
+				Defect: streamingSignerPublicKeyDrifts,
+			},
+			{
+				ID:          StreamingSignerChecks.Algorithm.Smoke(),
+				Statement:   "Algorithm returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *StreamingSignerHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Algorithm()
+						return nil
+					})
+				},
+				Defect: streamingSignerAlgorithmPanics,
+			},
+			{
+				ID:          StreamingSignerChecks.Algorithm.Deterministic(),
+				Statement:   "Algorithm returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[sign.StreamingSigner]{StreamingSignerChecks.Algorithm.Smoke()},
+				Apply: func(h *StreamingSignerHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) (crypto.Algorithm, error) {
+						r0 := h.Subject().Algorithm()
+						return r0, nil
+					})
+				},
+				Defect: streamingSignerAlgorithmDrifts,
+			},
+			{
+				ID:          StreamingSignerChecks.Verify.Smoke(),
+				Statement:   "Verify returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *StreamingSignerHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Verify([]byte{1}, []byte{1})
+						return nil
+					})
+				},
+				Defect: streamingSignerVerifyPanics,
+			},
+			{
+				ID:          StreamingSignerChecks.Verify.Smoke().Generated(),
+				Statement:   "Verify returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *StreamingSignerHandle, c *prop.Case) {
+					drawnMessage := c.Draw(prop.Of[[]byte](), "message")
+					drawnSignature := c.Draw(prop.Of[[]byte](), "signature")
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Verify(drawnMessage, drawnSignature)
+						return nil
+					})
+				},
+				Defect: streamingSignerVerifyPanics,
+			},
+			{
+				ID:          StreamingSignerChecks.Verify.Deterministic(),
+				Statement:   "Verify returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[sign.StreamingSigner]{StreamingSignerChecks.Verify.Smoke()},
+				Apply: func(h *StreamingSignerHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) (bool, error) {
+						r0 := h.Subject().Verify([]byte{1}, []byte{1})
+						return r0, nil
+					})
+				},
+				Defect: streamingSignerVerifyDrifts,
+			},
+			{
+				ID:          StreamingSignerChecks.Verify.Deterministic().Generated(),
+				Statement:   "Verify returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Entails:     []conform.ID[sign.StreamingSigner]{StreamingSignerChecks.Verify.Smoke().Generated()},
+				Property: func(h *StreamingSignerHandle, c *prop.Case) {
+					drawnMessage := c.Draw(prop.Of[[]byte](), "message")
+					drawnSignature := c.Draw(prop.Of[[]byte](), "signature")
+					probe.RepeatAgrees(h, func(ctx context.Context) (bool, error) {
+						r0 := h.Subject().Verify(drawnMessage, drawnSignature)
+						return r0, nil
+					})
+				},
+				Defect: streamingSignerVerifyDrifts,
+			},
 			{
 				ID:        StreamingSignerChecks.NewSignStream.StreamingSignerSignAndResetClearsTheStream(),
 				Statement: "the second SignAndReset of a SignStream signs only the message after the first",
@@ -792,6 +1730,15 @@ func StreamingSignerSuite() conform.Suite[sign.StreamingSigner] {
 				Statement: "Verify accepts the signature of a SignStream over the message that the stream absorbed",
 				Apply:     StreamingSignerStreamSignatureVerifies,
 				Defect:    signStreamSignsAnotherMessageForThePangram,
+			},
+		},
+		Refusals: []conform.Refusal{
+			{
+				Claim:    spec.Deterministic,
+				Callable: "StreamingSigner.NewSignStream",
+				Gate:     spec.ValueSamples,
+				Why:      "eidos derives no sample of a result of NewSignStream",
+				Remedy:   "author a sample of the result type with the directive sample",
 			},
 		},
 		Calls: []conform.Call[sign.StreamingSigner]{
@@ -1006,6 +1953,200 @@ func newStreamingSignerOver(_ *StreamingSignerHandle, spend func()) sign.Streami
 	return streamingSignerOver{spend: spend}
 }
 
+// streamingSignerNewSignStreamPanicsDefect is the planted defect of a
+// StreamingSigner whose NewSignStream panics.
+type streamingSignerNewSignStreamPanicsDefect struct {
+	streamingSignerOverEmbedded
+}
+
+// NewSignStream is the override of the planted defect.
+func (*streamingSignerNewSignStreamPanicsDefect) NewSignStream() (r0 sign.SignStream) {
+	panic("the planted defect of a StreamingSigner whose NewSignStream panics")
+}
+
+// streamingSignerNewSignStreamPanics returns the planted defect of a
+// StreamingSigner whose NewSignStream panics over a fresh subject.
+func streamingSignerNewSignStreamPanics(h *StreamingSignerHandle) sign.StreamingSigner {
+	return &streamingSignerNewSignStreamPanicsDefect{streamingSignerOverEmbedded: h.Fresh()}
+}
+
+// streamingSignerSignPanicsDefect is the planted defect of a
+// StreamingSigner whose Sign panics.
+type streamingSignerSignPanicsDefect struct {
+	streamingSignerOverEmbedded
+}
+
+// Sign is the override of the planted defect.
+func (*streamingSignerSignPanicsDefect) Sign(p0 []byte) (r0 []byte, r1 error) {
+	panic("the planted defect of a StreamingSigner whose Sign panics")
+}
+
+// streamingSignerSignPanics returns the planted defect of a
+// StreamingSigner whose Sign panics over a fresh subject.
+func streamingSignerSignPanics(h *StreamingSignerHandle) sign.StreamingSigner {
+	return &streamingSignerSignPanicsDefect{streamingSignerOverEmbedded: h.Fresh()}
+}
+
+// streamingSignerKeyIDPanicsDefect is the planted defect of a
+// StreamingSigner whose KeyID panics.
+type streamingSignerKeyIDPanicsDefect struct {
+	streamingSignerOverEmbedded
+}
+
+// KeyID is the override of the planted defect.
+func (*streamingSignerKeyIDPanicsDefect) KeyID() (r0 sign.KeyID) {
+	panic("the planted defect of a StreamingSigner whose KeyID panics")
+}
+
+// streamingSignerKeyIDPanics returns the planted defect of a
+// StreamingSigner whose KeyID panics over a fresh subject.
+func streamingSignerKeyIDPanics(h *StreamingSignerHandle) sign.StreamingSigner {
+	return &streamingSignerKeyIDPanicsDefect{streamingSignerOverEmbedded: h.Fresh()}
+}
+
+// streamingSignerKeyIDDriftsDefect is the planted defect of a
+// StreamingSigner whose KeyID returns another value on the repeat.
+type streamingSignerKeyIDDriftsDefect struct {
+	streamingSignerOverEmbedded
+	calls int
+}
+
+// KeyID is the override of the planted defect.
+func (d *streamingSignerKeyIDDriftsDefect) KeyID() (r0 sign.KeyID) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = sign.KeyID{2}
+	}
+	return r0
+}
+
+// streamingSignerKeyIDDrifts returns the planted defect of a
+// StreamingSigner whose KeyID returns another value on the repeat over a
+// fresh subject.
+func streamingSignerKeyIDDrifts(h *StreamingSignerHandle) sign.StreamingSigner {
+	return &streamingSignerKeyIDDriftsDefect{streamingSignerOverEmbedded: h.Fresh()}
+}
+
+// streamingSignerPublicKeyPanicsDefect is the planted defect of a
+// StreamingSigner whose PublicKey panics.
+type streamingSignerPublicKeyPanicsDefect struct {
+	streamingSignerOverEmbedded
+}
+
+// PublicKey is the override of the planted defect.
+func (*streamingSignerPublicKeyPanicsDefect) PublicKey() (r0 []byte) {
+	panic("the planted defect of a StreamingSigner whose PublicKey panics")
+}
+
+// streamingSignerPublicKeyPanics returns the planted defect of a
+// StreamingSigner whose PublicKey panics over a fresh subject.
+func streamingSignerPublicKeyPanics(h *StreamingSignerHandle) sign.StreamingSigner {
+	return &streamingSignerPublicKeyPanicsDefect{streamingSignerOverEmbedded: h.Fresh()}
+}
+
+// streamingSignerPublicKeyDriftsDefect is the planted defect of a
+// StreamingSigner whose PublicKey returns another value on the repeat.
+type streamingSignerPublicKeyDriftsDefect struct {
+	streamingSignerOverEmbedded
+	calls int
+}
+
+// PublicKey is the override of the planted defect.
+func (d *streamingSignerPublicKeyDriftsDefect) PublicKey() (r0 []byte) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = []byte{2}
+	}
+	return r0
+}
+
+// streamingSignerPublicKeyDrifts returns the planted defect of a
+// StreamingSigner whose PublicKey returns another value on the repeat over
+// a fresh subject.
+func streamingSignerPublicKeyDrifts(h *StreamingSignerHandle) sign.StreamingSigner {
+	return &streamingSignerPublicKeyDriftsDefect{streamingSignerOverEmbedded: h.Fresh()}
+}
+
+// streamingSignerAlgorithmPanicsDefect is the planted defect of a
+// StreamingSigner whose Algorithm panics.
+type streamingSignerAlgorithmPanicsDefect struct {
+	streamingSignerOverEmbedded
+}
+
+// Algorithm is the override of the planted defect.
+func (*streamingSignerAlgorithmPanicsDefect) Algorithm() (r0 crypto.Algorithm) {
+	panic("the planted defect of a StreamingSigner whose Algorithm panics")
+}
+
+// streamingSignerAlgorithmPanics returns the planted defect of a
+// StreamingSigner whose Algorithm panics over a fresh subject.
+func streamingSignerAlgorithmPanics(h *StreamingSignerHandle) sign.StreamingSigner {
+	return &streamingSignerAlgorithmPanicsDefect{streamingSignerOverEmbedded: h.Fresh()}
+}
+
+// streamingSignerAlgorithmDriftsDefect is the planted defect of a
+// StreamingSigner whose Algorithm returns another value on the repeat.
+type streamingSignerAlgorithmDriftsDefect struct {
+	streamingSignerOverEmbedded
+	calls int
+}
+
+// Algorithm is the override of the planted defect.
+func (d *streamingSignerAlgorithmDriftsDefect) Algorithm() (r0 crypto.Algorithm) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = crypto.Algorithm("sha-384")
+	}
+	return r0
+}
+
+// streamingSignerAlgorithmDrifts returns the planted defect of a
+// StreamingSigner whose Algorithm returns another value on the repeat over
+// a fresh subject.
+func streamingSignerAlgorithmDrifts(h *StreamingSignerHandle) sign.StreamingSigner {
+	return &streamingSignerAlgorithmDriftsDefect{streamingSignerOverEmbedded: h.Fresh()}
+}
+
+// streamingSignerVerifyPanicsDefect is the planted defect of a
+// StreamingSigner whose Verify panics.
+type streamingSignerVerifyPanicsDefect struct {
+	streamingSignerOverEmbedded
+}
+
+// Verify is the override of the planted defect.
+func (*streamingSignerVerifyPanicsDefect) Verify(p0, p1 []byte) (r0 bool) {
+	panic("the planted defect of a StreamingSigner whose Verify panics")
+}
+
+// streamingSignerVerifyPanics returns the planted defect of a
+// StreamingSigner whose Verify panics over a fresh subject.
+func streamingSignerVerifyPanics(h *StreamingSignerHandle) sign.StreamingSigner {
+	return &streamingSignerVerifyPanicsDefect{streamingSignerOverEmbedded: h.Fresh()}
+}
+
+// streamingSignerVerifyDriftsDefect is the planted defect of a
+// StreamingSigner whose Verify returns another value on the repeat.
+type streamingSignerVerifyDriftsDefect struct {
+	streamingSignerOverEmbedded
+	calls int
+}
+
+// Verify is the override of the planted defect.
+func (d *streamingSignerVerifyDriftsDefect) Verify(p0, p1 []byte) (r0 bool) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = bool(true)
+	}
+	return r0
+}
+
+// streamingSignerVerifyDrifts returns the planted defect of a
+// StreamingSigner whose Verify returns another value on the repeat over a
+// fresh subject.
+func streamingSignerVerifyDrifts(h *StreamingSignerHandle) sign.StreamingSigner {
+	return &streamingSignerVerifyDriftsDefect{streamingSignerOverEmbedded: h.Fresh()}
+}
+
 // The suite refers to the compatibility witness of its runtime.
 var _ = conform.CompatV1
 
@@ -1072,10 +2213,28 @@ func (c streamingVerifierNewVerifyStream) StreamingVerifierStreamRefusesANilSign
 	return c.Check("streaming-verifier-stream-refuses-a-nil-signature")
 }
 
+// Smoke returns the identity of the check that NewVerifyStream returns
+// without a panic for derived inputs.
+func (c streamingVerifierNewVerifyStream) Smoke() conform.ID[sign.StreamingVerifier] {
+	return c.Check("smoke")
+}
+
 // streamingVerifierKeyID is the name of StreamingVerifier.KeyID, with the
 // identities of its checks.
 type streamingVerifierKeyID struct {
 	conform.Callable[sign.StreamingVerifier]
+}
+
+// Smoke returns the identity of the check that KeyID returns without a
+// panic for derived inputs.
+func (c streamingVerifierKeyID) Smoke() conform.ID[sign.StreamingVerifier] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that KeyID returns the
+// same value for the same inputs.
+func (c streamingVerifierKeyID) Deterministic() conform.ID[sign.StreamingVerifier] {
+	return c.Check("deterministic")
 }
 
 // streamingVerifierPublicKey is the name of StreamingVerifier.PublicKey,
@@ -1084,10 +2243,34 @@ type streamingVerifierPublicKey struct {
 	conform.Callable[sign.StreamingVerifier]
 }
 
+// Smoke returns the identity of the check that PublicKey returns without a
+// panic for derived inputs.
+func (c streamingVerifierPublicKey) Smoke() conform.ID[sign.StreamingVerifier] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that PublicKey returns
+// the same value for the same inputs.
+func (c streamingVerifierPublicKey) Deterministic() conform.ID[sign.StreamingVerifier] {
+	return c.Check("deterministic")
+}
+
 // streamingVerifierAlgorithm is the name of StreamingVerifier.Algorithm,
 // with the identities of its checks.
 type streamingVerifierAlgorithm struct {
 	conform.Callable[sign.StreamingVerifier]
+}
+
+// Smoke returns the identity of the check that Algorithm returns without a
+// panic for derived inputs.
+func (c streamingVerifierAlgorithm) Smoke() conform.ID[sign.StreamingVerifier] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that Algorithm returns
+// the same value for the same inputs.
+func (c streamingVerifierAlgorithm) Deterministic() conform.ID[sign.StreamingVerifier] {
+	return c.Check("deterministic")
 }
 
 // streamingVerifierVerify is the name of StreamingVerifier.Verify, with
@@ -1096,12 +2279,187 @@ type streamingVerifierVerify struct {
 	conform.Callable[sign.StreamingVerifier]
 }
 
+// Smoke returns the identity of the check that Verify returns without a
+// panic for derived inputs.
+func (c streamingVerifierVerify) Smoke() conform.ID[sign.StreamingVerifier] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that Verify returns the
+// same value for the same inputs.
+func (c streamingVerifierVerify) Deterministic() conform.ID[sign.StreamingVerifier] {
+	return c.Check("deterministic")
+}
+
 // StreamingVerifierSuite returns the checks of StreamingVerifier, and the
 // calls and the budgets of its callables.
 func StreamingVerifierSuite() conform.Suite[sign.StreamingVerifier] {
 	return conform.Suite[sign.StreamingVerifier]{
 		Declaration: "StreamingVerifier",
+		Package:     "go.thesmos.sh/core/crypto/sign",
+		Generator:   conform.Generator{Name: "dokimi", Version: "0.1.0"},
 		Checks: []conform.Check[sign.StreamingVerifier]{
+			{
+				ID:          StreamingVerifierChecks.NewVerifyStream.Smoke(),
+				Statement:   "NewVerifyStream returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *StreamingVerifierHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().NewVerifyStream()
+						return nil
+					})
+				},
+				Defect: streamingVerifierNewVerifyStreamPanics,
+			},
+			{
+				ID:          StreamingVerifierChecks.KeyID.Smoke(),
+				Statement:   "KeyID returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *StreamingVerifierHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().KeyID()
+						return nil
+					})
+				},
+				Defect: streamingVerifierKeyIDPanics,
+			},
+			{
+				ID:          StreamingVerifierChecks.KeyID.Deterministic(),
+				Statement:   "KeyID returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[sign.StreamingVerifier]{StreamingVerifierChecks.KeyID.Smoke()},
+				Apply: func(h *StreamingVerifierHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) (sign.KeyID, error) {
+						r0 := h.Subject().KeyID()
+						return r0, nil
+					})
+				},
+				Defect: streamingVerifierKeyIDDrifts,
+			},
+			{
+				ID:          StreamingVerifierChecks.PublicKey.Smoke(),
+				Statement:   "PublicKey returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *StreamingVerifierHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().PublicKey()
+						return nil
+					})
+				},
+				Defect: streamingVerifierPublicKeyPanics,
+			},
+			{
+				ID:          StreamingVerifierChecks.PublicKey.Deterministic(),
+				Statement:   "PublicKey returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[sign.StreamingVerifier]{StreamingVerifierChecks.PublicKey.Smoke()},
+				Apply: func(h *StreamingVerifierHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) ([]byte, error) {
+						r0 := h.Subject().PublicKey()
+						return r0, nil
+					})
+				},
+				Defect: streamingVerifierPublicKeyDrifts,
+			},
+			{
+				ID:          StreamingVerifierChecks.Algorithm.Smoke(),
+				Statement:   "Algorithm returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *StreamingVerifierHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Algorithm()
+						return nil
+					})
+				},
+				Defect: streamingVerifierAlgorithmPanics,
+			},
+			{
+				ID:          StreamingVerifierChecks.Algorithm.Deterministic(),
+				Statement:   "Algorithm returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[sign.StreamingVerifier]{StreamingVerifierChecks.Algorithm.Smoke()},
+				Apply: func(h *StreamingVerifierHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) (crypto.Algorithm, error) {
+						r0 := h.Subject().Algorithm()
+						return r0, nil
+					})
+				},
+				Defect: streamingVerifierAlgorithmDrifts,
+			},
+			{
+				ID:          StreamingVerifierChecks.Verify.Smoke(),
+				Statement:   "Verify returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *StreamingVerifierHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Verify([]byte{1}, []byte{1})
+						return nil
+					})
+				},
+				Defect: streamingVerifierVerifyPanics,
+			},
+			{
+				ID:          StreamingVerifierChecks.Verify.Smoke().Generated(),
+				Statement:   "Verify returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *StreamingVerifierHandle, c *prop.Case) {
+					drawnMessage := c.Draw(prop.Of[[]byte](), "message")
+					drawnSignature := c.Draw(prop.Of[[]byte](), "signature")
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Verify(drawnMessage, drawnSignature)
+						return nil
+					})
+				},
+				Defect: streamingVerifierVerifyPanics,
+			},
+			{
+				ID:          StreamingVerifierChecks.Verify.Deterministic(),
+				Statement:   "Verify returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[sign.StreamingVerifier]{StreamingVerifierChecks.Verify.Smoke()},
+				Apply: func(h *StreamingVerifierHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) (bool, error) {
+						r0 := h.Subject().Verify([]byte{1}, []byte{1})
+						return r0, nil
+					})
+				},
+				Defect: streamingVerifierVerifyDrifts,
+			},
+			{
+				ID:          StreamingVerifierChecks.Verify.Deterministic().Generated(),
+				Statement:   "Verify returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Entails:     []conform.ID[sign.StreamingVerifier]{StreamingVerifierChecks.Verify.Smoke().Generated()},
+				Property: func(h *StreamingVerifierHandle, c *prop.Case) {
+					drawnMessage := c.Draw(prop.Of[[]byte](), "message")
+					drawnSignature := c.Draw(prop.Of[[]byte](), "signature")
+					probe.RepeatAgrees(h, func(ctx context.Context) (bool, error) {
+						r0 := h.Subject().Verify(drawnMessage, drawnSignature)
+						return r0, nil
+					})
+				},
+				Defect: streamingVerifierVerifyDrifts,
+			},
 			{
 				ID:        StreamingVerifierChecks.NewVerifyStream.StreamingVerifierStreamAbsorbsSplitWrites(),
 				Statement: "a VerifyStream accepts the signature of a message that it absorbed in two Writes",
@@ -1135,6 +2493,15 @@ func StreamingVerifierSuite() conform.Suite[sign.StreamingVerifier] {
 				Statement: "a VerifyStream refuses a nil signature",
 				Apply:     StreamingVerifierStreamRefusesANilSignature,
 				Defect:    verifyStreamAcceptsANilSignature,
+			},
+		},
+		Refusals: []conform.Refusal{
+			{
+				Claim:    spec.Deterministic,
+				Callable: "StreamingVerifier.NewVerifyStream",
+				Gate:     spec.ValueSamples,
+				Why:      "eidos derives no sample of a result of NewVerifyStream",
+				Remedy:   "author a sample of the result type with the directive sample",
 			},
 		},
 		Calls: []conform.Call[sign.StreamingVerifier]{
@@ -1339,4 +2706,181 @@ func newStreamingVerifierOver(_ *StreamingVerifierHandle, spend func()) sign.Str
 	return streamingVerifierOver{spend: spend}
 }
 
-// dokimi:provenance sha256:013fde33734d18ed2a315b8103b353ddaf1c9079662f833fd20ab4d21894b5c5
+// streamingVerifierNewVerifyStreamPanicsDefect is the planted defect of a
+// StreamingVerifier whose NewVerifyStream panics.
+type streamingVerifierNewVerifyStreamPanicsDefect struct {
+	streamingVerifierOverEmbedded
+}
+
+// NewVerifyStream is the override of the planted defect.
+func (*streamingVerifierNewVerifyStreamPanicsDefect) NewVerifyStream() (r0 sign.VerifyStream) {
+	panic("the planted defect of a StreamingVerifier whose NewVerifyStream panics")
+}
+
+// streamingVerifierNewVerifyStreamPanics returns the planted defect of a
+// StreamingVerifier whose NewVerifyStream panics over a fresh subject.
+func streamingVerifierNewVerifyStreamPanics(h *StreamingVerifierHandle) sign.StreamingVerifier {
+	return &streamingVerifierNewVerifyStreamPanicsDefect{streamingVerifierOverEmbedded: h.Fresh()}
+}
+
+// streamingVerifierKeyIDPanicsDefect is the planted defect of a
+// StreamingVerifier whose KeyID panics.
+type streamingVerifierKeyIDPanicsDefect struct {
+	streamingVerifierOverEmbedded
+}
+
+// KeyID is the override of the planted defect.
+func (*streamingVerifierKeyIDPanicsDefect) KeyID() (r0 sign.KeyID) {
+	panic("the planted defect of a StreamingVerifier whose KeyID panics")
+}
+
+// streamingVerifierKeyIDPanics returns the planted defect of a
+// StreamingVerifier whose KeyID panics over a fresh subject.
+func streamingVerifierKeyIDPanics(h *StreamingVerifierHandle) sign.StreamingVerifier {
+	return &streamingVerifierKeyIDPanicsDefect{streamingVerifierOverEmbedded: h.Fresh()}
+}
+
+// streamingVerifierKeyIDDriftsDefect is the planted defect of a
+// StreamingVerifier whose KeyID returns another value on the repeat.
+type streamingVerifierKeyIDDriftsDefect struct {
+	streamingVerifierOverEmbedded
+	calls int
+}
+
+// KeyID is the override of the planted defect.
+func (d *streamingVerifierKeyIDDriftsDefect) KeyID() (r0 sign.KeyID) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = sign.KeyID{2}
+	}
+	return r0
+}
+
+// streamingVerifierKeyIDDrifts returns the planted defect of a
+// StreamingVerifier whose KeyID returns another value on the repeat over a
+// fresh subject.
+func streamingVerifierKeyIDDrifts(h *StreamingVerifierHandle) sign.StreamingVerifier {
+	return &streamingVerifierKeyIDDriftsDefect{streamingVerifierOverEmbedded: h.Fresh()}
+}
+
+// streamingVerifierPublicKeyPanicsDefect is the planted defect of a
+// StreamingVerifier whose PublicKey panics.
+type streamingVerifierPublicKeyPanicsDefect struct {
+	streamingVerifierOverEmbedded
+}
+
+// PublicKey is the override of the planted defect.
+func (*streamingVerifierPublicKeyPanicsDefect) PublicKey() (r0 []byte) {
+	panic("the planted defect of a StreamingVerifier whose PublicKey panics")
+}
+
+// streamingVerifierPublicKeyPanics returns the planted defect of a
+// StreamingVerifier whose PublicKey panics over a fresh subject.
+func streamingVerifierPublicKeyPanics(h *StreamingVerifierHandle) sign.StreamingVerifier {
+	return &streamingVerifierPublicKeyPanicsDefect{streamingVerifierOverEmbedded: h.Fresh()}
+}
+
+// streamingVerifierPublicKeyDriftsDefect is the planted defect of a
+// StreamingVerifier whose PublicKey returns another value on the repeat.
+type streamingVerifierPublicKeyDriftsDefect struct {
+	streamingVerifierOverEmbedded
+	calls int
+}
+
+// PublicKey is the override of the planted defect.
+func (d *streamingVerifierPublicKeyDriftsDefect) PublicKey() (r0 []byte) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = []byte{2}
+	}
+	return r0
+}
+
+// streamingVerifierPublicKeyDrifts returns the planted defect of a
+// StreamingVerifier whose PublicKey returns another value on the repeat
+// over a fresh subject.
+func streamingVerifierPublicKeyDrifts(h *StreamingVerifierHandle) sign.StreamingVerifier {
+	return &streamingVerifierPublicKeyDriftsDefect{streamingVerifierOverEmbedded: h.Fresh()}
+}
+
+// streamingVerifierAlgorithmPanicsDefect is the planted defect of a
+// StreamingVerifier whose Algorithm panics.
+type streamingVerifierAlgorithmPanicsDefect struct {
+	streamingVerifierOverEmbedded
+}
+
+// Algorithm is the override of the planted defect.
+func (*streamingVerifierAlgorithmPanicsDefect) Algorithm() (r0 crypto.Algorithm) {
+	panic("the planted defect of a StreamingVerifier whose Algorithm panics")
+}
+
+// streamingVerifierAlgorithmPanics returns the planted defect of a
+// StreamingVerifier whose Algorithm panics over a fresh subject.
+func streamingVerifierAlgorithmPanics(h *StreamingVerifierHandle) sign.StreamingVerifier {
+	return &streamingVerifierAlgorithmPanicsDefect{streamingVerifierOverEmbedded: h.Fresh()}
+}
+
+// streamingVerifierAlgorithmDriftsDefect is the planted defect of a
+// StreamingVerifier whose Algorithm returns another value on the repeat.
+type streamingVerifierAlgorithmDriftsDefect struct {
+	streamingVerifierOverEmbedded
+	calls int
+}
+
+// Algorithm is the override of the planted defect.
+func (d *streamingVerifierAlgorithmDriftsDefect) Algorithm() (r0 crypto.Algorithm) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = crypto.Algorithm("sha-384")
+	}
+	return r0
+}
+
+// streamingVerifierAlgorithmDrifts returns the planted defect of a
+// StreamingVerifier whose Algorithm returns another value on the repeat
+// over a fresh subject.
+func streamingVerifierAlgorithmDrifts(h *StreamingVerifierHandle) sign.StreamingVerifier {
+	return &streamingVerifierAlgorithmDriftsDefect{streamingVerifierOverEmbedded: h.Fresh()}
+}
+
+// streamingVerifierVerifyPanicsDefect is the planted defect of a
+// StreamingVerifier whose Verify panics.
+type streamingVerifierVerifyPanicsDefect struct {
+	streamingVerifierOverEmbedded
+}
+
+// Verify is the override of the planted defect.
+func (*streamingVerifierVerifyPanicsDefect) Verify(p0, p1 []byte) (r0 bool) {
+	panic("the planted defect of a StreamingVerifier whose Verify panics")
+}
+
+// streamingVerifierVerifyPanics returns the planted defect of a
+// StreamingVerifier whose Verify panics over a fresh subject.
+func streamingVerifierVerifyPanics(h *StreamingVerifierHandle) sign.StreamingVerifier {
+	return &streamingVerifierVerifyPanicsDefect{streamingVerifierOverEmbedded: h.Fresh()}
+}
+
+// streamingVerifierVerifyDriftsDefect is the planted defect of a
+// StreamingVerifier whose Verify returns another value on the repeat.
+type streamingVerifierVerifyDriftsDefect struct {
+	streamingVerifierOverEmbedded
+	calls int
+}
+
+// Verify is the override of the planted defect.
+func (d *streamingVerifierVerifyDriftsDefect) Verify(p0, p1 []byte) (r0 bool) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = bool(true)
+	}
+	return r0
+}
+
+// streamingVerifierVerifyDrifts returns the planted defect of a
+// StreamingVerifier whose Verify returns another value on the repeat over
+// a fresh subject.
+func streamingVerifierVerifyDrifts(h *StreamingVerifierHandle) sign.StreamingVerifier {
+	return &streamingVerifierVerifyDriftsDefect{streamingVerifierOverEmbedded: h.Fresh()}
+}
+
+// dokimi:provenance sha256:eb8059fe07e90e7e172013ed4d0b142dba9ca176dd930ca06a76f0dff9963eea

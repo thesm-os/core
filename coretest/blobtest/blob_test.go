@@ -60,7 +60,10 @@ func TestBlob(t *testing.T) {
 
 		t.Run("passes the store in memory", func(t *testing.T) {
 			t.Parallel()
-			blobtest.RunStoreSuite(t, func() *memory.Store { return memory.New(fake.New(origin)) }, storeOptions()...)
+			excuse := conform.Excuse(blobtest.StoreChecks.Get.StoreGetReaderFailsWithErrMismatch(),
+				"a reader of the store in memory reads the bytes of its version after an overwrite or a delete")
+			blobtest.RunStoreSuite(t, func() *memory.Store { return memory.New(fake.New(origin)) },
+				append(storeOptions(), excuse)...)
 		})
 
 		t.Run("passes a store whose readers fail once their version is removed", func(t *testing.T) {

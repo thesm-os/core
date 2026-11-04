@@ -48,30 +48,7 @@ func TestSpanSuite(t *testing.T) {
 				},
 				Defect: func(*telemetrytest.SpanHandle) telemetry.Span { return &spanSubject{} },
 			}),
-			conform.Excuse(
-				telemetrytest.SpanChecks.End.SpanEndAcceptsANilError(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.SpanChecks.End.SpanSecondEndReturns(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.SpanChecks.SetAttributes.SpanMethodsReturnAfterEnd(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.SpanChecks.SetAttributes.SpanSetAttributesAcceptsAttributes(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.SpanChecks.SetAttributes.SpanSetAttributesAcceptsNoAttributes(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.SpanChecks.AddEvent.SpanAddEventAcceptsAttributes(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[telemetry.Span]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -93,30 +70,7 @@ func TestSpanSuite(t *testing.T) {
 				},
 				Defect: func(*telemetrytest.SpanHandle) telemetry.Span { return &spanSubject{} },
 			}),
-			conform.Excuse(
-				telemetrytest.SpanChecks.End.SpanEndAcceptsANilError(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.SpanChecks.End.SpanSecondEndReturns(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.SpanChecks.SetAttributes.SpanMethodsReturnAfterEnd(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.SpanChecks.SetAttributes.SpanSetAttributesAcceptsAttributes(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.SpanChecks.SetAttributes.SpanSetAttributesAcceptsNoAttributes(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.SpanChecks.AddEvent.SpanAddEventAcceptsAttributes(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[telemetry.Span]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -142,29 +96,21 @@ func TestSpanSuite(t *testing.T) {
 		)
 		assert.Equal(
 			t,
-			string(telemetrytest.SpanChecks.SetAttributes.SpanSetAttributesAcceptsAttributes()),
-			"Span.SetAttributes/span-set-attributes-accepts-attributes",
-			"the identity of the check joins the callable and the segment of the check",
-		)
-		assert.Equal(
-			t,
 			string(telemetrytest.SpanChecks.SetAttributes.SpanSetAttributesAcceptsNoAttributes()),
 			"Span.SetAttributes/span-set-attributes-accepts-no-attributes",
-			"the identity of the check joins the callable and the segment of the check",
-		)
-		assert.Equal(
-			t,
-			string(telemetrytest.SpanChecks.AddEvent.SpanAddEventAcceptsAttributes()),
-			"Span.AddEvent/span-add-event-accepts-attributes",
 			"the identity of the check joins the callable and the segment of the check",
 		)
 	})
 }
 
+// spanSuite is the suite of Span that the tests of the planted defect of a
+// ceiling apply.
+var spanSuite = telemetrytest.SpanSuite()
+
 // spanIdle returns the planted defect of a ceiling of Span with a spend of
-// nothing, a subject that answers each call at once.
+// nothing. Each call of the defect returns its zero results at once.
 func spanIdle(h *telemetrytest.SpanHandle) telemetry.Span {
-	return telemetrytest.SpanSuite().Calls[0].Over(h, func() {})
+	return spanSuite.Calls[0].Over(h, func() {})
 }
 
 // TestSpanSuiteBudgets applies the allocation ceilings of the suite of
@@ -179,30 +125,7 @@ func TestSpanSuiteBudgets(t *testing.T) {
 		conform.Ceilings(telemetrytest.SpanChecks.SetAttributes.Callable, conform.Budget{Allocs: new(uint64(0))}),
 		conform.Ceilings(telemetrytest.SpanChecks.AddEvent.Callable, conform.Budget{Allocs: new(uint64(0))}),
 		conform.Ceilings(telemetrytest.SpanChecks.SpanContext.Callable, conform.Budget{Allocs: new(uint64(0))}),
-		conform.Excuse(
-			telemetrytest.SpanChecks.End.SpanEndAcceptsANilError(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.SpanChecks.End.SpanSecondEndReturns(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.SpanChecks.SetAttributes.SpanMethodsReturnAfterEnd(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.SpanChecks.SetAttributes.SpanSetAttributesAcceptsAttributes(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.SpanChecks.SetAttributes.SpanSetAttributesAcceptsNoAttributes(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.SpanChecks.AddEvent.SpanAddEventAcceptsAttributes(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[telemetry.Span]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -213,30 +136,7 @@ func FuzzSpanSuiteEnd(f *testing.F) {
 		f,
 		telemetrytest.SpanChecks.End.Callable,
 		spanIdle,
-		conform.Excuse(
-			telemetrytest.SpanChecks.End.SpanEndAcceptsANilError(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.SpanChecks.End.SpanSecondEndReturns(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.SpanChecks.SetAttributes.SpanMethodsReturnAfterEnd(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.SpanChecks.SetAttributes.SpanSetAttributesAcceptsAttributes(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.SpanChecks.SetAttributes.SpanSetAttributesAcceptsNoAttributes(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.SpanChecks.AddEvent.SpanAddEventAcceptsAttributes(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[telemetry.Span]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -247,30 +147,7 @@ func FuzzSpanSuiteSetAttributes(f *testing.F) {
 		f,
 		telemetrytest.SpanChecks.SetAttributes.Callable,
 		spanIdle,
-		conform.Excuse(
-			telemetrytest.SpanChecks.End.SpanEndAcceptsANilError(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.SpanChecks.End.SpanSecondEndReturns(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.SpanChecks.SetAttributes.SpanMethodsReturnAfterEnd(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.SpanChecks.SetAttributes.SpanSetAttributesAcceptsAttributes(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.SpanChecks.SetAttributes.SpanSetAttributesAcceptsNoAttributes(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.SpanChecks.AddEvent.SpanAddEventAcceptsAttributes(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[telemetry.Span]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -281,30 +158,7 @@ func FuzzSpanSuiteAddEvent(f *testing.F) {
 		f,
 		telemetrytest.SpanChecks.AddEvent.Callable,
 		spanIdle,
-		conform.Excuse(
-			telemetrytest.SpanChecks.End.SpanEndAcceptsANilError(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.SpanChecks.End.SpanSecondEndReturns(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.SpanChecks.SetAttributes.SpanMethodsReturnAfterEnd(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.SpanChecks.SetAttributes.SpanSetAttributesAcceptsAttributes(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.SpanChecks.SetAttributes.SpanSetAttributesAcceptsNoAttributes(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.SpanChecks.AddEvent.SpanAddEventAcceptsAttributes(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[telemetry.Span]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -315,30 +169,7 @@ func FuzzSpanSuiteSpanContext(f *testing.F) {
 		f,
 		telemetrytest.SpanChecks.SpanContext.Callable,
 		spanIdle,
-		conform.Excuse(
-			telemetrytest.SpanChecks.End.SpanEndAcceptsANilError(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.SpanChecks.End.SpanSecondEndReturns(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.SpanChecks.SetAttributes.SpanMethodsReturnAfterEnd(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.SpanChecks.SetAttributes.SpanSetAttributesAcceptsAttributes(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.SpanChecks.SetAttributes.SpanSetAttributesAcceptsNoAttributes(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.SpanChecks.AddEvent.SpanAddEventAcceptsAttributes(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[telemetry.Span]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -359,4 +190,4 @@ func BenchmarkSpanSuite(b *testing.B) {
 	})
 }
 
-// dokimi:provenance sha256:c6d8fdc8c3541a92994c697beae548dd35bd489a3f6c2ba7bec312f97e1ea94e
+// dokimi:provenance sha256:426c2e06bac190e8c520b69e2208fd845914290852b271fcce3a0917f37078fb

@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"go.dokimi.dev/assert"
-	"go.dokimi.dev/assert/expect"
 	"go.dokimi.dev/stub"
 	"go.thesmos.sh/core/coretest/cryptotest"
 	"go.thesmos.sh/core/crypto"
@@ -50,13 +49,15 @@ func xofStubNewXOFStream(tb assert.TB, s *cryptotest.XOFStub) crypto.XOFStream {
 	return s.NewXOFStream()
 }
 
-// xofStubIDSubject returns the subject of [stub.Behaviour] for ID. The
-// subject calls a new double that reports to tb.
+// xofStubIDSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for ID. The subject calls a new double that
+// reports to tb.
 func xofStubIDSubject(tb assert.TB) stub.Subject[cryptotest.XOFIDCall, cryptotest.XOFIDReturn] {
 	tb.Helper()
 	s := cryptotest.NewXOFStub(tb)
 	return stub.Subject[cryptotest.XOFIDCall, cryptotest.XOFIDReturn]{
-		Stub: s.OnID.MethodStub,
+		Stub:  s.OnID.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = xofStubID(tb, s)
 		},
@@ -64,9 +65,14 @@ func xofStubIDSubject(tb assert.TB) stub.Subject[cryptotest.XOFIDCall, cryptotes
 			got0 := xofStubID(tb, s)
 			return cryptotest.XOFIDReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() cryptotest.XOFIDReturn {
+			want0 := xofStubIDPins()
+			s.OnID.Returns(want0)
+			return cryptotest.XOFIDReturn{Result: want0}
+		},
+		Override: func(seen func(cryptotest.XOFIDCall)) {
 			s.OnID.Func(func() crypto.ID {
-				mark()
+				seen(cryptotest.XOFIDCall{})
 				var z0 crypto.ID
 				return z0
 			})
@@ -74,13 +80,15 @@ func xofStubIDSubject(tb assert.TB) stub.Subject[cryptotest.XOFIDCall, cryptotes
 	}
 }
 
-// xofStubAlgorithmSubject returns the subject of [stub.Behaviour] for
-// Algorithm. The subject calls a new double that reports to tb.
+// xofStubAlgorithmSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Algorithm. The subject calls a new double that
+// reports to tb.
 func xofStubAlgorithmSubject(tb assert.TB) stub.Subject[cryptotest.XOFAlgorithmCall, cryptotest.XOFAlgorithmReturn] {
 	tb.Helper()
 	s := cryptotest.NewXOFStub(tb)
 	return stub.Subject[cryptotest.XOFAlgorithmCall, cryptotest.XOFAlgorithmReturn]{
-		Stub: s.OnAlgorithm.MethodStub,
+		Stub:  s.OnAlgorithm.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = xofStubAlgorithm(tb, s)
 		},
@@ -88,9 +96,14 @@ func xofStubAlgorithmSubject(tb assert.TB) stub.Subject[cryptotest.XOFAlgorithmC
 			got0 := xofStubAlgorithm(tb, s)
 			return cryptotest.XOFAlgorithmReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() cryptotest.XOFAlgorithmReturn {
+			want0 := xofStubAlgorithmPins()
+			s.OnAlgorithm.Returns(want0)
+			return cryptotest.XOFAlgorithmReturn{Result: want0}
+		},
+		Override: func(seen func(cryptotest.XOFAlgorithmCall)) {
 			s.OnAlgorithm.Func(func() crypto.Algorithm {
-				mark()
+				seen(cryptotest.XOFAlgorithmCall{})
 				var z0 crypto.Algorithm
 				return z0
 			})
@@ -98,15 +111,17 @@ func xofStubAlgorithmSubject(tb assert.TB) stub.Subject[cryptotest.XOFAlgorithmC
 	}
 }
 
-// xofStubNewXOFStreamSubject returns the subject of [stub.Behaviour] for
-// NewXOFStream. The subject calls a new double that reports to tb.
+// xofStubNewXOFStreamSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for NewXOFStream. The subject calls a new double
+// that reports to tb.
 func xofStubNewXOFStreamSubject(
 	tb assert.TB,
 ) stub.Subject[cryptotest.XOFNewXOFStreamCall, cryptotest.XOFNewXOFStreamReturn] {
 	tb.Helper()
 	s := cryptotest.NewXOFStub(tb)
 	return stub.Subject[cryptotest.XOFNewXOFStreamCall, cryptotest.XOFNewXOFStreamReturn]{
-		Stub: s.OnNewXOFStream.MethodStub,
+		Stub:  s.OnNewXOFStream.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = xofStubNewXOFStream(tb, s)
 		},
@@ -114,9 +129,9 @@ func xofStubNewXOFStreamSubject(
 			got0 := xofStubNewXOFStream(tb, s)
 			return cryptotest.XOFNewXOFStreamReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Override: func(seen func(cryptotest.XOFNewXOFStreamCall)) {
 			s.OnNewXOFStream.Func(func() crypto.XOFStream {
-				mark()
+				seen(cryptotest.XOFNewXOFStreamCall{})
 				var z0 crypto.XOFStream
 				return z0
 			})
@@ -137,7 +152,6 @@ func xofStubInstanceOf(tb assert.TB, s *cryptotest.XOFStub) xofStubInstance {
 		Call: func() {
 			_ = xofStubID(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -149,103 +163,34 @@ func TestXOFStub(t *testing.T) {
 	t.Run("ID", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "ID", xofStubIDSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewXOFStub(t)
-			var seen []cryptotest.XOFIDCall
-			s.OnID.OnRecord(func(c cryptotest.XOFIDCall) { seen = append(seen, c) })
-			_ = xofStubID(t, s)
-			_ = xofStubID(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of ID")
-		})
 	})
 
 	t.Run("Algorithm", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Algorithm", xofStubAlgorithmSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewXOFStub(t)
-			var seen []cryptotest.XOFAlgorithmCall
-			s.OnAlgorithm.OnRecord(func(c cryptotest.XOFAlgorithmCall) { seen = append(seen, c) })
-			_ = xofStubAlgorithm(t, s)
-			_ = xofStubAlgorithm(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Algorithm")
-		})
 	})
 
 	t.Run("NewXOFStream", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "NewXOFStream", xofStubNewXOFStreamSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewXOFStub(t)
-			var seen []cryptotest.XOFNewXOFStreamCall
-			s.OnNewXOFStream.OnRecord(func(c cryptotest.XOFNewXOFStreamCall) { seen = append(seen, c) })
-			_ = xofStubNewXOFStream(t, s)
-			_ = xofStubNewXOFStream(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of NewXOFStream")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) xofStubInstance {
-			return xofStubInstanceOf(tb, cryptotest.NewXOFStub(tb))
-		})
 
-		t.Run("clears the recorded calls of ID", func(t *testing.T) {
+		t.Run("ID", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewXOFStub(t)
-			_ = xofStubID(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnID.CallCount(), 0, "ResetCalls clears the calls of ID")
+			stub.ResetBehaviour(t, "ID", xofStubIDSubject)
 		})
 
-		t.Run("keeps the results of Returns of ID", func(t *testing.T) {
+		t.Run("Algorithm", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewXOFStub(t)
-			want0 := xofStubIDPins()
-			s.OnID.Returns(want0)
-			s.ResetCalls()
-			got0 := xofStubID(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of ID")
+			stub.ResetBehaviour(t, "Algorithm", xofStubAlgorithmSubject)
 		})
 
-		t.Run("clears the recorded calls of Algorithm", func(t *testing.T) {
+		t.Run("NewXOFStream", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewXOFStub(t)
-			_ = xofStubAlgorithm(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnAlgorithm.CallCount(), 0, "ResetCalls clears the calls of Algorithm")
-		})
-
-		t.Run("keeps the results of Returns of Algorithm", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewXOFStub(t)
-			want0 := xofStubAlgorithmPins()
-			s.OnAlgorithm.Returns(want0)
-			s.ResetCalls()
-			got0 := xofStubAlgorithm(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Algorithm")
-		})
-
-		t.Run("clears the recorded calls of NewXOFStream", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewXOFStub(t)
-			_ = xofStubNewXOFStream(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnNewXOFStream.CallCount(), 0, "ResetCalls clears the calls of NewXOFStream")
-		})
-	})
-
-	t.Run("NewXOFStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) xofStubInstance {
-			return xofStubInstanceOf(tb, cryptotest.NewXOFStubDelayed(tb, d, clk))
+			stub.ResetBehaviour(t, "NewXOFStream", xofStubNewXOFStreamSubject)
 		})
 	})
 
@@ -364,86 +309,6 @@ func TestXOFStub(t *testing.T) {
 	})
 }
 
-// TestXOFIDStub checks the methods of XOFIDStub, which configures ID.
-func TestXOFIDStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of ID", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewXOFStub(t)
-			want0 := xofStubIDPins()
-			s.OnID.Returns(want0)
-			got0 := xofStubID(t, s)
-			assert.Equal(t, got0, want0, "ID returns the Result that Returns sets")
-		})
-
-		t.Run("configures ID for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewXOFStub(r)
-			s.OnID.Strict()
-			var want0 crypto.ID
-			s.OnID.Returns(want0)
-			_ = xofStubID(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of ID")
-		})
-	})
-}
-
-// TestXOFAlgorithmStub checks the methods of XOFAlgorithmStub, which
-// configures Algorithm.
-func TestXOFAlgorithmStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Algorithm", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewXOFStub(t)
-			want0 := xofStubAlgorithmPins()
-			s.OnAlgorithm.Returns(want0)
-			got0 := xofStubAlgorithm(t, s)
-			assert.Equal(t, got0, want0, "Algorithm returns the Result that Returns sets")
-		})
-
-		t.Run("configures Algorithm for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewXOFStub(r)
-			s.OnAlgorithm.Strict()
-			var want0 crypto.Algorithm
-			s.OnAlgorithm.Returns(want0)
-			_ = xofStubAlgorithm(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Algorithm")
-		})
-	})
-}
-
-// TestXOFNewXOFStreamStub checks the methods of XOFNewXOFStreamStub, which
-// configures NewXOFStream.
-func TestXOFNewXOFStreamStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("configures NewXOFStream for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewXOFStub(r)
-			s.OnNewXOFStream.Strict()
-			var want0 crypto.XOFStream
-			s.OnNewXOFStream.Returns(want0)
-			_ = xofStubNewXOFStream(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of NewXOFStream")
-		})
-	})
-}
-
 // xofStreamStubReset calls Reset of s with the samples of its arguments.
 func xofStreamStubReset(tb assert.TB, s *cryptotest.XOFStreamStub) {
 	tb.Helper()
@@ -498,43 +363,57 @@ func xofStreamStubReadPins() (int, error) {
 	return want0, want1
 }
 
-// xofStreamStubResetSubject returns the subject of [stub.Behaviour] for
-// Reset. The subject calls a new double that reports to tb.
+// xofStreamStubResetSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Reset. The subject calls a new double that
+// reports to tb.
 func xofStreamStubResetSubject(tb assert.TB) stub.Subject[cryptotest.XOFStreamResetCall, struct{}] {
 	tb.Helper()
 	s := cryptotest.NewXOFStreamStub(tb)
 	return stub.Subject[cryptotest.XOFStreamResetCall, struct{}]{
-		Stub: s.OnReset.MethodStub,
+		Stub:  s.OnReset.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			xofStreamStubReset(tb, s)
 		},
-		Override: func(mark func()) {
+		Override: func(seen func(cryptotest.XOFStreamResetCall)) {
 			s.OnReset.Func(func() {
-				mark()
+				seen(cryptotest.XOFStreamResetCall{})
 			})
 		},
 	}
 }
 
-// xofStreamStubWriteSubject returns the subject of [stub.Behaviour] for
-// Write. The subject calls a new double that reports to tb.
+// xofStreamStubWriteSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Write. The subject calls a new double that
+// reports to tb.
 func xofStreamStubWriteSubject(
 	tb assert.TB,
 ) stub.Subject[cryptotest.XOFStreamWriteCall, cryptotest.XOFStreamWriteReturn] {
 	tb.Helper()
 	s := cryptotest.NewXOFStreamStub(tb)
 	return stub.Subject[cryptotest.XOFStreamWriteCall, cryptotest.XOFStreamWriteReturn]{
-		Stub: s.OnWrite.MethodStub,
+		Stub:  s.OnWrite.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = xofStreamStubWrite(tb, s)
+		},
+		Arguments: func(tb assert.TB, c cryptotest.XOFStreamWriteCall) {
+			tb.Helper()
+			a0 := xofStreamStubWriteArgs(tb)
+			assert.Equal(tb, c.P, a0, "the call records P")
 		},
 		Result: func() cryptotest.XOFStreamWriteReturn {
 			got0, got1 := xofStreamStubWrite(tb, s)
 			return cryptotest.XOFStreamWriteReturn{N: got0, Err: got1}
 		},
-		Override: func(mark func()) {
-			s.OnWrite.Func(func(_ []byte) (int, error) {
-				mark()
+		Returns: func() cryptotest.XOFStreamWriteReturn {
+			want0, want1 := xofStreamStubWritePins()
+			s.OnWrite.Returns(want0, want1)
+			return cryptotest.XOFStreamWriteReturn{N: want0, Err: want1}
+		},
+		Override: func(seen func(cryptotest.XOFStreamWriteCall)) {
+			s.OnWrite.Func(func(p0 []byte) (int, error) {
+				seen(cryptotest.XOFStreamWriteCall{P: p0})
 				var z0 int
 				var z1 error
 				return z0, z1
@@ -547,23 +426,35 @@ func xofStreamStubWriteSubject(
 	}
 }
 
-// xofStreamStubReadSubject returns the subject of [stub.Behaviour] for
-// Read. The subject calls a new double that reports to tb.
+// xofStreamStubReadSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Read. The subject calls a new double that
+// reports to tb.
 func xofStreamStubReadSubject(tb assert.TB) stub.Subject[cryptotest.XOFStreamReadCall, cryptotest.XOFStreamReadReturn] {
 	tb.Helper()
 	s := cryptotest.NewXOFStreamStub(tb)
 	return stub.Subject[cryptotest.XOFStreamReadCall, cryptotest.XOFStreamReadReturn]{
-		Stub: s.OnRead.MethodStub,
+		Stub:  s.OnRead.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = xofStreamStubRead(tb, s)
+		},
+		Arguments: func(tb assert.TB, c cryptotest.XOFStreamReadCall) {
+			tb.Helper()
+			a0 := xofStreamStubReadArgs(tb)
+			assert.Equal(tb, c.P, a0, "the call records P")
 		},
 		Result: func() cryptotest.XOFStreamReadReturn {
 			got0, got1 := xofStreamStubRead(tb, s)
 			return cryptotest.XOFStreamReadReturn{N: got0, Err: got1}
 		},
-		Override: func(mark func()) {
-			s.OnRead.Func(func(_ []byte) (int, error) {
-				mark()
+		Returns: func() cryptotest.XOFStreamReadReturn {
+			want0, want1 := xofStreamStubReadPins()
+			s.OnRead.Returns(want0, want1)
+			return cryptotest.XOFStreamReadReturn{N: want0, Err: want1}
+		},
+		Override: func(seen func(cryptotest.XOFStreamReadCall)) {
+			s.OnRead.Func(func(p0 []byte) (int, error) {
+				seen(cryptotest.XOFStreamReadCall{P: p0})
 				var z0 int
 				var z1 error
 				return z0, z1
@@ -589,7 +480,6 @@ func xofStreamStubInstanceOf(tb assert.TB, s *cryptotest.XOFStreamStub) xofStrea
 		Call: func() {
 			xofStreamStubReset(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -601,143 +491,34 @@ func TestXOFStreamStub(t *testing.T) {
 	t.Run("Reset", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Reset", xofStreamStubResetSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewXOFStreamStub(t)
-			var seen []cryptotest.XOFStreamResetCall
-			s.OnReset.OnRecord(func(c cryptotest.XOFStreamResetCall) { seen = append(seen, c) })
-			xofStreamStubReset(t, s)
-			xofStreamStubReset(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Reset")
-		})
 	})
 
 	t.Run("Write", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Write", xofStreamStubWriteSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewXOFStreamStub(t)
-			_, _ = xofStreamStubWrite(t, s)
-			got := s.OnWrite.AssertCalledOnce(t, "Write records the call")
-			a0 := xofStreamStubWriteArgs(t)
-			assert.Equal(t, got.P, a0, "the call records P")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewXOFStreamStub(t)
-			var seen []cryptotest.XOFStreamWriteCall
-			s.OnWrite.OnRecord(func(c cryptotest.XOFStreamWriteCall) { seen = append(seen, c) })
-			_, _ = xofStreamStubWrite(t, s)
-			_, _ = xofStreamStubWrite(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Write")
-		})
 	})
 
 	t.Run("Read", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Read", xofStreamStubReadSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewXOFStreamStub(t)
-			_, _ = xofStreamStubRead(t, s)
-			got := s.OnRead.AssertCalledOnce(t, "Read records the call")
-			a0 := xofStreamStubReadArgs(t)
-			assert.Equal(t, got.P, a0, "the call records P")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewXOFStreamStub(t)
-			var seen []cryptotest.XOFStreamReadCall
-			s.OnRead.OnRecord(func(c cryptotest.XOFStreamReadCall) { seen = append(seen, c) })
-			_, _ = xofStreamStubRead(t, s)
-			_, _ = xofStreamStubRead(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Read")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) xofStreamStubInstance {
-			return xofStreamStubInstanceOf(tb, cryptotest.NewXOFStreamStub(tb))
-		})
 
-		t.Run("clears the recorded calls of Reset", func(t *testing.T) {
+		t.Run("Reset", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewXOFStreamStub(t)
-			xofStreamStubReset(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnReset.CallCount(), 0, "ResetCalls clears the calls of Reset")
+			stub.ResetBehaviour(t, "Reset", xofStreamStubResetSubject)
 		})
 
-		t.Run("clears the recorded calls of Write", func(t *testing.T) {
+		t.Run("Write", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewXOFStreamStub(t)
-			_, _ = xofStreamStubWrite(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnWrite.CallCount(), 0, "ResetCalls clears the calls of Write")
+			stub.ResetBehaviour(t, "Write", xofStreamStubWriteSubject)
 		})
 
-		t.Run("keeps the results of Returns of Write", func(t *testing.T) {
+		t.Run("Read", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewXOFStreamStub(t)
-			want0, want1 := xofStreamStubWritePins()
-			s.OnWrite.Returns(want0, want1)
-			s.ResetCalls()
-			got0, got1 := xofStreamStubWrite(t, s)
-			expect.Equal(t, got0, want0, "ResetCalls keeps the N of Write")
-			expect.ErrorIs(t, got1, want1, "ResetCalls keeps the error of Write")
-		})
-
-		t.Run("clears the recorded calls of Read", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewXOFStreamStub(t)
-			_, _ = xofStreamStubRead(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnRead.CallCount(), 0, "ResetCalls clears the calls of Read")
-		})
-
-		t.Run("keeps the results of Returns of Read", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewXOFStreamStub(t)
-			want0, want1 := xofStreamStubReadPins()
-			s.OnRead.Returns(want0, want1)
-			s.ResetCalls()
-			got0, got1 := xofStreamStubRead(t, s)
-			expect.Equal(t, got0, want0, "ResetCalls keeps the N of Read")
-			expect.ErrorIs(t, got1, want1, "ResetCalls keeps the error of Read")
-		})
-	})
-
-	t.Run("NewXOFStreamStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) xofStreamStubInstance {
-			return xofStreamStubInstanceOf(tb, cryptotest.NewXOFStreamStubDelayed(tb, d, clk))
-		})
-	})
-
-	t.Run("NewXOFStreamStubFailing", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("fails Write with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Write-failing")
-			s := cryptotest.NewXOFStreamStubFailing(t, want)
-			_, err := xofStreamStubWrite(t, s)
-			assert.ErrorIs(t, err, want, "Write fails with the error of NewXOFStreamStubFailing")
-		})
-
-		t.Run("fails Read with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Read-failing")
-			s := cryptotest.NewXOFStreamStubFailing(t, want)
-			_, err := xofStreamStubRead(t, s)
-			assert.ErrorIs(t, err, want, "Read fails with the error of NewXOFStreamStubFailing")
+			stub.ResetBehaviour(t, "Read", xofStreamStubReadSubject)
 		})
 	})
 
@@ -903,106 +684,4 @@ func TestXOFStreamStub(t *testing.T) {
 	})
 }
 
-// TestXOFStreamWriteStub checks the methods of XOFStreamWriteStub, which
-// configures Write.
-func TestXOFStreamWriteStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Write", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewXOFStreamStub(t)
-			want0, want1 := xofStreamStubWritePins()
-			s.OnWrite.Returns(want0, want1)
-			got0, got1 := xofStreamStubWrite(t, s)
-			expect.Equal(t, got0, want0, "Write returns the N that Returns sets")
-			expect.ErrorIs(t, got1, want1, "Write returns the error that Returns sets")
-		})
-
-		t.Run("configures Write for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewXOFStreamStub(r)
-			s.OnWrite.Strict()
-			var want0 int
-			var want1 error
-			s.OnWrite.Returns(want0, want1)
-			_, _ = xofStreamStubWrite(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Write")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Write to the function", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewXOFStreamStub(t)
-			var got0 []byte
-			s.OnWrite.Func(func(p0 []byte) (int, error) {
-				got0 = p0
-				var z0 int
-				var z1 error
-				return z0, z1
-			})
-			_, _ = xofStreamStubWrite(t, s)
-			a0 := xofStreamStubWriteArgs(t)
-			assert.Equal(t, got0, a0, "the function receives P")
-		})
-	})
-}
-
-// TestXOFStreamReadStub checks the methods of XOFStreamReadStub, which
-// configures Read.
-func TestXOFStreamReadStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Read", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewXOFStreamStub(t)
-			want0, want1 := xofStreamStubReadPins()
-			s.OnRead.Returns(want0, want1)
-			got0, got1 := xofStreamStubRead(t, s)
-			expect.Equal(t, got0, want0, "Read returns the N that Returns sets")
-			expect.ErrorIs(t, got1, want1, "Read returns the error that Returns sets")
-		})
-
-		t.Run("configures Read for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewXOFStreamStub(r)
-			s.OnRead.Strict()
-			var want0 int
-			var want1 error
-			s.OnRead.Returns(want0, want1)
-			_, _ = xofStreamStubRead(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Read")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Read to the function", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewXOFStreamStub(t)
-			var got0 []byte
-			s.OnRead.Func(func(p0 []byte) (int, error) {
-				got0 = p0
-				var z0 int
-				var z1 error
-				return z0, z1
-			})
-			_, _ = xofStreamStubRead(t, s)
-			a0 := xofStreamStubReadArgs(t)
-			assert.Equal(t, got0, a0, "the function receives P")
-		})
-	})
-}
-
-// dokimi:provenance sha256:17594764e33acc27aa219d9b92d9af3f30725d8e3dcd46b98ab01bb4c4646966
+// dokimi:provenance sha256:d955f25be41c6ecaadd1eeec00f89bc2bef72e1b7cbff743e5c971ed6c63b6c2

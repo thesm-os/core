@@ -48,78 +48,7 @@ func TestStoreSuite(t *testing.T) {
 				},
 				Defect: func(*castest.StoreHandle) cas.Store { return &storeSubject{} },
 			}),
-			conform.Excuse(
-				castest.StoreChecks.Hasher.StoreHasherComputesWritableAddresses(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				castest.StoreChecks.Put.StoreKeepsEveryWriteAcrossARestart(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				castest.StoreChecks.Put.StoreLeavesEachAddressAbsentOrWhole(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				castest.StoreChecks.Put.StorePutRefusesADigestOfAnotherAlgorithm(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				castest.StoreChecks.Put.StorePutRefusesAWrongDigest(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				castest.StoreChecks.Put.StorePutReportsADuplicateAsNotWritten(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				castest.StoreChecks.Put.StorePutStreamReportsADuplicateAsNotWritten(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				castest.StoreChecks.Put.StorePutStreamStoresNothingOnFailure(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				castest.StoreChecks.Put.StorePutStreamWritesOnceUnderConcurrency(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				castest.StoreChecks.Put.StorePutWritesOnceUnderConcurrency(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				castest.StoreChecks.Put.StoreStoresTheEmptyValue(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				castest.StoreChecks.Get.StoreGetAppendsToItsBuffer(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				castest.StoreChecks.Get.StoreGetStreamReportsAbsenceAsNotFound(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				castest.StoreChecks.Get.StorePutGetRoundTripsAnIndependentSlice(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				castest.StoreChecks.Get.StoreStreamAgreesWithTheWholeValue(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				castest.StoreChecks.Has.StoreHasAgreesWithGet(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				castest.StoreChecks.Has.StoreRefusesTheZeroDigest(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				castest.StoreChecks.Has.StoreReturnsTheErrorOfADoneContext(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[cas.Store]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -141,78 +70,7 @@ func TestStoreSuite(t *testing.T) {
 				},
 				Defect: func(*castest.StoreHandle) cas.Store { return &storeSubject{} },
 			}),
-			conform.Excuse(
-				castest.StoreChecks.Hasher.StoreHasherComputesWritableAddresses(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				castest.StoreChecks.Put.StoreKeepsEveryWriteAcrossARestart(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				castest.StoreChecks.Put.StoreLeavesEachAddressAbsentOrWhole(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				castest.StoreChecks.Put.StorePutRefusesADigestOfAnotherAlgorithm(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				castest.StoreChecks.Put.StorePutRefusesAWrongDigest(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				castest.StoreChecks.Put.StorePutReportsADuplicateAsNotWritten(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				castest.StoreChecks.Put.StorePutStreamReportsADuplicateAsNotWritten(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				castest.StoreChecks.Put.StorePutStreamStoresNothingOnFailure(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				castest.StoreChecks.Put.StorePutStreamWritesOnceUnderConcurrency(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				castest.StoreChecks.Put.StorePutWritesOnceUnderConcurrency(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				castest.StoreChecks.Put.StoreStoresTheEmptyValue(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				castest.StoreChecks.Get.StoreGetAppendsToItsBuffer(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				castest.StoreChecks.Get.StoreGetStreamReportsAbsenceAsNotFound(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				castest.StoreChecks.Get.StorePutGetRoundTripsAnIndependentSlice(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				castest.StoreChecks.Get.StoreStreamAgreesWithTheWholeValue(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				castest.StoreChecks.Has.StoreHasAgreesWithGet(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				castest.StoreChecks.Has.StoreRefusesTheZeroDigest(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				castest.StoreChecks.Has.StoreReturnsTheErrorOfADoneContext(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[cas.Store]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -329,10 +187,14 @@ func TestStoreSuite(t *testing.T) {
 	})
 }
 
+// storeSuite is the suite of Store that the tests of the planted defect of
+// a ceiling apply.
+var storeSuite = castest.StoreSuite()
+
 // storeIdle returns the planted defect of a ceiling of Store with a spend
-// of nothing, a subject that answers each call at once.
+// of nothing. Each call of the defect returns its zero results at once.
 func storeIdle(h *castest.StoreHandle) cas.Store {
-	return castest.StoreSuite().Calls[0].Over(h, func() {})
+	return storeSuite.Calls[0].Over(h, func() {})
 }
 
 // TestStoreSuiteBudgets applies the allocation ceilings of the suite of
@@ -347,78 +209,7 @@ func TestStoreSuiteBudgets(t *testing.T) {
 		conform.Ceilings(castest.StoreChecks.Put.Callable, conform.Budget{Allocs: new(uint64(0))}),
 		conform.Ceilings(castest.StoreChecks.Get.Callable, conform.Budget{Allocs: new(uint64(0))}),
 		conform.Ceilings(castest.StoreChecks.Has.Callable, conform.Budget{Allocs: new(uint64(0))}),
-		conform.Excuse(
-			castest.StoreChecks.Hasher.StoreHasherComputesWritableAddresses(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Put.StoreKeepsEveryWriteAcrossARestart(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Put.StoreLeavesEachAddressAbsentOrWhole(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Put.StorePutRefusesADigestOfAnotherAlgorithm(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Put.StorePutRefusesAWrongDigest(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Put.StorePutReportsADuplicateAsNotWritten(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Put.StorePutStreamReportsADuplicateAsNotWritten(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Put.StorePutStreamStoresNothingOnFailure(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Put.StorePutStreamWritesOnceUnderConcurrency(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Put.StorePutWritesOnceUnderConcurrency(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Put.StoreStoresTheEmptyValue(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Get.StoreGetAppendsToItsBuffer(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Get.StoreGetStreamReportsAbsenceAsNotFound(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Get.StorePutGetRoundTripsAnIndependentSlice(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Get.StoreStreamAgreesWithTheWholeValue(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Has.StoreHasAgreesWithGet(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Has.StoreRefusesTheZeroDigest(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Has.StoreReturnsTheErrorOfADoneContext(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[cas.Store]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -429,78 +220,7 @@ func FuzzStoreSuiteHasher(f *testing.F) {
 		f,
 		castest.StoreChecks.Hasher.Callable,
 		storeIdle,
-		conform.Excuse(
-			castest.StoreChecks.Hasher.StoreHasherComputesWritableAddresses(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Put.StoreKeepsEveryWriteAcrossARestart(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Put.StoreLeavesEachAddressAbsentOrWhole(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Put.StorePutRefusesADigestOfAnotherAlgorithm(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Put.StorePutRefusesAWrongDigest(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Put.StorePutReportsADuplicateAsNotWritten(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Put.StorePutStreamReportsADuplicateAsNotWritten(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Put.StorePutStreamStoresNothingOnFailure(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Put.StorePutStreamWritesOnceUnderConcurrency(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Put.StorePutWritesOnceUnderConcurrency(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Put.StoreStoresTheEmptyValue(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Get.StoreGetAppendsToItsBuffer(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Get.StoreGetStreamReportsAbsenceAsNotFound(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Get.StorePutGetRoundTripsAnIndependentSlice(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Get.StoreStreamAgreesWithTheWholeValue(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Has.StoreHasAgreesWithGet(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Has.StoreRefusesTheZeroDigest(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Has.StoreReturnsTheErrorOfADoneContext(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[cas.Store]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -511,78 +231,7 @@ func FuzzStoreSuitePut(f *testing.F) {
 		f,
 		castest.StoreChecks.Put.Callable,
 		storeIdle,
-		conform.Excuse(
-			castest.StoreChecks.Hasher.StoreHasherComputesWritableAddresses(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Put.StoreKeepsEveryWriteAcrossARestart(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Put.StoreLeavesEachAddressAbsentOrWhole(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Put.StorePutRefusesADigestOfAnotherAlgorithm(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Put.StorePutRefusesAWrongDigest(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Put.StorePutReportsADuplicateAsNotWritten(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Put.StorePutStreamReportsADuplicateAsNotWritten(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Put.StorePutStreamStoresNothingOnFailure(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Put.StorePutStreamWritesOnceUnderConcurrency(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Put.StorePutWritesOnceUnderConcurrency(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Put.StoreStoresTheEmptyValue(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Get.StoreGetAppendsToItsBuffer(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Get.StoreGetStreamReportsAbsenceAsNotFound(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Get.StorePutGetRoundTripsAnIndependentSlice(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Get.StoreStreamAgreesWithTheWholeValue(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Has.StoreHasAgreesWithGet(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Has.StoreRefusesTheZeroDigest(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Has.StoreReturnsTheErrorOfADoneContext(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[cas.Store]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -593,78 +242,7 @@ func FuzzStoreSuiteGet(f *testing.F) {
 		f,
 		castest.StoreChecks.Get.Callable,
 		storeIdle,
-		conform.Excuse(
-			castest.StoreChecks.Hasher.StoreHasherComputesWritableAddresses(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Put.StoreKeepsEveryWriteAcrossARestart(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Put.StoreLeavesEachAddressAbsentOrWhole(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Put.StorePutRefusesADigestOfAnotherAlgorithm(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Put.StorePutRefusesAWrongDigest(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Put.StorePutReportsADuplicateAsNotWritten(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Put.StorePutStreamReportsADuplicateAsNotWritten(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Put.StorePutStreamStoresNothingOnFailure(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Put.StorePutStreamWritesOnceUnderConcurrency(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Put.StorePutWritesOnceUnderConcurrency(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Put.StoreStoresTheEmptyValue(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Get.StoreGetAppendsToItsBuffer(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Get.StoreGetStreamReportsAbsenceAsNotFound(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Get.StorePutGetRoundTripsAnIndependentSlice(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Get.StoreStreamAgreesWithTheWholeValue(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Has.StoreHasAgreesWithGet(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Has.StoreRefusesTheZeroDigest(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Has.StoreReturnsTheErrorOfADoneContext(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[cas.Store]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -675,78 +253,7 @@ func FuzzStoreSuiteHas(f *testing.F) {
 		f,
 		castest.StoreChecks.Has.Callable,
 		storeIdle,
-		conform.Excuse(
-			castest.StoreChecks.Hasher.StoreHasherComputesWritableAddresses(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Put.StoreKeepsEveryWriteAcrossARestart(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Put.StoreLeavesEachAddressAbsentOrWhole(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Put.StorePutRefusesADigestOfAnotherAlgorithm(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Put.StorePutRefusesAWrongDigest(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Put.StorePutReportsADuplicateAsNotWritten(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Put.StorePutStreamReportsADuplicateAsNotWritten(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Put.StorePutStreamStoresNothingOnFailure(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Put.StorePutStreamWritesOnceUnderConcurrency(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Put.StorePutWritesOnceUnderConcurrency(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Put.StoreStoresTheEmptyValue(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Get.StoreGetAppendsToItsBuffer(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Get.StoreGetStreamReportsAbsenceAsNotFound(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Get.StorePutGetRoundTripsAnIndependentSlice(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Get.StoreStreamAgreesWithTheWholeValue(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Has.StoreHasAgreesWithGet(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Has.StoreRefusesTheZeroDigest(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			castest.StoreChecks.Has.StoreReturnsTheErrorOfADoneContext(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[cas.Store]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -767,4 +274,4 @@ func BenchmarkStoreSuite(b *testing.B) {
 	})
 }
 
-// dokimi:provenance sha256:6fa6c5fedd69550d76b758ad74849cf5f7c4f7df7ca6236675c4a93e9b3ff8bc
+// dokimi:provenance sha256:dce0a311b4ddeeb5cf37de5f902cfed1cd7f534e4c8d5ebcc892caeffcb27401

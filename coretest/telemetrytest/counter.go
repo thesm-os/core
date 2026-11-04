@@ -5,7 +5,6 @@ package telemetrytest
 
 import (
 	"context"
-	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -47,33 +46,6 @@ var (
 // soundSpec is the spec of the no-op instruments that keep the calls of a
 // planted defect that do not break its law.
 var soundSpec = telemetry.InstrumentSpec{Name: "test.sound"}
-
-// CounterAddReturnsForAPositiveValue checks that Add of 1 returns without a
-// panic.
-//
-//dokimi:check Counter.Add defect=counterAddPanicsForOne
-func CounterAddReturnsForAPositiveValue(h *CounterHandle) {
-	c := h.Subject()
-	assert.NotPanics(h, func() { c.Add(h.Context(), 1) }, h.Statement())
-}
-
-// CounterAddReturnsForZero checks that Add of 0 returns without a panic.
-//
-//dokimi:check Counter.Add defect=counterAddPanicsForZero
-func CounterAddReturnsForZero(h *CounterHandle) {
-	c := h.Subject()
-	assert.NotPanics(h, func() { c.Add(h.Context(), 0) }, h.Statement())
-}
-
-// CounterAddReturnsForANegativeValue checks that Add of -1 and Add of
-// math.MinInt64 return without a panic.
-//
-//dokimi:check Counter.Add defect=counterAddPanicsForANegativeValue
-func CounterAddReturnsForANegativeValue(h *CounterHandle) {
-	c := h.Subject()
-	assert.NotPanics(h, func() { c.Add(h.Context(), -1) }, h.Statement())
-	assert.NotPanics(h, func() { c.Add(h.Context(), math.MinInt64) }, h.Statement())
-}
 
 // CounterWithReturnsACounterForNilAttributes checks that With(nil) returns a
 // Counter whose Add returns without a panic.
@@ -185,40 +157,6 @@ func releaseWhileEmitting(release, emit func()) []history.Outcome {
 
 		return client, nil
 	})
-}
-
-// counterAddPanicsForOne returns the planted defect of
-// CounterAddReturnsForAPositiveValue: a Counter whose Add panics for 1.
-func counterAddPanicsForOne(h *CounterHandle) telemetry.Counter {
-	return NewCounterStub(h, CounterStubDelegateTo(noop.New().Counter(soundSpec)),
-		WithCounterAdd(func(_ context.Context, value int64) {
-			if value == 1 {
-				panic("telemetrytest: Add panics for 1")
-			}
-		}))
-}
-
-// counterAddPanicsForZero returns the planted defect of
-// CounterAddReturnsForZero: a Counter whose Add panics for 0.
-func counterAddPanicsForZero(h *CounterHandle) telemetry.Counter {
-	return NewCounterStub(h, CounterStubDelegateTo(noop.New().Counter(soundSpec)),
-		WithCounterAdd(func(_ context.Context, value int64) {
-			if value == 0 {
-				panic("telemetrytest: Add panics for 0")
-			}
-		}))
-}
-
-// counterAddPanicsForANegativeValue returns the planted defect of
-// CounterAddReturnsForANegativeValue: a Counter whose Add panics for a
-// negative value.
-func counterAddPanicsForANegativeValue(h *CounterHandle) telemetry.Counter {
-	return NewCounterStub(h, CounterStubDelegateTo(noop.New().Counter(soundSpec)),
-		WithCounterAdd(func(_ context.Context, value int64) {
-			if value < 0 {
-				panic("telemetrytest: Add panics for a negative value")
-			}
-		}))
 }
 
 // counterWithReturnsNilForNil returns the planted defect of

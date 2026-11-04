@@ -114,6 +114,7 @@ func (*reader) Close() error {
 //   - List allocates the page snapshot.
 //
 //dokimi:subject blob.Store new=newStore options=storeOptions
+//dokimi:excuse Store.Get/store-get-reader-fails-with-err-mismatch reason="a reader of the store in memory reads the bytes of its version after an overwrite or a delete"
 //dokimi:subject blob.RangeReader new=newStore
 type Store struct {
 	c   clock.Clock

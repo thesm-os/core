@@ -48,50 +48,7 @@ func TestCounterSuite(t *testing.T) {
 				},
 				Defect: func(*telemetrytest.CounterHandle) telemetry.Counter { return &counterSubject{} },
 			}),
-			conform.Excuse(
-				telemetrytest.CounterChecks.Add.CounterAddReturnsAfterRelease(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.CounterChecks.Add.CounterAddReturnsForANegativeValue(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.CounterChecks.Add.CounterAddReturnsForAPositiveValue(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.CounterChecks.Add.CounterAddReturnsForZero(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.CounterChecks.With.CounterWithOfABoundCounterReturnsACounter(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.CounterChecks.With.CounterWithReturnsACounterForEmptyAttributes(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.CounterChecks.With.CounterWithReturnsACounterForNilAttributes(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.CounterChecks.Release.CounterReleaseLeavesAnUnboundCounterUsable(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.CounterChecks.Release.CounterReleaseLeavesTheCounterOfWithUsable(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.CounterChecks.Release.CounterReleaseReturnsWhileAddRuns(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.CounterChecks.Release.CounterSecondReleaseReturns(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[telemetry.Counter]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -113,50 +70,7 @@ func TestCounterSuite(t *testing.T) {
 				},
 				Defect: func(*telemetrytest.CounterHandle) telemetry.Counter { return &counterSubject{} },
 			}),
-			conform.Excuse(
-				telemetrytest.CounterChecks.Add.CounterAddReturnsAfterRelease(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.CounterChecks.Add.CounterAddReturnsForANegativeValue(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.CounterChecks.Add.CounterAddReturnsForAPositiveValue(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.CounterChecks.Add.CounterAddReturnsForZero(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.CounterChecks.With.CounterWithOfABoundCounterReturnsACounter(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.CounterChecks.With.CounterWithReturnsACounterForEmptyAttributes(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.CounterChecks.With.CounterWithReturnsACounterForNilAttributes(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.CounterChecks.Release.CounterReleaseLeavesAnUnboundCounterUsable(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.CounterChecks.Release.CounterReleaseLeavesTheCounterOfWithUsable(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.CounterChecks.Release.CounterReleaseReturnsWhileAddRuns(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.CounterChecks.Release.CounterSecondReleaseReturns(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[telemetry.Counter]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -166,24 +80,6 @@ func TestCounterSuite(t *testing.T) {
 			t,
 			string(telemetrytest.CounterChecks.Add.CounterAddReturnsAfterRelease()),
 			"Counter.Add/counter-add-returns-after-release",
-			"the identity of the check joins the callable and the segment of the check",
-		)
-		assert.Equal(
-			t,
-			string(telemetrytest.CounterChecks.Add.CounterAddReturnsForANegativeValue()),
-			"Counter.Add/counter-add-returns-for-a-negative-value",
-			"the identity of the check joins the callable and the segment of the check",
-		)
-		assert.Equal(
-			t,
-			string(telemetrytest.CounterChecks.Add.CounterAddReturnsForAPositiveValue()),
-			"Counter.Add/counter-add-returns-for-a-positive-value",
-			"the identity of the check joins the callable and the segment of the check",
-		)
-		assert.Equal(
-			t,
-			string(telemetrytest.CounterChecks.Add.CounterAddReturnsForZero()),
-			"Counter.Add/counter-add-returns-for-zero",
 			"the identity of the check joins the callable and the segment of the check",
 		)
 		assert.Equal(
@@ -231,10 +127,15 @@ func TestCounterSuite(t *testing.T) {
 	})
 }
 
+// counterSuite is the suite of Counter that the tests of the planted
+// defect of a ceiling apply.
+var counterSuite = telemetrytest.CounterSuite()
+
 // counterIdle returns the planted defect of a ceiling of Counter with a
-// spend of nothing, a subject that answers each call at once.
+// spend of nothing. Each call of the defect returns its zero results at
+// once.
 func counterIdle(h *telemetrytest.CounterHandle) telemetry.Counter {
-	return telemetrytest.CounterSuite().Calls[0].Over(h, func() {})
+	return counterSuite.Calls[0].Over(h, func() {})
 }
 
 // TestCounterSuiteBudgets applies the allocation ceilings of the suite of
@@ -248,50 +149,7 @@ func TestCounterSuiteBudgets(t *testing.T) {
 		conform.Ceilings(telemetrytest.CounterChecks.Add.Callable, conform.Budget{Allocs: new(uint64(0))}),
 		conform.Ceilings(telemetrytest.CounterChecks.With.Callable, conform.Budget{Allocs: new(uint64(0))}),
 		conform.Ceilings(telemetrytest.CounterChecks.Release.Callable, conform.Budget{Allocs: new(uint64(0))}),
-		conform.Excuse(
-			telemetrytest.CounterChecks.Add.CounterAddReturnsAfterRelease(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.CounterChecks.Add.CounterAddReturnsForANegativeValue(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.CounterChecks.Add.CounterAddReturnsForAPositiveValue(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.CounterChecks.Add.CounterAddReturnsForZero(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.CounterChecks.With.CounterWithOfABoundCounterReturnsACounter(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.CounterChecks.With.CounterWithReturnsACounterForEmptyAttributes(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.CounterChecks.With.CounterWithReturnsACounterForNilAttributes(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.CounterChecks.Release.CounterReleaseLeavesAnUnboundCounterUsable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.CounterChecks.Release.CounterReleaseLeavesTheCounterOfWithUsable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.CounterChecks.Release.CounterReleaseReturnsWhileAddRuns(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.CounterChecks.Release.CounterSecondReleaseReturns(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[telemetry.Counter]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -302,50 +160,7 @@ func FuzzCounterSuiteAdd(f *testing.F) {
 		f,
 		telemetrytest.CounterChecks.Add.Callable,
 		counterIdle,
-		conform.Excuse(
-			telemetrytest.CounterChecks.Add.CounterAddReturnsAfterRelease(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.CounterChecks.Add.CounterAddReturnsForANegativeValue(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.CounterChecks.Add.CounterAddReturnsForAPositiveValue(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.CounterChecks.Add.CounterAddReturnsForZero(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.CounterChecks.With.CounterWithOfABoundCounterReturnsACounter(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.CounterChecks.With.CounterWithReturnsACounterForEmptyAttributes(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.CounterChecks.With.CounterWithReturnsACounterForNilAttributes(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.CounterChecks.Release.CounterReleaseLeavesAnUnboundCounterUsable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.CounterChecks.Release.CounterReleaseLeavesTheCounterOfWithUsable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.CounterChecks.Release.CounterReleaseReturnsWhileAddRuns(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.CounterChecks.Release.CounterSecondReleaseReturns(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[telemetry.Counter]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -356,50 +171,7 @@ func FuzzCounterSuiteWith(f *testing.F) {
 		f,
 		telemetrytest.CounterChecks.With.Callable,
 		counterIdle,
-		conform.Excuse(
-			telemetrytest.CounterChecks.Add.CounterAddReturnsAfterRelease(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.CounterChecks.Add.CounterAddReturnsForANegativeValue(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.CounterChecks.Add.CounterAddReturnsForAPositiveValue(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.CounterChecks.Add.CounterAddReturnsForZero(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.CounterChecks.With.CounterWithOfABoundCounterReturnsACounter(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.CounterChecks.With.CounterWithReturnsACounterForEmptyAttributes(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.CounterChecks.With.CounterWithReturnsACounterForNilAttributes(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.CounterChecks.Release.CounterReleaseLeavesAnUnboundCounterUsable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.CounterChecks.Release.CounterReleaseLeavesTheCounterOfWithUsable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.CounterChecks.Release.CounterReleaseReturnsWhileAddRuns(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.CounterChecks.Release.CounterSecondReleaseReturns(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[telemetry.Counter]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -410,50 +182,7 @@ func FuzzCounterSuiteRelease(f *testing.F) {
 		f,
 		telemetrytest.CounterChecks.Release.Callable,
 		counterIdle,
-		conform.Excuse(
-			telemetrytest.CounterChecks.Add.CounterAddReturnsAfterRelease(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.CounterChecks.Add.CounterAddReturnsForANegativeValue(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.CounterChecks.Add.CounterAddReturnsForAPositiveValue(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.CounterChecks.Add.CounterAddReturnsForZero(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.CounterChecks.With.CounterWithOfABoundCounterReturnsACounter(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.CounterChecks.With.CounterWithReturnsACounterForEmptyAttributes(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.CounterChecks.With.CounterWithReturnsACounterForNilAttributes(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.CounterChecks.Release.CounterReleaseLeavesAnUnboundCounterUsable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.CounterChecks.Release.CounterReleaseLeavesTheCounterOfWithUsable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.CounterChecks.Release.CounterReleaseReturnsWhileAddRuns(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.CounterChecks.Release.CounterSecondReleaseReturns(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[telemetry.Counter]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -471,4 +200,4 @@ func BenchmarkCounterSuite(b *testing.B) {
 	})
 }
 
-// dokimi:provenance sha256:bd22367e440188619dfca4ab4a19e3e61bc58d7170e4edd609008650d7d8055b
+// dokimi:provenance sha256:e762223ac35891c428a834046f34d0cfc8cee340b62044ff50826833c9f4b8eb

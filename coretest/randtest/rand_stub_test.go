@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"go.dokimi.dev/assert"
-	"go.dokimi.dev/assert/expect"
 	"go.dokimi.dev/stub"
 	"go.thesmos.sh/core/coretest/randtest"
 )
@@ -53,13 +52,15 @@ func randStubReadPins() (int, error) {
 	return want0, want1
 }
 
-// randStubUint64Subject returns the subject of [stub.Behaviour] for
-// Uint64. The subject calls a new double that reports to tb.
+// randStubUint64Subject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Uint64. The subject calls a new double that
+// reports to tb.
 func randStubUint64Subject(tb assert.TB) stub.Subject[randtest.RandUint64Call, randtest.RandUint64Return] {
 	tb.Helper()
 	s := randtest.NewRandStub(tb)
 	return stub.Subject[randtest.RandUint64Call, randtest.RandUint64Return]{
-		Stub: s.OnUint64.MethodStub,
+		Stub:  s.OnUint64.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = randStubUint64(tb, s)
 		},
@@ -67,9 +68,14 @@ func randStubUint64Subject(tb assert.TB) stub.Subject[randtest.RandUint64Call, r
 			got0 := randStubUint64(tb, s)
 			return randtest.RandUint64Return{Result: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() randtest.RandUint64Return {
+			want0 := randStubUint64Pins()
+			s.OnUint64.Returns(want0)
+			return randtest.RandUint64Return{Result: want0}
+		},
+		Override: func(seen func(randtest.RandUint64Call)) {
 			s.OnUint64.Func(func() uint64 {
-				mark()
+				seen(randtest.RandUint64Call{})
 				var z0 uint64
 				return z0
 			})
@@ -77,23 +83,35 @@ func randStubUint64Subject(tb assert.TB) stub.Subject[randtest.RandUint64Call, r
 	}
 }
 
-// randStubReadSubject returns the subject of [stub.Behaviour] for Read.
-// The subject calls a new double that reports to tb.
+// randStubReadSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Read. The subject calls a new double that
+// reports to tb.
 func randStubReadSubject(tb assert.TB) stub.Subject[randtest.RandReadCall, randtest.RandReadReturn] {
 	tb.Helper()
 	s := randtest.NewRandStub(tb)
 	return stub.Subject[randtest.RandReadCall, randtest.RandReadReturn]{
-		Stub: s.OnRead.MethodStub,
+		Stub:  s.OnRead.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = randStubRead(tb, s)
+		},
+		Arguments: func(tb assert.TB, c randtest.RandReadCall) {
+			tb.Helper()
+			a0 := randStubReadArgs(tb)
+			assert.Equal(tb, c.P, a0, "the call records P")
 		},
 		Result: func() randtest.RandReadReturn {
 			got0, got1 := randStubRead(tb, s)
 			return randtest.RandReadReturn{N: got0, Err: got1}
 		},
-		Override: func(mark func()) {
-			s.OnRead.Func(func(_ []byte) (int, error) {
-				mark()
+		Returns: func() randtest.RandReadReturn {
+			want0, want1 := randStubReadPins()
+			s.OnRead.Returns(want0, want1)
+			return randtest.RandReadReturn{N: want0, Err: want1}
+		},
+		Override: func(seen func(randtest.RandReadCall)) {
+			s.OnRead.Func(func(p0 []byte) (int, error) {
+				seen(randtest.RandReadCall{P: p0})
 				var z0 int
 				var z1 error
 				return z0, z1
@@ -119,7 +137,6 @@ func randStubInstanceOf(tb assert.TB, s *randtest.RandStub) randStubInstance {
 		Call: func() {
 			_ = randStubUint64(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -131,102 +148,24 @@ func TestRandStub(t *testing.T) {
 	t.Run("Uint64", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Uint64", randStubUint64Subject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := randtest.NewRandStub(t)
-			var seen []randtest.RandUint64Call
-			s.OnUint64.OnRecord(func(c randtest.RandUint64Call) { seen = append(seen, c) })
-			_ = randStubUint64(t, s)
-			_ = randStubUint64(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Uint64")
-		})
 	})
 
 	t.Run("Read", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Read", randStubReadSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := randtest.NewRandStub(t)
-			_, _ = randStubRead(t, s)
-			got := s.OnRead.AssertCalledOnce(t, "Read records the call")
-			a0 := randStubReadArgs(t)
-			assert.Equal(t, got.P, a0, "the call records P")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := randtest.NewRandStub(t)
-			var seen []randtest.RandReadCall
-			s.OnRead.OnRecord(func(c randtest.RandReadCall) { seen = append(seen, c) })
-			_, _ = randStubRead(t, s)
-			_, _ = randStubRead(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Read")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) randStubInstance {
-			return randStubInstanceOf(tb, randtest.NewRandStub(tb))
-		})
 
-		t.Run("clears the recorded calls of Uint64", func(t *testing.T) {
+		t.Run("Uint64", func(t *testing.T) {
 			t.Parallel()
-			s := randtest.NewRandStub(t)
-			_ = randStubUint64(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnUint64.CallCount(), 0, "ResetCalls clears the calls of Uint64")
+			stub.ResetBehaviour(t, "Uint64", randStubUint64Subject)
 		})
 
-		t.Run("keeps the results of Returns of Uint64", func(t *testing.T) {
+		t.Run("Read", func(t *testing.T) {
 			t.Parallel()
-			s := randtest.NewRandStub(t)
-			want0 := randStubUint64Pins()
-			s.OnUint64.Returns(want0)
-			s.ResetCalls()
-			got0 := randStubUint64(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Uint64")
-		})
-
-		t.Run("clears the recorded calls of Read", func(t *testing.T) {
-			t.Parallel()
-			s := randtest.NewRandStub(t)
-			_, _ = randStubRead(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnRead.CallCount(), 0, "ResetCalls clears the calls of Read")
-		})
-
-		t.Run("keeps the results of Returns of Read", func(t *testing.T) {
-			t.Parallel()
-			s := randtest.NewRandStub(t)
-			want0, want1 := randStubReadPins()
-			s.OnRead.Returns(want0, want1)
-			s.ResetCalls()
-			got0, got1 := randStubRead(t, s)
-			expect.Equal(t, got0, want0, "ResetCalls keeps the N of Read")
-			expect.ErrorIs(t, got1, want1, "ResetCalls keeps the error of Read")
-		})
-	})
-
-	t.Run("NewRandStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) randStubInstance {
-			return randStubInstanceOf(tb, randtest.NewRandStubDelayed(tb, d, clk))
-		})
-	})
-
-	t.Run("NewRandStubFailing", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("fails Read with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Read-failing")
-			s := randtest.NewRandStubFailing(t, want)
-			_, err := randStubRead(t, s)
-			assert.ErrorIs(t, err, want, "Read fails with the error of NewRandStubFailing")
+			stub.ResetBehaviour(t, "Read", randStubReadSubject)
 		})
 	})
 
@@ -344,85 +283,4 @@ func TestRandStub(t *testing.T) {
 	})
 }
 
-// TestRandUint64Stub checks the methods of RandUint64Stub, which
-// configures Uint64.
-func TestRandUint64Stub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Uint64", func(t *testing.T) {
-			t.Parallel()
-			s := randtest.NewRandStub(t)
-			want0 := randStubUint64Pins()
-			s.OnUint64.Returns(want0)
-			got0 := randStubUint64(t, s)
-			assert.Equal(t, got0, want0, "Uint64 returns the Result that Returns sets")
-		})
-
-		t.Run("configures Uint64 for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := randtest.NewRandStub(r)
-			s.OnUint64.Strict()
-			var want0 uint64
-			s.OnUint64.Returns(want0)
-			_ = randStubUint64(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Uint64")
-		})
-	})
-}
-
-// TestRandReadStub checks the methods of RandReadStub, which configures
-// Read.
-func TestRandReadStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Read", func(t *testing.T) {
-			t.Parallel()
-			s := randtest.NewRandStub(t)
-			want0, want1 := randStubReadPins()
-			s.OnRead.Returns(want0, want1)
-			got0, got1 := randStubRead(t, s)
-			expect.Equal(t, got0, want0, "Read returns the N that Returns sets")
-			expect.ErrorIs(t, got1, want1, "Read returns the error that Returns sets")
-		})
-
-		t.Run("configures Read for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := randtest.NewRandStub(r)
-			s.OnRead.Strict()
-			var want0 int
-			var want1 error
-			s.OnRead.Returns(want0, want1)
-			_, _ = randStubRead(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Read")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Read to the function", func(t *testing.T) {
-			t.Parallel()
-			s := randtest.NewRandStub(t)
-			var got0 []byte
-			s.OnRead.Func(func(p0 []byte) (int, error) {
-				got0 = p0
-				var z0 int
-				var z1 error
-				return z0, z1
-			})
-			_, _ = randStubRead(t, s)
-			a0 := randStubReadArgs(t)
-			assert.Equal(t, got0, a0, "the function receives P")
-		})
-	})
-}
-
-// dokimi:provenance sha256:acb95c64db65a6d5cfcbb17e26f371e09a5d69f9096e7fb3213bb721e07307b7
+// dokimi:provenance sha256:8061cae8eb0e1667668f73ac5368e8ae706f6b49efd996b05a2d1f5dc02cad46

@@ -49,50 +49,7 @@ func TestHistogramSuite(t *testing.T) {
 				},
 				Defect: func(*telemetrytest.HistogramHandle) telemetry.Histogram { return &histogramSubject{} },
 			}),
-			conform.Excuse(
-				telemetrytest.HistogramChecks.Record.HistogramRecordReturnsAfterRelease(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.HistogramChecks.Record.HistogramRecordReturnsForANegativeValue(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.HistogramChecks.Record.HistogramRecordReturnsForANonFiniteValue(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.HistogramChecks.Record.HistogramRecordReturnsForANonNegativeValue(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.HistogramChecks.With.HistogramWithOfABoundHistogramReturnsAHistogram(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.HistogramChecks.With.HistogramWithReturnsAHistogramForEmptyAttributes(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.HistogramChecks.With.HistogramWithReturnsAHistogramForNilAttributes(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.HistogramChecks.Release.HistogramReleaseLeavesAnUnboundHistogramUsable(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.HistogramChecks.Release.HistogramReleaseLeavesTheHistogramOfWithUsable(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.HistogramChecks.Release.HistogramReleaseReturnsWhileRecordRuns(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.HistogramChecks.Release.HistogramSecondReleaseReturns(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[telemetry.Histogram]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -114,50 +71,7 @@ func TestHistogramSuite(t *testing.T) {
 				},
 				Defect: func(*telemetrytest.HistogramHandle) telemetry.Histogram { return &histogramSubject{} },
 			}),
-			conform.Excuse(
-				telemetrytest.HistogramChecks.Record.HistogramRecordReturnsAfterRelease(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.HistogramChecks.Record.HistogramRecordReturnsForANegativeValue(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.HistogramChecks.Record.HistogramRecordReturnsForANonFiniteValue(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.HistogramChecks.Record.HistogramRecordReturnsForANonNegativeValue(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.HistogramChecks.With.HistogramWithOfABoundHistogramReturnsAHistogram(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.HistogramChecks.With.HistogramWithReturnsAHistogramForEmptyAttributes(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.HistogramChecks.With.HistogramWithReturnsAHistogramForNilAttributes(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.HistogramChecks.Release.HistogramReleaseLeavesAnUnboundHistogramUsable(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.HistogramChecks.Release.HistogramReleaseLeavesTheHistogramOfWithUsable(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.HistogramChecks.Release.HistogramReleaseReturnsWhileRecordRuns(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.HistogramChecks.Release.HistogramSecondReleaseReturns(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[telemetry.Histogram]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -167,12 +81,6 @@ func TestHistogramSuite(t *testing.T) {
 			t,
 			string(telemetrytest.HistogramChecks.Record.HistogramRecordReturnsAfterRelease()),
 			"Histogram.Record/histogram-record-returns-after-release",
-			"the identity of the check joins the callable and the segment of the check",
-		)
-		assert.Equal(
-			t,
-			string(telemetrytest.HistogramChecks.Record.HistogramRecordReturnsForANegativeValue()),
-			"Histogram.Record/histogram-record-returns-for-a-negative-value",
 			"the identity of the check joins the callable and the segment of the check",
 		)
 		assert.Equal(
@@ -232,10 +140,15 @@ func TestHistogramSuite(t *testing.T) {
 	})
 }
 
+// histogramSuite is the suite of Histogram that the tests of the planted
+// defect of a ceiling apply.
+var histogramSuite = telemetrytest.HistogramSuite()
+
 // histogramIdle returns the planted defect of a ceiling of Histogram with
-// a spend of nothing, a subject that answers each call at once.
+// a spend of nothing. Each call of the defect returns its zero results at
+// once.
 func histogramIdle(h *telemetrytest.HistogramHandle) telemetry.Histogram {
-	return telemetrytest.HistogramSuite().Calls[0].Over(h, func() {})
+	return histogramSuite.Calls[0].Over(h, func() {})
 }
 
 // TestHistogramSuiteBudgets applies the allocation ceilings of the suite
@@ -249,49 +162,8 @@ func TestHistogramSuiteBudgets(t *testing.T) {
 		conform.Ceilings(telemetrytest.HistogramChecks.Record.Callable, conform.Budget{Allocs: new(uint64(0))}),
 		conform.Ceilings(telemetrytest.HistogramChecks.With.Callable, conform.Budget{Allocs: new(uint64(0))}),
 		conform.Ceilings(telemetrytest.HistogramChecks.Release.Callable, conform.Budget{Allocs: new(uint64(0))}),
-		conform.Excuse(
-			telemetrytest.HistogramChecks.Record.HistogramRecordReturnsAfterRelease(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.HistogramChecks.Record.HistogramRecordReturnsForANegativeValue(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.HistogramChecks.Record.HistogramRecordReturnsForANonFiniteValue(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.HistogramChecks.Record.HistogramRecordReturnsForANonNegativeValue(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.HistogramChecks.With.HistogramWithOfABoundHistogramReturnsAHistogram(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.HistogramChecks.With.HistogramWithReturnsAHistogramForEmptyAttributes(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.HistogramChecks.With.HistogramWithReturnsAHistogramForNilAttributes(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.HistogramChecks.Release.HistogramReleaseLeavesAnUnboundHistogramUsable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.HistogramChecks.Release.HistogramReleaseLeavesTheHistogramOfWithUsable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.HistogramChecks.Release.HistogramReleaseReturnsWhileRecordRuns(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.HistogramChecks.Release.HistogramSecondReleaseReturns(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[telemetry.Histogram](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -303,49 +175,8 @@ func FuzzHistogramSuiteRecord(f *testing.F) {
 		f,
 		telemetrytest.HistogramChecks.Record.Callable,
 		histogramIdle,
-		conform.Excuse(
-			telemetrytest.HistogramChecks.Record.HistogramRecordReturnsAfterRelease(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.HistogramChecks.Record.HistogramRecordReturnsForANegativeValue(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.HistogramChecks.Record.HistogramRecordReturnsForANonFiniteValue(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.HistogramChecks.Record.HistogramRecordReturnsForANonNegativeValue(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.HistogramChecks.With.HistogramWithOfABoundHistogramReturnsAHistogram(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.HistogramChecks.With.HistogramWithReturnsAHistogramForEmptyAttributes(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.HistogramChecks.With.HistogramWithReturnsAHistogramForNilAttributes(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.HistogramChecks.Release.HistogramReleaseLeavesAnUnboundHistogramUsable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.HistogramChecks.Release.HistogramReleaseLeavesTheHistogramOfWithUsable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.HistogramChecks.Release.HistogramReleaseReturnsWhileRecordRuns(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.HistogramChecks.Release.HistogramSecondReleaseReturns(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[telemetry.Histogram](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -357,49 +188,8 @@ func FuzzHistogramSuiteWith(f *testing.F) {
 		f,
 		telemetrytest.HistogramChecks.With.Callable,
 		histogramIdle,
-		conform.Excuse(
-			telemetrytest.HistogramChecks.Record.HistogramRecordReturnsAfterRelease(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.HistogramChecks.Record.HistogramRecordReturnsForANegativeValue(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.HistogramChecks.Record.HistogramRecordReturnsForANonFiniteValue(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.HistogramChecks.Record.HistogramRecordReturnsForANonNegativeValue(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.HistogramChecks.With.HistogramWithOfABoundHistogramReturnsAHistogram(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.HistogramChecks.With.HistogramWithReturnsAHistogramForEmptyAttributes(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.HistogramChecks.With.HistogramWithReturnsAHistogramForNilAttributes(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.HistogramChecks.Release.HistogramReleaseLeavesAnUnboundHistogramUsable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.HistogramChecks.Release.HistogramReleaseLeavesTheHistogramOfWithUsable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.HistogramChecks.Release.HistogramReleaseReturnsWhileRecordRuns(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.HistogramChecks.Release.HistogramSecondReleaseReturns(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[telemetry.Histogram](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -411,49 +201,8 @@ func FuzzHistogramSuiteRelease(f *testing.F) {
 		f,
 		telemetrytest.HistogramChecks.Release.Callable,
 		histogramIdle,
-		conform.Excuse(
-			telemetrytest.HistogramChecks.Record.HistogramRecordReturnsAfterRelease(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.HistogramChecks.Record.HistogramRecordReturnsForANegativeValue(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.HistogramChecks.Record.HistogramRecordReturnsForANonFiniteValue(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.HistogramChecks.Record.HistogramRecordReturnsForANonNegativeValue(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.HistogramChecks.With.HistogramWithOfABoundHistogramReturnsAHistogram(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.HistogramChecks.With.HistogramWithReturnsAHistogramForEmptyAttributes(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.HistogramChecks.With.HistogramWithReturnsAHistogramForNilAttributes(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.HistogramChecks.Release.HistogramReleaseLeavesAnUnboundHistogramUsable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.HistogramChecks.Release.HistogramReleaseLeavesTheHistogramOfWithUsable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.HistogramChecks.Release.HistogramReleaseReturnsWhileRecordRuns(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.HistogramChecks.Release.HistogramSecondReleaseReturns(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[telemetry.Histogram](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -472,4 +221,4 @@ func BenchmarkHistogramSuite(b *testing.B) {
 	})
 }
 
-// dokimi:provenance sha256:f3a5da361bcae48ddc226fc2c33806182cbff8dcbaae5253020f2ef4e70a5687
+// dokimi:provenance sha256:5c5acd7227eeee91753171b6b2f15c955217f129891227fb0a1dcba51603918b

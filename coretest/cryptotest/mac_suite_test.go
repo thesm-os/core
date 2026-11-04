@@ -48,62 +48,7 @@ func TestMACSuite(t *testing.T) {
 				},
 				Defect: func(*cryptotest.MACHandle) crypto.MAC { return &macSubject{} },
 			}),
-			conform.Excuse(
-				cryptotest.MACChecks.ID.MACIDIdentifiesTheImplementation(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.MACChecks.Algorithm.MACAlgorithmNamesTheFunction(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.MACChecks.Size.MACSignedSizeIsTheSize(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.MACChecks.Sign.MACSignDistinguishesInputs(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.MACChecks.Sign.MACSignIsDeterministic(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.MACChecks.Sign.MACSignMatchesTheReference(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.MACChecks.Sign.MACSignsNilAsEmpty(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.MACChecks.Verify.MACVerifyAcceptsTheMACOfSign(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.MACChecks.Verify.MACVerifyRefusesAMACOfAWrongLength(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.MACChecks.Verify.MACVerifyRefusesAModifiedMAC(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.MACChecks.NewStream.MACStreamAbsorbsSplitWrites(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.MACChecks.NewStream.MACStreamResetRestartsTheMAC(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.MACChecks.NewStream.MACStreamSumKeepsTheState(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.MACChecks.NewStream.MACStreamSumsLikeSign(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[crypto.MAC]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -125,62 +70,7 @@ func TestMACSuite(t *testing.T) {
 				},
 				Defect: func(*cryptotest.MACHandle) crypto.MAC { return &macSubject{} },
 			}),
-			conform.Excuse(
-				cryptotest.MACChecks.ID.MACIDIdentifiesTheImplementation(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.MACChecks.Algorithm.MACAlgorithmNamesTheFunction(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.MACChecks.Size.MACSignedSizeIsTheSize(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.MACChecks.Sign.MACSignDistinguishesInputs(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.MACChecks.Sign.MACSignIsDeterministic(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.MACChecks.Sign.MACSignMatchesTheReference(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.MACChecks.Sign.MACSignsNilAsEmpty(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.MACChecks.Verify.MACVerifyAcceptsTheMACOfSign(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.MACChecks.Verify.MACVerifyRefusesAMACOfAWrongLength(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.MACChecks.Verify.MACVerifyRefusesAModifiedMAC(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.MACChecks.NewStream.MACStreamAbsorbsSplitWrites(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.MACChecks.NewStream.MACStreamResetRestartsTheMAC(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.MACChecks.NewStream.MACStreamSumKeepsTheState(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.MACChecks.NewStream.MACStreamSumsLikeSign(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[crypto.MAC]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -273,10 +163,14 @@ func TestMACSuite(t *testing.T) {
 	})
 }
 
+// macSuite is the suite of MAC that the tests of the planted defect of a
+// ceiling apply.
+var macSuite = cryptotest.MACSuite()
+
 // macIdle returns the planted defect of a ceiling of MAC with a spend of
-// nothing, a subject that answers each call at once.
+// nothing. Each call of the defect returns its zero results at once.
 func macIdle(h *cryptotest.MACHandle) crypto.MAC {
-	return cryptotest.MACSuite().Calls[0].Over(h, func() {})
+	return macSuite.Calls[0].Over(h, func() {})
 }
 
 // TestMACSuiteBudgets applies the allocation ceilings of the suite of MAC
@@ -292,62 +186,7 @@ func TestMACSuiteBudgets(t *testing.T) {
 		conform.Ceilings(cryptotest.MACChecks.Sign.Callable, conform.Budget{Allocs: new(uint64(0))}),
 		conform.Ceilings(cryptotest.MACChecks.Verify.Callable, conform.Budget{Allocs: new(uint64(0))}),
 		conform.Ceilings(cryptotest.MACChecks.NewStream.Callable, conform.Budget{Allocs: new(uint64(0))}),
-		conform.Excuse(
-			cryptotest.MACChecks.ID.MACIDIdentifiesTheImplementation(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Algorithm.MACAlgorithmNamesTheFunction(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Size.MACSignedSizeIsTheSize(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Sign.MACSignDistinguishesInputs(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Sign.MACSignIsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Sign.MACSignMatchesTheReference(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Sign.MACSignsNilAsEmpty(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Verify.MACVerifyAcceptsTheMACOfSign(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Verify.MACVerifyRefusesAMACOfAWrongLength(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Verify.MACVerifyRefusesAModifiedMAC(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.NewStream.MACStreamAbsorbsSplitWrites(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.NewStream.MACStreamResetRestartsTheMAC(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.NewStream.MACStreamSumKeepsTheState(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.NewStream.MACStreamSumsLikeSign(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[crypto.MAC]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -358,62 +197,7 @@ func FuzzMACSuiteID(f *testing.F) {
 		f,
 		cryptotest.MACChecks.ID.Callable,
 		macIdle,
-		conform.Excuse(
-			cryptotest.MACChecks.ID.MACIDIdentifiesTheImplementation(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Algorithm.MACAlgorithmNamesTheFunction(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Size.MACSignedSizeIsTheSize(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Sign.MACSignDistinguishesInputs(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Sign.MACSignIsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Sign.MACSignMatchesTheReference(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Sign.MACSignsNilAsEmpty(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Verify.MACVerifyAcceptsTheMACOfSign(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Verify.MACVerifyRefusesAMACOfAWrongLength(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Verify.MACVerifyRefusesAModifiedMAC(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.NewStream.MACStreamAbsorbsSplitWrites(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.NewStream.MACStreamResetRestartsTheMAC(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.NewStream.MACStreamSumKeepsTheState(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.NewStream.MACStreamSumsLikeSign(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[crypto.MAC]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -424,62 +208,7 @@ func FuzzMACSuiteAlgorithm(f *testing.F) {
 		f,
 		cryptotest.MACChecks.Algorithm.Callable,
 		macIdle,
-		conform.Excuse(
-			cryptotest.MACChecks.ID.MACIDIdentifiesTheImplementation(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Algorithm.MACAlgorithmNamesTheFunction(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Size.MACSignedSizeIsTheSize(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Sign.MACSignDistinguishesInputs(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Sign.MACSignIsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Sign.MACSignMatchesTheReference(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Sign.MACSignsNilAsEmpty(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Verify.MACVerifyAcceptsTheMACOfSign(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Verify.MACVerifyRefusesAMACOfAWrongLength(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Verify.MACVerifyRefusesAModifiedMAC(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.NewStream.MACStreamAbsorbsSplitWrites(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.NewStream.MACStreamResetRestartsTheMAC(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.NewStream.MACStreamSumKeepsTheState(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.NewStream.MACStreamSumsLikeSign(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[crypto.MAC]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -490,62 +219,7 @@ func FuzzMACSuiteSize(f *testing.F) {
 		f,
 		cryptotest.MACChecks.Size.Callable,
 		macIdle,
-		conform.Excuse(
-			cryptotest.MACChecks.ID.MACIDIdentifiesTheImplementation(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Algorithm.MACAlgorithmNamesTheFunction(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Size.MACSignedSizeIsTheSize(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Sign.MACSignDistinguishesInputs(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Sign.MACSignIsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Sign.MACSignMatchesTheReference(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Sign.MACSignsNilAsEmpty(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Verify.MACVerifyAcceptsTheMACOfSign(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Verify.MACVerifyRefusesAMACOfAWrongLength(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Verify.MACVerifyRefusesAModifiedMAC(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.NewStream.MACStreamAbsorbsSplitWrites(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.NewStream.MACStreamResetRestartsTheMAC(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.NewStream.MACStreamSumKeepsTheState(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.NewStream.MACStreamSumsLikeSign(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[crypto.MAC]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -556,62 +230,7 @@ func FuzzMACSuiteSign(f *testing.F) {
 		f,
 		cryptotest.MACChecks.Sign.Callable,
 		macIdle,
-		conform.Excuse(
-			cryptotest.MACChecks.ID.MACIDIdentifiesTheImplementation(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Algorithm.MACAlgorithmNamesTheFunction(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Size.MACSignedSizeIsTheSize(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Sign.MACSignDistinguishesInputs(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Sign.MACSignIsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Sign.MACSignMatchesTheReference(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Sign.MACSignsNilAsEmpty(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Verify.MACVerifyAcceptsTheMACOfSign(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Verify.MACVerifyRefusesAMACOfAWrongLength(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Verify.MACVerifyRefusesAModifiedMAC(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.NewStream.MACStreamAbsorbsSplitWrites(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.NewStream.MACStreamResetRestartsTheMAC(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.NewStream.MACStreamSumKeepsTheState(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.NewStream.MACStreamSumsLikeSign(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[crypto.MAC]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -622,62 +241,7 @@ func FuzzMACSuiteVerify(f *testing.F) {
 		f,
 		cryptotest.MACChecks.Verify.Callable,
 		macIdle,
-		conform.Excuse(
-			cryptotest.MACChecks.ID.MACIDIdentifiesTheImplementation(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Algorithm.MACAlgorithmNamesTheFunction(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Size.MACSignedSizeIsTheSize(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Sign.MACSignDistinguishesInputs(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Sign.MACSignIsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Sign.MACSignMatchesTheReference(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Sign.MACSignsNilAsEmpty(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Verify.MACVerifyAcceptsTheMACOfSign(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Verify.MACVerifyRefusesAMACOfAWrongLength(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Verify.MACVerifyRefusesAModifiedMAC(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.NewStream.MACStreamAbsorbsSplitWrites(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.NewStream.MACStreamResetRestartsTheMAC(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.NewStream.MACStreamSumKeepsTheState(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.NewStream.MACStreamSumsLikeSign(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[crypto.MAC]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -688,62 +252,7 @@ func FuzzMACSuiteNewStream(f *testing.F) {
 		f,
 		cryptotest.MACChecks.NewStream.Callable,
 		macIdle,
-		conform.Excuse(
-			cryptotest.MACChecks.ID.MACIDIdentifiesTheImplementation(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Algorithm.MACAlgorithmNamesTheFunction(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Size.MACSignedSizeIsTheSize(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Sign.MACSignDistinguishesInputs(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Sign.MACSignIsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Sign.MACSignMatchesTheReference(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Sign.MACSignsNilAsEmpty(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Verify.MACVerifyAcceptsTheMACOfSign(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Verify.MACVerifyRefusesAMACOfAWrongLength(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.Verify.MACVerifyRefusesAModifiedMAC(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.NewStream.MACStreamAbsorbsSplitWrites(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.NewStream.MACStreamResetRestartsTheMAC(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.NewStream.MACStreamSumKeepsTheState(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.MACChecks.NewStream.MACStreamSumsLikeSign(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[crypto.MAC]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -778,4 +287,4 @@ func BenchmarkMACSuiteParallel(b *testing.B) {
 	})
 }
 
-// dokimi:provenance sha256:fa917aeb24faa5fbeda58dc0c2cdbd5e35adba54849874c815b11ec8bb4b6b87
+// dokimi:provenance sha256:716d8af77a581d31006cb18632318f8185f287aaa16e041a4a1589aea4f64b11

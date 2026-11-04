@@ -49,26 +49,7 @@ func TestReporterSuite(t *testing.T) {
 				},
 				Defect: func(*telemetrytest.ReporterHandle) telemetry.Reporter { return &reporterSubject{} },
 			}),
-			conform.Excuse(
-				telemetrytest.ReporterChecks.Counter.ReporterCounterReturnsACounter(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.ReporterChecks.Counter.ReporterCounterReturnsACounterForAKnownName(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.ReporterChecks.Gauge.ReporterGaugeReturnsAGauge(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.ReporterChecks.Histogram.ReporterHistogramReturnsAHistogram(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.ReporterChecks.Tracer.ReporterTracerReturnsATracer(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[telemetry.Reporter]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -90,26 +71,7 @@ func TestReporterSuite(t *testing.T) {
 				},
 				Defect: func(*telemetrytest.ReporterHandle) telemetry.Reporter { return &reporterSubject{} },
 			}),
-			conform.Excuse(
-				telemetrytest.ReporterChecks.Counter.ReporterCounterReturnsACounter(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.ReporterChecks.Counter.ReporterCounterReturnsACounterForAKnownName(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.ReporterChecks.Gauge.ReporterGaugeReturnsAGauge(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.ReporterChecks.Histogram.ReporterHistogramReturnsAHistogram(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.ReporterChecks.Tracer.ReporterTracerReturnsATracer(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[telemetry.Reporter]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -148,10 +110,15 @@ func TestReporterSuite(t *testing.T) {
 	})
 }
 
+// reporterSuite is the suite of Reporter that the tests of the planted
+// defect of a ceiling apply.
+var reporterSuite = telemetrytest.ReporterSuite()
+
 // reporterIdle returns the planted defect of a ceiling of Reporter with a
-// spend of nothing, a subject that answers each call at once.
+// spend of nothing. Each call of the defect returns its zero results at
+// once.
 func reporterIdle(h *telemetrytest.ReporterHandle) telemetry.Reporter {
-	return telemetrytest.ReporterSuite().Calls[0].Over(h, func() {})
+	return reporterSuite.Calls[0].Over(h, func() {})
 }
 
 // TestReporterSuiteBudgets applies the allocation ceilings of the suite of
@@ -166,25 +133,8 @@ func TestReporterSuiteBudgets(t *testing.T) {
 		conform.Ceilings(telemetrytest.ReporterChecks.Gauge.Callable, conform.Budget{Allocs: new(uint64(0))}),
 		conform.Ceilings(telemetrytest.ReporterChecks.Histogram.Callable, conform.Budget{Allocs: new(uint64(0))}),
 		conform.Ceilings(telemetrytest.ReporterChecks.Tracer.Callable, conform.Budget{Allocs: new(uint64(0))}),
-		conform.Excuse(
-			telemetrytest.ReporterChecks.Counter.ReporterCounterReturnsACounter(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.ReporterChecks.Counter.ReporterCounterReturnsACounterForAKnownName(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.ReporterChecks.Gauge.ReporterGaugeReturnsAGauge(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.ReporterChecks.Histogram.ReporterHistogramReturnsAHistogram(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.ReporterChecks.Tracer.ReporterTracerReturnsATracer(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[telemetry.Reporter](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -196,25 +146,8 @@ func FuzzReporterSuiteCounter(f *testing.F) {
 		f,
 		telemetrytest.ReporterChecks.Counter.Callable,
 		reporterIdle,
-		conform.Excuse(
-			telemetrytest.ReporterChecks.Counter.ReporterCounterReturnsACounter(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.ReporterChecks.Counter.ReporterCounterReturnsACounterForAKnownName(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.ReporterChecks.Gauge.ReporterGaugeReturnsAGauge(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.ReporterChecks.Histogram.ReporterHistogramReturnsAHistogram(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.ReporterChecks.Tracer.ReporterTracerReturnsATracer(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[telemetry.Reporter](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -226,25 +159,8 @@ func FuzzReporterSuiteGauge(f *testing.F) {
 		f,
 		telemetrytest.ReporterChecks.Gauge.Callable,
 		reporterIdle,
-		conform.Excuse(
-			telemetrytest.ReporterChecks.Counter.ReporterCounterReturnsACounter(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.ReporterChecks.Counter.ReporterCounterReturnsACounterForAKnownName(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.ReporterChecks.Gauge.ReporterGaugeReturnsAGauge(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.ReporterChecks.Histogram.ReporterHistogramReturnsAHistogram(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.ReporterChecks.Tracer.ReporterTracerReturnsATracer(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[telemetry.Reporter](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -257,25 +173,8 @@ func FuzzReporterSuiteHistogram(f *testing.F) {
 		f,
 		telemetrytest.ReporterChecks.Histogram.Callable,
 		reporterIdle,
-		conform.Excuse(
-			telemetrytest.ReporterChecks.Counter.ReporterCounterReturnsACounter(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.ReporterChecks.Counter.ReporterCounterReturnsACounterForAKnownName(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.ReporterChecks.Gauge.ReporterGaugeReturnsAGauge(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.ReporterChecks.Histogram.ReporterHistogramReturnsAHistogram(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.ReporterChecks.Tracer.ReporterTracerReturnsATracer(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[telemetry.Reporter](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -287,25 +186,8 @@ func FuzzReporterSuiteTracer(f *testing.F) {
 		f,
 		telemetrytest.ReporterChecks.Tracer.Callable,
 		reporterIdle,
-		conform.Excuse(
-			telemetrytest.ReporterChecks.Counter.ReporterCounterReturnsACounter(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.ReporterChecks.Counter.ReporterCounterReturnsACounterForAKnownName(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.ReporterChecks.Gauge.ReporterGaugeReturnsAGauge(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.ReporterChecks.Histogram.ReporterHistogramReturnsAHistogram(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.ReporterChecks.Tracer.ReporterTracerReturnsATracer(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[telemetry.Reporter](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -327,4 +209,4 @@ func BenchmarkReporterSuite(b *testing.B) {
 	})
 }
 
-// dokimi:provenance sha256:f590c04f541435c9d2e1556aa12cdb26bb34a4e167d8d84e051719c253f21a37
+// dokimi:provenance sha256:adc56ab7d24972c3a8e08f2057ed08d2994f31d4a5ad6b50d123737e3c2007df

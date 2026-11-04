@@ -49,38 +49,7 @@ func TestVerifierSuite(t *testing.T) {
 				},
 				Defect: func(*cryptotest.VerifierHandle) sign.Verifier { return &verifierSubject{} },
 			}),
-			conform.Excuse(
-				cryptotest.VerifierChecks.KeyID.VerifierKeyIDIsStable(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.VerifierChecks.PublicKey.VerifierPublicKeyIsStable(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.VerifierChecks.Algorithm.VerifierAlgorithmIsStable(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.VerifierChecks.Verify.VerifierAcceptsASignatureOfItsKey(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.VerifierChecks.Verify.VerifierRefusesAFlippedMessageBit(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.VerifierChecks.Verify.VerifierRefusesAFlippedSignatureBit(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.VerifierChecks.Verify.VerifierRefusesANilSignature(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.VerifierChecks.Verify.VerifierRefusesAnEmptySignature(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[sign.Verifier]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -102,61 +71,12 @@ func TestVerifierSuite(t *testing.T) {
 				},
 				Defect: func(*cryptotest.VerifierHandle) sign.Verifier { return &verifierSubject{} },
 			}),
-			conform.Excuse(
-				cryptotest.VerifierChecks.KeyID.VerifierKeyIDIsStable(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.VerifierChecks.PublicKey.VerifierPublicKeyIsStable(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.VerifierChecks.Algorithm.VerifierAlgorithmIsStable(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.VerifierChecks.Verify.VerifierAcceptsASignatureOfItsKey(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.VerifierChecks.Verify.VerifierRefusesAFlippedMessageBit(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.VerifierChecks.Verify.VerifierRefusesAFlippedSignatureBit(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.VerifierChecks.Verify.VerifierRefusesANilSignature(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.VerifierChecks.Verify.VerifierRefusesAnEmptySignature(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[sign.Verifier]("the test applies the check of its option alone"),
 		)
 	})
 
 	t.Run("VerifierChecks", func(t *testing.T) {
 		t.Parallel()
-		assert.Equal(
-			t,
-			string(cryptotest.VerifierChecks.KeyID.VerifierKeyIDIsStable()),
-			"Verifier.KeyID/verifier-key-idis-stable",
-			"the identity of the check joins the callable and the segment of the check",
-		)
-		assert.Equal(
-			t,
-			string(cryptotest.VerifierChecks.PublicKey.VerifierPublicKeyIsStable()),
-			"Verifier.PublicKey/verifier-public-key-is-stable",
-			"the identity of the check joins the callable and the segment of the check",
-		)
-		assert.Equal(
-			t,
-			string(cryptotest.VerifierChecks.Algorithm.VerifierAlgorithmIsStable()),
-			"Verifier.Algorithm/verifier-algorithm-is-stable",
-			"the identity of the check joins the callable and the segment of the check",
-		)
 		assert.Equal(
 			t,
 			string(cryptotest.VerifierChecks.Verify.VerifierAcceptsASignatureOfItsKey()),
@@ -190,10 +110,15 @@ func TestVerifierSuite(t *testing.T) {
 	})
 }
 
+// verifierSuite is the suite of Verifier that the tests of the planted
+// defect of a ceiling apply.
+var verifierSuite = cryptotest.VerifierSuite()
+
 // verifierIdle returns the planted defect of a ceiling of Verifier with a
-// spend of nothing, a subject that answers each call at once.
+// spend of nothing. Each call of the defect returns its zero results at
+// once.
 func verifierIdle(h *cryptotest.VerifierHandle) sign.Verifier {
-	return cryptotest.VerifierSuite().Calls[0].Over(h, func() {})
+	return verifierSuite.Calls[0].Over(h, func() {})
 }
 
 // TestVerifierSuiteBudgets applies the allocation ceilings of the suite of
@@ -208,38 +133,7 @@ func TestVerifierSuiteBudgets(t *testing.T) {
 		conform.Ceilings(cryptotest.VerifierChecks.PublicKey.Callable, conform.Budget{Allocs: new(uint64(0))}),
 		conform.Ceilings(cryptotest.VerifierChecks.Algorithm.Callable, conform.Budget{Allocs: new(uint64(0))}),
 		conform.Ceilings(cryptotest.VerifierChecks.Verify.Callable, conform.Budget{Allocs: new(uint64(0))}),
-		conform.Excuse(
-			cryptotest.VerifierChecks.KeyID.VerifierKeyIDIsStable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.VerifierChecks.PublicKey.VerifierPublicKeyIsStable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.VerifierChecks.Algorithm.VerifierAlgorithmIsStable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.VerifierChecks.Verify.VerifierAcceptsASignatureOfItsKey(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.VerifierChecks.Verify.VerifierRefusesAFlippedMessageBit(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.VerifierChecks.Verify.VerifierRefusesAFlippedSignatureBit(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.VerifierChecks.Verify.VerifierRefusesANilSignature(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.VerifierChecks.Verify.VerifierRefusesAnEmptySignature(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[sign.Verifier]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -250,38 +144,7 @@ func FuzzVerifierSuiteKeyID(f *testing.F) {
 		f,
 		cryptotest.VerifierChecks.KeyID.Callable,
 		verifierIdle,
-		conform.Excuse(
-			cryptotest.VerifierChecks.KeyID.VerifierKeyIDIsStable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.VerifierChecks.PublicKey.VerifierPublicKeyIsStable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.VerifierChecks.Algorithm.VerifierAlgorithmIsStable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.VerifierChecks.Verify.VerifierAcceptsASignatureOfItsKey(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.VerifierChecks.Verify.VerifierRefusesAFlippedMessageBit(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.VerifierChecks.Verify.VerifierRefusesAFlippedSignatureBit(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.VerifierChecks.Verify.VerifierRefusesANilSignature(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.VerifierChecks.Verify.VerifierRefusesAnEmptySignature(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[sign.Verifier]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -293,38 +156,7 @@ func FuzzVerifierSuitePublicKey(f *testing.F) {
 		f,
 		cryptotest.VerifierChecks.PublicKey.Callable,
 		verifierIdle,
-		conform.Excuse(
-			cryptotest.VerifierChecks.KeyID.VerifierKeyIDIsStable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.VerifierChecks.PublicKey.VerifierPublicKeyIsStable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.VerifierChecks.Algorithm.VerifierAlgorithmIsStable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.VerifierChecks.Verify.VerifierAcceptsASignatureOfItsKey(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.VerifierChecks.Verify.VerifierRefusesAFlippedMessageBit(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.VerifierChecks.Verify.VerifierRefusesAFlippedSignatureBit(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.VerifierChecks.Verify.VerifierRefusesANilSignature(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.VerifierChecks.Verify.VerifierRefusesAnEmptySignature(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[sign.Verifier]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -336,38 +168,7 @@ func FuzzVerifierSuiteAlgorithm(f *testing.F) {
 		f,
 		cryptotest.VerifierChecks.Algorithm.Callable,
 		verifierIdle,
-		conform.Excuse(
-			cryptotest.VerifierChecks.KeyID.VerifierKeyIDIsStable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.VerifierChecks.PublicKey.VerifierPublicKeyIsStable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.VerifierChecks.Algorithm.VerifierAlgorithmIsStable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.VerifierChecks.Verify.VerifierAcceptsASignatureOfItsKey(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.VerifierChecks.Verify.VerifierRefusesAFlippedMessageBit(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.VerifierChecks.Verify.VerifierRefusesAFlippedSignatureBit(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.VerifierChecks.Verify.VerifierRefusesANilSignature(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.VerifierChecks.Verify.VerifierRefusesAnEmptySignature(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[sign.Verifier]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -378,38 +179,7 @@ func FuzzVerifierSuiteVerify(f *testing.F) {
 		f,
 		cryptotest.VerifierChecks.Verify.Callable,
 		verifierIdle,
-		conform.Excuse(
-			cryptotest.VerifierChecks.KeyID.VerifierKeyIDIsStable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.VerifierChecks.PublicKey.VerifierPublicKeyIsStable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.VerifierChecks.Algorithm.VerifierAlgorithmIsStable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.VerifierChecks.Verify.VerifierAcceptsASignatureOfItsKey(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.VerifierChecks.Verify.VerifierRefusesAFlippedMessageBit(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.VerifierChecks.Verify.VerifierRefusesAFlippedSignatureBit(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.VerifierChecks.Verify.VerifierRefusesANilSignature(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.VerifierChecks.Verify.VerifierRefusesAnEmptySignature(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[sign.Verifier]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -465,38 +235,7 @@ func TestSignerSuite(t *testing.T) {
 				},
 				Defect: func(*cryptotest.SignerHandle) sign.Signer { return &signerSubject{} },
 			}),
-			conform.Excuse(
-				cryptotest.SignerChecks.Sign.SignerSignaturesVerify(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.SignerChecks.Sign.SignerSignsAnEmptyMessage(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.SignerChecks.KeyID.SignerKeyIDIsStable(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.SignerChecks.PublicKey.SignerPublicKeyIsStable(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.SignerChecks.Algorithm.SignerAlgorithmIsStable(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.SignerChecks.Verify.SignerRefusesAFlippedMessageBit(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.SignerChecks.Verify.SignerRefusesAFlippedSignatureBit(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.SignerChecks.Verify.SignerRefusesASignatureOfAWrongLength(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[sign.Signer]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -518,38 +257,7 @@ func TestSignerSuite(t *testing.T) {
 				},
 				Defect: func(*cryptotest.SignerHandle) sign.Signer { return &signerSubject{} },
 			}),
-			conform.Excuse(
-				cryptotest.SignerChecks.Sign.SignerSignaturesVerify(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.SignerChecks.Sign.SignerSignsAnEmptyMessage(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.SignerChecks.KeyID.SignerKeyIDIsStable(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.SignerChecks.PublicKey.SignerPublicKeyIsStable(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.SignerChecks.Algorithm.SignerAlgorithmIsStable(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.SignerChecks.Verify.SignerRefusesAFlippedMessageBit(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.SignerChecks.Verify.SignerRefusesAFlippedSignatureBit(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.SignerChecks.Verify.SignerRefusesASignatureOfAWrongLength(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[sign.Signer]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -565,24 +273,6 @@ func TestSignerSuite(t *testing.T) {
 			t,
 			string(cryptotest.SignerChecks.Sign.SignerSignsAnEmptyMessage()),
 			"Signer.Sign/signer-signs-an-empty-message",
-			"the identity of the check joins the callable and the segment of the check",
-		)
-		assert.Equal(
-			t,
-			string(cryptotest.SignerChecks.KeyID.SignerKeyIDIsStable()),
-			"Signer.KeyID/signer-key-idis-stable",
-			"the identity of the check joins the callable and the segment of the check",
-		)
-		assert.Equal(
-			t,
-			string(cryptotest.SignerChecks.PublicKey.SignerPublicKeyIsStable()),
-			"Signer.PublicKey/signer-public-key-is-stable",
-			"the identity of the check joins the callable and the segment of the check",
-		)
-		assert.Equal(
-			t,
-			string(cryptotest.SignerChecks.Algorithm.SignerAlgorithmIsStable()),
-			"Signer.Algorithm/signer-algorithm-is-stable",
 			"the identity of the check joins the callable and the segment of the check",
 		)
 		assert.Equal(
@@ -606,10 +296,15 @@ func TestSignerSuite(t *testing.T) {
 	})
 }
 
+// signerSuite is the suite of Signer that the tests of the planted defect
+// of a ceiling apply.
+var signerSuite = cryptotest.SignerSuite()
+
 // signerIdle returns the planted defect of a ceiling of Signer with a
-// spend of nothing, a subject that answers each call at once.
+// spend of nothing. Each call of the defect returns its zero results at
+// once.
 func signerIdle(h *cryptotest.SignerHandle) sign.Signer {
-	return cryptotest.SignerSuite().Calls[0].Over(h, func() {})
+	return signerSuite.Calls[0].Over(h, func() {})
 }
 
 // TestSignerSuiteBudgets applies the allocation ceilings of the suite of
@@ -625,38 +320,7 @@ func TestSignerSuiteBudgets(t *testing.T) {
 		conform.Ceilings(cryptotest.SignerChecks.PublicKey.Callable, conform.Budget{Allocs: new(uint64(0))}),
 		conform.Ceilings(cryptotest.SignerChecks.Algorithm.Callable, conform.Budget{Allocs: new(uint64(0))}),
 		conform.Ceilings(cryptotest.SignerChecks.Verify.Callable, conform.Budget{Allocs: new(uint64(0))}),
-		conform.Excuse(
-			cryptotest.SignerChecks.Sign.SignerSignaturesVerify(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.SignerChecks.Sign.SignerSignsAnEmptyMessage(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.SignerChecks.KeyID.SignerKeyIDIsStable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.SignerChecks.PublicKey.SignerPublicKeyIsStable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.SignerChecks.Algorithm.SignerAlgorithmIsStable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.SignerChecks.Verify.SignerRefusesAFlippedMessageBit(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.SignerChecks.Verify.SignerRefusesAFlippedSignatureBit(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.SignerChecks.Verify.SignerRefusesASignatureOfAWrongLength(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[sign.Signer]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -667,38 +331,7 @@ func FuzzSignerSuiteSign(f *testing.F) {
 		f,
 		cryptotest.SignerChecks.Sign.Callable,
 		signerIdle,
-		conform.Excuse(
-			cryptotest.SignerChecks.Sign.SignerSignaturesVerify(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.SignerChecks.Sign.SignerSignsAnEmptyMessage(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.SignerChecks.KeyID.SignerKeyIDIsStable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.SignerChecks.PublicKey.SignerPublicKeyIsStable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.SignerChecks.Algorithm.SignerAlgorithmIsStable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.SignerChecks.Verify.SignerRefusesAFlippedMessageBit(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.SignerChecks.Verify.SignerRefusesAFlippedSignatureBit(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.SignerChecks.Verify.SignerRefusesASignatureOfAWrongLength(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[sign.Signer]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -709,38 +342,7 @@ func FuzzSignerSuiteKeyID(f *testing.F) {
 		f,
 		cryptotest.SignerChecks.KeyID.Callable,
 		signerIdle,
-		conform.Excuse(
-			cryptotest.SignerChecks.Sign.SignerSignaturesVerify(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.SignerChecks.Sign.SignerSignsAnEmptyMessage(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.SignerChecks.KeyID.SignerKeyIDIsStable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.SignerChecks.PublicKey.SignerPublicKeyIsStable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.SignerChecks.Algorithm.SignerAlgorithmIsStable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.SignerChecks.Verify.SignerRefusesAFlippedMessageBit(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.SignerChecks.Verify.SignerRefusesAFlippedSignatureBit(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.SignerChecks.Verify.SignerRefusesASignatureOfAWrongLength(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[sign.Signer]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -751,38 +353,7 @@ func FuzzSignerSuitePublicKey(f *testing.F) {
 		f,
 		cryptotest.SignerChecks.PublicKey.Callable,
 		signerIdle,
-		conform.Excuse(
-			cryptotest.SignerChecks.Sign.SignerSignaturesVerify(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.SignerChecks.Sign.SignerSignsAnEmptyMessage(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.SignerChecks.KeyID.SignerKeyIDIsStable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.SignerChecks.PublicKey.SignerPublicKeyIsStable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.SignerChecks.Algorithm.SignerAlgorithmIsStable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.SignerChecks.Verify.SignerRefusesAFlippedMessageBit(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.SignerChecks.Verify.SignerRefusesAFlippedSignatureBit(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.SignerChecks.Verify.SignerRefusesASignatureOfAWrongLength(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[sign.Signer]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -793,38 +364,7 @@ func FuzzSignerSuiteAlgorithm(f *testing.F) {
 		f,
 		cryptotest.SignerChecks.Algorithm.Callable,
 		signerIdle,
-		conform.Excuse(
-			cryptotest.SignerChecks.Sign.SignerSignaturesVerify(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.SignerChecks.Sign.SignerSignsAnEmptyMessage(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.SignerChecks.KeyID.SignerKeyIDIsStable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.SignerChecks.PublicKey.SignerPublicKeyIsStable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.SignerChecks.Algorithm.SignerAlgorithmIsStable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.SignerChecks.Verify.SignerRefusesAFlippedMessageBit(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.SignerChecks.Verify.SignerRefusesAFlippedSignatureBit(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.SignerChecks.Verify.SignerRefusesASignatureOfAWrongLength(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[sign.Signer]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -835,38 +375,7 @@ func FuzzSignerSuiteVerify(f *testing.F) {
 		f,
 		cryptotest.SignerChecks.Verify.Callable,
 		signerIdle,
-		conform.Excuse(
-			cryptotest.SignerChecks.Sign.SignerSignaturesVerify(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.SignerChecks.Sign.SignerSignsAnEmptyMessage(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.SignerChecks.KeyID.SignerKeyIDIsStable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.SignerChecks.PublicKey.SignerPublicKeyIsStable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.SignerChecks.Algorithm.SignerAlgorithmIsStable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.SignerChecks.Verify.SignerRefusesAFlippedMessageBit(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.SignerChecks.Verify.SignerRefusesAFlippedSignatureBit(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.SignerChecks.Verify.SignerRefusesASignatureOfAWrongLength(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[sign.Signer]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -926,22 +435,7 @@ func TestStreamingSignerSuite(t *testing.T) {
 				},
 				Defect: func(*cryptotest.StreamingSignerHandle) sign.StreamingSigner { return &streamingSignerSubject{} },
 			}),
-			conform.Excuse(
-				cryptotest.StreamingSignerChecks.NewSignStream.StreamingSignerSignAndResetClearsTheStream(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.StreamingSignerChecks.NewSignStream.StreamingSignerStreamAbsorbsSplitWrites(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.StreamingSignerChecks.NewSignStream.StreamingSignerStreamIgnoresEmptyWrites(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.StreamingSignerChecks.NewSignStream.StreamingSignerStreamSignatureVerifies(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[sign.StreamingSigner]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -963,22 +457,7 @@ func TestStreamingSignerSuite(t *testing.T) {
 				},
 				Defect: func(*cryptotest.StreamingSignerHandle) sign.StreamingSigner { return &streamingSignerSubject{} },
 			}),
-			conform.Excuse(
-				cryptotest.StreamingSignerChecks.NewSignStream.StreamingSignerSignAndResetClearsTheStream(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.StreamingSignerChecks.NewSignStream.StreamingSignerStreamAbsorbsSplitWrites(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.StreamingSignerChecks.NewSignStream.StreamingSignerStreamIgnoresEmptyWrites(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.StreamingSignerChecks.NewSignStream.StreamingSignerStreamSignatureVerifies(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[sign.StreamingSigner]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -1011,11 +490,15 @@ func TestStreamingSignerSuite(t *testing.T) {
 	})
 }
 
+// streamingSignerSuite is the suite of StreamingSigner that the tests of
+// the planted defect of a ceiling apply.
+var streamingSignerSuite = cryptotest.StreamingSignerSuite()
+
 // streamingSignerIdle returns the planted defect of a ceiling of
-// StreamingSigner with a spend of nothing, a subject that answers each
-// call at once.
+// StreamingSigner with a spend of nothing. Each call of the defect returns
+// its zero results at once.
 func streamingSignerIdle(h *cryptotest.StreamingSignerHandle) sign.StreamingSigner {
-	return cryptotest.StreamingSignerSuite().Calls[0].Over(h, func() {})
+	return streamingSignerSuite.Calls[0].Over(h, func() {})
 }
 
 // TestStreamingSignerSuiteBudgets applies the allocation ceilings of the
@@ -1035,21 +518,8 @@ func TestStreamingSignerSuiteBudgets(t *testing.T) {
 		conform.Ceilings(cryptotest.StreamingSignerChecks.PublicKey.Callable, conform.Budget{Allocs: new(uint64(0))}),
 		conform.Ceilings(cryptotest.StreamingSignerChecks.Algorithm.Callable, conform.Budget{Allocs: new(uint64(0))}),
 		conform.Ceilings(cryptotest.StreamingSignerChecks.Verify.Callable, conform.Budget{Allocs: new(uint64(0))}),
-		conform.Excuse(
-			cryptotest.StreamingSignerChecks.NewSignStream.StreamingSignerSignAndResetClearsTheStream(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.StreamingSignerChecks.NewSignStream.StreamingSignerStreamAbsorbsSplitWrites(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.StreamingSignerChecks.NewSignStream.StreamingSignerStreamIgnoresEmptyWrites(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.StreamingSignerChecks.NewSignStream.StreamingSignerStreamSignatureVerifies(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[sign.StreamingSigner](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -1062,21 +532,8 @@ func FuzzStreamingSignerSuiteNewSignStream(f *testing.F) {
 		f,
 		cryptotest.StreamingSignerChecks.NewSignStream.Callable,
 		streamingSignerIdle,
-		conform.Excuse(
-			cryptotest.StreamingSignerChecks.NewSignStream.StreamingSignerSignAndResetClearsTheStream(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.StreamingSignerChecks.NewSignStream.StreamingSignerStreamAbsorbsSplitWrites(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.StreamingSignerChecks.NewSignStream.StreamingSignerStreamIgnoresEmptyWrites(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.StreamingSignerChecks.NewSignStream.StreamingSignerStreamSignatureVerifies(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[sign.StreamingSigner](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -1089,21 +546,8 @@ func FuzzStreamingSignerSuiteSign(f *testing.F) {
 		f,
 		cryptotest.StreamingSignerChecks.Sign.Callable,
 		streamingSignerIdle,
-		conform.Excuse(
-			cryptotest.StreamingSignerChecks.NewSignStream.StreamingSignerSignAndResetClearsTheStream(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.StreamingSignerChecks.NewSignStream.StreamingSignerStreamAbsorbsSplitWrites(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.StreamingSignerChecks.NewSignStream.StreamingSignerStreamIgnoresEmptyWrites(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.StreamingSignerChecks.NewSignStream.StreamingSignerStreamSignatureVerifies(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[sign.StreamingSigner](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -1116,21 +560,8 @@ func FuzzStreamingSignerSuiteKeyID(f *testing.F) {
 		f,
 		cryptotest.StreamingSignerChecks.KeyID.Callable,
 		streamingSignerIdle,
-		conform.Excuse(
-			cryptotest.StreamingSignerChecks.NewSignStream.StreamingSignerSignAndResetClearsTheStream(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.StreamingSignerChecks.NewSignStream.StreamingSignerStreamAbsorbsSplitWrites(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.StreamingSignerChecks.NewSignStream.StreamingSignerStreamIgnoresEmptyWrites(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.StreamingSignerChecks.NewSignStream.StreamingSignerStreamSignatureVerifies(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[sign.StreamingSigner](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -1143,21 +574,8 @@ func FuzzStreamingSignerSuitePublicKey(f *testing.F) {
 		f,
 		cryptotest.StreamingSignerChecks.PublicKey.Callable,
 		streamingSignerIdle,
-		conform.Excuse(
-			cryptotest.StreamingSignerChecks.NewSignStream.StreamingSignerSignAndResetClearsTheStream(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.StreamingSignerChecks.NewSignStream.StreamingSignerStreamAbsorbsSplitWrites(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.StreamingSignerChecks.NewSignStream.StreamingSignerStreamIgnoresEmptyWrites(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.StreamingSignerChecks.NewSignStream.StreamingSignerStreamSignatureVerifies(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[sign.StreamingSigner](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -1170,21 +588,8 @@ func FuzzStreamingSignerSuiteAlgorithm(f *testing.F) {
 		f,
 		cryptotest.StreamingSignerChecks.Algorithm.Callable,
 		streamingSignerIdle,
-		conform.Excuse(
-			cryptotest.StreamingSignerChecks.NewSignStream.StreamingSignerSignAndResetClearsTheStream(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.StreamingSignerChecks.NewSignStream.StreamingSignerStreamAbsorbsSplitWrites(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.StreamingSignerChecks.NewSignStream.StreamingSignerStreamIgnoresEmptyWrites(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.StreamingSignerChecks.NewSignStream.StreamingSignerStreamSignatureVerifies(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[sign.StreamingSigner](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -1197,21 +602,8 @@ func FuzzStreamingSignerSuiteVerify(f *testing.F) {
 		f,
 		cryptotest.StreamingSignerChecks.Verify.Callable,
 		streamingSignerIdle,
-		conform.Excuse(
-			cryptotest.StreamingSignerChecks.NewSignStream.StreamingSignerSignAndResetClearsTheStream(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.StreamingSignerChecks.NewSignStream.StreamingSignerStreamAbsorbsSplitWrites(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.StreamingSignerChecks.NewSignStream.StreamingSignerStreamIgnoresEmptyWrites(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.StreamingSignerChecks.NewSignStream.StreamingSignerStreamSignatureVerifies(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[sign.StreamingSigner](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -1289,26 +681,7 @@ func TestStreamingVerifierSuite(t *testing.T) {
 				},
 				Defect: func(*cryptotest.StreamingVerifierHandle) sign.StreamingVerifier { return &streamingVerifierSubject{} },
 			}),
-			conform.Excuse(
-				cryptotest.StreamingVerifierChecks.NewVerifyStream.StreamingVerifierStreamAbsorbsSplitWrites(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.StreamingVerifierChecks.NewVerifyStream.StreamingVerifierStreamAcceptsASignatureOfItsKey(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.StreamingVerifierChecks.NewVerifyStream.StreamingVerifierStreamIgnoresEmptyWrites(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.StreamingVerifierChecks.NewVerifyStream.StreamingVerifierStreamRefusesAFlippedSignatureBit(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.StreamingVerifierChecks.NewVerifyStream.StreamingVerifierStreamRefusesANilSignature(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[sign.StreamingVerifier]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -1330,26 +703,7 @@ func TestStreamingVerifierSuite(t *testing.T) {
 				},
 				Defect: func(*cryptotest.StreamingVerifierHandle) sign.StreamingVerifier { return &streamingVerifierSubject{} },
 			}),
-			conform.Excuse(
-				cryptotest.StreamingVerifierChecks.NewVerifyStream.StreamingVerifierStreamAbsorbsSplitWrites(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.StreamingVerifierChecks.NewVerifyStream.StreamingVerifierStreamAcceptsASignatureOfItsKey(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.StreamingVerifierChecks.NewVerifyStream.StreamingVerifierStreamIgnoresEmptyWrites(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.StreamingVerifierChecks.NewVerifyStream.StreamingVerifierStreamRefusesAFlippedSignatureBit(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.StreamingVerifierChecks.NewVerifyStream.StreamingVerifierStreamRefusesANilSignature(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[sign.StreamingVerifier]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -1392,11 +746,15 @@ func TestStreamingVerifierSuite(t *testing.T) {
 	})
 }
 
+// streamingVerifierSuite is the suite of StreamingVerifier that the tests
+// of the planted defect of a ceiling apply.
+var streamingVerifierSuite = cryptotest.StreamingVerifierSuite()
+
 // streamingVerifierIdle returns the planted defect of a ceiling of
-// StreamingVerifier with a spend of nothing, a subject that answers each
-// call at once.
+// StreamingVerifier with a spend of nothing. Each call of the defect
+// returns its zero results at once.
 func streamingVerifierIdle(h *cryptotest.StreamingVerifierHandle) sign.StreamingVerifier {
-	return cryptotest.StreamingVerifierSuite().Calls[0].Over(h, func() {})
+	return streamingVerifierSuite.Calls[0].Over(h, func() {})
 }
 
 // TestStreamingVerifierSuiteBudgets applies the allocation ceilings of the
@@ -1415,25 +773,8 @@ func TestStreamingVerifierSuiteBudgets(t *testing.T) {
 		conform.Ceilings(cryptotest.StreamingVerifierChecks.PublicKey.Callable, conform.Budget{Allocs: new(uint64(0))}),
 		conform.Ceilings(cryptotest.StreamingVerifierChecks.Algorithm.Callable, conform.Budget{Allocs: new(uint64(0))}),
 		conform.Ceilings(cryptotest.StreamingVerifierChecks.Verify.Callable, conform.Budget{Allocs: new(uint64(0))}),
-		conform.Excuse(
-			cryptotest.StreamingVerifierChecks.NewVerifyStream.StreamingVerifierStreamAbsorbsSplitWrites(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.StreamingVerifierChecks.NewVerifyStream.StreamingVerifierStreamAcceptsASignatureOfItsKey(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.StreamingVerifierChecks.NewVerifyStream.StreamingVerifierStreamIgnoresEmptyWrites(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.StreamingVerifierChecks.NewVerifyStream.StreamingVerifierStreamRefusesAFlippedSignatureBit(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.StreamingVerifierChecks.NewVerifyStream.StreamingVerifierStreamRefusesANilSignature(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[sign.StreamingVerifier](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -1446,25 +787,8 @@ func FuzzStreamingVerifierSuiteNewVerifyStream(f *testing.F) {
 		f,
 		cryptotest.StreamingVerifierChecks.NewVerifyStream.Callable,
 		streamingVerifierIdle,
-		conform.Excuse(
-			cryptotest.StreamingVerifierChecks.NewVerifyStream.StreamingVerifierStreamAbsorbsSplitWrites(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.StreamingVerifierChecks.NewVerifyStream.StreamingVerifierStreamAcceptsASignatureOfItsKey(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.StreamingVerifierChecks.NewVerifyStream.StreamingVerifierStreamIgnoresEmptyWrites(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.StreamingVerifierChecks.NewVerifyStream.StreamingVerifierStreamRefusesAFlippedSignatureBit(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.StreamingVerifierChecks.NewVerifyStream.StreamingVerifierStreamRefusesANilSignature(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[sign.StreamingVerifier](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -1477,25 +801,8 @@ func FuzzStreamingVerifierSuiteKeyID(f *testing.F) {
 		f,
 		cryptotest.StreamingVerifierChecks.KeyID.Callable,
 		streamingVerifierIdle,
-		conform.Excuse(
-			cryptotest.StreamingVerifierChecks.NewVerifyStream.StreamingVerifierStreamAbsorbsSplitWrites(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.StreamingVerifierChecks.NewVerifyStream.StreamingVerifierStreamAcceptsASignatureOfItsKey(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.StreamingVerifierChecks.NewVerifyStream.StreamingVerifierStreamIgnoresEmptyWrites(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.StreamingVerifierChecks.NewVerifyStream.StreamingVerifierStreamRefusesAFlippedSignatureBit(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.StreamingVerifierChecks.NewVerifyStream.StreamingVerifierStreamRefusesANilSignature(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[sign.StreamingVerifier](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -1508,25 +815,8 @@ func FuzzStreamingVerifierSuitePublicKey(f *testing.F) {
 		f,
 		cryptotest.StreamingVerifierChecks.PublicKey.Callable,
 		streamingVerifierIdle,
-		conform.Excuse(
-			cryptotest.StreamingVerifierChecks.NewVerifyStream.StreamingVerifierStreamAbsorbsSplitWrites(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.StreamingVerifierChecks.NewVerifyStream.StreamingVerifierStreamAcceptsASignatureOfItsKey(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.StreamingVerifierChecks.NewVerifyStream.StreamingVerifierStreamIgnoresEmptyWrites(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.StreamingVerifierChecks.NewVerifyStream.StreamingVerifierStreamRefusesAFlippedSignatureBit(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.StreamingVerifierChecks.NewVerifyStream.StreamingVerifierStreamRefusesANilSignature(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[sign.StreamingVerifier](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -1539,25 +829,8 @@ func FuzzStreamingVerifierSuiteAlgorithm(f *testing.F) {
 		f,
 		cryptotest.StreamingVerifierChecks.Algorithm.Callable,
 		streamingVerifierIdle,
-		conform.Excuse(
-			cryptotest.StreamingVerifierChecks.NewVerifyStream.StreamingVerifierStreamAbsorbsSplitWrites(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.StreamingVerifierChecks.NewVerifyStream.StreamingVerifierStreamAcceptsASignatureOfItsKey(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.StreamingVerifierChecks.NewVerifyStream.StreamingVerifierStreamIgnoresEmptyWrites(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.StreamingVerifierChecks.NewVerifyStream.StreamingVerifierStreamRefusesAFlippedSignatureBit(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.StreamingVerifierChecks.NewVerifyStream.StreamingVerifierStreamRefusesANilSignature(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[sign.StreamingVerifier](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -1570,25 +843,8 @@ func FuzzStreamingVerifierSuiteVerify(f *testing.F) {
 		f,
 		cryptotest.StreamingVerifierChecks.Verify.Callable,
 		streamingVerifierIdle,
-		conform.Excuse(
-			cryptotest.StreamingVerifierChecks.NewVerifyStream.StreamingVerifierStreamAbsorbsSplitWrites(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.StreamingVerifierChecks.NewVerifyStream.StreamingVerifierStreamAcceptsASignatureOfItsKey(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.StreamingVerifierChecks.NewVerifyStream.StreamingVerifierStreamIgnoresEmptyWrites(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.StreamingVerifierChecks.NewVerifyStream.StreamingVerifierStreamRefusesAFlippedSignatureBit(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.StreamingVerifierChecks.NewVerifyStream.StreamingVerifierStreamRefusesANilSignature(),
-			"the planted defect of a ceiling answers each call with its zero results",
+		conform.ExcuseSuite[sign.StreamingVerifier](
+			"the planted defect of a ceiling returns the zero results of each call",
 		),
 	)
 }
@@ -1633,4 +889,4 @@ func BenchmarkStreamingVerifierSuite(b *testing.B) {
 	})
 }
 
-// dokimi:provenance sha256:7134d04a2aeb27129469a2f053b3fc31738c731570af455648cecdcec6ffda92
+// dokimi:provenance sha256:eed4551907f526c7c2be928a106ebfdf7c7112243272c77372b9e814fc72088e

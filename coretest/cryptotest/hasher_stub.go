@@ -364,15 +364,6 @@ func NewHasherStub(tb assert.TB, opts ...HasherStubOption) *HasherStub {
 	return s
 }
 
-// NewHasherStubDelayed returns a double whose methods sleep d on clk
-// before they return. It applies opts after the clock and the latency.
-func NewHasherStubDelayed(tb assert.TB, d time.Duration, clk assert.Clock, opts ...HasherStubOption) *HasherStub {
-	return NewHasherStub(tb, append([]HasherStubOption{
-		HasherStubWithClock(clk),
-		HasherStubWithLatency(d),
-	}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *HasherStub) ResetCalls() {
@@ -769,21 +760,6 @@ func NewStreamStub(tb assert.TB, opts ...StreamStubOption) *StreamStub {
 	return s
 }
 
-// NewStreamStubDelayed returns a double whose methods sleep d on clk
-// before they return. It applies opts after the clock and the latency.
-func NewStreamStubDelayed(tb assert.TB, d time.Duration, clk assert.Clock, opts ...StreamStubOption) *StreamStub {
-	return NewStreamStub(tb, append([]StreamStubOption{
-		StreamStubWithClock(clk),
-		StreamStubWithLatency(d),
-	}, opts...)...)
-}
-
-// NewStreamStubFailing returns a double on which each call of a method
-// that can fail fails with err. It applies opts after the failure.
-func NewStreamStubFailing(tb assert.TB, err error, opts ...StreamStubOption) *StreamStub {
-	return NewStreamStub(tb, append([]StreamStubOption{StreamStubFailing(err)}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *StreamStub) ResetCalls() {
@@ -890,4 +866,4 @@ func (s *StreamStub) Write(p []byte) (n int, err error) {
 	return r.N, r.Err
 }
 
-// dokimi:provenance sha256:a5d88a1297bd4194b3debafdaa0bfd0f1bd2489e83a3ea3a130de32dd061fc73
+// dokimi:provenance sha256:e51be8206c96e138e00198f7665d04e2f5f16b42938f234c3ae354e1c21b4999

@@ -10,6 +10,7 @@ import (
 
 	"go.dokimi.dev/assert/prop"
 	"go.dokimi.dev/conform"
+	"go.dokimi.dev/spec"
 	"go.thesmos.sh/core/telemetry"
 )
 
@@ -67,6 +68,8 @@ func (c tracerStart) TracerStartReturnsNonNilResults() conform.ID[telemetry.Trac
 func TracerSuite() conform.Suite[telemetry.Tracer] {
 	return conform.Suite[telemetry.Tracer]{
 		Declaration: "Tracer",
+		Package:     "go.thesmos.sh/core/telemetry",
+		Generator:   conform.Generator{Name: "dokimi", Version: "0.1.0"},
 		Checks: []conform.Check[telemetry.Tracer]{
 			{
 				ID:        TracerChecks.Start.TracerSecondStartReturnsASpan(),
@@ -91,6 +94,15 @@ func TracerSuite() conform.Suite[telemetry.Tracer] {
 				Statement: "Start returns a context and a span that are not nil",
 				Apply:     TracerStartReturnsNonNilResults,
 				Defect:    tracerStartReturnsANilContext,
+			},
+		},
+		Refusals: []conform.Refusal{
+			{
+				Claim:    spec.Cancel,
+				Callable: "Tracer.Start",
+				Gate:     spec.Failure,
+				Why:      "Start cannot fail",
+				Remedy:   "give Start an error result",
 			},
 		},
 		Calls: []conform.Call[telemetry.Tracer]{
@@ -208,4 +220,4 @@ func newTracerOver(_ *TracerHandle, spend func()) telemetry.Tracer {
 	return tracerOver{spend: spend}
 }
 
-// dokimi:provenance sha256:006a7b4fdb5205969c6ca6630ff7b7e97428215200112c9b60d1b5bd5dd17378
+// dokimi:provenance sha256:5cfd7ff72ec44d9ec8c0ebcd2c0e8c6da7b0c34ac70f7f9c1c5ce33c8c53b31d

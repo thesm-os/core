@@ -48,22 +48,7 @@ func TestRandSuite(t *testing.T) {
 				},
 				Defect: func(*randtest.RandHandle) rand.Rand { return &randSubject{} },
 			}),
-			conform.Excuse(
-				randtest.RandChecks.Uint64.Uint64ReturnsDistinctValues(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				randtest.RandChecks.Read.ReadFillsTheBuffer(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				randtest.RandChecks.Read.ReadOfEmptyReturnsZero(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				randtest.RandChecks.Read.ReadOfNilReturnsZero(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[rand.Rand]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -85,22 +70,7 @@ func TestRandSuite(t *testing.T) {
 				},
 				Defect: func(*randtest.RandHandle) rand.Rand { return &randSubject{} },
 			}),
-			conform.Excuse(
-				randtest.RandChecks.Uint64.Uint64ReturnsDistinctValues(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				randtest.RandChecks.Read.ReadFillsTheBuffer(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				randtest.RandChecks.Read.ReadOfEmptyReturnsZero(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				randtest.RandChecks.Read.ReadOfNilReturnsZero(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[rand.Rand]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -133,10 +103,14 @@ func TestRandSuite(t *testing.T) {
 	})
 }
 
+// randSuite is the suite of Rand that the tests of the planted defect of a
+// ceiling apply.
+var randSuite = randtest.RandSuite()
+
 // randIdle returns the planted defect of a ceiling of Rand with a spend of
-// nothing, a subject that answers each call at once.
+// nothing. Each call of the defect returns its zero results at once.
 func randIdle(h *randtest.RandHandle) rand.Rand {
-	return randtest.RandSuite().Calls[0].Over(h, func() {})
+	return randSuite.Calls[0].Over(h, func() {})
 }
 
 // TestRandSuiteBudgets applies the allocation ceilings of the suite of
@@ -149,22 +123,7 @@ func TestRandSuiteBudgets(t *testing.T) {
 		randIdle,
 		conform.Ceilings(randtest.RandChecks.Uint64.Callable, conform.Budget{Allocs: new(uint64(0))}),
 		conform.Ceilings(randtest.RandChecks.Read.Callable, conform.Budget{Allocs: new(uint64(0))}),
-		conform.Excuse(
-			randtest.RandChecks.Uint64.Uint64ReturnsDistinctValues(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			randtest.RandChecks.Read.ReadFillsTheBuffer(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			randtest.RandChecks.Read.ReadOfEmptyReturnsZero(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			randtest.RandChecks.Read.ReadOfNilReturnsZero(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[rand.Rand]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -175,22 +134,7 @@ func FuzzRandSuiteUint64(f *testing.F) {
 		f,
 		randtest.RandChecks.Uint64.Callable,
 		randIdle,
-		conform.Excuse(
-			randtest.RandChecks.Uint64.Uint64ReturnsDistinctValues(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			randtest.RandChecks.Read.ReadFillsTheBuffer(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			randtest.RandChecks.Read.ReadOfEmptyReturnsZero(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			randtest.RandChecks.Read.ReadOfNilReturnsZero(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[rand.Rand]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -201,22 +145,7 @@ func FuzzRandSuiteRead(f *testing.F) {
 		f,
 		randtest.RandChecks.Read.Callable,
 		randIdle,
-		conform.Excuse(
-			randtest.RandChecks.Uint64.Uint64ReturnsDistinctValues(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			randtest.RandChecks.Read.ReadFillsTheBuffer(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			randtest.RandChecks.Read.ReadOfEmptyReturnsZero(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			randtest.RandChecks.Read.ReadOfNilReturnsZero(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[rand.Rand]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -231,4 +160,4 @@ func BenchmarkRandSuite(b *testing.B) {
 	})
 }
 
-// dokimi:provenance sha256:49dd6c80e3f56f3d93e3aa12f3a937fa407c2cfd109d8fe737691429f6fb09e9
+// dokimi:provenance sha256:e3ee004a979bab2a2b3a3883fffcf9f23bf3e33c49abc7162a39c6d1eaa84478

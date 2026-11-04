@@ -10,6 +10,8 @@ import (
 
 	"go.dokimi.dev/assert/prop"
 	"go.dokimi.dev/conform"
+	"go.dokimi.dev/conform/probe"
+	"go.dokimi.dev/spec"
 	"go.thesmos.sh/core/telemetry"
 )
 
@@ -47,22 +49,10 @@ func (c counterAdd) CounterAddReturnsAfterRelease() conform.ID[telemetry.Counter
 	return c.Check("counter-add-returns-after-release")
 }
 
-// CounterAddReturnsForANegativeValue returns the identity of the check
-// that Add of -1 and Add of math.MinInt64 return without a panic.
-func (c counterAdd) CounterAddReturnsForANegativeValue() conform.ID[telemetry.Counter] {
-	return c.Check("counter-add-returns-for-a-negative-value")
-}
-
-// CounterAddReturnsForAPositiveValue returns the identity of the check
-// that Add of 1 returns without a panic.
-func (c counterAdd) CounterAddReturnsForAPositiveValue() conform.ID[telemetry.Counter] {
-	return c.Check("counter-add-returns-for-a-positive-value")
-}
-
-// CounterAddReturnsForZero returns the identity of the check that Add of 0
-// returns without a panic.
-func (c counterAdd) CounterAddReturnsForZero() conform.ID[telemetry.Counter] {
-	return c.Check("counter-add-returns-for-zero")
+// Smoke returns the identity of the check that Add returns without a panic
+// for derived inputs.
+func (c counterAdd) Smoke() conform.ID[telemetry.Counter] {
+	return c.Check("smoke")
 }
 
 // counterWith is the name of Counter.With, with the identities of its
@@ -90,6 +80,12 @@ func (c counterWith) CounterWithReturnsACounterForEmptyAttributes() conform.ID[t
 // panic.
 func (c counterWith) CounterWithReturnsACounterForNilAttributes() conform.ID[telemetry.Counter] {
 	return c.Check("counter-with-returns-a-counter-for-nil-attributes")
+}
+
+// Smoke returns the identity of the check that With returns without a
+// panic for derived inputs.
+func (c counterWith) Smoke() conform.ID[telemetry.Counter] {
+	return c.Check("smoke")
 }
 
 // counterRelease is the name of Counter.Release, with the identities of
@@ -125,35 +121,114 @@ func (c counterRelease) CounterSecondReleaseReturns() conform.ID[telemetry.Count
 	return c.Check("counter-second-release-returns")
 }
 
+// Smoke returns the identity of the check that Release returns without a
+// panic for derived inputs.
+func (c counterRelease) Smoke() conform.ID[telemetry.Counter] {
+	return c.Check("smoke")
+}
+
+// RepeatSurvives returns the identity of the check that Release returns
+// without a panic when it is called twice.
+func (c counterRelease) RepeatSurvives() conform.ID[telemetry.Counter] {
+	return c.Check("repeat-survives")
+}
+
 // CounterSuite returns the checks of Counter, and the calls and the
 // budgets of its callables.
 func CounterSuite() conform.Suite[telemetry.Counter] {
 	return conform.Suite[telemetry.Counter]{
 		Declaration: "Counter",
+		Package:     "go.thesmos.sh/core/telemetry",
+		Generator:   conform.Generator{Name: "dokimi", Version: "0.1.0"},
 		Checks: []conform.Check[telemetry.Counter]{
+			{
+				ID:          CounterChecks.Add.Smoke(),
+				Statement:   "Add returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *CounterHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Add(ctx, int64(42))
+						return nil
+					})
+				},
+				Defect: counterAddPanics,
+			},
+			{
+				ID:          CounterChecks.Add.Smoke().Generated(),
+				Statement:   "Add returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *CounterHandle, c *prop.Case) {
+					drawnValue := c.Draw(prop.Of[int64](), "value")
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Add(ctx, drawnValue)
+						return nil
+					})
+				},
+				Defect: counterAddPanics,
+			},
+			{
+				ID:          CounterChecks.With.Smoke(),
+				Statement:   "With returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *CounterHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().With([]telemetry.Attr{{Key: "Key-a"}})
+						return nil
+					})
+				},
+				Defect: counterWithPanics,
+			},
+			{
+				ID:          CounterChecks.With.Smoke().Generated(),
+				Statement:   "With returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *CounterHandle, c *prop.Case) {
+					drawnAttrs := c.Draw(prop.Of[[]telemetry.Attr](), "attrs")
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().With(drawnAttrs)
+						return nil
+					})
+				},
+				Defect: counterWithPanics,
+			},
+			{
+				ID:          CounterChecks.Release.Smoke(),
+				Statement:   "Release returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *CounterHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Release()
+						return nil
+					})
+				},
+				Defect: counterReleasePanics,
+			},
+			{
+				ID:          CounterChecks.Release.RepeatSurvives(),
+				Statement:   "Release returns without a panic when it is called twice",
+				Claim:       spec.RepeatSurvives,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Apply: func(h *CounterHandle) {
+					probe.SurvivesRepeat(h, func(ctx context.Context) error {
+						h.Subject().Release()
+						return nil
+					})
+				},
+				Defect: counterReleasePanicsOnRepeat,
+			},
 			{
 				ID:        CounterChecks.Add.CounterAddReturnsAfterRelease(),
 				Statement: "Add of a released Counter returns without a panic",
 				Apply:     CounterAddReturnsAfterRelease,
 				Defect:    counterBoundAddPanicsAfterRelease,
-			},
-			{
-				ID:        CounterChecks.Add.CounterAddReturnsForANegativeValue(),
-				Statement: "Add of -1 and Add of math.MinInt64 return without a panic",
-				Apply:     CounterAddReturnsForANegativeValue,
-				Defect:    counterAddPanicsForANegativeValue,
-			},
-			{
-				ID:        CounterChecks.Add.CounterAddReturnsForAPositiveValue(),
-				Statement: "Add of 1 returns without a panic",
-				Apply:     CounterAddReturnsForAPositiveValue,
-				Defect:    counterAddPanicsForOne,
-			},
-			{
-				ID:        CounterChecks.Add.CounterAddReturnsForZero(),
-				Statement: "Add of 0 returns without a panic",
-				Apply:     CounterAddReturnsForZero,
-				Defect:    counterAddPanicsForZero,
 			},
 			{
 				ID:        CounterChecks.With.CounterWithOfABoundCounterReturnsACounter(),
@@ -196,6 +271,30 @@ func CounterSuite() conform.Suite[telemetry.Counter] {
 				Statement: "a second Release of a bound Counter returns without a panic",
 				Apply:     CounterSecondReleaseReturns,
 				Defect:    counterSecondReleasePanics,
+			},
+		},
+		Refusals: []conform.Refusal{
+			{
+				Claim:    spec.Cancel,
+				Callable: "Counter.Add",
+				Gate:     spec.Failure,
+				Why:      "Add cannot fail",
+				Remedy:   "give Add an error result",
+			},
+			{
+				Claim:    spec.Deterministic,
+				Callable: "Counter.With",
+				Gate:     spec.ValueSamples,
+				Why:      "eidos derives no sample of a result of With",
+				Remedy:   "author a sample of the result type with the directive sample",
+			},
+		},
+		Unclaimed: []conform.Unclaimed{
+			{
+				Classification: "shape:mutator",
+				Callable:       "Counter.Add",
+				Stance:         spec.Silent,
+				Note:           "A mutation is an input of the other checks, and its result is an error alone.",
 			},
 		},
 		Calls: []conform.Call[telemetry.Counter]{
@@ -352,4 +451,77 @@ func newCounterOver(_ *CounterHandle, spend func()) telemetry.Counter {
 	return counterOver{spend: spend}
 }
 
-// dokimi:provenance sha256:f07513e3469fe020a7e07de9e4fa6198ab095c4d6476c04fd83292f2c8610c04
+// counterAddPanicsDefect is the planted defect of a Counter whose Add
+// panics.
+type counterAddPanicsDefect struct {
+	counterOverEmbedded
+}
+
+// Add is the override of the planted defect.
+func (*counterAddPanicsDefect) Add(p0 context.Context, p1 int64) {
+	panic("the planted defect of a Counter whose Add panics")
+}
+
+// counterAddPanics returns the planted defect of a Counter whose Add
+// panics over a fresh subject.
+func counterAddPanics(h *CounterHandle) telemetry.Counter {
+	return &counterAddPanicsDefect{counterOverEmbedded: h.Fresh()}
+}
+
+// counterWithPanicsDefect is the planted defect of a Counter whose With
+// panics.
+type counterWithPanicsDefect struct {
+	counterOverEmbedded
+}
+
+// With is the override of the planted defect.
+func (*counterWithPanicsDefect) With(p0 []telemetry.Attr) (r0 telemetry.Counter) {
+	panic("the planted defect of a Counter whose With panics")
+}
+
+// counterWithPanics returns the planted defect of a Counter whose With
+// panics over a fresh subject.
+func counterWithPanics(h *CounterHandle) telemetry.Counter {
+	return &counterWithPanicsDefect{counterOverEmbedded: h.Fresh()}
+}
+
+// counterReleasePanicsDefect is the planted defect of a Counter whose
+// Release panics.
+type counterReleasePanicsDefect struct {
+	counterOverEmbedded
+}
+
+// Release is the override of the planted defect.
+func (*counterReleasePanicsDefect) Release() {
+	panic("the planted defect of a Counter whose Release panics")
+}
+
+// counterReleasePanics returns the planted defect of a Counter whose
+// Release panics over a fresh subject.
+func counterReleasePanics(h *CounterHandle) telemetry.Counter {
+	return &counterReleasePanicsDefect{counterOverEmbedded: h.Fresh()}
+}
+
+// counterReleasePanicsOnRepeatDefect is the planted defect of a Counter
+// whose Release panics on the repeat.
+type counterReleasePanicsOnRepeatDefect struct {
+	counterOverEmbedded
+	calls int
+}
+
+// Release is the override of the planted defect.
+func (d *counterReleasePanicsOnRepeatDefect) Release() {
+	d.calls++
+	if d.calls > 1 {
+		panic("the planted defect of a Counter whose Release panics on the repeat")
+	}
+	d.counterOverEmbedded.Release()
+}
+
+// counterReleasePanicsOnRepeat returns the planted defect of a Counter
+// whose Release panics on the repeat over a fresh subject.
+func counterReleasePanicsOnRepeat(h *CounterHandle) telemetry.Counter {
+	return &counterReleasePanicsOnRepeatDefect{counterOverEmbedded: h.Fresh()}
+}
+
+// dokimi:provenance sha256:b3f132fb64f85d497aa290501982287cede3760046b1684703c699d5cd0d2ec0

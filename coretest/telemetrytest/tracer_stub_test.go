@@ -34,24 +34,33 @@ func tracerStubStart(tb assert.TB, s *telemetrytest.TracerStub) (context.Context
 	return s.Start(a0, a1, a2...)
 }
 
-// tracerStubStartSubject returns the subject of [stub.Behaviour] for
-// Start. The subject calls a new double that reports to tb.
+// tracerStubStartSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Start. The subject calls a new double that
+// reports to tb.
 func tracerStubStartSubject(tb assert.TB) stub.Subject[telemetrytest.TracerStartCall, telemetrytest.TracerStartReturn] {
 	tb.Helper()
 	s := telemetrytest.NewTracerStub(tb)
 	return stub.Subject[telemetrytest.TracerStartCall, telemetrytest.TracerStartReturn]{
-		Stub: s.OnStart.MethodStub,
+		Stub:  s.OnStart.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = tracerStubStart(tb, s)
+		},
+		Arguments: func(tb assert.TB, c telemetrytest.TracerStartCall) {
+			tb.Helper()
+			a0, a1, a2 := tracerStubStartArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.Name, a1, "the call records Name")
+			expect.Equal(tb, c.Opts, a2, "the call records Opts")
 		},
 		Result: func() telemetrytest.TracerStartReturn {
 			got0, got1 := tracerStubStart(tb, s)
 			return telemetrytest.TracerStartReturn{Result0: got0, Result1: got1}
 		},
-		Override: func(mark func()) {
+		Override: func(seen func(telemetrytest.TracerStartCall)) {
 			s.OnStart.Func(
-				func(_ context.Context, _ telemetry.SpanName, _ ...telemetry.SpanOption) (context.Context, telemetry.Span) {
-					mark()
+				func(p0 context.Context, p1 telemetry.SpanName, p2 ...telemetry.SpanOption) (context.Context, telemetry.Span) {
+					seen(telemetrytest.TracerStartCall{Ctx: p0, Name: p1, Opts: p2})
 					var z0 context.Context
 					var z1 telemetry.Span
 					return z0, z1
@@ -74,7 +83,6 @@ func tracerStubInstanceOf(tb assert.TB, s *telemetrytest.TracerStub) tracerStubI
 		Call: func() {
 			_, _ = tracerStubStart(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -86,48 +94,14 @@ func TestTracerStub(t *testing.T) {
 	t.Run("Start", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Start", tracerStubStartSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewTracerStub(t)
-			_, _ = tracerStubStart(t, s)
-			got := s.OnStart.AssertCalledOnce(t, "Start records the call")
-			a0, a1, a2 := tracerStubStartArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.Name, a1, "the call records Name")
-			expect.Equal(t, got.Opts, a2, "the call records Opts")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewTracerStub(t)
-			var seen []telemetrytest.TracerStartCall
-			s.OnStart.OnRecord(func(c telemetrytest.TracerStartCall) { seen = append(seen, c) })
-			_, _ = tracerStubStart(t, s)
-			_, _ = tracerStubStart(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Start")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) tracerStubInstance {
-			return tracerStubInstanceOf(tb, telemetrytest.NewTracerStub(tb))
-		})
 
-		t.Run("clears the recorded calls of Start", func(t *testing.T) {
+		t.Run("Start", func(t *testing.T) {
 			t.Parallel()
-			s := telemetrytest.NewTracerStub(t)
-			_, _ = tracerStubStart(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnStart.CallCount(), 0, "ResetCalls clears the calls of Start")
-		})
-	})
-
-	t.Run("NewTracerStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) tracerStubInstance {
-			return tracerStubInstanceOf(tb, telemetrytest.NewTracerStubDelayed(tb, d, clk))
+			stub.ResetBehaviour(t, "Start", tracerStubStartSubject)
 		})
 	})
 
@@ -211,51 +185,4 @@ func TestTracerStub(t *testing.T) {
 	})
 }
 
-// TestTracerStartStub checks the methods of TracerStartStub, which
-// configures Start.
-func TestTracerStartStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("configures Start for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := telemetrytest.NewTracerStub(r)
-			s.OnStart.Strict()
-			var want0 context.Context
-			var want1 telemetry.Span
-			s.OnStart.Returns(want0, want1)
-			_, _ = tracerStubStart(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Start")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Start to the function", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewTracerStub(t)
-			var got0 context.Context
-			var got1 telemetry.SpanName
-			var got2 []telemetry.SpanOption
-			s.OnStart.Func(
-				func(p0 context.Context, p1 telemetry.SpanName, p2 ...telemetry.SpanOption) (context.Context, telemetry.Span) {
-					got0, got1, got2 = p0, p1, p2
-					var z0 context.Context
-					var z1 telemetry.Span
-					return z0, z1
-				},
-			)
-			_, _ = tracerStubStart(t, s)
-			a0, a1, a2 := tracerStubStartArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives Name")
-			expect.Equal(t, got2, a2, "the function receives Opts")
-		})
-	})
-}
-
-// dokimi:provenance sha256:1732efd0ba11d1b13ed8b3745d3dc4b9b3db482a5263fdd29c5bd4a851eeb427
+// dokimi:provenance sha256:9223aa36f7c34308a7550ef87a088640b53c36321415c58ec9f141fc4ea124e7

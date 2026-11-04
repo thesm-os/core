@@ -13,6 +13,25 @@ import (
 	"go.thesmos.sh/core/crypto"
 )
 
+// AEADSealCall records one call of AEAD.Seal.
+type AEADSealCall struct {
+	Dst            []byte
+	Nonce          []byte
+	Plaintext      []byte
+	AdditionalData []byte
+	Result         []byte
+}
+
+// AEADOpenCall records one call of AEAD.Open.
+type AEADOpenCall struct {
+	Dst            []byte
+	Nonce          []byte
+	Ciphertext     []byte
+	AdditionalData []byte
+	Result         []byte
+	Err            error
+}
+
 // AEADIDCall records one call of AEAD.ID.
 type AEADIDCall struct {
 	Result crypto.ID
@@ -33,23 +52,61 @@ type AEADOverheadCall struct {
 	Result int
 }
 
-// AEADSealCall records one call of AEAD.Seal.
-type AEADSealCall struct {
-	Dst            []byte
-	Nonce          []byte
-	Plaintext      []byte
-	AdditionalData []byte
-	Result         []byte
+// AEADSealStub configures Seal and records its calls. Seal returns no
+// error, so a fault armed through it fails the test.
+type AEADSealStub struct {
+	*stub.MethodStub[AEADSealCall]
+
+	fn       func([]byte, []byte, []byte, []byte) []byte
+	fallback *AEADSealReturn
 }
 
-// AEADOpenCall records one call of AEAD.Open.
-type AEADOpenCall struct {
-	Dst            []byte
-	Nonce          []byte
-	Ciphertext     []byte
-	AdditionalData []byte
-	Result         []byte
-	Err            error
+// AEADSealReturn contains the fixed results of Seal.
+type AEADSealReturn struct {
+	Result []byte
+}
+
+// Returns sets the results of every call of Seal. A function takes
+// precedence over them.
+func (s *AEADSealStub) Returns(result []byte) *AEADSealStub {
+	s.fallback = &AEADSealReturn{Result: result}
+	return s
+}
+
+// Func sets the function that computes the results of Seal from its
+// arguments.
+func (s *AEADSealStub) Func(fn func([]byte, []byte, []byte, []byte) []byte) *AEADSealStub {
+	s.fn = fn
+	return s
+}
+
+// AEADOpenStub configures Open and records its calls. A fault armed
+// through it takes precedence over the function and the fixed results.
+type AEADOpenStub struct {
+	*stub.MethodStub[AEADOpenCall]
+
+	fn       func([]byte, []byte, []byte, []byte) ([]byte, error)
+	fallback *AEADOpenReturn
+}
+
+// AEADOpenReturn contains the fixed results of Open.
+type AEADOpenReturn struct {
+	Result []byte
+	Err    error
+}
+
+// Returns sets the results of every call of Open. A function and an
+// injected fault take precedence over them.
+func (s *AEADOpenStub) Returns(result []byte, err error) *AEADOpenStub {
+	s.fallback = &AEADOpenReturn{Result: result, Err: err}
+	return s
+}
+
+// Func sets the function that computes the results of Open from its
+// arguments. An injected fault takes precedence over it.
+func (s *AEADOpenStub) Func(fn func([]byte, []byte, []byte, []byte) ([]byte, error)) *AEADOpenStub {
+	s.fn = fn
+	return s
 }
 
 // AEADIDStub configures ID and records its calls. ID returns no error, so
@@ -164,63 +221,6 @@ func (s *AEADOverheadStub) Func(fn func() int) *AEADOverheadStub {
 	return s
 }
 
-// AEADSealStub configures Seal and records its calls. Seal returns no
-// error, so a fault armed through it fails the test.
-type AEADSealStub struct {
-	*stub.MethodStub[AEADSealCall]
-
-	fn       func([]byte, []byte, []byte, []byte) []byte
-	fallback *AEADSealReturn
-}
-
-// AEADSealReturn contains the fixed results of Seal.
-type AEADSealReturn struct {
-	Result []byte
-}
-
-// Returns sets the results of every call of Seal. A function takes
-// precedence over them.
-func (s *AEADSealStub) Returns(result []byte) *AEADSealStub {
-	s.fallback = &AEADSealReturn{Result: result}
-	return s
-}
-
-// Func sets the function that computes the results of Seal from its
-// arguments.
-func (s *AEADSealStub) Func(fn func([]byte, []byte, []byte, []byte) []byte) *AEADSealStub {
-	s.fn = fn
-	return s
-}
-
-// AEADOpenStub configures Open and records its calls. A fault armed
-// through it takes precedence over the function and the fixed results.
-type AEADOpenStub struct {
-	*stub.MethodStub[AEADOpenCall]
-
-	fn       func([]byte, []byte, []byte, []byte) ([]byte, error)
-	fallback *AEADOpenReturn
-}
-
-// AEADOpenReturn contains the fixed results of Open.
-type AEADOpenReturn struct {
-	Result []byte
-	Err    error
-}
-
-// Returns sets the results of every call of Open. A function and an
-// injected fault take precedence over them.
-func (s *AEADOpenStub) Returns(result []byte, err error) *AEADOpenStub {
-	s.fallback = &AEADOpenReturn{Result: result, Err: err}
-	return s
-}
-
-// Func sets the function that computes the results of Open from its
-// arguments. An injected fault takes precedence over it.
-func (s *AEADOpenStub) Func(fn func([]byte, []byte, []byte, []byte) ([]byte, error)) *AEADOpenStub {
-	s.fn = fn
-	return s
-}
-
 // The reference to stub.CompatV1 fails the build against another major
 // version of the runtime of doubles.
 var _ = stub.CompatV1
@@ -238,12 +238,12 @@ func AEADStubStrict() AEADStubOption {
 // double still records the call.
 func AEADStubDelegateTo(impl crypto.AEAD) AEADStubOption {
 	return func(s *AEADStub) {
+		s.OnSeal.Func(impl.Seal)
+		s.OnOpen.Func(impl.Open)
 		s.OnID.Func(impl.ID)
 		s.OnAlgorithm.Func(impl.Algorithm)
 		s.OnNonceSize.Func(impl.NonceSize)
 		s.OnOverhead.Func(impl.Overhead)
-		s.OnSeal.Func(impl.Seal)
-		s.OnOpen.Func(impl.Open)
 	}
 }
 
@@ -282,6 +282,16 @@ func AEADStubFailing(err error) AEADStubOption {
 	}
 }
 
+// WithAEADSeal returns the option that sets the function of Seal.
+func WithAEADSeal(fn func([]byte, []byte, []byte, []byte) []byte) AEADStubOption {
+	return func(s *AEADStub) { s.OnSeal.Func(fn) }
+}
+
+// WithAEADOpen returns the option that sets the function of Open.
+func WithAEADOpen(fn func([]byte, []byte, []byte, []byte) ([]byte, error)) AEADStubOption {
+	return func(s *AEADStub) { s.OnOpen.Func(fn) }
+}
+
 // WithAEADID returns the option that sets the function of ID.
 func WithAEADID(fn func() crypto.ID) AEADStubOption {
 	return func(s *AEADStub) { s.OnID.Func(fn) }
@@ -304,30 +314,18 @@ func WithAEADOverhead(fn func() int) AEADStubOption {
 	return func(s *AEADStub) { s.OnOverhead.Func(fn) }
 }
 
-// WithAEADSeal returns the option that sets the function of Seal.
-func WithAEADSeal(fn func([]byte, []byte, []byte, []byte) []byte) AEADStubOption {
-	return func(s *AEADStub) { s.OnSeal.Func(fn) }
-}
-
-// WithAEADOpen returns the option that sets the function of Open.
-func WithAEADOpen(fn func([]byte, []byte, []byte, []byte) ([]byte, error)) AEADStubOption {
-	return func(s *AEADStub) { s.OnOpen.Func(fn) }
-}
-
 // AEADStub is a recording test double of AEAD. Each field On<Method>
 // configures its method. An unconfigured method records the call and
 // returns the zero values of its results.
 type AEADStub struct {
+	OnSeal      *AEADSealStub
+	OnOpen      *AEADOpenStub
 	OnID        *AEADIDStub
 	OnAlgorithm *AEADAlgorithmStub
 	// OnNonceSize configures NonceSize, which AEAD declares.
 	OnNonceSize *AEADNonceSizeStub
 	// OnOverhead configures Overhead, which AEAD declares.
 	OnOverhead *AEADOverheadStub
-	// OnSeal configures Seal, which AEAD declares.
-	OnSeal *AEADSealStub
-	// OnOpen configures Open, which AEAD declares.
-	OnOpen *AEADOpenStub
 
 	// group contains the stub of each method.
 	group  *stub.Group
@@ -342,20 +340,20 @@ var _ crypto.AEAD = (*AEADStub)(nil)
 // of the test. With a nil tb, the double reports nothing.
 func NewAEADStub(tb assert.TB, opts ...AEADStubOption) *AEADStub {
 	s := &AEADStub{
+		OnSeal:      &AEADSealStub{MethodStub: stub.NewMethodStub[AEADSealCall](tb, "AEAD.Seal")},
+		OnOpen:      &AEADOpenStub{MethodStub: stub.NewMethodStub[AEADOpenCall](tb, "AEAD.Open")},
 		OnID:        &AEADIDStub{MethodStub: stub.NewMethodStub[AEADIDCall](tb, "AEAD.ID")},
 		OnAlgorithm: &AEADAlgorithmStub{MethodStub: stub.NewMethodStub[AEADAlgorithmCall](tb, "AEAD.Algorithm")},
 		OnNonceSize: &AEADNonceSizeStub{MethodStub: stub.NewMethodStub[AEADNonceSizeCall](tb, "AEAD.NonceSize")},
 		OnOverhead:  &AEADOverheadStub{MethodStub: stub.NewMethodStub[AEADOverheadCall](tb, "AEAD.Overhead")},
-		OnSeal:      &AEADSealStub{MethodStub: stub.NewMethodStub[AEADSealCall](tb, "AEAD.Seal")},
-		OnOpen:      &AEADOpenStub{MethodStub: stub.NewMethodStub[AEADOpenCall](tb, "AEAD.Open")},
 	}
 	s.group = stub.NewGroup(
+		s.OnSeal.MethodStub,
+		s.OnOpen.MethodStub,
 		s.OnID.MethodStub,
 		s.OnAlgorithm.MethodStub,
 		s.OnNonceSize.MethodStub,
 		s.OnOverhead.MethodStub,
-		s.OnSeal.MethodStub,
-		s.OnOpen.MethodStub,
 	)
 	for _, opt := range opts {
 		opt(s)
@@ -367,25 +365,66 @@ func NewAEADStub(tb assert.TB, opts ...AEADStubOption) *AEADStub {
 	return s
 }
 
-// NewAEADStubDelayed returns a double whose methods sleep d on clk before
-// they return. It applies opts after the clock and the latency.
-func NewAEADStubDelayed(tb assert.TB, d time.Duration, clk assert.Clock, opts ...AEADStubOption) *AEADStub {
-	return NewAEADStub(tb, append([]AEADStubOption{
-		AEADStubWithClock(clk),
-		AEADStubWithLatency(d),
-	}, opts...)...)
-}
-
-// NewAEADStubFailing returns a double on which each call of a method that
-// can fail fails with err. It applies opts after the failure.
-func NewAEADStubFailing(tb assert.TB, err error, opts ...AEADStubOption) *AEADStub {
-	return NewAEADStub(tb, append([]AEADStubOption{AEADStubFailing(err)}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *AEADStub) ResetCalls() {
 	s.group.Reset()
+}
+
+// invoke returns a call of the function of Func with the arguments, and nil
+// where no function is set.
+func (s *AEADSealStub) invoke(dst, nonce, plaintext, additionalData []byte) func() AEADSealReturn {
+	if s.fn == nil {
+		return nil
+	}
+	return func() AEADSealReturn {
+		r0 := s.fn(dst, nonce, plaintext, additionalData)
+		return AEADSealReturn{Result: r0}
+	}
+}
+
+// Seal records the call. An armed fault comes first, then the function of
+// Func, then the results of Returns, and then the zero values.
+func (s *AEADStub) Seal(dst, nonce, plaintext, additionalData []byte) []byte {
+	call := AEADSealCall{Dst: dst, Nonce: nonce, Plaintext: plaintext, AdditionalData: additionalData}
+	r := stub.Answer(s.OnSeal.MethodStub, call, stub.Arms[AEADSealCall, AEADSealReturn]{
+		Invoke:   s.OnSeal.invoke(dst, nonce, plaintext, additionalData),
+		Fallback: s.OnSeal.fallback,
+		Stamp: func(c AEADSealCall, r AEADSealReturn) AEADSealCall {
+			c.Result = r.Result
+			return c
+		},
+	})
+	return r.Result
+}
+
+// invoke returns a call of the function of Func with the arguments, and nil
+// where no function is set.
+func (s *AEADOpenStub) invoke(dst, nonce, ciphertext, additionalData []byte) func() AEADOpenReturn {
+	if s.fn == nil {
+		return nil
+	}
+	return func() AEADOpenReturn {
+		r0, r1 := s.fn(dst, nonce, ciphertext, additionalData)
+		return AEADOpenReturn{Result: r0, Err: r1}
+	}
+}
+
+// Open records the call. An armed fault comes first, then the function of
+// Func, then the results of Returns, and then the zero values.
+func (s *AEADStub) Open(dst, nonce, ciphertext, additionalData []byte) ([]byte, error) {
+	call := AEADOpenCall{Dst: dst, Nonce: nonce, Ciphertext: ciphertext, AdditionalData: additionalData}
+	r := stub.Answer(s.OnOpen.MethodStub, call, stub.Arms[AEADOpenCall, AEADOpenReturn]{
+		Invoke:   s.OnOpen.invoke(dst, nonce, ciphertext, additionalData),
+		Fallback: s.OnOpen.fallback,
+		Fault:    func(err error) AEADOpenReturn { return AEADOpenReturn{Err: err} },
+		Stamp: func(c AEADOpenCall, r AEADOpenReturn) AEADOpenCall {
+			c.Result = r.Result
+			c.Err = r.Err
+			return c
+		},
+	})
+	return r.Result, r.Err
 }
 
 // invoke returns a call of the function of Func with the arguments, and nil
@@ -496,60 +535,4 @@ func (s *AEADStub) Overhead() int {
 	return r.Result
 }
 
-// invoke returns a call of the function of Func with the arguments, and nil
-// where no function is set.
-func (s *AEADSealStub) invoke(dst, nonce, plaintext, additionalData []byte) func() AEADSealReturn {
-	if s.fn == nil {
-		return nil
-	}
-	return func() AEADSealReturn {
-		r0 := s.fn(dst, nonce, plaintext, additionalData)
-		return AEADSealReturn{Result: r0}
-	}
-}
-
-// Seal records the call. An armed fault comes first, then the function of
-// Func, then the results of Returns, and then the zero values.
-func (s *AEADStub) Seal(dst, nonce, plaintext, additionalData []byte) []byte {
-	call := AEADSealCall{Dst: dst, Nonce: nonce, Plaintext: plaintext, AdditionalData: additionalData}
-	r := stub.Answer(s.OnSeal.MethodStub, call, stub.Arms[AEADSealCall, AEADSealReturn]{
-		Invoke:   s.OnSeal.invoke(dst, nonce, plaintext, additionalData),
-		Fallback: s.OnSeal.fallback,
-		Stamp: func(c AEADSealCall, r AEADSealReturn) AEADSealCall {
-			c.Result = r.Result
-			return c
-		},
-	})
-	return r.Result
-}
-
-// invoke returns a call of the function of Func with the arguments, and nil
-// where no function is set.
-func (s *AEADOpenStub) invoke(dst, nonce, ciphertext, additionalData []byte) func() AEADOpenReturn {
-	if s.fn == nil {
-		return nil
-	}
-	return func() AEADOpenReturn {
-		r0, r1 := s.fn(dst, nonce, ciphertext, additionalData)
-		return AEADOpenReturn{Result: r0, Err: r1}
-	}
-}
-
-// Open records the call. An armed fault comes first, then the function of
-// Func, then the results of Returns, and then the zero values.
-func (s *AEADStub) Open(dst, nonce, ciphertext, additionalData []byte) ([]byte, error) {
-	call := AEADOpenCall{Dst: dst, Nonce: nonce, Ciphertext: ciphertext, AdditionalData: additionalData}
-	r := stub.Answer(s.OnOpen.MethodStub, call, stub.Arms[AEADOpenCall, AEADOpenReturn]{
-		Invoke:   s.OnOpen.invoke(dst, nonce, ciphertext, additionalData),
-		Fallback: s.OnOpen.fallback,
-		Fault:    func(err error) AEADOpenReturn { return AEADOpenReturn{Err: err} },
-		Stamp: func(c AEADOpenCall, r AEADOpenReturn) AEADOpenCall {
-			c.Result = r.Result
-			c.Err = r.Err
-			return c
-		},
-	})
-	return r.Result, r.Err
-}
-
-// dokimi:provenance sha256:47670df6c478d67ed55411ad1a56c70d10332072a40b1026d9e863f170e4778e
+// dokimi:provenance sha256:9ea438d1a4fe7bd164c019130267ed5ca261a9f77f336dcf9d38bacb986d5e1b

@@ -12,16 +12,12 @@ import (
 	"go.thesmos.sh/core/telemetry/noop"
 )
 
-// The names of the events that the checks of a Span add.
+// The names of the event that a check of a Span adds and of the span that a
+// planted defect delegates to.
 const (
-	spanEmptyEventName     telemetry.EventName = "event.empty"
-	spanPopulatedEventName telemetry.EventName = "event.populated"
-	spanLateEventName      telemetry.EventName = "post.end"
-	spanSoundName          telemetry.SpanName  = "test.sound"
+	spanLateEventName telemetry.EventName = "post.end"
+	spanSoundName     telemetry.SpanName  = "test.sound"
 )
-
-// spanAttrs are the attributes that the checks of a Span set.
-var spanAttrs = []telemetry.Attr{telemetry.AttrString("k1", "v1"), telemetry.AttrString("k2", "v2")}
 
 // SpanSetAttributesAcceptsNoAttributes checks that SetAttributes of nil and of
 // an empty slice returns without a panic.
@@ -31,25 +27,6 @@ func SpanSetAttributesAcceptsNoAttributes(h *SpanHandle) {
 	s := h.Subject()
 	assert.NotPanics(h, func() { s.SetAttributes(nil) }, h.Statement())
 	assert.NotPanics(h, func() { s.SetAttributes([]telemetry.Attr{}) }, h.Statement())
-}
-
-// SpanSetAttributesAcceptsAttributes checks that SetAttributes of two
-// attributes returns without a panic.
-//
-//dokimi:check Span.SetAttributes defect=spanSetAttributesPanicsForAttributes
-func SpanSetAttributesAcceptsAttributes(h *SpanHandle) {
-	s := h.Subject()
-	assert.NotPanics(h, func() { s.SetAttributes(spanAttrs) }, h.Statement())
-}
-
-// SpanAddEventAcceptsAttributes checks that AddEvent of an event without
-// attributes and of an event with attributes returns without a panic.
-//
-//dokimi:check Span.AddEvent defect=spanAddEventPanicsForAttributes
-func SpanAddEventAcceptsAttributes(h *SpanHandle) {
-	s := h.Subject()
-	assert.NotPanics(h, func() { s.AddEvent(spanEmptyEventName, nil) }, h.Statement())
-	assert.NotPanics(h, func() { s.AddEvent(spanPopulatedEventName, spanAttrs) }, h.Statement())
 }
 
 // SpanEndAcceptsANilError checks that End(nil) returns without a panic.
@@ -90,28 +67,6 @@ func spanSetAttributesPanicsForAnEmptySlice(h *SpanHandle) telemetry.Span {
 			panic("telemetrytest: SetAttributes panics for an empty slice")
 		}
 	}))
-}
-
-// spanSetAttributesPanicsForAttributes returns the planted defect of
-// SpanSetAttributesAcceptsAttributes: a span whose SetAttributes panics for
-// attributes.
-func spanSetAttributesPanicsForAttributes(h *SpanHandle) telemetry.Span {
-	return NewSpanStub(h, SpanStubDelegateTo(soundSpan(h)), WithSpanSetAttributes(func(attrs []telemetry.Attr) {
-		if len(attrs) > 0 {
-			panic("telemetrytest: SetAttributes panics for attributes")
-		}
-	}))
-}
-
-// spanAddEventPanicsForAttributes returns the planted defect of
-// SpanAddEventAcceptsAttributes: a span whose AddEvent panics for attributes.
-func spanAddEventPanicsForAttributes(h *SpanHandle) telemetry.Span {
-	return NewSpanStub(h, SpanStubDelegateTo(soundSpan(h)),
-		WithSpanAddEvent(func(_ telemetry.EventName, attrs []telemetry.Attr) {
-			if len(attrs) > 0 {
-				panic("telemetrytest: AddEvent panics for attributes")
-			}
-		}))
 }
 
 // spanEndPanicsForANilError returns the planted defect of

@@ -10,6 +10,8 @@ import (
 
 	"go.dokimi.dev/assert/prop"
 	"go.dokimi.dev/conform"
+	"go.dokimi.dev/conform/probe"
+	"go.dokimi.dev/spec"
 	"go.thesmos.sh/core/crypto"
 )
 
@@ -46,6 +48,18 @@ func (c xofid) XOFIDIdentifiesTheImplementation() conform.ID[crypto.XOF] {
 	return c.Check("xofid-identifies-the-implementation")
 }
 
+// Smoke returns the identity of the check that ID returns without a panic
+// for derived inputs.
+func (c xofid) Smoke() conform.ID[crypto.XOF] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that ID returns the same
+// value for the same inputs.
+func (c xofid) Deterministic() conform.ID[crypto.XOF] {
+	return c.Check("deterministic")
+}
+
 // xofAlgorithm is the name of XOF.Algorithm, with the identities of its
 // checks.
 type xofAlgorithm struct {
@@ -57,6 +71,18 @@ type xofAlgorithm struct {
 // call.
 func (c xofAlgorithm) XOFAlgorithmNamesTheFunction() conform.ID[crypto.XOF] {
 	return c.Check("xof-algorithm-names-the-function")
+}
+
+// Smoke returns the identity of the check that Algorithm returns without a
+// panic for derived inputs.
+func (c xofAlgorithm) Smoke() conform.ID[crypto.XOF] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that Algorithm returns
+// the same value for the same inputs.
+func (c xofAlgorithm) Deterministic() conform.ID[crypto.XOF] {
+	return c.Check("deterministic")
 }
 
 // xofNewXOFStream is the name of XOF.NewXOFStream, with the identities of
@@ -123,12 +149,92 @@ func (c xofNewXOFStream) XOFWriteAfterReadReturnsErrXOFSqueezing() conform.ID[cr
 	return c.Check("xof-write-after-read-returns-err-xof-squeezing")
 }
 
+// Smoke returns the identity of the check that NewXOFStream returns
+// without a panic for derived inputs.
+func (c xofNewXOFStream) Smoke() conform.ID[crypto.XOF] {
+	return c.Check("smoke")
+}
+
 // XOFSuite returns the checks of XOF, and the calls and the budgets of its
 // callables.
 func XOFSuite() conform.Suite[crypto.XOF] {
 	return conform.Suite[crypto.XOF]{
 		Declaration: "XOF",
+		Package:     "go.thesmos.sh/core/crypto",
+		Generator:   conform.Generator{Name: "dokimi", Version: "0.1.0"},
 		Checks: []conform.Check[crypto.XOF]{
+			{
+				ID:          XOFChecks.ID.Smoke(),
+				Statement:   "ID returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *XOFHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().ID()
+						return nil
+					})
+				},
+				Defect: xofidPanics,
+			},
+			{
+				ID:          XOFChecks.ID.Deterministic(),
+				Statement:   "ID returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[crypto.XOF]{XOFChecks.ID.Smoke()},
+				Apply: func(h *XOFHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) (crypto.ID, error) {
+						r0 := h.Subject().ID()
+						return r0, nil
+					})
+				},
+				Defect: xofidDrifts,
+			},
+			{
+				ID:          XOFChecks.Algorithm.Smoke(),
+				Statement:   "Algorithm returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *XOFHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Algorithm()
+						return nil
+					})
+				},
+				Defect: xofAlgorithmPanics,
+			},
+			{
+				ID:          XOFChecks.Algorithm.Deterministic(),
+				Statement:   "Algorithm returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[crypto.XOF]{XOFChecks.Algorithm.Smoke()},
+				Apply: func(h *XOFHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) (crypto.Algorithm, error) {
+						r0 := h.Subject().Algorithm()
+						return r0, nil
+					})
+				},
+				Defect: xofAlgorithmDrifts,
+			},
+			{
+				ID:          XOFChecks.NewXOFStream.Smoke(),
+				Statement:   "NewXOFStream returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *XOFHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().NewXOFStream()
+						return nil
+					})
+				},
+				Defect: xofNewXOFStreamPanics,
+			},
 			{
 				ID:        XOFChecks.ID.XOFIDIdentifiesTheImplementation(),
 				Statement: "ID returns an ID that is not zero, and the same ID on every call",
@@ -194,6 +300,15 @@ func XOFSuite() conform.Suite[crypto.XOF] {
 				Statement: "a Write after a Read returns an error that wraps crypto.ErrXOFSqueezing",
 				Apply:     XOFWriteAfterReadReturnsErrXOFSqueezing,
 				Defect:    xofAbsorbsAfterARead,
+			},
+		},
+		Refusals: []conform.Refusal{
+			{
+				Claim:    spec.Deterministic,
+				Callable: "XOF.NewXOFStream",
+				Gate:     spec.ValueSamples,
+				Why:      "eidos derives no sample of a result of NewXOFStream",
+				Remedy:   "author a sample of the result type with the directive sample",
 			},
 		},
 		Calls: []conform.Call[crypto.XOF]{
@@ -332,4 +447,98 @@ func newXOFOver(_ *XOFHandle, spend func()) crypto.XOF {
 	return xofOver{spend: spend}
 }
 
-// dokimi:provenance sha256:2354b46105084850a5cbd3dbe80eabcd619c95dfb64858f7fd553e1378eb1249
+// xofidPanicsDefect is the planted defect of a XOF whose ID panics.
+type xofidPanicsDefect struct {
+	xofOverEmbedded
+}
+
+// ID is the override of the planted defect.
+func (*xofidPanicsDefect) ID() (r0 crypto.ID) {
+	panic("the planted defect of a XOF whose ID panics")
+}
+
+// xofidPanics returns the planted defect of a XOF whose ID panics over a
+// fresh subject.
+func xofidPanics(h *XOFHandle) crypto.XOF {
+	return &xofidPanicsDefect{xofOverEmbedded: h.Fresh()}
+}
+
+// xofidDriftsDefect is the planted defect of a XOF whose ID returns
+// another value on the repeat.
+type xofidDriftsDefect struct {
+	xofOverEmbedded
+	calls int
+}
+
+// ID is the override of the planted defect.
+func (d *xofidDriftsDefect) ID() (r0 crypto.ID) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = crypto.ID{2}
+	}
+	return r0
+}
+
+// xofidDrifts returns the planted defect of a XOF whose ID returns another
+// value on the repeat over a fresh subject.
+func xofidDrifts(h *XOFHandle) crypto.XOF {
+	return &xofidDriftsDefect{xofOverEmbedded: h.Fresh()}
+}
+
+// xofAlgorithmPanicsDefect is the planted defect of a XOF whose Algorithm
+// panics.
+type xofAlgorithmPanicsDefect struct {
+	xofOverEmbedded
+}
+
+// Algorithm is the override of the planted defect.
+func (*xofAlgorithmPanicsDefect) Algorithm() (r0 crypto.Algorithm) {
+	panic("the planted defect of a XOF whose Algorithm panics")
+}
+
+// xofAlgorithmPanics returns the planted defect of a XOF whose Algorithm
+// panics over a fresh subject.
+func xofAlgorithmPanics(h *XOFHandle) crypto.XOF {
+	return &xofAlgorithmPanicsDefect{xofOverEmbedded: h.Fresh()}
+}
+
+// xofAlgorithmDriftsDefect is the planted defect of a XOF whose Algorithm
+// returns another value on the repeat.
+type xofAlgorithmDriftsDefect struct {
+	xofOverEmbedded
+	calls int
+}
+
+// Algorithm is the override of the planted defect.
+func (d *xofAlgorithmDriftsDefect) Algorithm() (r0 crypto.Algorithm) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = crypto.Algorithm("sha-384")
+	}
+	return r0
+}
+
+// xofAlgorithmDrifts returns the planted defect of a XOF whose Algorithm
+// returns another value on the repeat over a fresh subject.
+func xofAlgorithmDrifts(h *XOFHandle) crypto.XOF {
+	return &xofAlgorithmDriftsDefect{xofOverEmbedded: h.Fresh()}
+}
+
+// xofNewXOFStreamPanicsDefect is the planted defect of a XOF whose
+// NewXOFStream panics.
+type xofNewXOFStreamPanicsDefect struct {
+	xofOverEmbedded
+}
+
+// NewXOFStream is the override of the planted defect.
+func (*xofNewXOFStreamPanicsDefect) NewXOFStream() (r0 crypto.XOFStream) {
+	panic("the planted defect of a XOF whose NewXOFStream panics")
+}
+
+// xofNewXOFStreamPanics returns the planted defect of a XOF whose
+// NewXOFStream panics over a fresh subject.
+func xofNewXOFStreamPanics(h *XOFHandle) crypto.XOF {
+	return &xofNewXOFStreamPanicsDefect{xofOverEmbedded: h.Fresh()}
+}
+
+// dokimi:provenance sha256:9ea6c80b0f6ba9fad61f3132371b4cf5949abe2bd6c4c3d91f834e469e942225

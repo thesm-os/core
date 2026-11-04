@@ -14,15 +14,9 @@ import (
 	"go.thesmos.sh/core/telemetry/noop"
 )
 
-// The values that the checks of a Histogram pass to Record.
-var (
-	// nonNegativeValues are 0 and positive values of a small and a large
-	// magnitude.
-	nonNegativeValues = []float64{0, 0.5, 1, 1e3, 1e9}
-
-	// negativeValues are negative values of a small and a large magnitude.
-	negativeValues = []float64{-0.5, -1, -1e9}
-)
+// nonNegativeValues are 0 and positive values of a small and a large
+// magnitude. A check of a Histogram passes them to Record.
+var nonNegativeValues = []float64{0, 0.5, 1, 1e3, 1e9}
 
 // HistogramRecordReturnsForANonNegativeValue checks that Record of 0, 0.5, 1,
 // 1e3 and 1e9 returns without a panic.
@@ -35,19 +29,6 @@ func HistogramRecordReturnsForANonNegativeValue(h *HistogramHandle) {
 
 		return nil
 	}, nonNegativeValues, h.Statement())
-}
-
-// HistogramRecordReturnsForANegativeValue checks that Record of -0.5, -1 and
-// -1e9 returns without a panic.
-//
-//dokimi:check Histogram.Record defect=histogramRecordPanicsForMinusOne
-func HistogramRecordReturnsForANegativeValue(h *HistogramHandle) {
-	hist := h.Subject()
-	assert.Total(h, func(value float64) error {
-		hist.Record(h.Context(), value)
-
-		return nil
-	}, negativeValues, h.Statement())
 }
 
 // HistogramRecordReturnsForANonFiniteValue checks that Record of NaN and of
@@ -160,18 +141,6 @@ func histogramRecordPanicsForAHalf(h *HistogramHandle) telemetry.Histogram {
 		WithHistogramRecord(func(_ context.Context, value float64) {
 			if value == 0.5 {
 				panic("telemetrytest: Record panics for 0.5")
-			}
-		}))
-}
-
-// histogramRecordPanicsForMinusOne returns the planted defect of
-// HistogramRecordReturnsForANegativeValue: a Histogram whose Record panics for
-// -1.
-func histogramRecordPanicsForMinusOne(h *HistogramHandle) telemetry.Histogram {
-	return NewHistogramStub(h, HistogramStubDelegateTo(noop.New().Histogram(soundSpec)),
-		WithHistogramRecord(func(_ context.Context, value float64) {
-			if value == -1 {
-				panic("telemetrytest: Record panics for -1")
 			}
 		}))
 }

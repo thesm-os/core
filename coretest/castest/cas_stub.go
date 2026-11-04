@@ -286,21 +286,6 @@ func NewStoreStub(tb assert.TB, opts ...StoreStubOption) *StoreStub {
 	return s
 }
 
-// NewStoreStubDelayed returns a double whose methods sleep d on clk before
-// they return. It applies opts after the clock and the latency.
-func NewStoreStubDelayed(tb assert.TB, d time.Duration, clk assert.Clock, opts ...StoreStubOption) *StoreStub {
-	return NewStoreStub(tb, append([]StoreStubOption{
-		StoreStubWithClock(clk),
-		StoreStubWithLatency(d),
-	}, opts...)...)
-}
-
-// NewStoreStubFailing returns a double on which each call of a method that
-// can fail fails with err. It applies opts after the failure.
-func NewStoreStubFailing(tb assert.TB, err error, opts ...StoreStubOption) *StoreStub {
-	return NewStoreStub(tb, append([]StoreStubOption{StoreStubFailing(err)}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *StoreStub) ResetCalls() {
@@ -614,21 +599,6 @@ func NewStreamerStub(tb assert.TB, opts ...StreamerStubOption) *StreamerStub {
 	return s
 }
 
-// NewStreamerStubDelayed returns a double whose methods sleep d on clk
-// before they return. It applies opts after the clock and the latency.
-func NewStreamerStubDelayed(tb assert.TB, d time.Duration, clk assert.Clock, opts ...StreamerStubOption) *StreamerStub {
-	return NewStreamerStub(tb, append([]StreamerStubOption{
-		StreamerStubWithClock(clk),
-		StreamerStubWithLatency(d),
-	}, opts...)...)
-}
-
-// NewStreamerStubFailing returns a double on which each call of a method
-// that can fail fails with err. It applies opts after the failure.
-func NewStreamerStubFailing(tb assert.TB, err error, opts ...StreamerStubOption) *StreamerStub {
-	return NewStreamerStub(tb, append([]StreamerStubOption{StreamerStubFailing(err)}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *StreamerStub) ResetCalls() {
@@ -697,4 +667,4 @@ func (s *StreamerStub) GetStream(ctx context.Context, d crypto.Digest) (io.ReadC
 	return r.Result, r.Err
 }
 
-// dokimi:provenance sha256:78aa36187e060a8158f0e8b3e700245dce92be51ed6ef80e5cdb27895974edbf
+// dokimi:provenance sha256:427e06a56c4bcf78b5ea21f86883bb85e9e72a264bb3e48ffa93b3e9379f711e

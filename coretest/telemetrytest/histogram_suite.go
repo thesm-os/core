@@ -10,6 +10,8 @@ import (
 
 	"go.dokimi.dev/assert/prop"
 	"go.dokimi.dev/conform"
+	"go.dokimi.dev/conform/probe"
+	"go.dokimi.dev/spec"
 	"go.thesmos.sh/core/telemetry"
 )
 
@@ -47,12 +49,6 @@ func (c histogramRecord) HistogramRecordReturnsAfterRelease() conform.ID[telemet
 	return c.Check("histogram-record-returns-after-release")
 }
 
-// HistogramRecordReturnsForANegativeValue returns the identity of the
-// check that Record of -0.5, -1 and -1e9 returns without a panic.
-func (c histogramRecord) HistogramRecordReturnsForANegativeValue() conform.ID[telemetry.Histogram] {
-	return c.Check("histogram-record-returns-for-a-negative-value")
-}
-
 // HistogramRecordReturnsForANonFiniteValue returns the identity of the
 // check that Record of NaN and of both infinities returns without a panic.
 func (c histogramRecord) HistogramRecordReturnsForANonFiniteValue() conform.ID[telemetry.Histogram] {
@@ -63,6 +59,12 @@ func (c histogramRecord) HistogramRecordReturnsForANonFiniteValue() conform.ID[t
 // check that Record of 0, 0.5, 1, 1e3 and 1e9 returns without a panic.
 func (c histogramRecord) HistogramRecordReturnsForANonNegativeValue() conform.ID[telemetry.Histogram] {
 	return c.Check("histogram-record-returns-for-a-non-negative-value")
+}
+
+// Smoke returns the identity of the check that Record returns without a
+// panic for derived inputs.
+func (c histogramRecord) Smoke() conform.ID[telemetry.Histogram] {
+	return c.Check("smoke")
 }
 
 // histogramWith is the name of Histogram.With, with the identities of its
@@ -90,6 +92,12 @@ func (c histogramWith) HistogramWithReturnsAHistogramForEmptyAttributes() confor
 // without a panic.
 func (c histogramWith) HistogramWithReturnsAHistogramForNilAttributes() conform.ID[telemetry.Histogram] {
 	return c.Check("histogram-with-returns-a-histogram-for-nil-attributes")
+}
+
+// Smoke returns the identity of the check that With returns without a
+// panic for derived inputs.
+func (c histogramWith) Smoke() conform.ID[telemetry.Histogram] {
+	return c.Check("smoke")
 }
 
 // histogramRelease is the name of Histogram.Release, with the identities
@@ -126,23 +134,114 @@ func (c histogramRelease) HistogramSecondReleaseReturns() conform.ID[telemetry.H
 	return c.Check("histogram-second-release-returns")
 }
 
+// Smoke returns the identity of the check that Release returns without a
+// panic for derived inputs.
+func (c histogramRelease) Smoke() conform.ID[telemetry.Histogram] {
+	return c.Check("smoke")
+}
+
+// RepeatSurvives returns the identity of the check that Release returns
+// without a panic when it is called twice.
+func (c histogramRelease) RepeatSurvives() conform.ID[telemetry.Histogram] {
+	return c.Check("repeat-survives")
+}
+
 // HistogramSuite returns the checks of Histogram, and the calls and the
 // budgets of its callables.
 func HistogramSuite() conform.Suite[telemetry.Histogram] {
 	return conform.Suite[telemetry.Histogram]{
 		Declaration: "Histogram",
+		Package:     "go.thesmos.sh/core/telemetry",
+		Generator:   conform.Generator{Name: "dokimi", Version: "0.1.0"},
 		Checks: []conform.Check[telemetry.Histogram]{
+			{
+				ID:          HistogramChecks.Record.Smoke(),
+				Statement:   "Record returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *HistogramHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Record(ctx, float64(1.5))
+						return nil
+					})
+				},
+				Defect: histogramRecordPanics,
+			},
+			{
+				ID:          HistogramChecks.Record.Smoke().Generated(),
+				Statement:   "Record returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *HistogramHandle, c *prop.Case) {
+					drawnValue := c.Draw(prop.Of[float64](), "value")
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Record(ctx, drawnValue)
+						return nil
+					})
+				},
+				Defect: histogramRecordPanics,
+			},
+			{
+				ID:          HistogramChecks.With.Smoke(),
+				Statement:   "With returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *HistogramHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().With([]telemetry.Attr{{Key: "Key-a"}})
+						return nil
+					})
+				},
+				Defect: histogramWithPanics,
+			},
+			{
+				ID:          HistogramChecks.With.Smoke().Generated(),
+				Statement:   "With returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *HistogramHandle, c *prop.Case) {
+					drawnAttrs := c.Draw(prop.Of[[]telemetry.Attr](), "attrs")
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().With(drawnAttrs)
+						return nil
+					})
+				},
+				Defect: histogramWithPanics,
+			},
+			{
+				ID:          HistogramChecks.Release.Smoke(),
+				Statement:   "Release returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *HistogramHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Release()
+						return nil
+					})
+				},
+				Defect: histogramReleasePanics,
+			},
+			{
+				ID:          HistogramChecks.Release.RepeatSurvives(),
+				Statement:   "Release returns without a panic when it is called twice",
+				Claim:       spec.RepeatSurvives,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Apply: func(h *HistogramHandle) {
+					probe.SurvivesRepeat(h, func(ctx context.Context) error {
+						h.Subject().Release()
+						return nil
+					})
+				},
+				Defect: histogramReleasePanicsOnRepeat,
+			},
 			{
 				ID:        HistogramChecks.Record.HistogramRecordReturnsAfterRelease(),
 				Statement: "Record of a released Histogram returns without a panic",
 				Apply:     HistogramRecordReturnsAfterRelease,
 				Defect:    histogramBoundRecordPanicsAfterRelease,
-			},
-			{
-				ID:        HistogramChecks.Record.HistogramRecordReturnsForANegativeValue(),
-				Statement: "Record of -0.5, -1 and -1e9 returns without a panic",
-				Apply:     HistogramRecordReturnsForANegativeValue,
-				Defect:    histogramRecordPanicsForMinusOne,
 			},
 			{
 				ID:        HistogramChecks.Record.HistogramRecordReturnsForANonFiniteValue(),
@@ -197,6 +296,30 @@ func HistogramSuite() conform.Suite[telemetry.Histogram] {
 				Statement: "a second Release of a bound Histogram returns without a panic",
 				Apply:     HistogramSecondReleaseReturns,
 				Defect:    histogramSecondReleasePanics,
+			},
+		},
+		Refusals: []conform.Refusal{
+			{
+				Claim:    spec.Cancel,
+				Callable: "Histogram.Record",
+				Gate:     spec.Failure,
+				Why:      "Record cannot fail",
+				Remedy:   "give Record an error result",
+			},
+			{
+				Claim:    spec.Deterministic,
+				Callable: "Histogram.With",
+				Gate:     spec.ValueSamples,
+				Why:      "eidos derives no sample of a result of With",
+				Remedy:   "author a sample of the result type with the directive sample",
+			},
+		},
+		Unclaimed: []conform.Unclaimed{
+			{
+				Classification: "shape:mutator",
+				Callable:       "Histogram.Record",
+				Stance:         spec.Silent,
+				Note:           "A mutation is an input of the other checks, and its result is an error alone.",
 			},
 		},
 		Calls: []conform.Call[telemetry.Histogram]{
@@ -357,4 +480,77 @@ func newHistogramOver(_ *HistogramHandle, spend func()) telemetry.Histogram {
 	return histogramOver{spend: spend}
 }
 
-// dokimi:provenance sha256:54fde3c18b658712bbd1f760ff98894355d481b01a385a326677891617473e56
+// histogramRecordPanicsDefect is the planted defect of a Histogram whose
+// Record panics.
+type histogramRecordPanicsDefect struct {
+	histogramOverEmbedded
+}
+
+// Record is the override of the planted defect.
+func (*histogramRecordPanicsDefect) Record(p0 context.Context, p1 float64) {
+	panic("the planted defect of a Histogram whose Record panics")
+}
+
+// histogramRecordPanics returns the planted defect of a Histogram whose
+// Record panics over a fresh subject.
+func histogramRecordPanics(h *HistogramHandle) telemetry.Histogram {
+	return &histogramRecordPanicsDefect{histogramOverEmbedded: h.Fresh()}
+}
+
+// histogramWithPanicsDefect is the planted defect of a Histogram whose
+// With panics.
+type histogramWithPanicsDefect struct {
+	histogramOverEmbedded
+}
+
+// With is the override of the planted defect.
+func (*histogramWithPanicsDefect) With(p0 []telemetry.Attr) (r0 telemetry.Histogram) {
+	panic("the planted defect of a Histogram whose With panics")
+}
+
+// histogramWithPanics returns the planted defect of a Histogram whose With
+// panics over a fresh subject.
+func histogramWithPanics(h *HistogramHandle) telemetry.Histogram {
+	return &histogramWithPanicsDefect{histogramOverEmbedded: h.Fresh()}
+}
+
+// histogramReleasePanicsDefect is the planted defect of a Histogram whose
+// Release panics.
+type histogramReleasePanicsDefect struct {
+	histogramOverEmbedded
+}
+
+// Release is the override of the planted defect.
+func (*histogramReleasePanicsDefect) Release() {
+	panic("the planted defect of a Histogram whose Release panics")
+}
+
+// histogramReleasePanics returns the planted defect of a Histogram whose
+// Release panics over a fresh subject.
+func histogramReleasePanics(h *HistogramHandle) telemetry.Histogram {
+	return &histogramReleasePanicsDefect{histogramOverEmbedded: h.Fresh()}
+}
+
+// histogramReleasePanicsOnRepeatDefect is the planted defect of a
+// Histogram whose Release panics on the repeat.
+type histogramReleasePanicsOnRepeatDefect struct {
+	histogramOverEmbedded
+	calls int
+}
+
+// Release is the override of the planted defect.
+func (d *histogramReleasePanicsOnRepeatDefect) Release() {
+	d.calls++
+	if d.calls > 1 {
+		panic("the planted defect of a Histogram whose Release panics on the repeat")
+	}
+	d.histogramOverEmbedded.Release()
+}
+
+// histogramReleasePanicsOnRepeat returns the planted defect of a Histogram
+// whose Release panics on the repeat over a fresh subject.
+func histogramReleasePanicsOnRepeat(h *HistogramHandle) telemetry.Histogram {
+	return &histogramReleasePanicsOnRepeatDefect{histogramOverEmbedded: h.Fresh()}
+}
+
+// dokimi:provenance sha256:9b7e781cccf8ded08d4be844cd572587eeff25df2702b93fd74c28b503613ae2

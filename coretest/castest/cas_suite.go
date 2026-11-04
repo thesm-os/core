@@ -10,6 +10,8 @@ import (
 
 	"go.dokimi.dev/assert/prop"
 	"go.dokimi.dev/conform"
+	"go.dokimi.dev/conform/probe"
+	"go.dokimi.dev/spec"
 	"go.thesmos.sh/core/cas"
 	"go.thesmos.sh/core/crypto"
 )
@@ -49,6 +51,12 @@ type storeHasher struct {
 // value.
 func (c storeHasher) StoreHasherComputesWritableAddresses() conform.ID[cas.Store] {
 	return c.Check("store-hasher-computes-writable-addresses")
+}
+
+// Smoke returns the identity of the check that Hasher returns without a
+// panic for derived inputs.
+func (c storeHasher) Smoke() conform.ID[cas.Store] {
+	return c.Check("smoke")
 }
 
 // storePut is the name of Store.Put, with the identities of its checks.
@@ -193,7 +201,23 @@ func (c storeHas) StoreReturnsTheErrorOfADoneContext() conform.ID[cas.Store] {
 func StoreSuite() conform.Suite[cas.Store] {
 	return conform.Suite[cas.Store]{
 		Declaration: "Store",
+		Package:     "go.thesmos.sh/core/cas",
+		Generator:   conform.Generator{Name: "dokimi", Version: "0.1.0"},
 		Checks: []conform.Check[cas.Store]{
+			{
+				ID:          StoreChecks.Hasher.Smoke(),
+				Statement:   "Hasher returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *StoreHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Hasher()
+						return nil
+					})
+				},
+				Defect: storeHasherPanics,
+			},
 			{
 				ID:        StoreChecks.Hasher.StoreHasherComputesWritableAddresses(),
 				Statement: "a Put of a value under the address that Hasher computes stores the value",
@@ -303,6 +327,43 @@ func StoreSuite() conform.Suite[cas.Store] {
 				Statement: "Put, Get, Has and cas.GetStream return the error of a context that ended",
 				Apply:     StoreReturnsTheErrorOfADoneContext,
 				Defect:    casHasIgnoresItsContext,
+			},
+		},
+		Refusals: []conform.Refusal{
+			{
+				Claim:    spec.Deterministic,
+				Callable: "Store.Hasher",
+				Gate:     spec.ValueSamples,
+				Why:      "eidos derives no sample of a result of Hasher",
+				Remedy:   "author a sample of the result type with the directive sample",
+			},
+			{
+				Claim:    spec.Cancel,
+				Callable: "Store.Put",
+				Gate:     spec.InputSamples,
+				Why:      "eidos derives no sample of the parameter d of Put",
+				Remedy:   "author a sample of the parameter d with the directive sample",
+			},
+			{
+				Claim:    spec.Cancel,
+				Callable: "Store.Get",
+				Gate:     spec.InputSamples,
+				Why:      "eidos derives no sample of the parameter d of Get",
+				Remedy:   "author a sample of the parameter d with the directive sample",
+			},
+			{
+				Claim:    spec.Cancel,
+				Callable: "Store.Has",
+				Gate:     spec.InputSamples,
+				Why:      "eidos derives no sample of the parameter d of Has",
+				Remedy:   "author a sample of the parameter d with the directive sample",
+			},
+			{
+				Claim:    spec.ZeroOnError,
+				Callable: "Store.Has",
+				Gate:     spec.InputSamples,
+				Why:      "eidos derives no sample of the parameter d of Has",
+				Remedy:   "author a sample of the parameter d with the directive sample",
 			},
 		},
 		Calls: []conform.Call[cas.Store]{
@@ -475,4 +536,21 @@ func newStoreOver(_ *StoreHandle, spend func()) cas.Store {
 	return storeOver{spend: spend}
 }
 
-// dokimi:provenance sha256:bfeef24bb2edcb2a65a8528d8de62f86a2ceb34d64bbd3b9b995e540502c9081
+// storeHasherPanicsDefect is the planted defect of a Store whose Hasher
+// panics.
+type storeHasherPanicsDefect struct {
+	storeOverEmbedded
+}
+
+// Hasher is the override of the planted defect.
+func (*storeHasherPanicsDefect) Hasher() (r0 crypto.Hasher) {
+	panic("the planted defect of a Store whose Hasher panics")
+}
+
+// storeHasherPanics returns the planted defect of a Store whose Hasher
+// panics over a fresh subject.
+func storeHasherPanics(h *StoreHandle) cas.Store {
+	return &storeHasherPanicsDefect{storeOverEmbedded: h.Fresh()}
+}
+
+// dokimi:provenance sha256:b8cde3333f88c02472af5d4860ebff81f1052c20157116a52cbd6785ef880715

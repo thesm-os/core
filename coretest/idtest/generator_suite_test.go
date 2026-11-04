@@ -49,18 +49,7 @@ func TestGeneratorSuite(t *testing.T) {
 				},
 				Defect: func(*idtest.GeneratorHandle) id.Generator { return &generatorSubject{} },
 			}),
-			conform.Excuse(
-				idtest.GeneratorChecks.Generate.KeepsItsSize(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				idtest.GeneratorChecks.Generate.ReturnsDistinctIDs(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				idtest.GeneratorChecks.Generate.ReturnsNonZero(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[id.Generator]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -82,18 +71,7 @@ func TestGeneratorSuite(t *testing.T) {
 				},
 				Defect: func(*idtest.GeneratorHandle) id.Generator { return &generatorSubject{} },
 			}),
-			conform.Excuse(
-				idtest.GeneratorChecks.Generate.KeepsItsSize(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				idtest.GeneratorChecks.Generate.ReturnsDistinctIDs(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				idtest.GeneratorChecks.Generate.ReturnsNonZero(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[id.Generator]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -120,10 +98,15 @@ func TestGeneratorSuite(t *testing.T) {
 	})
 }
 
+// generatorSuite is the suite of Generator that the tests of the planted
+// defect of a ceiling apply.
+var generatorSuite = idtest.GeneratorSuite()
+
 // generatorIdle returns the planted defect of a ceiling of Generator with
-// a spend of nothing, a subject that answers each call at once.
+// a spend of nothing. Each call of the defect returns its zero results at
+// once.
 func generatorIdle(h *idtest.GeneratorHandle) id.Generator {
-	return idtest.GeneratorSuite().Calls[0].Over(h, func() {})
+	return generatorSuite.Calls[0].Over(h, func() {})
 }
 
 // TestGeneratorSuiteBudgets applies the allocation ceilings of the suite
@@ -135,18 +118,7 @@ func TestGeneratorSuiteBudgets(t *testing.T) {
 		t,
 		generatorIdle,
 		conform.Ceilings(idtest.GeneratorChecks.Generate.Callable, conform.Budget{Allocs: new(uint64(0))}),
-		conform.Excuse(
-			idtest.GeneratorChecks.Generate.KeepsItsSize(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			idtest.GeneratorChecks.Generate.ReturnsDistinctIDs(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			idtest.GeneratorChecks.Generate.ReturnsNonZero(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[id.Generator]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -158,18 +130,7 @@ func FuzzGeneratorSuiteGenerate(f *testing.F) {
 		f,
 		idtest.GeneratorChecks.Generate.Callable,
 		generatorIdle,
-		conform.Excuse(
-			idtest.GeneratorChecks.Generate.KeepsItsSize(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			idtest.GeneratorChecks.Generate.ReturnsDistinctIDs(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			idtest.GeneratorChecks.Generate.ReturnsNonZero(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[id.Generator]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -181,4 +142,4 @@ func BenchmarkGeneratorSuite(b *testing.B) {
 	})
 }
 
-// dokimi:provenance sha256:033a9a5ece53d1f2c0a3ed7d89408836da119d5e9f7579264700737170acb6d3
+// dokimi:provenance sha256:bcc8e5bc0479786d89c4243983a4dd393ea77592a4770f36a615a5ec7582f75a

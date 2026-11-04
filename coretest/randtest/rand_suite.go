@@ -10,6 +10,8 @@ import (
 
 	"go.dokimi.dev/assert/prop"
 	"go.dokimi.dev/conform"
+	"go.dokimi.dev/conform/probe"
+	"go.dokimi.dev/spec"
 	"go.thesmos.sh/core/rand"
 )
 
@@ -45,6 +47,12 @@ func (c randUint64) Uint64ReturnsDistinctValues() conform.ID[rand.Rand] {
 	return c.Check("uint64-returns-distinct-values")
 }
 
+// Smoke returns the identity of the check that Uint64 returns without a
+// panic for derived inputs.
+func (c randUint64) Smoke() conform.ID[rand.Rand] {
+	return c.Check("smoke")
+}
+
 // randRead is the name of Rand.Read, with the identities of its checks.
 type randRead struct {
 	conform.Callable[rand.Rand]
@@ -68,12 +76,62 @@ func (c randRead) ReadOfNilReturnsZero() conform.ID[rand.Rand] {
 	return c.Check("read-of-nil-returns-zero")
 }
 
+// Smoke returns the identity of the check that Read returns without a
+// panic for derived inputs.
+func (c randRead) Smoke() conform.ID[rand.Rand] {
+	return c.Check("smoke")
+}
+
 // RandSuite returns the checks of Rand, and the calls and the budgets of
 // its callables.
 func RandSuite() conform.Suite[rand.Rand] {
 	return conform.Suite[rand.Rand]{
 		Declaration: "Rand",
+		Package:     "go.thesmos.sh/core/rand",
+		Generator:   conform.Generator{Name: "dokimi", Version: "0.1.0"},
 		Checks: []conform.Check[rand.Rand]{
+			{
+				ID:          RandChecks.Uint64.Smoke(),
+				Statement:   "Uint64 returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *RandHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Uint64()
+						return nil
+					})
+				},
+				Defect: randUint64Panics,
+			},
+			{
+				ID:          RandChecks.Read.Smoke(),
+				Statement:   "Read returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *RandHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						_, err := h.Subject().Read([]byte{1})
+						return err
+					})
+				},
+				Defect: randReadPanics,
+			},
+			{
+				ID:          RandChecks.Read.Smoke().Generated(),
+				Statement:   "Read returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *RandHandle, c *prop.Case) {
+					drawnP := c.Draw(prop.Of[[]byte](), "p")
+					probe.Survives(h, func(ctx context.Context) error {
+						_, err := h.Subject().Read(drawnP)
+						return err
+					})
+				},
+				Defect: randReadPanics,
+			},
 			{
 				ID:        RandChecks.Uint64.Uint64ReturnsDistinctValues(),
 				Statement: "16 calls of Uint64 return 16 distinct values",
@@ -97,6 +155,22 @@ func RandSuite() conform.Suite[rand.Rand] {
 				Statement: "Read of a nil buffer returns 0 and no error",
 				Apply:     ReadOfNilReturnsZero,
 				Defect:    failsOnNil,
+			},
+		},
+		Refusals: []conform.Refusal{
+			{
+				Claim:    spec.Deterministic,
+				Callable: "Rand.Uint64",
+				Gate:     spec.StableSubject,
+				Why:      "Uint64 reads the clock or changes its subject, so a repeat can return another value",
+				Remedy:   "remove the mixin time-aware or side-effect where a repeat of Uint64 returns the same value",
+			},
+			{
+				Claim:    spec.SideEffect,
+				Callable: "Rand.Uint64",
+				Gate:     spec.Cancellation,
+				Why:      "Uint64 takes no context",
+				Remedy:   "add a context parameter to Uint64",
 			},
 		},
 		Calls: []conform.Call[rand.Rand]{
@@ -216,4 +290,37 @@ func newRandOver(_ *RandHandle, spend func()) rand.Rand {
 	return randOver{spend: spend}
 }
 
-// dokimi:provenance sha256:66bccac1b023c832317f39502c1303e761f2c389771efeced0221c58eecdb26a
+// randUint64PanicsDefect is the planted defect of a Rand whose Uint64
+// panics.
+type randUint64PanicsDefect struct {
+	randOverEmbedded
+}
+
+// Uint64 is the override of the planted defect.
+func (*randUint64PanicsDefect) Uint64() (r0 uint64) {
+	panic("the planted defect of a Rand whose Uint64 panics")
+}
+
+// randUint64Panics returns the planted defect of a Rand whose Uint64
+// panics over a fresh subject.
+func randUint64Panics(h *RandHandle) rand.Rand {
+	return &randUint64PanicsDefect{randOverEmbedded: h.Fresh()}
+}
+
+// randReadPanicsDefect is the planted defect of a Rand whose Read panics.
+type randReadPanicsDefect struct {
+	randOverEmbedded
+}
+
+// Read is the override of the planted defect.
+func (*randReadPanicsDefect) Read(p0 []byte) (r0 int, r1 error) {
+	panic("the planted defect of a Rand whose Read panics")
+}
+
+// randReadPanics returns the planted defect of a Rand whose Read panics
+// over a fresh subject.
+func randReadPanics(h *RandHandle) rand.Rand {
+	return &randReadPanicsDefect{randOverEmbedded: h.Fresh()}
+}
+
+// dokimi:provenance sha256:cd559258610d43faf84c220c3c71df46bdaaa796416d18049bd537f1bf537f06

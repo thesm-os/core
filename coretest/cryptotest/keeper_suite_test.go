@@ -48,34 +48,7 @@ func TestKeeperSuite(t *testing.T) {
 				},
 				Defect: func(*cryptotest.KeeperHandle) crypto.Keeper { return &keeperSubject{} },
 			}),
-			conform.Excuse(
-				cryptotest.KeeperChecks.KeyID.KeeperNamesItsKey(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.KeeperChecks.Wrap.KeeperRoundTripsAnEmptyKey(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.KeeperChecks.Wrap.KeeperWrapsNonDeterministically(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.KeeperChecks.Unwrap.KeeperRefusesCorruptedMaterial(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.KeeperChecks.Unwrap.KeeperRefusesTruncatedMaterial(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.KeeperChecks.Unwrap.KeeperRoundTripsADataKey(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.KeeperChecks.Unwrap.KeeperUnwrapsUnderASecondInstance(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[crypto.Keeper]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -97,34 +70,7 @@ func TestKeeperSuite(t *testing.T) {
 				},
 				Defect: func(*cryptotest.KeeperHandle) crypto.Keeper { return &keeperSubject{} },
 			}),
-			conform.Excuse(
-				cryptotest.KeeperChecks.KeyID.KeeperNamesItsKey(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.KeeperChecks.Wrap.KeeperRoundTripsAnEmptyKey(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.KeeperChecks.Wrap.KeeperWrapsNonDeterministically(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.KeeperChecks.Unwrap.KeeperRefusesCorruptedMaterial(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.KeeperChecks.Unwrap.KeeperRefusesTruncatedMaterial(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.KeeperChecks.Unwrap.KeeperRoundTripsADataKey(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.KeeperChecks.Unwrap.KeeperUnwrapsUnderASecondInstance(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[crypto.Keeper]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -175,10 +121,15 @@ func TestKeeperSuite(t *testing.T) {
 	})
 }
 
+// keeperSuite is the suite of Keeper that the tests of the planted defect
+// of a ceiling apply.
+var keeperSuite = cryptotest.KeeperSuite()
+
 // keeperIdle returns the planted defect of a ceiling of Keeper with a
-// spend of nothing, a subject that answers each call at once.
+// spend of nothing. Each call of the defect returns its zero results at
+// once.
 func keeperIdle(h *cryptotest.KeeperHandle) crypto.Keeper {
-	return cryptotest.KeeperSuite().Calls[0].Over(h, func() {})
+	return keeperSuite.Calls[0].Over(h, func() {})
 }
 
 // TestKeeperSuiteBudgets applies the allocation ceilings of the suite of
@@ -192,34 +143,7 @@ func TestKeeperSuiteBudgets(t *testing.T) {
 		conform.Ceilings(cryptotest.KeeperChecks.KeyID.Callable, conform.Budget{Allocs: new(uint64(0))}),
 		conform.Ceilings(cryptotest.KeeperChecks.Wrap.Callable, conform.Budget{Allocs: new(uint64(0))}),
 		conform.Ceilings(cryptotest.KeeperChecks.Unwrap.Callable, conform.Budget{Allocs: new(uint64(0))}),
-		conform.Excuse(
-			cryptotest.KeeperChecks.KeyID.KeeperNamesItsKey(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.KeeperChecks.Wrap.KeeperRoundTripsAnEmptyKey(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.KeeperChecks.Wrap.KeeperWrapsNonDeterministically(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.KeeperChecks.Unwrap.KeeperRefusesCorruptedMaterial(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.KeeperChecks.Unwrap.KeeperRefusesTruncatedMaterial(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.KeeperChecks.Unwrap.KeeperRoundTripsADataKey(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.KeeperChecks.Unwrap.KeeperUnwrapsUnderASecondInstance(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[crypto.Keeper]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -230,34 +154,7 @@ func FuzzKeeperSuiteKeyID(f *testing.F) {
 		f,
 		cryptotest.KeeperChecks.KeyID.Callable,
 		keeperIdle,
-		conform.Excuse(
-			cryptotest.KeeperChecks.KeyID.KeeperNamesItsKey(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.KeeperChecks.Wrap.KeeperRoundTripsAnEmptyKey(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.KeeperChecks.Wrap.KeeperWrapsNonDeterministically(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.KeeperChecks.Unwrap.KeeperRefusesCorruptedMaterial(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.KeeperChecks.Unwrap.KeeperRefusesTruncatedMaterial(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.KeeperChecks.Unwrap.KeeperRoundTripsADataKey(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.KeeperChecks.Unwrap.KeeperUnwrapsUnderASecondInstance(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[crypto.Keeper]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -268,34 +165,7 @@ func FuzzKeeperSuiteWrap(f *testing.F) {
 		f,
 		cryptotest.KeeperChecks.Wrap.Callable,
 		keeperIdle,
-		conform.Excuse(
-			cryptotest.KeeperChecks.KeyID.KeeperNamesItsKey(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.KeeperChecks.Wrap.KeeperRoundTripsAnEmptyKey(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.KeeperChecks.Wrap.KeeperWrapsNonDeterministically(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.KeeperChecks.Unwrap.KeeperRefusesCorruptedMaterial(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.KeeperChecks.Unwrap.KeeperRefusesTruncatedMaterial(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.KeeperChecks.Unwrap.KeeperRoundTripsADataKey(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.KeeperChecks.Unwrap.KeeperUnwrapsUnderASecondInstance(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[crypto.Keeper]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -306,34 +176,7 @@ func FuzzKeeperSuiteUnwrap(f *testing.F) {
 		f,
 		cryptotest.KeeperChecks.Unwrap.Callable,
 		keeperIdle,
-		conform.Excuse(
-			cryptotest.KeeperChecks.KeyID.KeeperNamesItsKey(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.KeeperChecks.Wrap.KeeperRoundTripsAnEmptyKey(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.KeeperChecks.Wrap.KeeperWrapsNonDeterministically(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.KeeperChecks.Unwrap.KeeperRefusesCorruptedMaterial(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.KeeperChecks.Unwrap.KeeperRefusesTruncatedMaterial(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.KeeperChecks.Unwrap.KeeperRoundTripsADataKey(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.KeeperChecks.Unwrap.KeeperUnwrapsUnderASecondInstance(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[crypto.Keeper]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -351,4 +194,4 @@ func BenchmarkKeeperSuite(b *testing.B) {
 	})
 }
 
-// dokimi:provenance sha256:f072a79c4c86157f663856368252a3a380693f449aa94c9dbc05fc7450472510
+// dokimi:provenance sha256:e7cc3e053c3007fb501bebd143ac326beb57a15869841b21f857bf654bdfcc42

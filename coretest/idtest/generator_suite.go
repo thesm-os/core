@@ -10,6 +10,8 @@ import (
 
 	"go.dokimi.dev/assert/prop"
 	"go.dokimi.dev/conform"
+	"go.dokimi.dev/conform/probe"
+	"go.dokimi.dev/spec"
 	"go.thesmos.sh/core/id"
 )
 
@@ -55,12 +57,34 @@ func (c generatorGenerate) ReturnsNonZero() conform.ID[id.Generator] {
 	return c.Check("returns-non-zero")
 }
 
+// Smoke returns the identity of the check that Generate returns without a
+// panic for derived inputs.
+func (c generatorGenerate) Smoke() conform.ID[id.Generator] {
+	return c.Check("smoke")
+}
+
 // GeneratorSuite returns the checks of Generator, and the calls and the
 // budgets of its callables.
 func GeneratorSuite() conform.Suite[id.Generator] {
 	return conform.Suite[id.Generator]{
 		Declaration: "Generator",
+		Package:     "go.thesmos.sh/core/id",
+		Generator:   conform.Generator{Name: "dokimi", Version: "0.1.0"},
 		Checks: []conform.Check[id.Generator]{
+			{
+				ID:          GeneratorChecks.Generate.Smoke(),
+				Statement:   "Generate returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *GeneratorHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Generate()
+						return nil
+					})
+				},
+				Defect: generatorGeneratePanics,
+			},
 			{
 				ID:        GeneratorChecks.Generate.KeepsItsSize(),
 				Statement: "the calls of Generate return IDs of one size",
@@ -78,6 +102,15 @@ func GeneratorSuite() conform.Suite[id.Generator] {
 				Statement: "Generate does not return the Zero ID",
 				Apply:     ReturnsNonZero,
 				Defect:    returnsZero,
+			},
+		},
+		Refusals: []conform.Refusal{
+			{
+				Claim:    spec.Deterministic,
+				Callable: "Generator.Generate",
+				Gate:     spec.ValueSamples,
+				Why:      "eidos derives no sample of a result of Generate",
+				Remedy:   "author a sample of the result type with the directive sample",
 			},
 		},
 		Calls: []conform.Call[id.Generator]{
@@ -180,4 +213,21 @@ func newGeneratorOver(_ *GeneratorHandle, spend func()) id.Generator {
 	return generatorOver{spend: spend}
 }
 
-// dokimi:provenance sha256:9bc8f8c1bb684ae1aca1ec1464f562b02bea794eb616304b36d293e073e11fe6
+// generatorGeneratePanicsDefect is the planted defect of a Generator whose
+// Generate panics.
+type generatorGeneratePanicsDefect struct {
+	generatorOverEmbedded
+}
+
+// Generate is the override of the planted defect.
+func (*generatorGeneratePanicsDefect) Generate() (r0 id.ID) {
+	panic("the planted defect of a Generator whose Generate panics")
+}
+
+// generatorGeneratePanics returns the planted defect of a Generator whose
+// Generate panics over a fresh subject.
+func generatorGeneratePanics(h *GeneratorHandle) id.Generator {
+	return &generatorGeneratePanicsDefect{generatorOverEmbedded: h.Fresh()}
+}
+
+// dokimi:provenance sha256:416eb0bb0302bb0a8b5c9a2a0490d49007942f8d705c7448bfe49b81a82c1d78

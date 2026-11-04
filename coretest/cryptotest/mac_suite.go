@@ -10,6 +10,8 @@ import (
 
 	"go.dokimi.dev/assert/prop"
 	"go.dokimi.dev/conform"
+	"go.dokimi.dev/conform/probe"
+	"go.dokimi.dev/spec"
 	"go.thesmos.sh/core/crypto"
 )
 
@@ -52,6 +54,18 @@ func (c macid) MACIDIdentifiesTheImplementation() conform.ID[crypto.MAC] {
 	return c.Check("macid-identifies-the-implementation")
 }
 
+// Smoke returns the identity of the check that ID returns without a panic
+// for derived inputs.
+func (c macid) Smoke() conform.ID[crypto.MAC] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that ID returns the same
+// value for the same inputs.
+func (c macid) Deterministic() conform.ID[crypto.MAC] {
+	return c.Check("deterministic")
+}
+
 // macAlgorithm is the name of MAC.Algorithm, with the identities of its
 // checks.
 type macAlgorithm struct {
@@ -65,6 +79,18 @@ func (c macAlgorithm) MACAlgorithmNamesTheFunction() conform.ID[crypto.MAC] {
 	return c.Check("mac-algorithm-names-the-function")
 }
 
+// Smoke returns the identity of the check that Algorithm returns without a
+// panic for derived inputs.
+func (c macAlgorithm) Smoke() conform.ID[crypto.MAC] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that Algorithm returns
+// the same value for the same inputs.
+func (c macAlgorithm) Deterministic() conform.ID[crypto.MAC] {
+	return c.Check("deterministic")
+}
+
 // macSize is the name of MAC.Size, with the identities of its checks.
 type macSize struct {
 	conform.Callable[crypto.MAC]
@@ -74,6 +100,18 @@ type macSize struct {
 // Sign has the size that Size returns.
 func (c macSize) MACSignedSizeIsTheSize() conform.ID[crypto.MAC] {
 	return c.Check("mac-signed-size-is-the-size")
+}
+
+// Smoke returns the identity of the check that Size returns without a
+// panic for derived inputs.
+func (c macSize) Smoke() conform.ID[crypto.MAC] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that Size returns the
+// same value for the same inputs.
+func (c macSize) Deterministic() conform.ID[crypto.MAC] {
+	return c.Check("deterministic")
 }
 
 // macSign is the name of MAC.Sign, with the identities of its checks.
@@ -106,6 +144,12 @@ func (c macSign) MACSignsNilAsEmpty() conform.ID[crypto.MAC] {
 	return c.Check("mac-signs-nil-as-empty")
 }
 
+// Smoke returns the identity of the check that Sign returns without a
+// panic for derived inputs.
+func (c macSign) Smoke() conform.ID[crypto.MAC] {
+	return c.Check("smoke")
+}
+
 // macVerify is the name of MAC.Verify, with the identities of its checks.
 type macVerify struct {
 	conform.Callable[crypto.MAC]
@@ -128,6 +172,18 @@ func (c macVerify) MACVerifyRefusesAMACOfAWrongLength() conform.ID[crypto.MAC] {
 // Verify refuses a MAC of Sign whose first bit changed.
 func (c macVerify) MACVerifyRefusesAModifiedMAC() conform.ID[crypto.MAC] {
 	return c.Check("mac-verify-refuses-a-modified-mac")
+}
+
+// Smoke returns the identity of the check that Verify returns without a
+// panic for derived inputs.
+func (c macVerify) Smoke() conform.ID[crypto.MAC] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that Verify returns the
+// same value for the same inputs.
+func (c macVerify) Deterministic() conform.ID[crypto.MAC] {
+	return c.Check("deterministic")
 }
 
 // macNewStream is the name of MAC.NewStream, with the identities of its
@@ -163,12 +219,209 @@ func (c macNewStream) MACStreamSumsLikeSign() conform.ID[crypto.MAC] {
 	return c.Check("mac-stream-sums-like-sign")
 }
 
+// Smoke returns the identity of the check that NewStream returns without a
+// panic for derived inputs.
+func (c macNewStream) Smoke() conform.ID[crypto.MAC] {
+	return c.Check("smoke")
+}
+
 // MACSuite returns the checks of MAC, and the calls and the budgets of its
 // callables.
 func MACSuite() conform.Suite[crypto.MAC] {
 	return conform.Suite[crypto.MAC]{
 		Declaration: "MAC",
+		Package:     "go.thesmos.sh/core/crypto",
+		Generator:   conform.Generator{Name: "dokimi", Version: "0.1.0"},
 		Checks: []conform.Check[crypto.MAC]{
+			{
+				ID:          MACChecks.ID.Smoke(),
+				Statement:   "ID returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *MACHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().ID()
+						return nil
+					})
+				},
+				Defect: macidPanics,
+			},
+			{
+				ID:          MACChecks.ID.Deterministic(),
+				Statement:   "ID returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[crypto.MAC]{MACChecks.ID.Smoke()},
+				Apply: func(h *MACHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) (crypto.ID, error) {
+						r0 := h.Subject().ID()
+						return r0, nil
+					})
+				},
+				Defect: macidDrifts,
+			},
+			{
+				ID:          MACChecks.Algorithm.Smoke(),
+				Statement:   "Algorithm returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *MACHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Algorithm()
+						return nil
+					})
+				},
+				Defect: macAlgorithmPanics,
+			},
+			{
+				ID:          MACChecks.Algorithm.Deterministic(),
+				Statement:   "Algorithm returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[crypto.MAC]{MACChecks.Algorithm.Smoke()},
+				Apply: func(h *MACHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) (crypto.Algorithm, error) {
+						r0 := h.Subject().Algorithm()
+						return r0, nil
+					})
+				},
+				Defect: macAlgorithmDrifts,
+			},
+			{
+				ID:          MACChecks.Size.Smoke(),
+				Statement:   "Size returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *MACHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Size()
+						return nil
+					})
+				},
+				Defect: macSizePanics,
+			},
+			{
+				ID:          MACChecks.Size.Deterministic(),
+				Statement:   "Size returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[crypto.MAC]{MACChecks.Size.Smoke()},
+				Apply: func(h *MACHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) (int, error) {
+						r0 := h.Subject().Size()
+						return r0, nil
+					})
+				},
+				Defect: macSizeDrifts,
+			},
+			{
+				ID:          MACChecks.Sign.Smoke(),
+				Statement:   "Sign returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *MACHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Sign([]byte{1})
+						return nil
+					})
+				},
+				Defect: macSignPanics,
+			},
+			{
+				ID:          MACChecks.Sign.Smoke().Generated(),
+				Statement:   "Sign returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *MACHandle, c *prop.Case) {
+					drawnData := c.Draw(prop.Of[[]byte](), "data")
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Sign(drawnData)
+						return nil
+					})
+				},
+				Defect: macSignPanics,
+			},
+			{
+				ID:          MACChecks.Verify.Smoke(),
+				Statement:   "Verify returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *MACHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Verify([]byte{1}, []byte{1})
+						return nil
+					})
+				},
+				Defect: macVerifyPanics,
+			},
+			{
+				ID:          MACChecks.Verify.Smoke().Generated(),
+				Statement:   "Verify returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *MACHandle, c *prop.Case) {
+					drawnData := c.Draw(prop.Of[[]byte](), "data")
+					drawnExpected := c.Draw(prop.Of[[]byte](), "expected")
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Verify(drawnData, drawnExpected)
+						return nil
+					})
+				},
+				Defect: macVerifyPanics,
+			},
+			{
+				ID:          MACChecks.Verify.Deterministic(),
+				Statement:   "Verify returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[crypto.MAC]{MACChecks.Verify.Smoke()},
+				Apply: func(h *MACHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) (bool, error) {
+						r0 := h.Subject().Verify([]byte{1}, []byte{1})
+						return r0, nil
+					})
+				},
+				Defect: macVerifyDrifts,
+			},
+			{
+				ID:          MACChecks.Verify.Deterministic().Generated(),
+				Statement:   "Verify returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Entails:     []conform.ID[crypto.MAC]{MACChecks.Verify.Smoke().Generated()},
+				Property: func(h *MACHandle, c *prop.Case) {
+					drawnData := c.Draw(prop.Of[[]byte](), "data")
+					drawnExpected := c.Draw(prop.Of[[]byte](), "expected")
+					probe.RepeatAgrees(h, func(ctx context.Context) (bool, error) {
+						r0 := h.Subject().Verify(drawnData, drawnExpected)
+						return r0, nil
+					})
+				},
+				Defect: macVerifyDrifts,
+			},
+			{
+				ID:          MACChecks.NewStream.Smoke(),
+				Statement:   "NewStream returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *MACHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().NewStream()
+						return nil
+					})
+				},
+				Defect: macNewStreamPanics,
+			},
 			{
 				ID:        MACChecks.ID.MACIDIdentifiesTheImplementation(),
 				Statement: "ID returns an ID that is not zero, and the same ID on every call",
@@ -253,6 +506,30 @@ func MACSuite() conform.Suite[crypto.MAC] {
 				Statement: "the Sum of a stream that absorbed a message in one Write is the MAC that Sign returns for the message",
 				Apply:     MACStreamSumsLikeSign,
 				Defect:    macStreamDropsTheEndOfALongWrite,
+			},
+		},
+		Refusals: []conform.Refusal{
+			{
+				Claim:    spec.Deterministic,
+				Callable: "MAC.Sign",
+				Gate:     spec.ValueSamples,
+				Why:      "eidos derives no sample of a result of Sign",
+				Remedy:   "author a sample of the result type with the directive sample",
+			},
+			{
+				Claim:    spec.Deterministic,
+				Callable: "MAC.NewStream",
+				Gate:     spec.ValueSamples,
+				Why:      "eidos derives no sample of a result of NewStream",
+				Remedy:   "author a sample of the result type with the directive sample",
+			},
+		},
+		Unclaimed: []conform.Unclaimed{
+			{
+				Classification: "mixin:concurrent",
+				Callable:       "MAC.Sign",
+				Stance:         spec.Needs,
+				Note:           "The claim linearizable needs the param machineries=[reference] of the directive suite.",
 			},
 		},
 		Calls: []conform.Call[crypto.MAC]{
@@ -467,4 +744,191 @@ func newMACOver(_ *MACHandle, spend func()) crypto.MAC {
 	return macOver{spend: spend}
 }
 
-// dokimi:provenance sha256:e75adaefa6bd55587e76c1e340ded50e1149ad6d4a121d631512708b4b787dd6
+// macidPanicsDefect is the planted defect of a MAC whose ID panics.
+type macidPanicsDefect struct {
+	macOverEmbedded
+}
+
+// ID is the override of the planted defect.
+func (*macidPanicsDefect) ID() (r0 crypto.ID) {
+	panic("the planted defect of a MAC whose ID panics")
+}
+
+// macidPanics returns the planted defect of a MAC whose ID panics over a
+// fresh subject.
+func macidPanics(h *MACHandle) crypto.MAC {
+	return &macidPanicsDefect{macOverEmbedded: h.Fresh()}
+}
+
+// macidDriftsDefect is the planted defect of a MAC whose ID returns
+// another value on the repeat.
+type macidDriftsDefect struct {
+	macOverEmbedded
+	calls int
+}
+
+// ID is the override of the planted defect.
+func (d *macidDriftsDefect) ID() (r0 crypto.ID) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = crypto.ID{2}
+	}
+	return r0
+}
+
+// macidDrifts returns the planted defect of a MAC whose ID returns another
+// value on the repeat over a fresh subject.
+func macidDrifts(h *MACHandle) crypto.MAC {
+	return &macidDriftsDefect{macOverEmbedded: h.Fresh()}
+}
+
+// macAlgorithmPanicsDefect is the planted defect of a MAC whose Algorithm
+// panics.
+type macAlgorithmPanicsDefect struct {
+	macOverEmbedded
+}
+
+// Algorithm is the override of the planted defect.
+func (*macAlgorithmPanicsDefect) Algorithm() (r0 crypto.Algorithm) {
+	panic("the planted defect of a MAC whose Algorithm panics")
+}
+
+// macAlgorithmPanics returns the planted defect of a MAC whose Algorithm
+// panics over a fresh subject.
+func macAlgorithmPanics(h *MACHandle) crypto.MAC {
+	return &macAlgorithmPanicsDefect{macOverEmbedded: h.Fresh()}
+}
+
+// macAlgorithmDriftsDefect is the planted defect of a MAC whose Algorithm
+// returns another value on the repeat.
+type macAlgorithmDriftsDefect struct {
+	macOverEmbedded
+	calls int
+}
+
+// Algorithm is the override of the planted defect.
+func (d *macAlgorithmDriftsDefect) Algorithm() (r0 crypto.Algorithm) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = crypto.Algorithm("sha-384")
+	}
+	return r0
+}
+
+// macAlgorithmDrifts returns the planted defect of a MAC whose Algorithm
+// returns another value on the repeat over a fresh subject.
+func macAlgorithmDrifts(h *MACHandle) crypto.MAC {
+	return &macAlgorithmDriftsDefect{macOverEmbedded: h.Fresh()}
+}
+
+// macSizePanicsDefect is the planted defect of a MAC whose Size panics.
+type macSizePanicsDefect struct {
+	macOverEmbedded
+}
+
+// Size is the override of the planted defect.
+func (*macSizePanicsDefect) Size() (r0 int) {
+	panic("the planted defect of a MAC whose Size panics")
+}
+
+// macSizePanics returns the planted defect of a MAC whose Size panics over
+// a fresh subject.
+func macSizePanics(h *MACHandle) crypto.MAC {
+	return &macSizePanicsDefect{macOverEmbedded: h.Fresh()}
+}
+
+// macSizeDriftsDefect is the planted defect of a MAC whose Size returns
+// another value on the repeat.
+type macSizeDriftsDefect struct {
+	macOverEmbedded
+	calls int
+}
+
+// Size is the override of the planted defect.
+func (d *macSizeDriftsDefect) Size() (r0 int) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = int(7)
+	}
+	return r0
+}
+
+// macSizeDrifts returns the planted defect of a MAC whose Size returns
+// another value on the repeat over a fresh subject.
+func macSizeDrifts(h *MACHandle) crypto.MAC {
+	return &macSizeDriftsDefect{macOverEmbedded: h.Fresh()}
+}
+
+// macSignPanicsDefect is the planted defect of a MAC whose Sign panics.
+type macSignPanicsDefect struct {
+	macOverEmbedded
+}
+
+// Sign is the override of the planted defect.
+func (*macSignPanicsDefect) Sign(p0 []byte) (r0 crypto.Digest) {
+	panic("the planted defect of a MAC whose Sign panics")
+}
+
+// macSignPanics returns the planted defect of a MAC whose Sign panics over
+// a fresh subject.
+func macSignPanics(h *MACHandle) crypto.MAC {
+	return &macSignPanicsDefect{macOverEmbedded: h.Fresh()}
+}
+
+// macVerifyPanicsDefect is the planted defect of a MAC whose Verify
+// panics.
+type macVerifyPanicsDefect struct {
+	macOverEmbedded
+}
+
+// Verify is the override of the planted defect.
+func (*macVerifyPanicsDefect) Verify(p0, p1 []byte) (r0 bool) {
+	panic("the planted defect of a MAC whose Verify panics")
+}
+
+// macVerifyPanics returns the planted defect of a MAC whose Verify panics
+// over a fresh subject.
+func macVerifyPanics(h *MACHandle) crypto.MAC {
+	return &macVerifyPanicsDefect{macOverEmbedded: h.Fresh()}
+}
+
+// macVerifyDriftsDefect is the planted defect of a MAC whose Verify
+// returns another value on the repeat.
+type macVerifyDriftsDefect struct {
+	macOverEmbedded
+	calls int
+}
+
+// Verify is the override of the planted defect.
+func (d *macVerifyDriftsDefect) Verify(p0, p1 []byte) (r0 bool) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = bool(true)
+	}
+	return r0
+}
+
+// macVerifyDrifts returns the planted defect of a MAC whose Verify returns
+// another value on the repeat over a fresh subject.
+func macVerifyDrifts(h *MACHandle) crypto.MAC {
+	return &macVerifyDriftsDefect{macOverEmbedded: h.Fresh()}
+}
+
+// macNewStreamPanicsDefect is the planted defect of a MAC whose NewStream
+// panics.
+type macNewStreamPanicsDefect struct {
+	macOverEmbedded
+}
+
+// NewStream is the override of the planted defect.
+func (*macNewStreamPanicsDefect) NewStream() (r0 crypto.Stream) {
+	panic("the planted defect of a MAC whose NewStream panics")
+}
+
+// macNewStreamPanics returns the planted defect of a MAC whose NewStream
+// panics over a fresh subject.
+func macNewStreamPanics(h *MACHandle) crypto.MAC {
+	return &macNewStreamPanicsDefect{macOverEmbedded: h.Fresh()}
+}
+
+// dokimi:provenance sha256:34a1dea882e61e0ad7a2a5b1f2fb954cb7a09d448e2cd12b631ab8ff67a3d652

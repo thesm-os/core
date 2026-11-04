@@ -269,15 +269,6 @@ func NewVerifierStub(tb assert.TB, opts ...VerifierStubOption) *VerifierStub {
 	return s
 }
 
-// NewVerifierStubDelayed returns a double whose methods sleep d on clk
-// before they return. It applies opts after the clock and the latency.
-func NewVerifierStubDelayed(tb assert.TB, d time.Duration, clk assert.Clock, opts ...VerifierStubOption) *VerifierStub {
-	return NewVerifierStub(tb, append([]VerifierStubOption{
-		VerifierStubWithClock(clk),
-		VerifierStubWithLatency(d),
-	}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *VerifierStub) ResetCalls() {
@@ -697,21 +688,6 @@ func NewSignerStub(tb assert.TB, opts ...SignerStubOption) *SignerStub {
 	}
 	s.group.Bind(tb)
 	return s
-}
-
-// NewSignerStubDelayed returns a double whose methods sleep d on clk
-// before they return. It applies opts after the clock and the latency.
-func NewSignerStubDelayed(tb assert.TB, d time.Duration, clk assert.Clock, opts ...SignerStubOption) *SignerStub {
-	return NewSignerStub(tb, append([]SignerStubOption{
-		SignerStubWithClock(clk),
-		SignerStubWithLatency(d),
-	}, opts...)...)
-}
-
-// NewSignerStubFailing returns a double on which each call of a method
-// that can fail fails with err. It applies opts after the failure.
-func NewSignerStubFailing(tb assert.TB, err error, opts ...SignerStubOption) *SignerStub {
-	return NewSignerStub(tb, append([]SignerStubOption{SignerStubFailing(err)}, opts...)...)
 }
 
 // ResetCalls clears the recorded calls, the counters of the faults and the
@@ -1232,26 +1208,6 @@ func NewStreamingSignerStub(tb assert.TB, opts ...StreamingSignerStubOption) *St
 	return s
 }
 
-// NewStreamingSignerStubDelayed returns a double whose methods sleep d on
-// clk before they return. It applies opts after the clock and the latency.
-func NewStreamingSignerStubDelayed(
-	tb assert.TB,
-	d time.Duration,
-	clk assert.Clock,
-	opts ...StreamingSignerStubOption,
-) *StreamingSignerStub {
-	return NewStreamingSignerStub(tb, append([]StreamingSignerStubOption{
-		StreamingSignerStubWithClock(clk),
-		StreamingSignerStubWithLatency(d),
-	}, opts...)...)
-}
-
-// NewStreamingSignerStubFailing returns a double on which each call of a
-// method that can fail fails with err. It applies opts after the failure.
-func NewStreamingSignerStubFailing(tb assert.TB, err error, opts ...StreamingSignerStubOption) *StreamingSignerStub {
-	return NewStreamingSignerStub(tb, append([]StreamingSignerStubOption{StreamingSignerStubFailing(err)}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *StreamingSignerStub) ResetCalls() {
@@ -1618,26 +1574,6 @@ func NewSignStreamStub(tb assert.TB, opts ...SignStreamStubOption) *SignStreamSt
 	}
 	s.group.Bind(tb)
 	return s
-}
-
-// NewSignStreamStubDelayed returns a double whose methods sleep d on clk
-// before they return. It applies opts after the clock and the latency.
-func NewSignStreamStubDelayed(
-	tb assert.TB,
-	d time.Duration,
-	clk assert.Clock,
-	opts ...SignStreamStubOption,
-) *SignStreamStub {
-	return NewSignStreamStub(tb, append([]SignStreamStubOption{
-		SignStreamStubWithClock(clk),
-		SignStreamStubWithLatency(d),
-	}, opts...)...)
-}
-
-// NewSignStreamStubFailing returns a double on which each call of a method
-// that can fail fails with err. It applies opts after the failure.
-func NewSignStreamStubFailing(tb assert.TB, err error, opts ...SignStreamStubOption) *SignStreamStub {
-	return NewSignStreamStub(tb, append([]SignStreamStubOption{SignStreamStubFailing(err)}, opts...)...)
 }
 
 // ResetCalls clears the recorded calls, the counters of the faults and the
@@ -2034,21 +1970,6 @@ func NewStreamingVerifierStub(tb assert.TB, opts ...StreamingVerifierStubOption)
 	return s
 }
 
-// NewStreamingVerifierStubDelayed returns a double whose methods sleep d
-// on clk before they return. It applies opts after the clock and the
-// latency.
-func NewStreamingVerifierStubDelayed(
-	tb assert.TB,
-	d time.Duration,
-	clk assert.Clock,
-	opts ...StreamingVerifierStubOption,
-) *StreamingVerifierStub {
-	return NewStreamingVerifierStub(tb, append([]StreamingVerifierStubOption{
-		StreamingVerifierStubWithClock(clk),
-		StreamingVerifierStubWithLatency(d),
-	}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *StreamingVerifierStub) ResetCalls() {
@@ -2387,26 +2308,6 @@ func NewVerifyStreamStub(tb assert.TB, opts ...VerifyStreamStubOption) *VerifySt
 	return s
 }
 
-// NewVerifyStreamStubDelayed returns a double whose methods sleep d on clk
-// before they return. It applies opts after the clock and the latency.
-func NewVerifyStreamStubDelayed(
-	tb assert.TB,
-	d time.Duration,
-	clk assert.Clock,
-	opts ...VerifyStreamStubOption,
-) *VerifyStreamStub {
-	return NewVerifyStreamStub(tb, append([]VerifyStreamStubOption{
-		VerifyStreamStubWithClock(clk),
-		VerifyStreamStubWithLatency(d),
-	}, opts...)...)
-}
-
-// NewVerifyStreamStubFailing returns a double on which each call of a
-// method that can fail fails with err. It applies opts after the failure.
-func NewVerifyStreamStubFailing(tb assert.TB, err error, opts ...VerifyStreamStubOption) *VerifyStreamStub {
-	return NewVerifyStreamStub(tb, append([]VerifyStreamStubOption{VerifyStreamStubFailing(err)}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *VerifyStreamStub) ResetCalls() {
@@ -2469,4 +2370,4 @@ func (s *VerifyStreamStub) Write(p []byte) (n int, err error) {
 	return r.N, r.Err
 }
 
-// dokimi:provenance sha256:0494ff5254589fe9509f19e32cbb8e1743a24b3ddccd99792a653e6031e54c33
+// dokimi:provenance sha256:23f1295a13633b133259630b8ebb3d540cd353f90496feacea1b15e3980428a1

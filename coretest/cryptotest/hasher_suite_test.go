@@ -48,94 +48,7 @@ func TestHasherSuite(t *testing.T) {
 				},
 				Defect: func(*cryptotest.HasherHandle) crypto.Hasher { return &hasherSubject{} },
 			}),
-			conform.Excuse(
-				cryptotest.HasherChecks.ID.HasherIDIdentifiesTheImplementation(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.HasherChecks.Algorithm.HasherAlgorithmNamesTheFunction(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.HasherChecks.Hash.HasherHashDistinguishesInputs(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.HasherChecks.Hash.HasherHashIsDeterministic(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.HasherChecks.Hash.HasherHashMatchesTheReference(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.HasherChecks.Hash.HasherHashesNilAsEmpty(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.HasherChecks.HashTagged.HasherHashTaggedHashesNilAsTheRoleByte(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.HasherChecks.HashTagged.HasherHashTaggedIsDeterministic(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.HasherChecks.HashTagged.HasherHashTaggedIsTheRoleByteFollowedByTheData(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.HasherChecks.HashTagged.HasherHashTaggedRefusesABinaryRole(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.HasherChecks.HashTagged.HasherLeafDiffersFromItsNode(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedDependsOnTheOrder(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedIsDeterministic(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedIsTheRoleByteFollowedByBothOperands(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedRefusesAUnaryRole(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedRefusesAnOperandOfAnotherWidth(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedRefusesTheZeroDigest(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedSeparatesTheRoles(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.HasherChecks.NewStream.HasherStreamAbsorbsSplitWrites(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.HasherChecks.NewStream.HasherStreamResetRestartsTheHash(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.HasherChecks.NewStream.HasherStreamSumKeepsTheState(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.HasherChecks.NewStream.HasherStreamSumsLikeHash(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[crypto.Hasher]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -157,94 +70,7 @@ func TestHasherSuite(t *testing.T) {
 				},
 				Defect: func(*cryptotest.HasherHandle) crypto.Hasher { return &hasherSubject{} },
 			}),
-			conform.Excuse(
-				cryptotest.HasherChecks.ID.HasherIDIdentifiesTheImplementation(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.HasherChecks.Algorithm.HasherAlgorithmNamesTheFunction(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.HasherChecks.Hash.HasherHashDistinguishesInputs(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.HasherChecks.Hash.HasherHashIsDeterministic(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.HasherChecks.Hash.HasherHashMatchesTheReference(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.HasherChecks.Hash.HasherHashesNilAsEmpty(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.HasherChecks.HashTagged.HasherHashTaggedHashesNilAsTheRoleByte(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.HasherChecks.HashTagged.HasherHashTaggedIsDeterministic(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.HasherChecks.HashTagged.HasherHashTaggedIsTheRoleByteFollowedByTheData(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.HasherChecks.HashTagged.HasherHashTaggedRefusesABinaryRole(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.HasherChecks.HashTagged.HasherLeafDiffersFromItsNode(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedDependsOnTheOrder(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedIsDeterministic(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedIsTheRoleByteFollowedByBothOperands(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedRefusesAUnaryRole(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedRefusesAnOperandOfAnotherWidth(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedRefusesTheZeroDigest(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedSeparatesTheRoles(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.HasherChecks.NewStream.HasherStreamAbsorbsSplitWrites(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.HasherChecks.NewStream.HasherStreamResetRestartsTheHash(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.HasherChecks.NewStream.HasherStreamSumKeepsTheState(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.HasherChecks.NewStream.HasherStreamSumsLikeHash(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[crypto.Hasher]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -385,10 +211,15 @@ func TestHasherSuite(t *testing.T) {
 	})
 }
 
+// hasherSuite is the suite of Hasher that the tests of the planted defect
+// of a ceiling apply.
+var hasherSuite = cryptotest.HasherSuite()
+
 // hasherIdle returns the planted defect of a ceiling of Hasher with a
-// spend of nothing, a subject that answers each call at once.
+// spend of nothing. Each call of the defect returns its zero results at
+// once.
 func hasherIdle(h *cryptotest.HasherHandle) crypto.Hasher {
-	return cryptotest.HasherSuite().Calls[0].Over(h, func() {})
+	return hasherSuite.Calls[0].Over(h, func() {})
 }
 
 // TestHasherSuiteBudgets applies the allocation ceilings of the suite of
@@ -405,94 +236,7 @@ func TestHasherSuiteBudgets(t *testing.T) {
 		conform.Ceilings(cryptotest.HasherChecks.HashTagged.Callable, conform.Budget{Allocs: new(uint64(0))}),
 		conform.Ceilings(cryptotest.HasherChecks.CombineTagged.Callable, conform.Budget{Allocs: new(uint64(0))}),
 		conform.Ceilings(cryptotest.HasherChecks.NewStream.Callable, conform.Budget{Allocs: new(uint64(0))}),
-		conform.Excuse(
-			cryptotest.HasherChecks.ID.HasherIDIdentifiesTheImplementation(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.Algorithm.HasherAlgorithmNamesTheFunction(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.Hash.HasherHashDistinguishesInputs(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.Hash.HasherHashIsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.Hash.HasherHashMatchesTheReference(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.Hash.HasherHashesNilAsEmpty(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.HashTagged.HasherHashTaggedHashesNilAsTheRoleByte(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.HashTagged.HasherHashTaggedIsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.HashTagged.HasherHashTaggedIsTheRoleByteFollowedByTheData(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.HashTagged.HasherHashTaggedRefusesABinaryRole(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.HashTagged.HasherLeafDiffersFromItsNode(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedDependsOnTheOrder(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedIsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedIsTheRoleByteFollowedByBothOperands(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedRefusesAUnaryRole(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedRefusesAnOperandOfAnotherWidth(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedRefusesTheZeroDigest(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedSeparatesTheRoles(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.NewStream.HasherStreamAbsorbsSplitWrites(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.NewStream.HasherStreamResetRestartsTheHash(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.NewStream.HasherStreamSumKeepsTheState(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.NewStream.HasherStreamSumsLikeHash(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[crypto.Hasher]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -503,94 +247,7 @@ func FuzzHasherSuiteID(f *testing.F) {
 		f,
 		cryptotest.HasherChecks.ID.Callable,
 		hasherIdle,
-		conform.Excuse(
-			cryptotest.HasherChecks.ID.HasherIDIdentifiesTheImplementation(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.Algorithm.HasherAlgorithmNamesTheFunction(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.Hash.HasherHashDistinguishesInputs(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.Hash.HasherHashIsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.Hash.HasherHashMatchesTheReference(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.Hash.HasherHashesNilAsEmpty(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.HashTagged.HasherHashTaggedHashesNilAsTheRoleByte(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.HashTagged.HasherHashTaggedIsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.HashTagged.HasherHashTaggedIsTheRoleByteFollowedByTheData(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.HashTagged.HasherHashTaggedRefusesABinaryRole(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.HashTagged.HasherLeafDiffersFromItsNode(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedDependsOnTheOrder(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedIsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedIsTheRoleByteFollowedByBothOperands(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedRefusesAUnaryRole(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedRefusesAnOperandOfAnotherWidth(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedRefusesTheZeroDigest(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedSeparatesTheRoles(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.NewStream.HasherStreamAbsorbsSplitWrites(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.NewStream.HasherStreamResetRestartsTheHash(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.NewStream.HasherStreamSumKeepsTheState(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.NewStream.HasherStreamSumsLikeHash(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[crypto.Hasher]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -601,94 +258,7 @@ func FuzzHasherSuiteAlgorithm(f *testing.F) {
 		f,
 		cryptotest.HasherChecks.Algorithm.Callable,
 		hasherIdle,
-		conform.Excuse(
-			cryptotest.HasherChecks.ID.HasherIDIdentifiesTheImplementation(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.Algorithm.HasherAlgorithmNamesTheFunction(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.Hash.HasherHashDistinguishesInputs(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.Hash.HasherHashIsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.Hash.HasherHashMatchesTheReference(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.Hash.HasherHashesNilAsEmpty(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.HashTagged.HasherHashTaggedHashesNilAsTheRoleByte(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.HashTagged.HasherHashTaggedIsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.HashTagged.HasherHashTaggedIsTheRoleByteFollowedByTheData(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.HashTagged.HasherHashTaggedRefusesABinaryRole(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.HashTagged.HasherLeafDiffersFromItsNode(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedDependsOnTheOrder(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedIsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedIsTheRoleByteFollowedByBothOperands(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedRefusesAUnaryRole(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedRefusesAnOperandOfAnotherWidth(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedRefusesTheZeroDigest(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedSeparatesTheRoles(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.NewStream.HasherStreamAbsorbsSplitWrites(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.NewStream.HasherStreamResetRestartsTheHash(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.NewStream.HasherStreamSumKeepsTheState(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.NewStream.HasherStreamSumsLikeHash(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[crypto.Hasher]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -699,94 +269,7 @@ func FuzzHasherSuiteHash(f *testing.F) {
 		f,
 		cryptotest.HasherChecks.Hash.Callable,
 		hasherIdle,
-		conform.Excuse(
-			cryptotest.HasherChecks.ID.HasherIDIdentifiesTheImplementation(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.Algorithm.HasherAlgorithmNamesTheFunction(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.Hash.HasherHashDistinguishesInputs(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.Hash.HasherHashIsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.Hash.HasherHashMatchesTheReference(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.Hash.HasherHashesNilAsEmpty(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.HashTagged.HasherHashTaggedHashesNilAsTheRoleByte(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.HashTagged.HasherHashTaggedIsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.HashTagged.HasherHashTaggedIsTheRoleByteFollowedByTheData(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.HashTagged.HasherHashTaggedRefusesABinaryRole(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.HashTagged.HasherLeafDiffersFromItsNode(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedDependsOnTheOrder(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedIsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedIsTheRoleByteFollowedByBothOperands(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedRefusesAUnaryRole(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedRefusesAnOperandOfAnotherWidth(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedRefusesTheZeroDigest(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedSeparatesTheRoles(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.NewStream.HasherStreamAbsorbsSplitWrites(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.NewStream.HasherStreamResetRestartsTheHash(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.NewStream.HasherStreamSumKeepsTheState(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.NewStream.HasherStreamSumsLikeHash(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[crypto.Hasher]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -797,94 +280,7 @@ func FuzzHasherSuiteHashTagged(f *testing.F) {
 		f,
 		cryptotest.HasherChecks.HashTagged.Callable,
 		hasherIdle,
-		conform.Excuse(
-			cryptotest.HasherChecks.ID.HasherIDIdentifiesTheImplementation(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.Algorithm.HasherAlgorithmNamesTheFunction(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.Hash.HasherHashDistinguishesInputs(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.Hash.HasherHashIsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.Hash.HasherHashMatchesTheReference(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.Hash.HasherHashesNilAsEmpty(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.HashTagged.HasherHashTaggedHashesNilAsTheRoleByte(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.HashTagged.HasherHashTaggedIsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.HashTagged.HasherHashTaggedIsTheRoleByteFollowedByTheData(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.HashTagged.HasherHashTaggedRefusesABinaryRole(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.HashTagged.HasherLeafDiffersFromItsNode(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedDependsOnTheOrder(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedIsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedIsTheRoleByteFollowedByBothOperands(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedRefusesAUnaryRole(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedRefusesAnOperandOfAnotherWidth(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedRefusesTheZeroDigest(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedSeparatesTheRoles(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.NewStream.HasherStreamAbsorbsSplitWrites(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.NewStream.HasherStreamResetRestartsTheHash(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.NewStream.HasherStreamSumKeepsTheState(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.NewStream.HasherStreamSumsLikeHash(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[crypto.Hasher]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -896,94 +292,7 @@ func FuzzHasherSuiteCombineTagged(f *testing.F) {
 		f,
 		cryptotest.HasherChecks.CombineTagged.Callable,
 		hasherIdle,
-		conform.Excuse(
-			cryptotest.HasherChecks.ID.HasherIDIdentifiesTheImplementation(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.Algorithm.HasherAlgorithmNamesTheFunction(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.Hash.HasherHashDistinguishesInputs(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.Hash.HasherHashIsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.Hash.HasherHashMatchesTheReference(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.Hash.HasherHashesNilAsEmpty(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.HashTagged.HasherHashTaggedHashesNilAsTheRoleByte(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.HashTagged.HasherHashTaggedIsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.HashTagged.HasherHashTaggedIsTheRoleByteFollowedByTheData(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.HashTagged.HasherHashTaggedRefusesABinaryRole(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.HashTagged.HasherLeafDiffersFromItsNode(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedDependsOnTheOrder(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedIsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedIsTheRoleByteFollowedByBothOperands(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedRefusesAUnaryRole(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedRefusesAnOperandOfAnotherWidth(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedRefusesTheZeroDigest(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedSeparatesTheRoles(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.NewStream.HasherStreamAbsorbsSplitWrites(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.NewStream.HasherStreamResetRestartsTheHash(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.NewStream.HasherStreamSumKeepsTheState(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.NewStream.HasherStreamSumsLikeHash(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[crypto.Hasher]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -994,94 +303,7 @@ func FuzzHasherSuiteNewStream(f *testing.F) {
 		f,
 		cryptotest.HasherChecks.NewStream.Callable,
 		hasherIdle,
-		conform.Excuse(
-			cryptotest.HasherChecks.ID.HasherIDIdentifiesTheImplementation(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.Algorithm.HasherAlgorithmNamesTheFunction(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.Hash.HasherHashDistinguishesInputs(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.Hash.HasherHashIsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.Hash.HasherHashMatchesTheReference(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.Hash.HasherHashesNilAsEmpty(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.HashTagged.HasherHashTaggedHashesNilAsTheRoleByte(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.HashTagged.HasherHashTaggedIsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.HashTagged.HasherHashTaggedIsTheRoleByteFollowedByTheData(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.HashTagged.HasherHashTaggedRefusesABinaryRole(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.HashTagged.HasherLeafDiffersFromItsNode(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedDependsOnTheOrder(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedIsDeterministic(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedIsTheRoleByteFollowedByBothOperands(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedRefusesAUnaryRole(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedRefusesAnOperandOfAnotherWidth(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedRefusesTheZeroDigest(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.CombineTagged.HasherCombineTaggedSeparatesTheRoles(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.NewStream.HasherStreamAbsorbsSplitWrites(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.NewStream.HasherStreamResetRestartsTheHash(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.NewStream.HasherStreamSumKeepsTheState(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.HasherChecks.NewStream.HasherStreamSumsLikeHash(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[crypto.Hasher]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -1108,4 +330,4 @@ func BenchmarkHasherSuite(b *testing.B) {
 	})
 }
 
-// dokimi:provenance sha256:88fe634fea91b14acd2caa04c7ed0a0b899d31834615ee860718996c83d94bbc
+// dokimi:provenance sha256:6275008797f48b9f81fe082f0058de4591c0842625ccbe3b6dc7f48f9f6aa2fc

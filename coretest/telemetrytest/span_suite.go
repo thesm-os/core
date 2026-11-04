@@ -10,6 +10,8 @@ import (
 
 	"go.dokimi.dev/assert/prop"
 	"go.dokimi.dev/conform"
+	"go.dokimi.dev/conform/probe"
+	"go.dokimi.dev/spec"
 	"go.thesmos.sh/core/telemetry"
 )
 
@@ -66,16 +68,16 @@ func (c spanSetAttributes) SpanMethodsReturnAfterEnd() conform.ID[telemetry.Span
 	return c.Check("span-methods-return-after-end")
 }
 
-// SpanSetAttributesAcceptsAttributes returns the identity of the check
-// that SetAttributes of two attributes returns without a panic.
-func (c spanSetAttributes) SpanSetAttributesAcceptsAttributes() conform.ID[telemetry.Span] {
-	return c.Check("span-set-attributes-accepts-attributes")
-}
-
 // SpanSetAttributesAcceptsNoAttributes returns the identity of the check
 // that SetAttributes of nil and of an empty slice returns without a panic.
 func (c spanSetAttributes) SpanSetAttributesAcceptsNoAttributes() conform.ID[telemetry.Span] {
 	return c.Check("span-set-attributes-accepts-no-attributes")
+}
+
+// Smoke returns the identity of the check that SetAttributes returns
+// without a panic for derived inputs.
+func (c spanSetAttributes) Smoke() conform.ID[telemetry.Span] {
+	return c.Check("smoke")
 }
 
 // spanAddEvent is the name of Span.AddEvent, with the identities of its
@@ -84,11 +86,10 @@ type spanAddEvent struct {
 	conform.Callable[telemetry.Span]
 }
 
-// SpanAddEventAcceptsAttributes returns the identity of the check that
-// AddEvent of an event without attributes and of an event with attributes
-// returns without a panic.
-func (c spanAddEvent) SpanAddEventAcceptsAttributes() conform.ID[telemetry.Span] {
-	return c.Check("span-add-event-accepts-attributes")
+// Smoke returns the identity of the check that AddEvent returns without a
+// panic for derived inputs.
+func (c spanAddEvent) Smoke() conform.ID[telemetry.Span] {
+	return c.Check("smoke")
 }
 
 // spanSpanContext is the name of Span.SpanContext, with the identities of
@@ -97,12 +98,112 @@ type spanSpanContext struct {
 	conform.Callable[telemetry.Span]
 }
 
+// Smoke returns the identity of the check that SpanContext returns without
+// a panic for derived inputs.
+func (c spanSpanContext) Smoke() conform.ID[telemetry.Span] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that SpanContext returns
+// the same value for the same inputs.
+func (c spanSpanContext) Deterministic() conform.ID[telemetry.Span] {
+	return c.Check("deterministic")
+}
+
 // SpanSuite returns the checks of Span, and the calls and the budgets of
 // its callables.
 func SpanSuite() conform.Suite[telemetry.Span] {
 	return conform.Suite[telemetry.Span]{
 		Declaration: "Span",
+		Package:     "go.thesmos.sh/core/telemetry",
+		Generator:   conform.Generator{Name: "dokimi", Version: "0.1.0"},
 		Checks: []conform.Check[telemetry.Span]{
+			{
+				ID:          SpanChecks.SetAttributes.Smoke(),
+				Statement:   "SetAttributes returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *SpanHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().SetAttributes([]telemetry.Attr{{Key: "Key-a"}})
+						return nil
+					})
+				},
+				Defect: spanSetAttributesPanics,
+			},
+			{
+				ID:          SpanChecks.SetAttributes.Smoke().Generated(),
+				Statement:   "SetAttributes returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *SpanHandle, c *prop.Case) {
+					drawnAttrs := c.Draw(prop.Of[[]telemetry.Attr](), "attrs")
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().SetAttributes(drawnAttrs)
+						return nil
+					})
+				},
+				Defect: spanSetAttributesPanics,
+			},
+			{
+				ID:          SpanChecks.AddEvent.Smoke(),
+				Statement:   "AddEvent returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *SpanHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().AddEvent(telemetry.EventName("name-a"), []telemetry.Attr{{Key: "Key-a"}})
+						return nil
+					})
+				},
+				Defect: spanAddEventPanics,
+			},
+			{
+				ID:          SpanChecks.AddEvent.Smoke().Generated(),
+				Statement:   "AddEvent returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *SpanHandle, c *prop.Case) {
+					drawnName := c.Draw(prop.Of[telemetry.EventName](), "name")
+					drawnAttrs := c.Draw(prop.Of[[]telemetry.Attr](), "attrs")
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().AddEvent(drawnName, drawnAttrs)
+						return nil
+					})
+				},
+				Defect: spanAddEventPanics,
+			},
+			{
+				ID:          SpanChecks.SpanContext.Smoke(),
+				Statement:   "SpanContext returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *SpanHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().SpanContext()
+						return nil
+					})
+				},
+				Defect: spanSpanContextPanics,
+			},
+			{
+				ID:          SpanChecks.SpanContext.Deterministic(),
+				Statement:   "SpanContext returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[telemetry.Span]{SpanChecks.SpanContext.Smoke()},
+				Apply: func(h *SpanHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) (telemetry.SpanContext, error) {
+						r0 := h.Subject().SpanContext()
+						return r0, nil
+					})
+				},
+				Defect: spanSpanContextDrifts,
+			},
 			{
 				ID:        SpanChecks.End.SpanEndAcceptsANilError(),
 				Statement: "End(nil) returns without a panic",
@@ -122,22 +223,24 @@ func SpanSuite() conform.Suite[telemetry.Span] {
 				Defect:    spanSetAttributesPanicsAfterEnd,
 			},
 			{
-				ID:        SpanChecks.SetAttributes.SpanSetAttributesAcceptsAttributes(),
-				Statement: "SetAttributes of two attributes returns without a panic",
-				Apply:     SpanSetAttributesAcceptsAttributes,
-				Defect:    spanSetAttributesPanicsForAttributes,
-			},
-			{
 				ID:        SpanChecks.SetAttributes.SpanSetAttributesAcceptsNoAttributes(),
 				Statement: "SetAttributes of nil and of an empty slice returns without a panic",
 				Apply:     SpanSetAttributesAcceptsNoAttributes,
 				Defect:    spanSetAttributesPanicsForAnEmptySlice,
 			},
+		},
+		Unclaimed: []conform.Unclaimed{
 			{
-				ID:        SpanChecks.AddEvent.SpanAddEventAcceptsAttributes(),
-				Statement: "AddEvent of an event without attributes and of an event with attributes returns without a panic",
-				Apply:     SpanAddEventAcceptsAttributes,
-				Defect:    spanAddEventPanicsForAttributes,
+				Classification: "shape:mutator",
+				Callable:       "Span.End",
+				Stance:         spec.Silent,
+				Note:           "A mutation is an input of the other checks, and its result is an error alone.",
+			},
+			{
+				Classification: "shape:mutator",
+				Callable:       "Span.SetAttributes",
+				Stance:         spec.Silent,
+				Note:           "A mutation is an input of the other checks, and its result is an error alone.",
 			},
 		},
 		Calls: []conform.Call[telemetry.Span]{
@@ -310,4 +413,77 @@ func newSpanOver(_ *SpanHandle, spend func()) telemetry.Span {
 	return spanOver{spend: spend}
 }
 
-// dokimi:provenance sha256:4ba6e98ba01ab7d432487260cee9a2f2ae33f1fb2b43bdd3705980d64d7e941a
+// spanSetAttributesPanicsDefect is the planted defect of a Span whose
+// SetAttributes panics.
+type spanSetAttributesPanicsDefect struct {
+	spanOverEmbedded
+}
+
+// SetAttributes is the override of the planted defect.
+func (*spanSetAttributesPanicsDefect) SetAttributes(p0 []telemetry.Attr) {
+	panic("the planted defect of a Span whose SetAttributes panics")
+}
+
+// spanSetAttributesPanics returns the planted defect of a Span whose
+// SetAttributes panics over a fresh subject.
+func spanSetAttributesPanics(h *SpanHandle) telemetry.Span {
+	return &spanSetAttributesPanicsDefect{spanOverEmbedded: h.Fresh()}
+}
+
+// spanAddEventPanicsDefect is the planted defect of a Span whose AddEvent
+// panics.
+type spanAddEventPanicsDefect struct {
+	spanOverEmbedded
+}
+
+// AddEvent is the override of the planted defect.
+func (*spanAddEventPanicsDefect) AddEvent(p0 telemetry.EventName, p1 []telemetry.Attr) {
+	panic("the planted defect of a Span whose AddEvent panics")
+}
+
+// spanAddEventPanics returns the planted defect of a Span whose AddEvent
+// panics over a fresh subject.
+func spanAddEventPanics(h *SpanHandle) telemetry.Span {
+	return &spanAddEventPanicsDefect{spanOverEmbedded: h.Fresh()}
+}
+
+// spanSpanContextPanicsDefect is the planted defect of a Span whose
+// SpanContext panics.
+type spanSpanContextPanicsDefect struct {
+	spanOverEmbedded
+}
+
+// SpanContext is the override of the planted defect.
+func (*spanSpanContextPanicsDefect) SpanContext() (r0 telemetry.SpanContext) {
+	panic("the planted defect of a Span whose SpanContext panics")
+}
+
+// spanSpanContextPanics returns the planted defect of a Span whose
+// SpanContext panics over a fresh subject.
+func spanSpanContextPanics(h *SpanHandle) telemetry.Span {
+	return &spanSpanContextPanicsDefect{spanOverEmbedded: h.Fresh()}
+}
+
+// spanSpanContextDriftsDefect is the planted defect of a Span whose
+// SpanContext returns another value on the repeat.
+type spanSpanContextDriftsDefect struct {
+	spanOverEmbedded
+	calls int
+}
+
+// SpanContext is the override of the planted defect.
+func (d *spanSpanContextDriftsDefect) SpanContext() (r0 telemetry.SpanContext) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = telemetry.SpanContext{TraceID: telemetry.TraceID("TraceID-b")}
+	}
+	return r0
+}
+
+// spanSpanContextDrifts returns the planted defect of a Span whose
+// SpanContext returns another value on the repeat over a fresh subject.
+func spanSpanContextDrifts(h *SpanHandle) telemetry.Span {
+	return &spanSpanContextDriftsDefect{spanOverEmbedded: h.Fresh()}
+}
+
+// dokimi:provenance sha256:62d6eb09d51cfca8310e824463f2f2d51336c60532ba4cd956c8c00d521085e5

@@ -345,21 +345,6 @@ func NewStoreStub(tb assert.TB, opts ...StoreStubOption) *StoreStub {
 	return s
 }
 
-// NewStoreStubDelayed returns a double whose methods sleep d on clk before
-// they return. It applies opts after the clock and the latency.
-func NewStoreStubDelayed(tb assert.TB, d time.Duration, clk assert.Clock, opts ...StoreStubOption) *StoreStub {
-	return NewStoreStub(tb, append([]StoreStubOption{
-		StoreStubWithClock(clk),
-		StoreStubWithLatency(d),
-	}, opts...)...)
-}
-
-// NewStoreStubFailing returns a double on which each call of a method that
-// can fail fails with err. It applies opts after the failure.
-func NewStoreStubFailing(tb assert.TB, err error, opts ...StoreStubOption) *StoreStub {
-	return NewStoreStub(tb, append([]StoreStubOption{StoreStubFailing(err)}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *StoreStub) ResetCalls() {
@@ -664,26 +649,6 @@ func NewRangeReaderStub(tb assert.TB, opts ...RangeReaderStubOption) *RangeReade
 	return s
 }
 
-// NewRangeReaderStubDelayed returns a double whose methods sleep d on clk
-// before they return. It applies opts after the clock and the latency.
-func NewRangeReaderStubDelayed(
-	tb assert.TB,
-	d time.Duration,
-	clk assert.Clock,
-	opts ...RangeReaderStubOption,
-) *RangeReaderStub {
-	return NewRangeReaderStub(tb, append([]RangeReaderStubOption{
-		RangeReaderStubWithClock(clk),
-		RangeReaderStubWithLatency(d),
-	}, opts...)...)
-}
-
-// NewRangeReaderStubFailing returns a double on which each call of a
-// method that can fail fails with err. It applies opts after the failure.
-func NewRangeReaderStubFailing(tb assert.TB, err error, opts ...RangeReaderStubOption) *RangeReaderStub {
-	return NewRangeReaderStub(tb, append([]RangeReaderStubOption{RangeReaderStubFailing(err)}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *RangeReaderStub) ResetCalls() {
@@ -732,4 +697,4 @@ func (s *RangeReaderStub) ReadRange(
 	return r.Result0, r.Result1, r.Err
 }
 
-// dokimi:provenance sha256:3bf69b59712ad8fbf766ca6f62a74293b63cb81e0377253d766d6810d050b275
+// dokimi:provenance sha256:35273b4e155d245c5c7036946b5299bafb39be7b86776802b7e1e1dc22d4626c

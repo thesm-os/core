@@ -48,50 +48,7 @@ func TestXOFSuite(t *testing.T) {
 				},
 				Defect: func(*cryptotest.XOFHandle) crypto.XOF { return &xofSubject{} },
 			}),
-			conform.Excuse(
-				cryptotest.XOFChecks.ID.XOFIDIdentifiesTheImplementation(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.XOFChecks.Algorithm.XOFAlgorithmNamesTheFunction(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.XOFChecks.NewXOFStream.XOFAbsorbsInPieces(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.XOFChecks.NewXOFStream.XOFLongerReadExtendsTheStream(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.XOFChecks.NewXOFStream.XOFOutputDependsOnTheInput(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.XOFChecks.NewXOFStream.XOFResetDiscardsAbsorbedInput(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.XOFChecks.NewXOFStream.XOFResetRestartsTheOutput(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.XOFChecks.NewXOFStream.XOFSqueezesAnEmptyInput(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.XOFChecks.NewXOFStream.XOFStreamsAreIndependent(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.XOFChecks.NewXOFStream.XOFSuccessiveReadsContinueOneStream(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.XOFChecks.NewXOFStream.XOFWriteAfterReadReturnsErrXOFSqueezing(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[crypto.XOF]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -113,50 +70,7 @@ func TestXOFSuite(t *testing.T) {
 				},
 				Defect: func(*cryptotest.XOFHandle) crypto.XOF { return &xofSubject{} },
 			}),
-			conform.Excuse(
-				cryptotest.XOFChecks.ID.XOFIDIdentifiesTheImplementation(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.XOFChecks.Algorithm.XOFAlgorithmNamesTheFunction(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.XOFChecks.NewXOFStream.XOFAbsorbsInPieces(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.XOFChecks.NewXOFStream.XOFLongerReadExtendsTheStream(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.XOFChecks.NewXOFStream.XOFOutputDependsOnTheInput(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.XOFChecks.NewXOFStream.XOFResetDiscardsAbsorbedInput(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.XOFChecks.NewXOFStream.XOFResetRestartsTheOutput(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.XOFChecks.NewXOFStream.XOFSqueezesAnEmptyInput(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.XOFChecks.NewXOFStream.XOFStreamsAreIndependent(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.XOFChecks.NewXOFStream.XOFSuccessiveReadsContinueOneStream(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				cryptotest.XOFChecks.NewXOFStream.XOFWriteAfterReadReturnsErrXOFSqueezing(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[crypto.XOF]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -231,10 +145,14 @@ func TestXOFSuite(t *testing.T) {
 	})
 }
 
+// xofSuite is the suite of XOF that the tests of the planted defect of a
+// ceiling apply.
+var xofSuite = cryptotest.XOFSuite()
+
 // xofIdle returns the planted defect of a ceiling of XOF with a spend of
-// nothing, a subject that answers each call at once.
+// nothing. Each call of the defect returns its zero results at once.
 func xofIdle(h *cryptotest.XOFHandle) crypto.XOF {
-	return cryptotest.XOFSuite().Calls[0].Over(h, func() {})
+	return xofSuite.Calls[0].Over(h, func() {})
 }
 
 // TestXOFSuiteBudgets applies the allocation ceilings of the suite of XOF
@@ -247,50 +165,7 @@ func TestXOFSuiteBudgets(t *testing.T) {
 		conform.Ceilings(cryptotest.XOFChecks.ID.Callable, conform.Budget{Allocs: new(uint64(0))}),
 		conform.Ceilings(cryptotest.XOFChecks.Algorithm.Callable, conform.Budget{Allocs: new(uint64(0))}),
 		conform.Ceilings(cryptotest.XOFChecks.NewXOFStream.Callable, conform.Budget{Allocs: new(uint64(0))}),
-		conform.Excuse(
-			cryptotest.XOFChecks.ID.XOFIDIdentifiesTheImplementation(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.XOFChecks.Algorithm.XOFAlgorithmNamesTheFunction(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.XOFChecks.NewXOFStream.XOFAbsorbsInPieces(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.XOFChecks.NewXOFStream.XOFLongerReadExtendsTheStream(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.XOFChecks.NewXOFStream.XOFOutputDependsOnTheInput(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.XOFChecks.NewXOFStream.XOFResetDiscardsAbsorbedInput(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.XOFChecks.NewXOFStream.XOFResetRestartsTheOutput(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.XOFChecks.NewXOFStream.XOFSqueezesAnEmptyInput(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.XOFChecks.NewXOFStream.XOFStreamsAreIndependent(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.XOFChecks.NewXOFStream.XOFSuccessiveReadsContinueOneStream(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.XOFChecks.NewXOFStream.XOFWriteAfterReadReturnsErrXOFSqueezing(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[crypto.XOF]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -301,50 +176,7 @@ func FuzzXOFSuiteID(f *testing.F) {
 		f,
 		cryptotest.XOFChecks.ID.Callable,
 		xofIdle,
-		conform.Excuse(
-			cryptotest.XOFChecks.ID.XOFIDIdentifiesTheImplementation(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.XOFChecks.Algorithm.XOFAlgorithmNamesTheFunction(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.XOFChecks.NewXOFStream.XOFAbsorbsInPieces(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.XOFChecks.NewXOFStream.XOFLongerReadExtendsTheStream(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.XOFChecks.NewXOFStream.XOFOutputDependsOnTheInput(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.XOFChecks.NewXOFStream.XOFResetDiscardsAbsorbedInput(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.XOFChecks.NewXOFStream.XOFResetRestartsTheOutput(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.XOFChecks.NewXOFStream.XOFSqueezesAnEmptyInput(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.XOFChecks.NewXOFStream.XOFStreamsAreIndependent(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.XOFChecks.NewXOFStream.XOFSuccessiveReadsContinueOneStream(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.XOFChecks.NewXOFStream.XOFWriteAfterReadReturnsErrXOFSqueezing(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[crypto.XOF]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -355,50 +187,7 @@ func FuzzXOFSuiteAlgorithm(f *testing.F) {
 		f,
 		cryptotest.XOFChecks.Algorithm.Callable,
 		xofIdle,
-		conform.Excuse(
-			cryptotest.XOFChecks.ID.XOFIDIdentifiesTheImplementation(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.XOFChecks.Algorithm.XOFAlgorithmNamesTheFunction(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.XOFChecks.NewXOFStream.XOFAbsorbsInPieces(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.XOFChecks.NewXOFStream.XOFLongerReadExtendsTheStream(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.XOFChecks.NewXOFStream.XOFOutputDependsOnTheInput(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.XOFChecks.NewXOFStream.XOFResetDiscardsAbsorbedInput(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.XOFChecks.NewXOFStream.XOFResetRestartsTheOutput(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.XOFChecks.NewXOFStream.XOFSqueezesAnEmptyInput(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.XOFChecks.NewXOFStream.XOFStreamsAreIndependent(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.XOFChecks.NewXOFStream.XOFSuccessiveReadsContinueOneStream(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.XOFChecks.NewXOFStream.XOFWriteAfterReadReturnsErrXOFSqueezing(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[crypto.XOF]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -409,50 +198,7 @@ func FuzzXOFSuiteNewXOFStream(f *testing.F) {
 		f,
 		cryptotest.XOFChecks.NewXOFStream.Callable,
 		xofIdle,
-		conform.Excuse(
-			cryptotest.XOFChecks.ID.XOFIDIdentifiesTheImplementation(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.XOFChecks.Algorithm.XOFAlgorithmNamesTheFunction(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.XOFChecks.NewXOFStream.XOFAbsorbsInPieces(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.XOFChecks.NewXOFStream.XOFLongerReadExtendsTheStream(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.XOFChecks.NewXOFStream.XOFOutputDependsOnTheInput(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.XOFChecks.NewXOFStream.XOFResetDiscardsAbsorbedInput(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.XOFChecks.NewXOFStream.XOFResetRestartsTheOutput(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.XOFChecks.NewXOFStream.XOFSqueezesAnEmptyInput(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.XOFChecks.NewXOFStream.XOFStreamsAreIndependent(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.XOFChecks.NewXOFStream.XOFSuccessiveReadsContinueOneStream(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			cryptotest.XOFChecks.NewXOFStream.XOFWriteAfterReadReturnsErrXOFSqueezing(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[crypto.XOF]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -469,4 +215,4 @@ func BenchmarkXOFSuite(b *testing.B) {
 	})
 }
 
-// dokimi:provenance sha256:84988303c6c16353de44b3c5d0f800d53a3950632d8963659b3017006e9aaa3d
+// dokimi:provenance sha256:4afb7ee6faf5c9dabe8c4c5ca4cf9553d24b3b9aa820b171d028812ac8e1c079

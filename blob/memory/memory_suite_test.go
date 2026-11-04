@@ -7,6 +7,7 @@ package memory_test
 import (
 	"testing"
 
+	"go.dokimi.dev/conform"
 	"go.thesmos.sh/core/blob/memory"
 	"go.thesmos.sh/core/coretest/blobtest"
 )
@@ -16,13 +17,24 @@ import (
 func TestStoreConformsToStore(t *testing.T) {
 	t.Parallel()
 
-	blobtest.RunStoreSuite(t, newStore, storeOptions()...)
+	opts := append([]blobtest.StoreOption{
+		conform.Excuse(
+			blobtest.StoreChecks.Get.StoreGetReaderFailsWithErrMismatch(),
+			"a reader of the store in memory reads the bytes of its version after an overwrite or a delete",
+		),
+	}, storeOptions()...)
+	blobtest.RunStoreSuite(t, newStore, opts...)
 }
 
 // BenchmarkStoreConformsToStore measures each callable of the suite of
 // Store on Store.
 func BenchmarkStoreConformsToStore(b *testing.B) {
-	opts := storeOptions()
+	opts := append([]blobtest.StoreOption{
+		conform.Excuse(
+			blobtest.StoreChecks.Get.StoreGetReaderFailsWithErrMismatch(),
+			"a reader of the store in memory reads the bytes of its version after an overwrite or a delete",
+		),
+	}, storeOptions()...)
 	b.Run("Put", func(b *testing.B) {
 		blobtest.BenchStoreSuite(
 			b,
@@ -63,51 +75,81 @@ func BenchmarkStoreConformsToStore(b *testing.B) {
 // FuzzStoreConformsToStorePut fuzzes the property checks of Store.Put on
 // Store.
 func FuzzStoreConformsToStorePut(f *testing.F) {
+	opts := append([]blobtest.StoreOption{
+		conform.Excuse(
+			blobtest.StoreChecks.Get.StoreGetReaderFailsWithErrMismatch(),
+			"a reader of the store in memory reads the bytes of its version after an overwrite or a delete",
+		),
+	}, storeOptions()...)
 	blobtest.FuzzStoreSuite(
 		f,
 		blobtest.StoreChecks.Put.Callable,
 		func(*blobtest.StoreHandle) *memory.Store { return newStore() },
-		storeOptions()...)
+		opts...)
 }
 
 // FuzzStoreConformsToStoreGet fuzzes the property checks of Store.Get on
 // Store.
 func FuzzStoreConformsToStoreGet(f *testing.F) {
+	opts := append([]blobtest.StoreOption{
+		conform.Excuse(
+			blobtest.StoreChecks.Get.StoreGetReaderFailsWithErrMismatch(),
+			"a reader of the store in memory reads the bytes of its version after an overwrite or a delete",
+		),
+	}, storeOptions()...)
 	blobtest.FuzzStoreSuite(
 		f,
 		blobtest.StoreChecks.Get.Callable,
 		func(*blobtest.StoreHandle) *memory.Store { return newStore() },
-		storeOptions()...)
+		opts...)
 }
 
 // FuzzStoreConformsToStoreStat fuzzes the property checks of Store.Stat on
 // Store.
 func FuzzStoreConformsToStoreStat(f *testing.F) {
+	opts := append([]blobtest.StoreOption{
+		conform.Excuse(
+			blobtest.StoreChecks.Get.StoreGetReaderFailsWithErrMismatch(),
+			"a reader of the store in memory reads the bytes of its version after an overwrite or a delete",
+		),
+	}, storeOptions()...)
 	blobtest.FuzzStoreSuite(
 		f,
 		blobtest.StoreChecks.Stat.Callable,
 		func(*blobtest.StoreHandle) *memory.Store { return newStore() },
-		storeOptions()...)
+		opts...)
 }
 
 // FuzzStoreConformsToStoreDelete fuzzes the property checks of
 // Store.Delete on Store.
 func FuzzStoreConformsToStoreDelete(f *testing.F) {
+	opts := append([]blobtest.StoreOption{
+		conform.Excuse(
+			blobtest.StoreChecks.Get.StoreGetReaderFailsWithErrMismatch(),
+			"a reader of the store in memory reads the bytes of its version after an overwrite or a delete",
+		),
+	}, storeOptions()...)
 	blobtest.FuzzStoreSuite(
 		f,
 		blobtest.StoreChecks.Delete.Callable,
 		func(*blobtest.StoreHandle) *memory.Store { return newStore() },
-		storeOptions()...)
+		opts...)
 }
 
 // FuzzStoreConformsToStoreList fuzzes the property checks of Store.List on
 // Store.
 func FuzzStoreConformsToStoreList(f *testing.F) {
+	opts := append([]blobtest.StoreOption{
+		conform.Excuse(
+			blobtest.StoreChecks.Get.StoreGetReaderFailsWithErrMismatch(),
+			"a reader of the store in memory reads the bytes of its version after an overwrite or a delete",
+		),
+	}, storeOptions()...)
 	blobtest.FuzzStoreSuite(
 		f,
 		blobtest.StoreChecks.List.Callable,
 		func(*blobtest.StoreHandle) *memory.Store { return newStore() },
-		storeOptions()...)
+		opts...)
 }
 
 // TestStoreConformsToRangeReader applies the checks of the suite of
@@ -140,4 +182,4 @@ func FuzzStoreConformsToRangeReaderReadRange(f *testing.F) {
 	)
 }
 
-// dokimi:provenance sha256:3826d77c3c258f97f9e59c17ad939fea604e69041d4b956f73b327a11fc2e046
+// dokimi:provenance sha256:cc4b97abfce28065063d8ac6d8a26c0f5831ae395f2fe4098623a60cb5575beb

@@ -32,32 +32,6 @@ var (
 	signWrongLengths = [][]byte{nil, {}, make([]byte, 1), make([]byte, 16)}
 )
 
-// SignerAlgorithmIsStable checks that Algorithm returns the same name on every
-// call.
-//
-//dokimi:check Signer.Algorithm defect=signerAlternatesItsAlgorithm
-func SignerAlgorithmIsStable(h *SignerHandle) {
-	assert.Deterministic(h, func(s sign.Signer) (crypto.Algorithm, error) { return s.Algorithm(), nil }, h.Subject(),
-		h.Statement())
-}
-
-// SignerKeyIDIsStable checks that KeyID returns the same key ID on every call.
-//
-//dokimi:check Signer.KeyID defect=signerAlternatesItsKeyID
-func SignerKeyIDIsStable(h *SignerHandle) {
-	assert.Deterministic(h, func(s sign.Signer) (sign.KeyID, error) { return s.KeyID(), nil }, h.Subject(),
-		h.Statement())
-}
-
-// SignerPublicKeyIsStable checks that PublicKey returns the same bytes on every
-// call.
-//
-//dokimi:check Signer.PublicKey defect=signerAlternatesItsPublicKey
-func SignerPublicKeyIsStable(h *SignerHandle) {
-	assert.Deterministic(h, func(s sign.Signer) ([]byte, error) { return s.PublicKey(), nil }, h.Subject(),
-		h.Statement())
-}
-
 // SignerSignaturesVerify checks that Verify accepts the signature of Sign over
 // a message.
 //
@@ -110,33 +84,6 @@ func SignerRefusesASignatureOfAWrongLength(h *SignerHandle) {
 	for _, sig := range signWrongLengths {
 		assert.False(h, s.Verify(signAny, sig), h.Statement())
 	}
-}
-
-// VerifierAlgorithmIsStable checks that Algorithm returns the same name on
-// every call.
-//
-//dokimi:check Verifier.Algorithm defect=verifierAlternatesItsAlgorithm
-func VerifierAlgorithmIsStable(h *VerifierHandle) {
-	assert.Deterministic(h, func(v sign.Verifier) (crypto.Algorithm, error) { return v.Algorithm(), nil },
-		h.Subject(), h.Statement())
-}
-
-// VerifierKeyIDIsStable checks that KeyID returns the same key ID on every
-// call.
-//
-//dokimi:check Verifier.KeyID defect=verifierAlternatesItsKeyID
-func VerifierKeyIDIsStable(h *VerifierHandle) {
-	assert.Deterministic(h, func(v sign.Verifier) (sign.KeyID, error) { return v.KeyID(), nil }, h.Subject(),
-		h.Statement())
-}
-
-// VerifierPublicKeyIsStable checks that PublicKey returns the same bytes on
-// every call.
-//
-//dokimi:check Verifier.PublicKey defect=verifierAlternatesItsPublicKey
-func VerifierPublicKeyIsStable(h *VerifierHandle) {
-	assert.Deterministic(h, func(v sign.Verifier) ([]byte, error) { return v.PublicKey(), nil }, h.Subject(),
-		h.Statement())
 }
 
 // VerifierRefusesANilSignature checks that Verify refuses a nil signature.
@@ -439,56 +386,6 @@ func (s *stdlibVerifyStream) Verify(sig []byte) bool {
 	return ecdsa.VerifyASN1(&s.signer.fix.StdlibPriv.PublicKey, s.digest.Sum(nil), sig)
 }
 
-// signerAlternatesItsAlgorithm returns the planted defect of
-// SignerAlgorithmIsStable: a Signer whose Algorithm alternates between two
-// names.
-func signerAlternatesItsAlgorithm(h *SignerHandle) sign.Signer {
-	var calls int
-
-	return NewSignerStub(h, SignerStubDelegateTo(&stdlibSigner{spec: ed25519Spec()}),
-		WithSignerAlgorithm(func() crypto.Algorithm {
-			calls++
-			if calls%2 == 0 {
-				return crypto.AlgECDSAP384
-			}
-
-			return crypto.AlgEd25519
-		}))
-}
-
-// signerAlternatesItsKeyID returns the planted defect of SignerKeyIDIsStable: a
-// Signer whose KeyID alternates between its key ID and the zero key ID.
-func signerAlternatesItsKeyID(h *SignerHandle) sign.Signer {
-	sound := &stdlibSigner{spec: ed25519Spec()}
-	var calls int
-
-	return NewSignerStub(h, SignerStubDelegateTo(sound), WithSignerKeyID(func() sign.KeyID {
-		calls++
-		if calls%2 == 0 {
-			return sign.KeyID{}
-		}
-
-		return sound.KeyID()
-	}))
-}
-
-// signerAlternatesItsPublicKey returns the planted defect of
-// SignerPublicKeyIsStable: a Signer whose PublicKey alternates between its key
-// and no bytes.
-func signerAlternatesItsPublicKey(h *SignerHandle) sign.Signer {
-	sound := &stdlibSigner{spec: ed25519Spec()}
-	var calls int
-
-	return NewSignerStub(h, SignerStubDelegateTo(sound), WithSignerPublicKey(func() []byte {
-		calls++
-		if calls%2 == 0 {
-			return nil
-		}
-
-		return sound.PublicKey()
-	}))
-}
-
 // signerSignsAnotherMessage returns the planted defect of
 // SignerSignaturesVerify: a Signer whose Sign of the pangram signs another
 // message.
@@ -545,56 +442,6 @@ func signerAcceptsANilSignature(h *SignerHandle) sign.Signer {
 
 	return NewSignerStub(h, SignerStubDelegateTo(sound), WithSignerVerify(func(message, signature []byte) bool {
 		return signature == nil || sound.Verify(message, signature)
-	}))
-}
-
-// verifierAlternatesItsAlgorithm returns the planted defect of
-// VerifierAlgorithmIsStable: a Verifier whose Algorithm alternates between two
-// names.
-func verifierAlternatesItsAlgorithm(h *VerifierHandle) sign.Verifier {
-	var calls int
-
-	return NewVerifierStub(h, VerifierStubDelegateTo(soundVerifier()), WithVerifierAlgorithm(func() crypto.Algorithm {
-		calls++
-		if calls%2 == 0 {
-			return crypto.AlgECDSAP384
-		}
-
-		return crypto.AlgEd25519
-	}))
-}
-
-// verifierAlternatesItsKeyID returns the planted defect of
-// VerifierKeyIDIsStable: a Verifier whose KeyID alternates between its key ID
-// and the zero key ID.
-func verifierAlternatesItsKeyID(h *VerifierHandle) sign.Verifier {
-	sound := soundVerifier()
-	var calls int
-
-	return NewVerifierStub(h, VerifierStubDelegateTo(sound), WithVerifierKeyID(func() sign.KeyID {
-		calls++
-		if calls%2 == 0 {
-			return sign.KeyID{}
-		}
-
-		return sound.KeyID()
-	}))
-}
-
-// verifierAlternatesItsPublicKey returns the planted defect of
-// VerifierPublicKeyIsStable: a Verifier whose PublicKey alternates between its
-// key and no bytes.
-func verifierAlternatesItsPublicKey(h *VerifierHandle) sign.Verifier {
-	sound := soundVerifier()
-	var calls int
-
-	return NewVerifierStub(h, VerifierStubDelegateTo(sound), WithVerifierPublicKey(func() []byte {
-		calls++
-		if calls%2 == 0 {
-			return nil
-		}
-
-		return sound.PublicKey()
 	}))
 }
 

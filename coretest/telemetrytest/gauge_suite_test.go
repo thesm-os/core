@@ -48,62 +48,7 @@ func TestGaugeSuite(t *testing.T) {
 				},
 				Defect: func(*telemetrytest.GaugeHandle) telemetry.Gauge { return &gaugeSubject{} },
 			}),
-			conform.Excuse(
-				telemetrytest.GaugeChecks.Set.GaugeSetReturnsAfterRelease(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.GaugeChecks.Set.GaugeSetReturnsForAFiniteValue(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.GaugeChecks.Set.GaugeSetReturnsForANonFiniteValue(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.GaugeChecks.Add.GaugeAddReturnsAfterRelease(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.GaugeChecks.Add.GaugeAddReturnsForAFiniteDelta(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.GaugeChecks.Add.GaugeAddReturnsForANonFiniteDelta(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.GaugeChecks.With.GaugeWithOfABoundGaugeReturnsAGauge(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.GaugeChecks.With.GaugeWithReturnsAGaugeForEmptyAttributes(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.GaugeChecks.With.GaugeWithReturnsAGaugeForNilAttributes(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.GaugeChecks.Release.GaugeReleaseLeavesAnUnboundGaugeUsable(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.GaugeChecks.Release.GaugeReleaseLeavesTheGaugeOfWithUsable(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.GaugeChecks.Release.GaugeReleaseReturnsWhileAddRuns(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.GaugeChecks.Release.GaugeReleaseReturnsWhileSetRuns(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.GaugeChecks.Release.GaugeSecondReleaseReturns(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[telemetry.Gauge]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -125,62 +70,7 @@ func TestGaugeSuite(t *testing.T) {
 				},
 				Defect: func(*telemetrytest.GaugeHandle) telemetry.Gauge { return &gaugeSubject{} },
 			}),
-			conform.Excuse(
-				telemetrytest.GaugeChecks.Set.GaugeSetReturnsAfterRelease(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.GaugeChecks.Set.GaugeSetReturnsForAFiniteValue(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.GaugeChecks.Set.GaugeSetReturnsForANonFiniteValue(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.GaugeChecks.Add.GaugeAddReturnsAfterRelease(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.GaugeChecks.Add.GaugeAddReturnsForAFiniteDelta(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.GaugeChecks.Add.GaugeAddReturnsForANonFiniteDelta(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.GaugeChecks.With.GaugeWithOfABoundGaugeReturnsAGauge(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.GaugeChecks.With.GaugeWithReturnsAGaugeForEmptyAttributes(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.GaugeChecks.With.GaugeWithReturnsAGaugeForNilAttributes(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.GaugeChecks.Release.GaugeReleaseLeavesAnUnboundGaugeUsable(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.GaugeChecks.Release.GaugeReleaseLeavesTheGaugeOfWithUsable(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.GaugeChecks.Release.GaugeReleaseReturnsWhileAddRuns(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.GaugeChecks.Release.GaugeReleaseReturnsWhileSetRuns(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.GaugeChecks.Release.GaugeSecondReleaseReturns(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[telemetry.Gauge]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -194,12 +84,6 @@ func TestGaugeSuite(t *testing.T) {
 		)
 		assert.Equal(
 			t,
-			string(telemetrytest.GaugeChecks.Set.GaugeSetReturnsForAFiniteValue()),
-			"Gauge.Set/gauge-set-returns-for-a-finite-value",
-			"the identity of the check joins the callable and the segment of the check",
-		)
-		assert.Equal(
-			t,
 			string(telemetrytest.GaugeChecks.Set.GaugeSetReturnsForANonFiniteValue()),
 			"Gauge.Set/gauge-set-returns-for-a-non-finite-value",
 			"the identity of the check joins the callable and the segment of the check",
@@ -208,12 +92,6 @@ func TestGaugeSuite(t *testing.T) {
 			t,
 			string(telemetrytest.GaugeChecks.Add.GaugeAddReturnsAfterRelease()),
 			"Gauge.Add/gauge-add-returns-after-release",
-			"the identity of the check joins the callable and the segment of the check",
-		)
-		assert.Equal(
-			t,
-			string(telemetrytest.GaugeChecks.Add.GaugeAddReturnsForAFiniteDelta()),
-			"Gauge.Add/gauge-add-returns-for-a-finite-delta",
 			"the identity of the check joins the callable and the segment of the check",
 		)
 		assert.Equal(
@@ -273,10 +151,14 @@ func TestGaugeSuite(t *testing.T) {
 	})
 }
 
+// gaugeSuite is the suite of Gauge that the tests of the planted defect of
+// a ceiling apply.
+var gaugeSuite = telemetrytest.GaugeSuite()
+
 // gaugeIdle returns the planted defect of a ceiling of Gauge with a spend
-// of nothing, a subject that answers each call at once.
+// of nothing. Each call of the defect returns its zero results at once.
 func gaugeIdle(h *telemetrytest.GaugeHandle) telemetry.Gauge {
-	return telemetrytest.GaugeSuite().Calls[0].Over(h, func() {})
+	return gaugeSuite.Calls[0].Over(h, func() {})
 }
 
 // TestGaugeSuiteBudgets applies the allocation ceilings of the suite of
@@ -291,62 +173,7 @@ func TestGaugeSuiteBudgets(t *testing.T) {
 		conform.Ceilings(telemetrytest.GaugeChecks.Add.Callable, conform.Budget{Allocs: new(uint64(0))}),
 		conform.Ceilings(telemetrytest.GaugeChecks.With.Callable, conform.Budget{Allocs: new(uint64(0))}),
 		conform.Ceilings(telemetrytest.GaugeChecks.Release.Callable, conform.Budget{Allocs: new(uint64(0))}),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Set.GaugeSetReturnsAfterRelease(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Set.GaugeSetReturnsForAFiniteValue(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Set.GaugeSetReturnsForANonFiniteValue(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Add.GaugeAddReturnsAfterRelease(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Add.GaugeAddReturnsForAFiniteDelta(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Add.GaugeAddReturnsForANonFiniteDelta(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.With.GaugeWithOfABoundGaugeReturnsAGauge(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.With.GaugeWithReturnsAGaugeForEmptyAttributes(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.With.GaugeWithReturnsAGaugeForNilAttributes(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Release.GaugeReleaseLeavesAnUnboundGaugeUsable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Release.GaugeReleaseLeavesTheGaugeOfWithUsable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Release.GaugeReleaseReturnsWhileAddRuns(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Release.GaugeReleaseReturnsWhileSetRuns(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Release.GaugeSecondReleaseReturns(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[telemetry.Gauge]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -357,62 +184,7 @@ func FuzzGaugeSuiteSet(f *testing.F) {
 		f,
 		telemetrytest.GaugeChecks.Set.Callable,
 		gaugeIdle,
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Set.GaugeSetReturnsAfterRelease(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Set.GaugeSetReturnsForAFiniteValue(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Set.GaugeSetReturnsForANonFiniteValue(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Add.GaugeAddReturnsAfterRelease(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Add.GaugeAddReturnsForAFiniteDelta(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Add.GaugeAddReturnsForANonFiniteDelta(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.With.GaugeWithOfABoundGaugeReturnsAGauge(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.With.GaugeWithReturnsAGaugeForEmptyAttributes(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.With.GaugeWithReturnsAGaugeForNilAttributes(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Release.GaugeReleaseLeavesAnUnboundGaugeUsable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Release.GaugeReleaseLeavesTheGaugeOfWithUsable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Release.GaugeReleaseReturnsWhileAddRuns(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Release.GaugeReleaseReturnsWhileSetRuns(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Release.GaugeSecondReleaseReturns(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[telemetry.Gauge]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -423,62 +195,7 @@ func FuzzGaugeSuiteAdd(f *testing.F) {
 		f,
 		telemetrytest.GaugeChecks.Add.Callable,
 		gaugeIdle,
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Set.GaugeSetReturnsAfterRelease(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Set.GaugeSetReturnsForAFiniteValue(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Set.GaugeSetReturnsForANonFiniteValue(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Add.GaugeAddReturnsAfterRelease(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Add.GaugeAddReturnsForAFiniteDelta(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Add.GaugeAddReturnsForANonFiniteDelta(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.With.GaugeWithOfABoundGaugeReturnsAGauge(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.With.GaugeWithReturnsAGaugeForEmptyAttributes(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.With.GaugeWithReturnsAGaugeForNilAttributes(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Release.GaugeReleaseLeavesAnUnboundGaugeUsable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Release.GaugeReleaseLeavesTheGaugeOfWithUsable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Release.GaugeReleaseReturnsWhileAddRuns(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Release.GaugeReleaseReturnsWhileSetRuns(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Release.GaugeSecondReleaseReturns(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[telemetry.Gauge]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -489,62 +206,7 @@ func FuzzGaugeSuiteWith(f *testing.F) {
 		f,
 		telemetrytest.GaugeChecks.With.Callable,
 		gaugeIdle,
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Set.GaugeSetReturnsAfterRelease(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Set.GaugeSetReturnsForAFiniteValue(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Set.GaugeSetReturnsForANonFiniteValue(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Add.GaugeAddReturnsAfterRelease(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Add.GaugeAddReturnsForAFiniteDelta(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Add.GaugeAddReturnsForANonFiniteDelta(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.With.GaugeWithOfABoundGaugeReturnsAGauge(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.With.GaugeWithReturnsAGaugeForEmptyAttributes(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.With.GaugeWithReturnsAGaugeForNilAttributes(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Release.GaugeReleaseLeavesAnUnboundGaugeUsable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Release.GaugeReleaseLeavesTheGaugeOfWithUsable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Release.GaugeReleaseReturnsWhileAddRuns(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Release.GaugeReleaseReturnsWhileSetRuns(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Release.GaugeSecondReleaseReturns(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[telemetry.Gauge]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -555,62 +217,7 @@ func FuzzGaugeSuiteRelease(f *testing.F) {
 		f,
 		telemetrytest.GaugeChecks.Release.Callable,
 		gaugeIdle,
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Set.GaugeSetReturnsAfterRelease(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Set.GaugeSetReturnsForAFiniteValue(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Set.GaugeSetReturnsForANonFiniteValue(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Add.GaugeAddReturnsAfterRelease(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Add.GaugeAddReturnsForAFiniteDelta(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Add.GaugeAddReturnsForANonFiniteDelta(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.With.GaugeWithOfABoundGaugeReturnsAGauge(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.With.GaugeWithReturnsAGaugeForEmptyAttributes(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.With.GaugeWithReturnsAGaugeForNilAttributes(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Release.GaugeReleaseLeavesAnUnboundGaugeUsable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Release.GaugeReleaseLeavesTheGaugeOfWithUsable(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Release.GaugeReleaseReturnsWhileAddRuns(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Release.GaugeReleaseReturnsWhileSetRuns(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.GaugeChecks.Release.GaugeSecondReleaseReturns(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[telemetry.Gauge]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -631,4 +238,4 @@ func BenchmarkGaugeSuite(b *testing.B) {
 	})
 }
 
-// dokimi:provenance sha256:990374e9f4ef29bbd8e3548f00b200ba834160c9e70a9fdbf10331d14ecf83df
+// dokimi:provenance sha256:b1c30aff1520a5e415f9cb177bcc452b3d3d1bff70f716da3c213acd3abbae6e

@@ -100,13 +100,15 @@ func macStubNewStream(tb assert.TB, s *cryptotest.MACStub) crypto.Stream {
 	return s.NewStream()
 }
 
-// macStubIDSubject returns the subject of [stub.Behaviour] for ID. The
-// subject calls a new double that reports to tb.
+// macStubIDSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for ID. The subject calls a new double that
+// reports to tb.
 func macStubIDSubject(tb assert.TB) stub.Subject[cryptotest.MACIDCall, cryptotest.MACIDReturn] {
 	tb.Helper()
 	s := cryptotest.NewMACStub(tb)
 	return stub.Subject[cryptotest.MACIDCall, cryptotest.MACIDReturn]{
-		Stub: s.OnID.MethodStub,
+		Stub:  s.OnID.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = macStubID(tb, s)
 		},
@@ -114,9 +116,14 @@ func macStubIDSubject(tb assert.TB) stub.Subject[cryptotest.MACIDCall, cryptotes
 			got0 := macStubID(tb, s)
 			return cryptotest.MACIDReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() cryptotest.MACIDReturn {
+			want0 := macStubIDPins()
+			s.OnID.Returns(want0)
+			return cryptotest.MACIDReturn{Result: want0}
+		},
+		Override: func(seen func(cryptotest.MACIDCall)) {
 			s.OnID.Func(func() crypto.ID {
-				mark()
+				seen(cryptotest.MACIDCall{})
 				var z0 crypto.ID
 				return z0
 			})
@@ -124,13 +131,15 @@ func macStubIDSubject(tb assert.TB) stub.Subject[cryptotest.MACIDCall, cryptotes
 	}
 }
 
-// macStubAlgorithmSubject returns the subject of [stub.Behaviour] for
-// Algorithm. The subject calls a new double that reports to tb.
+// macStubAlgorithmSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Algorithm. The subject calls a new double that
+// reports to tb.
 func macStubAlgorithmSubject(tb assert.TB) stub.Subject[cryptotest.MACAlgorithmCall, cryptotest.MACAlgorithmReturn] {
 	tb.Helper()
 	s := cryptotest.NewMACStub(tb)
 	return stub.Subject[cryptotest.MACAlgorithmCall, cryptotest.MACAlgorithmReturn]{
-		Stub: s.OnAlgorithm.MethodStub,
+		Stub:  s.OnAlgorithm.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = macStubAlgorithm(tb, s)
 		},
@@ -138,9 +147,14 @@ func macStubAlgorithmSubject(tb assert.TB) stub.Subject[cryptotest.MACAlgorithmC
 			got0 := macStubAlgorithm(tb, s)
 			return cryptotest.MACAlgorithmReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() cryptotest.MACAlgorithmReturn {
+			want0 := macStubAlgorithmPins()
+			s.OnAlgorithm.Returns(want0)
+			return cryptotest.MACAlgorithmReturn{Result: want0}
+		},
+		Override: func(seen func(cryptotest.MACAlgorithmCall)) {
 			s.OnAlgorithm.Func(func() crypto.Algorithm {
-				mark()
+				seen(cryptotest.MACAlgorithmCall{})
 				var z0 crypto.Algorithm
 				return z0
 			})
@@ -148,13 +162,15 @@ func macStubAlgorithmSubject(tb assert.TB) stub.Subject[cryptotest.MACAlgorithmC
 	}
 }
 
-// macStubSizeSubject returns the subject of [stub.Behaviour] for Size. The
-// subject calls a new double that reports to tb.
+// macStubSizeSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Size. The subject calls a new double that
+// reports to tb.
 func macStubSizeSubject(tb assert.TB) stub.Subject[cryptotest.MACSizeCall, cryptotest.MACSizeReturn] {
 	tb.Helper()
 	s := cryptotest.NewMACStub(tb)
 	return stub.Subject[cryptotest.MACSizeCall, cryptotest.MACSizeReturn]{
-		Stub: s.OnSize.MethodStub,
+		Stub:  s.OnSize.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = macStubSize(tb, s)
 		},
@@ -162,9 +178,14 @@ func macStubSizeSubject(tb assert.TB) stub.Subject[cryptotest.MACSizeCall, crypt
 			got0 := macStubSize(tb, s)
 			return cryptotest.MACSizeReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() cryptotest.MACSizeReturn {
+			want0 := macStubSizePins()
+			s.OnSize.Returns(want0)
+			return cryptotest.MACSizeReturn{Result: want0}
+		},
+		Override: func(seen func(cryptotest.MACSizeCall)) {
 			s.OnSize.Func(func() int {
-				mark()
+				seen(cryptotest.MACSizeCall{})
 				var z0 int
 				return z0
 			})
@@ -172,23 +193,30 @@ func macStubSizeSubject(tb assert.TB) stub.Subject[cryptotest.MACSizeCall, crypt
 	}
 }
 
-// macStubSignSubject returns the subject of [stub.Behaviour] for Sign. The
-// subject calls a new double that reports to tb.
+// macStubSignSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Sign. The subject calls a new double that
+// reports to tb.
 func macStubSignSubject(tb assert.TB) stub.Subject[cryptotest.MACSignCall, cryptotest.MACSignReturn] {
 	tb.Helper()
 	s := cryptotest.NewMACStub(tb)
 	return stub.Subject[cryptotest.MACSignCall, cryptotest.MACSignReturn]{
-		Stub: s.OnSign.MethodStub,
+		Stub:  s.OnSign.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = macStubSign(tb, s)
+		},
+		Arguments: func(tb assert.TB, c cryptotest.MACSignCall) {
+			tb.Helper()
+			a0 := macStubSignArgs(tb)
+			assert.Equal(tb, c.Data, a0, "the call records Data")
 		},
 		Result: func() cryptotest.MACSignReturn {
 			got0 := macStubSign(tb, s)
 			return cryptotest.MACSignReturn{Result: got0}
 		},
-		Override: func(mark func()) {
-			s.OnSign.Func(func(_ []byte) crypto.Digest {
-				mark()
+		Override: func(seen func(cryptotest.MACSignCall)) {
+			s.OnSign.Func(func(p0 []byte) crypto.Digest {
+				seen(cryptotest.MACSignCall{Data: p0})
 				var z0 crypto.Digest
 				return z0
 			})
@@ -196,23 +224,36 @@ func macStubSignSubject(tb assert.TB) stub.Subject[cryptotest.MACSignCall, crypt
 	}
 }
 
-// macStubVerifySubject returns the subject of [stub.Behaviour] for Verify.
-// The subject calls a new double that reports to tb.
+// macStubVerifySubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Verify. The subject calls a new double that
+// reports to tb.
 func macStubVerifySubject(tb assert.TB) stub.Subject[cryptotest.MACVerifyCall, cryptotest.MACVerifyReturn] {
 	tb.Helper()
 	s := cryptotest.NewMACStub(tb)
 	return stub.Subject[cryptotest.MACVerifyCall, cryptotest.MACVerifyReturn]{
-		Stub: s.OnVerify.MethodStub,
+		Stub:  s.OnVerify.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = macStubVerify(tb, s)
+		},
+		Arguments: func(tb assert.TB, c cryptotest.MACVerifyCall) {
+			tb.Helper()
+			a0, a1 := macStubVerifyArgs(tb)
+			expect.Equal(tb, c.Data, a0, "the call records Data")
+			expect.Equal(tb, c.Expected, a1, "the call records Expected")
 		},
 		Result: func() cryptotest.MACVerifyReturn {
 			got0 := macStubVerify(tb, s)
 			return cryptotest.MACVerifyReturn{Result: got0}
 		},
-		Override: func(mark func()) {
-			s.OnVerify.Func(func(_, _ []byte) bool {
-				mark()
+		Returns: func() cryptotest.MACVerifyReturn {
+			want0 := macStubVerifyPins()
+			s.OnVerify.Returns(want0)
+			return cryptotest.MACVerifyReturn{Result: want0}
+		},
+		Override: func(seen func(cryptotest.MACVerifyCall)) {
+			s.OnVerify.Func(func(p0, p1 []byte) bool {
+				seen(cryptotest.MACVerifyCall{Data: p0, Expected: p1})
 				var z0 bool
 				return z0
 			})
@@ -220,13 +261,15 @@ func macStubVerifySubject(tb assert.TB) stub.Subject[cryptotest.MACVerifyCall, c
 	}
 }
 
-// macStubNewStreamSubject returns the subject of [stub.Behaviour] for
-// NewStream. The subject calls a new double that reports to tb.
+// macStubNewStreamSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for NewStream. The subject calls a new double that
+// reports to tb.
 func macStubNewStreamSubject(tb assert.TB) stub.Subject[cryptotest.MACNewStreamCall, cryptotest.MACNewStreamReturn] {
 	tb.Helper()
 	s := cryptotest.NewMACStub(tb)
 	return stub.Subject[cryptotest.MACNewStreamCall, cryptotest.MACNewStreamReturn]{
-		Stub: s.OnNewStream.MethodStub,
+		Stub:  s.OnNewStream.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = macStubNewStream(tb, s)
 		},
@@ -234,9 +277,9 @@ func macStubNewStreamSubject(tb assert.TB) stub.Subject[cryptotest.MACNewStreamC
 			got0 := macStubNewStream(tb, s)
 			return cryptotest.MACNewStreamReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Override: func(seen func(cryptotest.MACNewStreamCall)) {
 			s.OnNewStream.Func(func() crypto.Stream {
-				mark()
+				seen(cryptotest.MACNewStreamCall{})
 				var z0 crypto.Stream
 				return z0
 			})
@@ -257,7 +300,6 @@ func macStubInstanceOf(tb assert.TB, s *cryptotest.MACStub) macStubInstance {
 		Call: func() {
 			_ = macStubID(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -269,211 +311,64 @@ func TestMACStub(t *testing.T) {
 	t.Run("ID", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "ID", macStubIDSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewMACStub(t)
-			var seen []cryptotest.MACIDCall
-			s.OnID.OnRecord(func(c cryptotest.MACIDCall) { seen = append(seen, c) })
-			_ = macStubID(t, s)
-			_ = macStubID(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of ID")
-		})
 	})
 
 	t.Run("Algorithm", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Algorithm", macStubAlgorithmSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewMACStub(t)
-			var seen []cryptotest.MACAlgorithmCall
-			s.OnAlgorithm.OnRecord(func(c cryptotest.MACAlgorithmCall) { seen = append(seen, c) })
-			_ = macStubAlgorithm(t, s)
-			_ = macStubAlgorithm(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Algorithm")
-		})
 	})
 
 	t.Run("Size", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Size", macStubSizeSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewMACStub(t)
-			var seen []cryptotest.MACSizeCall
-			s.OnSize.OnRecord(func(c cryptotest.MACSizeCall) { seen = append(seen, c) })
-			_ = macStubSize(t, s)
-			_ = macStubSize(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Size")
-		})
 	})
 
 	t.Run("Sign", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Sign", macStubSignSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewMACStub(t)
-			_ = macStubSign(t, s)
-			got := s.OnSign.AssertCalledOnce(t, "Sign records the call")
-			a0 := macStubSignArgs(t)
-			assert.Equal(t, got.Data, a0, "the call records Data")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewMACStub(t)
-			var seen []cryptotest.MACSignCall
-			s.OnSign.OnRecord(func(c cryptotest.MACSignCall) { seen = append(seen, c) })
-			_ = macStubSign(t, s)
-			_ = macStubSign(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Sign")
-		})
 	})
 
 	t.Run("Verify", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Verify", macStubVerifySubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewMACStub(t)
-			_ = macStubVerify(t, s)
-			got := s.OnVerify.AssertCalledOnce(t, "Verify records the call")
-			a0, a1 := macStubVerifyArgs(t)
-			expect.Equal(t, got.Data, a0, "the call records Data")
-			expect.Equal(t, got.Expected, a1, "the call records Expected")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewMACStub(t)
-			var seen []cryptotest.MACVerifyCall
-			s.OnVerify.OnRecord(func(c cryptotest.MACVerifyCall) { seen = append(seen, c) })
-			_ = macStubVerify(t, s)
-			_ = macStubVerify(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Verify")
-		})
 	})
 
 	t.Run("NewStream", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "NewStream", macStubNewStreamSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewMACStub(t)
-			var seen []cryptotest.MACNewStreamCall
-			s.OnNewStream.OnRecord(func(c cryptotest.MACNewStreamCall) { seen = append(seen, c) })
-			_ = macStubNewStream(t, s)
-			_ = macStubNewStream(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of NewStream")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) macStubInstance {
-			return macStubInstanceOf(tb, cryptotest.NewMACStub(tb))
-		})
 
-		t.Run("clears the recorded calls of ID", func(t *testing.T) {
+		t.Run("ID", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewMACStub(t)
-			_ = macStubID(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnID.CallCount(), 0, "ResetCalls clears the calls of ID")
+			stub.ResetBehaviour(t, "ID", macStubIDSubject)
 		})
 
-		t.Run("keeps the results of Returns of ID", func(t *testing.T) {
+		t.Run("Algorithm", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewMACStub(t)
-			want0 := macStubIDPins()
-			s.OnID.Returns(want0)
-			s.ResetCalls()
-			got0 := macStubID(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of ID")
+			stub.ResetBehaviour(t, "Algorithm", macStubAlgorithmSubject)
 		})
 
-		t.Run("clears the recorded calls of Algorithm", func(t *testing.T) {
+		t.Run("Size", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewMACStub(t)
-			_ = macStubAlgorithm(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnAlgorithm.CallCount(), 0, "ResetCalls clears the calls of Algorithm")
+			stub.ResetBehaviour(t, "Size", macStubSizeSubject)
 		})
 
-		t.Run("keeps the results of Returns of Algorithm", func(t *testing.T) {
+		t.Run("Sign", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewMACStub(t)
-			want0 := macStubAlgorithmPins()
-			s.OnAlgorithm.Returns(want0)
-			s.ResetCalls()
-			got0 := macStubAlgorithm(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Algorithm")
+			stub.ResetBehaviour(t, "Sign", macStubSignSubject)
 		})
 
-		t.Run("clears the recorded calls of Size", func(t *testing.T) {
+		t.Run("Verify", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewMACStub(t)
-			_ = macStubSize(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnSize.CallCount(), 0, "ResetCalls clears the calls of Size")
+			stub.ResetBehaviour(t, "Verify", macStubVerifySubject)
 		})
 
-		t.Run("keeps the results of Returns of Size", func(t *testing.T) {
+		t.Run("NewStream", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewMACStub(t)
-			want0 := macStubSizePins()
-			s.OnSize.Returns(want0)
-			s.ResetCalls()
-			got0 := macStubSize(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Size")
-		})
-
-		t.Run("clears the recorded calls of Sign", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewMACStub(t)
-			_ = macStubSign(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnSign.CallCount(), 0, "ResetCalls clears the calls of Sign")
-		})
-
-		t.Run("clears the recorded calls of Verify", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewMACStub(t)
-			_ = macStubVerify(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnVerify.CallCount(), 0, "ResetCalls clears the calls of Verify")
-		})
-
-		t.Run("keeps the results of Returns of Verify", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewMACStub(t)
-			want0 := macStubVerifyPins()
-			s.OnVerify.Returns(want0)
-			s.ResetCalls()
-			got0 := macStubVerify(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Verify")
-		})
-
-		t.Run("clears the recorded calls of NewStream", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewMACStub(t)
-			_ = macStubNewStream(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnNewStream.CallCount(), 0, "ResetCalls clears the calls of NewStream")
-		})
-	})
-
-	t.Run("NewMACStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) macStubInstance {
-			return macStubInstanceOf(tb, cryptotest.NewMACStubDelayed(tb, d, clk))
+			stub.ResetBehaviour(t, "NewStream", macStubNewStreamSubject)
 		})
 	})
 
@@ -664,203 +559,4 @@ func TestMACStub(t *testing.T) {
 	})
 }
 
-// TestMACIDStub checks the methods of MACIDStub, which configures ID.
-func TestMACIDStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of ID", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewMACStub(t)
-			want0 := macStubIDPins()
-			s.OnID.Returns(want0)
-			got0 := macStubID(t, s)
-			assert.Equal(t, got0, want0, "ID returns the Result that Returns sets")
-		})
-
-		t.Run("configures ID for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewMACStub(r)
-			s.OnID.Strict()
-			var want0 crypto.ID
-			s.OnID.Returns(want0)
-			_ = macStubID(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of ID")
-		})
-	})
-}
-
-// TestMACAlgorithmStub checks the methods of MACAlgorithmStub, which
-// configures Algorithm.
-func TestMACAlgorithmStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Algorithm", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewMACStub(t)
-			want0 := macStubAlgorithmPins()
-			s.OnAlgorithm.Returns(want0)
-			got0 := macStubAlgorithm(t, s)
-			assert.Equal(t, got0, want0, "Algorithm returns the Result that Returns sets")
-		})
-
-		t.Run("configures Algorithm for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewMACStub(r)
-			s.OnAlgorithm.Strict()
-			var want0 crypto.Algorithm
-			s.OnAlgorithm.Returns(want0)
-			_ = macStubAlgorithm(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Algorithm")
-		})
-	})
-}
-
-// TestMACSizeStub checks the methods of MACSizeStub, which configures
-// Size.
-func TestMACSizeStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Size", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewMACStub(t)
-			want0 := macStubSizePins()
-			s.OnSize.Returns(want0)
-			got0 := macStubSize(t, s)
-			assert.Equal(t, got0, want0, "Size returns the Result that Returns sets")
-		})
-
-		t.Run("configures Size for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewMACStub(r)
-			s.OnSize.Strict()
-			var want0 int
-			s.OnSize.Returns(want0)
-			_ = macStubSize(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Size")
-		})
-	})
-}
-
-// TestMACSignStub checks the methods of MACSignStub, which configures
-// Sign.
-func TestMACSignStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("configures Sign for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewMACStub(r)
-			s.OnSign.Strict()
-			var want0 crypto.Digest
-			s.OnSign.Returns(want0)
-			_ = macStubSign(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Sign")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Sign to the function", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewMACStub(t)
-			var got0 []byte
-			s.OnSign.Func(func(p0 []byte) crypto.Digest {
-				got0 = p0
-				var z0 crypto.Digest
-				return z0
-			})
-			_ = macStubSign(t, s)
-			a0 := macStubSignArgs(t)
-			assert.Equal(t, got0, a0, "the function receives Data")
-		})
-	})
-}
-
-// TestMACVerifyStub checks the methods of MACVerifyStub, which configures
-// Verify.
-func TestMACVerifyStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Verify", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewMACStub(t)
-			want0 := macStubVerifyPins()
-			s.OnVerify.Returns(want0)
-			got0 := macStubVerify(t, s)
-			assert.Equal(t, got0, want0, "Verify returns the Result that Returns sets")
-		})
-
-		t.Run("configures Verify for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewMACStub(r)
-			s.OnVerify.Strict()
-			var want0 bool
-			s.OnVerify.Returns(want0)
-			_ = macStubVerify(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Verify")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Verify to the function", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewMACStub(t)
-			var got0 []byte
-			var got1 []byte
-			s.OnVerify.Func(func(p0, p1 []byte) bool {
-				got0, got1 = p0, p1
-				var z0 bool
-				return z0
-			})
-			_ = macStubVerify(t, s)
-			a0, a1 := macStubVerifyArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Data")
-			expect.Equal(t, got1, a1, "the function receives Expected")
-		})
-	})
-}
-
-// TestMACNewStreamStub checks the methods of MACNewStreamStub, which
-// configures NewStream.
-func TestMACNewStreamStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("configures NewStream for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewMACStub(r)
-			s.OnNewStream.Strict()
-			var want0 crypto.Stream
-			s.OnNewStream.Returns(want0)
-			_ = macStubNewStream(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of NewStream")
-		})
-	})
-}
-
-// dokimi:provenance sha256:01d7dbe3518113ab07eda2ef6496e793a541e54b44143e5d5abbed1a8c5421db
+// dokimi:provenance sha256:a71ded12027465fdade23578b03522bfc19b4f2e37bd8927745d4c864099c242

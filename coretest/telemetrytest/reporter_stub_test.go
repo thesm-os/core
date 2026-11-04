@@ -78,25 +78,32 @@ func reporterStubTracer(tb assert.TB, s *telemetrytest.ReporterStub) telemetry.T
 	return s.Tracer(a0)
 }
 
-// reporterStubCounterSubject returns the subject of [stub.Behaviour] for
-// Counter. The subject calls a new double that reports to tb.
+// reporterStubCounterSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Counter. The subject calls a new double that
+// reports to tb.
 func reporterStubCounterSubject(
 	tb assert.TB,
 ) stub.Subject[telemetrytest.ReporterCounterCall, telemetrytest.ReporterCounterReturn] {
 	tb.Helper()
 	s := telemetrytest.NewReporterStub(tb)
 	return stub.Subject[telemetrytest.ReporterCounterCall, telemetrytest.ReporterCounterReturn]{
-		Stub: s.OnCounter.MethodStub,
+		Stub:  s.OnCounter.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = reporterStubCounter(tb, s)
+		},
+		Arguments: func(tb assert.TB, c telemetrytest.ReporterCounterCall) {
+			tb.Helper()
+			a0 := reporterStubCounterArgs(tb)
+			assert.Equal(tb, c.Spec, a0, "the call records Spec")
 		},
 		Result: func() telemetrytest.ReporterCounterReturn {
 			got0 := reporterStubCounter(tb, s)
 			return telemetrytest.ReporterCounterReturn{Result: got0}
 		},
-		Override: func(mark func()) {
-			s.OnCounter.Func(func(_ telemetry.InstrumentSpec) telemetry.Counter {
-				mark()
+		Override: func(seen func(telemetrytest.ReporterCounterCall)) {
+			s.OnCounter.Func(func(p0 telemetry.InstrumentSpec) telemetry.Counter {
+				seen(telemetrytest.ReporterCounterCall{Spec: p0})
 				var z0 telemetry.Counter
 				return z0
 			})
@@ -104,25 +111,32 @@ func reporterStubCounterSubject(
 	}
 }
 
-// reporterStubGaugeSubject returns the subject of [stub.Behaviour] for
-// Gauge. The subject calls a new double that reports to tb.
+// reporterStubGaugeSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Gauge. The subject calls a new double that
+// reports to tb.
 func reporterStubGaugeSubject(
 	tb assert.TB,
 ) stub.Subject[telemetrytest.ReporterGaugeCall, telemetrytest.ReporterGaugeReturn] {
 	tb.Helper()
 	s := telemetrytest.NewReporterStub(tb)
 	return stub.Subject[telemetrytest.ReporterGaugeCall, telemetrytest.ReporterGaugeReturn]{
-		Stub: s.OnGauge.MethodStub,
+		Stub:  s.OnGauge.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = reporterStubGauge(tb, s)
+		},
+		Arguments: func(tb assert.TB, c telemetrytest.ReporterGaugeCall) {
+			tb.Helper()
+			a0 := reporterStubGaugeArgs(tb)
+			assert.Equal(tb, c.Spec, a0, "the call records Spec")
 		},
 		Result: func() telemetrytest.ReporterGaugeReturn {
 			got0 := reporterStubGauge(tb, s)
 			return telemetrytest.ReporterGaugeReturn{Result: got0}
 		},
-		Override: func(mark func()) {
-			s.OnGauge.Func(func(_ telemetry.InstrumentSpec) telemetry.Gauge {
-				mark()
+		Override: func(seen func(telemetrytest.ReporterGaugeCall)) {
+			s.OnGauge.Func(func(p0 telemetry.InstrumentSpec) telemetry.Gauge {
+				seen(telemetrytest.ReporterGaugeCall{Spec: p0})
 				var z0 telemetry.Gauge
 				return z0
 			})
@@ -130,25 +144,32 @@ func reporterStubGaugeSubject(
 	}
 }
 
-// reporterStubHistogramSubject returns the subject of [stub.Behaviour] for
-// Histogram. The subject calls a new double that reports to tb.
+// reporterStubHistogramSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Histogram. The subject calls a new double that
+// reports to tb.
 func reporterStubHistogramSubject(
 	tb assert.TB,
 ) stub.Subject[telemetrytest.ReporterHistogramCall, telemetrytest.ReporterHistogramReturn] {
 	tb.Helper()
 	s := telemetrytest.NewReporterStub(tb)
 	return stub.Subject[telemetrytest.ReporterHistogramCall, telemetrytest.ReporterHistogramReturn]{
-		Stub: s.OnHistogram.MethodStub,
+		Stub:  s.OnHistogram.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = reporterStubHistogram(tb, s)
+		},
+		Arguments: func(tb assert.TB, c telemetrytest.ReporterHistogramCall) {
+			tb.Helper()
+			a0 := reporterStubHistogramArgs(tb)
+			assert.Equal(tb, c.Spec, a0, "the call records Spec")
 		},
 		Result: func() telemetrytest.ReporterHistogramReturn {
 			got0 := reporterStubHistogram(tb, s)
 			return telemetrytest.ReporterHistogramReturn{Result: got0}
 		},
-		Override: func(mark func()) {
-			s.OnHistogram.Func(func(_ telemetry.InstrumentSpec) telemetry.Histogram {
-				mark()
+		Override: func(seen func(telemetrytest.ReporterHistogramCall)) {
+			s.OnHistogram.Func(func(p0 telemetry.InstrumentSpec) telemetry.Histogram {
+				seen(telemetrytest.ReporterHistogramCall{Spec: p0})
 				var z0 telemetry.Histogram
 				return z0
 			})
@@ -156,25 +177,32 @@ func reporterStubHistogramSubject(
 	}
 }
 
-// reporterStubTracerSubject returns the subject of [stub.Behaviour] for
-// Tracer. The subject calls a new double that reports to tb.
+// reporterStubTracerSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Tracer. The subject calls a new double that
+// reports to tb.
 func reporterStubTracerSubject(
 	tb assert.TB,
 ) stub.Subject[telemetrytest.ReporterTracerCall, telemetrytest.ReporterTracerReturn] {
 	tb.Helper()
 	s := telemetrytest.NewReporterStub(tb)
 	return stub.Subject[telemetrytest.ReporterTracerCall, telemetrytest.ReporterTracerReturn]{
-		Stub: s.OnTracer.MethodStub,
+		Stub:  s.OnTracer.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = reporterStubTracer(tb, s)
+		},
+		Arguments: func(tb assert.TB, c telemetrytest.ReporterTracerCall) {
+			tb.Helper()
+			a0 := reporterStubTracerArgs(tb)
+			assert.Equal(tb, c.Name, a0, "the call records Name")
 		},
 		Result: func() telemetrytest.ReporterTracerReturn {
 			got0 := reporterStubTracer(tb, s)
 			return telemetrytest.ReporterTracerReturn{Result: got0}
 		},
-		Override: func(mark func()) {
-			s.OnTracer.Func(func(_ telemetry.InstrumentName) telemetry.Tracer {
-				mark()
+		Override: func(seen func(telemetrytest.ReporterTracerCall)) {
+			s.OnTracer.Func(func(p0 telemetry.InstrumentName) telemetry.Tracer {
+				seen(telemetrytest.ReporterTracerCall{Name: p0})
 				var z0 telemetry.Tracer
 				return z0
 			})
@@ -195,7 +223,6 @@ func reporterStubInstanceOf(tb assert.TB, s *telemetrytest.ReporterStub) reporte
 		Call: func() {
 			_ = reporterStubCounter(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -207,142 +234,44 @@ func TestReporterStub(t *testing.T) {
 	t.Run("Counter", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Counter", reporterStubCounterSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewReporterStub(t)
-			_ = reporterStubCounter(t, s)
-			got := s.OnCounter.AssertCalledOnce(t, "Counter records the call")
-			a0 := reporterStubCounterArgs(t)
-			assert.Equal(t, got.Spec, a0, "the call records Spec")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewReporterStub(t)
-			var seen []telemetrytest.ReporterCounterCall
-			s.OnCounter.OnRecord(func(c telemetrytest.ReporterCounterCall) { seen = append(seen, c) })
-			_ = reporterStubCounter(t, s)
-			_ = reporterStubCounter(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Counter")
-		})
 	})
 
 	t.Run("Gauge", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Gauge", reporterStubGaugeSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewReporterStub(t)
-			_ = reporterStubGauge(t, s)
-			got := s.OnGauge.AssertCalledOnce(t, "Gauge records the call")
-			a0 := reporterStubGaugeArgs(t)
-			assert.Equal(t, got.Spec, a0, "the call records Spec")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewReporterStub(t)
-			var seen []telemetrytest.ReporterGaugeCall
-			s.OnGauge.OnRecord(func(c telemetrytest.ReporterGaugeCall) { seen = append(seen, c) })
-			_ = reporterStubGauge(t, s)
-			_ = reporterStubGauge(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Gauge")
-		})
 	})
 
 	t.Run("Histogram", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Histogram", reporterStubHistogramSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewReporterStub(t)
-			_ = reporterStubHistogram(t, s)
-			got := s.OnHistogram.AssertCalledOnce(t, "Histogram records the call")
-			a0 := reporterStubHistogramArgs(t)
-			assert.Equal(t, got.Spec, a0, "the call records Spec")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewReporterStub(t)
-			var seen []telemetrytest.ReporterHistogramCall
-			s.OnHistogram.OnRecord(func(c telemetrytest.ReporterHistogramCall) { seen = append(seen, c) })
-			_ = reporterStubHistogram(t, s)
-			_ = reporterStubHistogram(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Histogram")
-		})
 	})
 
 	t.Run("Tracer", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Tracer", reporterStubTracerSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewReporterStub(t)
-			_ = reporterStubTracer(t, s)
-			got := s.OnTracer.AssertCalledOnce(t, "Tracer records the call")
-			a0 := reporterStubTracerArgs(t)
-			assert.Equal(t, got.Name, a0, "the call records Name")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewReporterStub(t)
-			var seen []telemetrytest.ReporterTracerCall
-			s.OnTracer.OnRecord(func(c telemetrytest.ReporterTracerCall) { seen = append(seen, c) })
-			_ = reporterStubTracer(t, s)
-			_ = reporterStubTracer(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Tracer")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) reporterStubInstance {
-			return reporterStubInstanceOf(tb, telemetrytest.NewReporterStub(tb))
-		})
 
-		t.Run("clears the recorded calls of Counter", func(t *testing.T) {
+		t.Run("Counter", func(t *testing.T) {
 			t.Parallel()
-			s := telemetrytest.NewReporterStub(t)
-			_ = reporterStubCounter(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnCounter.CallCount(), 0, "ResetCalls clears the calls of Counter")
+			stub.ResetBehaviour(t, "Counter", reporterStubCounterSubject)
 		})
 
-		t.Run("clears the recorded calls of Gauge", func(t *testing.T) {
+		t.Run("Gauge", func(t *testing.T) {
 			t.Parallel()
-			s := telemetrytest.NewReporterStub(t)
-			_ = reporterStubGauge(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnGauge.CallCount(), 0, "ResetCalls clears the calls of Gauge")
+			stub.ResetBehaviour(t, "Gauge", reporterStubGaugeSubject)
 		})
 
-		t.Run("clears the recorded calls of Histogram", func(t *testing.T) {
+		t.Run("Histogram", func(t *testing.T) {
 			t.Parallel()
-			s := telemetrytest.NewReporterStub(t)
-			_ = reporterStubHistogram(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnHistogram.CallCount(), 0, "ResetCalls clears the calls of Histogram")
+			stub.ResetBehaviour(t, "Histogram", reporterStubHistogramSubject)
 		})
 
-		t.Run("clears the recorded calls of Tracer", func(t *testing.T) {
+		t.Run("Tracer", func(t *testing.T) {
 			t.Parallel()
-			s := telemetrytest.NewReporterStub(t)
-			_ = reporterStubTracer(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnTracer.CallCount(), 0, "ResetCalls clears the calls of Tracer")
-		})
-	})
-
-	t.Run("NewReporterStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) reporterStubInstance {
-			return reporterStubInstanceOf(tb, telemetrytest.NewReporterStubDelayed(tb, d, clk))
+			stub.ResetBehaviour(t, "Tracer", reporterStubTracerSubject)
 		})
 	})
 
@@ -507,160 +436,4 @@ func TestReporterStub(t *testing.T) {
 	})
 }
 
-// TestReporterCounterStub checks the methods of ReporterCounterStub, which
-// configures Counter.
-func TestReporterCounterStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("configures Counter for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := telemetrytest.NewReporterStub(r)
-			s.OnCounter.Strict()
-			var want0 telemetry.Counter
-			s.OnCounter.Returns(want0)
-			_ = reporterStubCounter(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Counter")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Counter to the function", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewReporterStub(t)
-			var got0 telemetry.InstrumentSpec
-			s.OnCounter.Func(func(p0 telemetry.InstrumentSpec) telemetry.Counter {
-				got0 = p0
-				var z0 telemetry.Counter
-				return z0
-			})
-			_ = reporterStubCounter(t, s)
-			a0 := reporterStubCounterArgs(t)
-			assert.Equal(t, got0, a0, "the function receives Spec")
-		})
-	})
-}
-
-// TestReporterGaugeStub checks the methods of ReporterGaugeStub, which
-// configures Gauge.
-func TestReporterGaugeStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("configures Gauge for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := telemetrytest.NewReporterStub(r)
-			s.OnGauge.Strict()
-			var want0 telemetry.Gauge
-			s.OnGauge.Returns(want0)
-			_ = reporterStubGauge(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Gauge")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Gauge to the function", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewReporterStub(t)
-			var got0 telemetry.InstrumentSpec
-			s.OnGauge.Func(func(p0 telemetry.InstrumentSpec) telemetry.Gauge {
-				got0 = p0
-				var z0 telemetry.Gauge
-				return z0
-			})
-			_ = reporterStubGauge(t, s)
-			a0 := reporterStubGaugeArgs(t)
-			assert.Equal(t, got0, a0, "the function receives Spec")
-		})
-	})
-}
-
-// TestReporterHistogramStub checks the methods of ReporterHistogramStub,
-// which configures Histogram.
-func TestReporterHistogramStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("configures Histogram for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := telemetrytest.NewReporterStub(r)
-			s.OnHistogram.Strict()
-			var want0 telemetry.Histogram
-			s.OnHistogram.Returns(want0)
-			_ = reporterStubHistogram(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Histogram")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Histogram to the function", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewReporterStub(t)
-			var got0 telemetry.InstrumentSpec
-			s.OnHistogram.Func(func(p0 telemetry.InstrumentSpec) telemetry.Histogram {
-				got0 = p0
-				var z0 telemetry.Histogram
-				return z0
-			})
-			_ = reporterStubHistogram(t, s)
-			a0 := reporterStubHistogramArgs(t)
-			assert.Equal(t, got0, a0, "the function receives Spec")
-		})
-	})
-}
-
-// TestReporterTracerStub checks the methods of ReporterTracerStub, which
-// configures Tracer.
-func TestReporterTracerStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("configures Tracer for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := telemetrytest.NewReporterStub(r)
-			s.OnTracer.Strict()
-			var want0 telemetry.Tracer
-			s.OnTracer.Returns(want0)
-			_ = reporterStubTracer(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Tracer")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Tracer to the function", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewReporterStub(t)
-			var got0 telemetry.InstrumentName
-			s.OnTracer.Func(func(p0 telemetry.InstrumentName) telemetry.Tracer {
-				got0 = p0
-				var z0 telemetry.Tracer
-				return z0
-			})
-			_ = reporterStubTracer(t, s)
-			a0 := reporterStubTracerArgs(t)
-			assert.Equal(t, got0, a0, "the function receives Name")
-		})
-	})
-}
-
-// dokimi:provenance sha256:89557460488fba71a841d812ca12f1253acbe982bf7e6c796a089d90f8796167
+// dokimi:provenance sha256:0fb3c0c510c27da80413b526424823eebb33a411d3999e3860dd04aad209e6e5

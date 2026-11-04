@@ -137,20 +137,6 @@ func NewGeneratorStub(tb assert.TB, opts ...GeneratorStubOption) *GeneratorStub 
 	return s
 }
 
-// NewGeneratorStubDelayed returns a double whose methods sleep d on clk
-// before they return. It applies opts after the clock and the latency.
-func NewGeneratorStubDelayed(
-	tb assert.TB,
-	d time.Duration,
-	clk assert.Clock,
-	opts ...GeneratorStubOption,
-) *GeneratorStub {
-	return NewGeneratorStub(tb, append([]GeneratorStubOption{
-		GeneratorStubWithClock(clk),
-		GeneratorStubWithLatency(d),
-	}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *GeneratorStub) ResetCalls() {
@@ -184,4 +170,4 @@ func (s *GeneratorStub) Generate() id.ID {
 	return r.Result
 }
 
-// dokimi:provenance sha256:ce1beecfbeaa63becd00a729f3888f5f4bcd1c1677458b5408e600ddacbc0cb7
+// dokimi:provenance sha256:3039dcb26913020b40709a431879b7a1635a7452c4d1f9e746ded407465cf9c8

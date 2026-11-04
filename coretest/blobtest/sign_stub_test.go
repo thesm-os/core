@@ -47,25 +47,39 @@ func getSignerStubSignGetPins() (blob.SignedRequest, error) {
 	return want0, want1
 }
 
-// getSignerStubSignGetSubject returns the subject of [stub.Behaviour] for
-// SignGet. The subject calls a new double that reports to tb.
+// getSignerStubSignGetSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for SignGet. The subject calls a new double that
+// reports to tb.
 func getSignerStubSignGetSubject(
 	tb assert.TB,
 ) stub.Subject[blobtest.GetSignerSignGetCall, blobtest.GetSignerSignGetReturn] {
 	tb.Helper()
 	s := blobtest.NewGetSignerStub(tb)
 	return stub.Subject[blobtest.GetSignerSignGetCall, blobtest.GetSignerSignGetReturn]{
-		Stub: s.OnSignGet.MethodStub,
+		Stub:  s.OnSignGet.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = getSignerStubSignGet(tb, s)
+		},
+		Arguments: func(tb assert.TB, c blobtest.GetSignerSignGetCall) {
+			tb.Helper()
+			a0, a1, a2 := getSignerStubSignGetArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.Key, a1, "the call records Key")
+			expect.Equal(tb, c.Expiry, a2, "the call records Expiry")
 		},
 		Result: func() blobtest.GetSignerSignGetReturn {
 			got0, got1 := getSignerStubSignGet(tb, s)
 			return blobtest.GetSignerSignGetReturn{Result: got0, Err: got1}
 		},
-		Override: func(mark func()) {
-			s.OnSignGet.Func(func(_ context.Context, _ string, _ time.Time) (blob.SignedRequest, error) {
-				mark()
+		Returns: func() blobtest.GetSignerSignGetReturn {
+			want0, want1 := getSignerStubSignGetPins()
+			s.OnSignGet.Returns(want0, want1)
+			return blobtest.GetSignerSignGetReturn{Result: want0, Err: want1}
+		},
+		Override: func(seen func(blobtest.GetSignerSignGetCall)) {
+			s.OnSignGet.Func(func(p0 context.Context, p1 string, p2 time.Time) (blob.SignedRequest, error) {
+				seen(blobtest.GetSignerSignGetCall{Ctx: p0, Key: p1, Expiry: p2})
 				var z0 blob.SignedRequest
 				var z1 error
 				return z0, z1
@@ -91,7 +105,6 @@ func getSignerStubInstanceOf(tb assert.TB, s *blobtest.GetSignerStub) getSignerS
 		Call: func() {
 			_, _ = getSignerStubSignGet(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -103,71 +116,14 @@ func TestGetSignerStub(t *testing.T) {
 	t.Run("SignGet", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "SignGet", getSignerStubSignGetSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := blobtest.NewGetSignerStub(t)
-			_, _ = getSignerStubSignGet(t, s)
-			got := s.OnSignGet.AssertCalledOnce(t, "SignGet records the call")
-			a0, a1, a2 := getSignerStubSignGetArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.Key, a1, "the call records Key")
-			expect.Equal(t, got.Expiry, a2, "the call records Expiry")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := blobtest.NewGetSignerStub(t)
-			var seen []blobtest.GetSignerSignGetCall
-			s.OnSignGet.OnRecord(func(c blobtest.GetSignerSignGetCall) { seen = append(seen, c) })
-			_, _ = getSignerStubSignGet(t, s)
-			_, _ = getSignerStubSignGet(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of SignGet")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) getSignerStubInstance {
-			return getSignerStubInstanceOf(tb, blobtest.NewGetSignerStub(tb))
-		})
 
-		t.Run("clears the recorded calls of SignGet", func(t *testing.T) {
+		t.Run("SignGet", func(t *testing.T) {
 			t.Parallel()
-			s := blobtest.NewGetSignerStub(t)
-			_, _ = getSignerStubSignGet(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnSignGet.CallCount(), 0, "ResetCalls clears the calls of SignGet")
-		})
-
-		t.Run("keeps the results of Returns of SignGet", func(t *testing.T) {
-			t.Parallel()
-			s := blobtest.NewGetSignerStub(t)
-			want0, want1 := getSignerStubSignGetPins()
-			s.OnSignGet.Returns(want0, want1)
-			s.ResetCalls()
-			got0, got1 := getSignerStubSignGet(t, s)
-			expect.Equal(t, got0, want0, "ResetCalls keeps the Result of SignGet")
-			expect.ErrorIs(t, got1, want1, "ResetCalls keeps the error of SignGet")
-		})
-	})
-
-	t.Run("NewGetSignerStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) getSignerStubInstance {
-			return getSignerStubInstanceOf(tb, blobtest.NewGetSignerStubDelayed(tb, d, clk))
-		})
-	})
-
-	t.Run("NewGetSignerStubFailing", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("fails SignGet with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("SignGet-failing")
-			s := blobtest.NewGetSignerStubFailing(t, want)
-			_, r1 := getSignerStubSignGet(t, s)
-			assert.ErrorIs(t, r1, want, "SignGet fails with the error of NewGetSignerStubFailing")
+			stub.ResetBehaviour(t, "SignGet", getSignerStubSignGetSubject)
 		})
 	})
 
@@ -270,61 +226,6 @@ func TestGetSignerStub(t *testing.T) {
 	})
 }
 
-// TestGetSignerSignGetStub checks the methods of GetSignerSignGetStub,
-// which configures SignGet.
-func TestGetSignerSignGetStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of SignGet", func(t *testing.T) {
-			t.Parallel()
-			s := blobtest.NewGetSignerStub(t)
-			want0, want1 := getSignerStubSignGetPins()
-			s.OnSignGet.Returns(want0, want1)
-			got0, got1 := getSignerStubSignGet(t, s)
-			expect.Equal(t, got0, want0, "SignGet returns the Result that Returns sets")
-			expect.ErrorIs(t, got1, want1, "SignGet returns the error that Returns sets")
-		})
-
-		t.Run("configures SignGet for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := blobtest.NewGetSignerStub(r)
-			s.OnSignGet.Strict()
-			var want0 blob.SignedRequest
-			var want1 error
-			s.OnSignGet.Returns(want0, want1)
-			_, _ = getSignerStubSignGet(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of SignGet")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of SignGet to the function", func(t *testing.T) {
-			t.Parallel()
-			s := blobtest.NewGetSignerStub(t)
-			var got0 context.Context
-			var got1 string
-			var got2 time.Time
-			s.OnSignGet.Func(func(p0 context.Context, p1 string, p2 time.Time) (blob.SignedRequest, error) {
-				got0, got1, got2 = p0, p1, p2
-				var z0 blob.SignedRequest
-				var z1 error
-				return z0, z1
-			})
-			_, _ = getSignerStubSignGet(t, s)
-			a0, a1, a2 := getSignerStubSignGetArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives Key")
-			expect.Equal(t, got2, a2, "the function receives Expiry")
-		})
-	})
-}
-
 // createSignerStubSignCreateArgs returns the samples of the arguments of
 // SignCreate.
 func createSignerStubSignCreateArgs(tb assert.TB) (context.Context, string, string, int64, time.Time) {
@@ -359,29 +260,46 @@ func createSignerStubSignCreatePins() (blob.SignedRequest, error) {
 }
 
 // createSignerStubSignCreateSubject returns the subject of
-// [stub.Behaviour] for SignCreate. The subject calls a new double that
-// reports to tb.
+// [stub.Behaviour] and [stub.ResetBehaviour] for SignCreate. The subject
+// calls a new double that reports to tb.
 func createSignerStubSignCreateSubject(
 	tb assert.TB,
 ) stub.Subject[blobtest.CreateSignerSignCreateCall, blobtest.CreateSignerSignCreateReturn] {
 	tb.Helper()
 	s := blobtest.NewCreateSignerStub(tb)
 	return stub.Subject[blobtest.CreateSignerSignCreateCall, blobtest.CreateSignerSignCreateReturn]{
-		Stub: s.OnSignCreate.MethodStub,
+		Stub:  s.OnSignCreate.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = createSignerStubSignCreate(tb, s)
+		},
+		Arguments: func(tb assert.TB, c blobtest.CreateSignerSignCreateCall) {
+			tb.Helper()
+			a0, a1, a2, a3, a4 := createSignerStubSignCreateArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.Key, a1, "the call records Key")
+			expect.Equal(tb, c.ContentType, a2, "the call records ContentType")
+			expect.Equal(tb, c.Size, a3, "the call records Size")
+			expect.Equal(tb, c.Expiry, a4, "the call records Expiry")
 		},
 		Result: func() blobtest.CreateSignerSignCreateReturn {
 			got0, got1 := createSignerStubSignCreate(tb, s)
 			return blobtest.CreateSignerSignCreateReturn{Result: got0, Err: got1}
 		},
-		Override: func(mark func()) {
-			s.OnSignCreate.Func(func(_ context.Context, _, _ string, _ int64, _ time.Time) (blob.SignedRequest, error) {
-				mark()
-				var z0 blob.SignedRequest
-				var z1 error
-				return z0, z1
-			})
+		Returns: func() blobtest.CreateSignerSignCreateReturn {
+			want0, want1 := createSignerStubSignCreatePins()
+			s.OnSignCreate.Returns(want0, want1)
+			return blobtest.CreateSignerSignCreateReturn{Result: want0, Err: want1}
+		},
+		Override: func(seen func(blobtest.CreateSignerSignCreateCall)) {
+			s.OnSignCreate.Func(
+				func(p0 context.Context, p1, p2 string, p3 int64, p4 time.Time) (blob.SignedRequest, error) {
+					seen(blobtest.CreateSignerSignCreateCall{Ctx: p0, Key: p1, ContentType: p2, Size: p3, Expiry: p4})
+					var z0 blob.SignedRequest
+					var z1 error
+					return z0, z1
+				},
+			)
 		},
 		Fails: func() error {
 			_, r1 := createSignerStubSignCreate(tb, s)
@@ -403,7 +321,6 @@ func createSignerStubInstanceOf(tb assert.TB, s *blobtest.CreateSignerStub) crea
 		Call: func() {
 			_, _ = createSignerStubSignCreate(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -415,73 +332,14 @@ func TestCreateSignerStub(t *testing.T) {
 	t.Run("SignCreate", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "SignCreate", createSignerStubSignCreateSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := blobtest.NewCreateSignerStub(t)
-			_, _ = createSignerStubSignCreate(t, s)
-			got := s.OnSignCreate.AssertCalledOnce(t, "SignCreate records the call")
-			a0, a1, a2, a3, a4 := createSignerStubSignCreateArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.Key, a1, "the call records Key")
-			expect.Equal(t, got.ContentType, a2, "the call records ContentType")
-			expect.Equal(t, got.Size, a3, "the call records Size")
-			expect.Equal(t, got.Expiry, a4, "the call records Expiry")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := blobtest.NewCreateSignerStub(t)
-			var seen []blobtest.CreateSignerSignCreateCall
-			s.OnSignCreate.OnRecord(func(c blobtest.CreateSignerSignCreateCall) { seen = append(seen, c) })
-			_, _ = createSignerStubSignCreate(t, s)
-			_, _ = createSignerStubSignCreate(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of SignCreate")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) createSignerStubInstance {
-			return createSignerStubInstanceOf(tb, blobtest.NewCreateSignerStub(tb))
-		})
 
-		t.Run("clears the recorded calls of SignCreate", func(t *testing.T) {
+		t.Run("SignCreate", func(t *testing.T) {
 			t.Parallel()
-			s := blobtest.NewCreateSignerStub(t)
-			_, _ = createSignerStubSignCreate(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnSignCreate.CallCount(), 0, "ResetCalls clears the calls of SignCreate")
-		})
-
-		t.Run("keeps the results of Returns of SignCreate", func(t *testing.T) {
-			t.Parallel()
-			s := blobtest.NewCreateSignerStub(t)
-			want0, want1 := createSignerStubSignCreatePins()
-			s.OnSignCreate.Returns(want0, want1)
-			s.ResetCalls()
-			got0, got1 := createSignerStubSignCreate(t, s)
-			expect.Equal(t, got0, want0, "ResetCalls keeps the Result of SignCreate")
-			expect.ErrorIs(t, got1, want1, "ResetCalls keeps the error of SignCreate")
-		})
-	})
-
-	t.Run("NewCreateSignerStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) createSignerStubInstance {
-			return createSignerStubInstanceOf(tb, blobtest.NewCreateSignerStubDelayed(tb, d, clk))
-		})
-	})
-
-	t.Run("NewCreateSignerStubFailing", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("fails SignCreate with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("SignCreate-failing")
-			s := blobtest.NewCreateSignerStubFailing(t, want)
-			_, r1 := createSignerStubSignCreate(t, s)
-			assert.ErrorIs(t, r1, want, "SignCreate fails with the error of NewCreateSignerStubFailing")
+			stub.ResetBehaviour(t, "SignCreate", createSignerStubSignCreateSubject)
 		})
 	})
 
@@ -593,65 +451,4 @@ func TestCreateSignerStub(t *testing.T) {
 	})
 }
 
-// TestCreateSignerSignCreateStub checks the methods of
-// CreateSignerSignCreateStub, which configures SignCreate.
-func TestCreateSignerSignCreateStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of SignCreate", func(t *testing.T) {
-			t.Parallel()
-			s := blobtest.NewCreateSignerStub(t)
-			want0, want1 := createSignerStubSignCreatePins()
-			s.OnSignCreate.Returns(want0, want1)
-			got0, got1 := createSignerStubSignCreate(t, s)
-			expect.Equal(t, got0, want0, "SignCreate returns the Result that Returns sets")
-			expect.ErrorIs(t, got1, want1, "SignCreate returns the error that Returns sets")
-		})
-
-		t.Run("configures SignCreate for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := blobtest.NewCreateSignerStub(r)
-			s.OnSignCreate.Strict()
-			var want0 blob.SignedRequest
-			var want1 error
-			s.OnSignCreate.Returns(want0, want1)
-			_, _ = createSignerStubSignCreate(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of SignCreate")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of SignCreate to the function", func(t *testing.T) {
-			t.Parallel()
-			s := blobtest.NewCreateSignerStub(t)
-			var got0 context.Context
-			var got1 string
-			var got2 string
-			var got3 int64
-			var got4 time.Time
-			s.OnSignCreate.Func(
-				func(p0 context.Context, p1, p2 string, p3 int64, p4 time.Time) (blob.SignedRequest, error) {
-					got0, got1, got2, got3, got4 = p0, p1, p2, p3, p4
-					var z0 blob.SignedRequest
-					var z1 error
-					return z0, z1
-				},
-			)
-			_, _ = createSignerStubSignCreate(t, s)
-			a0, a1, a2, a3, a4 := createSignerStubSignCreateArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives Key")
-			expect.Equal(t, got2, a2, "the function receives ContentType")
-			expect.Equal(t, got3, a3, "the function receives Size")
-			expect.Equal(t, got4, a4, "the function receives Expiry")
-		})
-	})
-}
-
-// dokimi:provenance sha256:92f1e55aa4c99336ec5e062438a8f0532be1055b6a12ee08b8216ca343fbc91f
+// dokimi:provenance sha256:bb2d4ed59db3dc0b182da49d725222991b56e4e75cda34226978ed3a8f8dd000

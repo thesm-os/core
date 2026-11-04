@@ -1,5 +1,5 @@
 {
-  "ergon": "0.17.0",
+  "ergon": "0.17.1",
   "files": [
     {
       "path": ".commitlint.yaml",
@@ -133,7 +133,7 @@
       "path": "Makefile",
       "producer": "common",
       "local": "0c287df46de1a009b2e3b0d02e8ea50e63c567469a0b551708eaa561ee1f8848",
-      "sha256": "64af89329705f201bbdccf06cd1a7266956979252785f17f0a60875188458f9c"
+      "sha256": "11c67ecdd703888e6fdb9c3c4fbcf69f213d8f94a14677b8d4232f412762d1a7"
     },
     {
       "path": "NOTICE",

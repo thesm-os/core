@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"go.dokimi.dev/assert"
-	"go.dokimi.dev/assert/expect"
 	"go.dokimi.dev/stub"
 	"go.thesmos.sh/core/clock"
 	"go.thesmos.sh/core/coretest/clocktest"
@@ -95,13 +94,15 @@ func clockStubUpdatePins() (clock.Instant, error) {
 	return want0, want1
 }
 
-// clockStubNowSubject returns the subject of [stub.Behaviour] for Now. The
-// subject calls a new double that reports to tb.
+// clockStubNowSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Now. The subject calls a new double that
+// reports to tb.
 func clockStubNowSubject(tb assert.TB) stub.Subject[clocktest.ClockNowCall, clocktest.ClockNowReturn] {
 	tb.Helper()
 	s := clocktest.NewClockStub(tb)
 	return stub.Subject[clocktest.ClockNowCall, clocktest.ClockNowReturn]{
-		Stub: s.OnNow.MethodStub,
+		Stub:  s.OnNow.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = clockStubNow(tb, s)
 		},
@@ -113,9 +114,14 @@ func clockStubNowSubject(tb assert.TB) stub.Subject[clocktest.ClockNowCall, cloc
 			r0 := clocktest.NewInstantBuilder().Build()
 			return clocktest.ClockNowReturn{Result: r0}
 		},
-		Override: func(mark func()) {
+		Returns: func() clocktest.ClockNowReturn {
+			want0 := clockStubNowPins()
+			s.OnNow.Returns(want0)
+			return clocktest.ClockNowReturn{Result: want0}
+		},
+		Override: func(seen func(clocktest.ClockNowCall)) {
 			s.OnNow.Func(func() clock.Instant {
-				mark()
+				seen(clocktest.ClockNowCall{})
 				var z0 clock.Instant
 				return z0
 			})
@@ -123,13 +129,15 @@ func clockStubNowSubject(tb assert.TB) stub.Subject[clocktest.ClockNowCall, cloc
 	}
 }
 
-// clockStubTimeSubject returns the subject of [stub.Behaviour] for Time.
-// The subject calls a new double that reports to tb.
+// clockStubTimeSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Time. The subject calls a new double that
+// reports to tb.
 func clockStubTimeSubject(tb assert.TB) stub.Subject[clocktest.ClockTimeCall, clocktest.ClockTimeReturn] {
 	tb.Helper()
 	s := clocktest.NewClockStub(tb)
 	return stub.Subject[clocktest.ClockTimeCall, clocktest.ClockTimeReturn]{
-		Stub: s.OnTime.MethodStub,
+		Stub:  s.OnTime.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = clockStubTime(tb, s)
 		},
@@ -137,9 +145,14 @@ func clockStubTimeSubject(tb assert.TB) stub.Subject[clocktest.ClockTimeCall, cl
 			got0 := clockStubTime(tb, s)
 			return clocktest.ClockTimeReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() clocktest.ClockTimeReturn {
+			want0 := clockStubTimePins()
+			s.OnTime.Returns(want0)
+			return clocktest.ClockTimeReturn{Result: want0}
+		},
+		Override: func(seen func(clocktest.ClockTimeCall)) {
 			s.OnTime.Func(func() time.Time {
-				mark()
+				seen(clocktest.ClockTimeCall{})
 				var z0 time.Time
 				return z0
 			})
@@ -147,13 +160,15 @@ func clockStubTimeSubject(tb assert.TB) stub.Subject[clocktest.ClockTimeCall, cl
 	}
 }
 
-// clockStubElapsedSubject returns the subject of [stub.Behaviour] for
-// Elapsed. The subject calls a new double that reports to tb.
+// clockStubElapsedSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Elapsed. The subject calls a new double that
+// reports to tb.
 func clockStubElapsedSubject(tb assert.TB) stub.Subject[clocktest.ClockElapsedCall, clocktest.ClockElapsedReturn] {
 	tb.Helper()
 	s := clocktest.NewClockStub(tb)
 	return stub.Subject[clocktest.ClockElapsedCall, clocktest.ClockElapsedReturn]{
-		Stub: s.OnElapsed.MethodStub,
+		Stub:  s.OnElapsed.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = clockStubElapsed(tb, s)
 		},
@@ -161,9 +176,14 @@ func clockStubElapsedSubject(tb assert.TB) stub.Subject[clocktest.ClockElapsedCa
 			got0 := clockStubElapsed(tb, s)
 			return clocktest.ClockElapsedReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() clocktest.ClockElapsedReturn {
+			want0 := clockStubElapsedPins()
+			s.OnElapsed.Returns(want0)
+			return clocktest.ClockElapsedReturn{Result: want0}
+		},
+		Override: func(seen func(clocktest.ClockElapsedCall)) {
 			s.OnElapsed.Func(func() time.Duration {
-				mark()
+				seen(clocktest.ClockElapsedCall{})
 				var z0 time.Duration
 				return z0
 			})
@@ -171,23 +191,30 @@ func clockStubElapsedSubject(tb assert.TB) stub.Subject[clocktest.ClockElapsedCa
 	}
 }
 
-// clockStubNewTimerSubject returns the subject of [stub.Behaviour] for
-// NewTimer. The subject calls a new double that reports to tb.
+// clockStubNewTimerSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for NewTimer. The subject calls a new double that
+// reports to tb.
 func clockStubNewTimerSubject(tb assert.TB) stub.Subject[clocktest.ClockNewTimerCall, clocktest.ClockNewTimerReturn] {
 	tb.Helper()
 	s := clocktest.NewClockStub(tb)
 	return stub.Subject[clocktest.ClockNewTimerCall, clocktest.ClockNewTimerReturn]{
-		Stub: s.OnNewTimer.MethodStub,
+		Stub:  s.OnNewTimer.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = clockStubNewTimer(tb, s)
+		},
+		Arguments: func(tb assert.TB, c clocktest.ClockNewTimerCall) {
+			tb.Helper()
+			a0 := clockStubNewTimerArgs(tb)
+			assert.Equal(tb, c.D, a0, "the call records D")
 		},
 		Result: func() clocktest.ClockNewTimerReturn {
 			got0 := clockStubNewTimer(tb, s)
 			return clocktest.ClockNewTimerReturn{Result: got0}
 		},
-		Override: func(mark func()) {
-			s.OnNewTimer.Func(func(_ time.Duration) clock.Timer {
-				mark()
+		Override: func(seen func(clocktest.ClockNewTimerCall)) {
+			s.OnNewTimer.Func(func(p0 time.Duration) clock.Timer {
+				seen(clocktest.ClockNewTimerCall{D: p0})
 				var z0 clock.Timer
 				return z0
 			})
@@ -195,15 +222,22 @@ func clockStubNewTimerSubject(tb assert.TB) stub.Subject[clocktest.ClockNewTimer
 	}
 }
 
-// clockStubUpdateSubject returns the subject of [stub.Behaviour] for
-// Update. The subject calls a new double that reports to tb.
+// clockStubUpdateSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Update. The subject calls a new double that
+// reports to tb.
 func clockStubUpdateSubject(tb assert.TB) stub.Subject[clocktest.ClockUpdateCall, clocktest.ClockUpdateReturn] {
 	tb.Helper()
 	s := clocktest.NewClockStub(tb)
 	return stub.Subject[clocktest.ClockUpdateCall, clocktest.ClockUpdateReturn]{
-		Stub: s.OnUpdate.MethodStub,
+		Stub:  s.OnUpdate.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = clockStubUpdate(tb, s)
+		},
+		Arguments: func(tb assert.TB, c clocktest.ClockUpdateCall) {
+			tb.Helper()
+			a0 := clockStubUpdateArgs(tb)
+			assert.Equal(tb, c.Observed, a0, "the call records Observed")
 		},
 		Result: func() clocktest.ClockUpdateReturn {
 			got0, got1 := clockStubUpdate(tb, s)
@@ -213,9 +247,14 @@ func clockStubUpdateSubject(tb assert.TB) stub.Subject[clocktest.ClockUpdateCall
 			r0 := clocktest.NewInstantBuilder().Build()
 			return clocktest.ClockUpdateReturn{Result: r0}
 		},
-		Override: func(mark func()) {
-			s.OnUpdate.Func(func(_ clock.Instant) (clock.Instant, error) {
-				mark()
+		Returns: func() clocktest.ClockUpdateReturn {
+			want0, want1 := clockStubUpdatePins()
+			s.OnUpdate.Returns(want0, want1)
+			return clocktest.ClockUpdateReturn{Result: want0, Err: want1}
+		},
+		Override: func(seen func(clocktest.ClockUpdateCall)) {
+			s.OnUpdate.Func(func(p0 clock.Instant) (clock.Instant, error) {
+				seen(clocktest.ClockUpdateCall{Observed: p0})
 				var z0 clock.Instant
 				var z1 error
 				return z0, z1
@@ -241,7 +280,6 @@ func clockStubInstanceOf(tb assert.TB, s *clocktest.ClockStub) clockStubInstance
 		Call: func() {
 			_ = clockStubNow(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -253,200 +291,54 @@ func TestClockStub(t *testing.T) {
 	t.Run("Now", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Now", clockStubNowSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := clocktest.NewClockStub(t)
-			var seen []clocktest.ClockNowCall
-			s.OnNow.OnRecord(func(c clocktest.ClockNowCall) { seen = append(seen, c) })
-			_ = clockStubNow(t, s)
-			_ = clockStubNow(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Now")
-		})
 	})
 
 	t.Run("Time", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Time", clockStubTimeSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := clocktest.NewClockStub(t)
-			var seen []clocktest.ClockTimeCall
-			s.OnTime.OnRecord(func(c clocktest.ClockTimeCall) { seen = append(seen, c) })
-			_ = clockStubTime(t, s)
-			_ = clockStubTime(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Time")
-		})
 	})
 
 	t.Run("Elapsed", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Elapsed", clockStubElapsedSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := clocktest.NewClockStub(t)
-			var seen []clocktest.ClockElapsedCall
-			s.OnElapsed.OnRecord(func(c clocktest.ClockElapsedCall) { seen = append(seen, c) })
-			_ = clockStubElapsed(t, s)
-			_ = clockStubElapsed(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Elapsed")
-		})
 	})
 
 	t.Run("NewTimer", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "NewTimer", clockStubNewTimerSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := clocktest.NewClockStub(t)
-			_ = clockStubNewTimer(t, s)
-			got := s.OnNewTimer.AssertCalledOnce(t, "NewTimer records the call")
-			a0 := clockStubNewTimerArgs(t)
-			assert.Equal(t, got.D, a0, "the call records D")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := clocktest.NewClockStub(t)
-			var seen []clocktest.ClockNewTimerCall
-			s.OnNewTimer.OnRecord(func(c clocktest.ClockNewTimerCall) { seen = append(seen, c) })
-			_ = clockStubNewTimer(t, s)
-			_ = clockStubNewTimer(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of NewTimer")
-		})
 	})
 
 	t.Run("Update", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Update", clockStubUpdateSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := clocktest.NewClockStub(t)
-			_, _ = clockStubUpdate(t, s)
-			got := s.OnUpdate.AssertCalledOnce(t, "Update records the call")
-			a0 := clockStubUpdateArgs(t)
-			assert.Equal(t, got.Observed, a0, "the call records Observed")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := clocktest.NewClockStub(t)
-			var seen []clocktest.ClockUpdateCall
-			s.OnUpdate.OnRecord(func(c clocktest.ClockUpdateCall) { seen = append(seen, c) })
-			_, _ = clockStubUpdate(t, s)
-			_, _ = clockStubUpdate(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Update")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) clockStubInstance {
-			return clockStubInstanceOf(tb, clocktest.NewClockStub(tb))
-		})
 
-		t.Run("clears the recorded calls of Now", func(t *testing.T) {
+		t.Run("Now", func(t *testing.T) {
 			t.Parallel()
-			s := clocktest.NewClockStub(t)
-			_ = clockStubNow(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnNow.CallCount(), 0, "ResetCalls clears the calls of Now")
+			stub.ResetBehaviour(t, "Now", clockStubNowSubject)
 		})
 
-		t.Run("keeps the results of Returns of Now", func(t *testing.T) {
+		t.Run("Time", func(t *testing.T) {
 			t.Parallel()
-			s := clocktest.NewClockStub(t)
-			want0 := clockStubNowPins()
-			s.OnNow.Returns(want0)
-			s.ResetCalls()
-			got0 := clockStubNow(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Now")
+			stub.ResetBehaviour(t, "Time", clockStubTimeSubject)
 		})
 
-		t.Run("clears the recorded calls of Time", func(t *testing.T) {
+		t.Run("Elapsed", func(t *testing.T) {
 			t.Parallel()
-			s := clocktest.NewClockStub(t)
-			_ = clockStubTime(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnTime.CallCount(), 0, "ResetCalls clears the calls of Time")
+			stub.ResetBehaviour(t, "Elapsed", clockStubElapsedSubject)
 		})
 
-		t.Run("keeps the results of Returns of Time", func(t *testing.T) {
+		t.Run("NewTimer", func(t *testing.T) {
 			t.Parallel()
-			s := clocktest.NewClockStub(t)
-			want0 := clockStubTimePins()
-			s.OnTime.Returns(want0)
-			s.ResetCalls()
-			got0 := clockStubTime(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Time")
+			stub.ResetBehaviour(t, "NewTimer", clockStubNewTimerSubject)
 		})
 
-		t.Run("clears the recorded calls of Elapsed", func(t *testing.T) {
+		t.Run("Update", func(t *testing.T) {
 			t.Parallel()
-			s := clocktest.NewClockStub(t)
-			_ = clockStubElapsed(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnElapsed.CallCount(), 0, "ResetCalls clears the calls of Elapsed")
-		})
-
-		t.Run("keeps the results of Returns of Elapsed", func(t *testing.T) {
-			t.Parallel()
-			s := clocktest.NewClockStub(t)
-			want0 := clockStubElapsedPins()
-			s.OnElapsed.Returns(want0)
-			s.ResetCalls()
-			got0 := clockStubElapsed(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Elapsed")
-		})
-
-		t.Run("clears the recorded calls of NewTimer", func(t *testing.T) {
-			t.Parallel()
-			s := clocktest.NewClockStub(t)
-			_ = clockStubNewTimer(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnNewTimer.CallCount(), 0, "ResetCalls clears the calls of NewTimer")
-		})
-
-		t.Run("clears the recorded calls of Update", func(t *testing.T) {
-			t.Parallel()
-			s := clocktest.NewClockStub(t)
-			_, _ = clockStubUpdate(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnUpdate.CallCount(), 0, "ResetCalls clears the calls of Update")
-		})
-
-		t.Run("keeps the results of Returns of Update", func(t *testing.T) {
-			t.Parallel()
-			s := clocktest.NewClockStub(t)
-			want0, want1 := clockStubUpdatePins()
-			s.OnUpdate.Returns(want0, want1)
-			s.ResetCalls()
-			got0, got1 := clockStubUpdate(t, s)
-			expect.Equal(t, got0, want0, "ResetCalls keeps the Result of Update")
-			expect.ErrorIs(t, got1, want1, "ResetCalls keeps the error of Update")
-		})
-	})
-
-	t.Run("NewClockStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) clockStubInstance {
-			return clockStubInstanceOf(tb, clocktest.NewClockStubDelayed(tb, d, clk))
-		})
-	})
-
-	t.Run("NewClockStubFailing", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("fails Update with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Update-failing")
-			s := clocktest.NewClockStubFailing(t, want)
-			_, r1 := clockStubUpdate(t, s)
-			assert.ErrorIs(t, r1, want, "Update fails with the error of NewClockStubFailing")
+			stub.ResetBehaviour(t, "Update", clockStubUpdateSubject)
 		})
 	})
 
@@ -636,190 +528,6 @@ func TestClockStub(t *testing.T) {
 	})
 }
 
-// TestClockNowStub checks the methods of ClockNowStub, which configures
-// Now.
-func TestClockNowStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Now", func(t *testing.T) {
-			t.Parallel()
-			s := clocktest.NewClockStub(t)
-			want0 := clockStubNowPins()
-			assert.NotEqual(t, want0, clockStubNowSubject(t).Default().Result,
-				"the sample of Result differs from its default result")
-			s.OnNow.Returns(want0)
-			got0 := clockStubNow(t, s)
-			assert.Equal(t, got0, want0, "Now returns the Result that Returns sets")
-		})
-
-		t.Run("configures Now for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := clocktest.NewClockStub(r)
-			s.OnNow.Strict()
-			var want0 clock.Instant
-			s.OnNow.Returns(want0)
-			_ = clockStubNow(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Now")
-		})
-	})
-}
-
-// TestClockTimeStub checks the methods of ClockTimeStub, which configures
-// Time.
-func TestClockTimeStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Time", func(t *testing.T) {
-			t.Parallel()
-			s := clocktest.NewClockStub(t)
-			want0 := clockStubTimePins()
-			s.OnTime.Returns(want0)
-			got0 := clockStubTime(t, s)
-			assert.Equal(t, got0, want0, "Time returns the Result that Returns sets")
-		})
-
-		t.Run("configures Time for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := clocktest.NewClockStub(r)
-			s.OnTime.Strict()
-			var want0 time.Time
-			s.OnTime.Returns(want0)
-			_ = clockStubTime(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Time")
-		})
-	})
-}
-
-// TestClockElapsedStub checks the methods of ClockElapsedStub, which
-// configures Elapsed.
-func TestClockElapsedStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Elapsed", func(t *testing.T) {
-			t.Parallel()
-			s := clocktest.NewClockStub(t)
-			want0 := clockStubElapsedPins()
-			s.OnElapsed.Returns(want0)
-			got0 := clockStubElapsed(t, s)
-			assert.Equal(t, got0, want0, "Elapsed returns the Result that Returns sets")
-		})
-
-		t.Run("configures Elapsed for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := clocktest.NewClockStub(r)
-			s.OnElapsed.Strict()
-			var want0 time.Duration
-			s.OnElapsed.Returns(want0)
-			_ = clockStubElapsed(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Elapsed")
-		})
-	})
-}
-
-// TestClockNewTimerStub checks the methods of ClockNewTimerStub, which
-// configures NewTimer.
-func TestClockNewTimerStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("configures NewTimer for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := clocktest.NewClockStub(r)
-			s.OnNewTimer.Strict()
-			var want0 clock.Timer
-			s.OnNewTimer.Returns(want0)
-			_ = clockStubNewTimer(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of NewTimer")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of NewTimer to the function", func(t *testing.T) {
-			t.Parallel()
-			s := clocktest.NewClockStub(t)
-			var got0 time.Duration
-			s.OnNewTimer.Func(func(p0 time.Duration) clock.Timer {
-				got0 = p0
-				var z0 clock.Timer
-				return z0
-			})
-			_ = clockStubNewTimer(t, s)
-			a0 := clockStubNewTimerArgs(t)
-			assert.Equal(t, got0, a0, "the function receives D")
-		})
-	})
-}
-
-// TestClockUpdateStub checks the methods of ClockUpdateStub, which
-// configures Update.
-func TestClockUpdateStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Update", func(t *testing.T) {
-			t.Parallel()
-			s := clocktest.NewClockStub(t)
-			want0, want1 := clockStubUpdatePins()
-			assert.NotEqual(t, want0, clockStubUpdateSubject(t).Default().Result,
-				"the sample of Result differs from its default result")
-			s.OnUpdate.Returns(want0, want1)
-			got0, got1 := clockStubUpdate(t, s)
-			expect.Equal(t, got0, want0, "Update returns the Result that Returns sets")
-			expect.ErrorIs(t, got1, want1, "Update returns the error that Returns sets")
-		})
-
-		t.Run("configures Update for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := clocktest.NewClockStub(r)
-			s.OnUpdate.Strict()
-			var want0 clock.Instant
-			var want1 error
-			s.OnUpdate.Returns(want0, want1)
-			_, _ = clockStubUpdate(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Update")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Update to the function", func(t *testing.T) {
-			t.Parallel()
-			s := clocktest.NewClockStub(t)
-			var got0 clock.Instant
-			s.OnUpdate.Func(func(p0 clock.Instant) (clock.Instant, error) {
-				got0 = p0
-				var z0 clock.Instant
-				var z1 error
-				return z0, z1
-			})
-			_, _ = clockStubUpdate(t, s)
-			a0 := clockStubUpdateArgs(t)
-			assert.Equal(t, got0, a0, "the function receives Observed")
-		})
-	})
-}
-
 // timerStubC calls C of s with the samples of its arguments.
 func timerStubC(tb assert.TB, s *clocktest.TimerStub) <-chan time.Time {
 	tb.Helper()
@@ -868,13 +576,15 @@ func timerStubStopPins() bool {
 	return want0
 }
 
-// timerStubCSubject returns the subject of [stub.Behaviour] for C. The
-// subject calls a new double that reports to tb.
+// timerStubCSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for C. The subject calls a new double that reports
+// to tb.
 func timerStubCSubject(tb assert.TB) stub.Subject[clocktest.TimerCCall, clocktest.TimerCReturn] {
 	tb.Helper()
 	s := clocktest.NewTimerStub(tb)
 	return stub.Subject[clocktest.TimerCCall, clocktest.TimerCReturn]{
-		Stub: s.OnC.MethodStub,
+		Stub:  s.OnC.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = timerStubC(tb, s)
 		},
@@ -882,9 +592,14 @@ func timerStubCSubject(tb assert.TB) stub.Subject[clocktest.TimerCCall, clocktes
 			got0 := timerStubC(tb, s)
 			return clocktest.TimerCReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() clocktest.TimerCReturn {
+			want0 := timerStubCPins()
+			s.OnC.Returns(want0)
+			return clocktest.TimerCReturn{Result: want0}
+		},
+		Override: func(seen func(clocktest.TimerCCall)) {
 			s.OnC.Func(func() <-chan time.Time {
-				mark()
+				seen(clocktest.TimerCCall{})
 				var z0 <-chan time.Time
 				return z0
 			})
@@ -892,23 +607,35 @@ func timerStubCSubject(tb assert.TB) stub.Subject[clocktest.TimerCCall, clocktes
 	}
 }
 
-// timerStubResetSubject returns the subject of [stub.Behaviour] for Reset.
-// The subject calls a new double that reports to tb.
+// timerStubResetSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Reset. The subject calls a new double that
+// reports to tb.
 func timerStubResetSubject(tb assert.TB) stub.Subject[clocktest.TimerResetCall, clocktest.TimerResetReturn] {
 	tb.Helper()
 	s := clocktest.NewTimerStub(tb)
 	return stub.Subject[clocktest.TimerResetCall, clocktest.TimerResetReturn]{
-		Stub: s.OnReset.MethodStub,
+		Stub:  s.OnReset.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = timerStubReset(tb, s)
+		},
+		Arguments: func(tb assert.TB, c clocktest.TimerResetCall) {
+			tb.Helper()
+			a0 := timerStubResetArgs(tb)
+			assert.Equal(tb, c.D, a0, "the call records D")
 		},
 		Result: func() clocktest.TimerResetReturn {
 			got0 := timerStubReset(tb, s)
 			return clocktest.TimerResetReturn{Result: got0}
 		},
-		Override: func(mark func()) {
-			s.OnReset.Func(func(_ time.Duration) bool {
-				mark()
+		Returns: func() clocktest.TimerResetReturn {
+			want0 := timerStubResetPins()
+			s.OnReset.Returns(want0)
+			return clocktest.TimerResetReturn{Result: want0}
+		},
+		Override: func(seen func(clocktest.TimerResetCall)) {
+			s.OnReset.Func(func(p0 time.Duration) bool {
+				seen(clocktest.TimerResetCall{D: p0})
 				var z0 bool
 				return z0
 			})
@@ -916,13 +643,15 @@ func timerStubResetSubject(tb assert.TB) stub.Subject[clocktest.TimerResetCall, 
 	}
 }
 
-// timerStubStopSubject returns the subject of [stub.Behaviour] for Stop.
-// The subject calls a new double that reports to tb.
+// timerStubStopSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Stop. The subject calls a new double that
+// reports to tb.
 func timerStubStopSubject(tb assert.TB) stub.Subject[clocktest.TimerStopCall, clocktest.TimerStopReturn] {
 	tb.Helper()
 	s := clocktest.NewTimerStub(tb)
 	return stub.Subject[clocktest.TimerStopCall, clocktest.TimerStopReturn]{
-		Stub: s.OnStop.MethodStub,
+		Stub:  s.OnStop.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = timerStubStop(tb, s)
 		},
@@ -930,9 +659,14 @@ func timerStubStopSubject(tb assert.TB) stub.Subject[clocktest.TimerStopCall, cl
 			got0 := timerStubStop(tb, s)
 			return clocktest.TimerStopReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() clocktest.TimerStopReturn {
+			want0 := timerStubStopPins()
+			s.OnStop.Returns(want0)
+			return clocktest.TimerStopReturn{Result: want0}
+		},
+		Override: func(seen func(clocktest.TimerStopCall)) {
 			s.OnStop.Func(func() bool {
-				mark()
+				seen(clocktest.TimerStopCall{})
 				var z0 bool
 				return z0
 			})
@@ -953,7 +687,6 @@ func timerStubInstanceOf(tb assert.TB, s *clocktest.TimerStub) timerStubInstance
 		Call: func() {
 			_ = timerStubC(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -965,122 +698,34 @@ func TestTimerStub(t *testing.T) {
 	t.Run("C", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "C", timerStubCSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := clocktest.NewTimerStub(t)
-			var seen []clocktest.TimerCCall
-			s.OnC.OnRecord(func(c clocktest.TimerCCall) { seen = append(seen, c) })
-			_ = timerStubC(t, s)
-			_ = timerStubC(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of C")
-		})
 	})
 
 	t.Run("Reset", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Reset", timerStubResetSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := clocktest.NewTimerStub(t)
-			_ = timerStubReset(t, s)
-			got := s.OnReset.AssertCalledOnce(t, "Reset records the call")
-			a0 := timerStubResetArgs(t)
-			assert.Equal(t, got.D, a0, "the call records D")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := clocktest.NewTimerStub(t)
-			var seen []clocktest.TimerResetCall
-			s.OnReset.OnRecord(func(c clocktest.TimerResetCall) { seen = append(seen, c) })
-			_ = timerStubReset(t, s)
-			_ = timerStubReset(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Reset")
-		})
 	})
 
 	t.Run("Stop", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Stop", timerStubStopSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := clocktest.NewTimerStub(t)
-			var seen []clocktest.TimerStopCall
-			s.OnStop.OnRecord(func(c clocktest.TimerStopCall) { seen = append(seen, c) })
-			_ = timerStubStop(t, s)
-			_ = timerStubStop(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Stop")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) timerStubInstance {
-			return timerStubInstanceOf(tb, clocktest.NewTimerStub(tb))
-		})
 
-		t.Run("clears the recorded calls of C", func(t *testing.T) {
+		t.Run("C", func(t *testing.T) {
 			t.Parallel()
-			s := clocktest.NewTimerStub(t)
-			_ = timerStubC(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnC.CallCount(), 0, "ResetCalls clears the calls of C")
+			stub.ResetBehaviour(t, "C", timerStubCSubject)
 		})
 
-		t.Run("keeps the results of Returns of C", func(t *testing.T) {
+		t.Run("Reset", func(t *testing.T) {
 			t.Parallel()
-			s := clocktest.NewTimerStub(t)
-			want0 := timerStubCPins()
-			s.OnC.Returns(want0)
-			s.ResetCalls()
-			got0 := timerStubC(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of C")
+			stub.ResetBehaviour(t, "Reset", timerStubResetSubject)
 		})
 
-		t.Run("clears the recorded calls of Reset", func(t *testing.T) {
+		t.Run("Stop", func(t *testing.T) {
 			t.Parallel()
-			s := clocktest.NewTimerStub(t)
-			_ = timerStubReset(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnReset.CallCount(), 0, "ResetCalls clears the calls of Reset")
-		})
-
-		t.Run("keeps the results of Returns of Reset", func(t *testing.T) {
-			t.Parallel()
-			s := clocktest.NewTimerStub(t)
-			want0 := timerStubResetPins()
-			s.OnReset.Returns(want0)
-			s.ResetCalls()
-			got0 := timerStubReset(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Reset")
-		})
-
-		t.Run("clears the recorded calls of Stop", func(t *testing.T) {
-			t.Parallel()
-			s := clocktest.NewTimerStub(t)
-			_ = timerStubStop(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnStop.CallCount(), 0, "ResetCalls clears the calls of Stop")
-		})
-
-		t.Run("keeps the results of Returns of Stop", func(t *testing.T) {
-			t.Parallel()
-			s := clocktest.NewTimerStub(t)
-			want0 := timerStubStopPins()
-			s.OnStop.Returns(want0)
-			s.ResetCalls()
-			got0 := timerStubStop(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Stop")
-		})
-	})
-
-	t.Run("NewTimerStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) timerStubInstance {
-			return timerStubInstanceOf(tb, clocktest.NewTimerStubDelayed(tb, d, clk))
+			stub.ResetBehaviour(t, "Stop", timerStubStopSubject)
 		})
 	})
 
@@ -1199,111 +844,4 @@ func TestTimerStub(t *testing.T) {
 	})
 }
 
-// TestTimerCStub checks the methods of TimerCStub, which configures C.
-func TestTimerCStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of C", func(t *testing.T) {
-			t.Parallel()
-			s := clocktest.NewTimerStub(t)
-			want0 := timerStubCPins()
-			s.OnC.Returns(want0)
-			got0 := timerStubC(t, s)
-			assert.Equal(t, got0, want0, "C returns the Result that Returns sets")
-		})
-
-		t.Run("configures C for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := clocktest.NewTimerStub(r)
-			s.OnC.Strict()
-			var want0 <-chan time.Time
-			s.OnC.Returns(want0)
-			_ = timerStubC(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of C")
-		})
-	})
-}
-
-// TestTimerResetStub checks the methods of TimerResetStub, which
-// configures Reset.
-func TestTimerResetStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Reset", func(t *testing.T) {
-			t.Parallel()
-			s := clocktest.NewTimerStub(t)
-			want0 := timerStubResetPins()
-			s.OnReset.Returns(want0)
-			got0 := timerStubReset(t, s)
-			assert.Equal(t, got0, want0, "Reset returns the Result that Returns sets")
-		})
-
-		t.Run("configures Reset for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := clocktest.NewTimerStub(r)
-			s.OnReset.Strict()
-			var want0 bool
-			s.OnReset.Returns(want0)
-			_ = timerStubReset(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Reset")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Reset to the function", func(t *testing.T) {
-			t.Parallel()
-			s := clocktest.NewTimerStub(t)
-			var got0 time.Duration
-			s.OnReset.Func(func(p0 time.Duration) bool {
-				got0 = p0
-				var z0 bool
-				return z0
-			})
-			_ = timerStubReset(t, s)
-			a0 := timerStubResetArgs(t)
-			assert.Equal(t, got0, a0, "the function receives D")
-		})
-	})
-}
-
-// TestTimerStopStub checks the methods of TimerStopStub, which configures
-// Stop.
-func TestTimerStopStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Stop", func(t *testing.T) {
-			t.Parallel()
-			s := clocktest.NewTimerStub(t)
-			want0 := timerStubStopPins()
-			s.OnStop.Returns(want0)
-			got0 := timerStubStop(t, s)
-			assert.Equal(t, got0, want0, "Stop returns the Result that Returns sets")
-		})
-
-		t.Run("configures Stop for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := clocktest.NewTimerStub(r)
-			s.OnStop.Strict()
-			var want0 bool
-			s.OnStop.Returns(want0)
-			_ = timerStubStop(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Stop")
-		})
-	})
-}
-
-// dokimi:provenance sha256:3591d19ace6f68a5d75f2e9b4404aa3e81c6478a93d980c12d79c4855ca80288
+// dokimi:provenance sha256:addf5c1d4a0fa10cfda0e1b9fc911a5f78fbf6767c7e42c1fbc5ed016cd40af6

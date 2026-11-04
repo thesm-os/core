@@ -193,15 +193,6 @@ func NewCounterStub(tb assert.TB, opts ...CounterStubOption) *CounterStub {
 	return s
 }
 
-// NewCounterStubDelayed returns a double whose methods sleep d on clk
-// before they return. It applies opts after the clock and the latency.
-func NewCounterStubDelayed(tb assert.TB, d time.Duration, clk assert.Clock, opts ...CounterStubOption) *CounterStub {
-	return NewCounterStub(tb, append([]CounterStubOption{
-		CounterStubWithClock(clk),
-		CounterStubWithLatency(d),
-	}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *CounterStub) ResetCalls() {
@@ -279,4 +270,4 @@ func (s *CounterStub) Release() {
 	})
 }
 
-// dokimi:provenance sha256:c4bb443c363b0268f78561934550ffee1ac0420b1cc14c0a2d11b1cd26cbdd4d
+// dokimi:provenance sha256:b9b2c532f8240f40909e8a823e616d584ee799aec8ed4af97c90a9ba8382ce3d

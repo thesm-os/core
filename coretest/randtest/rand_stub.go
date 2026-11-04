@@ -186,21 +186,6 @@ func NewRandStub(tb assert.TB, opts ...RandStubOption) *RandStub {
 	return s
 }
 
-// NewRandStubDelayed returns a double whose methods sleep d on clk before
-// they return. It applies opts after the clock and the latency.
-func NewRandStubDelayed(tb assert.TB, d time.Duration, clk assert.Clock, opts ...RandStubOption) *RandStub {
-	return NewRandStub(tb, append([]RandStubOption{
-		RandStubWithClock(clk),
-		RandStubWithLatency(d),
-	}, opts...)...)
-}
-
-// NewRandStubFailing returns a double on which each call of a method that
-// can fail fails with err. It applies opts after the failure.
-func NewRandStubFailing(tb assert.TB, err error, opts ...RandStubOption) *RandStub {
-	return NewRandStub(tb, append([]RandStubOption{RandStubFailing(err)}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *RandStub) ResetCalls() {
@@ -263,4 +248,4 @@ func (s *RandStub) Read(p []byte) (n int, err error) {
 	return r.N, r.Err
 }
 
-// dokimi:provenance sha256:4624bc2c2fea97246178d6427eae948a1f9585c0f81eccb667b33c1b6d67faba
+// dokimi:provenance sha256:1cb375d415498a609d1e179bcff83b5ea09c97534ca8e65c66d51e91be47dffd

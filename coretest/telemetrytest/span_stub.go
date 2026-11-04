@@ -229,15 +229,6 @@ func NewSpanStub(tb assert.TB, opts ...SpanStubOption) *SpanStub {
 	return s
 }
 
-// NewSpanStubDelayed returns a double whose methods sleep d on clk before
-// they return. It applies opts after the clock and the latency.
-func NewSpanStubDelayed(tb assert.TB, d time.Duration, clk assert.Clock, opts ...SpanStubOption) *SpanStub {
-	return NewSpanStub(tb, append([]SpanStubOption{
-		SpanStubWithClock(clk),
-		SpanStubWithLatency(d),
-	}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *SpanStub) ResetCalls() {
@@ -337,4 +328,4 @@ func (s *SpanStub) SpanContext() telemetry.SpanContext {
 	return r.Result
 }
 
-// dokimi:provenance sha256:5050a992432d19d88c87f3c99d514c190fa56960ddad01f67f229dbe28dd3a7d
+// dokimi:provenance sha256:4cc807a70304e8a4c01154ecf1db5b6f11ad8d5bbddd097812803e36a8194196

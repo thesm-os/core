@@ -14,40 +14,9 @@ import (
 	"go.thesmos.sh/core/telemetry/noop"
 )
 
-// The values that the checks of a Gauge pass to Set and to Add.
-var (
-	// finiteValues are values of both signs and of a large magnitude.
-	finiteValues = []float64{0, 1, -1, 1e9, -1e9}
-
-	// nonFiniteValues are NaN and both infinities.
-	nonFiniteValues = []float64{math.NaN(), math.Inf(1), math.Inf(-1)}
-)
-
-// GaugeSetReturnsForAFiniteValue checks that Set of 0, 1, -1, 1e9 and -1e9
-// returns without a panic.
-//
-//dokimi:check Gauge.Set defect=gaugeSetPanicsForMinusOne
-func GaugeSetReturnsForAFiniteValue(h *GaugeHandle) {
-	g := h.Subject()
-	assert.Total(h, func(value float64) error {
-		g.Set(h.Context(), value)
-
-		return nil
-	}, finiteValues, h.Statement())
-}
-
-// GaugeAddReturnsForAFiniteDelta checks that Add of 0, 1, -1, 1e9 and -1e9
-// returns without a panic.
-//
-//dokimi:check Gauge.Add defect=gaugeAddPanicsForMinusOne
-func GaugeAddReturnsForAFiniteDelta(h *GaugeHandle) {
-	g := h.Subject()
-	assert.Total(h, func(delta float64) error {
-		g.Add(h.Context(), delta)
-
-		return nil
-	}, finiteValues, h.Statement())
-}
+// nonFiniteValues are NaN and both infinities. The checks of a Gauge pass them
+// to Set and to Add, and the checks of a Histogram pass them to Record.
+var nonFiniteValues = []float64{math.NaN(), math.Inf(1), math.Inf(-1)}
 
 // GaugeSetReturnsForANonFiniteValue checks that Set of NaN and of both
 // infinities returns without a panic.
@@ -187,28 +156,6 @@ func GaugeReleaseReturnsWhileAddRuns(h *GaugeHandle) {
 	for _, o := range outcomes {
 		assert.True(h, o.Finished, h.Statement())
 	}
-}
-
-// gaugeSetPanicsForMinusOne returns the planted defect of
-// GaugeSetReturnsForAFiniteValue: a Gauge whose Set panics for -1.
-func gaugeSetPanicsForMinusOne(h *GaugeHandle) telemetry.Gauge {
-	return NewGaugeStub(h, GaugeStubDelegateTo(noop.New().Gauge(soundSpec)),
-		WithGaugeSet(func(_ context.Context, value float64) {
-			if value == -1 {
-				panic("telemetrytest: Set panics for -1")
-			}
-		}))
-}
-
-// gaugeAddPanicsForMinusOne returns the planted defect of
-// GaugeAddReturnsForAFiniteDelta: a Gauge whose Add panics for -1.
-func gaugeAddPanicsForMinusOne(h *GaugeHandle) telemetry.Gauge {
-	return NewGaugeStub(h, GaugeStubDelegateTo(noop.New().Gauge(soundSpec)),
-		WithGaugeAdd(func(_ context.Context, delta float64) {
-			if delta == -1 {
-				panic("telemetrytest: Add panics for -1")
-			}
-		}))
 }
 
 // gaugeSetPanicsForNaN returns the planted defect of

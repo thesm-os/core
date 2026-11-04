@@ -26,22 +26,22 @@ import (
 	randcrypto "go.thesmos.sh/core/rand/crypto"
 )
 
-// aes256GCMOverhead pins the bytes an AES-256-GCM envelope adds to its
-// plaintext: 1 of version, 1 of name length, 11 of name, 12 of nonce and
-// 16 of tag.
+// aes256GCMOverhead is the number of bytes that an AES-256-GCM envelope
+// adds to its plaintext: 1 of version, 1 of name length, 11 of name, 12 of
+// nonce and 16 of tag.
 const aes256GCMOverhead = 41
 
-// aeadKey is the key of every AEAD of the tests: the bytes 0 to 31. An
-// AES-128 key is its first 16 bytes.
+// aeadKey is the key of every AEAD of the tests, which contains the bytes 0
+// to 31. An AES-128 key is its first 16 bytes.
 var aeadKey = []byte{
 	0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
 	0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f,
 }
 
-// relabelled wraps an AEAD and reports a different Algorithm, leaving
-// the key and the underlying cipher untouched. Two relabelled AEADs over
-// one key differ in nothing but the name, so they isolate the binding of
-// the algorithm into the tag.
+// relabelled wraps an AEAD and reports another Algorithm. It keeps the key
+// and the cipher of the AEAD, so two relabelled AEADs over one key differ
+// only in the name. A test of them isolates the binding of the algorithm
+// into the tag.
 type relabelled struct {
 	crypto.AEAD
 	name crypto.Algorithm
@@ -108,8 +108,8 @@ func TestAEAD(t *testing.T) {
 			expect.Equal(t, string(sealed[2:2+len(alg)]), alg, "the name must follow its length")
 		})
 
-		// The layout of an envelope is frozen, so a change to any byte
-		// here changes every envelope ever sealed.
+		// The layout of an envelope is fixed, so a change of any byte here
+		// changes every envelope that core has sealed.
 		t.Run("returns the recorded envelope for fixed inputs", func(t *testing.T) {
 			t.Parallel()
 			want, err := hex.DecodeString("01" + // envelope version
@@ -173,8 +173,8 @@ func TestAEAD(t *testing.T) {
 			sealed, err := crypto.Seal(relabelled{AEAD: a, name: nameA}, randcrypto.New(), []byte("payload"), nil)
 			assert.NoError(t, err, "Seal must succeed")
 
-			// The rewritten envelope parses and names the algorithm of the
-			// opening AEAD.
+			// The rewritten envelope parses, and its header has the
+			// algorithm of the AEAD that opens it.
 			forged := bytes.Clone(sealed)
 			copy(forged[2:2+len(nameA)], nameB)
 
@@ -389,8 +389,8 @@ func TestAEAD(t *testing.T) {
 			assert.Equal(t, got, a.Algorithm(), "the name must be the name of the AEAD that sealed it")
 		})
 
-		// Peeking reads only the header, so the name may end at the end
-		// of the input.
+		// PeekAlgorithm reads only the header, so the name may end at the
+		// end of the input.
 		t.Run("returns the name of a header without a body", func(t *testing.T) {
 			t.Parallel()
 			got, err := crypto.PeekAlgorithm([]byte{crypto.EnvelopeVersion, 2, 'h', 'i'})
@@ -446,6 +446,33 @@ func TestAEAD(t *testing.T) {
 			_, err := crypto.PeekAlgorithm([]byte{crypto.EnvelopeVersion, 0})
 			assert.Equal(t, errs.Classify(err), errs.Integrity, "ErrAlgorithmSize must classify as Integrity")
 		})
+	})
+
+	t.Run("SealInputs", func(t *testing.T) {
+		t.Parallel()
+
+		for _, mode := range modes {
+			t.Run("returns a nonce of NonceSize bytes for an AEAD "+mode.name, func(t *testing.T) {
+				t.Parallel()
+				_, nonce, _, _ := crypto.SealInputs(mode.aead)
+				assert.Length(t, nonce, mode.aead.NonceSize(), "the nonce of SealInputs is NonceSize bytes long")
+			})
+		}
+	})
+
+	t.Run("OpenInputs", func(t *testing.T) {
+		t.Parallel()
+
+		for _, mode := range modes {
+			t.Run("returns a ciphertext that Open opens to the plaintext of SealInputs for an AEAD "+mode.name,
+				func(t *testing.T) {
+					t.Parallel()
+					_, _, want, _ := crypto.SealInputs(mode.aead)
+					got, err := mode.aead.Open(crypto.OpenInputs(mode.aead))
+					assert.NoError(t, err, "Open opens the ciphertext of OpenInputs")
+					assert.Equal(t, got, want, "Open returns the plaintext of SealInputs")
+				})
+		}
 	})
 }
 
@@ -600,9 +627,9 @@ func BenchmarkAEAD(b *testing.B) {
 		assert.Length(b, dst, len(plaintext)+aes256GCMOverhead, "the benchmark must measure an envelope")
 	})
 
-	// The embedded primitive with a sized destination and a nonce that
-	// the caller manages. The cost of the envelope is the difference
-	// between this and AppendSeal.
+	// The case seals with the embedded primitive, a sized destination and
+	// a nonce that the caller manages. The cost of the envelope is the
+	// difference between this case and AppendSeal.
 	b.Run("BaselineSeal", func(b *testing.B) {
 		nonce := make([]byte, a.NonceSize())
 		dst := make([]byte, 0, 2048)
@@ -658,7 +685,8 @@ func BenchmarkAEAD(b *testing.B) {
 }
 
 // newAEAD returns an AES-GCM AEAD over the first size bytes of aeadKey,
-// with nonces that Seal draws. It fails tb when aesgcm refuses the key.
+// whose nonces Seal reads from its source. It fails tb when aesgcm refuses
+// the key.
 func newAEAD(tb testing.TB, size int) crypto.AEAD {
 	tb.Helper()
 
@@ -668,8 +696,8 @@ func newAEAD(tb testing.TB, size int) crypto.AEAD {
 	return a
 }
 
-// newModuleNonceAEAD returns an AES-256-GCM AEAD over aeadKey that draws
-// its own nonces. It fails tb when aesgcm refuses the key.
+// newModuleNonceAEAD returns an AES-256-GCM AEAD over aeadKey that
+// generates its own nonces. It fails tb when aesgcm refuses the key.
 func newModuleNonceAEAD(tb testing.TB) crypto.AEAD {
 	tb.Helper()
 

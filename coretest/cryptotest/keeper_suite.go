@@ -10,6 +10,8 @@ import (
 
 	"go.dokimi.dev/assert/prop"
 	"go.dokimi.dev/conform"
+	"go.dokimi.dev/conform/probe"
+	"go.dokimi.dev/spec"
 	"go.thesmos.sh/core/crypto"
 )
 
@@ -47,6 +49,18 @@ func (c keeperKeyID) KeeperNamesItsKey() conform.ID[crypto.Keeper] {
 	return c.Check("keeper-names-its-key")
 }
 
+// Smoke returns the identity of the check that KeyID returns without a
+// panic for derived inputs.
+func (c keeperKeyID) Smoke() conform.ID[crypto.Keeper] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that KeyID returns the
+// same value for the same inputs.
+func (c keeperKeyID) Deterministic() conform.ID[crypto.Keeper] {
+	return c.Check("deterministic")
+}
+
 // keeperWrap is the name of Keeper.Wrap, with the identities of its
 // checks.
 type keeperWrap struct {
@@ -63,6 +77,18 @@ func (c keeperWrap) KeeperRoundTripsAnEmptyKey() conform.ID[crypto.Keeper] {
 // two Wraps of one data key return different bytes.
 func (c keeperWrap) KeeperWrapsNonDeterministically() conform.ID[crypto.Keeper] {
 	return c.Check("keeper-wraps-non-deterministically")
+}
+
+// Smoke returns the identity of the check that Wrap returns without a
+// panic for derived inputs.
+func (c keeperWrap) Smoke() conform.ID[crypto.Keeper] {
+	return c.Check("smoke")
+}
+
+// Cancel returns the identity of the check that Wrap returns an error for
+// a cancelled context.
+func (c keeperWrap) Cancel() conform.ID[crypto.Keeper] {
+	return c.Check("cancel")
 }
 
 // keeperUnwrap is the name of Keeper.Unwrap, with the identities of its
@@ -98,12 +124,165 @@ func (c keeperUnwrap) KeeperUnwrapsUnderASecondInstance() conform.ID[crypto.Keep
 	return c.Check("keeper-unwraps-under-a-second-instance")
 }
 
+// Smoke returns the identity of the check that Unwrap returns without a
+// panic for derived inputs.
+func (c keeperUnwrap) Smoke() conform.ID[crypto.Keeper] {
+	return c.Check("smoke")
+}
+
+// Cancel returns the identity of the check that Unwrap returns an error
+// for a cancelled context.
+func (c keeperUnwrap) Cancel() conform.ID[crypto.Keeper] {
+	return c.Check("cancel")
+}
+
 // KeeperSuite returns the checks of Keeper, and the calls and the budgets
 // of its callables.
 func KeeperSuite() conform.Suite[crypto.Keeper] {
 	return conform.Suite[crypto.Keeper]{
 		Declaration: "Keeper",
+		Package:     "go.thesmos.sh/core/crypto",
+		Generator:   conform.Generator{Name: "dokimi", Version: "0.1.0"},
 		Checks: []conform.Check[crypto.Keeper]{
+			{
+				ID:          KeeperChecks.KeyID.Smoke(),
+				Statement:   "KeyID returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *KeeperHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().KeyID()
+						return nil
+					})
+				},
+				Defect: keeperKeyIDPanics,
+			},
+			{
+				ID:          KeeperChecks.KeyID.Deterministic(),
+				Statement:   "KeyID returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[crypto.Keeper]{KeeperChecks.KeyID.Smoke()},
+				Apply: func(h *KeeperHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) (string, error) {
+						r0 := h.Subject().KeyID()
+						return r0, nil
+					})
+				},
+				Defect: keeperKeyIDDrifts,
+			},
+			{
+				ID:          KeeperChecks.Wrap.Smoke(),
+				Statement:   "Wrap returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *KeeperHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						_, err := h.Subject().Wrap(ctx, []byte{1})
+						return err
+					})
+				},
+				Defect: keeperWrapPanics,
+			},
+			{
+				ID:          KeeperChecks.Wrap.Smoke().Generated(),
+				Statement:   "Wrap returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *KeeperHandle, c *prop.Case) {
+					drawnDek := c.Draw(prop.Of[[]byte](), "dek")
+					probe.Survives(h, func(ctx context.Context) error {
+						_, err := h.Subject().Wrap(ctx, drawnDek)
+						return err
+					})
+				},
+				Defect: keeperWrapPanics,
+			},
+			{
+				ID:          KeeperChecks.Wrap.Cancel(),
+				Statement:   "Wrap returns an error for a cancelled context",
+				Claim:       spec.Cancel,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Apply: func(h *KeeperHandle) {
+					probe.UnderCancelled(h, func(ctx context.Context) error {
+						_, err := h.Subject().Wrap(ctx, []byte{1})
+						return err
+					})
+				},
+				Defect: keeperWrapIgnoresCancel,
+			},
+			{
+				ID:          KeeperChecks.Wrap.Cancel().Generated(),
+				Statement:   "Wrap returns an error for a cancelled context",
+				Claim:       spec.Cancel,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *KeeperHandle, c *prop.Case) {
+					drawnDek := c.Draw(prop.Of[[]byte](), "dek")
+					probe.UnderCancelled(h, func(ctx context.Context) error {
+						_, err := h.Subject().Wrap(ctx, drawnDek)
+						return err
+					})
+				},
+				Defect: keeperWrapIgnoresCancel,
+			},
+			{
+				ID:          KeeperChecks.Unwrap.Smoke(),
+				Statement:   "Unwrap returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *KeeperHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						_, err := h.Subject().Unwrap(ctx, []byte{1})
+						return err
+					})
+				},
+				Defect: keeperUnwrapPanics,
+			},
+			{
+				ID:          KeeperChecks.Unwrap.Smoke().Generated(),
+				Statement:   "Unwrap returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *KeeperHandle, c *prop.Case) {
+					drawnWrapped := c.Draw(prop.Of[[]byte](), "wrapped")
+					probe.Survives(h, func(ctx context.Context) error {
+						_, err := h.Subject().Unwrap(ctx, drawnWrapped)
+						return err
+					})
+				},
+				Defect: keeperUnwrapPanics,
+			},
+			{
+				ID:          KeeperChecks.Unwrap.Cancel(),
+				Statement:   "Unwrap returns an error for a cancelled context",
+				Claim:       spec.Cancel,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Apply: func(h *KeeperHandle) {
+					probe.UnderCancelled(h, func(ctx context.Context) error {
+						_, err := h.Subject().Unwrap(ctx, []byte{1})
+						return err
+					})
+				},
+				Defect: keeperUnwrapIgnoresCancel,
+			},
+			{
+				ID:          KeeperChecks.Unwrap.Cancel().Generated(),
+				Statement:   "Unwrap returns an error for a cancelled context",
+				Claim:       spec.Cancel,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *KeeperHandle, c *prop.Case) {
+					drawnWrapped := c.Draw(prop.Of[[]byte](), "wrapped")
+					probe.UnderCancelled(h, func(ctx context.Context) error {
+						_, err := h.Subject().Unwrap(ctx, drawnWrapped)
+						return err
+					})
+				},
+				Defect: keeperUnwrapIgnoresCancel,
+			},
 			{
 				ID:        KeeperChecks.KeyID.KeeperNamesItsKey(),
 				Statement: "KeyID returns a name that is not empty, and the same name on every call",
@@ -286,4 +465,117 @@ func newKeeperOver(_ *KeeperHandle, spend func()) crypto.Keeper {
 	return keeperOver{spend: spend}
 }
 
-// dokimi:provenance sha256:b765a1dd65d217a2e034a823b412a14d642df9139dcdc16b75c97d09d282d01f
+// keeperKeyIDPanicsDefect is the planted defect of a Keeper whose KeyID
+// panics.
+type keeperKeyIDPanicsDefect struct {
+	keeperOverEmbedded
+}
+
+// KeyID is the override of the planted defect.
+func (*keeperKeyIDPanicsDefect) KeyID() (r0 string) {
+	panic("the planted defect of a Keeper whose KeyID panics")
+}
+
+// keeperKeyIDPanics returns the planted defect of a Keeper whose KeyID
+// panics over a fresh subject.
+func keeperKeyIDPanics(h *KeeperHandle) crypto.Keeper {
+	return &keeperKeyIDPanicsDefect{keeperOverEmbedded: h.Fresh()}
+}
+
+// keeperKeyIDDriftsDefect is the planted defect of a Keeper whose KeyID
+// returns another value on the repeat.
+type keeperKeyIDDriftsDefect struct {
+	keeperOverEmbedded
+	calls int
+}
+
+// KeyID is the override of the planted defect.
+func (d *keeperKeyIDDriftsDefect) KeyID() (r0 string) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = string("sample-b")
+	}
+	return r0
+}
+
+// keeperKeyIDDrifts returns the planted defect of a Keeper whose KeyID
+// returns another value on the repeat over a fresh subject.
+func keeperKeyIDDrifts(h *KeeperHandle) crypto.Keeper {
+	return &keeperKeyIDDriftsDefect{keeperOverEmbedded: h.Fresh()}
+}
+
+// keeperWrapPanicsDefect is the planted defect of a Keeper whose Wrap
+// panics.
+type keeperWrapPanicsDefect struct {
+	keeperOverEmbedded
+}
+
+// Wrap is the override of the planted defect.
+func (*keeperWrapPanicsDefect) Wrap(p0 context.Context, p1 []byte) (r0 []byte, r1 error) {
+	panic("the planted defect of a Keeper whose Wrap panics")
+}
+
+// keeperWrapPanics returns the planted defect of a Keeper whose Wrap
+// panics over a fresh subject.
+func keeperWrapPanics(h *KeeperHandle) crypto.Keeper {
+	return &keeperWrapPanicsDefect{keeperOverEmbedded: h.Fresh()}
+}
+
+// keeperWrapIgnoresCancelDefect is the planted defect of a Keeper whose
+// Wrap ignores the context.
+type keeperWrapIgnoresCancelDefect struct {
+	keeperOverEmbedded
+}
+
+// Wrap is the override of the planted defect.
+func (d *keeperWrapIgnoresCancelDefect) Wrap(p0 context.Context, p1 []byte) (r0 []byte, r1 error) {
+	if p0.Err() != nil {
+		return r0, r1
+	}
+	return d.keeperOverEmbedded.Wrap(p0, p1)
+}
+
+// keeperWrapIgnoresCancel returns the planted defect of a Keeper whose
+// Wrap ignores the context over a fresh subject.
+func keeperWrapIgnoresCancel(h *KeeperHandle) crypto.Keeper {
+	return &keeperWrapIgnoresCancelDefect{keeperOverEmbedded: h.Fresh()}
+}
+
+// keeperUnwrapPanicsDefect is the planted defect of a Keeper whose Unwrap
+// panics.
+type keeperUnwrapPanicsDefect struct {
+	keeperOverEmbedded
+}
+
+// Unwrap is the override of the planted defect.
+func (*keeperUnwrapPanicsDefect) Unwrap(p0 context.Context, p1 []byte) (r0 []byte, r1 error) {
+	panic("the planted defect of a Keeper whose Unwrap panics")
+}
+
+// keeperUnwrapPanics returns the planted defect of a Keeper whose Unwrap
+// panics over a fresh subject.
+func keeperUnwrapPanics(h *KeeperHandle) crypto.Keeper {
+	return &keeperUnwrapPanicsDefect{keeperOverEmbedded: h.Fresh()}
+}
+
+// keeperUnwrapIgnoresCancelDefect is the planted defect of a Keeper whose
+// Unwrap ignores the context.
+type keeperUnwrapIgnoresCancelDefect struct {
+	keeperOverEmbedded
+}
+
+// Unwrap is the override of the planted defect.
+func (d *keeperUnwrapIgnoresCancelDefect) Unwrap(p0 context.Context, p1 []byte) (r0 []byte, r1 error) {
+	if p0.Err() != nil {
+		return r0, r1
+	}
+	return d.keeperOverEmbedded.Unwrap(p0, p1)
+}
+
+// keeperUnwrapIgnoresCancel returns the planted defect of a Keeper whose
+// Unwrap ignores the context over a fresh subject.
+func keeperUnwrapIgnoresCancel(h *KeeperHandle) crypto.Keeper {
+	return &keeperUnwrapIgnoresCancelDefect{keeperOverEmbedded: h.Fresh()}
+}
+
+// dokimi:provenance sha256:de03533eaa66f1b1fd1207ae21491a3c52dcb12a3a232efeb2c4f224f86283b6

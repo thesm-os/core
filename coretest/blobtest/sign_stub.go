@@ -152,26 +152,6 @@ func NewGetSignerStub(tb assert.TB, opts ...GetSignerStubOption) *GetSignerStub 
 	return s
 }
 
-// NewGetSignerStubDelayed returns a double whose methods sleep d on clk
-// before they return. It applies opts after the clock and the latency.
-func NewGetSignerStubDelayed(
-	tb assert.TB,
-	d time.Duration,
-	clk assert.Clock,
-	opts ...GetSignerStubOption,
-) *GetSignerStub {
-	return NewGetSignerStub(tb, append([]GetSignerStubOption{
-		GetSignerStubWithClock(clk),
-		GetSignerStubWithLatency(d),
-	}, opts...)...)
-}
-
-// NewGetSignerStubFailing returns a double on which each call of a method
-// that can fail fails with err. It applies opts after the failure.
-func NewGetSignerStubFailing(tb assert.TB, err error, opts ...GetSignerStubOption) *GetSignerStub {
-	return NewGetSignerStub(tb, append([]GetSignerStubOption{GetSignerStubFailing(err)}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *GetSignerStub) ResetCalls() {
@@ -353,26 +333,6 @@ func NewCreateSignerStub(tb assert.TB, opts ...CreateSignerStubOption) *CreateSi
 	return s
 }
 
-// NewCreateSignerStubDelayed returns a double whose methods sleep d on clk
-// before they return. It applies opts after the clock and the latency.
-func NewCreateSignerStubDelayed(
-	tb assert.TB,
-	d time.Duration,
-	clk assert.Clock,
-	opts ...CreateSignerStubOption,
-) *CreateSignerStub {
-	return NewCreateSignerStub(tb, append([]CreateSignerStubOption{
-		CreateSignerStubWithClock(clk),
-		CreateSignerStubWithLatency(d),
-	}, opts...)...)
-}
-
-// NewCreateSignerStubFailing returns a double on which each call of a
-// method that can fail fails with err. It applies opts after the failure.
-func NewCreateSignerStubFailing(tb assert.TB, err error, opts ...CreateSignerStubOption) *CreateSignerStub {
-	return NewCreateSignerStub(tb, append([]CreateSignerStubOption{CreateSignerStubFailing(err)}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *CreateSignerStub) ResetCalls() {
@@ -422,4 +382,4 @@ func (s *CreateSignerStub) SignCreate(
 	return r.Result, r.Err
 }
 
-// dokimi:provenance sha256:13c71208d1df79d0753e68a6ea0e473d3c5ab01eeefbc48f1ab52e22c0e49e6a
+// dokimi:provenance sha256:fc487c31708b1591aed174926390be011c862a7ab1fca228e266afab66bb651c

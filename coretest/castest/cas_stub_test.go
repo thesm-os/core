@@ -101,13 +101,15 @@ func storeStubHasPins() (bool, error) {
 	return want0, want1
 }
 
-// storeStubHasherSubject returns the subject of [stub.Behaviour] for
-// Hasher. The subject calls a new double that reports to tb.
+// storeStubHasherSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Hasher. The subject calls a new double that
+// reports to tb.
 func storeStubHasherSubject(tb assert.TB) stub.Subject[castest.StoreHasherCall, castest.StoreHasherReturn] {
 	tb.Helper()
 	s := castest.NewStoreStub(tb)
 	return stub.Subject[castest.StoreHasherCall, castest.StoreHasherReturn]{
-		Stub: s.OnHasher.MethodStub,
+		Stub:  s.OnHasher.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = storeStubHasher(tb, s)
 		},
@@ -115,9 +117,9 @@ func storeStubHasherSubject(tb assert.TB) stub.Subject[castest.StoreHasherCall, 
 			got0 := storeStubHasher(tb, s)
 			return castest.StoreHasherReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Override: func(seen func(castest.StoreHasherCall)) {
 			s.OnHasher.Func(func() crypto.Hasher {
-				mark()
+				seen(castest.StoreHasherCall{})
 				var z0 crypto.Hasher
 				return z0
 			})
@@ -125,23 +127,37 @@ func storeStubHasherSubject(tb assert.TB) stub.Subject[castest.StoreHasherCall, 
 	}
 }
 
-// storeStubPutSubject returns the subject of [stub.Behaviour] for Put. The
-// subject calls a new double that reports to tb.
+// storeStubPutSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Put. The subject calls a new double that
+// reports to tb.
 func storeStubPutSubject(tb assert.TB) stub.Subject[castest.StorePutCall, castest.StorePutReturn] {
 	tb.Helper()
 	s := castest.NewStoreStub(tb)
 	return stub.Subject[castest.StorePutCall, castest.StorePutReturn]{
-		Stub: s.OnPut.MethodStub,
+		Stub:  s.OnPut.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = storeStubPut(tb, s)
+		},
+		Arguments: func(tb assert.TB, c castest.StorePutCall) {
+			tb.Helper()
+			a0, a1, a2 := storeStubPutArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.D, a1, "the call records D")
+			expect.Equal(tb, c.Data, a2, "the call records Data")
 		},
 		Result: func() castest.StorePutReturn {
 			got0, got1 := storeStubPut(tb, s)
 			return castest.StorePutReturn{Wrote: got0, Err: got1}
 		},
-		Override: func(mark func()) {
-			s.OnPut.Func(func(_ context.Context, _ crypto.Digest, _ []byte) (bool, error) {
-				mark()
+		Returns: func() castest.StorePutReturn {
+			want0, want1 := storeStubPutPins()
+			s.OnPut.Returns(want0, want1)
+			return castest.StorePutReturn{Wrote: want0, Err: want1}
+		},
+		Override: func(seen func(castest.StorePutCall)) {
+			s.OnPut.Func(func(p0 context.Context, p1 crypto.Digest, p2 []byte) (bool, error) {
+				seen(castest.StorePutCall{Ctx: p0, D: p1, Data: p2})
 				var z0 bool
 				var z1 error
 				return z0, z1
@@ -154,23 +170,37 @@ func storeStubPutSubject(tb assert.TB) stub.Subject[castest.StorePutCall, castes
 	}
 }
 
-// storeStubGetSubject returns the subject of [stub.Behaviour] for Get. The
-// subject calls a new double that reports to tb.
+// storeStubGetSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Get. The subject calls a new double that
+// reports to tb.
 func storeStubGetSubject(tb assert.TB) stub.Subject[castest.StoreGetCall, castest.StoreGetReturn] {
 	tb.Helper()
 	s := castest.NewStoreStub(tb)
 	return stub.Subject[castest.StoreGetCall, castest.StoreGetReturn]{
-		Stub: s.OnGet.MethodStub,
+		Stub:  s.OnGet.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = storeStubGet(tb, s)
+		},
+		Arguments: func(tb assert.TB, c castest.StoreGetCall) {
+			tb.Helper()
+			a0, a1, a2 := storeStubGetArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.D, a1, "the call records D")
+			expect.Equal(tb, c.Dst, a2, "the call records Dst")
 		},
 		Result: func() castest.StoreGetReturn {
 			got0, got1 := storeStubGet(tb, s)
 			return castest.StoreGetReturn{Result: got0, Err: got1}
 		},
-		Override: func(mark func()) {
-			s.OnGet.Func(func(_ context.Context, _ crypto.Digest, _ []byte) ([]byte, error) {
-				mark()
+		Returns: func() castest.StoreGetReturn {
+			want0, want1 := storeStubGetPins()
+			s.OnGet.Returns(want0, want1)
+			return castest.StoreGetReturn{Result: want0, Err: want1}
+		},
+		Override: func(seen func(castest.StoreGetCall)) {
+			s.OnGet.Func(func(p0 context.Context, p1 crypto.Digest, p2 []byte) ([]byte, error) {
+				seen(castest.StoreGetCall{Ctx: p0, D: p1, Dst: p2})
 				var z0 []byte
 				var z1 error
 				return z0, z1
@@ -183,23 +213,36 @@ func storeStubGetSubject(tb assert.TB) stub.Subject[castest.StoreGetCall, castes
 	}
 }
 
-// storeStubHasSubject returns the subject of [stub.Behaviour] for Has. The
-// subject calls a new double that reports to tb.
+// storeStubHasSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Has. The subject calls a new double that
+// reports to tb.
 func storeStubHasSubject(tb assert.TB) stub.Subject[castest.StoreHasCall, castest.StoreHasReturn] {
 	tb.Helper()
 	s := castest.NewStoreStub(tb)
 	return stub.Subject[castest.StoreHasCall, castest.StoreHasReturn]{
-		Stub: s.OnHas.MethodStub,
+		Stub:  s.OnHas.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = storeStubHas(tb, s)
+		},
+		Arguments: func(tb assert.TB, c castest.StoreHasCall) {
+			tb.Helper()
+			a0, a1 := storeStubHasArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.D, a1, "the call records D")
 		},
 		Result: func() castest.StoreHasReturn {
 			got0, got1 := storeStubHas(tb, s)
 			return castest.StoreHasReturn{Result: got0, Err: got1}
 		},
-		Override: func(mark func()) {
-			s.OnHas.Func(func(_ context.Context, _ crypto.Digest) (bool, error) {
-				mark()
+		Returns: func() castest.StoreHasReturn {
+			want0, want1 := storeStubHasPins()
+			s.OnHas.Returns(want0, want1)
+			return castest.StoreHasReturn{Result: want0, Err: want1}
+		},
+		Override: func(seen func(castest.StoreHasCall)) {
+			s.OnHas.Func(func(p0 context.Context, p1 crypto.Digest) (bool, error) {
+				seen(castest.StoreHasCall{Ctx: p0, D: p1})
 				var z0 bool
 				var z1 error
 				return z0, z1
@@ -225,7 +268,6 @@ func storeStubInstanceOf(tb assert.TB, s *castest.StoreStub) storeStubInstance {
 		Call: func() {
 			_ = storeStubHasher(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -237,199 +279,44 @@ func TestStoreStub(t *testing.T) {
 	t.Run("Hasher", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Hasher", storeStubHasherSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := castest.NewStoreStub(t)
-			var seen []castest.StoreHasherCall
-			s.OnHasher.OnRecord(func(c castest.StoreHasherCall) { seen = append(seen, c) })
-			_ = storeStubHasher(t, s)
-			_ = storeStubHasher(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Hasher")
-		})
 	})
 
 	t.Run("Put", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Put", storeStubPutSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := castest.NewStoreStub(t)
-			_, _ = storeStubPut(t, s)
-			got := s.OnPut.AssertCalledOnce(t, "Put records the call")
-			a0, a1, a2 := storeStubPutArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.D, a1, "the call records D")
-			expect.Equal(t, got.Data, a2, "the call records Data")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := castest.NewStoreStub(t)
-			var seen []castest.StorePutCall
-			s.OnPut.OnRecord(func(c castest.StorePutCall) { seen = append(seen, c) })
-			_, _ = storeStubPut(t, s)
-			_, _ = storeStubPut(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Put")
-		})
 	})
 
 	t.Run("Get", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Get", storeStubGetSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := castest.NewStoreStub(t)
-			_, _ = storeStubGet(t, s)
-			got := s.OnGet.AssertCalledOnce(t, "Get records the call")
-			a0, a1, a2 := storeStubGetArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.D, a1, "the call records D")
-			expect.Equal(t, got.Dst, a2, "the call records Dst")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := castest.NewStoreStub(t)
-			var seen []castest.StoreGetCall
-			s.OnGet.OnRecord(func(c castest.StoreGetCall) { seen = append(seen, c) })
-			_, _ = storeStubGet(t, s)
-			_, _ = storeStubGet(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Get")
-		})
 	})
 
 	t.Run("Has", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Has", storeStubHasSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := castest.NewStoreStub(t)
-			_, _ = storeStubHas(t, s)
-			got := s.OnHas.AssertCalledOnce(t, "Has records the call")
-			a0, a1 := storeStubHasArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.D, a1, "the call records D")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := castest.NewStoreStub(t)
-			var seen []castest.StoreHasCall
-			s.OnHas.OnRecord(func(c castest.StoreHasCall) { seen = append(seen, c) })
-			_, _ = storeStubHas(t, s)
-			_, _ = storeStubHas(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Has")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) storeStubInstance {
-			return storeStubInstanceOf(tb, castest.NewStoreStub(tb))
-		})
 
-		t.Run("clears the recorded calls of Hasher", func(t *testing.T) {
+		t.Run("Hasher", func(t *testing.T) {
 			t.Parallel()
-			s := castest.NewStoreStub(t)
-			_ = storeStubHasher(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnHasher.CallCount(), 0, "ResetCalls clears the calls of Hasher")
+			stub.ResetBehaviour(t, "Hasher", storeStubHasherSubject)
 		})
 
-		t.Run("clears the recorded calls of Put", func(t *testing.T) {
+		t.Run("Put", func(t *testing.T) {
 			t.Parallel()
-			s := castest.NewStoreStub(t)
-			_, _ = storeStubPut(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnPut.CallCount(), 0, "ResetCalls clears the calls of Put")
+			stub.ResetBehaviour(t, "Put", storeStubPutSubject)
 		})
 
-		t.Run("keeps the results of Returns of Put", func(t *testing.T) {
+		t.Run("Get", func(t *testing.T) {
 			t.Parallel()
-			s := castest.NewStoreStub(t)
-			want0, want1 := storeStubPutPins()
-			s.OnPut.Returns(want0, want1)
-			s.ResetCalls()
-			got0, got1 := storeStubPut(t, s)
-			expect.Equal(t, got0, want0, "ResetCalls keeps the Wrote of Put")
-			expect.ErrorIs(t, got1, want1, "ResetCalls keeps the error of Put")
+			stub.ResetBehaviour(t, "Get", storeStubGetSubject)
 		})
 
-		t.Run("clears the recorded calls of Get", func(t *testing.T) {
+		t.Run("Has", func(t *testing.T) {
 			t.Parallel()
-			s := castest.NewStoreStub(t)
-			_, _ = storeStubGet(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnGet.CallCount(), 0, "ResetCalls clears the calls of Get")
-		})
-
-		t.Run("keeps the results of Returns of Get", func(t *testing.T) {
-			t.Parallel()
-			s := castest.NewStoreStub(t)
-			want0, want1 := storeStubGetPins()
-			s.OnGet.Returns(want0, want1)
-			s.ResetCalls()
-			got0, got1 := storeStubGet(t, s)
-			expect.Equal(t, got0, want0, "ResetCalls keeps the Result of Get")
-			expect.ErrorIs(t, got1, want1, "ResetCalls keeps the error of Get")
-		})
-
-		t.Run("clears the recorded calls of Has", func(t *testing.T) {
-			t.Parallel()
-			s := castest.NewStoreStub(t)
-			_, _ = storeStubHas(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnHas.CallCount(), 0, "ResetCalls clears the calls of Has")
-		})
-
-		t.Run("keeps the results of Returns of Has", func(t *testing.T) {
-			t.Parallel()
-			s := castest.NewStoreStub(t)
-			want0, want1 := storeStubHasPins()
-			s.OnHas.Returns(want0, want1)
-			s.ResetCalls()
-			got0, got1 := storeStubHas(t, s)
-			expect.Equal(t, got0, want0, "ResetCalls keeps the Result of Has")
-			expect.ErrorIs(t, got1, want1, "ResetCalls keeps the error of Has")
-		})
-	})
-
-	t.Run("NewStoreStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) storeStubInstance {
-			return storeStubInstanceOf(tb, castest.NewStoreStubDelayed(tb, d, clk))
-		})
-	})
-
-	t.Run("NewStoreStubFailing", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("fails Put with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Put-failing")
-			s := castest.NewStoreStubFailing(t, want)
-			_, err := storeStubPut(t, s)
-			assert.ErrorIs(t, err, want, "Put fails with the error of NewStoreStubFailing")
-		})
-
-		t.Run("fails Get with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Get-failing")
-			s := castest.NewStoreStubFailing(t, want)
-			_, r1 := storeStubGet(t, s)
-			assert.ErrorIs(t, r1, want, "Get fails with the error of NewStoreStubFailing")
-		})
-
-		t.Run("fails Has with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Has-failing")
-			s := castest.NewStoreStubFailing(t, want)
-			_, r1 := storeStubHas(t, s)
-			assert.ErrorIs(t, r1, want, "Has fails with the error of NewStoreStubFailing")
+			stub.ResetBehaviour(t, "Has", storeStubHasSubject)
 		})
 	})
 
@@ -639,190 +526,6 @@ func TestStoreStub(t *testing.T) {
 	})
 }
 
-// TestStoreHasherStub checks the methods of StoreHasherStub, which
-// configures Hasher.
-func TestStoreHasherStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("configures Hasher for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := castest.NewStoreStub(r)
-			s.OnHasher.Strict()
-			var want0 crypto.Hasher
-			s.OnHasher.Returns(want0)
-			_ = storeStubHasher(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Hasher")
-		})
-	})
-}
-
-// TestStorePutStub checks the methods of StorePutStub, which configures
-// Put.
-func TestStorePutStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Put", func(t *testing.T) {
-			t.Parallel()
-			s := castest.NewStoreStub(t)
-			want0, want1 := storeStubPutPins()
-			s.OnPut.Returns(want0, want1)
-			got0, got1 := storeStubPut(t, s)
-			expect.Equal(t, got0, want0, "Put returns the Wrote that Returns sets")
-			expect.ErrorIs(t, got1, want1, "Put returns the error that Returns sets")
-		})
-
-		t.Run("configures Put for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := castest.NewStoreStub(r)
-			s.OnPut.Strict()
-			var want0 bool
-			var want1 error
-			s.OnPut.Returns(want0, want1)
-			_, _ = storeStubPut(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Put")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Put to the function", func(t *testing.T) {
-			t.Parallel()
-			s := castest.NewStoreStub(t)
-			var got0 context.Context
-			var got1 crypto.Digest
-			var got2 []byte
-			s.OnPut.Func(func(p0 context.Context, p1 crypto.Digest, p2 []byte) (bool, error) {
-				got0, got1, got2 = p0, p1, p2
-				var z0 bool
-				var z1 error
-				return z0, z1
-			})
-			_, _ = storeStubPut(t, s)
-			a0, a1, a2 := storeStubPutArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives D")
-			expect.Equal(t, got2, a2, "the function receives Data")
-		})
-	})
-}
-
-// TestStoreGetStub checks the methods of StoreGetStub, which configures
-// Get.
-func TestStoreGetStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Get", func(t *testing.T) {
-			t.Parallel()
-			s := castest.NewStoreStub(t)
-			want0, want1 := storeStubGetPins()
-			s.OnGet.Returns(want0, want1)
-			got0, got1 := storeStubGet(t, s)
-			expect.Equal(t, got0, want0, "Get returns the Result that Returns sets")
-			expect.ErrorIs(t, got1, want1, "Get returns the error that Returns sets")
-		})
-
-		t.Run("configures Get for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := castest.NewStoreStub(r)
-			s.OnGet.Strict()
-			var want0 []byte
-			var want1 error
-			s.OnGet.Returns(want0, want1)
-			_, _ = storeStubGet(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Get")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Get to the function", func(t *testing.T) {
-			t.Parallel()
-			s := castest.NewStoreStub(t)
-			var got0 context.Context
-			var got1 crypto.Digest
-			var got2 []byte
-			s.OnGet.Func(func(p0 context.Context, p1 crypto.Digest, p2 []byte) ([]byte, error) {
-				got0, got1, got2 = p0, p1, p2
-				var z0 []byte
-				var z1 error
-				return z0, z1
-			})
-			_, _ = storeStubGet(t, s)
-			a0, a1, a2 := storeStubGetArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives D")
-			expect.Equal(t, got2, a2, "the function receives Dst")
-		})
-	})
-}
-
-// TestStoreHasStub checks the methods of StoreHasStub, which configures
-// Has.
-func TestStoreHasStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Has", func(t *testing.T) {
-			t.Parallel()
-			s := castest.NewStoreStub(t)
-			want0, want1 := storeStubHasPins()
-			s.OnHas.Returns(want0, want1)
-			got0, got1 := storeStubHas(t, s)
-			expect.Equal(t, got0, want0, "Has returns the Result that Returns sets")
-			expect.ErrorIs(t, got1, want1, "Has returns the error that Returns sets")
-		})
-
-		t.Run("configures Has for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := castest.NewStoreStub(r)
-			s.OnHas.Strict()
-			var want0 bool
-			var want1 error
-			s.OnHas.Returns(want0, want1)
-			_, _ = storeStubHas(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Has")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Has to the function", func(t *testing.T) {
-			t.Parallel()
-			s := castest.NewStoreStub(t)
-			var got0 context.Context
-			var got1 crypto.Digest
-			s.OnHas.Func(func(p0 context.Context, p1 crypto.Digest) (bool, error) {
-				got0, got1 = p0, p1
-				var z0 bool
-				var z1 error
-				return z0, z1
-			})
-			_, _ = storeStubHas(t, s)
-			a0, a1 := storeStubHasArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives D")
-		})
-	})
-}
-
 // streamerStubPutStreamArgs returns the samples of the arguments of
 // PutStream.
 func streamerStubPutStreamArgs(tb assert.TB) (context.Context, crypto.Digest, io.Reader) {
@@ -875,25 +578,39 @@ func streamerStubGetStreamPins() (io.ReadCloser, error) {
 	return want0, want1
 }
 
-// streamerStubPutStreamSubject returns the subject of [stub.Behaviour] for
-// PutStream. The subject calls a new double that reports to tb.
+// streamerStubPutStreamSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for PutStream. The subject calls a new double that
+// reports to tb.
 func streamerStubPutStreamSubject(
 	tb assert.TB,
 ) stub.Subject[castest.StreamerPutStreamCall, castest.StreamerPutStreamReturn] {
 	tb.Helper()
 	s := castest.NewStreamerStub(tb)
 	return stub.Subject[castest.StreamerPutStreamCall, castest.StreamerPutStreamReturn]{
-		Stub: s.OnPutStream.MethodStub,
+		Stub:  s.OnPutStream.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = streamerStubPutStream(tb, s)
+		},
+		Arguments: func(tb assert.TB, c castest.StreamerPutStreamCall) {
+			tb.Helper()
+			a0, a1, a2 := streamerStubPutStreamArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.D, a1, "the call records D")
+			expect.Equal(tb, c.R, a2, "the call records R")
 		},
 		Result: func() castest.StreamerPutStreamReturn {
 			got0, got1 := streamerStubPutStream(tb, s)
 			return castest.StreamerPutStreamReturn{Wrote: got0, Err: got1}
 		},
-		Override: func(mark func()) {
-			s.OnPutStream.Func(func(_ context.Context, _ crypto.Digest, _ io.Reader) (bool, error) {
-				mark()
+		Returns: func() castest.StreamerPutStreamReturn {
+			want0, want1 := streamerStubPutStreamPins()
+			s.OnPutStream.Returns(want0, want1)
+			return castest.StreamerPutStreamReturn{Wrote: want0, Err: want1}
+		},
+		Override: func(seen func(castest.StreamerPutStreamCall)) {
+			s.OnPutStream.Func(func(p0 context.Context, p1 crypto.Digest, p2 io.Reader) (bool, error) {
+				seen(castest.StreamerPutStreamCall{Ctx: p0, D: p1, R: p2})
 				var z0 bool
 				var z1 error
 				return z0, z1
@@ -906,25 +623,38 @@ func streamerStubPutStreamSubject(
 	}
 }
 
-// streamerStubGetStreamSubject returns the subject of [stub.Behaviour] for
-// GetStream. The subject calls a new double that reports to tb.
+// streamerStubGetStreamSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for GetStream. The subject calls a new double that
+// reports to tb.
 func streamerStubGetStreamSubject(
 	tb assert.TB,
 ) stub.Subject[castest.StreamerGetStreamCall, castest.StreamerGetStreamReturn] {
 	tb.Helper()
 	s := castest.NewStreamerStub(tb)
 	return stub.Subject[castest.StreamerGetStreamCall, castest.StreamerGetStreamReturn]{
-		Stub: s.OnGetStream.MethodStub,
+		Stub:  s.OnGetStream.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = streamerStubGetStream(tb, s)
+		},
+		Arguments: func(tb assert.TB, c castest.StreamerGetStreamCall) {
+			tb.Helper()
+			a0, a1 := streamerStubGetStreamArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.D, a1, "the call records D")
 		},
 		Result: func() castest.StreamerGetStreamReturn {
 			got0, got1 := streamerStubGetStream(tb, s)
 			return castest.StreamerGetStreamReturn{Result: got0, Err: got1}
 		},
-		Override: func(mark func()) {
-			s.OnGetStream.Func(func(_ context.Context, _ crypto.Digest) (io.ReadCloser, error) {
-				mark()
+		Returns: func() castest.StreamerGetStreamReturn {
+			want0, want1 := streamerStubGetStreamPins()
+			s.OnGetStream.Returns(want0, want1)
+			return castest.StreamerGetStreamReturn{Result: want0, Err: want1}
+		},
+		Override: func(seen func(castest.StreamerGetStreamCall)) {
+			s.OnGetStream.Func(func(p0 context.Context, p1 crypto.Digest) (io.ReadCloser, error) {
+				seen(castest.StreamerGetStreamCall{Ctx: p0, D: p1})
 				var z0 io.ReadCloser
 				var z1 error
 				return z0, z1
@@ -950,7 +680,6 @@ func streamerStubInstanceOf(tb assert.TB, s *castest.StreamerStub) streamerStubI
 		Call: func() {
 			_, _ = streamerStubPutStream(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -962,122 +691,24 @@ func TestStreamerStub(t *testing.T) {
 	t.Run("PutStream", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "PutStream", streamerStubPutStreamSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := castest.NewStreamerStub(t)
-			_, _ = streamerStubPutStream(t, s)
-			got := s.OnPutStream.AssertCalledOnce(t, "PutStream records the call")
-			a0, a1, a2 := streamerStubPutStreamArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.D, a1, "the call records D")
-			expect.Equal(t, got.R, a2, "the call records R")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := castest.NewStreamerStub(t)
-			var seen []castest.StreamerPutStreamCall
-			s.OnPutStream.OnRecord(func(c castest.StreamerPutStreamCall) { seen = append(seen, c) })
-			_, _ = streamerStubPutStream(t, s)
-			_, _ = streamerStubPutStream(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of PutStream")
-		})
 	})
 
 	t.Run("GetStream", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "GetStream", streamerStubGetStreamSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := castest.NewStreamerStub(t)
-			_, _ = streamerStubGetStream(t, s)
-			got := s.OnGetStream.AssertCalledOnce(t, "GetStream records the call")
-			a0, a1 := streamerStubGetStreamArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.D, a1, "the call records D")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := castest.NewStreamerStub(t)
-			var seen []castest.StreamerGetStreamCall
-			s.OnGetStream.OnRecord(func(c castest.StreamerGetStreamCall) { seen = append(seen, c) })
-			_, _ = streamerStubGetStream(t, s)
-			_, _ = streamerStubGetStream(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of GetStream")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) streamerStubInstance {
-			return streamerStubInstanceOf(tb, castest.NewStreamerStub(tb))
-		})
 
-		t.Run("clears the recorded calls of PutStream", func(t *testing.T) {
+		t.Run("PutStream", func(t *testing.T) {
 			t.Parallel()
-			s := castest.NewStreamerStub(t)
-			_, _ = streamerStubPutStream(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnPutStream.CallCount(), 0, "ResetCalls clears the calls of PutStream")
+			stub.ResetBehaviour(t, "PutStream", streamerStubPutStreamSubject)
 		})
 
-		t.Run("keeps the results of Returns of PutStream", func(t *testing.T) {
+		t.Run("GetStream", func(t *testing.T) {
 			t.Parallel()
-			s := castest.NewStreamerStub(t)
-			want0, want1 := streamerStubPutStreamPins()
-			s.OnPutStream.Returns(want0, want1)
-			s.ResetCalls()
-			got0, got1 := streamerStubPutStream(t, s)
-			expect.Equal(t, got0, want0, "ResetCalls keeps the Wrote of PutStream")
-			expect.ErrorIs(t, got1, want1, "ResetCalls keeps the error of PutStream")
-		})
-
-		t.Run("clears the recorded calls of GetStream", func(t *testing.T) {
-			t.Parallel()
-			s := castest.NewStreamerStub(t)
-			_, _ = streamerStubGetStream(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnGetStream.CallCount(), 0, "ResetCalls clears the calls of GetStream")
-		})
-
-		t.Run("keeps the results of Returns of GetStream", func(t *testing.T) {
-			t.Parallel()
-			s := castest.NewStreamerStub(t)
-			want0, want1 := streamerStubGetStreamPins()
-			s.OnGetStream.Returns(want0, want1)
-			s.ResetCalls()
-			_, got1 := streamerStubGetStream(t, s)
-			assert.ErrorIs(t, got1, want1, "ResetCalls keeps the error of GetStream")
-		})
-	})
-
-	t.Run("NewStreamerStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) streamerStubInstance {
-			return streamerStubInstanceOf(tb, castest.NewStreamerStubDelayed(tb, d, clk))
-		})
-	})
-
-	t.Run("NewStreamerStubFailing", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("fails PutStream with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("PutStream-failing")
-			s := castest.NewStreamerStubFailing(t, want)
-			_, err := streamerStubPutStream(t, s)
-			assert.ErrorIs(t, err, want, "PutStream fails with the error of NewStreamerStubFailing")
-		})
-
-		t.Run("fails GetStream with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("GetStream-failing")
-			s := castest.NewStreamerStubFailing(t, want)
-			_, r1 := streamerStubGetStream(t, s)
-			assert.ErrorIs(t, r1, want, "GetStream fails with the error of NewStreamerStubFailing")
+			stub.ResetBehaviour(t, "GetStream", streamerStubGetStreamSubject)
 		})
 	})
 
@@ -1220,111 +851,4 @@ func TestStreamerStub(t *testing.T) {
 	})
 }
 
-// TestStreamerPutStreamStub checks the methods of StreamerPutStreamStub,
-// which configures PutStream.
-func TestStreamerPutStreamStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of PutStream", func(t *testing.T) {
-			t.Parallel()
-			s := castest.NewStreamerStub(t)
-			want0, want1 := streamerStubPutStreamPins()
-			s.OnPutStream.Returns(want0, want1)
-			got0, got1 := streamerStubPutStream(t, s)
-			expect.Equal(t, got0, want0, "PutStream returns the Wrote that Returns sets")
-			expect.ErrorIs(t, got1, want1, "PutStream returns the error that Returns sets")
-		})
-
-		t.Run("configures PutStream for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := castest.NewStreamerStub(r)
-			s.OnPutStream.Strict()
-			var want0 bool
-			var want1 error
-			s.OnPutStream.Returns(want0, want1)
-			_, _ = streamerStubPutStream(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of PutStream")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of PutStream to the function", func(t *testing.T) {
-			t.Parallel()
-			s := castest.NewStreamerStub(t)
-			var got0 context.Context
-			var got1 crypto.Digest
-			var got2 io.Reader
-			s.OnPutStream.Func(func(p0 context.Context, p1 crypto.Digest, p2 io.Reader) (bool, error) {
-				got0, got1, got2 = p0, p1, p2
-				var z0 bool
-				var z1 error
-				return z0, z1
-			})
-			_, _ = streamerStubPutStream(t, s)
-			a0, a1, a2 := streamerStubPutStreamArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives D")
-			expect.Equal(t, got2, a2, "the function receives R")
-		})
-	})
-}
-
-// TestStreamerGetStreamStub checks the methods of StreamerGetStreamStub,
-// which configures GetStream.
-func TestStreamerGetStreamStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of GetStream", func(t *testing.T) {
-			t.Parallel()
-			s := castest.NewStreamerStub(t)
-			want0, want1 := streamerStubGetStreamPins()
-			s.OnGetStream.Returns(want0, want1)
-			_, got1 := streamerStubGetStream(t, s)
-			assert.ErrorIs(t, got1, want1, "GetStream returns the error that Returns sets")
-		})
-
-		t.Run("configures GetStream for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := castest.NewStreamerStub(r)
-			s.OnGetStream.Strict()
-			var want0 io.ReadCloser
-			var want1 error
-			s.OnGetStream.Returns(want0, want1)
-			_, _ = streamerStubGetStream(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of GetStream")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of GetStream to the function", func(t *testing.T) {
-			t.Parallel()
-			s := castest.NewStreamerStub(t)
-			var got0 context.Context
-			var got1 crypto.Digest
-			s.OnGetStream.Func(func(p0 context.Context, p1 crypto.Digest) (io.ReadCloser, error) {
-				got0, got1 = p0, p1
-				var z0 io.ReadCloser
-				var z1 error
-				return z0, z1
-			})
-			_, _ = streamerStubGetStream(t, s)
-			a0, a1 := streamerStubGetStreamArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives D")
-		})
-	})
-}
-
-// dokimi:provenance sha256:c06d1186ddcce77212e228011616a5bf5ec54f703b739dcc328845991de30637
+// dokimi:provenance sha256:e8313d3614242fa4e733f64335ef02606b2938f6acabe68dc49702285e181170

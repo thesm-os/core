@@ -143,15 +143,6 @@ func NewTracerStub(tb assert.TB, opts ...TracerStubOption) *TracerStub {
 	return s
 }
 
-// NewTracerStubDelayed returns a double whose methods sleep d on clk
-// before they return. It applies opts after the clock and the latency.
-func NewTracerStubDelayed(tb assert.TB, d time.Duration, clk assert.Clock, opts ...TracerStubOption) *TracerStub {
-	return NewTracerStub(tb, append([]TracerStubOption{
-		TracerStubWithClock(clk),
-		TracerStubWithLatency(d),
-	}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *TracerStub) ResetCalls() {
@@ -194,4 +185,4 @@ func (s *TracerStub) Start(
 	return r.Result0, r.Result1
 }
 
-// dokimi:provenance sha256:8a8ff274264b90a264be26ad6ff4e6bd24b0dfa583266fbf1e4305aff9a12aa9
+// dokimi:provenance sha256:edb8edb7c2e1bced8d79ba9f5fa33f7d71b5c2b5196a083ef42abd01e73653e9

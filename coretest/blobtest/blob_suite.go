@@ -11,6 +11,8 @@ import (
 
 	"go.dokimi.dev/assert/prop"
 	"go.dokimi.dev/conform"
+	"go.dokimi.dev/conform/probe"
+	"go.dokimi.dev/spec"
 	"go.thesmos.sh/core/blob"
 	"go.thesmos.sh/core/page"
 	"go.thesmos.sh/core/version"
@@ -180,6 +182,18 @@ func (c storeGet) StoreReportsAbsenceAsNotFound() conform.ID[blob.Store] {
 	return c.Check("store-reports-absence-as-not-found")
 }
 
+// Smoke returns the identity of the check that Get returns without a panic
+// for derived inputs.
+func (c storeGet) Smoke() conform.ID[blob.Store] {
+	return c.Check("smoke")
+}
+
+// Cancel returns the identity of the check that Get returns an error for a
+// cancelled context.
+func (c storeGet) Cancel() conform.ID[blob.Store] {
+	return c.Check("cancel")
+}
+
 // storeStat is the name of Store.Stat, with the identities of its checks.
 type storeStat struct {
 	conform.Callable[blob.Store]
@@ -190,6 +204,24 @@ type storeStat struct {
 // of Put, and a modification time.
 func (c storeStat) StoreStatDescribesTheObject() conform.ID[blob.Store] {
 	return c.Check("store-stat-describes-the-object")
+}
+
+// Smoke returns the identity of the check that Stat returns without a
+// panic for derived inputs.
+func (c storeStat) Smoke() conform.ID[blob.Store] {
+	return c.Check("smoke")
+}
+
+// Cancel returns the identity of the check that Stat returns an error for
+// a cancelled context.
+func (c storeStat) Cancel() conform.ID[blob.Store] {
+	return c.Check("cancel")
+}
+
+// ZeroOnError returns the identity of the check that Stat returns the zero
+// value beside an error.
+func (c storeStat) ZeroOnError() conform.ID[blob.Store] {
+	return c.Check("zero-on-error")
 }
 
 // storeDelete is the name of Store.Delete, with the identities of its
@@ -206,6 +238,18 @@ func (c storeDelete) StoreDeleteFollowsTheConditionalTable() conform.ID[blob.Sto
 	return c.Check("store-delete-follows-the-conditional-table")
 }
 
+// Smoke returns the identity of the check that Delete returns without a
+// panic for derived inputs.
+func (c storeDelete) Smoke() conform.ID[blob.Store] {
+	return c.Check("smoke")
+}
+
+// Cancel returns the identity of the check that Delete returns an error
+// for a cancelled context.
+func (c storeDelete) Cancel() conform.ID[blob.Store] {
+	return c.Check("cancel")
+}
+
 // storeList is the name of Store.List, with the identities of its checks.
 type storeList struct {
 	conform.Callable[blob.Store]
@@ -218,11 +262,16 @@ func (c storeList) StoreListYieldsEveryKeyOnce() conform.ID[blob.Store] {
 	return c.Check("store-list-yields-every-key-once")
 }
 
-// StoreReturnsTheErrorOfADoneContext returns the identity of the check
-// that Put, Get, Stat, Delete and List return the error of a context that
-// ended.
-func (c storeList) StoreReturnsTheErrorOfADoneContext() conform.ID[blob.Store] {
-	return c.Check("store-returns-the-error-of-a-done-context")
+// Smoke returns the identity of the check that List returns without a
+// panic for derived inputs.
+func (c storeList) Smoke() conform.ID[blob.Store] {
+	return c.Check("smoke")
+}
+
+// Cancel returns the identity of the check that List returns an error for
+// a cancelled context.
+func (c storeList) Cancel() conform.ID[blob.Store] {
+	return c.Check("cancel")
 }
 
 // StoreSuite returns the checks of Store, and the calls and the budgets of
@@ -230,7 +279,254 @@ func (c storeList) StoreReturnsTheErrorOfADoneContext() conform.ID[blob.Store] {
 func StoreSuite() conform.Suite[blob.Store] {
 	return conform.Suite[blob.Store]{
 		Declaration: "Store",
+		Package:     "go.thesmos.sh/core/blob",
+		Generator:   conform.Generator{Name: "dokimi", Version: "0.1.0"},
 		Checks: []conform.Check[blob.Store]{
+			{
+				ID:          StoreChecks.Get.Smoke(),
+				Statement:   "Get returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *StoreHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						_, _, err := h.Subject().Get(ctx, string("key-a"))
+						return err
+					})
+				},
+				Defect: storeGetPanics,
+			},
+			{
+				ID:          StoreChecks.Get.Smoke().Generated(),
+				Statement:   "Get returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *StoreHandle, c *prop.Case) {
+					drawnKey := c.Draw(prop.Of[string](), "key")
+					probe.Survives(h, func(ctx context.Context) error {
+						_, _, err := h.Subject().Get(ctx, drawnKey)
+						return err
+					})
+				},
+				Defect: storeGetPanics,
+			},
+			{
+				ID:          StoreChecks.Get.Cancel(),
+				Statement:   "Get returns an error for a cancelled context",
+				Claim:       spec.Cancel,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Apply: func(h *StoreHandle) {
+					probe.UnderCancelled(h, func(ctx context.Context) error {
+						_, _, err := h.Subject().Get(ctx, string("key-a"))
+						return err
+					})
+				},
+				Defect: storeGetIgnoresCancel,
+			},
+			{
+				ID:          StoreChecks.Get.Cancel().Generated(),
+				Statement:   "Get returns an error for a cancelled context",
+				Claim:       spec.Cancel,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *StoreHandle, c *prop.Case) {
+					drawnKey := c.Draw(prop.Of[string](), "key")
+					probe.UnderCancelled(h, func(ctx context.Context) error {
+						_, _, err := h.Subject().Get(ctx, drawnKey)
+						return err
+					})
+				},
+				Defect: storeGetIgnoresCancel,
+			},
+			{
+				ID:          StoreChecks.Stat.Smoke(),
+				Statement:   "Stat returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *StoreHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						_, err := h.Subject().Stat(ctx, string("key-a"))
+						return err
+					})
+				},
+				Defect: storeStatPanics,
+			},
+			{
+				ID:          StoreChecks.Stat.Smoke().Generated(),
+				Statement:   "Stat returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *StoreHandle, c *prop.Case) {
+					drawnKey := c.Draw(prop.Of[string](), "key")
+					probe.Survives(h, func(ctx context.Context) error {
+						_, err := h.Subject().Stat(ctx, drawnKey)
+						return err
+					})
+				},
+				Defect: storeStatPanics,
+			},
+			{
+				ID:          StoreChecks.Stat.Cancel(),
+				Statement:   "Stat returns an error for a cancelled context",
+				Claim:       spec.Cancel,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Apply: func(h *StoreHandle) {
+					probe.UnderCancelled(h, func(ctx context.Context) error {
+						_, err := h.Subject().Stat(ctx, string("key-a"))
+						return err
+					})
+				},
+				Defect: storeStatIgnoresCancel,
+			},
+			{
+				ID:          StoreChecks.Stat.Cancel().Generated(),
+				Statement:   "Stat returns an error for a cancelled context",
+				Claim:       spec.Cancel,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *StoreHandle, c *prop.Case) {
+					drawnKey := c.Draw(prop.Of[string](), "key")
+					probe.UnderCancelled(h, func(ctx context.Context) error {
+						_, err := h.Subject().Stat(ctx, drawnKey)
+						return err
+					})
+				},
+				Defect: storeStatIgnoresCancel,
+			},
+			{
+				ID:          StoreChecks.Stat.ZeroOnError(),
+				Statement:   "Stat returns the zero value beside an error",
+				Claim:       spec.ZeroOnError,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Apply: func(h *StoreHandle) {
+					probe.ZeroBesideError(h, func(ctx context.Context) (blob.Info, error) {
+						return h.Subject().Stat(ctx, string("key-a"))
+					}, blob.Info{})
+				},
+				Defect: storeStatValueBeside,
+			},
+			{
+				ID:          StoreChecks.Stat.ZeroOnError().Generated(),
+				Statement:   "Stat returns the zero value beside an error",
+				Claim:       spec.ZeroOnError,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *StoreHandle, c *prop.Case) {
+					drawnKey := c.Draw(prop.Of[string](), "key")
+					probe.ZeroBesideError(h, func(ctx context.Context) (blob.Info, error) {
+						return h.Subject().Stat(ctx, drawnKey)
+					}, blob.Info{})
+				},
+				Defect: storeStatValueBeside,
+			},
+			{
+				ID:          StoreChecks.Delete.Smoke(),
+				Statement:   "Delete returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *StoreHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						return h.Subject().Delete(ctx, string("key-a"), version.Version(""))
+					})
+				},
+				Defect: storeDeletePanics,
+			},
+			{
+				ID:          StoreChecks.Delete.Smoke().Generated(),
+				Statement:   "Delete returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *StoreHandle, c *prop.Case) {
+					drawnKey := c.Draw(prop.Of[string](), "key")
+					drawnIfMatch := c.Draw(prop.Of[version.Version](), "if-match")
+					probe.Survives(h, func(ctx context.Context) error {
+						return h.Subject().Delete(ctx, drawnKey, drawnIfMatch)
+					})
+				},
+				Defect: storeDeletePanics,
+			},
+			{
+				ID:          StoreChecks.Delete.Cancel(),
+				Statement:   "Delete returns an error for a cancelled context",
+				Claim:       spec.Cancel,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Apply: func(h *StoreHandle) {
+					probe.UnderCancelled(h, func(ctx context.Context) error {
+						return h.Subject().Delete(ctx, string("key-a"), version.Version(""))
+					})
+				},
+				Defect: storeDeleteIgnoresCancel,
+			},
+			{
+				ID:          StoreChecks.Delete.Cancel().Generated(),
+				Statement:   "Delete returns an error for a cancelled context",
+				Claim:       spec.Cancel,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *StoreHandle, c *prop.Case) {
+					drawnKey := c.Draw(prop.Of[string](), "key")
+					drawnIfMatch := c.Draw(prop.Of[version.Version](), "if-match")
+					probe.UnderCancelled(h, func(ctx context.Context) error {
+						return h.Subject().Delete(ctx, drawnKey, drawnIfMatch)
+					})
+				},
+				Defect: storeDeleteIgnoresCancel,
+			},
+			{
+				ID:          StoreChecks.List.Smoke(),
+				Statement:   "List returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *StoreHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						_, err := h.Subject().List(ctx, string("prefix-a"), page.Page{Token: "Token-a"})
+						return err
+					})
+				},
+				Defect: storeListPanics,
+			},
+			{
+				ID:          StoreChecks.List.Smoke().Generated(),
+				Statement:   "List returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *StoreHandle, c *prop.Case) {
+					drawnPrefix := c.Draw(prop.Of[string](), "prefix")
+					drawnP := c.Draw(prop.Of[page.Page](), "p")
+					probe.Survives(h, func(ctx context.Context) error {
+						_, err := h.Subject().List(ctx, drawnPrefix, drawnP)
+						return err
+					})
+				},
+				Defect: storeListPanics,
+			},
+			{
+				ID:          StoreChecks.List.Cancel(),
+				Statement:   "List returns an error for a cancelled context",
+				Claim:       spec.Cancel,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Apply: func(h *StoreHandle) {
+					probe.UnderCancelled(h, func(ctx context.Context) error {
+						_, err := h.Subject().List(ctx, string("prefix-a"), page.Page{Token: "Token-a"})
+						return err
+					})
+				},
+				Defect: storeListIgnoresCancel,
+			},
+			{
+				ID:          StoreChecks.List.Cancel().Generated(),
+				Statement:   "List returns an error for a cancelled context",
+				Claim:       spec.Cancel,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *StoreHandle, c *prop.Case) {
+					drawnPrefix := c.Draw(prop.Of[string](), "prefix")
+					drawnP := c.Draw(prop.Of[page.Page](), "p")
+					probe.UnderCancelled(h, func(ctx context.Context) error {
+						_, err := h.Subject().List(ctx, drawnPrefix, drawnP)
+						return err
+					})
+				},
+				Defect: storeListIgnoresCancel,
+			},
 			{
 				ID:        StoreChecks.Put.StoreKeepsAKeyAndALongerKey(),
 				Statement: "a key and a longer key that it prefixes, such as \"a/b\" and \"a/b/c\", keep their bodies together",
@@ -359,11 +655,29 @@ func StoreSuite() conform.Suite[blob.Store] {
 				Apply:     StoreListYieldsEveryKeyOnce,
 				Defect:    storeListRepeatsAKey,
 			},
+		},
+		Refusals: []conform.Refusal{
 			{
-				ID:        StoreChecks.List.StoreReturnsTheErrorOfADoneContext(),
-				Statement: "Put, Get, Stat, Delete and List return the error of a context that ended",
-				Apply:     StoreReturnsTheErrorOfADoneContext,
-				Defect:    storeListIgnoresItsContext,
+				Claim:    spec.Cancel,
+				Callable: "Store.Put",
+				Gate:     spec.InputSamples,
+				Why:      "eidos derives no sample of the parameter r of Put",
+				Remedy:   "author a sample of the parameter r with the directive sample",
+			},
+			{
+				Claim:    spec.ZeroesOnError,
+				Callable: "Store.Get",
+				Gate:     spec.ValueSamples,
+				Why:      "eidos derives no sample of a result of Get",
+				Remedy:   "author a sample of the result type with the directive sample",
+			},
+		},
+		Unclaimed: []conform.Unclaimed{
+			{
+				Classification: "shape:composite-writer",
+				Callable:       "Store.Delete",
+				Stance:         spec.Silent,
+				Note:           "A write is an input of the other checks, and its result is an error alone.",
 			},
 		},
 		Calls: []conform.Call[blob.Store]{
@@ -556,6 +870,178 @@ func newStoreOver(_ *StoreHandle, spend func()) blob.Store {
 	return storeOver{spend: spend}
 }
 
+// storeGetPanicsDefect is the planted defect of a Store whose Get panics.
+type storeGetPanicsDefect struct {
+	storeOverEmbedded
+}
+
+// Get is the override of the planted defect.
+func (*storeGetPanicsDefect) Get(p0 context.Context, p1 string) (r0 io.ReadCloser, r1 blob.Info, r2 error) {
+	panic("the planted defect of a Store whose Get panics")
+}
+
+// storeGetPanics returns the planted defect of a Store whose Get panics
+// over a fresh subject.
+func storeGetPanics(h *StoreHandle) blob.Store {
+	return &storeGetPanicsDefect{storeOverEmbedded: h.Fresh()}
+}
+
+// storeGetIgnoresCancelDefect is the planted defect of a Store whose Get
+// ignores the context.
+type storeGetIgnoresCancelDefect struct {
+	storeOverEmbedded
+}
+
+// Get is the override of the planted defect.
+func (d *storeGetIgnoresCancelDefect) Get(p0 context.Context, p1 string) (r0 io.ReadCloser, r1 blob.Info, r2 error) {
+	if p0.Err() != nil {
+		return r0, r1, r2
+	}
+	return d.storeOverEmbedded.Get(p0, p1)
+}
+
+// storeGetIgnoresCancel returns the planted defect of a Store whose Get
+// ignores the context over a fresh subject.
+func storeGetIgnoresCancel(h *StoreHandle) blob.Store {
+	return &storeGetIgnoresCancelDefect{storeOverEmbedded: h.Fresh()}
+}
+
+// storeStatPanicsDefect is the planted defect of a Store whose Stat
+// panics.
+type storeStatPanicsDefect struct {
+	storeOverEmbedded
+}
+
+// Stat is the override of the planted defect.
+func (*storeStatPanicsDefect) Stat(p0 context.Context, p1 string) (r0 blob.Info, r1 error) {
+	panic("the planted defect of a Store whose Stat panics")
+}
+
+// storeStatPanics returns the planted defect of a Store whose Stat panics
+// over a fresh subject.
+func storeStatPanics(h *StoreHandle) blob.Store {
+	return &storeStatPanicsDefect{storeOverEmbedded: h.Fresh()}
+}
+
+// storeStatIgnoresCancelDefect is the planted defect of a Store whose Stat
+// ignores the context.
+type storeStatIgnoresCancelDefect struct {
+	storeOverEmbedded
+}
+
+// Stat is the override of the planted defect.
+func (d *storeStatIgnoresCancelDefect) Stat(p0 context.Context, p1 string) (r0 blob.Info, r1 error) {
+	if p0.Err() != nil {
+		return r0, r1
+	}
+	return d.storeOverEmbedded.Stat(p0, p1)
+}
+
+// storeStatIgnoresCancel returns the planted defect of a Store whose Stat
+// ignores the context over a fresh subject.
+func storeStatIgnoresCancel(h *StoreHandle) blob.Store {
+	return &storeStatIgnoresCancelDefect{storeOverEmbedded: h.Fresh()}
+}
+
+// storeStatValueBesideDefect is the planted defect of a Store whose Stat
+// returns a value beside an error.
+type storeStatValueBesideDefect struct {
+	storeOverEmbedded
+}
+
+// Stat is the override of the planted defect.
+func (d *storeStatValueBesideDefect) Stat(p0 context.Context, p1 string) (r0 blob.Info, r1 error) {
+	r0, r1 = d.storeOverEmbedded.Stat(p0, p1)
+	if r1 != nil {
+		r0 = blob.Info{Key: "Key-b"}
+	}
+	return r0, r1
+}
+
+// storeStatValueBeside returns the planted defect of a Store whose Stat
+// returns a value beside an error over a fresh subject.
+func storeStatValueBeside(h *StoreHandle) blob.Store {
+	return &storeStatValueBesideDefect{storeOverEmbedded: h.Fresh()}
+}
+
+// storeDeletePanicsDefect is the planted defect of a Store whose Delete
+// panics.
+type storeDeletePanicsDefect struct {
+	storeOverEmbedded
+}
+
+// Delete is the override of the planted defect.
+func (*storeDeletePanicsDefect) Delete(p0 context.Context, p1 string, p2 version.Version) (r0 error) {
+	panic("the planted defect of a Store whose Delete panics")
+}
+
+// storeDeletePanics returns the planted defect of a Store whose Delete
+// panics over a fresh subject.
+func storeDeletePanics(h *StoreHandle) blob.Store {
+	return &storeDeletePanicsDefect{storeOverEmbedded: h.Fresh()}
+}
+
+// storeDeleteIgnoresCancelDefect is the planted defect of a Store whose
+// Delete ignores the context.
+type storeDeleteIgnoresCancelDefect struct {
+	storeOverEmbedded
+}
+
+// Delete is the override of the planted defect.
+func (d *storeDeleteIgnoresCancelDefect) Delete(p0 context.Context, p1 string, p2 version.Version) (r0 error) {
+	if p0.Err() != nil {
+		return r0
+	}
+	return d.storeOverEmbedded.Delete(p0, p1, p2)
+}
+
+// storeDeleteIgnoresCancel returns the planted defect of a Store whose
+// Delete ignores the context over a fresh subject.
+func storeDeleteIgnoresCancel(h *StoreHandle) blob.Store {
+	return &storeDeleteIgnoresCancelDefect{storeOverEmbedded: h.Fresh()}
+}
+
+// storeListPanicsDefect is the planted defect of a Store whose List
+// panics.
+type storeListPanicsDefect struct {
+	storeOverEmbedded
+}
+
+// List is the override of the planted defect.
+func (*storeListPanicsDefect) List(p0 context.Context, p1 string, p2 page.Page) (r0 page.Cursor[blob.Info], r1 error) {
+	panic("the planted defect of a Store whose List panics")
+}
+
+// storeListPanics returns the planted defect of a Store whose List panics
+// over a fresh subject.
+func storeListPanics(h *StoreHandle) blob.Store {
+	return &storeListPanicsDefect{storeOverEmbedded: h.Fresh()}
+}
+
+// storeListIgnoresCancelDefect is the planted defect of a Store whose List
+// ignores the context.
+type storeListIgnoresCancelDefect struct {
+	storeOverEmbedded
+}
+
+// List is the override of the planted defect.
+func (d *storeListIgnoresCancelDefect) List(
+	p0 context.Context,
+	p1 string,
+	p2 page.Page,
+) (r0 page.Cursor[blob.Info], r1 error) {
+	if p0.Err() != nil {
+		return r0, r1
+	}
+	return d.storeOverEmbedded.List(p0, p1, p2)
+}
+
+// storeListIgnoresCancel returns the planted defect of a Store whose List
+// ignores the context over a fresh subject.
+func storeListIgnoresCancel(h *StoreHandle) blob.Store {
+	return &storeListIgnoresCancelDefect{storeOverEmbedded: h.Fresh()}
+}
+
 // The suite refers to the compatibility witness of its runtime.
 var _ = conform.CompatV1
 
@@ -616,12 +1102,89 @@ func (c rangeReaderReadRange) RangeReaderReturnsTheErrorOfADoneContext() conform
 	return c.Check("range-reader-returns-the-error-of-a-done-context")
 }
 
+// Smoke returns the identity of the check that ReadRange returns without a
+// panic for derived inputs.
+func (c rangeReaderReadRange) Smoke() conform.ID[blob.RangeReader] {
+	return c.Check("smoke")
+}
+
+// Cancel returns the identity of the check that ReadRange returns an error
+// for a cancelled context.
+func (c rangeReaderReadRange) Cancel() conform.ID[blob.RangeReader] {
+	return c.Check("cancel")
+}
+
 // RangeReaderSuite returns the checks of RangeReader, and the calls and
 // the budgets of its callables.
 func RangeReaderSuite() conform.Suite[blob.RangeReader] {
 	return conform.Suite[blob.RangeReader]{
 		Declaration: "RangeReader",
+		Package:     "go.thesmos.sh/core/blob",
+		Generator:   conform.Generator{Name: "dokimi", Version: "0.1.0"},
 		Checks: []conform.Check[blob.RangeReader]{
+			{
+				ID:          RangeReaderChecks.ReadRange.Smoke(),
+				Statement:   "ReadRange returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *RangeReaderHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						_, _, err := h.Subject().
+							ReadRange(ctx, string("key-a"), int64(42), []byte{1}, version.Version(""))
+						return err
+					})
+				},
+				Defect: rangeReaderReadRangePanics,
+			},
+			{
+				ID:          RangeReaderChecks.ReadRange.Smoke().Generated(),
+				Statement:   "ReadRange returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *RangeReaderHandle, c *prop.Case) {
+					drawnKey := c.Draw(prop.Of[string](), "key")
+					drawnOff := c.Draw(prop.Of[int64](), "off")
+					drawnDst := c.Draw(prop.Of[[]byte](), "dst")
+					drawnIfMatch := c.Draw(prop.Of[version.Version](), "if-match")
+					probe.Survives(h, func(ctx context.Context) error {
+						_, _, err := h.Subject().ReadRange(ctx, drawnKey, drawnOff, drawnDst, drawnIfMatch)
+						return err
+					})
+				},
+				Defect: rangeReaderReadRangePanics,
+			},
+			{
+				ID:          RangeReaderChecks.ReadRange.Cancel(),
+				Statement:   "ReadRange returns an error for a cancelled context",
+				Claim:       spec.Cancel,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Apply: func(h *RangeReaderHandle) {
+					probe.UnderCancelled(h, func(ctx context.Context) error {
+						_, _, err := h.Subject().
+							ReadRange(ctx, string("key-a"), int64(42), []byte{1}, version.Version(""))
+						return err
+					})
+				},
+				Defect: rangeReaderReadRangeIgnoresCancel,
+			},
+			{
+				ID:          RangeReaderChecks.ReadRange.Cancel().Generated(),
+				Statement:   "ReadRange returns an error for a cancelled context",
+				Claim:       spec.Cancel,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *RangeReaderHandle, c *prop.Case) {
+					drawnKey := c.Draw(prop.Of[string](), "key")
+					drawnOff := c.Draw(prop.Of[int64](), "off")
+					drawnDst := c.Draw(prop.Of[[]byte](), "dst")
+					drawnIfMatch := c.Draw(prop.Of[version.Version](), "if-match")
+					probe.UnderCancelled(h, func(ctx context.Context) error {
+						_, _, err := h.Subject().ReadRange(ctx, drawnKey, drawnOff, drawnDst, drawnIfMatch)
+						return err
+					})
+				},
+				Defect: rangeReaderReadRangeIgnoresCancel,
+			},
 			{
 				ID:        RangeReaderChecks.ReadRange.RangeReaderReadsLikeReadAt(),
 				Statement: "ReadRange returns the count, the error and the bytes of bytes.Reader.ReadAt over the body, with the Info that Stat returns",
@@ -772,4 +1335,53 @@ func newRangeReaderOver(_ *RangeReaderHandle, spend func()) blob.RangeReader {
 	return rangeReaderOver{spend: spend}
 }
 
-// dokimi:provenance sha256:2801959b2e8403c91bfb406c520341e55f446d340ab0ee4b5232f7b37e06cf35
+// rangeReaderReadRangePanicsDefect is the planted defect of a RangeReader
+// whose ReadRange panics.
+type rangeReaderReadRangePanicsDefect struct {
+	rangeReaderOverEmbedded
+}
+
+// ReadRange is the override of the planted defect.
+func (*rangeReaderReadRangePanicsDefect) ReadRange(
+	p0 context.Context,
+	p1 string,
+	p2 int64,
+	p3 []byte,
+	p4 version.Version,
+) (r0 int, r1 blob.Info, r2 error) {
+	panic("the planted defect of a RangeReader whose ReadRange panics")
+}
+
+// rangeReaderReadRangePanics returns the planted defect of a RangeReader
+// whose ReadRange panics over a fresh subject.
+func rangeReaderReadRangePanics(h *RangeReaderHandle) blob.RangeReader {
+	return &rangeReaderReadRangePanicsDefect{rangeReaderOverEmbedded: h.Fresh()}
+}
+
+// rangeReaderReadRangeIgnoresCancelDefect is the planted defect of a
+// RangeReader whose ReadRange ignores the context.
+type rangeReaderReadRangeIgnoresCancelDefect struct {
+	rangeReaderOverEmbedded
+}
+
+// ReadRange is the override of the planted defect.
+func (d *rangeReaderReadRangeIgnoresCancelDefect) ReadRange(
+	p0 context.Context,
+	p1 string,
+	p2 int64,
+	p3 []byte,
+	p4 version.Version,
+) (r0 int, r1 blob.Info, r2 error) {
+	if p0.Err() != nil {
+		return r0, r1, r2
+	}
+	return d.rangeReaderOverEmbedded.ReadRange(p0, p1, p2, p3, p4)
+}
+
+// rangeReaderReadRangeIgnoresCancel returns the planted defect of a
+// RangeReader whose ReadRange ignores the context over a fresh subject.
+func rangeReaderReadRangeIgnoresCancel(h *RangeReaderHandle) blob.RangeReader {
+	return &rangeReaderReadRangeIgnoresCancelDefect{rangeReaderOverEmbedded: h.Fresh()}
+}
+
+// dokimi:provenance sha256:24e17a9e6250661eb46c24a9b5ad64f5c43799fc2492b12c66c39a57df7e6a9e

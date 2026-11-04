@@ -10,6 +10,8 @@ import (
 
 	"go.dokimi.dev/assert/prop"
 	"go.dokimi.dev/conform"
+	"go.dokimi.dev/conform/probe"
+	"go.dokimi.dev/spec"
 	"go.thesmos.sh/core/telemetry"
 )
 
@@ -48,16 +50,16 @@ func (c gaugeSet) GaugeSetReturnsAfterRelease() conform.ID[telemetry.Gauge] {
 	return c.Check("gauge-set-returns-after-release")
 }
 
-// GaugeSetReturnsForAFiniteValue returns the identity of the check that
-// Set of 0, 1, -1, 1e9 and -1e9 returns without a panic.
-func (c gaugeSet) GaugeSetReturnsForAFiniteValue() conform.ID[telemetry.Gauge] {
-	return c.Check("gauge-set-returns-for-a-finite-value")
-}
-
 // GaugeSetReturnsForANonFiniteValue returns the identity of the check that
 // Set of NaN and of both infinities returns without a panic.
 func (c gaugeSet) GaugeSetReturnsForANonFiniteValue() conform.ID[telemetry.Gauge] {
 	return c.Check("gauge-set-returns-for-a-non-finite-value")
+}
+
+// Smoke returns the identity of the check that Set returns without a panic
+// for derived inputs.
+func (c gaugeSet) Smoke() conform.ID[telemetry.Gauge] {
+	return c.Check("smoke")
 }
 
 // gaugeAdd is the name of Gauge.Add, with the identities of its checks.
@@ -71,16 +73,16 @@ func (c gaugeAdd) GaugeAddReturnsAfterRelease() conform.ID[telemetry.Gauge] {
 	return c.Check("gauge-add-returns-after-release")
 }
 
-// GaugeAddReturnsForAFiniteDelta returns the identity of the check that
-// Add of 0, 1, -1, 1e9 and -1e9 returns without a panic.
-func (c gaugeAdd) GaugeAddReturnsForAFiniteDelta() conform.ID[telemetry.Gauge] {
-	return c.Check("gauge-add-returns-for-a-finite-delta")
-}
-
 // GaugeAddReturnsForANonFiniteDelta returns the identity of the check that
 // Add of NaN and of both infinities returns without a panic.
 func (c gaugeAdd) GaugeAddReturnsForANonFiniteDelta() conform.ID[telemetry.Gauge] {
 	return c.Check("gauge-add-returns-for-a-non-finite-delta")
+}
+
+// Smoke returns the identity of the check that Add returns without a panic
+// for derived inputs.
+func (c gaugeAdd) Smoke() conform.ID[telemetry.Gauge] {
+	return c.Check("smoke")
 }
 
 // gaugeWith is the name of Gauge.With, with the identities of its checks.
@@ -106,6 +108,12 @@ func (c gaugeWith) GaugeWithReturnsAGaugeForEmptyAttributes() conform.ID[telemet
 // that With(nil) returns a Gauge whose Set returns without a panic.
 func (c gaugeWith) GaugeWithReturnsAGaugeForNilAttributes() conform.ID[telemetry.Gauge] {
 	return c.Check("gauge-with-returns-a-gauge-for-nil-attributes")
+}
+
+// Smoke returns the identity of the check that With returns without a
+// panic for derived inputs.
+func (c gaugeWith) Smoke() conform.ID[telemetry.Gauge] {
+	return c.Check("smoke")
 }
 
 // gaugeRelease is the name of Gauge.Release, with the identities of its
@@ -148,23 +156,142 @@ func (c gaugeRelease) GaugeSecondReleaseReturns() conform.ID[telemetry.Gauge] {
 	return c.Check("gauge-second-release-returns")
 }
 
+// Smoke returns the identity of the check that Release returns without a
+// panic for derived inputs.
+func (c gaugeRelease) Smoke() conform.ID[telemetry.Gauge] {
+	return c.Check("smoke")
+}
+
+// RepeatSurvives returns the identity of the check that Release returns
+// without a panic when it is called twice.
+func (c gaugeRelease) RepeatSurvives() conform.ID[telemetry.Gauge] {
+	return c.Check("repeat-survives")
+}
+
 // GaugeSuite returns the checks of Gauge, and the calls and the budgets of
 // its callables.
 func GaugeSuite() conform.Suite[telemetry.Gauge] {
 	return conform.Suite[telemetry.Gauge]{
 		Declaration: "Gauge",
+		Package:     "go.thesmos.sh/core/telemetry",
+		Generator:   conform.Generator{Name: "dokimi", Version: "0.1.0"},
 		Checks: []conform.Check[telemetry.Gauge]{
+			{
+				ID:          GaugeChecks.Set.Smoke(),
+				Statement:   "Set returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *GaugeHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Set(ctx, float64(1.5))
+						return nil
+					})
+				},
+				Defect: gaugeSetPanics,
+			},
+			{
+				ID:          GaugeChecks.Set.Smoke().Generated(),
+				Statement:   "Set returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *GaugeHandle, c *prop.Case) {
+					drawnValue := c.Draw(prop.Of[float64](), "value")
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Set(ctx, drawnValue)
+						return nil
+					})
+				},
+				Defect: gaugeSetPanics,
+			},
+			{
+				ID:          GaugeChecks.Add.Smoke(),
+				Statement:   "Add returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *GaugeHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Add(ctx, float64(1.5))
+						return nil
+					})
+				},
+				Defect: gaugeAddPanics,
+			},
+			{
+				ID:          GaugeChecks.Add.Smoke().Generated(),
+				Statement:   "Add returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *GaugeHandle, c *prop.Case) {
+					drawnDelta := c.Draw(prop.Of[float64](), "delta")
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Add(ctx, drawnDelta)
+						return nil
+					})
+				},
+				Defect: gaugeAddPanics,
+			},
+			{
+				ID:          GaugeChecks.With.Smoke(),
+				Statement:   "With returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *GaugeHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().With([]telemetry.Attr{{Key: "Key-a"}})
+						return nil
+					})
+				},
+				Defect: gaugeWithPanics,
+			},
+			{
+				ID:          GaugeChecks.With.Smoke().Generated(),
+				Statement:   "With returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *GaugeHandle, c *prop.Case) {
+					drawnAttrs := c.Draw(prop.Of[[]telemetry.Attr](), "attrs")
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().With(drawnAttrs)
+						return nil
+					})
+				},
+				Defect: gaugeWithPanics,
+			},
+			{
+				ID:          GaugeChecks.Release.Smoke(),
+				Statement:   "Release returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *GaugeHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Release()
+						return nil
+					})
+				},
+				Defect: gaugeReleasePanics,
+			},
+			{
+				ID:          GaugeChecks.Release.RepeatSurvives(),
+				Statement:   "Release returns without a panic when it is called twice",
+				Claim:       spec.RepeatSurvives,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Apply: func(h *GaugeHandle) {
+					probe.SurvivesRepeat(h, func(ctx context.Context) error {
+						h.Subject().Release()
+						return nil
+					})
+				},
+				Defect: gaugeReleasePanicsOnRepeat,
+			},
 			{
 				ID:        GaugeChecks.Set.GaugeSetReturnsAfterRelease(),
 				Statement: "Set of a released Gauge returns without a panic",
 				Apply:     GaugeSetReturnsAfterRelease,
 				Defect:    gaugeBoundSetPanicsAfterRelease,
-			},
-			{
-				ID:        GaugeChecks.Set.GaugeSetReturnsForAFiniteValue(),
-				Statement: "Set of 0, 1, -1, 1e9 and -1e9 returns without a panic",
-				Apply:     GaugeSetReturnsForAFiniteValue,
-				Defect:    gaugeSetPanicsForMinusOne,
 			},
 			{
 				ID:        GaugeChecks.Set.GaugeSetReturnsForANonFiniteValue(),
@@ -177,12 +304,6 @@ func GaugeSuite() conform.Suite[telemetry.Gauge] {
 				Statement: "Add of a released Gauge returns without a panic",
 				Apply:     GaugeAddReturnsAfterRelease,
 				Defect:    gaugeBoundAddPanicsAfterRelease,
-			},
-			{
-				ID:        GaugeChecks.Add.GaugeAddReturnsForAFiniteDelta(),
-				Statement: "Add of 0, 1, -1, 1e9 and -1e9 returns without a panic",
-				Apply:     GaugeAddReturnsForAFiniteDelta,
-				Defect:    gaugeAddPanicsForMinusOne,
 			},
 			{
 				ID:        GaugeChecks.Add.GaugeAddReturnsForANonFiniteDelta(),
@@ -237,6 +358,43 @@ func GaugeSuite() conform.Suite[telemetry.Gauge] {
 				Statement: "a second Release of a bound Gauge returns without a panic",
 				Apply:     GaugeSecondReleaseReturns,
 				Defect:    gaugeSecondReleasePanics,
+			},
+		},
+		Refusals: []conform.Refusal{
+			{
+				Claim:    spec.Cancel,
+				Callable: "Gauge.Set",
+				Gate:     spec.Failure,
+				Why:      "Set cannot fail",
+				Remedy:   "give Set an error result",
+			},
+			{
+				Claim:    spec.Cancel,
+				Callable: "Gauge.Add",
+				Gate:     spec.Failure,
+				Why:      "Add cannot fail",
+				Remedy:   "give Add an error result",
+			},
+			{
+				Claim:    spec.Deterministic,
+				Callable: "Gauge.With",
+				Gate:     spec.ValueSamples,
+				Why:      "eidos derives no sample of a result of With",
+				Remedy:   "author a sample of the result type with the directive sample",
+			},
+		},
+		Unclaimed: []conform.Unclaimed{
+			{
+				Classification: "shape:mutator",
+				Callable:       "Gauge.Set",
+				Stance:         spec.Silent,
+				Note:           "A mutation is an input of the other checks, and its result is an error alone.",
+			},
+			{
+				Classification: "shape:mutator",
+				Callable:       "Gauge.Add",
+				Stance:         spec.Silent,
+				Note:           "A mutation is an input of the other checks, and its result is an error alone.",
 			},
 		},
 		Calls: []conform.Call[telemetry.Gauge]{
@@ -407,4 +565,92 @@ func newGaugeOver(_ *GaugeHandle, spend func()) telemetry.Gauge {
 	return gaugeOver{spend: spend}
 }
 
-// dokimi:provenance sha256:620777227e74573e0790b21f44f506d91013a101a5d1dd70f4c494d319c0baa3
+// gaugeSetPanicsDefect is the planted defect of a Gauge whose Set panics.
+type gaugeSetPanicsDefect struct {
+	gaugeOverEmbedded
+}
+
+// Set is the override of the planted defect.
+func (*gaugeSetPanicsDefect) Set(p0 context.Context, p1 float64) {
+	panic("the planted defect of a Gauge whose Set panics")
+}
+
+// gaugeSetPanics returns the planted defect of a Gauge whose Set panics
+// over a fresh subject.
+func gaugeSetPanics(h *GaugeHandle) telemetry.Gauge {
+	return &gaugeSetPanicsDefect{gaugeOverEmbedded: h.Fresh()}
+}
+
+// gaugeAddPanicsDefect is the planted defect of a Gauge whose Add panics.
+type gaugeAddPanicsDefect struct {
+	gaugeOverEmbedded
+}
+
+// Add is the override of the planted defect.
+func (*gaugeAddPanicsDefect) Add(p0 context.Context, p1 float64) {
+	panic("the planted defect of a Gauge whose Add panics")
+}
+
+// gaugeAddPanics returns the planted defect of a Gauge whose Add panics
+// over a fresh subject.
+func gaugeAddPanics(h *GaugeHandle) telemetry.Gauge {
+	return &gaugeAddPanicsDefect{gaugeOverEmbedded: h.Fresh()}
+}
+
+// gaugeWithPanicsDefect is the planted defect of a Gauge whose With
+// panics.
+type gaugeWithPanicsDefect struct {
+	gaugeOverEmbedded
+}
+
+// With is the override of the planted defect.
+func (*gaugeWithPanicsDefect) With(p0 []telemetry.Attr) (r0 telemetry.Gauge) {
+	panic("the planted defect of a Gauge whose With panics")
+}
+
+// gaugeWithPanics returns the planted defect of a Gauge whose With panics
+// over a fresh subject.
+func gaugeWithPanics(h *GaugeHandle) telemetry.Gauge {
+	return &gaugeWithPanicsDefect{gaugeOverEmbedded: h.Fresh()}
+}
+
+// gaugeReleasePanicsDefect is the planted defect of a Gauge whose Release
+// panics.
+type gaugeReleasePanicsDefect struct {
+	gaugeOverEmbedded
+}
+
+// Release is the override of the planted defect.
+func (*gaugeReleasePanicsDefect) Release() {
+	panic("the planted defect of a Gauge whose Release panics")
+}
+
+// gaugeReleasePanics returns the planted defect of a Gauge whose Release
+// panics over a fresh subject.
+func gaugeReleasePanics(h *GaugeHandle) telemetry.Gauge {
+	return &gaugeReleasePanicsDefect{gaugeOverEmbedded: h.Fresh()}
+}
+
+// gaugeReleasePanicsOnRepeatDefect is the planted defect of a Gauge whose
+// Release panics on the repeat.
+type gaugeReleasePanicsOnRepeatDefect struct {
+	gaugeOverEmbedded
+	calls int
+}
+
+// Release is the override of the planted defect.
+func (d *gaugeReleasePanicsOnRepeatDefect) Release() {
+	d.calls++
+	if d.calls > 1 {
+		panic("the planted defect of a Gauge whose Release panics on the repeat")
+	}
+	d.gaugeOverEmbedded.Release()
+}
+
+// gaugeReleasePanicsOnRepeat returns the planted defect of a Gauge whose
+// Release panics on the repeat over a fresh subject.
+func gaugeReleasePanicsOnRepeat(h *GaugeHandle) telemetry.Gauge {
+	return &gaugeReleasePanicsOnRepeatDefect{gaugeOverEmbedded: h.Fresh()}
+}
+
+// dokimi:provenance sha256:4c4e93b7a4534a18ecbee1c391780216360996c82ad9958ca67b59f791f79f29

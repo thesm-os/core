@@ -104,13 +104,15 @@ func hasherStubNewStream(tb assert.TB, s *cryptotest.HasherStub) crypto.Stream {
 	return s.NewStream()
 }
 
-// hasherStubIDSubject returns the subject of [stub.Behaviour] for ID. The
-// subject calls a new double that reports to tb.
+// hasherStubIDSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for ID. The subject calls a new double that
+// reports to tb.
 func hasherStubIDSubject(tb assert.TB) stub.Subject[cryptotest.HasherIDCall, cryptotest.HasherIDReturn] {
 	tb.Helper()
 	s := cryptotest.NewHasherStub(tb)
 	return stub.Subject[cryptotest.HasherIDCall, cryptotest.HasherIDReturn]{
-		Stub: s.OnID.MethodStub,
+		Stub:  s.OnID.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = hasherStubID(tb, s)
 		},
@@ -118,9 +120,14 @@ func hasherStubIDSubject(tb assert.TB) stub.Subject[cryptotest.HasherIDCall, cry
 			got0 := hasherStubID(tb, s)
 			return cryptotest.HasherIDReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() cryptotest.HasherIDReturn {
+			want0 := hasherStubIDPins()
+			s.OnID.Returns(want0)
+			return cryptotest.HasherIDReturn{Result: want0}
+		},
+		Override: func(seen func(cryptotest.HasherIDCall)) {
 			s.OnID.Func(func() crypto.ID {
-				mark()
+				seen(cryptotest.HasherIDCall{})
 				var z0 crypto.ID
 				return z0
 			})
@@ -128,15 +135,17 @@ func hasherStubIDSubject(tb assert.TB) stub.Subject[cryptotest.HasherIDCall, cry
 	}
 }
 
-// hasherStubAlgorithmSubject returns the subject of [stub.Behaviour] for
-// Algorithm. The subject calls a new double that reports to tb.
+// hasherStubAlgorithmSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Algorithm. The subject calls a new double that
+// reports to tb.
 func hasherStubAlgorithmSubject(
 	tb assert.TB,
 ) stub.Subject[cryptotest.HasherAlgorithmCall, cryptotest.HasherAlgorithmReturn] {
 	tb.Helper()
 	s := cryptotest.NewHasherStub(tb)
 	return stub.Subject[cryptotest.HasherAlgorithmCall, cryptotest.HasherAlgorithmReturn]{
-		Stub: s.OnAlgorithm.MethodStub,
+		Stub:  s.OnAlgorithm.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = hasherStubAlgorithm(tb, s)
 		},
@@ -144,9 +153,14 @@ func hasherStubAlgorithmSubject(
 			got0 := hasherStubAlgorithm(tb, s)
 			return cryptotest.HasherAlgorithmReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() cryptotest.HasherAlgorithmReturn {
+			want0 := hasherStubAlgorithmPins()
+			s.OnAlgorithm.Returns(want0)
+			return cryptotest.HasherAlgorithmReturn{Result: want0}
+		},
+		Override: func(seen func(cryptotest.HasherAlgorithmCall)) {
 			s.OnAlgorithm.Func(func() crypto.Algorithm {
-				mark()
+				seen(cryptotest.HasherAlgorithmCall{})
 				var z0 crypto.Algorithm
 				return z0
 			})
@@ -154,23 +168,30 @@ func hasherStubAlgorithmSubject(
 	}
 }
 
-// hasherStubHashSubject returns the subject of [stub.Behaviour] for Hash.
-// The subject calls a new double that reports to tb.
+// hasherStubHashSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Hash. The subject calls a new double that
+// reports to tb.
 func hasherStubHashSubject(tb assert.TB) stub.Subject[cryptotest.HasherHashCall, cryptotest.HasherHashReturn] {
 	tb.Helper()
 	s := cryptotest.NewHasherStub(tb)
 	return stub.Subject[cryptotest.HasherHashCall, cryptotest.HasherHashReturn]{
-		Stub: s.OnHash.MethodStub,
+		Stub:  s.OnHash.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = hasherStubHash(tb, s)
+		},
+		Arguments: func(tb assert.TB, c cryptotest.HasherHashCall) {
+			tb.Helper()
+			a0 := hasherStubHashArgs(tb)
+			assert.Equal(tb, c.Data, a0, "the call records Data")
 		},
 		Result: func() cryptotest.HasherHashReturn {
 			got0 := hasherStubHash(tb, s)
 			return cryptotest.HasherHashReturn{Result: got0}
 		},
-		Override: func(mark func()) {
-			s.OnHash.Func(func(_ []byte) crypto.Digest {
-				mark()
+		Override: func(seen func(cryptotest.HasherHashCall)) {
+			s.OnHash.Func(func(p0 []byte) crypto.Digest {
+				seen(cryptotest.HasherHashCall{Data: p0})
 				var z0 crypto.Digest
 				return z0
 			})
@@ -178,25 +199,33 @@ func hasherStubHashSubject(tb assert.TB) stub.Subject[cryptotest.HasherHashCall,
 	}
 }
 
-// hasherStubHashTaggedSubject returns the subject of [stub.Behaviour] for
-// HashTagged. The subject calls a new double that reports to tb.
+// hasherStubHashTaggedSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for HashTagged. The subject calls a new double
+// that reports to tb.
 func hasherStubHashTaggedSubject(
 	tb assert.TB,
 ) stub.Subject[cryptotest.HasherHashTaggedCall, cryptotest.HasherHashTaggedReturn] {
 	tb.Helper()
 	s := cryptotest.NewHasherStub(tb)
 	return stub.Subject[cryptotest.HasherHashTaggedCall, cryptotest.HasherHashTaggedReturn]{
-		Stub: s.OnHashTagged.MethodStub,
+		Stub:  s.OnHashTagged.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = hasherStubHashTagged(tb, s)
+		},
+		Arguments: func(tb assert.TB, c cryptotest.HasherHashTaggedCall) {
+			tb.Helper()
+			a0, a1 := hasherStubHashTaggedArgs(tb)
+			expect.Equal(tb, c.R, a0, "the call records R")
+			expect.Equal(tb, c.Data, a1, "the call records Data")
 		},
 		Result: func() cryptotest.HasherHashTaggedReturn {
 			got0 := hasherStubHashTagged(tb, s)
 			return cryptotest.HasherHashTaggedReturn{Result: got0}
 		},
-		Override: func(mark func()) {
-			s.OnHashTagged.Func(func(_ crypto.Role, _ []byte) crypto.Digest {
-				mark()
+		Override: func(seen func(cryptotest.HasherHashTaggedCall)) {
+			s.OnHashTagged.Func(func(p0 crypto.Role, p1 []byte) crypto.Digest {
+				seen(cryptotest.HasherHashTaggedCall{R: p0, Data: p1})
 				var z0 crypto.Digest
 				return z0
 			})
@@ -205,24 +234,33 @@ func hasherStubHashTaggedSubject(
 }
 
 // hasherStubCombineTaggedSubject returns the subject of [stub.Behaviour]
-// for CombineTagged. The subject calls a new double that reports to tb.
+// and [stub.ResetBehaviour] for CombineTagged. The subject calls a new
+// double that reports to tb.
 func hasherStubCombineTaggedSubject(
 	tb assert.TB,
 ) stub.Subject[cryptotest.HasherCombineTaggedCall, cryptotest.HasherCombineTaggedReturn] {
 	tb.Helper()
 	s := cryptotest.NewHasherStub(tb)
 	return stub.Subject[cryptotest.HasherCombineTaggedCall, cryptotest.HasherCombineTaggedReturn]{
-		Stub: s.OnCombineTagged.MethodStub,
+		Stub:  s.OnCombineTagged.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = hasherStubCombineTagged(tb, s)
+		},
+		Arguments: func(tb assert.TB, c cryptotest.HasherCombineTaggedCall) {
+			tb.Helper()
+			a0, a1, a2 := hasherStubCombineTaggedArgs(tb)
+			expect.Equal(tb, c.R, a0, "the call records R")
+			expect.Equal(tb, c.Left, a1, "the call records Left")
+			expect.Equal(tb, c.Right, a2, "the call records Right")
 		},
 		Result: func() cryptotest.HasherCombineTaggedReturn {
 			got0 := hasherStubCombineTagged(tb, s)
 			return cryptotest.HasherCombineTaggedReturn{Result: got0}
 		},
-		Override: func(mark func()) {
-			s.OnCombineTagged.Func(func(_ crypto.Role, _, _ crypto.Digest) crypto.Digest {
-				mark()
+		Override: func(seen func(cryptotest.HasherCombineTaggedCall)) {
+			s.OnCombineTagged.Func(func(p0 crypto.Role, p1, p2 crypto.Digest) crypto.Digest {
+				seen(cryptotest.HasherCombineTaggedCall{R: p0, Left: p1, Right: p2})
 				var z0 crypto.Digest
 				return z0
 			})
@@ -230,15 +268,17 @@ func hasherStubCombineTaggedSubject(
 	}
 }
 
-// hasherStubNewStreamSubject returns the subject of [stub.Behaviour] for
-// NewStream. The subject calls a new double that reports to tb.
+// hasherStubNewStreamSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for NewStream. The subject calls a new double that
+// reports to tb.
 func hasherStubNewStreamSubject(
 	tb assert.TB,
 ) stub.Subject[cryptotest.HasherNewStreamCall, cryptotest.HasherNewStreamReturn] {
 	tb.Helper()
 	s := cryptotest.NewHasherStub(tb)
 	return stub.Subject[cryptotest.HasherNewStreamCall, cryptotest.HasherNewStreamReturn]{
-		Stub: s.OnNewStream.MethodStub,
+		Stub:  s.OnNewStream.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = hasherStubNewStream(tb, s)
 		},
@@ -246,9 +286,9 @@ func hasherStubNewStreamSubject(
 			got0 := hasherStubNewStream(tb, s)
 			return cryptotest.HasherNewStreamReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Override: func(seen func(cryptotest.HasherNewStreamCall)) {
 			s.OnNewStream.Func(func() crypto.Stream {
-				mark()
+				seen(cryptotest.HasherNewStreamCall{})
 				var z0 crypto.Stream
 				return z0
 			})
@@ -269,7 +309,6 @@ func hasherStubInstanceOf(tb assert.TB, s *cryptotest.HasherStub) hasherStubInst
 		Call: func() {
 			_ = hasherStubID(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -281,202 +320,64 @@ func TestHasherStub(t *testing.T) {
 	t.Run("ID", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "ID", hasherStubIDSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewHasherStub(t)
-			var seen []cryptotest.HasherIDCall
-			s.OnID.OnRecord(func(c cryptotest.HasherIDCall) { seen = append(seen, c) })
-			_ = hasherStubID(t, s)
-			_ = hasherStubID(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of ID")
-		})
 	})
 
 	t.Run("Algorithm", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Algorithm", hasherStubAlgorithmSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewHasherStub(t)
-			var seen []cryptotest.HasherAlgorithmCall
-			s.OnAlgorithm.OnRecord(func(c cryptotest.HasherAlgorithmCall) { seen = append(seen, c) })
-			_ = hasherStubAlgorithm(t, s)
-			_ = hasherStubAlgorithm(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Algorithm")
-		})
 	})
 
 	t.Run("Hash", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Hash", hasherStubHashSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewHasherStub(t)
-			_ = hasherStubHash(t, s)
-			got := s.OnHash.AssertCalledOnce(t, "Hash records the call")
-			a0 := hasherStubHashArgs(t)
-			assert.Equal(t, got.Data, a0, "the call records Data")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewHasherStub(t)
-			var seen []cryptotest.HasherHashCall
-			s.OnHash.OnRecord(func(c cryptotest.HasherHashCall) { seen = append(seen, c) })
-			_ = hasherStubHash(t, s)
-			_ = hasherStubHash(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Hash")
-		})
 	})
 
 	t.Run("HashTagged", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "HashTagged", hasherStubHashTaggedSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewHasherStub(t)
-			_ = hasherStubHashTagged(t, s)
-			got := s.OnHashTagged.AssertCalledOnce(t, "HashTagged records the call")
-			a0, a1 := hasherStubHashTaggedArgs(t)
-			expect.Equal(t, got.R, a0, "the call records R")
-			expect.Equal(t, got.Data, a1, "the call records Data")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewHasherStub(t)
-			var seen []cryptotest.HasherHashTaggedCall
-			s.OnHashTagged.OnRecord(func(c cryptotest.HasherHashTaggedCall) { seen = append(seen, c) })
-			_ = hasherStubHashTagged(t, s)
-			_ = hasherStubHashTagged(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of HashTagged")
-		})
 	})
 
 	t.Run("CombineTagged", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "CombineTagged", hasherStubCombineTaggedSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewHasherStub(t)
-			_ = hasherStubCombineTagged(t, s)
-			got := s.OnCombineTagged.AssertCalledOnce(t, "CombineTagged records the call")
-			a0, a1, a2 := hasherStubCombineTaggedArgs(t)
-			expect.Equal(t, got.R, a0, "the call records R")
-			expect.Equal(t, got.Left, a1, "the call records Left")
-			expect.Equal(t, got.Right, a2, "the call records Right")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewHasherStub(t)
-			var seen []cryptotest.HasherCombineTaggedCall
-			s.OnCombineTagged.OnRecord(func(c cryptotest.HasherCombineTaggedCall) { seen = append(seen, c) })
-			_ = hasherStubCombineTagged(t, s)
-			_ = hasherStubCombineTagged(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of CombineTagged")
-		})
 	})
 
 	t.Run("NewStream", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "NewStream", hasherStubNewStreamSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewHasherStub(t)
-			var seen []cryptotest.HasherNewStreamCall
-			s.OnNewStream.OnRecord(func(c cryptotest.HasherNewStreamCall) { seen = append(seen, c) })
-			_ = hasherStubNewStream(t, s)
-			_ = hasherStubNewStream(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of NewStream")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) hasherStubInstance {
-			return hasherStubInstanceOf(tb, cryptotest.NewHasherStub(tb))
-		})
 
-		t.Run("clears the recorded calls of ID", func(t *testing.T) {
+		t.Run("ID", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewHasherStub(t)
-			_ = hasherStubID(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnID.CallCount(), 0, "ResetCalls clears the calls of ID")
+			stub.ResetBehaviour(t, "ID", hasherStubIDSubject)
 		})
 
-		t.Run("keeps the results of Returns of ID", func(t *testing.T) {
+		t.Run("Algorithm", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewHasherStub(t)
-			want0 := hasherStubIDPins()
-			s.OnID.Returns(want0)
-			s.ResetCalls()
-			got0 := hasherStubID(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of ID")
+			stub.ResetBehaviour(t, "Algorithm", hasherStubAlgorithmSubject)
 		})
 
-		t.Run("clears the recorded calls of Algorithm", func(t *testing.T) {
+		t.Run("Hash", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewHasherStub(t)
-			_ = hasherStubAlgorithm(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnAlgorithm.CallCount(), 0, "ResetCalls clears the calls of Algorithm")
+			stub.ResetBehaviour(t, "Hash", hasherStubHashSubject)
 		})
 
-		t.Run("keeps the results of Returns of Algorithm", func(t *testing.T) {
+		t.Run("HashTagged", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewHasherStub(t)
-			want0 := hasherStubAlgorithmPins()
-			s.OnAlgorithm.Returns(want0)
-			s.ResetCalls()
-			got0 := hasherStubAlgorithm(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Algorithm")
+			stub.ResetBehaviour(t, "HashTagged", hasherStubHashTaggedSubject)
 		})
 
-		t.Run("clears the recorded calls of Hash", func(t *testing.T) {
+		t.Run("CombineTagged", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewHasherStub(t)
-			_ = hasherStubHash(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnHash.CallCount(), 0, "ResetCalls clears the calls of Hash")
+			stub.ResetBehaviour(t, "CombineTagged", hasherStubCombineTaggedSubject)
 		})
 
-		t.Run("clears the recorded calls of HashTagged", func(t *testing.T) {
+		t.Run("NewStream", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewHasherStub(t)
-			_ = hasherStubHashTagged(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnHashTagged.CallCount(), 0, "ResetCalls clears the calls of HashTagged")
-		})
-
-		t.Run("clears the recorded calls of CombineTagged", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewHasherStub(t)
-			_ = hasherStubCombineTagged(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnCombineTagged.CallCount(), 0, "ResetCalls clears the calls of CombineTagged")
-		})
-
-		t.Run("clears the recorded calls of NewStream", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewHasherStub(t)
-			_ = hasherStubNewStream(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnNewStream.CallCount(), 0, "ResetCalls clears the calls of NewStream")
-		})
-	})
-
-	t.Run("NewHasherStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) hasherStubInstance {
-			return hasherStubInstanceOf(tb, cryptotest.NewHasherStubDelayed(tb, d, clk))
+			stub.ResetBehaviour(t, "NewStream", hasherStubNewStreamSubject)
 		})
 	})
 
@@ -673,210 +574,6 @@ func TestHasherStub(t *testing.T) {
 	})
 }
 
-// TestHasherIDStub checks the methods of HasherIDStub, which configures
-// ID.
-func TestHasherIDStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of ID", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewHasherStub(t)
-			want0 := hasherStubIDPins()
-			s.OnID.Returns(want0)
-			got0 := hasherStubID(t, s)
-			assert.Equal(t, got0, want0, "ID returns the Result that Returns sets")
-		})
-
-		t.Run("configures ID for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewHasherStub(r)
-			s.OnID.Strict()
-			var want0 crypto.ID
-			s.OnID.Returns(want0)
-			_ = hasherStubID(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of ID")
-		})
-	})
-}
-
-// TestHasherAlgorithmStub checks the methods of HasherAlgorithmStub, which
-// configures Algorithm.
-func TestHasherAlgorithmStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Algorithm", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewHasherStub(t)
-			want0 := hasherStubAlgorithmPins()
-			s.OnAlgorithm.Returns(want0)
-			got0 := hasherStubAlgorithm(t, s)
-			assert.Equal(t, got0, want0, "Algorithm returns the Result that Returns sets")
-		})
-
-		t.Run("configures Algorithm for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewHasherStub(r)
-			s.OnAlgorithm.Strict()
-			var want0 crypto.Algorithm
-			s.OnAlgorithm.Returns(want0)
-			_ = hasherStubAlgorithm(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Algorithm")
-		})
-	})
-}
-
-// TestHasherHashStub checks the methods of HasherHashStub, which
-// configures Hash.
-func TestHasherHashStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("configures Hash for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewHasherStub(r)
-			s.OnHash.Strict()
-			var want0 crypto.Digest
-			s.OnHash.Returns(want0)
-			_ = hasherStubHash(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Hash")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Hash to the function", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewHasherStub(t)
-			var got0 []byte
-			s.OnHash.Func(func(p0 []byte) crypto.Digest {
-				got0 = p0
-				var z0 crypto.Digest
-				return z0
-			})
-			_ = hasherStubHash(t, s)
-			a0 := hasherStubHashArgs(t)
-			assert.Equal(t, got0, a0, "the function receives Data")
-		})
-	})
-}
-
-// TestHasherHashTaggedStub checks the methods of HasherHashTaggedStub,
-// which configures HashTagged.
-func TestHasherHashTaggedStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("configures HashTagged for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewHasherStub(r)
-			s.OnHashTagged.Strict()
-			var want0 crypto.Digest
-			s.OnHashTagged.Returns(want0)
-			_ = hasherStubHashTagged(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of HashTagged")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of HashTagged to the function", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewHasherStub(t)
-			var got0 crypto.Role
-			var got1 []byte
-			s.OnHashTagged.Func(func(p0 crypto.Role, p1 []byte) crypto.Digest {
-				got0, got1 = p0, p1
-				var z0 crypto.Digest
-				return z0
-			})
-			_ = hasherStubHashTagged(t, s)
-			a0, a1 := hasherStubHashTaggedArgs(t)
-			expect.Equal(t, got0, a0, "the function receives R")
-			expect.Equal(t, got1, a1, "the function receives Data")
-		})
-	})
-}
-
-// TestHasherCombineTaggedStub checks the methods of
-// HasherCombineTaggedStub, which configures CombineTagged.
-func TestHasherCombineTaggedStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("configures CombineTagged for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewHasherStub(r)
-			s.OnCombineTagged.Strict()
-			var want0 crypto.Digest
-			s.OnCombineTagged.Returns(want0)
-			_ = hasherStubCombineTagged(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of CombineTagged")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of CombineTagged to the function", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewHasherStub(t)
-			var got0 crypto.Role
-			var got1 crypto.Digest
-			var got2 crypto.Digest
-			s.OnCombineTagged.Func(func(p0 crypto.Role, p1, p2 crypto.Digest) crypto.Digest {
-				got0, got1, got2 = p0, p1, p2
-				var z0 crypto.Digest
-				return z0
-			})
-			_ = hasherStubCombineTagged(t, s)
-			a0, a1, a2 := hasherStubCombineTaggedArgs(t)
-			expect.Equal(t, got0, a0, "the function receives R")
-			expect.Equal(t, got1, a1, "the function receives Left")
-			expect.Equal(t, got2, a2, "the function receives Right")
-		})
-	})
-}
-
-// TestHasherNewStreamStub checks the methods of HasherNewStreamStub, which
-// configures NewStream.
-func TestHasherNewStreamStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("configures NewStream for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewHasherStub(r)
-			s.OnNewStream.Strict()
-			var want0 crypto.Stream
-			s.OnNewStream.Returns(want0)
-			_ = hasherStubNewStream(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of NewStream")
-		})
-	})
-}
-
 // streamStubSum calls Sum of s with the samples of its arguments.
 func streamStubSum(tb assert.TB, s *cryptotest.StreamStub) crypto.Digest {
 	tb.Helper()
@@ -919,13 +616,15 @@ func streamStubWritePins() (int, error) {
 	return want0, want1
 }
 
-// streamStubSumSubject returns the subject of [stub.Behaviour] for Sum.
-// The subject calls a new double that reports to tb.
+// streamStubSumSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Sum. The subject calls a new double that
+// reports to tb.
 func streamStubSumSubject(tb assert.TB) stub.Subject[cryptotest.StreamSumCall, cryptotest.StreamSumReturn] {
 	tb.Helper()
 	s := cryptotest.NewStreamStub(tb)
 	return stub.Subject[cryptotest.StreamSumCall, cryptotest.StreamSumReturn]{
-		Stub: s.OnSum.MethodStub,
+		Stub:  s.OnSum.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = streamStubSum(tb, s)
 		},
@@ -933,9 +632,9 @@ func streamStubSumSubject(tb assert.TB) stub.Subject[cryptotest.StreamSumCall, c
 			got0 := streamStubSum(tb, s)
 			return cryptotest.StreamSumReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Override: func(seen func(cryptotest.StreamSumCall)) {
 			s.OnSum.Func(func() crypto.Digest {
-				mark()
+				seen(cryptotest.StreamSumCall{})
 				var z0 crypto.Digest
 				return z0
 			})
@@ -943,59 +642,75 @@ func streamStubSumSubject(tb assert.TB) stub.Subject[cryptotest.StreamSumCall, c
 	}
 }
 
-// streamStubResetSubject returns the subject of [stub.Behaviour] for
-// Reset. The subject calls a new double that reports to tb.
+// streamStubResetSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Reset. The subject calls a new double that
+// reports to tb.
 func streamStubResetSubject(tb assert.TB) stub.Subject[cryptotest.StreamResetCall, struct{}] {
 	tb.Helper()
 	s := cryptotest.NewStreamStub(tb)
 	return stub.Subject[cryptotest.StreamResetCall, struct{}]{
-		Stub: s.OnReset.MethodStub,
+		Stub:  s.OnReset.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			streamStubReset(tb, s)
 		},
-		Override: func(mark func()) {
+		Override: func(seen func(cryptotest.StreamResetCall)) {
 			s.OnReset.Func(func() {
-				mark()
+				seen(cryptotest.StreamResetCall{})
 			})
 		},
 	}
 }
 
-// streamStubCloseSubject returns the subject of [stub.Behaviour] for
-// Close. The subject calls a new double that reports to tb.
+// streamStubCloseSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Close. The subject calls a new double that
+// reports to tb.
 func streamStubCloseSubject(tb assert.TB) stub.Subject[cryptotest.StreamCloseCall, struct{}] {
 	tb.Helper()
 	s := cryptotest.NewStreamStub(tb)
 	return stub.Subject[cryptotest.StreamCloseCall, struct{}]{
-		Stub: s.OnClose.MethodStub,
+		Stub:  s.OnClose.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			streamStubClose(tb, s)
 		},
-		Override: func(mark func()) {
+		Override: func(seen func(cryptotest.StreamCloseCall)) {
 			s.OnClose.Func(func() {
-				mark()
+				seen(cryptotest.StreamCloseCall{})
 			})
 		},
 	}
 }
 
-// streamStubWriteSubject returns the subject of [stub.Behaviour] for
-// Write. The subject calls a new double that reports to tb.
+// streamStubWriteSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Write. The subject calls a new double that
+// reports to tb.
 func streamStubWriteSubject(tb assert.TB) stub.Subject[cryptotest.StreamWriteCall, cryptotest.StreamWriteReturn] {
 	tb.Helper()
 	s := cryptotest.NewStreamStub(tb)
 	return stub.Subject[cryptotest.StreamWriteCall, cryptotest.StreamWriteReturn]{
-		Stub: s.OnWrite.MethodStub,
+		Stub:  s.OnWrite.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = streamStubWrite(tb, s)
+		},
+		Arguments: func(tb assert.TB, c cryptotest.StreamWriteCall) {
+			tb.Helper()
+			a0 := streamStubWriteArgs(tb)
+			assert.Equal(tb, c.P, a0, "the call records P")
 		},
 		Result: func() cryptotest.StreamWriteReturn {
 			got0, got1 := streamStubWrite(tb, s)
 			return cryptotest.StreamWriteReturn{N: got0, Err: got1}
 		},
-		Override: func(mark func()) {
-			s.OnWrite.Func(func(_ []byte) (int, error) {
-				mark()
+		Returns: func() cryptotest.StreamWriteReturn {
+			want0, want1 := streamStubWritePins()
+			s.OnWrite.Returns(want0, want1)
+			return cryptotest.StreamWriteReturn{N: want0, Err: want1}
+		},
+		Override: func(seen func(cryptotest.StreamWriteCall)) {
+			s.OnWrite.Func(func(p0 []byte) (int, error) {
+				seen(cryptotest.StreamWriteCall{P: p0})
 				var z0 int
 				var z1 error
 				return z0, z1
@@ -1021,7 +736,6 @@ func streamStubInstanceOf(tb assert.TB, s *cryptotest.StreamStub) streamStubInst
 		Call: func() {
 			_ = streamStubSum(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -1033,138 +747,44 @@ func TestStreamStub(t *testing.T) {
 	t.Run("Sum", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Sum", streamStubSumSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewStreamStub(t)
-			var seen []cryptotest.StreamSumCall
-			s.OnSum.OnRecord(func(c cryptotest.StreamSumCall) { seen = append(seen, c) })
-			_ = streamStubSum(t, s)
-			_ = streamStubSum(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Sum")
-		})
 	})
 
 	t.Run("Reset", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Reset", streamStubResetSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewStreamStub(t)
-			var seen []cryptotest.StreamResetCall
-			s.OnReset.OnRecord(func(c cryptotest.StreamResetCall) { seen = append(seen, c) })
-			streamStubReset(t, s)
-			streamStubReset(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Reset")
-		})
 	})
 
 	t.Run("Close", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Close", streamStubCloseSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewStreamStub(t)
-			var seen []cryptotest.StreamCloseCall
-			s.OnClose.OnRecord(func(c cryptotest.StreamCloseCall) { seen = append(seen, c) })
-			streamStubClose(t, s)
-			streamStubClose(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Close")
-		})
 	})
 
 	t.Run("Write", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Write", streamStubWriteSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewStreamStub(t)
-			_, _ = streamStubWrite(t, s)
-			got := s.OnWrite.AssertCalledOnce(t, "Write records the call")
-			a0 := streamStubWriteArgs(t)
-			assert.Equal(t, got.P, a0, "the call records P")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewStreamStub(t)
-			var seen []cryptotest.StreamWriteCall
-			s.OnWrite.OnRecord(func(c cryptotest.StreamWriteCall) { seen = append(seen, c) })
-			_, _ = streamStubWrite(t, s)
-			_, _ = streamStubWrite(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Write")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) streamStubInstance {
-			return streamStubInstanceOf(tb, cryptotest.NewStreamStub(tb))
-		})
 
-		t.Run("clears the recorded calls of Sum", func(t *testing.T) {
+		t.Run("Sum", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewStreamStub(t)
-			_ = streamStubSum(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnSum.CallCount(), 0, "ResetCalls clears the calls of Sum")
+			stub.ResetBehaviour(t, "Sum", streamStubSumSubject)
 		})
 
-		t.Run("clears the recorded calls of Reset", func(t *testing.T) {
+		t.Run("Reset", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewStreamStub(t)
-			streamStubReset(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnReset.CallCount(), 0, "ResetCalls clears the calls of Reset")
+			stub.ResetBehaviour(t, "Reset", streamStubResetSubject)
 		})
 
-		t.Run("clears the recorded calls of Close", func(t *testing.T) {
+		t.Run("Close", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewStreamStub(t)
-			streamStubClose(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnClose.CallCount(), 0, "ResetCalls clears the calls of Close")
+			stub.ResetBehaviour(t, "Close", streamStubCloseSubject)
 		})
 
-		t.Run("clears the recorded calls of Write", func(t *testing.T) {
+		t.Run("Write", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewStreamStub(t)
-			_, _ = streamStubWrite(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnWrite.CallCount(), 0, "ResetCalls clears the calls of Write")
-		})
-
-		t.Run("keeps the results of Returns of Write", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewStreamStub(t)
-			want0, want1 := streamStubWritePins()
-			s.OnWrite.Returns(want0, want1)
-			s.ResetCalls()
-			got0, got1 := streamStubWrite(t, s)
-			expect.Equal(t, got0, want0, "ResetCalls keeps the N of Write")
-			expect.ErrorIs(t, got1, want1, "ResetCalls keeps the error of Write")
-		})
-	})
-
-	t.Run("NewStreamStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) streamStubInstance {
-			return streamStubInstanceOf(tb, cryptotest.NewStreamStubDelayed(tb, d, clk))
-		})
-	})
-
-	t.Run("NewStreamStubFailing", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("fails Write with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Write-failing")
-			s := cryptotest.NewStreamStubFailing(t, want)
-			_, err := streamStubWrite(t, s)
-			assert.ErrorIs(t, err, want, "Write fails with the error of NewStreamStubFailing")
+			stub.ResetBehaviour(t, "Write", streamStubWriteSubject)
 		})
 	})
 
@@ -1326,76 +946,4 @@ func TestStreamStub(t *testing.T) {
 	})
 }
 
-// TestStreamSumStub checks the methods of StreamSumStub, which configures
-// Sum.
-func TestStreamSumStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("configures Sum for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewStreamStub(r)
-			s.OnSum.Strict()
-			var want0 crypto.Digest
-			s.OnSum.Returns(want0)
-			_ = streamStubSum(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Sum")
-		})
-	})
-}
-
-// TestStreamWriteStub checks the methods of StreamWriteStub, which
-// configures Write.
-func TestStreamWriteStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Write", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewStreamStub(t)
-			want0, want1 := streamStubWritePins()
-			s.OnWrite.Returns(want0, want1)
-			got0, got1 := streamStubWrite(t, s)
-			expect.Equal(t, got0, want0, "Write returns the N that Returns sets")
-			expect.ErrorIs(t, got1, want1, "Write returns the error that Returns sets")
-		})
-
-		t.Run("configures Write for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewStreamStub(r)
-			s.OnWrite.Strict()
-			var want0 int
-			var want1 error
-			s.OnWrite.Returns(want0, want1)
-			_, _ = streamStubWrite(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Write")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Write to the function", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewStreamStub(t)
-			var got0 []byte
-			s.OnWrite.Func(func(p0 []byte) (int, error) {
-				got0 = p0
-				var z0 int
-				var z1 error
-				return z0, z1
-			})
-			_, _ = streamStubWrite(t, s)
-			a0 := streamStubWriteArgs(t)
-			assert.Equal(t, got0, a0, "the function receives P")
-		})
-	})
-}
-
-// dokimi:provenance sha256:76633b9e483d13b4a82b3650f4d3df2f59452a5b3e898449daa13172a48afc3c
+// dokimi:provenance sha256:0d2302c3363755ab19a59d3a383c137aa1203943af56c47499554747ec5a0152

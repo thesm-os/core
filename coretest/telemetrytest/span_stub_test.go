@@ -79,69 +79,93 @@ func spanStubSpanContextPins() telemetry.SpanContext {
 	return want0
 }
 
-// spanStubEndSubject returns the subject of [stub.Behaviour] for End. The
-// subject calls a new double that reports to tb.
+// spanStubEndSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for End. The subject calls a new double that
+// reports to tb.
 func spanStubEndSubject(tb assert.TB) stub.Subject[telemetrytest.SpanEndCall, struct{}] {
 	tb.Helper()
 	s := telemetrytest.NewSpanStub(tb)
 	return stub.Subject[telemetrytest.SpanEndCall, struct{}]{
-		Stub: s.OnEnd.MethodStub,
+		Stub:  s.OnEnd.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			spanStubEnd(tb, s)
 		},
-		Override: func(mark func()) {
-			s.OnEnd.Func(func(_ error) {
-				mark()
+		Arguments: func(tb assert.TB, c telemetrytest.SpanEndCall) {
+			tb.Helper()
+			a0 := spanStubEndArgs(tb)
+			assert.Equal(tb, c.Err, a0, "the call records Err")
+		},
+		Override: func(seen func(telemetrytest.SpanEndCall)) {
+			s.OnEnd.Func(func(p0 error) {
+				seen(telemetrytest.SpanEndCall{Err: p0})
 			})
 		},
 	}
 }
 
-// spanStubSetAttributesSubject returns the subject of [stub.Behaviour] for
-// SetAttributes. The subject calls a new double that reports to tb.
+// spanStubSetAttributesSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for SetAttributes. The subject calls a new double
+// that reports to tb.
 func spanStubSetAttributesSubject(tb assert.TB) stub.Subject[telemetrytest.SpanSetAttributesCall, struct{}] {
 	tb.Helper()
 	s := telemetrytest.NewSpanStub(tb)
 	return stub.Subject[telemetrytest.SpanSetAttributesCall, struct{}]{
-		Stub: s.OnSetAttributes.MethodStub,
+		Stub:  s.OnSetAttributes.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			spanStubSetAttributes(tb, s)
 		},
-		Override: func(mark func()) {
-			s.OnSetAttributes.Func(func(_ []telemetry.Attr) {
-				mark()
+		Arguments: func(tb assert.TB, c telemetrytest.SpanSetAttributesCall) {
+			tb.Helper()
+			a0 := spanStubSetAttributesArgs(tb)
+			assert.Equal(tb, c.Attrs, a0, "the call records Attrs")
+		},
+		Override: func(seen func(telemetrytest.SpanSetAttributesCall)) {
+			s.OnSetAttributes.Func(func(p0 []telemetry.Attr) {
+				seen(telemetrytest.SpanSetAttributesCall{Attrs: p0})
 			})
 		},
 	}
 }
 
-// spanStubAddEventSubject returns the subject of [stub.Behaviour] for
-// AddEvent. The subject calls a new double that reports to tb.
+// spanStubAddEventSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for AddEvent. The subject calls a new double that
+// reports to tb.
 func spanStubAddEventSubject(tb assert.TB) stub.Subject[telemetrytest.SpanAddEventCall, struct{}] {
 	tb.Helper()
 	s := telemetrytest.NewSpanStub(tb)
 	return stub.Subject[telemetrytest.SpanAddEventCall, struct{}]{
-		Stub: s.OnAddEvent.MethodStub,
+		Stub:  s.OnAddEvent.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			spanStubAddEvent(tb, s)
 		},
-		Override: func(mark func()) {
-			s.OnAddEvent.Func(func(_ telemetry.EventName, _ []telemetry.Attr) {
-				mark()
+		Arguments: func(tb assert.TB, c telemetrytest.SpanAddEventCall) {
+			tb.Helper()
+			a0, a1 := spanStubAddEventArgs(tb)
+			expect.Equal(tb, c.Name, a0, "the call records Name")
+			expect.Equal(tb, c.Attrs, a1, "the call records Attrs")
+		},
+		Override: func(seen func(telemetrytest.SpanAddEventCall)) {
+			s.OnAddEvent.Func(func(p0 telemetry.EventName, p1 []telemetry.Attr) {
+				seen(telemetrytest.SpanAddEventCall{Name: p0, Attrs: p1})
 			})
 		},
 	}
 }
 
-// spanStubSpanContextSubject returns the subject of [stub.Behaviour] for
-// SpanContext. The subject calls a new double that reports to tb.
+// spanStubSpanContextSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for SpanContext. The subject calls a new double
+// that reports to tb.
 func spanStubSpanContextSubject(
 	tb assert.TB,
 ) stub.Subject[telemetrytest.SpanSpanContextCall, telemetrytest.SpanSpanContextReturn] {
 	tb.Helper()
 	s := telemetrytest.NewSpanStub(tb)
 	return stub.Subject[telemetrytest.SpanSpanContextCall, telemetrytest.SpanSpanContextReturn]{
-		Stub: s.OnSpanContext.MethodStub,
+		Stub:  s.OnSpanContext.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = spanStubSpanContext(tb, s)
 		},
@@ -149,9 +173,14 @@ func spanStubSpanContextSubject(
 			got0 := spanStubSpanContext(tb, s)
 			return telemetrytest.SpanSpanContextReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() telemetrytest.SpanSpanContextReturn {
+			want0 := spanStubSpanContextPins()
+			s.OnSpanContext.Returns(want0)
+			return telemetrytest.SpanSpanContextReturn{Result: want0}
+		},
+		Override: func(seen func(telemetrytest.SpanSpanContextCall)) {
 			s.OnSpanContext.Func(func() telemetry.SpanContext {
-				mark()
+				seen(telemetrytest.SpanSpanContextCall{})
 				var z0 telemetry.SpanContext
 				return z0
 			})
@@ -172,7 +201,6 @@ func spanStubInstanceOf(tb assert.TB, s *telemetrytest.SpanStub) spanStubInstanc
 		Call: func() {
 			spanStubEnd(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -184,144 +212,44 @@ func TestSpanStub(t *testing.T) {
 	t.Run("End", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "End", spanStubEndSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewSpanStub(t)
-			spanStubEnd(t, s)
-			got := s.OnEnd.AssertCalledOnce(t, "End records the call")
-			a0 := spanStubEndArgs(t)
-			assert.Equal(t, got.Err, a0, "the call records Err")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewSpanStub(t)
-			var seen []telemetrytest.SpanEndCall
-			s.OnEnd.OnRecord(func(c telemetrytest.SpanEndCall) { seen = append(seen, c) })
-			spanStubEnd(t, s)
-			spanStubEnd(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of End")
-		})
 	})
 
 	t.Run("SetAttributes", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "SetAttributes", spanStubSetAttributesSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewSpanStub(t)
-			spanStubSetAttributes(t, s)
-			got := s.OnSetAttributes.AssertCalledOnce(t, "SetAttributes records the call")
-			a0 := spanStubSetAttributesArgs(t)
-			assert.Equal(t, got.Attrs, a0, "the call records Attrs")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewSpanStub(t)
-			var seen []telemetrytest.SpanSetAttributesCall
-			s.OnSetAttributes.OnRecord(func(c telemetrytest.SpanSetAttributesCall) { seen = append(seen, c) })
-			spanStubSetAttributes(t, s)
-			spanStubSetAttributes(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of SetAttributes")
-		})
 	})
 
 	t.Run("AddEvent", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "AddEvent", spanStubAddEventSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewSpanStub(t)
-			spanStubAddEvent(t, s)
-			got := s.OnAddEvent.AssertCalledOnce(t, "AddEvent records the call")
-			a0, a1 := spanStubAddEventArgs(t)
-			expect.Equal(t, got.Name, a0, "the call records Name")
-			expect.Equal(t, got.Attrs, a1, "the call records Attrs")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewSpanStub(t)
-			var seen []telemetrytest.SpanAddEventCall
-			s.OnAddEvent.OnRecord(func(c telemetrytest.SpanAddEventCall) { seen = append(seen, c) })
-			spanStubAddEvent(t, s)
-			spanStubAddEvent(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of AddEvent")
-		})
 	})
 
 	t.Run("SpanContext", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "SpanContext", spanStubSpanContextSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewSpanStub(t)
-			var seen []telemetrytest.SpanSpanContextCall
-			s.OnSpanContext.OnRecord(func(c telemetrytest.SpanSpanContextCall) { seen = append(seen, c) })
-			_ = spanStubSpanContext(t, s)
-			_ = spanStubSpanContext(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of SpanContext")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) spanStubInstance {
-			return spanStubInstanceOf(tb, telemetrytest.NewSpanStub(tb))
-		})
 
-		t.Run("clears the recorded calls of End", func(t *testing.T) {
+		t.Run("End", func(t *testing.T) {
 			t.Parallel()
-			s := telemetrytest.NewSpanStub(t)
-			spanStubEnd(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnEnd.CallCount(), 0, "ResetCalls clears the calls of End")
+			stub.ResetBehaviour(t, "End", spanStubEndSubject)
 		})
 
-		t.Run("clears the recorded calls of SetAttributes", func(t *testing.T) {
+		t.Run("SetAttributes", func(t *testing.T) {
 			t.Parallel()
-			s := telemetrytest.NewSpanStub(t)
-			spanStubSetAttributes(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnSetAttributes.CallCount(), 0, "ResetCalls clears the calls of SetAttributes")
+			stub.ResetBehaviour(t, "SetAttributes", spanStubSetAttributesSubject)
 		})
 
-		t.Run("clears the recorded calls of AddEvent", func(t *testing.T) {
+		t.Run("AddEvent", func(t *testing.T) {
 			t.Parallel()
-			s := telemetrytest.NewSpanStub(t)
-			spanStubAddEvent(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnAddEvent.CallCount(), 0, "ResetCalls clears the calls of AddEvent")
+			stub.ResetBehaviour(t, "AddEvent", spanStubAddEventSubject)
 		})
 
-		t.Run("clears the recorded calls of SpanContext", func(t *testing.T) {
+		t.Run("SpanContext", func(t *testing.T) {
 			t.Parallel()
-			s := telemetrytest.NewSpanStub(t)
-			_ = spanStubSpanContext(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnSpanContext.CallCount(), 0, "ResetCalls clears the calls of SpanContext")
-		})
-
-		t.Run("keeps the results of Returns of SpanContext", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewSpanStub(t)
-			want0 := spanStubSpanContextPins()
-			s.OnSpanContext.Returns(want0)
-			s.ResetCalls()
-			got0 := spanStubSpanContext(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of SpanContext")
-		})
-	})
-
-	t.Run("NewSpanStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) spanStubInstance {
-			return spanStubInstanceOf(tb, telemetrytest.NewSpanStubDelayed(tb, d, clk))
+			stub.ResetBehaviour(t, "SpanContext", spanStubSpanContextSubject)
 		})
 	})
 
@@ -465,101 +393,4 @@ func TestSpanStub(t *testing.T) {
 	})
 }
 
-// TestSpanEndStub checks the methods of SpanEndStub, which configures End.
-func TestSpanEndStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of End to the function", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewSpanStub(t)
-			var got0 error
-			s.OnEnd.Func(func(p0 error) {
-				got0 = p0
-			})
-			spanStubEnd(t, s)
-			a0 := spanStubEndArgs(t)
-			assert.Equal(t, got0, a0, "the function receives Err")
-		})
-	})
-}
-
-// TestSpanSetAttributesStub checks the methods of SpanSetAttributesStub,
-// which configures SetAttributes.
-func TestSpanSetAttributesStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of SetAttributes to the function", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewSpanStub(t)
-			var got0 []telemetry.Attr
-			s.OnSetAttributes.Func(func(p0 []telemetry.Attr) {
-				got0 = p0
-			})
-			spanStubSetAttributes(t, s)
-			a0 := spanStubSetAttributesArgs(t)
-			assert.Equal(t, got0, a0, "the function receives Attrs")
-		})
-	})
-}
-
-// TestSpanAddEventStub checks the methods of SpanAddEventStub, which
-// configures AddEvent.
-func TestSpanAddEventStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of AddEvent to the function", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewSpanStub(t)
-			var got0 telemetry.EventName
-			var got1 []telemetry.Attr
-			s.OnAddEvent.Func(func(p0 telemetry.EventName, p1 []telemetry.Attr) {
-				got0, got1 = p0, p1
-			})
-			spanStubAddEvent(t, s)
-			a0, a1 := spanStubAddEventArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Name")
-			expect.Equal(t, got1, a1, "the function receives Attrs")
-		})
-	})
-}
-
-// TestSpanSpanContextStub checks the methods of SpanSpanContextStub, which
-// configures SpanContext.
-func TestSpanSpanContextStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of SpanContext", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewSpanStub(t)
-			want0 := spanStubSpanContextPins()
-			s.OnSpanContext.Returns(want0)
-			got0 := spanStubSpanContext(t, s)
-			assert.Equal(t, got0, want0, "SpanContext returns the Result that Returns sets")
-		})
-
-		t.Run("configures SpanContext for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := telemetrytest.NewSpanStub(r)
-			s.OnSpanContext.Strict()
-			var want0 telemetry.SpanContext
-			s.OnSpanContext.Returns(want0)
-			_ = spanStubSpanContext(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of SpanContext")
-		})
-	})
-}
-
-// dokimi:provenance sha256:952e4efa18552c70d2d2582e47a4bdbace0aa40996889e9ab80b4be23f08142f
+// dokimi:provenance sha256:2332e2de884a2302f673e548d397847e455108e1d0d444d944a8d708961ff25b

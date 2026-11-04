@@ -194,20 +194,6 @@ func NewHistogramStub(tb assert.TB, opts ...HistogramStubOption) *HistogramStub 
 	return s
 }
 
-// NewHistogramStubDelayed returns a double whose methods sleep d on clk
-// before they return. It applies opts after the clock and the latency.
-func NewHistogramStubDelayed(
-	tb assert.TB,
-	d time.Duration,
-	clk assert.Clock,
-	opts ...HistogramStubOption,
-) *HistogramStub {
-	return NewHistogramStub(tb, append([]HistogramStubOption{
-		HistogramStubWithClock(clk),
-		HistogramStubWithLatency(d),
-	}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *HistogramStub) ResetCalls() {
@@ -285,4 +271,4 @@ func (s *HistogramStub) Release() {
 	})
 }
 
-// dokimi:provenance sha256:04550adef9af0553ca568b83f168e56ad69db8dac9ee704a4d697ecc913c679d
+// dokimi:provenance sha256:4b79531422ee2cadda8362ee46a0222c21746df52d473d7d9508802f55f23f33

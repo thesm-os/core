@@ -11,6 +11,8 @@ import (
 
 	"go.dokimi.dev/assert/prop"
 	"go.dokimi.dev/conform"
+	"go.dokimi.dev/conform/probe"
+	"go.dokimi.dev/spec"
 	"go.thesmos.sh/core/clock"
 )
 
@@ -65,6 +67,12 @@ func (c clockNow) NowReturnsAscendingInstants() conform.ID[clock.Clock] {
 	return c.Check("now-returns-ascending-instants")
 }
 
+// Smoke returns the identity of the check that Now returns without a panic
+// for derived inputs.
+func (c clockNow) Smoke() conform.ID[clock.Clock] {
+	return c.Check("smoke")
+}
+
 // clockTime is the name of Clock.Time, with the identities of its checks.
 type clockTime struct {
 	conform.Callable[clock.Clock]
@@ -80,6 +88,12 @@ func (c clockTime) TimeReturnsNonZero() conform.ID[clock.Clock] {
 // time in the location UTC.
 func (c clockTime) TimeReturnsUTC() conform.ID[clock.Clock] {
 	return c.Check("time-returns-utc")
+}
+
+// Smoke returns the identity of the check that Time returns without a
+// panic for derived inputs.
+func (c clockTime) Smoke() conform.ID[clock.Clock] {
+	return c.Check("smoke")
 }
 
 // clockElapsed is the name of Clock.Elapsed, with the identities of its
@@ -100,6 +114,12 @@ func (c clockElapsed) ElapsedIsNotNegative() conform.ID[clock.Clock] {
 	return c.Check("elapsed-is-not-negative")
 }
 
+// Smoke returns the identity of the check that Elapsed returns without a
+// panic for derived inputs.
+func (c clockElapsed) Smoke() conform.ID[clock.Clock] {
+	return c.Check("smoke")
+}
+
 // clockNewTimer is the name of Clock.NewTimer, with the identities of its
 // checks.
 type clockNewTimer struct {
@@ -116,6 +136,12 @@ func (c clockNewTimer) NewTimerOfANegativeDurationSendsATick() conform.ID[clock.
 // Timer of NewTimer(0) sends its tick within a second.
 func (c clockNewTimer) NewTimerOfZeroSendsATick() conform.ID[clock.Clock] {
 	return c.Check("new-timer-of-zero-sends-a-tick")
+}
+
+// Smoke returns the identity of the check that NewTimer returns without a
+// panic for derived inputs.
+func (c clockNewTimer) Smoke() conform.ID[clock.Clock] {
+	return c.Check("smoke")
 }
 
 // clockUpdate is the name of Clock.Update, with the identities of its
@@ -166,12 +192,118 @@ func (c clockUpdate) UpdateReturnsALaterInstant() conform.ID[clock.Clock] {
 	return c.Check("update-returns-a-later-instant")
 }
 
+// Smoke returns the identity of the check that Update returns without a
+// panic for derived inputs.
+func (c clockUpdate) Smoke() conform.ID[clock.Clock] {
+	return c.Check("smoke")
+}
+
 // ClockSuite returns the checks of Clock, and the calls and the budgets of
 // its callables.
 func ClockSuite() conform.Suite[clock.Clock] {
 	return conform.Suite[clock.Clock]{
 		Declaration: "Clock",
+		Package:     "go.thesmos.sh/core/clock",
+		Generator:   conform.Generator{Name: "dokimi", Version: "0.1.0"},
 		Checks: []conform.Check[clock.Clock]{
+			{
+				ID:          ClockChecks.Now.Smoke(),
+				Statement:   "Now returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *ClockHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Now()
+						return nil
+					})
+				},
+				Defect: clockNowPanics,
+			},
+			{
+				ID:          ClockChecks.Time.Smoke(),
+				Statement:   "Time returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *ClockHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Time()
+						return nil
+					})
+				},
+				Defect: clockTimePanics,
+			},
+			{
+				ID:          ClockChecks.Elapsed.Smoke(),
+				Statement:   "Elapsed returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *ClockHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Elapsed()
+						return nil
+					})
+				},
+				Defect: clockElapsedPanics,
+			},
+			{
+				ID:          ClockChecks.NewTimer.Smoke(),
+				Statement:   "NewTimer returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *ClockHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().NewTimer(time.Duration(1))
+						return nil
+					})
+				},
+				Defect: clockNewTimerPanics,
+			},
+			{
+				ID:          ClockChecks.NewTimer.Smoke().Generated(),
+				Statement:   "NewTimer returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *ClockHandle, c *prop.Case) {
+					drawnD := c.Draw(prop.Of[time.Duration](), "d")
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().NewTimer(drawnD)
+						return nil
+					})
+				},
+				Defect: clockNewTimerPanics,
+			},
+			{
+				ID:          ClockChecks.Update.Smoke(),
+				Statement:   "Update returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *ClockHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						_, err := h.Subject().Update(clock.Instant{Wall: 42})
+						return err
+					})
+				},
+				Defect: clockUpdatePanics,
+			},
+			{
+				ID:          ClockChecks.Update.Smoke().Generated(),
+				Statement:   "Update returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *ClockHandle, c *prop.Case) {
+					drawnObserved := c.Draw(prop.Of[clock.Instant](), "observed")
+					probe.Survives(h, func(ctx context.Context) error {
+						_, err := h.Subject().Update(drawnObserved)
+						return err
+					})
+				},
+				Defect: clockUpdatePanics,
+			},
 			{
 				ID:        ClockChecks.Now.NowFallsBetweenTwoTimes(),
 				Statement: "the Wall of Now is at or after the time of a call of Time before it, and at or before the time of a call of Time after it",
@@ -261,6 +393,85 @@ func ClockSuite() conform.Suite[clock.Clock] {
 				Statement: "Update returns an Instant after the Instant of a peer at the Wall of Now with Logical 99",
 				Apply:     UpdateReturnsALaterInstant,
 				Defect:    dropsTheLogicalOfAPeer,
+			},
+		},
+		Refusals: []conform.Refusal{
+			{
+				Claim:    spec.Deterministic,
+				Callable: "Clock.Now",
+				Gate:     spec.StableSubject,
+				Why:      "Now reads the clock or changes its subject, so a repeat can return another value",
+				Remedy:   "remove the mixin time-aware or side-effect where a repeat of Now returns the same value",
+			},
+			{
+				Claim:    spec.TimeAware,
+				Callable: "Clock.Now",
+				Gate:     spec.Cancellation,
+				Why:      "Now takes no context",
+				Remedy:   "add a context parameter to Now",
+			},
+			{
+				Claim:    spec.Steady,
+				Callable: "Clock.Now",
+				Gate:     spec.Cancellation,
+				Why:      "Now takes no context",
+				Remedy:   "add a context parameter to Now",
+			},
+			{
+				Claim:    spec.Deterministic,
+				Callable: "Clock.Time",
+				Gate:     spec.StableSubject,
+				Why:      "Time reads the clock or changes its subject, so a repeat can return another value",
+				Remedy:   "remove the mixin time-aware or side-effect where a repeat of Time returns the same value",
+			},
+			{
+				Claim:    spec.TimeAware,
+				Callable: "Clock.Time",
+				Gate:     spec.Cancellation,
+				Why:      "Time takes no context",
+				Remedy:   "add a context parameter to Time",
+			},
+			{
+				Claim:    spec.Steady,
+				Callable: "Clock.Time",
+				Gate:     spec.Cancellation,
+				Why:      "Time takes no context",
+				Remedy:   "add a context parameter to Time",
+			},
+			{
+				Claim:    spec.Deterministic,
+				Callable: "Clock.Elapsed",
+				Gate:     spec.StableSubject,
+				Why:      "Elapsed reads the clock or changes its subject, so a repeat can return another value",
+				Remedy:   "remove the mixin time-aware or side-effect where a repeat of Elapsed returns the same value",
+			},
+			{
+				Claim:    spec.TimeAware,
+				Callable: "Clock.Elapsed",
+				Gate:     spec.Cancellation,
+				Why:      "Elapsed takes no context",
+				Remedy:   "add a context parameter to Elapsed",
+			},
+			{
+				Claim:    spec.Steady,
+				Callable: "Clock.Elapsed",
+				Gate:     spec.Cancellation,
+				Why:      "Elapsed takes no context",
+				Remedy:   "add a context parameter to Elapsed",
+			},
+			{
+				Claim:    spec.Deterministic,
+				Callable: "Clock.NewTimer",
+				Gate:     spec.ValueSamples,
+				Why:      "eidos derives no sample of a result of NewTimer",
+				Remedy:   "author a sample of the result type with the directive sample",
+			},
+			{
+				Claim:    spec.ZeroOnError,
+				Callable: "Clock.Update",
+				Gate:     spec.Unrefused,
+				Why:      "Update fails only for a peer instant beyond the max offset of the clock",
+				Remedy:   "remove the directive refuse of the claim where Update makes it",
 			},
 		},
 		Calls: []conform.Call[clock.Clock]{
@@ -461,6 +672,90 @@ func newClockOver(_ *ClockHandle, spend func()) clock.Clock {
 	return clockOver{spend: spend}
 }
 
+// clockNowPanicsDefect is the planted defect of a Clock whose Now panics.
+type clockNowPanicsDefect struct {
+	clockOverEmbedded
+}
+
+// Now is the override of the planted defect.
+func (*clockNowPanicsDefect) Now() (r0 clock.Instant) {
+	panic("the planted defect of a Clock whose Now panics")
+}
+
+// clockNowPanics returns the planted defect of a Clock whose Now panics
+// over a fresh subject.
+func clockNowPanics(h *ClockHandle) clock.Clock {
+	return &clockNowPanicsDefect{clockOverEmbedded: h.Fresh()}
+}
+
+// clockTimePanicsDefect is the planted defect of a Clock whose Time
+// panics.
+type clockTimePanicsDefect struct {
+	clockOverEmbedded
+}
+
+// Time is the override of the planted defect.
+func (*clockTimePanicsDefect) Time() (r0 time.Time) {
+	panic("the planted defect of a Clock whose Time panics")
+}
+
+// clockTimePanics returns the planted defect of a Clock whose Time panics
+// over a fresh subject.
+func clockTimePanics(h *ClockHandle) clock.Clock {
+	return &clockTimePanicsDefect{clockOverEmbedded: h.Fresh()}
+}
+
+// clockElapsedPanicsDefect is the planted defect of a Clock whose Elapsed
+// panics.
+type clockElapsedPanicsDefect struct {
+	clockOverEmbedded
+}
+
+// Elapsed is the override of the planted defect.
+func (*clockElapsedPanicsDefect) Elapsed() (r0 time.Duration) {
+	panic("the planted defect of a Clock whose Elapsed panics")
+}
+
+// clockElapsedPanics returns the planted defect of a Clock whose Elapsed
+// panics over a fresh subject.
+func clockElapsedPanics(h *ClockHandle) clock.Clock {
+	return &clockElapsedPanicsDefect{clockOverEmbedded: h.Fresh()}
+}
+
+// clockNewTimerPanicsDefect is the planted defect of a Clock whose
+// NewTimer panics.
+type clockNewTimerPanicsDefect struct {
+	clockOverEmbedded
+}
+
+// NewTimer is the override of the planted defect.
+func (*clockNewTimerPanicsDefect) NewTimer(p0 time.Duration) (r0 clock.Timer) {
+	panic("the planted defect of a Clock whose NewTimer panics")
+}
+
+// clockNewTimerPanics returns the planted defect of a Clock whose NewTimer
+// panics over a fresh subject.
+func clockNewTimerPanics(h *ClockHandle) clock.Clock {
+	return &clockNewTimerPanicsDefect{clockOverEmbedded: h.Fresh()}
+}
+
+// clockUpdatePanicsDefect is the planted defect of a Clock whose Update
+// panics.
+type clockUpdatePanicsDefect struct {
+	clockOverEmbedded
+}
+
+// Update is the override of the planted defect.
+func (*clockUpdatePanicsDefect) Update(p0 clock.Instant) (r0 clock.Instant, r1 error) {
+	panic("the planted defect of a Clock whose Update panics")
+}
+
+// clockUpdatePanics returns the planted defect of a Clock whose Update
+// panics over a fresh subject.
+func clockUpdatePanics(h *ClockHandle) clock.Clock {
+	return &clockUpdatePanicsDefect{clockOverEmbedded: h.Fresh()}
+}
+
 // The suite refers to the compatibility witness of its runtime.
 var _ = conform.CompatV1
 
@@ -486,6 +781,12 @@ var TimerChecks = struct {
 // timerC is the name of Timer.C, with the identities of its checks.
 type timerC struct {
 	conform.Callable[clock.Timer]
+}
+
+// Smoke returns the identity of the check that C returns without a panic
+// for derived inputs.
+func (c timerC) Smoke() conform.ID[clock.Timer] {
+	return c.Check("smoke")
 }
 
 // timerReset is the name of Timer.Reset, with the identities of its
@@ -519,6 +820,18 @@ func (c timerReset) ResetToZeroSendsATick() conform.ID[clock.Timer] {
 	return c.Check("reset-to-zero-sends-a-tick")
 }
 
+// Smoke returns the identity of the check that Reset returns without a
+// panic for derived inputs.
+func (c timerReset) Smoke() conform.ID[clock.Timer] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that Reset returns the
+// same value for the same inputs.
+func (c timerReset) Deterministic() conform.ID[clock.Timer] {
+	return c.Check("deterministic")
+}
+
 // timerStop is the name of Timer.Stop, with the identities of its checks.
 type timerStop struct {
 	conform.Callable[clock.Timer]
@@ -543,12 +856,106 @@ func (c timerStop) StopOfAPendingTimerReturnsTrue() conform.ID[clock.Timer] {
 	return c.Check("stop-of-a-pending-timer-returns-true")
 }
 
+// Smoke returns the identity of the check that Stop returns without a
+// panic for derived inputs.
+func (c timerStop) Smoke() conform.ID[clock.Timer] {
+	return c.Check("smoke")
+}
+
 // TimerSuite returns the checks of Timer, and the calls and the budgets of
 // its callables.
 func TimerSuite() conform.Suite[clock.Timer] {
 	return conform.Suite[clock.Timer]{
 		Declaration: "Timer",
+		Package:     "go.thesmos.sh/core/clock",
+		Generator:   conform.Generator{Name: "dokimi", Version: "0.1.0"},
 		Checks: []conform.Check[clock.Timer]{
+			{
+				ID:          TimerChecks.C.Smoke(),
+				Statement:   "C returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *TimerHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().C()
+						return nil
+					})
+				},
+				Defect: timerCPanics,
+			},
+			{
+				ID:          TimerChecks.Reset.Smoke(),
+				Statement:   "Reset returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *TimerHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Reset(time.Duration(1))
+						return nil
+					})
+				},
+				Defect: timerResetPanics,
+			},
+			{
+				ID:          TimerChecks.Reset.Smoke().Generated(),
+				Statement:   "Reset returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *TimerHandle, c *prop.Case) {
+					drawnD := c.Draw(prop.Of[time.Duration](), "d")
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Reset(drawnD)
+						return nil
+					})
+				},
+				Defect: timerResetPanics,
+			},
+			{
+				ID:          TimerChecks.Reset.Deterministic(),
+				Statement:   "Reset returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[clock.Timer]{TimerChecks.Reset.Smoke()},
+				Apply: func(h *TimerHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) (bool, error) {
+						r0 := h.Subject().Reset(time.Duration(1))
+						return r0, nil
+					})
+				},
+				Defect: timerResetDrifts,
+			},
+			{
+				ID:          TimerChecks.Reset.Deterministic().Generated(),
+				Statement:   "Reset returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Entails:     []conform.ID[clock.Timer]{TimerChecks.Reset.Smoke().Generated()},
+				Property: func(h *TimerHandle, c *prop.Case) {
+					drawnD := c.Draw(prop.Of[time.Duration](), "d")
+					probe.RepeatAgrees(h, func(ctx context.Context) (bool, error) {
+						r0 := h.Subject().Reset(drawnD)
+						return r0, nil
+					})
+				},
+				Defect: timerResetDrifts,
+			},
+			{
+				ID:          TimerChecks.Stop.Smoke(),
+				Statement:   "Stop returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *TimerHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Stop()
+						return nil
+					})
+				},
+				Defect: timerStopPanics,
+			},
 			{
 				ID:        TimerChecks.Reset.ResetAfterStopReturnsFalse(),
 				Statement: "Reset of a stopped Timer returns false",
@@ -590,6 +997,29 @@ func TimerSuite() conform.Suite[clock.Timer] {
 				Statement: "Stop of a pending Timer returns true",
 				Apply:     StopOfAPendingTimerReturnsTrue,
 				Defect:    stopReturnsFalse,
+			},
+		},
+		Refusals: []conform.Refusal{
+			{
+				Claim:    spec.Deterministic,
+				Callable: "Timer.C",
+				Gate:     spec.ValueSamples,
+				Why:      "eidos derives no sample of a result of C",
+				Remedy:   "author a sample of the result type with the directive sample",
+			},
+			{
+				Claim:    spec.Predicate,
+				Callable: "Timer.Stop",
+				Gate:     spec.StableSubject,
+				Why:      "Stop reads the clock or changes its subject, so a repeat can return another value",
+				Remedy:   "remove the mixin time-aware or side-effect where a repeat of Stop returns the same value",
+			},
+			{
+				Claim:    spec.SideEffect,
+				Callable: "Timer.Stop",
+				Gate:     spec.Cancellation,
+				Why:      "Stop takes no context",
+				Remedy:   "add a context parameter to Stop",
 			},
 		},
 		Calls: []conform.Call[clock.Timer]{
@@ -729,4 +1159,76 @@ func newTimerOver(_ *TimerHandle, spend func()) clock.Timer {
 	return timerOver{spend: spend}
 }
 
-// dokimi:provenance sha256:5e220876a0e4951df52458cf4a297124320773dfa860477d96eaf9ce8edd0543
+// timerCPanicsDefect is the planted defect of a Timer whose C panics.
+type timerCPanicsDefect struct {
+	timerOverEmbedded
+}
+
+// C is the override of the planted defect.
+func (*timerCPanicsDefect) C() (r0 <-chan time.Time) {
+	panic("the planted defect of a Timer whose C panics")
+}
+
+// timerCPanics returns the planted defect of a Timer whose C panics over a
+// fresh subject.
+func timerCPanics(h *TimerHandle) clock.Timer {
+	return &timerCPanicsDefect{timerOverEmbedded: h.Fresh()}
+}
+
+// timerResetPanicsDefect is the planted defect of a Timer whose Reset
+// panics.
+type timerResetPanicsDefect struct {
+	timerOverEmbedded
+}
+
+// Reset is the override of the planted defect.
+func (*timerResetPanicsDefect) Reset(p0 time.Duration) (r0 bool) {
+	panic("the planted defect of a Timer whose Reset panics")
+}
+
+// timerResetPanics returns the planted defect of a Timer whose Reset
+// panics over a fresh subject.
+func timerResetPanics(h *TimerHandle) clock.Timer {
+	return &timerResetPanicsDefect{timerOverEmbedded: h.Fresh()}
+}
+
+// timerResetDriftsDefect is the planted defect of a Timer whose Reset
+// returns another value on the repeat.
+type timerResetDriftsDefect struct {
+	timerOverEmbedded
+	calls int
+}
+
+// Reset is the override of the planted defect.
+func (d *timerResetDriftsDefect) Reset(p0 time.Duration) (r0 bool) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = bool(true)
+	}
+	return r0
+}
+
+// timerResetDrifts returns the planted defect of a Timer whose Reset
+// returns another value on the repeat over a fresh subject.
+func timerResetDrifts(h *TimerHandle) clock.Timer {
+	return &timerResetDriftsDefect{timerOverEmbedded: h.Fresh()}
+}
+
+// timerStopPanicsDefect is the planted defect of a Timer whose Stop
+// panics.
+type timerStopPanicsDefect struct {
+	timerOverEmbedded
+}
+
+// Stop is the override of the planted defect.
+func (*timerStopPanicsDefect) Stop() (r0 bool) {
+	panic("the planted defect of a Timer whose Stop panics")
+}
+
+// timerStopPanics returns the planted defect of a Timer whose Stop panics
+// over a fresh subject.
+func timerStopPanics(h *TimerHandle) clock.Timer {
+	return &timerStopPanicsDefect{timerOverEmbedded: h.Fresh()}
+}
+
+// dokimi:provenance sha256:5dde95d50ab39c81ffadc06eb25690267254e020f1ad1c5fbdfa159d50b9e674

@@ -3,64 +3,65 @@
 
 package rand
 
-// Rand is the unified randomness seam. Both fixed-width
-// [Rand.Uint64] and variable-length [Rand.Read] are first-class:
-// implementations natively implement whichever shape matches their
-// underlying generator and derive the other.
+// Rand is the seam of randomness. An implementation implements
+// [Rand.Uint64] or [Rand.Read] over its generator, whichever the generator
+// produces, and derives the other from it.
 //
 // # Crypto strength
 //
-// The Rand interface itself is silent on cryptographic properties;
-// strength is a property of the implementation, documented in its
-// own godoc. See [package rand] for guidance on which
-// implementation to pick.
+// Rand states no cryptographic property. The doc comment of each
+// implementation states whether it is a cryptographic source.
 //
 // # Concurrency
 //
-// Implementations document their concurrency safety. The standard
-// implementations in this module are split:
+// Each implementation states whether it is safe for concurrent use. The
+// implementations of core differ:
 //
-//   - [pcg.Rand] is NOT safe for concurrent use; one instance per
-//     goroutine.
-//   - [crypto.Rand] is safe for concurrent use ([crypto/rand]
-//     itself is).
-//   - [seeded.Rand] is safe for concurrent use.
-//   - [fixed.Rand] is trivially safe for concurrent use (stateless).
+//   - A [go.thesmos.sh/core/rand/pcg.Rand] is safe for one goroutine at a
+//     time.
+//   - [go.thesmos.sh/core/rand/crypto.Rand] and
+//     [go.thesmos.sh/core/rand/seeded.Rand] are safe for concurrent use.
+//   - [go.thesmos.sh/core/rand/constant.Rand] has no mutable state, so it
+//     is safe for concurrent use.
+//
+// # Allocation contract
+//
+// [Rand.Uint64] must not allocate.
 //
 //dokimi:stub
 //dokimi:suite
 //dokimi:out path=../coretest/randtest/
 type Rand interface {
-	// Uint64 returns a uniformly distributed 64-bit value.
+	// Uint64 returns a uniformly distributed 64-bit value. Each call
+	// returns the next value of the source.
 	//
-	// Allocation contract: zero alloc.
+	//dokimi:mixin side-effect
 	Uint64() uint64
 
-	// Read fills p with random bytes and returns the number of
-	// bytes filled along with any error. PRNG implementations may
-	// fill p by writing successive Uint64 values; CSPRNG
-	// implementations Read directly from the entropy source.
+	// Read fills p with random bytes, and returns the number of bytes that
+	// it filled and an error. A PRNG can fill p with successive Uint64
+	// values, and a CSPRNG reads p from its entropy source.
 	//
-	// Implementations that always succeed return (len(p), nil).
-	// Cryptographic implementations may return an error if the
-	// underlying entropy source fails; non-cryptographic
-	// implementations should never return an error.
+	// An implementation that cannot fail returns len(p) and nil. A
+	// cryptographic implementation returns an error when its entropy
+	// source fails, and a non-cryptographic implementation never returns
+	// one.
 	Read(p []byte) (n int, err error)
 }
 
-// Seed is a typed integer for deterministic-RNG seeding.
+// Seed is the seed of a deterministic implementation of [Rand].
 //
-// Use Seed in option types where the caller wants reproducible
-// results: dataset shuffling, simulation replay, deterministic test
-// fixtures. SeedUnspecified is the reserved zero value meaning "no
-// fixed seed; let the implementation source its own entropy."
+// An option takes a Seed when its caller needs reproducible results, such
+// as the shuffle of a dataset, the replay of a simulation or a
+// deterministic test fixture. An implementation that receives
+// [SeedUnspecified], the zero value, reads its own entropy.
 //
-// Seed is not on the [Rand] interface — only deterministic
-// implementations (e.g. [pcg.Rand], [seeded.Rand]) carry one. The
-// type lives in this package so implementations share a vocabulary.
+// [Rand] has no seed. Only a deterministic implementation, such as
+// [go.thesmos.sh/core/rand/pcg.Rand] or
+// [go.thesmos.sh/core/rand/seeded.Rand], takes one. Every implementation
+// takes the same type, which this package declares.
 type Seed int64
 
-// SeedUnspecified is the reserved zero value indicating no seed.
-// Implementations receiving SeedUnspecified should source their own
-// entropy (typically from a CSPRNG or the system time).
+// SeedUnspecified is the zero Seed. An implementation that receives it
+// reads its own entropy, such as from a CSPRNG or from the system time.
 const SeedUnspecified Seed = 0

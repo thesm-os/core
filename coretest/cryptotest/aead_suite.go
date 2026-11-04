@@ -10,6 +10,8 @@ import (
 
 	"go.dokimi.dev/assert/prop"
 	"go.dokimi.dev/conform"
+	"go.dokimi.dev/conform/probe"
+	"go.dokimi.dev/spec"
 	"go.thesmos.sh/core/crypto"
 )
 
@@ -26,55 +28,19 @@ type (
 // AEADChecks contains the name of each callable of AEAD, with the
 // identities of its checks.
 var AEADChecks = struct {
+	Seal      aeadSeal
+	Open      aeadOpen
 	ID        aeadid
 	Algorithm aeadAlgorithm
 	NonceSize aeadNonceSize
 	Overhead  aeadOverhead
-	Seal      aeadSeal
-	Open      aeadOpen
 }{
+	Seal:      aeadSeal{"AEAD.Seal"},
+	Open:      aeadOpen{"AEAD.Open"},
 	ID:        aeadid{"AEAD.ID"},
 	Algorithm: aeadAlgorithm{"AEAD.Algorithm"},
 	NonceSize: aeadNonceSize{"AEAD.NonceSize"},
 	Overhead:  aeadOverhead{"AEAD.Overhead"},
-	Seal:      aeadSeal{"AEAD.Seal"},
-	Open:      aeadOpen{"AEAD.Open"},
-}
-
-// aeadid is the name of AEAD.ID, with the identities of its checks.
-type aeadid struct {
-	conform.Callable[crypto.AEAD]
-}
-
-// AEADIDIdentifiesTheImplementation returns the identity of the check that
-// ID returns an ID that is not zero, and the same ID on every call.
-func (c aeadid) AEADIDIdentifiesTheImplementation() conform.ID[crypto.AEAD] {
-	return c.Check("aeadid-identifies-the-implementation")
-}
-
-// aeadAlgorithm is the name of AEAD.Algorithm, with the identities of its
-// checks.
-type aeadAlgorithm struct {
-	conform.Callable[crypto.AEAD]
-}
-
-// aeadNonceSize is the name of AEAD.NonceSize, with the identities of its
-// checks.
-type aeadNonceSize struct {
-	conform.Callable[crypto.AEAD]
-}
-
-// aeadOverhead is the name of AEAD.Overhead, with the identities of its
-// checks.
-type aeadOverhead struct {
-	conform.Callable[crypto.AEAD]
-}
-
-// AEADSealedLengthIsTheEnvelope returns the identity of the check that an
-// envelope is as long as its header, its nonce, its plaintext and the
-// Overhead of the AEAD.
-func (c aeadOverhead) AEADSealedLengthIsTheEnvelope() conform.ID[crypto.AEAD] {
-	return c.Check("aead-sealed-length-is-the-envelope")
 }
 
 // aeadSeal is the name of AEAD.Seal, with the identities of its checks.
@@ -86,6 +52,12 @@ type aeadSeal struct {
 // Seals of one plaintext return different envelopes.
 func (c aeadSeal) AEADSealDrawsAFreshNonce() conform.ID[crypto.AEAD] {
 	return c.Check("aead-seal-draws-a-fresh-nonce")
+}
+
+// Smoke returns the identity of the check that Seal returns without a
+// panic for derived inputs.
+func (c aeadSeal) Smoke() conform.ID[crypto.AEAD] {
+	return c.Check("smoke")
 }
 
 // aeadOpen is the name of AEAD.Open, with the identities of its checks.
@@ -140,23 +112,249 @@ func (c aeadOpen) AEADRoundTripsAPlaintext() conform.ID[crypto.AEAD] {
 	return c.Check("aead-round-trips-a-plaintext")
 }
 
+// Smoke returns the identity of the check that Open returns without a
+// panic for derived inputs.
+func (c aeadOpen) Smoke() conform.ID[crypto.AEAD] {
+	return c.Check("smoke")
+}
+
+// aeadid is the name of AEAD.ID, with the identities of its checks.
+type aeadid struct {
+	conform.Callable[crypto.AEAD]
+}
+
+// AEADIDIdentifiesTheImplementation returns the identity of the check that
+// ID returns an ID that is not zero, and the same ID on every call.
+func (c aeadid) AEADIDIdentifiesTheImplementation() conform.ID[crypto.AEAD] {
+	return c.Check("aeadid-identifies-the-implementation")
+}
+
+// Smoke returns the identity of the check that ID returns without a panic
+// for derived inputs.
+func (c aeadid) Smoke() conform.ID[crypto.AEAD] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that ID returns the same
+// value for the same inputs.
+func (c aeadid) Deterministic() conform.ID[crypto.AEAD] {
+	return c.Check("deterministic")
+}
+
+// aeadAlgorithm is the name of AEAD.Algorithm, with the identities of its
+// checks.
+type aeadAlgorithm struct {
+	conform.Callable[crypto.AEAD]
+}
+
+// Smoke returns the identity of the check that Algorithm returns without a
+// panic for derived inputs.
+func (c aeadAlgorithm) Smoke() conform.ID[crypto.AEAD] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that Algorithm returns
+// the same value for the same inputs.
+func (c aeadAlgorithm) Deterministic() conform.ID[crypto.AEAD] {
+	return c.Check("deterministic")
+}
+
+// aeadNonceSize is the name of AEAD.NonceSize, with the identities of its
+// checks.
+type aeadNonceSize struct {
+	conform.Callable[crypto.AEAD]
+}
+
+// Smoke returns the identity of the check that NonceSize returns without a
+// panic for derived inputs.
+func (c aeadNonceSize) Smoke() conform.ID[crypto.AEAD] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that NonceSize returns
+// the same value for the same inputs.
+func (c aeadNonceSize) Deterministic() conform.ID[crypto.AEAD] {
+	return c.Check("deterministic")
+}
+
+// aeadOverhead is the name of AEAD.Overhead, with the identities of its
+// checks.
+type aeadOverhead struct {
+	conform.Callable[crypto.AEAD]
+}
+
+// AEADSealedLengthIsTheEnvelope returns the identity of the check that an
+// envelope is as long as its header, its nonce, its plaintext and the
+// Overhead of the AEAD.
+func (c aeadOverhead) AEADSealedLengthIsTheEnvelope() conform.ID[crypto.AEAD] {
+	return c.Check("aead-sealed-length-is-the-envelope")
+}
+
+// Smoke returns the identity of the check that Overhead returns without a
+// panic for derived inputs.
+func (c aeadOverhead) Smoke() conform.ID[crypto.AEAD] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that Overhead returns
+// the same value for the same inputs.
+func (c aeadOverhead) Deterministic() conform.ID[crypto.AEAD] {
+	return c.Check("deterministic")
+}
+
 // AEADSuite returns the checks of AEAD, and the calls and the budgets of
 // its callables.
 func AEADSuite() conform.Suite[crypto.AEAD] {
 	return conform.Suite[crypto.AEAD]{
 		Declaration: "AEAD",
+		Package:     "go.thesmos.sh/core/crypto",
+		Generator:   conform.Generator{Name: "dokimi", Version: "0.1.0"},
 		Checks: []conform.Check[crypto.AEAD]{
 			{
-				ID:        AEADChecks.ID.AEADIDIdentifiesTheImplementation(),
-				Statement: "ID returns an ID that is not zero, and the same ID on every call",
-				Apply:     AEADIDIdentifiesTheImplementation,
-				Defect:    aeadHasNoID,
+				ID:          AEADChecks.Seal.Smoke(),
+				Statement:   "Seal returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.InputsBuiltFromTheSubject, spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *AEADHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						builtSeal0, builtSeal1, builtSeal2, builtSeal3 := crypto.SealInputs(h.Subject())
+						h.Subject().Seal(builtSeal0, builtSeal1, builtSeal2, builtSeal3)
+						return nil
+					})
+				},
+				Defect: aeadSealPanics,
 			},
 			{
-				ID:        AEADChecks.Overhead.AEADSealedLengthIsTheEnvelope(),
-				Statement: "an envelope is as long as its header, its nonce, its plaintext and the Overhead of the AEAD",
-				Apply:     AEADSealedLengthIsTheEnvelope,
-				Defect:    aeadOverstatesItsOverhead,
+				ID:          AEADChecks.Open.Smoke(),
+				Statement:   "Open returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.InputsBuiltFromTheSubject, spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *AEADHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						builtOpen0, builtOpen1, builtOpen2, builtOpen3 := crypto.OpenInputs(h.Subject())
+						_, err := h.Subject().Open(builtOpen0, builtOpen1, builtOpen2, builtOpen3)
+						return err
+					})
+				},
+				Defect: aeadOpenPanics,
+			},
+			{
+				ID:          AEADChecks.ID.Smoke(),
+				Statement:   "ID returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *AEADHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().ID()
+						return nil
+					})
+				},
+				Defect: aeadidPanics,
+			},
+			{
+				ID:          AEADChecks.ID.Deterministic(),
+				Statement:   "ID returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[crypto.AEAD]{AEADChecks.ID.Smoke()},
+				Apply: func(h *AEADHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) (crypto.ID, error) {
+						r0 := h.Subject().ID()
+						return r0, nil
+					})
+				},
+				Defect: aeadidDrifts,
+			},
+			{
+				ID:          AEADChecks.Algorithm.Smoke(),
+				Statement:   "Algorithm returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *AEADHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Algorithm()
+						return nil
+					})
+				},
+				Defect: aeadAlgorithmPanics,
+			},
+			{
+				ID:          AEADChecks.Algorithm.Deterministic(),
+				Statement:   "Algorithm returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[crypto.AEAD]{AEADChecks.Algorithm.Smoke()},
+				Apply: func(h *AEADHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) (crypto.Algorithm, error) {
+						r0 := h.Subject().Algorithm()
+						return r0, nil
+					})
+				},
+				Defect: aeadAlgorithmDrifts,
+			},
+			{
+				ID:          AEADChecks.NonceSize.Smoke(),
+				Statement:   "NonceSize returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *AEADHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().NonceSize()
+						return nil
+					})
+				},
+				Defect: aeadNonceSizePanics,
+			},
+			{
+				ID:          AEADChecks.NonceSize.Deterministic(),
+				Statement:   "NonceSize returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[crypto.AEAD]{AEADChecks.NonceSize.Smoke()},
+				Apply: func(h *AEADHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) (int, error) {
+						r0 := h.Subject().NonceSize()
+						return r0, nil
+					})
+				},
+				Defect: aeadNonceSizeDrifts,
+			},
+			{
+				ID:          AEADChecks.Overhead.Smoke(),
+				Statement:   "Overhead returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *AEADHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Overhead()
+						return nil
+					})
+				},
+				Defect: aeadOverheadPanics,
+			},
+			{
+				ID:          AEADChecks.Overhead.Deterministic(),
+				Statement:   "Overhead returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[crypto.AEAD]{AEADChecks.Overhead.Smoke()},
+				Apply: func(h *AEADHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) (int, error) {
+						r0 := h.Subject().Overhead()
+						return r0, nil
+					})
+				},
+				Defect: aeadOverheadDrifts,
 			},
 			{
 				ID:        AEADChecks.Seal.AEADSealDrawsAFreshNonce(),
@@ -207,8 +405,53 @@ func AEADSuite() conform.Suite[crypto.AEAD] {
 				Apply:     AEADRoundTripsAPlaintext,
 				Defect:    aeadChangesALargePlaintext,
 			},
+			{
+				ID:        AEADChecks.ID.AEADIDIdentifiesTheImplementation(),
+				Statement: "ID returns an ID that is not zero, and the same ID on every call",
+				Apply:     AEADIDIdentifiesTheImplementation,
+				Defect:    aeadHasNoID,
+			},
+			{
+				ID:        AEADChecks.Overhead.AEADSealedLengthIsTheEnvelope(),
+				Statement: "an envelope is as long as its header, its nonce, its plaintext and the Overhead of the AEAD",
+				Apply:     AEADSealedLengthIsTheEnvelope,
+				Defect:    aeadOverstatesItsOverhead,
+			},
+		},
+		Refusals: []conform.Refusal{
+			{
+				Claim:    spec.Deterministic,
+				Callable: "AEAD.Seal",
+				Gate:     spec.Unrefused,
+				Why:      "an AEAD with random nonces generates a new nonce in each Seal",
+				Remedy:   "remove the directive refuse of the claim where Seal makes it",
+			},
+		},
+		Unclaimed: []conform.Unclaimed{
+			{
+				Classification: "mixin:sample",
+				Callable:       "AEAD.Seal",
+				Stance:         spec.Silent,
+				Note:           "The mixin names the builder of the inputs of each derived call of the callable.",
+			},
+			{
+				Classification: "mixin:sample",
+				Callable:       "AEAD.Open",
+				Stance:         spec.Silent,
+				Note:           "The mixin names the builder of the inputs of each derived call of the callable.",
+			},
 		},
 		Calls: []conform.Call[crypto.AEAD]{
+			{
+				Calls:    aeadSealCalls,
+				Over:     newAEADOver,
+				Callable: AEADChecks.Seal.Callable,
+			},
+			{
+				Calls:    aeadOpenCalls,
+				Over:     newAEADOver,
+				Callable: AEADChecks.Open.Callable,
+			},
 			{
 				Calls:    aeadidCalls,
 				Over:     newAEADOver,
@@ -228,16 +471,6 @@ func AEADSuite() conform.Suite[crypto.AEAD] {
 				Calls:    aeadOverheadCalls,
 				Over:     newAEADOver,
 				Callable: AEADChecks.Overhead.Callable,
-			},
-			{
-				Calls:    aeadSealCalls,
-				Over:     newAEADOver,
-				Callable: AEADChecks.Seal.Callable,
-			},
-			{
-				Calls:    aeadOpenCalls,
-				Over:     newAEADOver,
-				Callable: AEADChecks.Open.Callable,
 			},
 		},
 	}
@@ -296,6 +529,26 @@ func aeadSubjects[T crypto.AEAD](newSubject func(h *AEADHandle) T) func(h *AEADH
 	return func(h *AEADHandle) crypto.AEAD { return newSubject(h) }
 }
 
+// aeadSealCalls generates the calls of AEAD.Seal with the inputs that its
+// builder SealInputs returns.
+var aeadSealCalls = prop.Composite(func(*prop.Case) func(context.Context, crypto.AEAD) error {
+	return func(_ context.Context, subject crypto.AEAD) error {
+		dst, nonce, plaintext, additionalData := crypto.SealInputs(subject)
+		_ = subject.Seal(dst, nonce, plaintext, additionalData)
+		return nil
+	}
+})
+
+// aeadOpenCalls generates the calls of AEAD.Open with the inputs that its
+// builder OpenInputs returns.
+var aeadOpenCalls = prop.Composite(func(*prop.Case) func(context.Context, crypto.AEAD) error {
+	return func(_ context.Context, subject crypto.AEAD) error {
+		dst, nonce, ciphertext, additionalData := crypto.OpenInputs(subject)
+		_, err := subject.Open(dst, nonce, ciphertext, additionalData)
+		return err
+	}
+})
+
 // aeadidCalls generates the calls of AEAD.ID with the inputs that each
 // case draws.
 var aeadidCalls = prop.Composite(func(*prop.Case) func(context.Context, crypto.AEAD) error {
@@ -332,32 +585,6 @@ var aeadOverheadCalls = prop.Composite(func(*prop.Case) func(context.Context, cr
 	}
 })
 
-// aeadSealCalls generates the calls of AEAD.Seal with the inputs that each
-// case draws.
-var aeadSealCalls = prop.Composite(func(c *prop.Case) func(context.Context, crypto.AEAD) error {
-	dst := c.Draw(prop.Of[[]byte](), "dst")
-	nonce := c.Draw(prop.Of[[]byte](), "nonce")
-	plaintext := c.Draw(prop.Of[[]byte](), "plaintext")
-	additionalData := c.Draw(prop.Of[[]byte](), "additional-data")
-	return func(_ context.Context, subject crypto.AEAD) error {
-		_ = subject.Seal(dst, nonce, plaintext, additionalData)
-		return nil
-	}
-})
-
-// aeadOpenCalls generates the calls of AEAD.Open with the inputs that each
-// case draws.
-var aeadOpenCalls = prop.Composite(func(c *prop.Case) func(context.Context, crypto.AEAD) error {
-	dst := c.Draw(prop.Of[[]byte](), "dst")
-	nonce := c.Draw(prop.Of[[]byte](), "nonce")
-	ciphertext := c.Draw(prop.Of[[]byte](), "ciphertext")
-	additionalData := c.Draw(prop.Of[[]byte](), "additional-data")
-	return func(_ context.Context, subject crypto.AEAD) error {
-		_, err := subject.Open(dst, nonce, ciphertext, additionalData)
-		return err
-	}
-})
-
 // aeadOverEmbedded is crypto.AEAD under the name of the field that
 // aeadOver embeds.
 type aeadOverEmbedded = crypto.AEAD
@@ -368,6 +595,18 @@ type aeadOverEmbedded = crypto.AEAD
 type aeadOver struct {
 	aeadOverEmbedded
 	spend func()
+}
+
+// Seal calls spend and returns its zero results.
+func (o aeadOver) Seal([]byte, []byte, []byte, []byte) (r0 []byte) {
+	o.spend()
+	return r0
+}
+
+// Open calls spend and returns its zero results.
+func (o aeadOver) Open([]byte, []byte, []byte, []byte) (r0 []byte, r1 error) {
+	o.spend()
+	return r0, r1
 }
 
 // ID calls spend and returns its zero results.
@@ -394,22 +633,197 @@ func (o aeadOver) Overhead() (r0 int) {
 	return r0
 }
 
-// Seal calls spend and returns its zero results.
-func (o aeadOver) Seal([]byte, []byte, []byte, []byte) (r0 []byte) {
-	o.spend()
-	return r0
-}
-
-// Open calls spend and returns its zero results.
-func (o aeadOver) Open([]byte, []byte, []byte, []byte) (r0 []byte, r1 error) {
-	o.spend()
-	return r0, r1
-}
-
 // newAEADOver returns the planted defect of a ceiling of AEAD, whose
 // callables call spend.
 func newAEADOver(_ *AEADHandle, spend func()) crypto.AEAD {
 	return aeadOver{spend: spend}
 }
 
-// dokimi:provenance sha256:c619c9b2abaf893e58c2adac9b9890ee6dbb393ab585bacb2597d6c610e7dc96
+// aeadSealPanicsDefect is the planted defect of a AEAD whose Seal panics.
+type aeadSealPanicsDefect struct {
+	aeadOverEmbedded
+}
+
+// Seal is the override of the planted defect.
+func (*aeadSealPanicsDefect) Seal(p0, p1, p2, p3 []byte) (r0 []byte) {
+	panic("the planted defect of a AEAD whose Seal panics")
+}
+
+// aeadSealPanics returns the planted defect of a AEAD whose Seal panics
+// over a fresh subject.
+func aeadSealPanics(h *AEADHandle) crypto.AEAD {
+	return &aeadSealPanicsDefect{aeadOverEmbedded: h.Fresh()}
+}
+
+// aeadOpenPanicsDefect is the planted defect of a AEAD whose Open panics.
+type aeadOpenPanicsDefect struct {
+	aeadOverEmbedded
+}
+
+// Open is the override of the planted defect.
+func (*aeadOpenPanicsDefect) Open(p0, p1, p2, p3 []byte) (r0 []byte, r1 error) {
+	panic("the planted defect of a AEAD whose Open panics")
+}
+
+// aeadOpenPanics returns the planted defect of a AEAD whose Open panics
+// over a fresh subject.
+func aeadOpenPanics(h *AEADHandle) crypto.AEAD {
+	return &aeadOpenPanicsDefect{aeadOverEmbedded: h.Fresh()}
+}
+
+// aeadidPanicsDefect is the planted defect of a AEAD whose ID panics.
+type aeadidPanicsDefect struct {
+	aeadOverEmbedded
+}
+
+// ID is the override of the planted defect.
+func (*aeadidPanicsDefect) ID() (r0 crypto.ID) {
+	panic("the planted defect of a AEAD whose ID panics")
+}
+
+// aeadidPanics returns the planted defect of a AEAD whose ID panics over a
+// fresh subject.
+func aeadidPanics(h *AEADHandle) crypto.AEAD {
+	return &aeadidPanicsDefect{aeadOverEmbedded: h.Fresh()}
+}
+
+// aeadidDriftsDefect is the planted defect of a AEAD whose ID returns
+// another value on the repeat.
+type aeadidDriftsDefect struct {
+	aeadOverEmbedded
+	calls int
+}
+
+// ID is the override of the planted defect.
+func (d *aeadidDriftsDefect) ID() (r0 crypto.ID) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = crypto.ID{2}
+	}
+	return r0
+}
+
+// aeadidDrifts returns the planted defect of a AEAD whose ID returns
+// another value on the repeat over a fresh subject.
+func aeadidDrifts(h *AEADHandle) crypto.AEAD {
+	return &aeadidDriftsDefect{aeadOverEmbedded: h.Fresh()}
+}
+
+// aeadAlgorithmPanicsDefect is the planted defect of a AEAD whose
+// Algorithm panics.
+type aeadAlgorithmPanicsDefect struct {
+	aeadOverEmbedded
+}
+
+// Algorithm is the override of the planted defect.
+func (*aeadAlgorithmPanicsDefect) Algorithm() (r0 crypto.Algorithm) {
+	panic("the planted defect of a AEAD whose Algorithm panics")
+}
+
+// aeadAlgorithmPanics returns the planted defect of a AEAD whose Algorithm
+// panics over a fresh subject.
+func aeadAlgorithmPanics(h *AEADHandle) crypto.AEAD {
+	return &aeadAlgorithmPanicsDefect{aeadOverEmbedded: h.Fresh()}
+}
+
+// aeadAlgorithmDriftsDefect is the planted defect of a AEAD whose
+// Algorithm returns another value on the repeat.
+type aeadAlgorithmDriftsDefect struct {
+	aeadOverEmbedded
+	calls int
+}
+
+// Algorithm is the override of the planted defect.
+func (d *aeadAlgorithmDriftsDefect) Algorithm() (r0 crypto.Algorithm) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = crypto.Algorithm("sha-384")
+	}
+	return r0
+}
+
+// aeadAlgorithmDrifts returns the planted defect of a AEAD whose Algorithm
+// returns another value on the repeat over a fresh subject.
+func aeadAlgorithmDrifts(h *AEADHandle) crypto.AEAD {
+	return &aeadAlgorithmDriftsDefect{aeadOverEmbedded: h.Fresh()}
+}
+
+// aeadNonceSizePanicsDefect is the planted defect of a AEAD whose
+// NonceSize panics.
+type aeadNonceSizePanicsDefect struct {
+	aeadOverEmbedded
+}
+
+// NonceSize is the override of the planted defect.
+func (*aeadNonceSizePanicsDefect) NonceSize() (r0 int) {
+	panic("the planted defect of a AEAD whose NonceSize panics")
+}
+
+// aeadNonceSizePanics returns the planted defect of a AEAD whose NonceSize
+// panics over a fresh subject.
+func aeadNonceSizePanics(h *AEADHandle) crypto.AEAD {
+	return &aeadNonceSizePanicsDefect{aeadOverEmbedded: h.Fresh()}
+}
+
+// aeadNonceSizeDriftsDefect is the planted defect of a AEAD whose
+// NonceSize returns another value on the repeat.
+type aeadNonceSizeDriftsDefect struct {
+	aeadOverEmbedded
+	calls int
+}
+
+// NonceSize is the override of the planted defect.
+func (d *aeadNonceSizeDriftsDefect) NonceSize() (r0 int) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = int(7)
+	}
+	return r0
+}
+
+// aeadNonceSizeDrifts returns the planted defect of a AEAD whose NonceSize
+// returns another value on the repeat over a fresh subject.
+func aeadNonceSizeDrifts(h *AEADHandle) crypto.AEAD {
+	return &aeadNonceSizeDriftsDefect{aeadOverEmbedded: h.Fresh()}
+}
+
+// aeadOverheadPanicsDefect is the planted defect of a AEAD whose Overhead
+// panics.
+type aeadOverheadPanicsDefect struct {
+	aeadOverEmbedded
+}
+
+// Overhead is the override of the planted defect.
+func (*aeadOverheadPanicsDefect) Overhead() (r0 int) {
+	panic("the planted defect of a AEAD whose Overhead panics")
+}
+
+// aeadOverheadPanics returns the planted defect of a AEAD whose Overhead
+// panics over a fresh subject.
+func aeadOverheadPanics(h *AEADHandle) crypto.AEAD {
+	return &aeadOverheadPanicsDefect{aeadOverEmbedded: h.Fresh()}
+}
+
+// aeadOverheadDriftsDefect is the planted defect of a AEAD whose Overhead
+// returns another value on the repeat.
+type aeadOverheadDriftsDefect struct {
+	aeadOverEmbedded
+	calls int
+}
+
+// Overhead is the override of the planted defect.
+func (d *aeadOverheadDriftsDefect) Overhead() (r0 int) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = int(7)
+	}
+	return r0
+}
+
+// aeadOverheadDrifts returns the planted defect of a AEAD whose Overhead
+// returns another value on the repeat over a fresh subject.
+func aeadOverheadDrifts(h *AEADHandle) crypto.AEAD {
+	return &aeadOverheadDriftsDefect{aeadOverEmbedded: h.Fresh()}
+}
+
+// dokimi:provenance sha256:2bfe1a457bba5268debdaad2df512b26f80a9dd89d09c96c1657ac1120e0f6e8

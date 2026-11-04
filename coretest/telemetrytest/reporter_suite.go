@@ -10,6 +10,8 @@ import (
 
 	"go.dokimi.dev/assert/prop"
 	"go.dokimi.dev/conform"
+	"go.dokimi.dev/conform/probe"
+	"go.dokimi.dev/spec"
 	"go.thesmos.sh/core/telemetry"
 )
 
@@ -55,6 +57,12 @@ func (c reporterCounter) ReporterCounterReturnsACounterForAKnownName() conform.I
 	return c.Check("reporter-counter-returns-a-counter-for-a-known-name")
 }
 
+// Smoke returns the identity of the check that Counter returns without a
+// panic for derived inputs.
+func (c reporterCounter) Smoke() conform.ID[telemetry.Reporter] {
+	return c.Check("smoke")
+}
+
 // reporterGauge is the name of Reporter.Gauge, with the identities of its
 // checks.
 type reporterGauge struct {
@@ -65,6 +73,12 @@ type reporterGauge struct {
 // returns a Gauge.
 func (c reporterGauge) ReporterGaugeReturnsAGauge() conform.ID[telemetry.Reporter] {
 	return c.Check("reporter-gauge-returns-a-gauge")
+}
+
+// Smoke returns the identity of the check that Gauge returns without a
+// panic for derived inputs.
+func (c reporterGauge) Smoke() conform.ID[telemetry.Reporter] {
+	return c.Check("smoke")
 }
 
 // reporterHistogram is the name of Reporter.Histogram, with the identities
@@ -79,6 +93,12 @@ func (c reporterHistogram) ReporterHistogramReturnsAHistogram() conform.ID[telem
 	return c.Check("reporter-histogram-returns-a-histogram")
 }
 
+// Smoke returns the identity of the check that Histogram returns without a
+// panic for derived inputs.
+func (c reporterHistogram) Smoke() conform.ID[telemetry.Reporter] {
+	return c.Check("smoke")
+}
+
 // reporterTracer is the name of Reporter.Tracer, with the identities of
 // its checks.
 type reporterTracer struct {
@@ -91,12 +111,132 @@ func (c reporterTracer) ReporterTracerReturnsATracer() conform.ID[telemetry.Repo
 	return c.Check("reporter-tracer-returns-a-tracer")
 }
 
+// Smoke returns the identity of the check that Tracer returns without a
+// panic for derived inputs.
+func (c reporterTracer) Smoke() conform.ID[telemetry.Reporter] {
+	return c.Check("smoke")
+}
+
 // ReporterSuite returns the checks of Reporter, and the calls and the
 // budgets of its callables.
 func ReporterSuite() conform.Suite[telemetry.Reporter] {
 	return conform.Suite[telemetry.Reporter]{
 		Declaration: "Reporter",
+		Package:     "go.thesmos.sh/core/telemetry",
+		Generator:   conform.Generator{Name: "dokimi", Version: "0.1.0"},
 		Checks: []conform.Check[telemetry.Reporter]{
+			{
+				ID:          ReporterChecks.Counter.Smoke(),
+				Statement:   "Counter returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *ReporterHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Counter(telemetry.InstrumentSpec{Name: telemetry.InstrumentName("Name-a")})
+						return nil
+					})
+				},
+				Defect: reporterCounterPanics,
+			},
+			{
+				ID:          ReporterChecks.Counter.Smoke().Generated(),
+				Statement:   "Counter returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *ReporterHandle, c *prop.Case) {
+					drawnSpec := c.Draw(prop.Of[telemetry.InstrumentSpec](), "spec")
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Counter(drawnSpec)
+						return nil
+					})
+				},
+				Defect: reporterCounterPanics,
+			},
+			{
+				ID:          ReporterChecks.Gauge.Smoke(),
+				Statement:   "Gauge returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *ReporterHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Gauge(telemetry.InstrumentSpec{Name: telemetry.InstrumentName("Name-a")})
+						return nil
+					})
+				},
+				Defect: reporterGaugePanics,
+			},
+			{
+				ID:          ReporterChecks.Gauge.Smoke().Generated(),
+				Statement:   "Gauge returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *ReporterHandle, c *prop.Case) {
+					drawnSpec := c.Draw(prop.Of[telemetry.InstrumentSpec](), "spec")
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Gauge(drawnSpec)
+						return nil
+					})
+				},
+				Defect: reporterGaugePanics,
+			},
+			{
+				ID:          ReporterChecks.Histogram.Smoke(),
+				Statement:   "Histogram returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *ReporterHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Histogram(telemetry.InstrumentSpec{Name: telemetry.InstrumentName("Name-a")})
+						return nil
+					})
+				},
+				Defect: reporterHistogramPanics,
+			},
+			{
+				ID:          ReporterChecks.Histogram.Smoke().Generated(),
+				Statement:   "Histogram returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *ReporterHandle, c *prop.Case) {
+					drawnSpec := c.Draw(prop.Of[telemetry.InstrumentSpec](), "spec")
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Histogram(drawnSpec)
+						return nil
+					})
+				},
+				Defect: reporterHistogramPanics,
+			},
+			{
+				ID:          ReporterChecks.Tracer.Smoke(),
+				Statement:   "Tracer returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *ReporterHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Tracer(telemetry.InstrumentName("name-a"))
+						return nil
+					})
+				},
+				Defect: reporterTracerPanics,
+			},
+			{
+				ID:          ReporterChecks.Tracer.Smoke().Generated(),
+				Statement:   "Tracer returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *ReporterHandle, c *prop.Case) {
+					drawnName := c.Draw(prop.Of[telemetry.InstrumentName](), "name")
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Tracer(drawnName)
+						return nil
+					})
+				},
+				Defect: reporterTracerPanics,
+			},
 			{
 				ID:        ReporterChecks.Counter.ReporterCounterReturnsACounter(),
 				Statement: "Counter returns a Counter",
@@ -126,6 +266,36 @@ func ReporterSuite() conform.Suite[telemetry.Reporter] {
 				Statement: "Tracer returns a Tracer",
 				Apply:     ReporterTracerReturnsATracer,
 				Defect:    reporterTracerIsNil,
+			},
+		},
+		Refusals: []conform.Refusal{
+			{
+				Claim:    spec.Deterministic,
+				Callable: "Reporter.Counter",
+				Gate:     spec.ValueSamples,
+				Why:      "eidos derives no sample of a result of Counter",
+				Remedy:   "author a sample of the result type with the directive sample",
+			},
+			{
+				Claim:    spec.Deterministic,
+				Callable: "Reporter.Gauge",
+				Gate:     spec.ValueSamples,
+				Why:      "eidos derives no sample of a result of Gauge",
+				Remedy:   "author a sample of the result type with the directive sample",
+			},
+			{
+				Claim:    spec.Deterministic,
+				Callable: "Reporter.Histogram",
+				Gate:     spec.ValueSamples,
+				Why:      "eidos derives no sample of a result of Histogram",
+				Remedy:   "author a sample of the result type with the directive sample",
+			},
+			{
+				Claim:    spec.Deterministic,
+				Callable: "Reporter.Tracer",
+				Gate:     spec.ValueSamples,
+				Why:      "eidos derives no sample of a result of Tracer",
+				Remedy:   "author a sample of the result type with the directive sample",
 			},
 		},
 		Calls: []conform.Call[telemetry.Reporter]{
@@ -307,4 +477,72 @@ func newReporterOver(_ *ReporterHandle, spend func()) telemetry.Reporter {
 	return reporterOver{spend: spend}
 }
 
-// dokimi:provenance sha256:cea0628d8f8a12fb4b6703de364484fef5f666e9cb21deb5639aaf3771f5b16a
+// reporterCounterPanicsDefect is the planted defect of a Reporter whose
+// Counter panics.
+type reporterCounterPanicsDefect struct {
+	reporterOverEmbedded
+}
+
+// Counter is the override of the planted defect.
+func (*reporterCounterPanicsDefect) Counter(p0 telemetry.InstrumentSpec) (r0 telemetry.Counter) {
+	panic("the planted defect of a Reporter whose Counter panics")
+}
+
+// reporterCounterPanics returns the planted defect of a Reporter whose
+// Counter panics over a fresh subject.
+func reporterCounterPanics(h *ReporterHandle) telemetry.Reporter {
+	return &reporterCounterPanicsDefect{reporterOverEmbedded: h.Fresh()}
+}
+
+// reporterGaugePanicsDefect is the planted defect of a Reporter whose
+// Gauge panics.
+type reporterGaugePanicsDefect struct {
+	reporterOverEmbedded
+}
+
+// Gauge is the override of the planted defect.
+func (*reporterGaugePanicsDefect) Gauge(p0 telemetry.InstrumentSpec) (r0 telemetry.Gauge) {
+	panic("the planted defect of a Reporter whose Gauge panics")
+}
+
+// reporterGaugePanics returns the planted defect of a Reporter whose Gauge
+// panics over a fresh subject.
+func reporterGaugePanics(h *ReporterHandle) telemetry.Reporter {
+	return &reporterGaugePanicsDefect{reporterOverEmbedded: h.Fresh()}
+}
+
+// reporterHistogramPanicsDefect is the planted defect of a Reporter whose
+// Histogram panics.
+type reporterHistogramPanicsDefect struct {
+	reporterOverEmbedded
+}
+
+// Histogram is the override of the planted defect.
+func (*reporterHistogramPanicsDefect) Histogram(p0 telemetry.InstrumentSpec) (r0 telemetry.Histogram) {
+	panic("the planted defect of a Reporter whose Histogram panics")
+}
+
+// reporterHistogramPanics returns the planted defect of a Reporter whose
+// Histogram panics over a fresh subject.
+func reporterHistogramPanics(h *ReporterHandle) telemetry.Reporter {
+	return &reporterHistogramPanicsDefect{reporterOverEmbedded: h.Fresh()}
+}
+
+// reporterTracerPanicsDefect is the planted defect of a Reporter whose
+// Tracer panics.
+type reporterTracerPanicsDefect struct {
+	reporterOverEmbedded
+}
+
+// Tracer is the override of the planted defect.
+func (*reporterTracerPanicsDefect) Tracer(p0 telemetry.InstrumentName) (r0 telemetry.Tracer) {
+	panic("the planted defect of a Reporter whose Tracer panics")
+}
+
+// reporterTracerPanics returns the planted defect of a Reporter whose
+// Tracer panics over a fresh subject.
+func reporterTracerPanics(h *ReporterHandle) telemetry.Reporter {
+	return &reporterTracerPanicsDefect{reporterOverEmbedded: h.Fresh()}
+}
+
+// dokimi:provenance sha256:e710b4db7cc6c0f5d20a35a921bc020a7b455584db835f70409b0e40d83b1152

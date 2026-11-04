@@ -48,66 +48,7 @@ func TestClockSuite(t *testing.T) {
 				},
 				Defect: func(*clocktest.ClockHandle) clock.Clock { return &clockSubject{} },
 			}),
-			conform.Excuse(
-				clocktest.ClockChecks.Now.NowFallsBetweenTwoTimes(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				clocktest.ClockChecks.Now.NowReturnsANonZeroWall(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				clocktest.ClockChecks.Now.NowReturnsAscendingInstants(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				clocktest.ClockChecks.Time.TimeReturnsNonZero(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				clocktest.ClockChecks.Time.TimeReturnsUTC(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				clocktest.ClockChecks.Elapsed.ElapsedDoesNotDecrease(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				clocktest.ClockChecks.Elapsed.ElapsedIsNotNegative(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				clocktest.ClockChecks.NewTimer.NewTimerOfANegativeDurationSendsATick(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				clocktest.ClockChecks.NewTimer.NewTimerOfZeroSendsATick(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				clocktest.ClockChecks.Update.UpdateFollowsAPeerAhead(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				clocktest.ClockChecks.Update.UpdateKeepsTheNode(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				clocktest.ClockChecks.Update.UpdateKeepsTheWallForARefusedPeer(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				clocktest.ClockChecks.Update.UpdatePassesAPeerAtTheLastLogical(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				clocktest.ClockChecks.Update.UpdateRefusesAPeerAYearAhead(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				clocktest.ClockChecks.Update.UpdateReturnsALaterInstant(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[clock.Clock]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -129,66 +70,7 @@ func TestClockSuite(t *testing.T) {
 				},
 				Defect: func(*clocktest.ClockHandle) clock.Clock { return &clockSubject{} },
 			}),
-			conform.Excuse(
-				clocktest.ClockChecks.Now.NowFallsBetweenTwoTimes(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				clocktest.ClockChecks.Now.NowReturnsANonZeroWall(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				clocktest.ClockChecks.Now.NowReturnsAscendingInstants(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				clocktest.ClockChecks.Time.TimeReturnsNonZero(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				clocktest.ClockChecks.Time.TimeReturnsUTC(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				clocktest.ClockChecks.Elapsed.ElapsedDoesNotDecrease(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				clocktest.ClockChecks.Elapsed.ElapsedIsNotNegative(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				clocktest.ClockChecks.NewTimer.NewTimerOfANegativeDurationSendsATick(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				clocktest.ClockChecks.NewTimer.NewTimerOfZeroSendsATick(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				clocktest.ClockChecks.Update.UpdateFollowsAPeerAhead(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				clocktest.ClockChecks.Update.UpdateKeepsTheNode(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				clocktest.ClockChecks.Update.UpdateKeepsTheWallForARefusedPeer(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				clocktest.ClockChecks.Update.UpdatePassesAPeerAtTheLastLogical(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				clocktest.ClockChecks.Update.UpdateRefusesAPeerAYearAhead(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				clocktest.ClockChecks.Update.UpdateReturnsALaterInstant(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[clock.Clock]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -287,10 +169,14 @@ func TestClockSuite(t *testing.T) {
 	})
 }
 
+// clockSuite is the suite of Clock that the tests of the planted defect of
+// a ceiling apply.
+var clockSuite = clocktest.ClockSuite()
+
 // clockIdle returns the planted defect of a ceiling of Clock with a spend
-// of nothing, a subject that answers each call at once.
+// of nothing. Each call of the defect returns its zero results at once.
 func clockIdle(h *clocktest.ClockHandle) clock.Clock {
-	return clocktest.ClockSuite().Calls[0].Over(h, func() {})
+	return clockSuite.Calls[0].Over(h, func() {})
 }
 
 // TestClockSuiteBudgets applies the allocation ceilings of the suite of
@@ -306,66 +192,7 @@ func TestClockSuiteBudgets(t *testing.T) {
 		conform.Ceilings(clocktest.ClockChecks.Elapsed.Callable, conform.Budget{Allocs: new(uint64(0))}),
 		conform.Ceilings(clocktest.ClockChecks.NewTimer.Callable, conform.Budget{Allocs: new(uint64(0))}),
 		conform.Ceilings(clocktest.ClockChecks.Update.Callable, conform.Budget{Allocs: new(uint64(0))}),
-		conform.Excuse(
-			clocktest.ClockChecks.Now.NowFallsBetweenTwoTimes(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Now.NowReturnsANonZeroWall(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Now.NowReturnsAscendingInstants(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Time.TimeReturnsNonZero(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Time.TimeReturnsUTC(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Elapsed.ElapsedDoesNotDecrease(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Elapsed.ElapsedIsNotNegative(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.NewTimer.NewTimerOfANegativeDurationSendsATick(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.NewTimer.NewTimerOfZeroSendsATick(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Update.UpdateFollowsAPeerAhead(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Update.UpdateKeepsTheNode(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Update.UpdateKeepsTheWallForARefusedPeer(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Update.UpdatePassesAPeerAtTheLastLogical(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Update.UpdateRefusesAPeerAYearAhead(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Update.UpdateReturnsALaterInstant(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[clock.Clock]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -376,66 +203,7 @@ func FuzzClockSuiteNow(f *testing.F) {
 		f,
 		clocktest.ClockChecks.Now.Callable,
 		clockIdle,
-		conform.Excuse(
-			clocktest.ClockChecks.Now.NowFallsBetweenTwoTimes(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Now.NowReturnsANonZeroWall(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Now.NowReturnsAscendingInstants(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Time.TimeReturnsNonZero(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Time.TimeReturnsUTC(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Elapsed.ElapsedDoesNotDecrease(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Elapsed.ElapsedIsNotNegative(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.NewTimer.NewTimerOfANegativeDurationSendsATick(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.NewTimer.NewTimerOfZeroSendsATick(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Update.UpdateFollowsAPeerAhead(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Update.UpdateKeepsTheNode(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Update.UpdateKeepsTheWallForARefusedPeer(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Update.UpdatePassesAPeerAtTheLastLogical(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Update.UpdateRefusesAPeerAYearAhead(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Update.UpdateReturnsALaterInstant(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[clock.Clock]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -446,66 +214,7 @@ func FuzzClockSuiteTime(f *testing.F) {
 		f,
 		clocktest.ClockChecks.Time.Callable,
 		clockIdle,
-		conform.Excuse(
-			clocktest.ClockChecks.Now.NowFallsBetweenTwoTimes(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Now.NowReturnsANonZeroWall(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Now.NowReturnsAscendingInstants(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Time.TimeReturnsNonZero(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Time.TimeReturnsUTC(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Elapsed.ElapsedDoesNotDecrease(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Elapsed.ElapsedIsNotNegative(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.NewTimer.NewTimerOfANegativeDurationSendsATick(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.NewTimer.NewTimerOfZeroSendsATick(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Update.UpdateFollowsAPeerAhead(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Update.UpdateKeepsTheNode(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Update.UpdateKeepsTheWallForARefusedPeer(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Update.UpdatePassesAPeerAtTheLastLogical(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Update.UpdateRefusesAPeerAYearAhead(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Update.UpdateReturnsALaterInstant(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[clock.Clock]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -516,66 +225,7 @@ func FuzzClockSuiteElapsed(f *testing.F) {
 		f,
 		clocktest.ClockChecks.Elapsed.Callable,
 		clockIdle,
-		conform.Excuse(
-			clocktest.ClockChecks.Now.NowFallsBetweenTwoTimes(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Now.NowReturnsANonZeroWall(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Now.NowReturnsAscendingInstants(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Time.TimeReturnsNonZero(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Time.TimeReturnsUTC(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Elapsed.ElapsedDoesNotDecrease(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Elapsed.ElapsedIsNotNegative(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.NewTimer.NewTimerOfANegativeDurationSendsATick(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.NewTimer.NewTimerOfZeroSendsATick(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Update.UpdateFollowsAPeerAhead(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Update.UpdateKeepsTheNode(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Update.UpdateKeepsTheWallForARefusedPeer(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Update.UpdatePassesAPeerAtTheLastLogical(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Update.UpdateRefusesAPeerAYearAhead(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Update.UpdateReturnsALaterInstant(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[clock.Clock]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -586,66 +236,7 @@ func FuzzClockSuiteNewTimer(f *testing.F) {
 		f,
 		clocktest.ClockChecks.NewTimer.Callable,
 		clockIdle,
-		conform.Excuse(
-			clocktest.ClockChecks.Now.NowFallsBetweenTwoTimes(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Now.NowReturnsANonZeroWall(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Now.NowReturnsAscendingInstants(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Time.TimeReturnsNonZero(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Time.TimeReturnsUTC(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Elapsed.ElapsedDoesNotDecrease(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Elapsed.ElapsedIsNotNegative(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.NewTimer.NewTimerOfANegativeDurationSendsATick(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.NewTimer.NewTimerOfZeroSendsATick(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Update.UpdateFollowsAPeerAhead(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Update.UpdateKeepsTheNode(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Update.UpdateKeepsTheWallForARefusedPeer(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Update.UpdatePassesAPeerAtTheLastLogical(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Update.UpdateRefusesAPeerAYearAhead(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Update.UpdateReturnsALaterInstant(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[clock.Clock]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -656,66 +247,7 @@ func FuzzClockSuiteUpdate(f *testing.F) {
 		f,
 		clocktest.ClockChecks.Update.Callable,
 		clockIdle,
-		conform.Excuse(
-			clocktest.ClockChecks.Now.NowFallsBetweenTwoTimes(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Now.NowReturnsANonZeroWall(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Now.NowReturnsAscendingInstants(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Time.TimeReturnsNonZero(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Time.TimeReturnsUTC(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Elapsed.ElapsedDoesNotDecrease(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Elapsed.ElapsedIsNotNegative(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.NewTimer.NewTimerOfANegativeDurationSendsATick(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.NewTimer.NewTimerOfZeroSendsATick(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Update.UpdateFollowsAPeerAhead(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Update.UpdateKeepsTheNode(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Update.UpdateKeepsTheWallForARefusedPeer(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Update.UpdatePassesAPeerAtTheLastLogical(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Update.UpdateRefusesAPeerAYearAhead(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.ClockChecks.Update.UpdateReturnsALaterInstant(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[clock.Clock]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -774,34 +306,7 @@ func TestTimerSuite(t *testing.T) {
 				},
 				Defect: func(*clocktest.TimerHandle) clock.Timer { return &timerSubject{} },
 			}),
-			conform.Excuse(
-				clocktest.TimerChecks.Reset.ResetAfterStopReturnsFalse(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				clocktest.TimerChecks.Reset.ResetAfterTheTickReturnsFalse(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				clocktest.TimerChecks.Reset.ResetOfAPendingTimerReturnsTrue(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				clocktest.TimerChecks.Reset.ResetToZeroSendsATick(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				clocktest.TimerChecks.Stop.SecondStopReturnsFalse(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				clocktest.TimerChecks.Stop.StopAfterTheTickReturnsFalse(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				clocktest.TimerChecks.Stop.StopOfAPendingTimerReturnsTrue(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[clock.Timer]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -823,34 +328,7 @@ func TestTimerSuite(t *testing.T) {
 				},
 				Defect: func(*clocktest.TimerHandle) clock.Timer { return &timerSubject{} },
 			}),
-			conform.Excuse(
-				clocktest.TimerChecks.Reset.ResetAfterStopReturnsFalse(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				clocktest.TimerChecks.Reset.ResetAfterTheTickReturnsFalse(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				clocktest.TimerChecks.Reset.ResetOfAPendingTimerReturnsTrue(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				clocktest.TimerChecks.Reset.ResetToZeroSendsATick(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				clocktest.TimerChecks.Stop.SecondStopReturnsFalse(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				clocktest.TimerChecks.Stop.StopAfterTheTickReturnsFalse(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				clocktest.TimerChecks.Stop.StopOfAPendingTimerReturnsTrue(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[clock.Timer]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -901,10 +379,14 @@ func TestTimerSuite(t *testing.T) {
 	})
 }
 
+// timerSuite is the suite of Timer that the tests of the planted defect of
+// a ceiling apply.
+var timerSuite = clocktest.TimerSuite()
+
 // timerIdle returns the planted defect of a ceiling of Timer with a spend
-// of nothing, a subject that answers each call at once.
+// of nothing. Each call of the defect returns its zero results at once.
 func timerIdle(h *clocktest.TimerHandle) clock.Timer {
-	return clocktest.TimerSuite().Calls[0].Over(h, func() {})
+	return timerSuite.Calls[0].Over(h, func() {})
 }
 
 // TestTimerSuiteBudgets applies the allocation ceilings of the suite of
@@ -918,34 +400,7 @@ func TestTimerSuiteBudgets(t *testing.T) {
 		conform.Ceilings(clocktest.TimerChecks.C.Callable, conform.Budget{Allocs: new(uint64(0))}),
 		conform.Ceilings(clocktest.TimerChecks.Reset.Callable, conform.Budget{Allocs: new(uint64(0))}),
 		conform.Ceilings(clocktest.TimerChecks.Stop.Callable, conform.Budget{Allocs: new(uint64(0))}),
-		conform.Excuse(
-			clocktest.TimerChecks.Reset.ResetAfterStopReturnsFalse(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.TimerChecks.Reset.ResetAfterTheTickReturnsFalse(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.TimerChecks.Reset.ResetOfAPendingTimerReturnsTrue(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.TimerChecks.Reset.ResetToZeroSendsATick(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.TimerChecks.Stop.SecondStopReturnsFalse(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.TimerChecks.Stop.StopAfterTheTickReturnsFalse(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.TimerChecks.Stop.StopOfAPendingTimerReturnsTrue(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[clock.Timer]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -956,34 +411,7 @@ func FuzzTimerSuiteC(f *testing.F) {
 		f,
 		clocktest.TimerChecks.C.Callable,
 		timerIdle,
-		conform.Excuse(
-			clocktest.TimerChecks.Reset.ResetAfterStopReturnsFalse(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.TimerChecks.Reset.ResetAfterTheTickReturnsFalse(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.TimerChecks.Reset.ResetOfAPendingTimerReturnsTrue(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.TimerChecks.Reset.ResetToZeroSendsATick(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.TimerChecks.Stop.SecondStopReturnsFalse(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.TimerChecks.Stop.StopAfterTheTickReturnsFalse(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.TimerChecks.Stop.StopOfAPendingTimerReturnsTrue(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[clock.Timer]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -994,34 +422,7 @@ func FuzzTimerSuiteReset(f *testing.F) {
 		f,
 		clocktest.TimerChecks.Reset.Callable,
 		timerIdle,
-		conform.Excuse(
-			clocktest.TimerChecks.Reset.ResetAfterStopReturnsFalse(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.TimerChecks.Reset.ResetAfterTheTickReturnsFalse(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.TimerChecks.Reset.ResetOfAPendingTimerReturnsTrue(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.TimerChecks.Reset.ResetToZeroSendsATick(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.TimerChecks.Stop.SecondStopReturnsFalse(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.TimerChecks.Stop.StopAfterTheTickReturnsFalse(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.TimerChecks.Stop.StopOfAPendingTimerReturnsTrue(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[clock.Timer]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -1032,34 +433,7 @@ func FuzzTimerSuiteStop(f *testing.F) {
 		f,
 		clocktest.TimerChecks.Stop.Callable,
 		timerIdle,
-		conform.Excuse(
-			clocktest.TimerChecks.Reset.ResetAfterStopReturnsFalse(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.TimerChecks.Reset.ResetAfterTheTickReturnsFalse(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.TimerChecks.Reset.ResetOfAPendingTimerReturnsTrue(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.TimerChecks.Reset.ResetToZeroSendsATick(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.TimerChecks.Stop.SecondStopReturnsFalse(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.TimerChecks.Stop.StopAfterTheTickReturnsFalse(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			clocktest.TimerChecks.Stop.StopOfAPendingTimerReturnsTrue(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[clock.Timer]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -1077,4 +451,4 @@ func BenchmarkTimerSuite(b *testing.B) {
 	})
 }
 
-// dokimi:provenance sha256:197ec7e84626eb64cb58a8bae66fb42b51a6d8ad6d3104d70d5e93458f5896b5
+// dokimi:provenance sha256:5817e1279f3a2e4dc37823bd95b5f2e5e3793418fe3cb218709145dfabfeba2d

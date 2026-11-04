@@ -268,15 +268,6 @@ func NewReporterStub(tb assert.TB, opts ...ReporterStubOption) *ReporterStub {
 	return s
 }
 
-// NewReporterStubDelayed returns a double whose methods sleep d on clk
-// before they return. It applies opts after the clock and the latency.
-func NewReporterStubDelayed(tb assert.TB, d time.Duration, clk assert.Clock, opts ...ReporterStubOption) *ReporterStub {
-	return NewReporterStub(tb, append([]ReporterStubOption{
-		ReporterStubWithClock(clk),
-		ReporterStubWithLatency(d),
-	}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *ReporterStub) ResetCalls() {
@@ -391,4 +382,4 @@ func (s *ReporterStub) Tracer(name telemetry.InstrumentName) telemetry.Tracer {
 	return r.Result
 }
 
-// dokimi:provenance sha256:957fd93e470aae9e1ddf792500206a1c3b80499bbdfb175865f744cb69dc921c
+// dokimi:provenance sha256:677c194cf25c185bd54e0e898eb4d197fde5d7d8aceaa8ded9e20c6515510b32

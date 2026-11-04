@@ -221,15 +221,6 @@ func NewXOFStub(tb assert.TB, opts ...XOFStubOption) *XOFStub {
 	return s
 }
 
-// NewXOFStubDelayed returns a double whose methods sleep d on clk before
-// they return. It applies opts after the clock and the latency.
-func NewXOFStubDelayed(tb assert.TB, d time.Duration, clk assert.Clock, opts ...XOFStubOption) *XOFStub {
-	return NewXOFStub(tb, append([]XOFStubOption{
-		XOFStubWithClock(clk),
-		XOFStubWithLatency(d),
-	}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *XOFStub) ResetCalls() {
@@ -524,26 +515,6 @@ func NewXOFStreamStub(tb assert.TB, opts ...XOFStreamStubOption) *XOFStreamStub 
 	return s
 }
 
-// NewXOFStreamStubDelayed returns a double whose methods sleep d on clk
-// before they return. It applies opts after the clock and the latency.
-func NewXOFStreamStubDelayed(
-	tb assert.TB,
-	d time.Duration,
-	clk assert.Clock,
-	opts ...XOFStreamStubOption,
-) *XOFStreamStub {
-	return NewXOFStreamStub(tb, append([]XOFStreamStubOption{
-		XOFStreamStubWithClock(clk),
-		XOFStreamStubWithLatency(d),
-	}, opts...)...)
-}
-
-// NewXOFStreamStubFailing returns a double on which each call of a method
-// that can fail fails with err. It applies opts after the failure.
-func NewXOFStreamStubFailing(tb assert.TB, err error, opts ...XOFStreamStubOption) *XOFStreamStub {
-	return NewXOFStreamStub(tb, append([]XOFStreamStubOption{XOFStreamStubFailing(err)}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *XOFStreamStub) ResetCalls() {
@@ -630,4 +601,4 @@ func (s *XOFStreamStub) Read(p []byte) (n int, err error) {
 	return r.N, r.Err
 }
 
-// dokimi:provenance sha256:bb3adfffd83541ed637c47ea2c4ce193b5af684a0f7b4086be6413ab673a97e3
+// dokimi:provenance sha256:f96c79e23fcde6b9089a2ab750640adcdd7c7c8a9bb570a2727480ac7b25c9b8

@@ -10,6 +10,8 @@ import (
 
 	"go.dokimi.dev/assert/prop"
 	"go.dokimi.dev/conform"
+	"go.dokimi.dev/conform/probe"
+	"go.dokimi.dev/spec"
 	"go.thesmos.sh/core/crypto"
 )
 
@@ -52,6 +54,18 @@ func (c hasherID) HasherIDIdentifiesTheImplementation() conform.ID[crypto.Hasher
 	return c.Check("hasher-id-identifies-the-implementation")
 }
 
+// Smoke returns the identity of the check that ID returns without a panic
+// for derived inputs.
+func (c hasherID) Smoke() conform.ID[crypto.Hasher] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that ID returns the same
+// value for the same inputs.
+func (c hasherID) Deterministic() conform.ID[crypto.Hasher] {
+	return c.Check("deterministic")
+}
+
 // hasherAlgorithm is the name of Hasher.Algorithm, with the identities of
 // its checks.
 type hasherAlgorithm struct {
@@ -63,6 +77,18 @@ type hasherAlgorithm struct {
 // call.
 func (c hasherAlgorithm) HasherAlgorithmNamesTheFunction() conform.ID[crypto.Hasher] {
 	return c.Check("hasher-algorithm-names-the-function")
+}
+
+// Smoke returns the identity of the check that Algorithm returns without a
+// panic for derived inputs.
+func (c hasherAlgorithm) Smoke() conform.ID[crypto.Hasher] {
+	return c.Check("smoke")
+}
+
+// Deterministic returns the identity of the check that Algorithm returns
+// the same value for the same inputs.
+func (c hasherAlgorithm) Deterministic() conform.ID[crypto.Hasher] {
+	return c.Check("deterministic")
 }
 
 // hasherHash is the name of Hasher.Hash, with the identities of its
@@ -94,6 +120,12 @@ func (c hasherHash) HasherHashMatchesTheReference() conform.ID[crypto.Hasher] {
 // of nil data is the digest of empty data.
 func (c hasherHash) HasherHashesNilAsEmpty() conform.ID[crypto.Hasher] {
 	return c.Check("hasher-hashes-nil-as-empty")
+}
+
+// Smoke returns the identity of the check that Hash returns without a
+// panic for derived inputs.
+func (c hasherHash) Smoke() conform.ID[crypto.Hasher] {
+	return c.Check("smoke")
 }
 
 // hasherHashTagged is the name of Hasher.HashTagged, with the identities
@@ -135,6 +167,12 @@ func (c hasherHashTagged) HasherHashTaggedRefusesABinaryRole() conform.ID[crypto
 // leaf, does not return the digest of the node.
 func (c hasherHashTagged) HasherLeafDiffersFromItsNode() conform.ID[crypto.Hasher] {
 	return c.Check("hasher-leaf-differs-from-its-node")
+}
+
+// Smoke returns the identity of the check that HashTagged returns without
+// a panic for derived inputs.
+func (c hasherHashTagged) Smoke() conform.ID[crypto.Hasher] {
+	return c.Check("smoke")
 }
 
 // hasherCombineTagged is the name of Hasher.CombineTagged, with the
@@ -225,12 +263,148 @@ func (c hasherNewStream) HasherStreamSumsLikeHash() conform.ID[crypto.Hasher] {
 	return c.Check("hasher-stream-sums-like-hash")
 }
 
+// Smoke returns the identity of the check that NewStream returns without a
+// panic for derived inputs.
+func (c hasherNewStream) Smoke() conform.ID[crypto.Hasher] {
+	return c.Check("smoke")
+}
+
 // HasherSuite returns the checks of Hasher, and the calls and the budgets
 // of its callables.
 func HasherSuite() conform.Suite[crypto.Hasher] {
 	return conform.Suite[crypto.Hasher]{
 		Declaration: "Hasher",
+		Package:     "go.thesmos.sh/core/crypto",
+		Generator:   conform.Generator{Name: "dokimi", Version: "0.1.0"},
 		Checks: []conform.Check[crypto.Hasher]{
+			{
+				ID:          HasherChecks.ID.Smoke(),
+				Statement:   "ID returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *HasherHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().ID()
+						return nil
+					})
+				},
+				Defect: hasherIDPanics,
+			},
+			{
+				ID:          HasherChecks.ID.Deterministic(),
+				Statement:   "ID returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[crypto.Hasher]{HasherChecks.ID.Smoke()},
+				Apply: func(h *HasherHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) (crypto.ID, error) {
+						r0 := h.Subject().ID()
+						return r0, nil
+					})
+				},
+				Defect: hasherIDDrifts,
+			},
+			{
+				ID:          HasherChecks.Algorithm.Smoke(),
+				Statement:   "Algorithm returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *HasherHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Algorithm()
+						return nil
+					})
+				},
+				Defect: hasherAlgorithmPanics,
+			},
+			{
+				ID:          HasherChecks.Algorithm.Deterministic(),
+				Statement:   "Algorithm returns the same value for the same inputs",
+				Claim:       spec.Deterministic,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Entails:     []conform.ID[crypto.Hasher]{HasherChecks.Algorithm.Smoke()},
+				Apply: func(h *HasherHandle) {
+					probe.RepeatAgrees(h, func(ctx context.Context) (crypto.Algorithm, error) {
+						r0 := h.Subject().Algorithm()
+						return r0, nil
+					})
+				},
+				Defect: hasherAlgorithmDrifts,
+			},
+			{
+				ID:          HasherChecks.Hash.Smoke(),
+				Statement:   "Hash returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *HasherHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Hash([]byte{1})
+						return nil
+					})
+				},
+				Defect: hasherHashPanics,
+			},
+			{
+				ID:          HasherChecks.Hash.Smoke().Generated(),
+				Statement:   "Hash returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *HasherHandle, c *prop.Case) {
+					drawnData := c.Draw(prop.Of[[]byte](), "data")
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().Hash(drawnData)
+						return nil
+					})
+				},
+				Defect: hasherHashPanics,
+			},
+			{
+				ID:          HasherChecks.HashTagged.Smoke(),
+				Statement:   "HashTagged returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *HasherHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().HashTagged(crypto.Role(1), []byte{1})
+						return nil
+					})
+				},
+				Defect: hasherHashTaggedPanics,
+			},
+			{
+				ID:          HasherChecks.HashTagged.Smoke().Generated(),
+				Statement:   "HashTagged returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.GeneratedInputs, spec.NothingBeyondACaller},
+				Property: func(h *HasherHandle, c *prop.Case) {
+					drawnData := c.Draw(prop.Of[[]byte](), "data")
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().HashTagged(crypto.Role(1), drawnData)
+						return nil
+					})
+				},
+				Defect: hasherHashTaggedPanics,
+			},
+			{
+				ID:          HasherChecks.NewStream.Smoke(),
+				Statement:   "NewStream returns without a panic for derived inputs",
+				Claim:       spec.Smoke,
+				Machineries: []spec.MachineryID{spec.NothingBeyondACaller},
+				Shallow:     true,
+				Apply: func(h *HasherHandle) {
+					probe.Survives(h, func(ctx context.Context) error {
+						h.Subject().NewStream()
+						return nil
+					})
+				},
+				Defect: hasherNewStreamPanics,
+			},
 			{
 				ID:        HasherChecks.ID.HasherIDIdentifiesTheImplementation(),
 				Statement: "ID returns an ID that is not zero, and the same ID on every call",
@@ -363,6 +537,36 @@ func HasherSuite() conform.Suite[crypto.Hasher] {
 				Statement: "the Sum of a stream that absorbed a message in one Write is the digest that Hash returns for the message",
 				Apply:     HasherStreamSumsLikeHash,
 				Defect:    hasherStreamDropsTheEndOfALongWrite,
+			},
+		},
+		Refusals: []conform.Refusal{
+			{
+				Claim:    spec.Deterministic,
+				Callable: "Hasher.Hash",
+				Gate:     spec.ValueSamples,
+				Why:      "eidos derives no sample of a result of Hash",
+				Remedy:   "author a sample of the result type with the directive sample",
+			},
+			{
+				Claim:    spec.Deterministic,
+				Callable: "Hasher.HashTagged",
+				Gate:     spec.ValueSamples,
+				Why:      "eidos derives no sample of a result of HashTagged",
+				Remedy:   "author a sample of the result type with the directive sample",
+			},
+			{
+				Claim:    spec.Deterministic,
+				Callable: "Hasher.CombineTagged",
+				Gate:     spec.ValueSamples,
+				Why:      "eidos derives no sample of a result of CombineTagged",
+				Remedy:   "author a sample of the result type with the directive sample",
+			},
+			{
+				Claim:    spec.Deterministic,
+				Callable: "Hasher.NewStream",
+				Gate:     spec.ValueSamples,
+				Why:      "eidos derives no sample of a result of NewStream",
+				Remedy:   "author a sample of the result type with the directive sample",
 			},
 		},
 		Calls: []conform.Call[crypto.Hasher]{
@@ -576,4 +780,132 @@ func newHasherOver(_ *HasherHandle, spend func()) crypto.Hasher {
 	return hasherOver{spend: spend}
 }
 
-// dokimi:provenance sha256:14d6fa5f98805c2fa7895afd0e5e76f396e0ca4809259bd9b9f94681255fb238
+// hasherIDPanicsDefect is the planted defect of a Hasher whose ID panics.
+type hasherIDPanicsDefect struct {
+	hasherOverEmbedded
+}
+
+// ID is the override of the planted defect.
+func (*hasherIDPanicsDefect) ID() (r0 crypto.ID) {
+	panic("the planted defect of a Hasher whose ID panics")
+}
+
+// hasherIDPanics returns the planted defect of a Hasher whose ID panics
+// over a fresh subject.
+func hasherIDPanics(h *HasherHandle) crypto.Hasher {
+	return &hasherIDPanicsDefect{hasherOverEmbedded: h.Fresh()}
+}
+
+// hasherIDDriftsDefect is the planted defect of a Hasher whose ID returns
+// another value on the repeat.
+type hasherIDDriftsDefect struct {
+	hasherOverEmbedded
+	calls int
+}
+
+// ID is the override of the planted defect.
+func (d *hasherIDDriftsDefect) ID() (r0 crypto.ID) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = crypto.ID{2}
+	}
+	return r0
+}
+
+// hasherIDDrifts returns the planted defect of a Hasher whose ID returns
+// another value on the repeat over a fresh subject.
+func hasherIDDrifts(h *HasherHandle) crypto.Hasher {
+	return &hasherIDDriftsDefect{hasherOverEmbedded: h.Fresh()}
+}
+
+// hasherAlgorithmPanicsDefect is the planted defect of a Hasher whose
+// Algorithm panics.
+type hasherAlgorithmPanicsDefect struct {
+	hasherOverEmbedded
+}
+
+// Algorithm is the override of the planted defect.
+func (*hasherAlgorithmPanicsDefect) Algorithm() (r0 crypto.Algorithm) {
+	panic("the planted defect of a Hasher whose Algorithm panics")
+}
+
+// hasherAlgorithmPanics returns the planted defect of a Hasher whose
+// Algorithm panics over a fresh subject.
+func hasherAlgorithmPanics(h *HasherHandle) crypto.Hasher {
+	return &hasherAlgorithmPanicsDefect{hasherOverEmbedded: h.Fresh()}
+}
+
+// hasherAlgorithmDriftsDefect is the planted defect of a Hasher whose
+// Algorithm returns another value on the repeat.
+type hasherAlgorithmDriftsDefect struct {
+	hasherOverEmbedded
+	calls int
+}
+
+// Algorithm is the override of the planted defect.
+func (d *hasherAlgorithmDriftsDefect) Algorithm() (r0 crypto.Algorithm) {
+	d.calls++
+	if d.calls > 1 {
+		r0 = crypto.Algorithm("sha-384")
+	}
+	return r0
+}
+
+// hasherAlgorithmDrifts returns the planted defect of a Hasher whose
+// Algorithm returns another value on the repeat over a fresh subject.
+func hasherAlgorithmDrifts(h *HasherHandle) crypto.Hasher {
+	return &hasherAlgorithmDriftsDefect{hasherOverEmbedded: h.Fresh()}
+}
+
+// hasherHashPanicsDefect is the planted defect of a Hasher whose Hash
+// panics.
+type hasherHashPanicsDefect struct {
+	hasherOverEmbedded
+}
+
+// Hash is the override of the planted defect.
+func (*hasherHashPanicsDefect) Hash(p0 []byte) (r0 crypto.Digest) {
+	panic("the planted defect of a Hasher whose Hash panics")
+}
+
+// hasherHashPanics returns the planted defect of a Hasher whose Hash
+// panics over a fresh subject.
+func hasherHashPanics(h *HasherHandle) crypto.Hasher {
+	return &hasherHashPanicsDefect{hasherOverEmbedded: h.Fresh()}
+}
+
+// hasherHashTaggedPanicsDefect is the planted defect of a Hasher whose
+// HashTagged panics.
+type hasherHashTaggedPanicsDefect struct {
+	hasherOverEmbedded
+}
+
+// HashTagged is the override of the planted defect.
+func (*hasherHashTaggedPanicsDefect) HashTagged(p0 crypto.Role, p1 []byte) (r0 crypto.Digest) {
+	panic("the planted defect of a Hasher whose HashTagged panics")
+}
+
+// hasherHashTaggedPanics returns the planted defect of a Hasher whose
+// HashTagged panics over a fresh subject.
+func hasherHashTaggedPanics(h *HasherHandle) crypto.Hasher {
+	return &hasherHashTaggedPanicsDefect{hasherOverEmbedded: h.Fresh()}
+}
+
+// hasherNewStreamPanicsDefect is the planted defect of a Hasher whose
+// NewStream panics.
+type hasherNewStreamPanicsDefect struct {
+	hasherOverEmbedded
+}
+
+// NewStream is the override of the planted defect.
+func (*hasherNewStreamPanicsDefect) NewStream() (r0 crypto.Stream) {
+	panic("the planted defect of a Hasher whose NewStream panics")
+}
+
+// hasherNewStreamPanics returns the planted defect of a Hasher whose
+// NewStream panics over a fresh subject.
+func hasherNewStreamPanics(h *HasherHandle) crypto.Hasher {
+	return &hasherNewStreamPanicsDefect{hasherOverEmbedded: h.Fresh()}
+}
+
+// dokimi:provenance sha256:1e87dcb4ab846dff4a082d2c3e163fabbff72ba692669736f2bc42fe8a5c7f3b

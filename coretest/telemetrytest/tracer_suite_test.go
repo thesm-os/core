@@ -48,22 +48,7 @@ func TestTracerSuite(t *testing.T) {
 				},
 				Defect: func(*telemetrytest.TracerHandle) telemetry.Tracer { return &tracerSubject{} },
 			}),
-			conform.Excuse(
-				telemetrytest.TracerChecks.Start.TracerSecondStartReturnsASpan(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.TracerChecks.Start.TracerStartAcceptsANilContext(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.TracerChecks.Start.TracerStartAppliesItsOptions(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.TracerChecks.Start.TracerStartReturnsNonNilResults(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[telemetry.Tracer]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -85,22 +70,7 @@ func TestTracerSuite(t *testing.T) {
 				},
 				Defect: func(*telemetrytest.TracerHandle) telemetry.Tracer { return &tracerSubject{} },
 			}),
-			conform.Excuse(
-				telemetrytest.TracerChecks.Start.TracerSecondStartReturnsASpan(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.TracerChecks.Start.TracerStartAcceptsANilContext(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.TracerChecks.Start.TracerStartAppliesItsOptions(),
-				"the test applies the check of its option alone",
-			),
-			conform.Excuse(
-				telemetrytest.TracerChecks.Start.TracerStartReturnsNonNilResults(),
-				"the test applies the check of its option alone",
-			),
+			conform.ExcuseSuite[telemetry.Tracer]("the test applies the check of its option alone"),
 		)
 	})
 
@@ -133,10 +103,15 @@ func TestTracerSuite(t *testing.T) {
 	})
 }
 
+// tracerSuite is the suite of Tracer that the tests of the planted defect
+// of a ceiling apply.
+var tracerSuite = telemetrytest.TracerSuite()
+
 // tracerIdle returns the planted defect of a ceiling of Tracer with a
-// spend of nothing, a subject that answers each call at once.
+// spend of nothing. Each call of the defect returns its zero results at
+// once.
 func tracerIdle(h *telemetrytest.TracerHandle) telemetry.Tracer {
-	return telemetrytest.TracerSuite().Calls[0].Over(h, func() {})
+	return tracerSuite.Calls[0].Over(h, func() {})
 }
 
 // TestTracerSuiteBudgets applies the allocation ceilings of the suite of
@@ -148,22 +123,7 @@ func TestTracerSuiteBudgets(t *testing.T) {
 		t,
 		tracerIdle,
 		conform.Ceilings(telemetrytest.TracerChecks.Start.Callable, conform.Budget{Allocs: new(uint64(0))}),
-		conform.Excuse(
-			telemetrytest.TracerChecks.Start.TracerSecondStartReturnsASpan(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.TracerChecks.Start.TracerStartAcceptsANilContext(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.TracerChecks.Start.TracerStartAppliesItsOptions(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.TracerChecks.Start.TracerStartReturnsNonNilResults(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[telemetry.Tracer]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -174,22 +134,7 @@ func FuzzTracerSuiteStart(f *testing.F) {
 		f,
 		telemetrytest.TracerChecks.Start.Callable,
 		tracerIdle,
-		conform.Excuse(
-			telemetrytest.TracerChecks.Start.TracerSecondStartReturnsASpan(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.TracerChecks.Start.TracerStartAcceptsANilContext(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.TracerChecks.Start.TracerStartAppliesItsOptions(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
-		conform.Excuse(
-			telemetrytest.TracerChecks.Start.TracerStartReturnsNonNilResults(),
-			"the planted defect of a ceiling answers each call with its zero results",
-		),
+		conform.ExcuseSuite[telemetry.Tracer]("the planted defect of a ceiling returns the zero results of each call"),
 	)
 }
 
@@ -201,4 +146,4 @@ func BenchmarkTracerSuite(b *testing.B) {
 	})
 }
 
-// dokimi:provenance sha256:93b70d9ad8b5401b2534d13ff4705dcdb24748ff0a53a0c912b9b673d53e20c0
+// dokimi:provenance sha256:be8c7480cc2e1da4133e46ee2e5337369febcd5bdbd581a76bbf0272723437b6

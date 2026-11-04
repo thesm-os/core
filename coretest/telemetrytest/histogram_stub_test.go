@@ -55,43 +55,58 @@ func histogramStubRelease(tb assert.TB, s *telemetrytest.HistogramStub) {
 	s.Release()
 }
 
-// histogramStubRecordSubject returns the subject of [stub.Behaviour] for
-// Record. The subject calls a new double that reports to tb.
+// histogramStubRecordSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Record. The subject calls a new double that
+// reports to tb.
 func histogramStubRecordSubject(tb assert.TB) stub.Subject[telemetrytest.HistogramRecordCall, struct{}] {
 	tb.Helper()
 	s := telemetrytest.NewHistogramStub(tb)
 	return stub.Subject[telemetrytest.HistogramRecordCall, struct{}]{
-		Stub: s.OnRecord.MethodStub,
+		Stub:  s.OnRecord.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			histogramStubRecord(tb, s)
 		},
-		Override: func(mark func()) {
-			s.OnRecord.Func(func(_ context.Context, _ float64) {
-				mark()
+		Arguments: func(tb assert.TB, c telemetrytest.HistogramRecordCall) {
+			tb.Helper()
+			a0, a1 := histogramStubRecordArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.Value, a1, "the call records Value")
+		},
+		Override: func(seen func(telemetrytest.HistogramRecordCall)) {
+			s.OnRecord.Func(func(p0 context.Context, p1 float64) {
+				seen(telemetrytest.HistogramRecordCall{Ctx: p0, Value: p1})
 			})
 		},
 	}
 }
 
-// histogramStubWithSubject returns the subject of [stub.Behaviour] for
-// With. The subject calls a new double that reports to tb.
+// histogramStubWithSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for With. The subject calls a new double that
+// reports to tb.
 func histogramStubWithSubject(
 	tb assert.TB,
 ) stub.Subject[telemetrytest.HistogramWithCall, telemetrytest.HistogramWithReturn] {
 	tb.Helper()
 	s := telemetrytest.NewHistogramStub(tb)
 	return stub.Subject[telemetrytest.HistogramWithCall, telemetrytest.HistogramWithReturn]{
-		Stub: s.OnWith.MethodStub,
+		Stub:  s.OnWith.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = histogramStubWith(tb, s)
+		},
+		Arguments: func(tb assert.TB, c telemetrytest.HistogramWithCall) {
+			tb.Helper()
+			a0 := histogramStubWithArgs(tb)
+			assert.Equal(tb, c.Attrs, a0, "the call records Attrs")
 		},
 		Result: func() telemetrytest.HistogramWithReturn {
 			got0 := histogramStubWith(tb, s)
 			return telemetrytest.HistogramWithReturn{Result: got0}
 		},
-		Override: func(mark func()) {
-			s.OnWith.Func(func(_ []telemetry.Attr) telemetry.Histogram {
-				mark()
+		Override: func(seen func(telemetrytest.HistogramWithCall)) {
+			s.OnWith.Func(func(p0 []telemetry.Attr) telemetry.Histogram {
+				seen(telemetrytest.HistogramWithCall{Attrs: p0})
 				var z0 telemetry.Histogram
 				return z0
 			})
@@ -99,19 +114,21 @@ func histogramStubWithSubject(
 	}
 }
 
-// histogramStubReleaseSubject returns the subject of [stub.Behaviour] for
-// Release. The subject calls a new double that reports to tb.
+// histogramStubReleaseSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Release. The subject calls a new double that
+// reports to tb.
 func histogramStubReleaseSubject(tb assert.TB) stub.Subject[telemetrytest.HistogramReleaseCall, struct{}] {
 	tb.Helper()
 	s := telemetrytest.NewHistogramStub(tb)
 	return stub.Subject[telemetrytest.HistogramReleaseCall, struct{}]{
-		Stub: s.OnRelease.MethodStub,
+		Stub:  s.OnRelease.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			histogramStubRelease(tb, s)
 		},
-		Override: func(mark func()) {
+		Override: func(seen func(telemetrytest.HistogramReleaseCall)) {
 			s.OnRelease.Func(func() {
-				mark()
+				seen(telemetrytest.HistogramReleaseCall{})
 			})
 		},
 	}
@@ -130,7 +147,6 @@ func histogramStubInstanceOf(tb assert.TB, s *telemetrytest.HistogramStub) histo
 		Call: func() {
 			histogramStubRecord(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -142,102 +158,34 @@ func TestHistogramStub(t *testing.T) {
 	t.Run("Record", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Record", histogramStubRecordSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewHistogramStub(t)
-			histogramStubRecord(t, s)
-			got := s.OnRecord.AssertCalledOnce(t, "Record records the call")
-			a0, a1 := histogramStubRecordArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.Value, a1, "the call records Value")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewHistogramStub(t)
-			var seen []telemetrytest.HistogramRecordCall
-			s.OnRecord.OnRecord(func(c telemetrytest.HistogramRecordCall) { seen = append(seen, c) })
-			histogramStubRecord(t, s)
-			histogramStubRecord(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Record")
-		})
 	})
 
 	t.Run("With", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "With", histogramStubWithSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewHistogramStub(t)
-			_ = histogramStubWith(t, s)
-			got := s.OnWith.AssertCalledOnce(t, "With records the call")
-			a0 := histogramStubWithArgs(t)
-			assert.Equal(t, got.Attrs, a0, "the call records Attrs")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewHistogramStub(t)
-			var seen []telemetrytest.HistogramWithCall
-			s.OnWith.OnRecord(func(c telemetrytest.HistogramWithCall) { seen = append(seen, c) })
-			_ = histogramStubWith(t, s)
-			_ = histogramStubWith(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of With")
-		})
 	})
 
 	t.Run("Release", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Release", histogramStubReleaseSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewHistogramStub(t)
-			var seen []telemetrytest.HistogramReleaseCall
-			s.OnRelease.OnRecord(func(c telemetrytest.HistogramReleaseCall) { seen = append(seen, c) })
-			histogramStubRelease(t, s)
-			histogramStubRelease(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Release")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) histogramStubInstance {
-			return histogramStubInstanceOf(tb, telemetrytest.NewHistogramStub(tb))
-		})
 
-		t.Run("clears the recorded calls of Record", func(t *testing.T) {
+		t.Run("Record", func(t *testing.T) {
 			t.Parallel()
-			s := telemetrytest.NewHistogramStub(t)
-			histogramStubRecord(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnRecord.CallCount(), 0, "ResetCalls clears the calls of Record")
+			stub.ResetBehaviour(t, "Record", histogramStubRecordSubject)
 		})
 
-		t.Run("clears the recorded calls of With", func(t *testing.T) {
+		t.Run("With", func(t *testing.T) {
 			t.Parallel()
-			s := telemetrytest.NewHistogramStub(t)
-			_ = histogramStubWith(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnWith.CallCount(), 0, "ResetCalls clears the calls of With")
+			stub.ResetBehaviour(t, "With", histogramStubWithSubject)
 		})
 
-		t.Run("clears the recorded calls of Release", func(t *testing.T) {
+		t.Run("Release", func(t *testing.T) {
 			t.Parallel()
-			s := telemetrytest.NewHistogramStub(t)
-			histogramStubRelease(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnRelease.CallCount(), 0, "ResetCalls clears the calls of Release")
-		})
-	})
-
-	t.Run("NewHistogramStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) histogramStubInstance {
-			return histogramStubInstanceOf(tb, telemetrytest.NewHistogramStubDelayed(tb, d, clk))
+			stub.ResetBehaviour(t, "Release", histogramStubReleaseSubject)
 		})
 	})
 
@@ -371,67 +319,4 @@ func TestHistogramStub(t *testing.T) {
 	})
 }
 
-// TestHistogramRecordStub checks the methods of HistogramRecordStub, which
-// configures Record.
-func TestHistogramRecordStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Record to the function", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewHistogramStub(t)
-			var got0 context.Context
-			var got1 float64
-			s.OnRecord.Func(func(p0 context.Context, p1 float64) {
-				got0, got1 = p0, p1
-			})
-			histogramStubRecord(t, s)
-			a0, a1 := histogramStubRecordArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives Value")
-		})
-	})
-}
-
-// TestHistogramWithStub checks the methods of HistogramWithStub, which
-// configures With.
-func TestHistogramWithStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("configures With for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := telemetrytest.NewHistogramStub(r)
-			s.OnWith.Strict()
-			var want0 telemetry.Histogram
-			s.OnWith.Returns(want0)
-			_ = histogramStubWith(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of With")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of With to the function", func(t *testing.T) {
-			t.Parallel()
-			s := telemetrytest.NewHistogramStub(t)
-			var got0 []telemetry.Attr
-			s.OnWith.Func(func(p0 []telemetry.Attr) telemetry.Histogram {
-				got0 = p0
-				var z0 telemetry.Histogram
-				return z0
-			})
-			_ = histogramStubWith(t, s)
-			a0 := histogramStubWithArgs(t)
-			assert.Equal(t, got0, a0, "the function receives Attrs")
-		})
-	})
-}
-
-// dokimi:provenance sha256:117988b4eca8e06861a1e028d40479d481b6afcfe9f5ad1fdc478265439847af
+// dokimi:provenance sha256:04a19d1a3d00376ab85452dc1fa22a6b2a041c8b06f7f990edf9362a81a775fa

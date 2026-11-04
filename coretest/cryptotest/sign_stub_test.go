@@ -85,13 +85,15 @@ func verifierStubVerifyPins() bool {
 	return want0
 }
 
-// verifierStubKeyIDSubject returns the subject of [stub.Behaviour] for
-// KeyID. The subject calls a new double that reports to tb.
+// verifierStubKeyIDSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for KeyID. The subject calls a new double that
+// reports to tb.
 func verifierStubKeyIDSubject(tb assert.TB) stub.Subject[cryptotest.VerifierKeyIDCall, cryptotest.VerifierKeyIDReturn] {
 	tb.Helper()
 	s := cryptotest.NewVerifierStub(tb)
 	return stub.Subject[cryptotest.VerifierKeyIDCall, cryptotest.VerifierKeyIDReturn]{
-		Stub: s.OnKeyID.MethodStub,
+		Stub:  s.OnKeyID.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = verifierStubKeyID(tb, s)
 		},
@@ -99,9 +101,14 @@ func verifierStubKeyIDSubject(tb assert.TB) stub.Subject[cryptotest.VerifierKeyI
 			got0 := verifierStubKeyID(tb, s)
 			return cryptotest.VerifierKeyIDReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() cryptotest.VerifierKeyIDReturn {
+			want0 := verifierStubKeyIDPins()
+			s.OnKeyID.Returns(want0)
+			return cryptotest.VerifierKeyIDReturn{Result: want0}
+		},
+		Override: func(seen func(cryptotest.VerifierKeyIDCall)) {
 			s.OnKeyID.Func(func() sign.KeyID {
-				mark()
+				seen(cryptotest.VerifierKeyIDCall{})
 				var z0 sign.KeyID
 				return z0
 			})
@@ -109,15 +116,17 @@ func verifierStubKeyIDSubject(tb assert.TB) stub.Subject[cryptotest.VerifierKeyI
 	}
 }
 
-// verifierStubPublicKeySubject returns the subject of [stub.Behaviour] for
-// PublicKey. The subject calls a new double that reports to tb.
+// verifierStubPublicKeySubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for PublicKey. The subject calls a new double that
+// reports to tb.
 func verifierStubPublicKeySubject(
 	tb assert.TB,
 ) stub.Subject[cryptotest.VerifierPublicKeyCall, cryptotest.VerifierPublicKeyReturn] {
 	tb.Helper()
 	s := cryptotest.NewVerifierStub(tb)
 	return stub.Subject[cryptotest.VerifierPublicKeyCall, cryptotest.VerifierPublicKeyReturn]{
-		Stub: s.OnPublicKey.MethodStub,
+		Stub:  s.OnPublicKey.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = verifierStubPublicKey(tb, s)
 		},
@@ -125,9 +134,14 @@ func verifierStubPublicKeySubject(
 			got0 := verifierStubPublicKey(tb, s)
 			return cryptotest.VerifierPublicKeyReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() cryptotest.VerifierPublicKeyReturn {
+			want0 := verifierStubPublicKeyPins()
+			s.OnPublicKey.Returns(want0)
+			return cryptotest.VerifierPublicKeyReturn{Result: want0}
+		},
+		Override: func(seen func(cryptotest.VerifierPublicKeyCall)) {
 			s.OnPublicKey.Func(func() []byte {
-				mark()
+				seen(cryptotest.VerifierPublicKeyCall{})
 				var z0 []byte
 				return z0
 			})
@@ -135,15 +149,17 @@ func verifierStubPublicKeySubject(
 	}
 }
 
-// verifierStubAlgorithmSubject returns the subject of [stub.Behaviour] for
-// Algorithm. The subject calls a new double that reports to tb.
+// verifierStubAlgorithmSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Algorithm. The subject calls a new double that
+// reports to tb.
 func verifierStubAlgorithmSubject(
 	tb assert.TB,
 ) stub.Subject[cryptotest.VerifierAlgorithmCall, cryptotest.VerifierAlgorithmReturn] {
 	tb.Helper()
 	s := cryptotest.NewVerifierStub(tb)
 	return stub.Subject[cryptotest.VerifierAlgorithmCall, cryptotest.VerifierAlgorithmReturn]{
-		Stub: s.OnAlgorithm.MethodStub,
+		Stub:  s.OnAlgorithm.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = verifierStubAlgorithm(tb, s)
 		},
@@ -151,9 +167,14 @@ func verifierStubAlgorithmSubject(
 			got0 := verifierStubAlgorithm(tb, s)
 			return cryptotest.VerifierAlgorithmReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() cryptotest.VerifierAlgorithmReturn {
+			want0 := verifierStubAlgorithmPins()
+			s.OnAlgorithm.Returns(want0)
+			return cryptotest.VerifierAlgorithmReturn{Result: want0}
+		},
+		Override: func(seen func(cryptotest.VerifierAlgorithmCall)) {
 			s.OnAlgorithm.Func(func() crypto.Algorithm {
-				mark()
+				seen(cryptotest.VerifierAlgorithmCall{})
 				var z0 crypto.Algorithm
 				return z0
 			})
@@ -161,25 +182,38 @@ func verifierStubAlgorithmSubject(
 	}
 }
 
-// verifierStubVerifySubject returns the subject of [stub.Behaviour] for
-// Verify. The subject calls a new double that reports to tb.
+// verifierStubVerifySubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Verify. The subject calls a new double that
+// reports to tb.
 func verifierStubVerifySubject(
 	tb assert.TB,
 ) stub.Subject[cryptotest.VerifierVerifyCall, cryptotest.VerifierVerifyReturn] {
 	tb.Helper()
 	s := cryptotest.NewVerifierStub(tb)
 	return stub.Subject[cryptotest.VerifierVerifyCall, cryptotest.VerifierVerifyReturn]{
-		Stub: s.OnVerify.MethodStub,
+		Stub:  s.OnVerify.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = verifierStubVerify(tb, s)
+		},
+		Arguments: func(tb assert.TB, c cryptotest.VerifierVerifyCall) {
+			tb.Helper()
+			a0, a1 := verifierStubVerifyArgs(tb)
+			expect.Equal(tb, c.Message, a0, "the call records Message")
+			expect.Equal(tb, c.Signature, a1, "the call records Signature")
 		},
 		Result: func() cryptotest.VerifierVerifyReturn {
 			got0 := verifierStubVerify(tb, s)
 			return cryptotest.VerifierVerifyReturn{Result: got0}
 		},
-		Override: func(mark func()) {
-			s.OnVerify.Func(func(_, _ []byte) bool {
-				mark()
+		Returns: func() cryptotest.VerifierVerifyReturn {
+			want0 := verifierStubVerifyPins()
+			s.OnVerify.Returns(want0)
+			return cryptotest.VerifierVerifyReturn{Result: want0}
+		},
+		Override: func(seen func(cryptotest.VerifierVerifyCall)) {
+			s.OnVerify.Func(func(p0, p1 []byte) bool {
+				seen(cryptotest.VerifierVerifyCall{Message: p0, Signature: p1})
 				var z0 bool
 				return z0
 			})
@@ -200,7 +234,6 @@ func verifierStubInstanceOf(tb assert.TB, s *cryptotest.VerifierStub) verifierSt
 		Call: func() {
 			_ = verifierStubKeyID(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -212,156 +245,44 @@ func TestVerifierStub(t *testing.T) {
 	t.Run("KeyID", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "KeyID", verifierStubKeyIDSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewVerifierStub(t)
-			var seen []cryptotest.VerifierKeyIDCall
-			s.OnKeyID.OnRecord(func(c cryptotest.VerifierKeyIDCall) { seen = append(seen, c) })
-			_ = verifierStubKeyID(t, s)
-			_ = verifierStubKeyID(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of KeyID")
-		})
 	})
 
 	t.Run("PublicKey", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "PublicKey", verifierStubPublicKeySubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewVerifierStub(t)
-			var seen []cryptotest.VerifierPublicKeyCall
-			s.OnPublicKey.OnRecord(func(c cryptotest.VerifierPublicKeyCall) { seen = append(seen, c) })
-			_ = verifierStubPublicKey(t, s)
-			_ = verifierStubPublicKey(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of PublicKey")
-		})
 	})
 
 	t.Run("Algorithm", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Algorithm", verifierStubAlgorithmSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewVerifierStub(t)
-			var seen []cryptotest.VerifierAlgorithmCall
-			s.OnAlgorithm.OnRecord(func(c cryptotest.VerifierAlgorithmCall) { seen = append(seen, c) })
-			_ = verifierStubAlgorithm(t, s)
-			_ = verifierStubAlgorithm(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Algorithm")
-		})
 	})
 
 	t.Run("Verify", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Verify", verifierStubVerifySubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewVerifierStub(t)
-			_ = verifierStubVerify(t, s)
-			got := s.OnVerify.AssertCalledOnce(t, "Verify records the call")
-			a0, a1 := verifierStubVerifyArgs(t)
-			expect.Equal(t, got.Message, a0, "the call records Message")
-			expect.Equal(t, got.Signature, a1, "the call records Signature")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewVerifierStub(t)
-			var seen []cryptotest.VerifierVerifyCall
-			s.OnVerify.OnRecord(func(c cryptotest.VerifierVerifyCall) { seen = append(seen, c) })
-			_ = verifierStubVerify(t, s)
-			_ = verifierStubVerify(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Verify")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) verifierStubInstance {
-			return verifierStubInstanceOf(tb, cryptotest.NewVerifierStub(tb))
-		})
 
-		t.Run("clears the recorded calls of KeyID", func(t *testing.T) {
+		t.Run("KeyID", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewVerifierStub(t)
-			_ = verifierStubKeyID(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnKeyID.CallCount(), 0, "ResetCalls clears the calls of KeyID")
+			stub.ResetBehaviour(t, "KeyID", verifierStubKeyIDSubject)
 		})
 
-		t.Run("keeps the results of Returns of KeyID", func(t *testing.T) {
+		t.Run("PublicKey", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewVerifierStub(t)
-			want0 := verifierStubKeyIDPins()
-			s.OnKeyID.Returns(want0)
-			s.ResetCalls()
-			got0 := verifierStubKeyID(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of KeyID")
+			stub.ResetBehaviour(t, "PublicKey", verifierStubPublicKeySubject)
 		})
 
-		t.Run("clears the recorded calls of PublicKey", func(t *testing.T) {
+		t.Run("Algorithm", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewVerifierStub(t)
-			_ = verifierStubPublicKey(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnPublicKey.CallCount(), 0, "ResetCalls clears the calls of PublicKey")
+			stub.ResetBehaviour(t, "Algorithm", verifierStubAlgorithmSubject)
 		})
 
-		t.Run("keeps the results of Returns of PublicKey", func(t *testing.T) {
+		t.Run("Verify", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewVerifierStub(t)
-			want0 := verifierStubPublicKeyPins()
-			s.OnPublicKey.Returns(want0)
-			s.ResetCalls()
-			got0 := verifierStubPublicKey(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of PublicKey")
-		})
-
-		t.Run("clears the recorded calls of Algorithm", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewVerifierStub(t)
-			_ = verifierStubAlgorithm(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnAlgorithm.CallCount(), 0, "ResetCalls clears the calls of Algorithm")
-		})
-
-		t.Run("keeps the results of Returns of Algorithm", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewVerifierStub(t)
-			want0 := verifierStubAlgorithmPins()
-			s.OnAlgorithm.Returns(want0)
-			s.ResetCalls()
-			got0 := verifierStubAlgorithm(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Algorithm")
-		})
-
-		t.Run("clears the recorded calls of Verify", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewVerifierStub(t)
-			_ = verifierStubVerify(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnVerify.CallCount(), 0, "ResetCalls clears the calls of Verify")
-		})
-
-		t.Run("keeps the results of Returns of Verify", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewVerifierStub(t)
-			want0 := verifierStubVerifyPins()
-			s.OnVerify.Returns(want0)
-			s.ResetCalls()
-			got0 := verifierStubVerify(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Verify")
-		})
-	})
-
-	t.Run("NewVerifierStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) verifierStubInstance {
-			return verifierStubInstanceOf(tb, cryptotest.NewVerifierStubDelayed(tb, d, clk))
+			stub.ResetBehaviour(t, "Verify", verifierStubVerifySubject)
 		})
 	})
 
@@ -511,146 +432,6 @@ func TestVerifierStub(t *testing.T) {
 	})
 }
 
-// TestVerifierKeyIDStub checks the methods of VerifierKeyIDStub, which
-// configures KeyID.
-func TestVerifierKeyIDStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of KeyID", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewVerifierStub(t)
-			want0 := verifierStubKeyIDPins()
-			s.OnKeyID.Returns(want0)
-			got0 := verifierStubKeyID(t, s)
-			assert.Equal(t, got0, want0, "KeyID returns the Result that Returns sets")
-		})
-
-		t.Run("configures KeyID for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewVerifierStub(r)
-			s.OnKeyID.Strict()
-			var want0 sign.KeyID
-			s.OnKeyID.Returns(want0)
-			_ = verifierStubKeyID(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of KeyID")
-		})
-	})
-}
-
-// TestVerifierPublicKeyStub checks the methods of VerifierPublicKeyStub,
-// which configures PublicKey.
-func TestVerifierPublicKeyStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of PublicKey", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewVerifierStub(t)
-			want0 := verifierStubPublicKeyPins()
-			s.OnPublicKey.Returns(want0)
-			got0 := verifierStubPublicKey(t, s)
-			assert.Equal(t, got0, want0, "PublicKey returns the Result that Returns sets")
-		})
-
-		t.Run("configures PublicKey for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewVerifierStub(r)
-			s.OnPublicKey.Strict()
-			var want0 []byte
-			s.OnPublicKey.Returns(want0)
-			_ = verifierStubPublicKey(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of PublicKey")
-		})
-	})
-}
-
-// TestVerifierAlgorithmStub checks the methods of VerifierAlgorithmStub,
-// which configures Algorithm.
-func TestVerifierAlgorithmStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Algorithm", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewVerifierStub(t)
-			want0 := verifierStubAlgorithmPins()
-			s.OnAlgorithm.Returns(want0)
-			got0 := verifierStubAlgorithm(t, s)
-			assert.Equal(t, got0, want0, "Algorithm returns the Result that Returns sets")
-		})
-
-		t.Run("configures Algorithm for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewVerifierStub(r)
-			s.OnAlgorithm.Strict()
-			var want0 crypto.Algorithm
-			s.OnAlgorithm.Returns(want0)
-			_ = verifierStubAlgorithm(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Algorithm")
-		})
-	})
-}
-
-// TestVerifierVerifyStub checks the methods of VerifierVerifyStub, which
-// configures Verify.
-func TestVerifierVerifyStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Verify", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewVerifierStub(t)
-			want0 := verifierStubVerifyPins()
-			s.OnVerify.Returns(want0)
-			got0 := verifierStubVerify(t, s)
-			assert.Equal(t, got0, want0, "Verify returns the Result that Returns sets")
-		})
-
-		t.Run("configures Verify for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewVerifierStub(r)
-			s.OnVerify.Strict()
-			var want0 bool
-			s.OnVerify.Returns(want0)
-			_ = verifierStubVerify(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Verify")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Verify to the function", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewVerifierStub(t)
-			var got0 []byte
-			var got1 []byte
-			s.OnVerify.Func(func(p0, p1 []byte) bool {
-				got0, got1 = p0, p1
-				var z0 bool
-				return z0
-			})
-			_ = verifierStubVerify(t, s)
-			a0, a1 := verifierStubVerifyArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Message")
-			expect.Equal(t, got1, a1, "the function receives Signature")
-		})
-	})
-}
-
 // signerStubSignArgs returns the samples of the arguments of Sign.
 func signerStubSignArgs(tb assert.TB) []byte {
 	tb.Helper()
@@ -740,23 +521,35 @@ func signerStubVerifyPins() bool {
 	return want0
 }
 
-// signerStubSignSubject returns the subject of [stub.Behaviour] for Sign.
-// The subject calls a new double that reports to tb.
+// signerStubSignSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Sign. The subject calls a new double that
+// reports to tb.
 func signerStubSignSubject(tb assert.TB) stub.Subject[cryptotest.SignerSignCall, cryptotest.SignerSignReturn] {
 	tb.Helper()
 	s := cryptotest.NewSignerStub(tb)
 	return stub.Subject[cryptotest.SignerSignCall, cryptotest.SignerSignReturn]{
-		Stub: s.OnSign.MethodStub,
+		Stub:  s.OnSign.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = signerStubSign(tb, s)
+		},
+		Arguments: func(tb assert.TB, c cryptotest.SignerSignCall) {
+			tb.Helper()
+			a0 := signerStubSignArgs(tb)
+			assert.Equal(tb, c.Message, a0, "the call records Message")
 		},
 		Result: func() cryptotest.SignerSignReturn {
 			got0, got1 := signerStubSign(tb, s)
 			return cryptotest.SignerSignReturn{Result: got0, Err: got1}
 		},
-		Override: func(mark func()) {
-			s.OnSign.Func(func(_ []byte) ([]byte, error) {
-				mark()
+		Returns: func() cryptotest.SignerSignReturn {
+			want0, want1 := signerStubSignPins()
+			s.OnSign.Returns(want0, want1)
+			return cryptotest.SignerSignReturn{Result: want0, Err: want1}
+		},
+		Override: func(seen func(cryptotest.SignerSignCall)) {
+			s.OnSign.Func(func(p0 []byte) ([]byte, error) {
+				seen(cryptotest.SignerSignCall{Message: p0})
 				var z0 []byte
 				var z1 error
 				return z0, z1
@@ -769,13 +562,15 @@ func signerStubSignSubject(tb assert.TB) stub.Subject[cryptotest.SignerSignCall,
 	}
 }
 
-// signerStubKeyIDSubject returns the subject of [stub.Behaviour] for
-// KeyID. The subject calls a new double that reports to tb.
+// signerStubKeyIDSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for KeyID. The subject calls a new double that
+// reports to tb.
 func signerStubKeyIDSubject(tb assert.TB) stub.Subject[cryptotest.SignerKeyIDCall, cryptotest.SignerKeyIDReturn] {
 	tb.Helper()
 	s := cryptotest.NewSignerStub(tb)
 	return stub.Subject[cryptotest.SignerKeyIDCall, cryptotest.SignerKeyIDReturn]{
-		Stub: s.OnKeyID.MethodStub,
+		Stub:  s.OnKeyID.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = signerStubKeyID(tb, s)
 		},
@@ -783,9 +578,14 @@ func signerStubKeyIDSubject(tb assert.TB) stub.Subject[cryptotest.SignerKeyIDCal
 			got0 := signerStubKeyID(tb, s)
 			return cryptotest.SignerKeyIDReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() cryptotest.SignerKeyIDReturn {
+			want0 := signerStubKeyIDPins()
+			s.OnKeyID.Returns(want0)
+			return cryptotest.SignerKeyIDReturn{Result: want0}
+		},
+		Override: func(seen func(cryptotest.SignerKeyIDCall)) {
 			s.OnKeyID.Func(func() sign.KeyID {
-				mark()
+				seen(cryptotest.SignerKeyIDCall{})
 				var z0 sign.KeyID
 				return z0
 			})
@@ -793,15 +593,17 @@ func signerStubKeyIDSubject(tb assert.TB) stub.Subject[cryptotest.SignerKeyIDCal
 	}
 }
 
-// signerStubPublicKeySubject returns the subject of [stub.Behaviour] for
-// PublicKey. The subject calls a new double that reports to tb.
+// signerStubPublicKeySubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for PublicKey. The subject calls a new double that
+// reports to tb.
 func signerStubPublicKeySubject(
 	tb assert.TB,
 ) stub.Subject[cryptotest.SignerPublicKeyCall, cryptotest.SignerPublicKeyReturn] {
 	tb.Helper()
 	s := cryptotest.NewSignerStub(tb)
 	return stub.Subject[cryptotest.SignerPublicKeyCall, cryptotest.SignerPublicKeyReturn]{
-		Stub: s.OnPublicKey.MethodStub,
+		Stub:  s.OnPublicKey.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = signerStubPublicKey(tb, s)
 		},
@@ -809,9 +611,14 @@ func signerStubPublicKeySubject(
 			got0 := signerStubPublicKey(tb, s)
 			return cryptotest.SignerPublicKeyReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() cryptotest.SignerPublicKeyReturn {
+			want0 := signerStubPublicKeyPins()
+			s.OnPublicKey.Returns(want0)
+			return cryptotest.SignerPublicKeyReturn{Result: want0}
+		},
+		Override: func(seen func(cryptotest.SignerPublicKeyCall)) {
 			s.OnPublicKey.Func(func() []byte {
-				mark()
+				seen(cryptotest.SignerPublicKeyCall{})
 				var z0 []byte
 				return z0
 			})
@@ -819,15 +626,17 @@ func signerStubPublicKeySubject(
 	}
 }
 
-// signerStubAlgorithmSubject returns the subject of [stub.Behaviour] for
-// Algorithm. The subject calls a new double that reports to tb.
+// signerStubAlgorithmSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Algorithm. The subject calls a new double that
+// reports to tb.
 func signerStubAlgorithmSubject(
 	tb assert.TB,
 ) stub.Subject[cryptotest.SignerAlgorithmCall, cryptotest.SignerAlgorithmReturn] {
 	tb.Helper()
 	s := cryptotest.NewSignerStub(tb)
 	return stub.Subject[cryptotest.SignerAlgorithmCall, cryptotest.SignerAlgorithmReturn]{
-		Stub: s.OnAlgorithm.MethodStub,
+		Stub:  s.OnAlgorithm.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = signerStubAlgorithm(tb, s)
 		},
@@ -835,9 +644,14 @@ func signerStubAlgorithmSubject(
 			got0 := signerStubAlgorithm(tb, s)
 			return cryptotest.SignerAlgorithmReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() cryptotest.SignerAlgorithmReturn {
+			want0 := signerStubAlgorithmPins()
+			s.OnAlgorithm.Returns(want0)
+			return cryptotest.SignerAlgorithmReturn{Result: want0}
+		},
+		Override: func(seen func(cryptotest.SignerAlgorithmCall)) {
 			s.OnAlgorithm.Func(func() crypto.Algorithm {
-				mark()
+				seen(cryptotest.SignerAlgorithmCall{})
 				var z0 crypto.Algorithm
 				return z0
 			})
@@ -845,23 +659,36 @@ func signerStubAlgorithmSubject(
 	}
 }
 
-// signerStubVerifySubject returns the subject of [stub.Behaviour] for
-// Verify. The subject calls a new double that reports to tb.
+// signerStubVerifySubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Verify. The subject calls a new double that
+// reports to tb.
 func signerStubVerifySubject(tb assert.TB) stub.Subject[cryptotest.SignerVerifyCall, cryptotest.SignerVerifyReturn] {
 	tb.Helper()
 	s := cryptotest.NewSignerStub(tb)
 	return stub.Subject[cryptotest.SignerVerifyCall, cryptotest.SignerVerifyReturn]{
-		Stub: s.OnVerify.MethodStub,
+		Stub:  s.OnVerify.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = signerStubVerify(tb, s)
+		},
+		Arguments: func(tb assert.TB, c cryptotest.SignerVerifyCall) {
+			tb.Helper()
+			a0, a1 := signerStubVerifyArgs(tb)
+			expect.Equal(tb, c.Message, a0, "the call records Message")
+			expect.Equal(tb, c.Signature, a1, "the call records Signature")
 		},
 		Result: func() cryptotest.SignerVerifyReturn {
 			got0 := signerStubVerify(tb, s)
 			return cryptotest.SignerVerifyReturn{Result: got0}
 		},
-		Override: func(mark func()) {
-			s.OnVerify.Func(func(_, _ []byte) bool {
-				mark()
+		Returns: func() cryptotest.SignerVerifyReturn {
+			want0 := signerStubVerifyPins()
+			s.OnVerify.Returns(want0)
+			return cryptotest.SignerVerifyReturn{Result: want0}
+		},
+		Override: func(seen func(cryptotest.SignerVerifyCall)) {
+			s.OnVerify.Func(func(p0, p1 []byte) bool {
+				seen(cryptotest.SignerVerifyCall{Message: p0, Signature: p1})
 				var z0 bool
 				return z0
 			})
@@ -882,7 +709,6 @@ func signerStubInstanceOf(tb assert.TB, s *cryptotest.SignerStub) signerStubInst
 		Call: func() {
 			_, _ = signerStubSign(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -894,211 +720,54 @@ func TestSignerStub(t *testing.T) {
 	t.Run("Sign", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Sign", signerStubSignSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewSignerStub(t)
-			_, _ = signerStubSign(t, s)
-			got := s.OnSign.AssertCalledOnce(t, "Sign records the call")
-			a0 := signerStubSignArgs(t)
-			assert.Equal(t, got.Message, a0, "the call records Message")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewSignerStub(t)
-			var seen []cryptotest.SignerSignCall
-			s.OnSign.OnRecord(func(c cryptotest.SignerSignCall) { seen = append(seen, c) })
-			_, _ = signerStubSign(t, s)
-			_, _ = signerStubSign(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Sign")
-		})
 	})
 
 	t.Run("KeyID", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "KeyID", signerStubKeyIDSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewSignerStub(t)
-			var seen []cryptotest.SignerKeyIDCall
-			s.OnKeyID.OnRecord(func(c cryptotest.SignerKeyIDCall) { seen = append(seen, c) })
-			_ = signerStubKeyID(t, s)
-			_ = signerStubKeyID(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of KeyID")
-		})
 	})
 
 	t.Run("PublicKey", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "PublicKey", signerStubPublicKeySubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewSignerStub(t)
-			var seen []cryptotest.SignerPublicKeyCall
-			s.OnPublicKey.OnRecord(func(c cryptotest.SignerPublicKeyCall) { seen = append(seen, c) })
-			_ = signerStubPublicKey(t, s)
-			_ = signerStubPublicKey(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of PublicKey")
-		})
 	})
 
 	t.Run("Algorithm", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Algorithm", signerStubAlgorithmSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewSignerStub(t)
-			var seen []cryptotest.SignerAlgorithmCall
-			s.OnAlgorithm.OnRecord(func(c cryptotest.SignerAlgorithmCall) { seen = append(seen, c) })
-			_ = signerStubAlgorithm(t, s)
-			_ = signerStubAlgorithm(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Algorithm")
-		})
 	})
 
 	t.Run("Verify", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Verify", signerStubVerifySubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewSignerStub(t)
-			_ = signerStubVerify(t, s)
-			got := s.OnVerify.AssertCalledOnce(t, "Verify records the call")
-			a0, a1 := signerStubVerifyArgs(t)
-			expect.Equal(t, got.Message, a0, "the call records Message")
-			expect.Equal(t, got.Signature, a1, "the call records Signature")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewSignerStub(t)
-			var seen []cryptotest.SignerVerifyCall
-			s.OnVerify.OnRecord(func(c cryptotest.SignerVerifyCall) { seen = append(seen, c) })
-			_ = signerStubVerify(t, s)
-			_ = signerStubVerify(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Verify")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) signerStubInstance {
-			return signerStubInstanceOf(tb, cryptotest.NewSignerStub(tb))
-		})
 
-		t.Run("clears the recorded calls of Sign", func(t *testing.T) {
+		t.Run("Sign", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewSignerStub(t)
-			_, _ = signerStubSign(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnSign.CallCount(), 0, "ResetCalls clears the calls of Sign")
+			stub.ResetBehaviour(t, "Sign", signerStubSignSubject)
 		})
 
-		t.Run("keeps the results of Returns of Sign", func(t *testing.T) {
+		t.Run("KeyID", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewSignerStub(t)
-			want0, want1 := signerStubSignPins()
-			s.OnSign.Returns(want0, want1)
-			s.ResetCalls()
-			got0, got1 := signerStubSign(t, s)
-			expect.Equal(t, got0, want0, "ResetCalls keeps the Result of Sign")
-			expect.ErrorIs(t, got1, want1, "ResetCalls keeps the error of Sign")
+			stub.ResetBehaviour(t, "KeyID", signerStubKeyIDSubject)
 		})
 
-		t.Run("clears the recorded calls of KeyID", func(t *testing.T) {
+		t.Run("PublicKey", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewSignerStub(t)
-			_ = signerStubKeyID(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnKeyID.CallCount(), 0, "ResetCalls clears the calls of KeyID")
+			stub.ResetBehaviour(t, "PublicKey", signerStubPublicKeySubject)
 		})
 
-		t.Run("keeps the results of Returns of KeyID", func(t *testing.T) {
+		t.Run("Algorithm", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewSignerStub(t)
-			want0 := signerStubKeyIDPins()
-			s.OnKeyID.Returns(want0)
-			s.ResetCalls()
-			got0 := signerStubKeyID(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of KeyID")
+			stub.ResetBehaviour(t, "Algorithm", signerStubAlgorithmSubject)
 		})
 
-		t.Run("clears the recorded calls of PublicKey", func(t *testing.T) {
+		t.Run("Verify", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewSignerStub(t)
-			_ = signerStubPublicKey(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnPublicKey.CallCount(), 0, "ResetCalls clears the calls of PublicKey")
-		})
-
-		t.Run("keeps the results of Returns of PublicKey", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewSignerStub(t)
-			want0 := signerStubPublicKeyPins()
-			s.OnPublicKey.Returns(want0)
-			s.ResetCalls()
-			got0 := signerStubPublicKey(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of PublicKey")
-		})
-
-		t.Run("clears the recorded calls of Algorithm", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewSignerStub(t)
-			_ = signerStubAlgorithm(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnAlgorithm.CallCount(), 0, "ResetCalls clears the calls of Algorithm")
-		})
-
-		t.Run("keeps the results of Returns of Algorithm", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewSignerStub(t)
-			want0 := signerStubAlgorithmPins()
-			s.OnAlgorithm.Returns(want0)
-			s.ResetCalls()
-			got0 := signerStubAlgorithm(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Algorithm")
-		})
-
-		t.Run("clears the recorded calls of Verify", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewSignerStub(t)
-			_ = signerStubVerify(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnVerify.CallCount(), 0, "ResetCalls clears the calls of Verify")
-		})
-
-		t.Run("keeps the results of Returns of Verify", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewSignerStub(t)
-			want0 := signerStubVerifyPins()
-			s.OnVerify.Returns(want0)
-			s.ResetCalls()
-			got0 := signerStubVerify(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Verify")
-		})
-	})
-
-	t.Run("NewSignerStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) signerStubInstance {
-			return signerStubInstanceOf(tb, cryptotest.NewSignerStubDelayed(tb, d, clk))
-		})
-	})
-
-	t.Run("NewSignerStubFailing", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("fails Sign with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Sign-failing")
-			s := cryptotest.NewSignerStubFailing(t, want)
-			_, r1 := signerStubSign(t, s)
-			assert.ErrorIs(t, r1, want, "Sign fails with the error of NewSignerStubFailing")
+			stub.ResetBehaviour(t, "Verify", signerStubVerifySubject)
 		})
 	})
 
@@ -1288,197 +957,6 @@ func TestSignerStub(t *testing.T) {
 	})
 }
 
-// TestSignerSignStub checks the methods of SignerSignStub, which
-// configures Sign.
-func TestSignerSignStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Sign", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewSignerStub(t)
-			want0, want1 := signerStubSignPins()
-			s.OnSign.Returns(want0, want1)
-			got0, got1 := signerStubSign(t, s)
-			expect.Equal(t, got0, want0, "Sign returns the Result that Returns sets")
-			expect.ErrorIs(t, got1, want1, "Sign returns the error that Returns sets")
-		})
-
-		t.Run("configures Sign for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewSignerStub(r)
-			s.OnSign.Strict()
-			var want0 []byte
-			var want1 error
-			s.OnSign.Returns(want0, want1)
-			_, _ = signerStubSign(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Sign")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Sign to the function", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewSignerStub(t)
-			var got0 []byte
-			s.OnSign.Func(func(p0 []byte) ([]byte, error) {
-				got0 = p0
-				var z0 []byte
-				var z1 error
-				return z0, z1
-			})
-			_, _ = signerStubSign(t, s)
-			a0 := signerStubSignArgs(t)
-			assert.Equal(t, got0, a0, "the function receives Message")
-		})
-	})
-}
-
-// TestSignerKeyIDStub checks the methods of SignerKeyIDStub, which
-// configures KeyID.
-func TestSignerKeyIDStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of KeyID", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewSignerStub(t)
-			want0 := signerStubKeyIDPins()
-			s.OnKeyID.Returns(want0)
-			got0 := signerStubKeyID(t, s)
-			assert.Equal(t, got0, want0, "KeyID returns the Result that Returns sets")
-		})
-
-		t.Run("configures KeyID for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewSignerStub(r)
-			s.OnKeyID.Strict()
-			var want0 sign.KeyID
-			s.OnKeyID.Returns(want0)
-			_ = signerStubKeyID(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of KeyID")
-		})
-	})
-}
-
-// TestSignerPublicKeyStub checks the methods of SignerPublicKeyStub, which
-// configures PublicKey.
-func TestSignerPublicKeyStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of PublicKey", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewSignerStub(t)
-			want0 := signerStubPublicKeyPins()
-			s.OnPublicKey.Returns(want0)
-			got0 := signerStubPublicKey(t, s)
-			assert.Equal(t, got0, want0, "PublicKey returns the Result that Returns sets")
-		})
-
-		t.Run("configures PublicKey for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewSignerStub(r)
-			s.OnPublicKey.Strict()
-			var want0 []byte
-			s.OnPublicKey.Returns(want0)
-			_ = signerStubPublicKey(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of PublicKey")
-		})
-	})
-}
-
-// TestSignerAlgorithmStub checks the methods of SignerAlgorithmStub, which
-// configures Algorithm.
-func TestSignerAlgorithmStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Algorithm", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewSignerStub(t)
-			want0 := signerStubAlgorithmPins()
-			s.OnAlgorithm.Returns(want0)
-			got0 := signerStubAlgorithm(t, s)
-			assert.Equal(t, got0, want0, "Algorithm returns the Result that Returns sets")
-		})
-
-		t.Run("configures Algorithm for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewSignerStub(r)
-			s.OnAlgorithm.Strict()
-			var want0 crypto.Algorithm
-			s.OnAlgorithm.Returns(want0)
-			_ = signerStubAlgorithm(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Algorithm")
-		})
-	})
-}
-
-// TestSignerVerifyStub checks the methods of SignerVerifyStub, which
-// configures Verify.
-func TestSignerVerifyStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Verify", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewSignerStub(t)
-			want0 := signerStubVerifyPins()
-			s.OnVerify.Returns(want0)
-			got0 := signerStubVerify(t, s)
-			assert.Equal(t, got0, want0, "Verify returns the Result that Returns sets")
-		})
-
-		t.Run("configures Verify for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewSignerStub(r)
-			s.OnVerify.Strict()
-			var want0 bool
-			s.OnVerify.Returns(want0)
-			_ = signerStubVerify(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Verify")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Verify to the function", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewSignerStub(t)
-			var got0 []byte
-			var got1 []byte
-			s.OnVerify.Func(func(p0, p1 []byte) bool {
-				got0, got1 = p0, p1
-				var z0 bool
-				return z0
-			})
-			_ = signerStubVerify(t, s)
-			a0, a1 := signerStubVerifyArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Message")
-			expect.Equal(t, got1, a1, "the function receives Signature")
-		})
-	})
-}
-
 // streamingSignerStubNewSignStream calls NewSignStream of s with the
 // samples of its arguments.
 func streamingSignerStubNewSignStream(tb assert.TB, s *cryptotest.StreamingSignerStub) sign.SignStream {
@@ -1585,15 +1063,16 @@ func streamingSignerStubVerifyPins() bool {
 }
 
 // streamingSignerStubNewSignStreamSubject returns the subject of
-// [stub.Behaviour] for NewSignStream. The subject calls a new double that
-// reports to tb.
+// [stub.Behaviour] and [stub.ResetBehaviour] for NewSignStream. The
+// subject calls a new double that reports to tb.
 func streamingSignerStubNewSignStreamSubject(
 	tb assert.TB,
 ) stub.Subject[cryptotest.StreamingSignerNewSignStreamCall, cryptotest.StreamingSignerNewSignStreamReturn] {
 	tb.Helper()
 	s := cryptotest.NewStreamingSignerStub(tb)
 	return stub.Subject[cryptotest.StreamingSignerNewSignStreamCall, cryptotest.StreamingSignerNewSignStreamReturn]{
-		Stub: s.OnNewSignStream.MethodStub,
+		Stub:  s.OnNewSignStream.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = streamingSignerStubNewSignStream(tb, s)
 		},
@@ -1601,9 +1080,9 @@ func streamingSignerStubNewSignStreamSubject(
 			got0 := streamingSignerStubNewSignStream(tb, s)
 			return cryptotest.StreamingSignerNewSignStreamReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Override: func(seen func(cryptotest.StreamingSignerNewSignStreamCall)) {
 			s.OnNewSignStream.Func(func() sign.SignStream {
-				mark()
+				seen(cryptotest.StreamingSignerNewSignStreamCall{})
 				var z0 sign.SignStream
 				return z0
 			})
@@ -1612,24 +1091,36 @@ func streamingSignerStubNewSignStreamSubject(
 }
 
 // streamingSignerStubSignSubject returns the subject of [stub.Behaviour]
-// for Sign. The subject calls a new double that reports to tb.
+// and [stub.ResetBehaviour] for Sign. The subject calls a new double that
+// reports to tb.
 func streamingSignerStubSignSubject(
 	tb assert.TB,
 ) stub.Subject[cryptotest.StreamingSignerSignCall, cryptotest.StreamingSignerSignReturn] {
 	tb.Helper()
 	s := cryptotest.NewStreamingSignerStub(tb)
 	return stub.Subject[cryptotest.StreamingSignerSignCall, cryptotest.StreamingSignerSignReturn]{
-		Stub: s.OnSign.MethodStub,
+		Stub:  s.OnSign.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = streamingSignerStubSign(tb, s)
+		},
+		Arguments: func(tb assert.TB, c cryptotest.StreamingSignerSignCall) {
+			tb.Helper()
+			a0 := streamingSignerStubSignArgs(tb)
+			assert.Equal(tb, c.Message, a0, "the call records Message")
 		},
 		Result: func() cryptotest.StreamingSignerSignReturn {
 			got0, got1 := streamingSignerStubSign(tb, s)
 			return cryptotest.StreamingSignerSignReturn{Result: got0, Err: got1}
 		},
-		Override: func(mark func()) {
-			s.OnSign.Func(func(_ []byte) ([]byte, error) {
-				mark()
+		Returns: func() cryptotest.StreamingSignerSignReturn {
+			want0, want1 := streamingSignerStubSignPins()
+			s.OnSign.Returns(want0, want1)
+			return cryptotest.StreamingSignerSignReturn{Result: want0, Err: want1}
+		},
+		Override: func(seen func(cryptotest.StreamingSignerSignCall)) {
+			s.OnSign.Func(func(p0 []byte) ([]byte, error) {
+				seen(cryptotest.StreamingSignerSignCall{Message: p0})
 				var z0 []byte
 				var z1 error
 				return z0, z1
@@ -1643,14 +1134,16 @@ func streamingSignerStubSignSubject(
 }
 
 // streamingSignerStubKeyIDSubject returns the subject of [stub.Behaviour]
-// for KeyID. The subject calls a new double that reports to tb.
+// and [stub.ResetBehaviour] for KeyID. The subject calls a new double that
+// reports to tb.
 func streamingSignerStubKeyIDSubject(
 	tb assert.TB,
 ) stub.Subject[cryptotest.StreamingSignerKeyIDCall, cryptotest.StreamingSignerKeyIDReturn] {
 	tb.Helper()
 	s := cryptotest.NewStreamingSignerStub(tb)
 	return stub.Subject[cryptotest.StreamingSignerKeyIDCall, cryptotest.StreamingSignerKeyIDReturn]{
-		Stub: s.OnKeyID.MethodStub,
+		Stub:  s.OnKeyID.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = streamingSignerStubKeyID(tb, s)
 		},
@@ -1658,9 +1151,14 @@ func streamingSignerStubKeyIDSubject(
 			got0 := streamingSignerStubKeyID(tb, s)
 			return cryptotest.StreamingSignerKeyIDReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() cryptotest.StreamingSignerKeyIDReturn {
+			want0 := streamingSignerStubKeyIDPins()
+			s.OnKeyID.Returns(want0)
+			return cryptotest.StreamingSignerKeyIDReturn{Result: want0}
+		},
+		Override: func(seen func(cryptotest.StreamingSignerKeyIDCall)) {
 			s.OnKeyID.Func(func() sign.KeyID {
-				mark()
+				seen(cryptotest.StreamingSignerKeyIDCall{})
 				var z0 sign.KeyID
 				return z0
 			})
@@ -1669,15 +1167,16 @@ func streamingSignerStubKeyIDSubject(
 }
 
 // streamingSignerStubPublicKeySubject returns the subject of
-// [stub.Behaviour] for PublicKey. The subject calls a new double that
-// reports to tb.
+// [stub.Behaviour] and [stub.ResetBehaviour] for PublicKey. The subject
+// calls a new double that reports to tb.
 func streamingSignerStubPublicKeySubject(
 	tb assert.TB,
 ) stub.Subject[cryptotest.StreamingSignerPublicKeyCall, cryptotest.StreamingSignerPublicKeyReturn] {
 	tb.Helper()
 	s := cryptotest.NewStreamingSignerStub(tb)
 	return stub.Subject[cryptotest.StreamingSignerPublicKeyCall, cryptotest.StreamingSignerPublicKeyReturn]{
-		Stub: s.OnPublicKey.MethodStub,
+		Stub:  s.OnPublicKey.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = streamingSignerStubPublicKey(tb, s)
 		},
@@ -1685,9 +1184,14 @@ func streamingSignerStubPublicKeySubject(
 			got0 := streamingSignerStubPublicKey(tb, s)
 			return cryptotest.StreamingSignerPublicKeyReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() cryptotest.StreamingSignerPublicKeyReturn {
+			want0 := streamingSignerStubPublicKeyPins()
+			s.OnPublicKey.Returns(want0)
+			return cryptotest.StreamingSignerPublicKeyReturn{Result: want0}
+		},
+		Override: func(seen func(cryptotest.StreamingSignerPublicKeyCall)) {
 			s.OnPublicKey.Func(func() []byte {
-				mark()
+				seen(cryptotest.StreamingSignerPublicKeyCall{})
 				var z0 []byte
 				return z0
 			})
@@ -1696,15 +1200,16 @@ func streamingSignerStubPublicKeySubject(
 }
 
 // streamingSignerStubAlgorithmSubject returns the subject of
-// [stub.Behaviour] for Algorithm. The subject calls a new double that
-// reports to tb.
+// [stub.Behaviour] and [stub.ResetBehaviour] for Algorithm. The subject
+// calls a new double that reports to tb.
 func streamingSignerStubAlgorithmSubject(
 	tb assert.TB,
 ) stub.Subject[cryptotest.StreamingSignerAlgorithmCall, cryptotest.StreamingSignerAlgorithmReturn] {
 	tb.Helper()
 	s := cryptotest.NewStreamingSignerStub(tb)
 	return stub.Subject[cryptotest.StreamingSignerAlgorithmCall, cryptotest.StreamingSignerAlgorithmReturn]{
-		Stub: s.OnAlgorithm.MethodStub,
+		Stub:  s.OnAlgorithm.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = streamingSignerStubAlgorithm(tb, s)
 		},
@@ -1712,9 +1217,14 @@ func streamingSignerStubAlgorithmSubject(
 			got0 := streamingSignerStubAlgorithm(tb, s)
 			return cryptotest.StreamingSignerAlgorithmReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() cryptotest.StreamingSignerAlgorithmReturn {
+			want0 := streamingSignerStubAlgorithmPins()
+			s.OnAlgorithm.Returns(want0)
+			return cryptotest.StreamingSignerAlgorithmReturn{Result: want0}
+		},
+		Override: func(seen func(cryptotest.StreamingSignerAlgorithmCall)) {
 			s.OnAlgorithm.Func(func() crypto.Algorithm {
-				mark()
+				seen(cryptotest.StreamingSignerAlgorithmCall{})
 				var z0 crypto.Algorithm
 				return z0
 			})
@@ -1723,24 +1233,37 @@ func streamingSignerStubAlgorithmSubject(
 }
 
 // streamingSignerStubVerifySubject returns the subject of [stub.Behaviour]
-// for Verify. The subject calls a new double that reports to tb.
+// and [stub.ResetBehaviour] for Verify. The subject calls a new double
+// that reports to tb.
 func streamingSignerStubVerifySubject(
 	tb assert.TB,
 ) stub.Subject[cryptotest.StreamingSignerVerifyCall, cryptotest.StreamingSignerVerifyReturn] {
 	tb.Helper()
 	s := cryptotest.NewStreamingSignerStub(tb)
 	return stub.Subject[cryptotest.StreamingSignerVerifyCall, cryptotest.StreamingSignerVerifyReturn]{
-		Stub: s.OnVerify.MethodStub,
+		Stub:  s.OnVerify.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = streamingSignerStubVerify(tb, s)
+		},
+		Arguments: func(tb assert.TB, c cryptotest.StreamingSignerVerifyCall) {
+			tb.Helper()
+			a0, a1 := streamingSignerStubVerifyArgs(tb)
+			expect.Equal(tb, c.Message, a0, "the call records Message")
+			expect.Equal(tb, c.Signature, a1, "the call records Signature")
 		},
 		Result: func() cryptotest.StreamingSignerVerifyReturn {
 			got0 := streamingSignerStubVerify(tb, s)
 			return cryptotest.StreamingSignerVerifyReturn{Result: got0}
 		},
-		Override: func(mark func()) {
-			s.OnVerify.Func(func(_, _ []byte) bool {
-				mark()
+		Returns: func() cryptotest.StreamingSignerVerifyReturn {
+			want0 := streamingSignerStubVerifyPins()
+			s.OnVerify.Returns(want0)
+			return cryptotest.StreamingSignerVerifyReturn{Result: want0}
+		},
+		Override: func(seen func(cryptotest.StreamingSignerVerifyCall)) {
+			s.OnVerify.Func(func(p0, p1 []byte) bool {
+				seen(cryptotest.StreamingSignerVerifyCall{Message: p0, Signature: p1})
 				var z0 bool
 				return z0
 			})
@@ -1762,7 +1285,6 @@ func streamingSignerStubInstanceOf(tb assert.TB, s *cryptotest.StreamingSignerSt
 		Call: func() {
 			_ = streamingSignerStubNewSignStream(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -1774,234 +1296,64 @@ func TestStreamingSignerStub(t *testing.T) {
 	t.Run("NewSignStream", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "NewSignStream", streamingSignerStubNewSignStreamSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewStreamingSignerStub(t)
-			var seen []cryptotest.StreamingSignerNewSignStreamCall
-			s.OnNewSignStream.OnRecord(func(c cryptotest.StreamingSignerNewSignStreamCall) { seen = append(seen, c) })
-			_ = streamingSignerStubNewSignStream(t, s)
-			_ = streamingSignerStubNewSignStream(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of NewSignStream")
-		})
 	})
 
 	t.Run("Sign", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Sign", streamingSignerStubSignSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewStreamingSignerStub(t)
-			_, _ = streamingSignerStubSign(t, s)
-			got := s.OnSign.AssertCalledOnce(t, "Sign records the call")
-			a0 := streamingSignerStubSignArgs(t)
-			assert.Equal(t, got.Message, a0, "the call records Message")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewStreamingSignerStub(t)
-			var seen []cryptotest.StreamingSignerSignCall
-			s.OnSign.OnRecord(func(c cryptotest.StreamingSignerSignCall) { seen = append(seen, c) })
-			_, _ = streamingSignerStubSign(t, s)
-			_, _ = streamingSignerStubSign(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Sign")
-		})
 	})
 
 	t.Run("KeyID", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "KeyID", streamingSignerStubKeyIDSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewStreamingSignerStub(t)
-			var seen []cryptotest.StreamingSignerKeyIDCall
-			s.OnKeyID.OnRecord(func(c cryptotest.StreamingSignerKeyIDCall) { seen = append(seen, c) })
-			_ = streamingSignerStubKeyID(t, s)
-			_ = streamingSignerStubKeyID(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of KeyID")
-		})
 	})
 
 	t.Run("PublicKey", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "PublicKey", streamingSignerStubPublicKeySubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewStreamingSignerStub(t)
-			var seen []cryptotest.StreamingSignerPublicKeyCall
-			s.OnPublicKey.OnRecord(func(c cryptotest.StreamingSignerPublicKeyCall) { seen = append(seen, c) })
-			_ = streamingSignerStubPublicKey(t, s)
-			_ = streamingSignerStubPublicKey(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of PublicKey")
-		})
 	})
 
 	t.Run("Algorithm", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Algorithm", streamingSignerStubAlgorithmSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewStreamingSignerStub(t)
-			var seen []cryptotest.StreamingSignerAlgorithmCall
-			s.OnAlgorithm.OnRecord(func(c cryptotest.StreamingSignerAlgorithmCall) { seen = append(seen, c) })
-			_ = streamingSignerStubAlgorithm(t, s)
-			_ = streamingSignerStubAlgorithm(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Algorithm")
-		})
 	})
 
 	t.Run("Verify", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Verify", streamingSignerStubVerifySubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewStreamingSignerStub(t)
-			_ = streamingSignerStubVerify(t, s)
-			got := s.OnVerify.AssertCalledOnce(t, "Verify records the call")
-			a0, a1 := streamingSignerStubVerifyArgs(t)
-			expect.Equal(t, got.Message, a0, "the call records Message")
-			expect.Equal(t, got.Signature, a1, "the call records Signature")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewStreamingSignerStub(t)
-			var seen []cryptotest.StreamingSignerVerifyCall
-			s.OnVerify.OnRecord(func(c cryptotest.StreamingSignerVerifyCall) { seen = append(seen, c) })
-			_ = streamingSignerStubVerify(t, s)
-			_ = streamingSignerStubVerify(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Verify")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) streamingSignerStubInstance {
-			return streamingSignerStubInstanceOf(tb, cryptotest.NewStreamingSignerStub(tb))
-		})
 
-		t.Run("clears the recorded calls of NewSignStream", func(t *testing.T) {
+		t.Run("NewSignStream", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewStreamingSignerStub(t)
-			_ = streamingSignerStubNewSignStream(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnNewSignStream.CallCount(), 0, "ResetCalls clears the calls of NewSignStream")
+			stub.ResetBehaviour(t, "NewSignStream", streamingSignerStubNewSignStreamSubject)
 		})
 
-		t.Run("clears the recorded calls of Sign", func(t *testing.T) {
+		t.Run("Sign", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewStreamingSignerStub(t)
-			_, _ = streamingSignerStubSign(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnSign.CallCount(), 0, "ResetCalls clears the calls of Sign")
+			stub.ResetBehaviour(t, "Sign", streamingSignerStubSignSubject)
 		})
 
-		t.Run("keeps the results of Returns of Sign", func(t *testing.T) {
+		t.Run("KeyID", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewStreamingSignerStub(t)
-			want0, want1 := streamingSignerStubSignPins()
-			s.OnSign.Returns(want0, want1)
-			s.ResetCalls()
-			got0, got1 := streamingSignerStubSign(t, s)
-			expect.Equal(t, got0, want0, "ResetCalls keeps the Result of Sign")
-			expect.ErrorIs(t, got1, want1, "ResetCalls keeps the error of Sign")
+			stub.ResetBehaviour(t, "KeyID", streamingSignerStubKeyIDSubject)
 		})
 
-		t.Run("clears the recorded calls of KeyID", func(t *testing.T) {
+		t.Run("PublicKey", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewStreamingSignerStub(t)
-			_ = streamingSignerStubKeyID(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnKeyID.CallCount(), 0, "ResetCalls clears the calls of KeyID")
+			stub.ResetBehaviour(t, "PublicKey", streamingSignerStubPublicKeySubject)
 		})
 
-		t.Run("keeps the results of Returns of KeyID", func(t *testing.T) {
+		t.Run("Algorithm", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewStreamingSignerStub(t)
-			want0 := streamingSignerStubKeyIDPins()
-			s.OnKeyID.Returns(want0)
-			s.ResetCalls()
-			got0 := streamingSignerStubKeyID(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of KeyID")
+			stub.ResetBehaviour(t, "Algorithm", streamingSignerStubAlgorithmSubject)
 		})
 
-		t.Run("clears the recorded calls of PublicKey", func(t *testing.T) {
+		t.Run("Verify", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewStreamingSignerStub(t)
-			_ = streamingSignerStubPublicKey(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnPublicKey.CallCount(), 0, "ResetCalls clears the calls of PublicKey")
-		})
-
-		t.Run("keeps the results of Returns of PublicKey", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewStreamingSignerStub(t)
-			want0 := streamingSignerStubPublicKeyPins()
-			s.OnPublicKey.Returns(want0)
-			s.ResetCalls()
-			got0 := streamingSignerStubPublicKey(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of PublicKey")
-		})
-
-		t.Run("clears the recorded calls of Algorithm", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewStreamingSignerStub(t)
-			_ = streamingSignerStubAlgorithm(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnAlgorithm.CallCount(), 0, "ResetCalls clears the calls of Algorithm")
-		})
-
-		t.Run("keeps the results of Returns of Algorithm", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewStreamingSignerStub(t)
-			want0 := streamingSignerStubAlgorithmPins()
-			s.OnAlgorithm.Returns(want0)
-			s.ResetCalls()
-			got0 := streamingSignerStubAlgorithm(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Algorithm")
-		})
-
-		t.Run("clears the recorded calls of Verify", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewStreamingSignerStub(t)
-			_ = streamingSignerStubVerify(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnVerify.CallCount(), 0, "ResetCalls clears the calls of Verify")
-		})
-
-		t.Run("keeps the results of Returns of Verify", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewStreamingSignerStub(t)
-			want0 := streamingSignerStubVerifyPins()
-			s.OnVerify.Returns(want0)
-			s.ResetCalls()
-			got0 := streamingSignerStubVerify(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Verify")
-		})
-	})
-
-	t.Run("NewStreamingSignerStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) streamingSignerStubInstance {
-			return streamingSignerStubInstanceOf(tb, cryptotest.NewStreamingSignerStubDelayed(tb, d, clk))
-		})
-	})
-
-	t.Run("NewStreamingSignerStubFailing", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("fails Sign with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Sign-failing")
-			s := cryptotest.NewStreamingSignerStubFailing(t, want)
-			_, r1 := streamingSignerStubSign(t, s)
-			assert.ErrorIs(t, r1, want, "Sign fails with the error of NewStreamingSignerStubFailing")
+			stub.ResetBehaviour(t, "Verify", streamingSignerStubVerifySubject)
 		})
 	})
 
@@ -2237,218 +1589,6 @@ func TestStreamingSignerStub(t *testing.T) {
 	})
 }
 
-// TestStreamingSignerNewSignStreamStub checks the methods of
-// StreamingSignerNewSignStreamStub, which configures NewSignStream.
-func TestStreamingSignerNewSignStreamStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("configures NewSignStream for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewStreamingSignerStub(r)
-			s.OnNewSignStream.Strict()
-			var want0 sign.SignStream
-			s.OnNewSignStream.Returns(want0)
-			_ = streamingSignerStubNewSignStream(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of NewSignStream")
-		})
-	})
-}
-
-// TestStreamingSignerSignStub checks the methods of
-// StreamingSignerSignStub, which configures Sign.
-func TestStreamingSignerSignStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Sign", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewStreamingSignerStub(t)
-			want0, want1 := streamingSignerStubSignPins()
-			s.OnSign.Returns(want0, want1)
-			got0, got1 := streamingSignerStubSign(t, s)
-			expect.Equal(t, got0, want0, "Sign returns the Result that Returns sets")
-			expect.ErrorIs(t, got1, want1, "Sign returns the error that Returns sets")
-		})
-
-		t.Run("configures Sign for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewStreamingSignerStub(r)
-			s.OnSign.Strict()
-			var want0 []byte
-			var want1 error
-			s.OnSign.Returns(want0, want1)
-			_, _ = streamingSignerStubSign(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Sign")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Sign to the function", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewStreamingSignerStub(t)
-			var got0 []byte
-			s.OnSign.Func(func(p0 []byte) ([]byte, error) {
-				got0 = p0
-				var z0 []byte
-				var z1 error
-				return z0, z1
-			})
-			_, _ = streamingSignerStubSign(t, s)
-			a0 := streamingSignerStubSignArgs(t)
-			assert.Equal(t, got0, a0, "the function receives Message")
-		})
-	})
-}
-
-// TestStreamingSignerKeyIDStub checks the methods of
-// StreamingSignerKeyIDStub, which configures KeyID.
-func TestStreamingSignerKeyIDStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of KeyID", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewStreamingSignerStub(t)
-			want0 := streamingSignerStubKeyIDPins()
-			s.OnKeyID.Returns(want0)
-			got0 := streamingSignerStubKeyID(t, s)
-			assert.Equal(t, got0, want0, "KeyID returns the Result that Returns sets")
-		})
-
-		t.Run("configures KeyID for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewStreamingSignerStub(r)
-			s.OnKeyID.Strict()
-			var want0 sign.KeyID
-			s.OnKeyID.Returns(want0)
-			_ = streamingSignerStubKeyID(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of KeyID")
-		})
-	})
-}
-
-// TestStreamingSignerPublicKeyStub checks the methods of
-// StreamingSignerPublicKeyStub, which configures PublicKey.
-func TestStreamingSignerPublicKeyStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of PublicKey", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewStreamingSignerStub(t)
-			want0 := streamingSignerStubPublicKeyPins()
-			s.OnPublicKey.Returns(want0)
-			got0 := streamingSignerStubPublicKey(t, s)
-			assert.Equal(t, got0, want0, "PublicKey returns the Result that Returns sets")
-		})
-
-		t.Run("configures PublicKey for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewStreamingSignerStub(r)
-			s.OnPublicKey.Strict()
-			var want0 []byte
-			s.OnPublicKey.Returns(want0)
-			_ = streamingSignerStubPublicKey(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of PublicKey")
-		})
-	})
-}
-
-// TestStreamingSignerAlgorithmStub checks the methods of
-// StreamingSignerAlgorithmStub, which configures Algorithm.
-func TestStreamingSignerAlgorithmStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Algorithm", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewStreamingSignerStub(t)
-			want0 := streamingSignerStubAlgorithmPins()
-			s.OnAlgorithm.Returns(want0)
-			got0 := streamingSignerStubAlgorithm(t, s)
-			assert.Equal(t, got0, want0, "Algorithm returns the Result that Returns sets")
-		})
-
-		t.Run("configures Algorithm for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewStreamingSignerStub(r)
-			s.OnAlgorithm.Strict()
-			var want0 crypto.Algorithm
-			s.OnAlgorithm.Returns(want0)
-			_ = streamingSignerStubAlgorithm(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Algorithm")
-		})
-	})
-}
-
-// TestStreamingSignerVerifyStub checks the methods of
-// StreamingSignerVerifyStub, which configures Verify.
-func TestStreamingSignerVerifyStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Verify", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewStreamingSignerStub(t)
-			want0 := streamingSignerStubVerifyPins()
-			s.OnVerify.Returns(want0)
-			got0 := streamingSignerStubVerify(t, s)
-			assert.Equal(t, got0, want0, "Verify returns the Result that Returns sets")
-		})
-
-		t.Run("configures Verify for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewStreamingSignerStub(r)
-			s.OnVerify.Strict()
-			var want0 bool
-			s.OnVerify.Returns(want0)
-			_ = streamingSignerStubVerify(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Verify")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Verify to the function", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewStreamingSignerStub(t)
-			var got0 []byte
-			var got1 []byte
-			s.OnVerify.Func(func(p0, p1 []byte) bool {
-				got0, got1 = p0, p1
-				var z0 bool
-				return z0
-			})
-			_ = streamingSignerStubVerify(t, s)
-			a0, a1 := streamingSignerStubVerifyArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Message")
-			expect.Equal(t, got1, a1, "the function receives Signature")
-		})
-	})
-}
-
 // signStreamStubSignAndReset calls SignAndReset of s with the samples of
 // its arguments.
 func signStreamStubSignAndReset(tb assert.TB, s *cryptotest.SignStreamStub) ([]byte, error) {
@@ -2490,15 +1630,16 @@ func signStreamStubWritePins() (int, error) {
 }
 
 // signStreamStubSignAndResetSubject returns the subject of
-// [stub.Behaviour] for SignAndReset. The subject calls a new double that
-// reports to tb.
+// [stub.Behaviour] and [stub.ResetBehaviour] for SignAndReset. The subject
+// calls a new double that reports to tb.
 func signStreamStubSignAndResetSubject(
 	tb assert.TB,
 ) stub.Subject[cryptotest.SignStreamSignAndResetCall, cryptotest.SignStreamSignAndResetReturn] {
 	tb.Helper()
 	s := cryptotest.NewSignStreamStub(tb)
 	return stub.Subject[cryptotest.SignStreamSignAndResetCall, cryptotest.SignStreamSignAndResetReturn]{
-		Stub: s.OnSignAndReset.MethodStub,
+		Stub:  s.OnSignAndReset.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = signStreamStubSignAndReset(tb, s)
 		},
@@ -2506,9 +1647,14 @@ func signStreamStubSignAndResetSubject(
 			got0, got1 := signStreamStubSignAndReset(tb, s)
 			return cryptotest.SignStreamSignAndResetReturn{Result: got0, Err: got1}
 		},
-		Override: func(mark func()) {
+		Returns: func() cryptotest.SignStreamSignAndResetReturn {
+			want0, want1 := signStreamStubSignAndResetPins()
+			s.OnSignAndReset.Returns(want0, want1)
+			return cryptotest.SignStreamSignAndResetReturn{Result: want0, Err: want1}
+		},
+		Override: func(seen func(cryptotest.SignStreamSignAndResetCall)) {
 			s.OnSignAndReset.Func(func() ([]byte, error) {
-				mark()
+				seen(cryptotest.SignStreamSignAndResetCall{})
 				var z0 []byte
 				var z1 error
 				return z0, z1
@@ -2521,25 +1667,37 @@ func signStreamStubSignAndResetSubject(
 	}
 }
 
-// signStreamStubWriteSubject returns the subject of [stub.Behaviour] for
-// Write. The subject calls a new double that reports to tb.
+// signStreamStubWriteSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Write. The subject calls a new double that
+// reports to tb.
 func signStreamStubWriteSubject(
 	tb assert.TB,
 ) stub.Subject[cryptotest.SignStreamWriteCall, cryptotest.SignStreamWriteReturn] {
 	tb.Helper()
 	s := cryptotest.NewSignStreamStub(tb)
 	return stub.Subject[cryptotest.SignStreamWriteCall, cryptotest.SignStreamWriteReturn]{
-		Stub: s.OnWrite.MethodStub,
+		Stub:  s.OnWrite.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = signStreamStubWrite(tb, s)
+		},
+		Arguments: func(tb assert.TB, c cryptotest.SignStreamWriteCall) {
+			tb.Helper()
+			a0 := signStreamStubWriteArgs(tb)
+			assert.Equal(tb, c.P, a0, "the call records P")
 		},
 		Result: func() cryptotest.SignStreamWriteReturn {
 			got0, got1 := signStreamStubWrite(tb, s)
 			return cryptotest.SignStreamWriteReturn{N: got0, Err: got1}
 		},
-		Override: func(mark func()) {
-			s.OnWrite.Func(func(_ []byte) (int, error) {
-				mark()
+		Returns: func() cryptotest.SignStreamWriteReturn {
+			want0, want1 := signStreamStubWritePins()
+			s.OnWrite.Returns(want0, want1)
+			return cryptotest.SignStreamWriteReturn{N: want0, Err: want1}
+		},
+		Override: func(seen func(cryptotest.SignStreamWriteCall)) {
+			s.OnWrite.Func(func(p0 []byte) (int, error) {
+				seen(cryptotest.SignStreamWriteCall{P: p0})
 				var z0 int
 				var z1 error
 				return z0, z1
@@ -2565,7 +1723,6 @@ func signStreamStubInstanceOf(tb assert.TB, s *cryptotest.SignStreamStub) signSt
 		Call: func() {
 			_, _ = signStreamStubSignAndReset(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -2577,111 +1734,24 @@ func TestSignStreamStub(t *testing.T) {
 	t.Run("SignAndReset", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "SignAndReset", signStreamStubSignAndResetSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewSignStreamStub(t)
-			var seen []cryptotest.SignStreamSignAndResetCall
-			s.OnSignAndReset.OnRecord(func(c cryptotest.SignStreamSignAndResetCall) { seen = append(seen, c) })
-			_, _ = signStreamStubSignAndReset(t, s)
-			_, _ = signStreamStubSignAndReset(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of SignAndReset")
-		})
 	})
 
 	t.Run("Write", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Write", signStreamStubWriteSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewSignStreamStub(t)
-			_, _ = signStreamStubWrite(t, s)
-			got := s.OnWrite.AssertCalledOnce(t, "Write records the call")
-			a0 := signStreamStubWriteArgs(t)
-			assert.Equal(t, got.P, a0, "the call records P")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewSignStreamStub(t)
-			var seen []cryptotest.SignStreamWriteCall
-			s.OnWrite.OnRecord(func(c cryptotest.SignStreamWriteCall) { seen = append(seen, c) })
-			_, _ = signStreamStubWrite(t, s)
-			_, _ = signStreamStubWrite(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Write")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) signStreamStubInstance {
-			return signStreamStubInstanceOf(tb, cryptotest.NewSignStreamStub(tb))
-		})
 
-		t.Run("clears the recorded calls of SignAndReset", func(t *testing.T) {
+		t.Run("SignAndReset", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewSignStreamStub(t)
-			_, _ = signStreamStubSignAndReset(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnSignAndReset.CallCount(), 0, "ResetCalls clears the calls of SignAndReset")
+			stub.ResetBehaviour(t, "SignAndReset", signStreamStubSignAndResetSubject)
 		})
 
-		t.Run("keeps the results of Returns of SignAndReset", func(t *testing.T) {
+		t.Run("Write", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewSignStreamStub(t)
-			want0, want1 := signStreamStubSignAndResetPins()
-			s.OnSignAndReset.Returns(want0, want1)
-			s.ResetCalls()
-			got0, got1 := signStreamStubSignAndReset(t, s)
-			expect.Equal(t, got0, want0, "ResetCalls keeps the Result of SignAndReset")
-			expect.ErrorIs(t, got1, want1, "ResetCalls keeps the error of SignAndReset")
-		})
-
-		t.Run("clears the recorded calls of Write", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewSignStreamStub(t)
-			_, _ = signStreamStubWrite(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnWrite.CallCount(), 0, "ResetCalls clears the calls of Write")
-		})
-
-		t.Run("keeps the results of Returns of Write", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewSignStreamStub(t)
-			want0, want1 := signStreamStubWritePins()
-			s.OnWrite.Returns(want0, want1)
-			s.ResetCalls()
-			got0, got1 := signStreamStubWrite(t, s)
-			expect.Equal(t, got0, want0, "ResetCalls keeps the N of Write")
-			expect.ErrorIs(t, got1, want1, "ResetCalls keeps the error of Write")
-		})
-	})
-
-	t.Run("NewSignStreamStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) signStreamStubInstance {
-			return signStreamStubInstanceOf(tb, cryptotest.NewSignStreamStubDelayed(tb, d, clk))
-		})
-	})
-
-	t.Run("NewSignStreamStubFailing", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("fails SignAndReset with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("SignAndReset-failing")
-			s := cryptotest.NewSignStreamStubFailing(t, want)
-			_, r1 := signStreamStubSignAndReset(t, s)
-			assert.ErrorIs(t, r1, want, "SignAndReset fails with the error of NewSignStreamStubFailing")
-		})
-
-		t.Run("fails Write with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Write-failing")
-			s := cryptotest.NewSignStreamStubFailing(t, want)
-			_, err := signStreamStubWrite(t, s)
-			assert.ErrorIs(t, err, want, "Write fails with the error of NewSignStreamStubFailing")
+			stub.ResetBehaviour(t, "Write", signStreamStubWriteSubject)
 		})
 	})
 
@@ -2828,89 +1898,6 @@ func TestSignStreamStub(t *testing.T) {
 	})
 }
 
-// TestSignStreamSignAndResetStub checks the methods of
-// SignStreamSignAndResetStub, which configures SignAndReset.
-func TestSignStreamSignAndResetStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of SignAndReset", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewSignStreamStub(t)
-			want0, want1 := signStreamStubSignAndResetPins()
-			s.OnSignAndReset.Returns(want0, want1)
-			got0, got1 := signStreamStubSignAndReset(t, s)
-			expect.Equal(t, got0, want0, "SignAndReset returns the Result that Returns sets")
-			expect.ErrorIs(t, got1, want1, "SignAndReset returns the error that Returns sets")
-		})
-
-		t.Run("configures SignAndReset for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewSignStreamStub(r)
-			s.OnSignAndReset.Strict()
-			var want0 []byte
-			var want1 error
-			s.OnSignAndReset.Returns(want0, want1)
-			_, _ = signStreamStubSignAndReset(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of SignAndReset")
-		})
-	})
-}
-
-// TestSignStreamWriteStub checks the methods of SignStreamWriteStub, which
-// configures Write.
-func TestSignStreamWriteStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Write", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewSignStreamStub(t)
-			want0, want1 := signStreamStubWritePins()
-			s.OnWrite.Returns(want0, want1)
-			got0, got1 := signStreamStubWrite(t, s)
-			expect.Equal(t, got0, want0, "Write returns the N that Returns sets")
-			expect.ErrorIs(t, got1, want1, "Write returns the error that Returns sets")
-		})
-
-		t.Run("configures Write for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewSignStreamStub(r)
-			s.OnWrite.Strict()
-			var want0 int
-			var want1 error
-			s.OnWrite.Returns(want0, want1)
-			_, _ = signStreamStubWrite(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Write")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Write to the function", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewSignStreamStub(t)
-			var got0 []byte
-			s.OnWrite.Func(func(p0 []byte) (int, error) {
-				got0 = p0
-				var z0 int
-				var z1 error
-				return z0, z1
-			})
-			_, _ = signStreamStubWrite(t, s)
-			a0 := signStreamStubWriteArgs(t)
-			assert.Equal(t, got0, a0, "the function receives P")
-		})
-	})
-}
-
 // streamingVerifierStubNewVerifyStream calls NewVerifyStream of s with the
 // samples of its arguments.
 func streamingVerifierStubNewVerifyStream(tb assert.TB, s *cryptotest.StreamingVerifierStub) sign.VerifyStream {
@@ -2991,15 +1978,16 @@ func streamingVerifierStubVerifyPins() bool {
 }
 
 // streamingVerifierStubNewVerifyStreamSubject returns the subject of
-// [stub.Behaviour] for NewVerifyStream. The subject calls a new double
-// that reports to tb.
+// [stub.Behaviour] and [stub.ResetBehaviour] for NewVerifyStream. The
+// subject calls a new double that reports to tb.
 func streamingVerifierStubNewVerifyStreamSubject(
 	tb assert.TB,
 ) stub.Subject[cryptotest.StreamingVerifierNewVerifyStreamCall, cryptotest.StreamingVerifierNewVerifyStreamReturn] {
 	tb.Helper()
 	s := cryptotest.NewStreamingVerifierStub(tb)
 	return stub.Subject[cryptotest.StreamingVerifierNewVerifyStreamCall, cryptotest.StreamingVerifierNewVerifyStreamReturn]{
-		Stub: s.OnNewVerifyStream.MethodStub,
+		Stub:  s.OnNewVerifyStream.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = streamingVerifierStubNewVerifyStream(tb, s)
 		},
@@ -3007,9 +1995,9 @@ func streamingVerifierStubNewVerifyStreamSubject(
 			got0 := streamingVerifierStubNewVerifyStream(tb, s)
 			return cryptotest.StreamingVerifierNewVerifyStreamReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Override: func(seen func(cryptotest.StreamingVerifierNewVerifyStreamCall)) {
 			s.OnNewVerifyStream.Func(func() sign.VerifyStream {
-				mark()
+				seen(cryptotest.StreamingVerifierNewVerifyStreamCall{})
 				var z0 sign.VerifyStream
 				return z0
 			})
@@ -3018,15 +2006,16 @@ func streamingVerifierStubNewVerifyStreamSubject(
 }
 
 // streamingVerifierStubKeyIDSubject returns the subject of
-// [stub.Behaviour] for KeyID. The subject calls a new double that reports
-// to tb.
+// [stub.Behaviour] and [stub.ResetBehaviour] for KeyID. The subject calls
+// a new double that reports to tb.
 func streamingVerifierStubKeyIDSubject(
 	tb assert.TB,
 ) stub.Subject[cryptotest.StreamingVerifierKeyIDCall, cryptotest.StreamingVerifierKeyIDReturn] {
 	tb.Helper()
 	s := cryptotest.NewStreamingVerifierStub(tb)
 	return stub.Subject[cryptotest.StreamingVerifierKeyIDCall, cryptotest.StreamingVerifierKeyIDReturn]{
-		Stub: s.OnKeyID.MethodStub,
+		Stub:  s.OnKeyID.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = streamingVerifierStubKeyID(tb, s)
 		},
@@ -3034,9 +2023,14 @@ func streamingVerifierStubKeyIDSubject(
 			got0 := streamingVerifierStubKeyID(tb, s)
 			return cryptotest.StreamingVerifierKeyIDReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() cryptotest.StreamingVerifierKeyIDReturn {
+			want0 := streamingVerifierStubKeyIDPins()
+			s.OnKeyID.Returns(want0)
+			return cryptotest.StreamingVerifierKeyIDReturn{Result: want0}
+		},
+		Override: func(seen func(cryptotest.StreamingVerifierKeyIDCall)) {
 			s.OnKeyID.Func(func() sign.KeyID {
-				mark()
+				seen(cryptotest.StreamingVerifierKeyIDCall{})
 				var z0 sign.KeyID
 				return z0
 			})
@@ -3045,15 +2039,16 @@ func streamingVerifierStubKeyIDSubject(
 }
 
 // streamingVerifierStubPublicKeySubject returns the subject of
-// [stub.Behaviour] for PublicKey. The subject calls a new double that
-// reports to tb.
+// [stub.Behaviour] and [stub.ResetBehaviour] for PublicKey. The subject
+// calls a new double that reports to tb.
 func streamingVerifierStubPublicKeySubject(
 	tb assert.TB,
 ) stub.Subject[cryptotest.StreamingVerifierPublicKeyCall, cryptotest.StreamingVerifierPublicKeyReturn] {
 	tb.Helper()
 	s := cryptotest.NewStreamingVerifierStub(tb)
 	return stub.Subject[cryptotest.StreamingVerifierPublicKeyCall, cryptotest.StreamingVerifierPublicKeyReturn]{
-		Stub: s.OnPublicKey.MethodStub,
+		Stub:  s.OnPublicKey.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = streamingVerifierStubPublicKey(tb, s)
 		},
@@ -3061,9 +2056,14 @@ func streamingVerifierStubPublicKeySubject(
 			got0 := streamingVerifierStubPublicKey(tb, s)
 			return cryptotest.StreamingVerifierPublicKeyReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() cryptotest.StreamingVerifierPublicKeyReturn {
+			want0 := streamingVerifierStubPublicKeyPins()
+			s.OnPublicKey.Returns(want0)
+			return cryptotest.StreamingVerifierPublicKeyReturn{Result: want0}
+		},
+		Override: func(seen func(cryptotest.StreamingVerifierPublicKeyCall)) {
 			s.OnPublicKey.Func(func() []byte {
-				mark()
+				seen(cryptotest.StreamingVerifierPublicKeyCall{})
 				var z0 []byte
 				return z0
 			})
@@ -3072,15 +2072,16 @@ func streamingVerifierStubPublicKeySubject(
 }
 
 // streamingVerifierStubAlgorithmSubject returns the subject of
-// [stub.Behaviour] for Algorithm. The subject calls a new double that
-// reports to tb.
+// [stub.Behaviour] and [stub.ResetBehaviour] for Algorithm. The subject
+// calls a new double that reports to tb.
 func streamingVerifierStubAlgorithmSubject(
 	tb assert.TB,
 ) stub.Subject[cryptotest.StreamingVerifierAlgorithmCall, cryptotest.StreamingVerifierAlgorithmReturn] {
 	tb.Helper()
 	s := cryptotest.NewStreamingVerifierStub(tb)
 	return stub.Subject[cryptotest.StreamingVerifierAlgorithmCall, cryptotest.StreamingVerifierAlgorithmReturn]{
-		Stub: s.OnAlgorithm.MethodStub,
+		Stub:  s.OnAlgorithm.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = streamingVerifierStubAlgorithm(tb, s)
 		},
@@ -3088,9 +2089,14 @@ func streamingVerifierStubAlgorithmSubject(
 			got0 := streamingVerifierStubAlgorithm(tb, s)
 			return cryptotest.StreamingVerifierAlgorithmReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() cryptotest.StreamingVerifierAlgorithmReturn {
+			want0 := streamingVerifierStubAlgorithmPins()
+			s.OnAlgorithm.Returns(want0)
+			return cryptotest.StreamingVerifierAlgorithmReturn{Result: want0}
+		},
+		Override: func(seen func(cryptotest.StreamingVerifierAlgorithmCall)) {
 			s.OnAlgorithm.Func(func() crypto.Algorithm {
-				mark()
+				seen(cryptotest.StreamingVerifierAlgorithmCall{})
 				var z0 crypto.Algorithm
 				return z0
 			})
@@ -3099,25 +2105,37 @@ func streamingVerifierStubAlgorithmSubject(
 }
 
 // streamingVerifierStubVerifySubject returns the subject of
-// [stub.Behaviour] for Verify. The subject calls a new double that reports
-// to tb.
+// [stub.Behaviour] and [stub.ResetBehaviour] for Verify. The subject calls
+// a new double that reports to tb.
 func streamingVerifierStubVerifySubject(
 	tb assert.TB,
 ) stub.Subject[cryptotest.StreamingVerifierVerifyCall, cryptotest.StreamingVerifierVerifyReturn] {
 	tb.Helper()
 	s := cryptotest.NewStreamingVerifierStub(tb)
 	return stub.Subject[cryptotest.StreamingVerifierVerifyCall, cryptotest.StreamingVerifierVerifyReturn]{
-		Stub: s.OnVerify.MethodStub,
+		Stub:  s.OnVerify.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = streamingVerifierStubVerify(tb, s)
+		},
+		Arguments: func(tb assert.TB, c cryptotest.StreamingVerifierVerifyCall) {
+			tb.Helper()
+			a0, a1 := streamingVerifierStubVerifyArgs(tb)
+			expect.Equal(tb, c.Message, a0, "the call records Message")
+			expect.Equal(tb, c.Signature, a1, "the call records Signature")
 		},
 		Result: func() cryptotest.StreamingVerifierVerifyReturn {
 			got0 := streamingVerifierStubVerify(tb, s)
 			return cryptotest.StreamingVerifierVerifyReturn{Result: got0}
 		},
-		Override: func(mark func()) {
-			s.OnVerify.Func(func(_, _ []byte) bool {
-				mark()
+		Returns: func() cryptotest.StreamingVerifierVerifyReturn {
+			want0 := streamingVerifierStubVerifyPins()
+			s.OnVerify.Returns(want0)
+			return cryptotest.StreamingVerifierVerifyReturn{Result: want0}
+		},
+		Override: func(seen func(cryptotest.StreamingVerifierVerifyCall)) {
+			s.OnVerify.Func(func(p0, p1 []byte) bool {
+				seen(cryptotest.StreamingVerifierVerifyCall{Message: p0, Signature: p1})
 				var z0 bool
 				return z0
 			})
@@ -3139,7 +2157,6 @@ func streamingVerifierStubInstanceOf(tb assert.TB, s *cryptotest.StreamingVerifi
 		Call: func() {
 			_ = streamingVerifierStubNewVerifyStream(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -3151,181 +2168,54 @@ func TestStreamingVerifierStub(t *testing.T) {
 	t.Run("NewVerifyStream", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "NewVerifyStream", streamingVerifierStubNewVerifyStreamSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewStreamingVerifierStub(t)
-			var seen []cryptotest.StreamingVerifierNewVerifyStreamCall
-			s.OnNewVerifyStream.OnRecord(
-				func(c cryptotest.StreamingVerifierNewVerifyStreamCall) { seen = append(seen, c) },
-			)
-			_ = streamingVerifierStubNewVerifyStream(t, s)
-			_ = streamingVerifierStubNewVerifyStream(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of NewVerifyStream")
-		})
 	})
 
 	t.Run("KeyID", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "KeyID", streamingVerifierStubKeyIDSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewStreamingVerifierStub(t)
-			var seen []cryptotest.StreamingVerifierKeyIDCall
-			s.OnKeyID.OnRecord(func(c cryptotest.StreamingVerifierKeyIDCall) { seen = append(seen, c) })
-			_ = streamingVerifierStubKeyID(t, s)
-			_ = streamingVerifierStubKeyID(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of KeyID")
-		})
 	})
 
 	t.Run("PublicKey", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "PublicKey", streamingVerifierStubPublicKeySubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewStreamingVerifierStub(t)
-			var seen []cryptotest.StreamingVerifierPublicKeyCall
-			s.OnPublicKey.OnRecord(func(c cryptotest.StreamingVerifierPublicKeyCall) { seen = append(seen, c) })
-			_ = streamingVerifierStubPublicKey(t, s)
-			_ = streamingVerifierStubPublicKey(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of PublicKey")
-		})
 	})
 
 	t.Run("Algorithm", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Algorithm", streamingVerifierStubAlgorithmSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewStreamingVerifierStub(t)
-			var seen []cryptotest.StreamingVerifierAlgorithmCall
-			s.OnAlgorithm.OnRecord(func(c cryptotest.StreamingVerifierAlgorithmCall) { seen = append(seen, c) })
-			_ = streamingVerifierStubAlgorithm(t, s)
-			_ = streamingVerifierStubAlgorithm(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Algorithm")
-		})
 	})
 
 	t.Run("Verify", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Verify", streamingVerifierStubVerifySubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewStreamingVerifierStub(t)
-			_ = streamingVerifierStubVerify(t, s)
-			got := s.OnVerify.AssertCalledOnce(t, "Verify records the call")
-			a0, a1 := streamingVerifierStubVerifyArgs(t)
-			expect.Equal(t, got.Message, a0, "the call records Message")
-			expect.Equal(t, got.Signature, a1, "the call records Signature")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewStreamingVerifierStub(t)
-			var seen []cryptotest.StreamingVerifierVerifyCall
-			s.OnVerify.OnRecord(func(c cryptotest.StreamingVerifierVerifyCall) { seen = append(seen, c) })
-			_ = streamingVerifierStubVerify(t, s)
-			_ = streamingVerifierStubVerify(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Verify")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) streamingVerifierStubInstance {
-			return streamingVerifierStubInstanceOf(tb, cryptotest.NewStreamingVerifierStub(tb))
-		})
 
-		t.Run("clears the recorded calls of NewVerifyStream", func(t *testing.T) {
+		t.Run("NewVerifyStream", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewStreamingVerifierStub(t)
-			_ = streamingVerifierStubNewVerifyStream(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnNewVerifyStream.CallCount(), 0, "ResetCalls clears the calls of NewVerifyStream")
+			stub.ResetBehaviour(t, "NewVerifyStream", streamingVerifierStubNewVerifyStreamSubject)
 		})
 
-		t.Run("clears the recorded calls of KeyID", func(t *testing.T) {
+		t.Run("KeyID", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewStreamingVerifierStub(t)
-			_ = streamingVerifierStubKeyID(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnKeyID.CallCount(), 0, "ResetCalls clears the calls of KeyID")
+			stub.ResetBehaviour(t, "KeyID", streamingVerifierStubKeyIDSubject)
 		})
 
-		t.Run("keeps the results of Returns of KeyID", func(t *testing.T) {
+		t.Run("PublicKey", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewStreamingVerifierStub(t)
-			want0 := streamingVerifierStubKeyIDPins()
-			s.OnKeyID.Returns(want0)
-			s.ResetCalls()
-			got0 := streamingVerifierStubKeyID(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of KeyID")
+			stub.ResetBehaviour(t, "PublicKey", streamingVerifierStubPublicKeySubject)
 		})
 
-		t.Run("clears the recorded calls of PublicKey", func(t *testing.T) {
+		t.Run("Algorithm", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewStreamingVerifierStub(t)
-			_ = streamingVerifierStubPublicKey(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnPublicKey.CallCount(), 0, "ResetCalls clears the calls of PublicKey")
+			stub.ResetBehaviour(t, "Algorithm", streamingVerifierStubAlgorithmSubject)
 		})
 
-		t.Run("keeps the results of Returns of PublicKey", func(t *testing.T) {
+		t.Run("Verify", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewStreamingVerifierStub(t)
-			want0 := streamingVerifierStubPublicKeyPins()
-			s.OnPublicKey.Returns(want0)
-			s.ResetCalls()
-			got0 := streamingVerifierStubPublicKey(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of PublicKey")
-		})
-
-		t.Run("clears the recorded calls of Algorithm", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewStreamingVerifierStub(t)
-			_ = streamingVerifierStubAlgorithm(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnAlgorithm.CallCount(), 0, "ResetCalls clears the calls of Algorithm")
-		})
-
-		t.Run("keeps the results of Returns of Algorithm", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewStreamingVerifierStub(t)
-			want0 := streamingVerifierStubAlgorithmPins()
-			s.OnAlgorithm.Returns(want0)
-			s.ResetCalls()
-			got0 := streamingVerifierStubAlgorithm(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Algorithm")
-		})
-
-		t.Run("clears the recorded calls of Verify", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewStreamingVerifierStub(t)
-			_ = streamingVerifierStubVerify(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnVerify.CallCount(), 0, "ResetCalls clears the calls of Verify")
-		})
-
-		t.Run("keeps the results of Returns of Verify", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewStreamingVerifierStub(t)
-			want0 := streamingVerifierStubVerifyPins()
-			s.OnVerify.Returns(want0)
-			s.ResetCalls()
-			got0 := streamingVerifierStubVerify(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Verify")
-		})
-	})
-
-	t.Run("NewStreamingVerifierStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) streamingVerifierStubInstance {
-			return streamingVerifierStubInstanceOf(tb, cryptotest.NewStreamingVerifierStubDelayed(tb, d, clk))
+			stub.ResetBehaviour(t, "Verify", streamingVerifierStubVerifySubject)
 		})
 	})
 
@@ -3514,167 +2404,6 @@ func TestStreamingVerifierStub(t *testing.T) {
 	})
 }
 
-// TestStreamingVerifierNewVerifyStreamStub checks the methods of
-// StreamingVerifierNewVerifyStreamStub, which configures NewVerifyStream.
-func TestStreamingVerifierNewVerifyStreamStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("configures NewVerifyStream for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewStreamingVerifierStub(r)
-			s.OnNewVerifyStream.Strict()
-			var want0 sign.VerifyStream
-			s.OnNewVerifyStream.Returns(want0)
-			_ = streamingVerifierStubNewVerifyStream(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of NewVerifyStream")
-		})
-	})
-}
-
-// TestStreamingVerifierKeyIDStub checks the methods of
-// StreamingVerifierKeyIDStub, which configures KeyID.
-func TestStreamingVerifierKeyIDStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of KeyID", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewStreamingVerifierStub(t)
-			want0 := streamingVerifierStubKeyIDPins()
-			s.OnKeyID.Returns(want0)
-			got0 := streamingVerifierStubKeyID(t, s)
-			assert.Equal(t, got0, want0, "KeyID returns the Result that Returns sets")
-		})
-
-		t.Run("configures KeyID for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewStreamingVerifierStub(r)
-			s.OnKeyID.Strict()
-			var want0 sign.KeyID
-			s.OnKeyID.Returns(want0)
-			_ = streamingVerifierStubKeyID(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of KeyID")
-		})
-	})
-}
-
-// TestStreamingVerifierPublicKeyStub checks the methods of
-// StreamingVerifierPublicKeyStub, which configures PublicKey.
-func TestStreamingVerifierPublicKeyStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of PublicKey", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewStreamingVerifierStub(t)
-			want0 := streamingVerifierStubPublicKeyPins()
-			s.OnPublicKey.Returns(want0)
-			got0 := streamingVerifierStubPublicKey(t, s)
-			assert.Equal(t, got0, want0, "PublicKey returns the Result that Returns sets")
-		})
-
-		t.Run("configures PublicKey for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewStreamingVerifierStub(r)
-			s.OnPublicKey.Strict()
-			var want0 []byte
-			s.OnPublicKey.Returns(want0)
-			_ = streamingVerifierStubPublicKey(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of PublicKey")
-		})
-	})
-}
-
-// TestStreamingVerifierAlgorithmStub checks the methods of
-// StreamingVerifierAlgorithmStub, which configures Algorithm.
-func TestStreamingVerifierAlgorithmStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Algorithm", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewStreamingVerifierStub(t)
-			want0 := streamingVerifierStubAlgorithmPins()
-			s.OnAlgorithm.Returns(want0)
-			got0 := streamingVerifierStubAlgorithm(t, s)
-			assert.Equal(t, got0, want0, "Algorithm returns the Result that Returns sets")
-		})
-
-		t.Run("configures Algorithm for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewStreamingVerifierStub(r)
-			s.OnAlgorithm.Strict()
-			var want0 crypto.Algorithm
-			s.OnAlgorithm.Returns(want0)
-			_ = streamingVerifierStubAlgorithm(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Algorithm")
-		})
-	})
-}
-
-// TestStreamingVerifierVerifyStub checks the methods of
-// StreamingVerifierVerifyStub, which configures Verify.
-func TestStreamingVerifierVerifyStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Verify", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewStreamingVerifierStub(t)
-			want0 := streamingVerifierStubVerifyPins()
-			s.OnVerify.Returns(want0)
-			got0 := streamingVerifierStubVerify(t, s)
-			assert.Equal(t, got0, want0, "Verify returns the Result that Returns sets")
-		})
-
-		t.Run("configures Verify for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewStreamingVerifierStub(r)
-			s.OnVerify.Strict()
-			var want0 bool
-			s.OnVerify.Returns(want0)
-			_ = streamingVerifierStubVerify(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Verify")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Verify to the function", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewStreamingVerifierStub(t)
-			var got0 []byte
-			var got1 []byte
-			s.OnVerify.Func(func(p0, p1 []byte) bool {
-				got0, got1 = p0, p1
-				var z0 bool
-				return z0
-			})
-			_ = streamingVerifierStubVerify(t, s)
-			a0, a1 := streamingVerifierStubVerifyArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Message")
-			expect.Equal(t, got1, a1, "the function receives Signature")
-		})
-	})
-}
-
 // verifyStreamStubVerifyArgs returns the samples of the arguments of
 // Verify.
 func verifyStreamStubVerifyArgs(tb assert.TB) []byte {
@@ -3725,24 +2454,36 @@ func verifyStreamStubWritePins() (int, error) {
 }
 
 // verifyStreamStubVerifySubject returns the subject of [stub.Behaviour]
-// for Verify. The subject calls a new double that reports to tb.
+// and [stub.ResetBehaviour] for Verify. The subject calls a new double
+// that reports to tb.
 func verifyStreamStubVerifySubject(
 	tb assert.TB,
 ) stub.Subject[cryptotest.VerifyStreamVerifyCall, cryptotest.VerifyStreamVerifyReturn] {
 	tb.Helper()
 	s := cryptotest.NewVerifyStreamStub(tb)
 	return stub.Subject[cryptotest.VerifyStreamVerifyCall, cryptotest.VerifyStreamVerifyReturn]{
-		Stub: s.OnVerify.MethodStub,
+		Stub:  s.OnVerify.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = verifyStreamStubVerify(tb, s)
+		},
+		Arguments: func(tb assert.TB, c cryptotest.VerifyStreamVerifyCall) {
+			tb.Helper()
+			a0 := verifyStreamStubVerifyArgs(tb)
+			assert.Equal(tb, c.Sig, a0, "the call records Sig")
 		},
 		Result: func() cryptotest.VerifyStreamVerifyReturn {
 			got0 := verifyStreamStubVerify(tb, s)
 			return cryptotest.VerifyStreamVerifyReturn{Result: got0}
 		},
-		Override: func(mark func()) {
-			s.OnVerify.Func(func(_ []byte) bool {
-				mark()
+		Returns: func() cryptotest.VerifyStreamVerifyReturn {
+			want0 := verifyStreamStubVerifyPins()
+			s.OnVerify.Returns(want0)
+			return cryptotest.VerifyStreamVerifyReturn{Result: want0}
+		},
+		Override: func(seen func(cryptotest.VerifyStreamVerifyCall)) {
+			s.OnVerify.Func(func(p0 []byte) bool {
+				seen(cryptotest.VerifyStreamVerifyCall{Sig: p0})
 				var z0 bool
 				return z0
 			})
@@ -3750,25 +2491,37 @@ func verifyStreamStubVerifySubject(
 	}
 }
 
-// verifyStreamStubWriteSubject returns the subject of [stub.Behaviour] for
-// Write. The subject calls a new double that reports to tb.
+// verifyStreamStubWriteSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Write. The subject calls a new double that
+// reports to tb.
 func verifyStreamStubWriteSubject(
 	tb assert.TB,
 ) stub.Subject[cryptotest.VerifyStreamWriteCall, cryptotest.VerifyStreamWriteReturn] {
 	tb.Helper()
 	s := cryptotest.NewVerifyStreamStub(tb)
 	return stub.Subject[cryptotest.VerifyStreamWriteCall, cryptotest.VerifyStreamWriteReturn]{
-		Stub: s.OnWrite.MethodStub,
+		Stub:  s.OnWrite.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = verifyStreamStubWrite(tb, s)
+		},
+		Arguments: func(tb assert.TB, c cryptotest.VerifyStreamWriteCall) {
+			tb.Helper()
+			a0 := verifyStreamStubWriteArgs(tb)
+			assert.Equal(tb, c.P, a0, "the call records P")
 		},
 		Result: func() cryptotest.VerifyStreamWriteReturn {
 			got0, got1 := verifyStreamStubWrite(tb, s)
 			return cryptotest.VerifyStreamWriteReturn{N: got0, Err: got1}
 		},
-		Override: func(mark func()) {
-			s.OnWrite.Func(func(_ []byte) (int, error) {
-				mark()
+		Returns: func() cryptotest.VerifyStreamWriteReturn {
+			want0, want1 := verifyStreamStubWritePins()
+			s.OnWrite.Returns(want0, want1)
+			return cryptotest.VerifyStreamWriteReturn{N: want0, Err: want1}
+		},
+		Override: func(seen func(cryptotest.VerifyStreamWriteCall)) {
+			s.OnWrite.Func(func(p0 []byte) (int, error) {
+				seen(cryptotest.VerifyStreamWriteCall{P: p0})
 				var z0 int
 				var z1 error
 				return z0, z1
@@ -3795,7 +2548,6 @@ func verifyStreamStubInstanceOf(tb assert.TB, s *cryptotest.VerifyStreamStub) ve
 		Call: func() {
 			_ = verifyStreamStubVerify(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -3807,111 +2559,24 @@ func TestVerifyStreamStub(t *testing.T) {
 	t.Run("Verify", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Verify", verifyStreamStubVerifySubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewVerifyStreamStub(t)
-			_ = verifyStreamStubVerify(t, s)
-			got := s.OnVerify.AssertCalledOnce(t, "Verify records the call")
-			a0 := verifyStreamStubVerifyArgs(t)
-			assert.Equal(t, got.Sig, a0, "the call records Sig")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewVerifyStreamStub(t)
-			var seen []cryptotest.VerifyStreamVerifyCall
-			s.OnVerify.OnRecord(func(c cryptotest.VerifyStreamVerifyCall) { seen = append(seen, c) })
-			_ = verifyStreamStubVerify(t, s)
-			_ = verifyStreamStubVerify(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Verify")
-		})
 	})
 
 	t.Run("Write", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Write", verifyStreamStubWriteSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewVerifyStreamStub(t)
-			_, _ = verifyStreamStubWrite(t, s)
-			got := s.OnWrite.AssertCalledOnce(t, "Write records the call")
-			a0 := verifyStreamStubWriteArgs(t)
-			assert.Equal(t, got.P, a0, "the call records P")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewVerifyStreamStub(t)
-			var seen []cryptotest.VerifyStreamWriteCall
-			s.OnWrite.OnRecord(func(c cryptotest.VerifyStreamWriteCall) { seen = append(seen, c) })
-			_, _ = verifyStreamStubWrite(t, s)
-			_, _ = verifyStreamStubWrite(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Write")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) verifyStreamStubInstance {
-			return verifyStreamStubInstanceOf(tb, cryptotest.NewVerifyStreamStub(tb))
-		})
 
-		t.Run("clears the recorded calls of Verify", func(t *testing.T) {
+		t.Run("Verify", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewVerifyStreamStub(t)
-			_ = verifyStreamStubVerify(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnVerify.CallCount(), 0, "ResetCalls clears the calls of Verify")
+			stub.ResetBehaviour(t, "Verify", verifyStreamStubVerifySubject)
 		})
 
-		t.Run("keeps the results of Returns of Verify", func(t *testing.T) {
+		t.Run("Write", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewVerifyStreamStub(t)
-			want0 := verifyStreamStubVerifyPins()
-			s.OnVerify.Returns(want0)
-			s.ResetCalls()
-			got0 := verifyStreamStubVerify(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of Verify")
-		})
-
-		t.Run("clears the recorded calls of Write", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewVerifyStreamStub(t)
-			_, _ = verifyStreamStubWrite(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnWrite.CallCount(), 0, "ResetCalls clears the calls of Write")
-		})
-
-		t.Run("keeps the results of Returns of Write", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewVerifyStreamStub(t)
-			want0, want1 := verifyStreamStubWritePins()
-			s.OnWrite.Returns(want0, want1)
-			s.ResetCalls()
-			got0, got1 := verifyStreamStubWrite(t, s)
-			expect.Equal(t, got0, want0, "ResetCalls keeps the N of Write")
-			expect.ErrorIs(t, got1, want1, "ResetCalls keeps the error of Write")
-		})
-	})
-
-	t.Run("NewVerifyStreamStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) verifyStreamStubInstance {
-			return verifyStreamStubInstanceOf(tb, cryptotest.NewVerifyStreamStubDelayed(tb, d, clk))
-		})
-	})
-
-	t.Run("NewVerifyStreamStubFailing", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("fails Write with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Write-failing")
-			s := cryptotest.NewVerifyStreamStubFailing(t, want)
-			_, err := verifyStreamStubWrite(t, s)
-			assert.ErrorIs(t, err, want, "Write fails with the error of NewVerifyStreamStubFailing")
+			stub.ResetBehaviour(t, "Write", verifyStreamStubWriteSubject)
 		})
 	})
 
@@ -4045,103 +2710,4 @@ func TestVerifyStreamStub(t *testing.T) {
 	})
 }
 
-// TestVerifyStreamVerifyStub checks the methods of VerifyStreamVerifyStub,
-// which configures Verify.
-func TestVerifyStreamVerifyStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Verify", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewVerifyStreamStub(t)
-			want0 := verifyStreamStubVerifyPins()
-			s.OnVerify.Returns(want0)
-			got0 := verifyStreamStubVerify(t, s)
-			assert.Equal(t, got0, want0, "Verify returns the Result that Returns sets")
-		})
-
-		t.Run("configures Verify for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewVerifyStreamStub(r)
-			s.OnVerify.Strict()
-			var want0 bool
-			s.OnVerify.Returns(want0)
-			_ = verifyStreamStubVerify(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Verify")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Verify to the function", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewVerifyStreamStub(t)
-			var got0 []byte
-			s.OnVerify.Func(func(p0 []byte) bool {
-				got0 = p0
-				var z0 bool
-				return z0
-			})
-			_ = verifyStreamStubVerify(t, s)
-			a0 := verifyStreamStubVerifyArgs(t)
-			assert.Equal(t, got0, a0, "the function receives Sig")
-		})
-	})
-}
-
-// TestVerifyStreamWriteStub checks the methods of VerifyStreamWriteStub,
-// which configures Write.
-func TestVerifyStreamWriteStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Write", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewVerifyStreamStub(t)
-			want0, want1 := verifyStreamStubWritePins()
-			s.OnWrite.Returns(want0, want1)
-			got0, got1 := verifyStreamStubWrite(t, s)
-			expect.Equal(t, got0, want0, "Write returns the N that Returns sets")
-			expect.ErrorIs(t, got1, want1, "Write returns the error that Returns sets")
-		})
-
-		t.Run("configures Write for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewVerifyStreamStub(r)
-			s.OnWrite.Strict()
-			var want0 int
-			var want1 error
-			s.OnWrite.Returns(want0, want1)
-			_, _ = verifyStreamStubWrite(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Write")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Write to the function", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewVerifyStreamStub(t)
-			var got0 []byte
-			s.OnWrite.Func(func(p0 []byte) (int, error) {
-				got0 = p0
-				var z0 int
-				var z1 error
-				return z0, z1
-			})
-			_, _ = verifyStreamStubWrite(t, s)
-			a0 := verifyStreamStubWriteArgs(t)
-			assert.Equal(t, got0, a0, "the function receives P")
-		})
-	})
-}
-
-// dokimi:provenance sha256:ea19791d9b67dc6357036cdb2aa3e9ceb6fa8dddfaac67d1af07614616264d53
+// dokimi:provenance sha256:0ffebd3bccff14490b47a988c5dcd9250a18b40c9abea0d4099371ac1e06638b
