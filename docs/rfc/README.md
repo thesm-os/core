@@ -128,7 +128,7 @@ Start from [`docs/templates/RFC.md`](../templates/RFC.md).
 | [0059](0059-radix-tries-for-prefix-queries.md) | Radix Tries for Prefix Queries | Accepted |
 | [0060](0060-approximate-membership-filters.md) | Approximate-Membership Filters and XXH3 Hashing | Accepted |
 | [0061](0061-snappy-block-compression.md) | Block Compression in the Snappy Format | Accepted |
-| [0062](0062-sorted-tables-and-memtables.md) | Sorted Tables and Memtables for LSM Trees | Accepted |
+| [0062](0062-sorted-tables-and-memtables.md) | Sorted Tables and Memtables for LSM Trees | Accepted, the pool of cursors superseded by [RFC-0087](0087-cursors-that-a-caller-keeps.md) |
 | [0063](0063-key-prefixes-in-skip-list-nodes.md) | Key Prefixes in Skip List Nodes | Accepted |
 | [0064](0064-checksums-of-table-blocks-in-their-parents.md) | Checksums of Table Blocks in Their Parents | Accepted |
 | [0065](0065-the-cost-of-a-skip-list-entry.md) | The Cost of a Skip List Entry | Accepted |
@@ -144,15 +144,17 @@ Start from [`docs/templates/RFC.md`](../templates/RFC.md).
 | [0075](0075-blocks-that-a-cache-lends-to-readers.md) | Blocks That a Cache Lends to Readers | Accepted |
 | [0076](0076-lists-and-arenas-over-caller-memory.md) | Lists and Arenas over Caller Memory | Accepted |
 | [0077](0077-partitioned-index-and-filters.md) | Partitioned Index and Filters of a Table | Accepted |
-| [0078](0078-range-tombstones-and-prefix-filters.md) | Range Tombstones and Prefix Filters of a Table | Accepted, alternative K superseded by [ADR-0076](../adr/0076-fragment-partitions-are-read-through-the-cache.md) |
+| [0078](0078-range-tombstones-and-prefix-filters.md) | Range Tombstones and Prefix Filters of a Table | Accepted, alternative K superseded by [ADR-0076](../adr/0076-fragment-partitions-are-read-through-the-cache.md), the pool of cursors of fragments superseded by [RFC-0087](0087-cursors-that-a-caller-keeps.md) |
 | [0079](0079-pinned-partitions-in-a-block-cache.md) | Pinned Partitions in a Block Cache | Accepted |
 | [0080](0080-test-generation-with-dokimi.md) | Test Generation with dokimi | Accepted |
 | [0081](0081-fragment-partitions-version-suffixes-and-checks.md) | Fragment Partitions, Version Suffixes and Checks of a Table | Accepted |
-| [0082](0082-signed-requests-on-named-object-storage.md) | Signed Requests on Named Object Storage | Accepted |
+| [0082](0082-signed-requests-on-named-object-storage.md) | Signed Requests on Named Object Storage | Accepted, the timing of the checks of an expiry superseded by [ADR-0077](../adr/0077-expiry-checks-take-their-timing-from-the-store.md) |
 | [0083](0083-calls-beyond-a-quorum.md) | Calls Beyond a Quorum | Accepted |
 | [0084](0084-durations-and-peer-instants-of-a-clock.md) | Durations and Peer Instants of a Clock | Accepted |
 | [0085](0085-links-between-spans.md) | Links Between Spans | Accepted |
 | [0086](0086-xaes-256-gcm.md) | XAES-256-GCM | Accepted |
+| [0087](0087-cursors-that-a-caller-keeps.md) | Cursors That a Caller Keeps | Accepted |
+| [0088](0088-data-keys-generated-with-associated-data.md) | Data Keys That a Custodian Generates with Associated Data | Accepted |
 
 ## Canonical first RFC
 

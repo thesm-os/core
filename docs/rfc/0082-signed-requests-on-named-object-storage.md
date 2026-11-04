@@ -7,7 +7,7 @@ created: 2026-10-31
 updated: 2026-10-31
 discussion: https://github.com/thesm-os/core/issues/109
 supersedes: none
-superseded-by: none
+superseded-by: ADR-0077
 produces-adr: tbd
 ---
 

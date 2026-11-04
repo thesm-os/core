@@ -7,7 +7,7 @@ created: 2026-10-15
 updated: 2026-10-16
 discussion: none
 supersedes: none
-superseded-by: none
+superseded-by: RFC-0087
 produces-adr: ADR-0057
 ---
 
