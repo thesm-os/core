@@ -26,8 +26,9 @@
 // # Capabilities
 //
 // [AssertDestroyerContract], [AssertKeyGeneratorContract],
-// [AssertAADKeeperContract] and [AssertKeyCreatorContract] assert the optional
-// capabilities of a [crypto.Keeper]. [AssertContextSignerContract] and
+// [AssertAADKeeperContract], [AssertAADKeyGeneratorContract] and
+// [AssertKeyCreatorContract] assert the optional capabilities of a
+// [crypto.Keeper]. [AssertContextSignerContract] and
 // [AssertAppendSignerContract] assert the optional capabilities of a
 // [sign.Signer].
 //
@@ -45,9 +46,10 @@
 // # Doubles
 //
 // [HasherStub], [XOFStub], [XOFStreamStub], [AEADStub], [KeeperStub],
-// [DestroyerStub], [KeyGeneratorStub], [MACStub], [StreamStub], [SignerStub],
-// [VerifierStub], [StreamingSignerStub], [StreamingVerifierStub],
-// [SignStreamStub] and [VerifyStreamStub] are recording doubles. Each method
+// [DestroyerStub], [KeyGeneratorStub], [AADKeeperStub], [AADKeyGeneratorStub],
+// [MACStub], [StreamStub], [SignerStub], [VerifierStub], [StreamingSignerStub],
+// [StreamingVerifierStub], [SignStreamStub] and [VerifyStreamStub] are
+// recording doubles. Each method
 // returns the result of a function that a With option sets, such as
 // [WithAEADOpen], a fixed result, or the result of the implementation that a
 // DelegateTo option names, such as [AEADStubDelegateTo].

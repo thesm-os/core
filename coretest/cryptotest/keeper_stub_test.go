@@ -80,13 +80,15 @@ func keeperStubUnwrapPins() ([]byte, error) {
 	return want0, want1
 }
 
-// keeperStubKeyIDSubject returns the subject of [stub.Behaviour] for
-// KeyID. The subject calls a new double that reports to tb.
+// keeperStubKeyIDSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for KeyID. The subject calls a new double that
+// reports to tb.
 func keeperStubKeyIDSubject(tb assert.TB) stub.Subject[cryptotest.KeeperKeyIDCall, cryptotest.KeeperKeyIDReturn] {
 	tb.Helper()
 	s := cryptotest.NewKeeperStub(tb)
 	return stub.Subject[cryptotest.KeeperKeyIDCall, cryptotest.KeeperKeyIDReturn]{
-		Stub: s.OnKeyID.MethodStub,
+		Stub:  s.OnKeyID.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = keeperStubKeyID(tb, s)
 		},
@@ -94,9 +96,14 @@ func keeperStubKeyIDSubject(tb assert.TB) stub.Subject[cryptotest.KeeperKeyIDCal
 			got0 := keeperStubKeyID(tb, s)
 			return cryptotest.KeeperKeyIDReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() cryptotest.KeeperKeyIDReturn {
+			want0 := keeperStubKeyIDPins()
+			s.OnKeyID.Returns(want0)
+			return cryptotest.KeeperKeyIDReturn{Result: want0}
+		},
+		Override: func(seen func(cryptotest.KeeperKeyIDCall)) {
 			s.OnKeyID.Func(func() string {
-				mark()
+				seen(cryptotest.KeeperKeyIDCall{})
 				var z0 string
 				return z0
 			})
@@ -104,23 +111,36 @@ func keeperStubKeyIDSubject(tb assert.TB) stub.Subject[cryptotest.KeeperKeyIDCal
 	}
 }
 
-// keeperStubWrapSubject returns the subject of [stub.Behaviour] for Wrap.
-// The subject calls a new double that reports to tb.
+// keeperStubWrapSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Wrap. The subject calls a new double that
+// reports to tb.
 func keeperStubWrapSubject(tb assert.TB) stub.Subject[cryptotest.KeeperWrapCall, cryptotest.KeeperWrapReturn] {
 	tb.Helper()
 	s := cryptotest.NewKeeperStub(tb)
 	return stub.Subject[cryptotest.KeeperWrapCall, cryptotest.KeeperWrapReturn]{
-		Stub: s.OnWrap.MethodStub,
+		Stub:  s.OnWrap.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = keeperStubWrap(tb, s)
+		},
+		Arguments: func(tb assert.TB, c cryptotest.KeeperWrapCall) {
+			tb.Helper()
+			a0, a1 := keeperStubWrapArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.Dek, a1, "the call records Dek")
 		},
 		Result: func() cryptotest.KeeperWrapReturn {
 			got0, got1 := keeperStubWrap(tb, s)
 			return cryptotest.KeeperWrapReturn{Result: got0, Err: got1}
 		},
-		Override: func(mark func()) {
-			s.OnWrap.Func(func(_ context.Context, _ []byte) ([]byte, error) {
-				mark()
+		Returns: func() cryptotest.KeeperWrapReturn {
+			want0, want1 := keeperStubWrapPins()
+			s.OnWrap.Returns(want0, want1)
+			return cryptotest.KeeperWrapReturn{Result: want0, Err: want1}
+		},
+		Override: func(seen func(cryptotest.KeeperWrapCall)) {
+			s.OnWrap.Func(func(p0 context.Context, p1 []byte) ([]byte, error) {
+				seen(cryptotest.KeeperWrapCall{Ctx: p0, Dek: p1})
 				var z0 []byte
 				var z1 error
 				return z0, z1
@@ -133,23 +153,36 @@ func keeperStubWrapSubject(tb assert.TB) stub.Subject[cryptotest.KeeperWrapCall,
 	}
 }
 
-// keeperStubUnwrapSubject returns the subject of [stub.Behaviour] for
-// Unwrap. The subject calls a new double that reports to tb.
+// keeperStubUnwrapSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Unwrap. The subject calls a new double that
+// reports to tb.
 func keeperStubUnwrapSubject(tb assert.TB) stub.Subject[cryptotest.KeeperUnwrapCall, cryptotest.KeeperUnwrapReturn] {
 	tb.Helper()
 	s := cryptotest.NewKeeperStub(tb)
 	return stub.Subject[cryptotest.KeeperUnwrapCall, cryptotest.KeeperUnwrapReturn]{
-		Stub: s.OnUnwrap.MethodStub,
+		Stub:  s.OnUnwrap.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = keeperStubUnwrap(tb, s)
+		},
+		Arguments: func(tb assert.TB, c cryptotest.KeeperUnwrapCall) {
+			tb.Helper()
+			a0, a1 := keeperStubUnwrapArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.Wrapped, a1, "the call records Wrapped")
 		},
 		Result: func() cryptotest.KeeperUnwrapReturn {
 			got0, got1 := keeperStubUnwrap(tb, s)
 			return cryptotest.KeeperUnwrapReturn{Result: got0, Err: got1}
 		},
-		Override: func(mark func()) {
-			s.OnUnwrap.Func(func(_ context.Context, _ []byte) ([]byte, error) {
-				mark()
+		Returns: func() cryptotest.KeeperUnwrapReturn {
+			want0, want1 := keeperStubUnwrapPins()
+			s.OnUnwrap.Returns(want0, want1)
+			return cryptotest.KeeperUnwrapReturn{Result: want0, Err: want1}
+		},
+		Override: func(seen func(cryptotest.KeeperUnwrapCall)) {
+			s.OnUnwrap.Func(func(p0 context.Context, p1 []byte) ([]byte, error) {
+				seen(cryptotest.KeeperUnwrapCall{Ctx: p0, Wrapped: p1})
 				var z0 []byte
 				var z1 error
 				return z0, z1
@@ -175,7 +208,6 @@ func keeperStubInstanceOf(tb assert.TB, s *cryptotest.KeeperStub) keeperStubInst
 		Call: func() {
 			_ = keeperStubKeyID(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -187,155 +219,34 @@ func TestKeeperStub(t *testing.T) {
 	t.Run("KeyID", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "KeyID", keeperStubKeyIDSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewKeeperStub(t)
-			var seen []cryptotest.KeeperKeyIDCall
-			s.OnKeyID.OnRecord(func(c cryptotest.KeeperKeyIDCall) { seen = append(seen, c) })
-			_ = keeperStubKeyID(t, s)
-			_ = keeperStubKeyID(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of KeyID")
-		})
 	})
 
 	t.Run("Wrap", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Wrap", keeperStubWrapSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewKeeperStub(t)
-			_, _ = keeperStubWrap(t, s)
-			got := s.OnWrap.AssertCalledOnce(t, "Wrap records the call")
-			a0, a1 := keeperStubWrapArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.Dek, a1, "the call records Dek")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewKeeperStub(t)
-			var seen []cryptotest.KeeperWrapCall
-			s.OnWrap.OnRecord(func(c cryptotest.KeeperWrapCall) { seen = append(seen, c) })
-			_, _ = keeperStubWrap(t, s)
-			_, _ = keeperStubWrap(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Wrap")
-		})
 	})
 
 	t.Run("Unwrap", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Unwrap", keeperStubUnwrapSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewKeeperStub(t)
-			_, _ = keeperStubUnwrap(t, s)
-			got := s.OnUnwrap.AssertCalledOnce(t, "Unwrap records the call")
-			a0, a1 := keeperStubUnwrapArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.Wrapped, a1, "the call records Wrapped")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewKeeperStub(t)
-			var seen []cryptotest.KeeperUnwrapCall
-			s.OnUnwrap.OnRecord(func(c cryptotest.KeeperUnwrapCall) { seen = append(seen, c) })
-			_, _ = keeperStubUnwrap(t, s)
-			_, _ = keeperStubUnwrap(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Unwrap")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) keeperStubInstance {
-			return keeperStubInstanceOf(tb, cryptotest.NewKeeperStub(tb))
-		})
 
-		t.Run("clears the recorded calls of KeyID", func(t *testing.T) {
+		t.Run("KeyID", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewKeeperStub(t)
-			_ = keeperStubKeyID(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnKeyID.CallCount(), 0, "ResetCalls clears the calls of KeyID")
+			stub.ResetBehaviour(t, "KeyID", keeperStubKeyIDSubject)
 		})
 
-		t.Run("keeps the results of Returns of KeyID", func(t *testing.T) {
+		t.Run("Wrap", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewKeeperStub(t)
-			want0 := keeperStubKeyIDPins()
-			s.OnKeyID.Returns(want0)
-			s.ResetCalls()
-			got0 := keeperStubKeyID(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of KeyID")
+			stub.ResetBehaviour(t, "Wrap", keeperStubWrapSubject)
 		})
 
-		t.Run("clears the recorded calls of Wrap", func(t *testing.T) {
+		t.Run("Unwrap", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewKeeperStub(t)
-			_, _ = keeperStubWrap(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnWrap.CallCount(), 0, "ResetCalls clears the calls of Wrap")
-		})
-
-		t.Run("keeps the results of Returns of Wrap", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewKeeperStub(t)
-			want0, want1 := keeperStubWrapPins()
-			s.OnWrap.Returns(want0, want1)
-			s.ResetCalls()
-			got0, got1 := keeperStubWrap(t, s)
-			expect.Equal(t, got0, want0, "ResetCalls keeps the Result of Wrap")
-			expect.ErrorIs(t, got1, want1, "ResetCalls keeps the error of Wrap")
-		})
-
-		t.Run("clears the recorded calls of Unwrap", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewKeeperStub(t)
-			_, _ = keeperStubUnwrap(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnUnwrap.CallCount(), 0, "ResetCalls clears the calls of Unwrap")
-		})
-
-		t.Run("keeps the results of Returns of Unwrap", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewKeeperStub(t)
-			want0, want1 := keeperStubUnwrapPins()
-			s.OnUnwrap.Returns(want0, want1)
-			s.ResetCalls()
-			got0, got1 := keeperStubUnwrap(t, s)
-			expect.Equal(t, got0, want0, "ResetCalls keeps the Result of Unwrap")
-			expect.ErrorIs(t, got1, want1, "ResetCalls keeps the error of Unwrap")
-		})
-	})
-
-	t.Run("NewKeeperStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) keeperStubInstance {
-			return keeperStubInstanceOf(tb, cryptotest.NewKeeperStubDelayed(tb, d, clk))
-		})
-	})
-
-	t.Run("NewKeeperStubFailing", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("fails Wrap with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Wrap-failing")
-			s := cryptotest.NewKeeperStubFailing(t, want)
-			_, r1 := keeperStubWrap(t, s)
-			assert.ErrorIs(t, r1, want, "Wrap fails with the error of NewKeeperStubFailing")
-		})
-
-		t.Run("fails Unwrap with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Unwrap-failing")
-			s := cryptotest.NewKeeperStubFailing(t, want)
-			_, r1 := keeperStubUnwrap(t, s)
-			assert.ErrorIs(t, r1, want, "Unwrap fails with the error of NewKeeperStubFailing")
+			stub.ResetBehaviour(t, "Unwrap", keeperStubUnwrapSubject)
 		})
 	})
 
@@ -502,142 +413,6 @@ func TestKeeperStub(t *testing.T) {
 	})
 }
 
-// TestKeeperKeyIDStub checks the methods of KeeperKeyIDStub, which
-// configures KeyID.
-func TestKeeperKeyIDStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of KeyID", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewKeeperStub(t)
-			want0 := keeperStubKeyIDPins()
-			s.OnKeyID.Returns(want0)
-			got0 := keeperStubKeyID(t, s)
-			assert.Equal(t, got0, want0, "KeyID returns the Result that Returns sets")
-		})
-
-		t.Run("configures KeyID for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewKeeperStub(r)
-			s.OnKeyID.Strict()
-			var want0 string
-			s.OnKeyID.Returns(want0)
-			_ = keeperStubKeyID(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of KeyID")
-		})
-	})
-}
-
-// TestKeeperWrapStub checks the methods of KeeperWrapStub, which
-// configures Wrap.
-func TestKeeperWrapStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Wrap", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewKeeperStub(t)
-			want0, want1 := keeperStubWrapPins()
-			s.OnWrap.Returns(want0, want1)
-			got0, got1 := keeperStubWrap(t, s)
-			expect.Equal(t, got0, want0, "Wrap returns the Result that Returns sets")
-			expect.ErrorIs(t, got1, want1, "Wrap returns the error that Returns sets")
-		})
-
-		t.Run("configures Wrap for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewKeeperStub(r)
-			s.OnWrap.Strict()
-			var want0 []byte
-			var want1 error
-			s.OnWrap.Returns(want0, want1)
-			_, _ = keeperStubWrap(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Wrap")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Wrap to the function", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewKeeperStub(t)
-			var got0 context.Context
-			var got1 []byte
-			s.OnWrap.Func(func(p0 context.Context, p1 []byte) ([]byte, error) {
-				got0, got1 = p0, p1
-				var z0 []byte
-				var z1 error
-				return z0, z1
-			})
-			_, _ = keeperStubWrap(t, s)
-			a0, a1 := keeperStubWrapArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives Dek")
-		})
-	})
-}
-
-// TestKeeperUnwrapStub checks the methods of KeeperUnwrapStub, which
-// configures Unwrap.
-func TestKeeperUnwrapStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Unwrap", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewKeeperStub(t)
-			want0, want1 := keeperStubUnwrapPins()
-			s.OnUnwrap.Returns(want0, want1)
-			got0, got1 := keeperStubUnwrap(t, s)
-			expect.Equal(t, got0, want0, "Unwrap returns the Result that Returns sets")
-			expect.ErrorIs(t, got1, want1, "Unwrap returns the error that Returns sets")
-		})
-
-		t.Run("configures Unwrap for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewKeeperStub(r)
-			s.OnUnwrap.Strict()
-			var want0 []byte
-			var want1 error
-			s.OnUnwrap.Returns(want0, want1)
-			_, _ = keeperStubUnwrap(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Unwrap")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Unwrap to the function", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewKeeperStub(t)
-			var got0 context.Context
-			var got1 []byte
-			s.OnUnwrap.Func(func(p0 context.Context, p1 []byte) ([]byte, error) {
-				got0, got1 = p0, p1
-				var z0 []byte
-				var z1 error
-				return z0, z1
-			})
-			_, _ = keeperStubUnwrap(t, s)
-			a0, a1 := keeperStubUnwrapArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives Wrapped")
-		})
-	})
-}
-
 // destroyerStubDestroyArgs returns the samples of the arguments of
 // Destroy.
 func destroyerStubDestroyArgs(tb assert.TB) (context.Context, string) {
@@ -728,25 +503,38 @@ func destroyerStubUnwrapPins() ([]byte, error) {
 	return want0, want1
 }
 
-// destroyerStubDestroySubject returns the subject of [stub.Behaviour] for
-// Destroy. The subject calls a new double that reports to tb.
+// destroyerStubDestroySubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Destroy. The subject calls a new double that
+// reports to tb.
 func destroyerStubDestroySubject(
 	tb assert.TB,
 ) stub.Subject[cryptotest.DestroyerDestroyCall, cryptotest.DestroyerDestroyReturn] {
 	tb.Helper()
 	s := cryptotest.NewDestroyerStub(tb)
 	return stub.Subject[cryptotest.DestroyerDestroyCall, cryptotest.DestroyerDestroyReturn]{
-		Stub: s.OnDestroy.MethodStub,
+		Stub:  s.OnDestroy.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = destroyerStubDestroy(tb, s)
+		},
+		Arguments: func(tb assert.TB, c cryptotest.DestroyerDestroyCall) {
+			tb.Helper()
+			a0, a1 := destroyerStubDestroyArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.KeyID, a1, "the call records KeyID")
 		},
 		Result: func() cryptotest.DestroyerDestroyReturn {
 			got0, got1 := destroyerStubDestroy(tb, s)
 			return cryptotest.DestroyerDestroyReturn{Result: got0, Err: got1}
 		},
-		Override: func(mark func()) {
-			s.OnDestroy.Func(func(_ context.Context, _ string) (time.Time, error) {
-				mark()
+		Returns: func() cryptotest.DestroyerDestroyReturn {
+			want0, want1 := destroyerStubDestroyPins()
+			s.OnDestroy.Returns(want0, want1)
+			return cryptotest.DestroyerDestroyReturn{Result: want0, Err: want1}
+		},
+		Override: func(seen func(cryptotest.DestroyerDestroyCall)) {
+			s.OnDestroy.Func(func(p0 context.Context, p1 string) (time.Time, error) {
+				seen(cryptotest.DestroyerDestroyCall{Ctx: p0, KeyID: p1})
 				var z0 time.Time
 				var z1 error
 				return z0, z1
@@ -759,15 +547,17 @@ func destroyerStubDestroySubject(
 	}
 }
 
-// destroyerStubKeyIDSubject returns the subject of [stub.Behaviour] for
-// KeyID. The subject calls a new double that reports to tb.
+// destroyerStubKeyIDSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for KeyID. The subject calls a new double that
+// reports to tb.
 func destroyerStubKeyIDSubject(
 	tb assert.TB,
 ) stub.Subject[cryptotest.DestroyerKeyIDCall, cryptotest.DestroyerKeyIDReturn] {
 	tb.Helper()
 	s := cryptotest.NewDestroyerStub(tb)
 	return stub.Subject[cryptotest.DestroyerKeyIDCall, cryptotest.DestroyerKeyIDReturn]{
-		Stub: s.OnKeyID.MethodStub,
+		Stub:  s.OnKeyID.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = destroyerStubKeyID(tb, s)
 		},
@@ -775,9 +565,14 @@ func destroyerStubKeyIDSubject(
 			got0 := destroyerStubKeyID(tb, s)
 			return cryptotest.DestroyerKeyIDReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() cryptotest.DestroyerKeyIDReturn {
+			want0 := destroyerStubKeyIDPins()
+			s.OnKeyID.Returns(want0)
+			return cryptotest.DestroyerKeyIDReturn{Result: want0}
+		},
+		Override: func(seen func(cryptotest.DestroyerKeyIDCall)) {
 			s.OnKeyID.Func(func() string {
-				mark()
+				seen(cryptotest.DestroyerKeyIDCall{})
 				var z0 string
 				return z0
 			})
@@ -785,23 +580,36 @@ func destroyerStubKeyIDSubject(
 	}
 }
 
-// destroyerStubWrapSubject returns the subject of [stub.Behaviour] for
-// Wrap. The subject calls a new double that reports to tb.
+// destroyerStubWrapSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Wrap. The subject calls a new double that
+// reports to tb.
 func destroyerStubWrapSubject(tb assert.TB) stub.Subject[cryptotest.DestroyerWrapCall, cryptotest.DestroyerWrapReturn] {
 	tb.Helper()
 	s := cryptotest.NewDestroyerStub(tb)
 	return stub.Subject[cryptotest.DestroyerWrapCall, cryptotest.DestroyerWrapReturn]{
-		Stub: s.OnWrap.MethodStub,
+		Stub:  s.OnWrap.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = destroyerStubWrap(tb, s)
+		},
+		Arguments: func(tb assert.TB, c cryptotest.DestroyerWrapCall) {
+			tb.Helper()
+			a0, a1 := destroyerStubWrapArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.Dek, a1, "the call records Dek")
 		},
 		Result: func() cryptotest.DestroyerWrapReturn {
 			got0, got1 := destroyerStubWrap(tb, s)
 			return cryptotest.DestroyerWrapReturn{Result: got0, Err: got1}
 		},
-		Override: func(mark func()) {
-			s.OnWrap.Func(func(_ context.Context, _ []byte) ([]byte, error) {
-				mark()
+		Returns: func() cryptotest.DestroyerWrapReturn {
+			want0, want1 := destroyerStubWrapPins()
+			s.OnWrap.Returns(want0, want1)
+			return cryptotest.DestroyerWrapReturn{Result: want0, Err: want1}
+		},
+		Override: func(seen func(cryptotest.DestroyerWrapCall)) {
+			s.OnWrap.Func(func(p0 context.Context, p1 []byte) ([]byte, error) {
+				seen(cryptotest.DestroyerWrapCall{Ctx: p0, Dek: p1})
 				var z0 []byte
 				var z1 error
 				return z0, z1
@@ -814,25 +622,38 @@ func destroyerStubWrapSubject(tb assert.TB) stub.Subject[cryptotest.DestroyerWra
 	}
 }
 
-// destroyerStubUnwrapSubject returns the subject of [stub.Behaviour] for
-// Unwrap. The subject calls a new double that reports to tb.
+// destroyerStubUnwrapSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Unwrap. The subject calls a new double that
+// reports to tb.
 func destroyerStubUnwrapSubject(
 	tb assert.TB,
 ) stub.Subject[cryptotest.DestroyerUnwrapCall, cryptotest.DestroyerUnwrapReturn] {
 	tb.Helper()
 	s := cryptotest.NewDestroyerStub(tb)
 	return stub.Subject[cryptotest.DestroyerUnwrapCall, cryptotest.DestroyerUnwrapReturn]{
-		Stub: s.OnUnwrap.MethodStub,
+		Stub:  s.OnUnwrap.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = destroyerStubUnwrap(tb, s)
+		},
+		Arguments: func(tb assert.TB, c cryptotest.DestroyerUnwrapCall) {
+			tb.Helper()
+			a0, a1 := destroyerStubUnwrapArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.Wrapped, a1, "the call records Wrapped")
 		},
 		Result: func() cryptotest.DestroyerUnwrapReturn {
 			got0, got1 := destroyerStubUnwrap(tb, s)
 			return cryptotest.DestroyerUnwrapReturn{Result: got0, Err: got1}
 		},
-		Override: func(mark func()) {
-			s.OnUnwrap.Func(func(_ context.Context, _ []byte) ([]byte, error) {
-				mark()
+		Returns: func() cryptotest.DestroyerUnwrapReturn {
+			want0, want1 := destroyerStubUnwrapPins()
+			s.OnUnwrap.Returns(want0, want1)
+			return cryptotest.DestroyerUnwrapReturn{Result: want0, Err: want1}
+		},
+		Override: func(seen func(cryptotest.DestroyerUnwrapCall)) {
+			s.OnUnwrap.Func(func(p0 context.Context, p1 []byte) ([]byte, error) {
+				seen(cryptotest.DestroyerUnwrapCall{Ctx: p0, Wrapped: p1})
 				var z0 []byte
 				var z1 error
 				return z0, z1
@@ -858,7 +679,6 @@ func destroyerStubInstanceOf(tb assert.TB, s *cryptotest.DestroyerStub) destroye
 		Call: func() {
 			_, _ = destroyerStubDestroy(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -870,207 +690,44 @@ func TestDestroyerStub(t *testing.T) {
 	t.Run("Destroy", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Destroy", destroyerStubDestroySubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewDestroyerStub(t)
-			_, _ = destroyerStubDestroy(t, s)
-			got := s.OnDestroy.AssertCalledOnce(t, "Destroy records the call")
-			a0, a1 := destroyerStubDestroyArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.KeyID, a1, "the call records KeyID")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewDestroyerStub(t)
-			var seen []cryptotest.DestroyerDestroyCall
-			s.OnDestroy.OnRecord(func(c cryptotest.DestroyerDestroyCall) { seen = append(seen, c) })
-			_, _ = destroyerStubDestroy(t, s)
-			_, _ = destroyerStubDestroy(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Destroy")
-		})
 	})
 
 	t.Run("KeyID", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "KeyID", destroyerStubKeyIDSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewDestroyerStub(t)
-			var seen []cryptotest.DestroyerKeyIDCall
-			s.OnKeyID.OnRecord(func(c cryptotest.DestroyerKeyIDCall) { seen = append(seen, c) })
-			_ = destroyerStubKeyID(t, s)
-			_ = destroyerStubKeyID(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of KeyID")
-		})
 	})
 
 	t.Run("Wrap", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Wrap", destroyerStubWrapSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewDestroyerStub(t)
-			_, _ = destroyerStubWrap(t, s)
-			got := s.OnWrap.AssertCalledOnce(t, "Wrap records the call")
-			a0, a1 := destroyerStubWrapArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.Dek, a1, "the call records Dek")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewDestroyerStub(t)
-			var seen []cryptotest.DestroyerWrapCall
-			s.OnWrap.OnRecord(func(c cryptotest.DestroyerWrapCall) { seen = append(seen, c) })
-			_, _ = destroyerStubWrap(t, s)
-			_, _ = destroyerStubWrap(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Wrap")
-		})
 	})
 
 	t.Run("Unwrap", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Unwrap", destroyerStubUnwrapSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewDestroyerStub(t)
-			_, _ = destroyerStubUnwrap(t, s)
-			got := s.OnUnwrap.AssertCalledOnce(t, "Unwrap records the call")
-			a0, a1 := destroyerStubUnwrapArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.Wrapped, a1, "the call records Wrapped")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewDestroyerStub(t)
-			var seen []cryptotest.DestroyerUnwrapCall
-			s.OnUnwrap.OnRecord(func(c cryptotest.DestroyerUnwrapCall) { seen = append(seen, c) })
-			_, _ = destroyerStubUnwrap(t, s)
-			_, _ = destroyerStubUnwrap(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Unwrap")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) destroyerStubInstance {
-			return destroyerStubInstanceOf(tb, cryptotest.NewDestroyerStub(tb))
-		})
 
-		t.Run("clears the recorded calls of Destroy", func(t *testing.T) {
+		t.Run("Destroy", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewDestroyerStub(t)
-			_, _ = destroyerStubDestroy(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnDestroy.CallCount(), 0, "ResetCalls clears the calls of Destroy")
+			stub.ResetBehaviour(t, "Destroy", destroyerStubDestroySubject)
 		})
 
-		t.Run("keeps the results of Returns of Destroy", func(t *testing.T) {
+		t.Run("KeyID", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewDestroyerStub(t)
-			want0, want1 := destroyerStubDestroyPins()
-			s.OnDestroy.Returns(want0, want1)
-			s.ResetCalls()
-			got0, got1 := destroyerStubDestroy(t, s)
-			expect.Equal(t, got0, want0, "ResetCalls keeps the Result of Destroy")
-			expect.ErrorIs(t, got1, want1, "ResetCalls keeps the error of Destroy")
+			stub.ResetBehaviour(t, "KeyID", destroyerStubKeyIDSubject)
 		})
 
-		t.Run("clears the recorded calls of KeyID", func(t *testing.T) {
+		t.Run("Wrap", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewDestroyerStub(t)
-			_ = destroyerStubKeyID(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnKeyID.CallCount(), 0, "ResetCalls clears the calls of KeyID")
+			stub.ResetBehaviour(t, "Wrap", destroyerStubWrapSubject)
 		})
 
-		t.Run("keeps the results of Returns of KeyID", func(t *testing.T) {
+		t.Run("Unwrap", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewDestroyerStub(t)
-			want0 := destroyerStubKeyIDPins()
-			s.OnKeyID.Returns(want0)
-			s.ResetCalls()
-			got0 := destroyerStubKeyID(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of KeyID")
-		})
-
-		t.Run("clears the recorded calls of Wrap", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewDestroyerStub(t)
-			_, _ = destroyerStubWrap(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnWrap.CallCount(), 0, "ResetCalls clears the calls of Wrap")
-		})
-
-		t.Run("keeps the results of Returns of Wrap", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewDestroyerStub(t)
-			want0, want1 := destroyerStubWrapPins()
-			s.OnWrap.Returns(want0, want1)
-			s.ResetCalls()
-			got0, got1 := destroyerStubWrap(t, s)
-			expect.Equal(t, got0, want0, "ResetCalls keeps the Result of Wrap")
-			expect.ErrorIs(t, got1, want1, "ResetCalls keeps the error of Wrap")
-		})
-
-		t.Run("clears the recorded calls of Unwrap", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewDestroyerStub(t)
-			_, _ = destroyerStubUnwrap(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnUnwrap.CallCount(), 0, "ResetCalls clears the calls of Unwrap")
-		})
-
-		t.Run("keeps the results of Returns of Unwrap", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewDestroyerStub(t)
-			want0, want1 := destroyerStubUnwrapPins()
-			s.OnUnwrap.Returns(want0, want1)
-			s.ResetCalls()
-			got0, got1 := destroyerStubUnwrap(t, s)
-			expect.Equal(t, got0, want0, "ResetCalls keeps the Result of Unwrap")
-			expect.ErrorIs(t, got1, want1, "ResetCalls keeps the error of Unwrap")
-		})
-	})
-
-	t.Run("NewDestroyerStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) destroyerStubInstance {
-			return destroyerStubInstanceOf(tb, cryptotest.NewDestroyerStubDelayed(tb, d, clk))
-		})
-	})
-
-	t.Run("NewDestroyerStubFailing", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("fails Destroy with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Destroy-failing")
-			s := cryptotest.NewDestroyerStubFailing(t, want)
-			_, r1 := destroyerStubDestroy(t, s)
-			assert.ErrorIs(t, r1, want, "Destroy fails with the error of NewDestroyerStubFailing")
-		})
-
-		t.Run("fails Wrap with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Wrap-failing")
-			s := cryptotest.NewDestroyerStubFailing(t, want)
-			_, r1 := destroyerStubWrap(t, s)
-			assert.ErrorIs(t, r1, want, "Wrap fails with the error of NewDestroyerStubFailing")
-		})
-
-		t.Run("fails Unwrap with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Unwrap-failing")
-			s := cryptotest.NewDestroyerStubFailing(t, want)
-			_, r1 := destroyerStubUnwrap(t, s)
-			assert.ErrorIs(t, r1, want, "Unwrap fails with the error of NewDestroyerStubFailing")
+			stub.ResetBehaviour(t, "Unwrap", destroyerStubUnwrapSubject)
 		})
 	})
 
@@ -1290,195 +947,6 @@ func TestDestroyerStub(t *testing.T) {
 	})
 }
 
-// TestDestroyerDestroyStub checks the methods of DestroyerDestroyStub,
-// which configures Destroy.
-func TestDestroyerDestroyStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Destroy", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewDestroyerStub(t)
-			want0, want1 := destroyerStubDestroyPins()
-			s.OnDestroy.Returns(want0, want1)
-			got0, got1 := destroyerStubDestroy(t, s)
-			expect.Equal(t, got0, want0, "Destroy returns the Result that Returns sets")
-			expect.ErrorIs(t, got1, want1, "Destroy returns the error that Returns sets")
-		})
-
-		t.Run("configures Destroy for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewDestroyerStub(r)
-			s.OnDestroy.Strict()
-			var want0 time.Time
-			var want1 error
-			s.OnDestroy.Returns(want0, want1)
-			_, _ = destroyerStubDestroy(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Destroy")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Destroy to the function", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewDestroyerStub(t)
-			var got0 context.Context
-			var got1 string
-			s.OnDestroy.Func(func(p0 context.Context, p1 string) (time.Time, error) {
-				got0, got1 = p0, p1
-				var z0 time.Time
-				var z1 error
-				return z0, z1
-			})
-			_, _ = destroyerStubDestroy(t, s)
-			a0, a1 := destroyerStubDestroyArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives KeyID")
-		})
-	})
-}
-
-// TestDestroyerKeyIDStub checks the methods of DestroyerKeyIDStub, which
-// configures KeyID.
-func TestDestroyerKeyIDStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of KeyID", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewDestroyerStub(t)
-			want0 := destroyerStubKeyIDPins()
-			s.OnKeyID.Returns(want0)
-			got0 := destroyerStubKeyID(t, s)
-			assert.Equal(t, got0, want0, "KeyID returns the Result that Returns sets")
-		})
-
-		t.Run("configures KeyID for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewDestroyerStub(r)
-			s.OnKeyID.Strict()
-			var want0 string
-			s.OnKeyID.Returns(want0)
-			_ = destroyerStubKeyID(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of KeyID")
-		})
-	})
-}
-
-// TestDestroyerWrapStub checks the methods of DestroyerWrapStub, which
-// configures Wrap.
-func TestDestroyerWrapStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Wrap", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewDestroyerStub(t)
-			want0, want1 := destroyerStubWrapPins()
-			s.OnWrap.Returns(want0, want1)
-			got0, got1 := destroyerStubWrap(t, s)
-			expect.Equal(t, got0, want0, "Wrap returns the Result that Returns sets")
-			expect.ErrorIs(t, got1, want1, "Wrap returns the error that Returns sets")
-		})
-
-		t.Run("configures Wrap for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewDestroyerStub(r)
-			s.OnWrap.Strict()
-			var want0 []byte
-			var want1 error
-			s.OnWrap.Returns(want0, want1)
-			_, _ = destroyerStubWrap(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Wrap")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Wrap to the function", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewDestroyerStub(t)
-			var got0 context.Context
-			var got1 []byte
-			s.OnWrap.Func(func(p0 context.Context, p1 []byte) ([]byte, error) {
-				got0, got1 = p0, p1
-				var z0 []byte
-				var z1 error
-				return z0, z1
-			})
-			_, _ = destroyerStubWrap(t, s)
-			a0, a1 := destroyerStubWrapArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives Dek")
-		})
-	})
-}
-
-// TestDestroyerUnwrapStub checks the methods of DestroyerUnwrapStub, which
-// configures Unwrap.
-func TestDestroyerUnwrapStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of Unwrap", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewDestroyerStub(t)
-			want0, want1 := destroyerStubUnwrapPins()
-			s.OnUnwrap.Returns(want0, want1)
-			got0, got1 := destroyerStubUnwrap(t, s)
-			expect.Equal(t, got0, want0, "Unwrap returns the Result that Returns sets")
-			expect.ErrorIs(t, got1, want1, "Unwrap returns the error that Returns sets")
-		})
-
-		t.Run("configures Unwrap for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewDestroyerStub(r)
-			s.OnUnwrap.Strict()
-			var want0 []byte
-			var want1 error
-			s.OnUnwrap.Returns(want0, want1)
-			_, _ = destroyerStubUnwrap(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Unwrap")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Unwrap to the function", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewDestroyerStub(t)
-			var got0 context.Context
-			var got1 []byte
-			s.OnUnwrap.Func(func(p0 context.Context, p1 []byte) ([]byte, error) {
-				got0, got1 = p0, p1
-				var z0 []byte
-				var z1 error
-				return z0, z1
-			})
-			_, _ = destroyerStubUnwrap(t, s)
-			a0, a1 := destroyerStubUnwrapArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives Wrapped")
-		})
-	})
-}
-
 // keyGeneratorStubGenerateKeyArgs returns the samples of the arguments of
 // GenerateKey.
 func keyGeneratorStubGenerateKeyArgs(tb assert.TB) (context.Context, int) {
@@ -1575,25 +1043,37 @@ func keyGeneratorStubUnwrapPins() ([]byte, error) {
 }
 
 // keyGeneratorStubGenerateKeySubject returns the subject of
-// [stub.Behaviour] for GenerateKey. The subject calls a new double that
-// reports to tb.
+// [stub.Behaviour] and [stub.ResetBehaviour] for GenerateKey. The subject
+// calls a new double that reports to tb.
 func keyGeneratorStubGenerateKeySubject(
 	tb assert.TB,
 ) stub.Subject[cryptotest.KeyGeneratorGenerateKeyCall, cryptotest.KeyGeneratorGenerateKeyReturn] {
 	tb.Helper()
 	s := cryptotest.NewKeyGeneratorStub(tb)
 	return stub.Subject[cryptotest.KeyGeneratorGenerateKeyCall, cryptotest.KeyGeneratorGenerateKeyReturn]{
-		Stub: s.OnGenerateKey.MethodStub,
+		Stub:  s.OnGenerateKey.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _, _ = keyGeneratorStubGenerateKey(tb, s)
+		},
+		Arguments: func(tb assert.TB, c cryptotest.KeyGeneratorGenerateKeyCall) {
+			tb.Helper()
+			a0, a1 := keyGeneratorStubGenerateKeyArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.Size, a1, "the call records Size")
 		},
 		Result: func() cryptotest.KeyGeneratorGenerateKeyReturn {
 			got0, got1, got2 := keyGeneratorStubGenerateKey(tb, s)
 			return cryptotest.KeyGeneratorGenerateKeyReturn{Plaintext: got0, Wrapped: got1, Err: got2}
 		},
-		Override: func(mark func()) {
-			s.OnGenerateKey.Func(func(_ context.Context, _ int) ([]byte, []byte, error) {
-				mark()
+		Returns: func() cryptotest.KeyGeneratorGenerateKeyReturn {
+			want0, want1, want2 := keyGeneratorStubGenerateKeyPins()
+			s.OnGenerateKey.Returns(want0, want1, want2)
+			return cryptotest.KeyGeneratorGenerateKeyReturn{Plaintext: want0, Wrapped: want1, Err: want2}
+		},
+		Override: func(seen func(cryptotest.KeyGeneratorGenerateKeyCall)) {
+			s.OnGenerateKey.Func(func(p0 context.Context, p1 int) ([]byte, []byte, error) {
+				seen(cryptotest.KeyGeneratorGenerateKeyCall{Ctx: p0, Size: p1})
 				var z0 []byte
 				var z1 []byte
 				var z2 error
@@ -1607,15 +1087,17 @@ func keyGeneratorStubGenerateKeySubject(
 	}
 }
 
-// keyGeneratorStubKeyIDSubject returns the subject of [stub.Behaviour] for
-// KeyID. The subject calls a new double that reports to tb.
+// keyGeneratorStubKeyIDSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for KeyID. The subject calls a new double that
+// reports to tb.
 func keyGeneratorStubKeyIDSubject(
 	tb assert.TB,
 ) stub.Subject[cryptotest.KeyGeneratorKeyIDCall, cryptotest.KeyGeneratorKeyIDReturn] {
 	tb.Helper()
 	s := cryptotest.NewKeyGeneratorStub(tb)
 	return stub.Subject[cryptotest.KeyGeneratorKeyIDCall, cryptotest.KeyGeneratorKeyIDReturn]{
-		Stub: s.OnKeyID.MethodStub,
+		Stub:  s.OnKeyID.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_ = keyGeneratorStubKeyID(tb, s)
 		},
@@ -1623,9 +1105,14 @@ func keyGeneratorStubKeyIDSubject(
 			got0 := keyGeneratorStubKeyID(tb, s)
 			return cryptotest.KeyGeneratorKeyIDReturn{Result: got0}
 		},
-		Override: func(mark func()) {
+		Returns: func() cryptotest.KeyGeneratorKeyIDReturn {
+			want0 := keyGeneratorStubKeyIDPins()
+			s.OnKeyID.Returns(want0)
+			return cryptotest.KeyGeneratorKeyIDReturn{Result: want0}
+		},
+		Override: func(seen func(cryptotest.KeyGeneratorKeyIDCall)) {
 			s.OnKeyID.Func(func() string {
-				mark()
+				seen(cryptotest.KeyGeneratorKeyIDCall{})
 				var z0 string
 				return z0
 			})
@@ -1633,25 +1120,38 @@ func keyGeneratorStubKeyIDSubject(
 	}
 }
 
-// keyGeneratorStubWrapSubject returns the subject of [stub.Behaviour] for
-// Wrap. The subject calls a new double that reports to tb.
+// keyGeneratorStubWrapSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Wrap. The subject calls a new double that
+// reports to tb.
 func keyGeneratorStubWrapSubject(
 	tb assert.TB,
 ) stub.Subject[cryptotest.KeyGeneratorWrapCall, cryptotest.KeyGeneratorWrapReturn] {
 	tb.Helper()
 	s := cryptotest.NewKeyGeneratorStub(tb)
 	return stub.Subject[cryptotest.KeyGeneratorWrapCall, cryptotest.KeyGeneratorWrapReturn]{
-		Stub: s.OnWrap.MethodStub,
+		Stub:  s.OnWrap.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = keyGeneratorStubWrap(tb, s)
+		},
+		Arguments: func(tb assert.TB, c cryptotest.KeyGeneratorWrapCall) {
+			tb.Helper()
+			a0, a1 := keyGeneratorStubWrapArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.Dek, a1, "the call records Dek")
 		},
 		Result: func() cryptotest.KeyGeneratorWrapReturn {
 			got0, got1 := keyGeneratorStubWrap(tb, s)
 			return cryptotest.KeyGeneratorWrapReturn{Result: got0, Err: got1}
 		},
-		Override: func(mark func()) {
-			s.OnWrap.Func(func(_ context.Context, _ []byte) ([]byte, error) {
-				mark()
+		Returns: func() cryptotest.KeyGeneratorWrapReturn {
+			want0, want1 := keyGeneratorStubWrapPins()
+			s.OnWrap.Returns(want0, want1)
+			return cryptotest.KeyGeneratorWrapReturn{Result: want0, Err: want1}
+		},
+		Override: func(seen func(cryptotest.KeyGeneratorWrapCall)) {
+			s.OnWrap.Func(func(p0 context.Context, p1 []byte) ([]byte, error) {
+				seen(cryptotest.KeyGeneratorWrapCall{Ctx: p0, Dek: p1})
 				var z0 []byte
 				var z1 error
 				return z0, z1
@@ -1665,24 +1165,37 @@ func keyGeneratorStubWrapSubject(
 }
 
 // keyGeneratorStubUnwrapSubject returns the subject of [stub.Behaviour]
-// for Unwrap. The subject calls a new double that reports to tb.
+// and [stub.ResetBehaviour] for Unwrap. The subject calls a new double
+// that reports to tb.
 func keyGeneratorStubUnwrapSubject(
 	tb assert.TB,
 ) stub.Subject[cryptotest.KeyGeneratorUnwrapCall, cryptotest.KeyGeneratorUnwrapReturn] {
 	tb.Helper()
 	s := cryptotest.NewKeyGeneratorStub(tb)
 	return stub.Subject[cryptotest.KeyGeneratorUnwrapCall, cryptotest.KeyGeneratorUnwrapReturn]{
-		Stub: s.OnUnwrap.MethodStub,
+		Stub:  s.OnUnwrap.MethodStub,
+		Reset: s.ResetCalls,
 		Call: func() {
 			_, _ = keyGeneratorStubUnwrap(tb, s)
+		},
+		Arguments: func(tb assert.TB, c cryptotest.KeyGeneratorUnwrapCall) {
+			tb.Helper()
+			a0, a1 := keyGeneratorStubUnwrapArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.Wrapped, a1, "the call records Wrapped")
 		},
 		Result: func() cryptotest.KeyGeneratorUnwrapReturn {
 			got0, got1 := keyGeneratorStubUnwrap(tb, s)
 			return cryptotest.KeyGeneratorUnwrapReturn{Result: got0, Err: got1}
 		},
-		Override: func(mark func()) {
-			s.OnUnwrap.Func(func(_ context.Context, _ []byte) ([]byte, error) {
-				mark()
+		Returns: func() cryptotest.KeyGeneratorUnwrapReturn {
+			want0, want1 := keyGeneratorStubUnwrapPins()
+			s.OnUnwrap.Returns(want0, want1)
+			return cryptotest.KeyGeneratorUnwrapReturn{Result: want0, Err: want1}
+		},
+		Override: func(seen func(cryptotest.KeyGeneratorUnwrapCall)) {
+			s.OnUnwrap.Func(func(p0 context.Context, p1 []byte) ([]byte, error) {
+				seen(cryptotest.KeyGeneratorUnwrapCall{Ctx: p0, Wrapped: p1})
 				var z0 []byte
 				var z1 error
 				return z0, z1
@@ -1709,7 +1222,6 @@ func keyGeneratorStubInstanceOf(tb assert.TB, s *cryptotest.KeyGeneratorStub) ke
 		Call: func() {
 			_, _, _ = keyGeneratorStubGenerateKey(tb, s)
 		},
-		Reset: s.ResetCalls,
 	}
 }
 
@@ -1721,208 +1233,44 @@ func TestKeyGeneratorStub(t *testing.T) {
 	t.Run("GenerateKey", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "GenerateKey", keyGeneratorStubGenerateKeySubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewKeyGeneratorStub(t)
-			_, _, _ = keyGeneratorStubGenerateKey(t, s)
-			got := s.OnGenerateKey.AssertCalledOnce(t, "GenerateKey records the call")
-			a0, a1 := keyGeneratorStubGenerateKeyArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.Size, a1, "the call records Size")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewKeyGeneratorStub(t)
-			var seen []cryptotest.KeyGeneratorGenerateKeyCall
-			s.OnGenerateKey.OnRecord(func(c cryptotest.KeyGeneratorGenerateKeyCall) { seen = append(seen, c) })
-			_, _, _ = keyGeneratorStubGenerateKey(t, s)
-			_, _, _ = keyGeneratorStubGenerateKey(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of GenerateKey")
-		})
 	})
 
 	t.Run("KeyID", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "KeyID", keyGeneratorStubKeyIDSubject)
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewKeyGeneratorStub(t)
-			var seen []cryptotest.KeyGeneratorKeyIDCall
-			s.OnKeyID.OnRecord(func(c cryptotest.KeyGeneratorKeyIDCall) { seen = append(seen, c) })
-			_ = keyGeneratorStubKeyID(t, s)
-			_ = keyGeneratorStubKeyID(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of KeyID")
-		})
 	})
 
 	t.Run("Wrap", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Wrap", keyGeneratorStubWrapSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewKeyGeneratorStub(t)
-			_, _ = keyGeneratorStubWrap(t, s)
-			got := s.OnWrap.AssertCalledOnce(t, "Wrap records the call")
-			a0, a1 := keyGeneratorStubWrapArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.Dek, a1, "the call records Dek")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewKeyGeneratorStub(t)
-			var seen []cryptotest.KeyGeneratorWrapCall
-			s.OnWrap.OnRecord(func(c cryptotest.KeyGeneratorWrapCall) { seen = append(seen, c) })
-			_, _ = keyGeneratorStubWrap(t, s)
-			_, _ = keyGeneratorStubWrap(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Wrap")
-		})
 	})
 
 	t.Run("Unwrap", func(t *testing.T) {
 		t.Parallel()
 		stub.Behaviour(t, "Unwrap", keyGeneratorStubUnwrapSubject)
-
-		t.Run("records the arguments of the call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewKeyGeneratorStub(t)
-			_, _ = keyGeneratorStubUnwrap(t, s)
-			got := s.OnUnwrap.AssertCalledOnce(t, "Unwrap records the call")
-			a0, a1 := keyGeneratorStubUnwrapArgs(t)
-			expect.Equal(t, got.Ctx, a0, "the call records Ctx", expect.ByIdentity())
-			expect.Equal(t, got.Wrapped, a1, "the call records Wrapped")
-		})
-
-		t.Run("runs the OnRecord hook once for each call", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewKeyGeneratorStub(t)
-			var seen []cryptotest.KeyGeneratorUnwrapCall
-			s.OnUnwrap.OnRecord(func(c cryptotest.KeyGeneratorUnwrapCall) { seen = append(seen, c) })
-			_, _ = keyGeneratorStubUnwrap(t, s)
-			_, _ = keyGeneratorStubUnwrap(t, s)
-			assert.Length(t, seen, 2, "OnRecord runs once for each call of Unwrap")
-		})
 	})
 
 	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
-		stub.ResetBehaviour(t, func(tb assert.TB) keyGeneratorStubInstance {
-			return keyGeneratorStubInstanceOf(tb, cryptotest.NewKeyGeneratorStub(tb))
-		})
 
-		t.Run("clears the recorded calls of GenerateKey", func(t *testing.T) {
+		t.Run("GenerateKey", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewKeyGeneratorStub(t)
-			_, _, _ = keyGeneratorStubGenerateKey(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnGenerateKey.CallCount(), 0, "ResetCalls clears the calls of GenerateKey")
+			stub.ResetBehaviour(t, "GenerateKey", keyGeneratorStubGenerateKeySubject)
 		})
 
-		t.Run("keeps the results of Returns of GenerateKey", func(t *testing.T) {
+		t.Run("KeyID", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewKeyGeneratorStub(t)
-			want0, want1, want2 := keyGeneratorStubGenerateKeyPins()
-			s.OnGenerateKey.Returns(want0, want1, want2)
-			s.ResetCalls()
-			got0, got1, got2 := keyGeneratorStubGenerateKey(t, s)
-			expect.Equal(t, got0, want0, "ResetCalls keeps the Plaintext of GenerateKey")
-			expect.Equal(t, got1, want1, "ResetCalls keeps the Wrapped of GenerateKey")
-			expect.ErrorIs(t, got2, want2, "ResetCalls keeps the error of GenerateKey")
+			stub.ResetBehaviour(t, "KeyID", keyGeneratorStubKeyIDSubject)
 		})
 
-		t.Run("clears the recorded calls of KeyID", func(t *testing.T) {
+		t.Run("Wrap", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewKeyGeneratorStub(t)
-			_ = keyGeneratorStubKeyID(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnKeyID.CallCount(), 0, "ResetCalls clears the calls of KeyID")
+			stub.ResetBehaviour(t, "Wrap", keyGeneratorStubWrapSubject)
 		})
 
-		t.Run("keeps the results of Returns of KeyID", func(t *testing.T) {
+		t.Run("Unwrap", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewKeyGeneratorStub(t)
-			want0 := keyGeneratorStubKeyIDPins()
-			s.OnKeyID.Returns(want0)
-			s.ResetCalls()
-			got0 := keyGeneratorStubKeyID(t, s)
-			assert.Equal(t, got0, want0, "ResetCalls keeps the Result of KeyID")
-		})
-
-		t.Run("clears the recorded calls of Wrap", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewKeyGeneratorStub(t)
-			_, _ = keyGeneratorStubWrap(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnWrap.CallCount(), 0, "ResetCalls clears the calls of Wrap")
-		})
-
-		t.Run("keeps the results of Returns of Wrap", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewKeyGeneratorStub(t)
-			want0, want1 := keyGeneratorStubWrapPins()
-			s.OnWrap.Returns(want0, want1)
-			s.ResetCalls()
-			got0, got1 := keyGeneratorStubWrap(t, s)
-			expect.Equal(t, got0, want0, "ResetCalls keeps the Result of Wrap")
-			expect.ErrorIs(t, got1, want1, "ResetCalls keeps the error of Wrap")
-		})
-
-		t.Run("clears the recorded calls of Unwrap", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewKeyGeneratorStub(t)
-			_, _ = keyGeneratorStubUnwrap(t, s)
-			s.ResetCalls()
-			assert.Equal(t, s.OnUnwrap.CallCount(), 0, "ResetCalls clears the calls of Unwrap")
-		})
-
-		t.Run("keeps the results of Returns of Unwrap", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewKeyGeneratorStub(t)
-			want0, want1 := keyGeneratorStubUnwrapPins()
-			s.OnUnwrap.Returns(want0, want1)
-			s.ResetCalls()
-			got0, got1 := keyGeneratorStubUnwrap(t, s)
-			expect.Equal(t, got0, want0, "ResetCalls keeps the Result of Unwrap")
-			expect.ErrorIs(t, got1, want1, "ResetCalls keeps the error of Unwrap")
-		})
-	})
-
-	t.Run("NewKeyGeneratorStubDelayed", func(t *testing.T) {
-		t.Parallel()
-		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) keyGeneratorStubInstance {
-			return keyGeneratorStubInstanceOf(tb, cryptotest.NewKeyGeneratorStubDelayed(tb, d, clk))
-		})
-	})
-
-	t.Run("NewKeyGeneratorStubFailing", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("fails GenerateKey with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("GenerateKey-failing")
-			s := cryptotest.NewKeyGeneratorStubFailing(t, want)
-			_, _, err := keyGeneratorStubGenerateKey(t, s)
-			assert.ErrorIs(t, err, want, "GenerateKey fails with the error of NewKeyGeneratorStubFailing")
-		})
-
-		t.Run("fails Wrap with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Wrap-failing")
-			s := cryptotest.NewKeyGeneratorStubFailing(t, want)
-			_, r1 := keyGeneratorStubWrap(t, s)
-			assert.ErrorIs(t, r1, want, "Wrap fails with the error of NewKeyGeneratorStubFailing")
-		})
-
-		t.Run("fails Unwrap with its error", func(t *testing.T) {
-			t.Parallel()
-			want := errors.New("Unwrap-failing")
-			s := cryptotest.NewKeyGeneratorStubFailing(t, want)
-			_, r1 := keyGeneratorStubUnwrap(t, s)
-			assert.ErrorIs(t, r1, want, "Unwrap fails with the error of NewKeyGeneratorStubFailing")
+			stub.ResetBehaviour(t, "Unwrap", keyGeneratorStubUnwrapSubject)
 		})
 	})
 
@@ -2152,196 +1500,1492 @@ func TestKeyGeneratorStub(t *testing.T) {
 	})
 }
 
-// TestKeyGeneratorGenerateKeyStub checks the methods of
-// KeyGeneratorGenerateKeyStub, which configures GenerateKey.
-func TestKeyGeneratorGenerateKeyStub(t *testing.T) {
+// aadKeeperStubWrapAADArgs returns the samples of the arguments of
+// WrapAAD.
+func aadKeeperStubWrapAADArgs(tb assert.TB) (context.Context, []byte, []byte) {
+	tb.Helper()
+	a0 := assert.Context(tb)
+	var a1 []byte
+	var a2 []byte
+	a1 = []byte{1}
+	a2 = []byte{1}
+	return a0, a1, a2
+}
+
+// aadKeeperStubWrapAAD calls WrapAAD of s with the samples of its
+// arguments.
+func aadKeeperStubWrapAAD(tb assert.TB, s *cryptotest.AADKeeperStub) ([]byte, error) {
+	tb.Helper()
+	a0, a1, a2 := aadKeeperStubWrapAADArgs(tb)
+	return s.WrapAAD(a0, a1, a2)
+}
+
+// aadKeeperStubWrapAADPins returns the samples of the results of WrapAAD,
+// with a new error as its error result.
+func aadKeeperStubWrapAADPins() ([]byte, error) {
+	var want0 []byte
+	want1 := errors.New("WrapAAD-returns")
+	want0 = []byte{1}
+	return want0, want1
+}
+
+// aadKeeperStubUnwrapAADArgs returns the samples of the arguments of
+// UnwrapAAD.
+func aadKeeperStubUnwrapAADArgs(tb assert.TB) (context.Context, []byte, []byte) {
+	tb.Helper()
+	a0 := assert.Context(tb)
+	var a1 []byte
+	var a2 []byte
+	a1 = []byte{1}
+	a2 = []byte{1}
+	return a0, a1, a2
+}
+
+// aadKeeperStubUnwrapAAD calls UnwrapAAD of s with the samples of its
+// arguments.
+func aadKeeperStubUnwrapAAD(tb assert.TB, s *cryptotest.AADKeeperStub) ([]byte, error) {
+	tb.Helper()
+	a0, a1, a2 := aadKeeperStubUnwrapAADArgs(tb)
+	return s.UnwrapAAD(a0, a1, a2)
+}
+
+// aadKeeperStubUnwrapAADPins returns the samples of the results of
+// UnwrapAAD, with a new error as its error result.
+func aadKeeperStubUnwrapAADPins() ([]byte, error) {
+	var want0 []byte
+	want1 := errors.New("UnwrapAAD-returns")
+	want0 = []byte{1}
+	return want0, want1
+}
+
+// aadKeeperStubKeyID calls KeyID of s with the samples of its arguments.
+func aadKeeperStubKeyID(tb assert.TB, s *cryptotest.AADKeeperStub) string {
+	tb.Helper()
+	return s.KeyID()
+}
+
+// aadKeeperStubKeyIDPins returns the samples of the results of KeyID.
+func aadKeeperStubKeyIDPins() string {
+	var want0 string
+	want0 = "KeyID-a"
+	return want0
+}
+
+// aadKeeperStubWrapArgs returns the samples of the arguments of Wrap.
+func aadKeeperStubWrapArgs(tb assert.TB) (context.Context, []byte) {
+	tb.Helper()
+	a0 := assert.Context(tb)
+	var a1 []byte
+	a1 = []byte{1}
+	return a0, a1
+}
+
+// aadKeeperStubWrap calls Wrap of s with the samples of its arguments.
+func aadKeeperStubWrap(tb assert.TB, s *cryptotest.AADKeeperStub) ([]byte, error) {
+	tb.Helper()
+	a0, a1 := aadKeeperStubWrapArgs(tb)
+	return s.Wrap(a0, a1)
+}
+
+// aadKeeperStubWrapPins returns the samples of the results of Wrap, with a
+// new error as its error result.
+func aadKeeperStubWrapPins() ([]byte, error) {
+	var want0 []byte
+	want1 := errors.New("Wrap-returns")
+	want0 = []byte{1}
+	return want0, want1
+}
+
+// aadKeeperStubUnwrapArgs returns the samples of the arguments of Unwrap.
+func aadKeeperStubUnwrapArgs(tb assert.TB) (context.Context, []byte) {
+	tb.Helper()
+	a0 := assert.Context(tb)
+	var a1 []byte
+	a1 = []byte{1}
+	return a0, a1
+}
+
+// aadKeeperStubUnwrap calls Unwrap of s with the samples of its arguments.
+func aadKeeperStubUnwrap(tb assert.TB, s *cryptotest.AADKeeperStub) ([]byte, error) {
+	tb.Helper()
+	a0, a1 := aadKeeperStubUnwrapArgs(tb)
+	return s.Unwrap(a0, a1)
+}
+
+// aadKeeperStubUnwrapPins returns the samples of the results of Unwrap,
+// with a new error as its error result.
+func aadKeeperStubUnwrapPins() ([]byte, error) {
+	var want0 []byte
+	want1 := errors.New("Unwrap-returns")
+	want0 = []byte{1}
+	return want0, want1
+}
+
+// aadKeeperStubWrapAADSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for WrapAAD. The subject calls a new double that
+// reports to tb.
+func aadKeeperStubWrapAADSubject(
+	tb assert.TB,
+) stub.Subject[cryptotest.AADKeeperWrapAADCall, cryptotest.AADKeeperWrapAADReturn] {
+	tb.Helper()
+	s := cryptotest.NewAADKeeperStub(tb)
+	return stub.Subject[cryptotest.AADKeeperWrapAADCall, cryptotest.AADKeeperWrapAADReturn]{
+		Stub:  s.OnWrapAAD.MethodStub,
+		Reset: s.ResetCalls,
+		Call: func() {
+			_, _ = aadKeeperStubWrapAAD(tb, s)
+		},
+		Arguments: func(tb assert.TB, c cryptotest.AADKeeperWrapAADCall) {
+			tb.Helper()
+			a0, a1, a2 := aadKeeperStubWrapAADArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.Dek, a1, "the call records Dek")
+			expect.Equal(tb, c.Aad, a2, "the call records Aad")
+		},
+		Result: func() cryptotest.AADKeeperWrapAADReturn {
+			got0, got1 := aadKeeperStubWrapAAD(tb, s)
+			return cryptotest.AADKeeperWrapAADReturn{Result: got0, Err: got1}
+		},
+		Returns: func() cryptotest.AADKeeperWrapAADReturn {
+			want0, want1 := aadKeeperStubWrapAADPins()
+			s.OnWrapAAD.Returns(want0, want1)
+			return cryptotest.AADKeeperWrapAADReturn{Result: want0, Err: want1}
+		},
+		Override: func(seen func(cryptotest.AADKeeperWrapAADCall)) {
+			s.OnWrapAAD.Func(func(p0 context.Context, p1, p2 []byte) ([]byte, error) {
+				seen(cryptotest.AADKeeperWrapAADCall{Ctx: p0, Dek: p1, Aad: p2})
+				var z0 []byte
+				var z1 error
+				return z0, z1
+			})
+		},
+		Fails: func() error {
+			_, r1 := aadKeeperStubWrapAAD(tb, s)
+			return r1
+		},
+	}
+}
+
+// aadKeeperStubUnwrapAADSubject returns the subject of [stub.Behaviour]
+// and [stub.ResetBehaviour] for UnwrapAAD. The subject calls a new double
+// that reports to tb.
+func aadKeeperStubUnwrapAADSubject(
+	tb assert.TB,
+) stub.Subject[cryptotest.AADKeeperUnwrapAADCall, cryptotest.AADKeeperUnwrapAADReturn] {
+	tb.Helper()
+	s := cryptotest.NewAADKeeperStub(tb)
+	return stub.Subject[cryptotest.AADKeeperUnwrapAADCall, cryptotest.AADKeeperUnwrapAADReturn]{
+		Stub:  s.OnUnwrapAAD.MethodStub,
+		Reset: s.ResetCalls,
+		Call: func() {
+			_, _ = aadKeeperStubUnwrapAAD(tb, s)
+		},
+		Arguments: func(tb assert.TB, c cryptotest.AADKeeperUnwrapAADCall) {
+			tb.Helper()
+			a0, a1, a2 := aadKeeperStubUnwrapAADArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.Wrapped, a1, "the call records Wrapped")
+			expect.Equal(tb, c.Aad, a2, "the call records Aad")
+		},
+		Result: func() cryptotest.AADKeeperUnwrapAADReturn {
+			got0, got1 := aadKeeperStubUnwrapAAD(tb, s)
+			return cryptotest.AADKeeperUnwrapAADReturn{Result: got0, Err: got1}
+		},
+		Returns: func() cryptotest.AADKeeperUnwrapAADReturn {
+			want0, want1 := aadKeeperStubUnwrapAADPins()
+			s.OnUnwrapAAD.Returns(want0, want1)
+			return cryptotest.AADKeeperUnwrapAADReturn{Result: want0, Err: want1}
+		},
+		Override: func(seen func(cryptotest.AADKeeperUnwrapAADCall)) {
+			s.OnUnwrapAAD.Func(func(p0 context.Context, p1, p2 []byte) ([]byte, error) {
+				seen(cryptotest.AADKeeperUnwrapAADCall{Ctx: p0, Wrapped: p1, Aad: p2})
+				var z0 []byte
+				var z1 error
+				return z0, z1
+			})
+		},
+		Fails: func() error {
+			_, r1 := aadKeeperStubUnwrapAAD(tb, s)
+			return r1
+		},
+	}
+}
+
+// aadKeeperStubKeyIDSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for KeyID. The subject calls a new double that
+// reports to tb.
+func aadKeeperStubKeyIDSubject(
+	tb assert.TB,
+) stub.Subject[cryptotest.AADKeeperKeyIDCall, cryptotest.AADKeeperKeyIDReturn] {
+	tb.Helper()
+	s := cryptotest.NewAADKeeperStub(tb)
+	return stub.Subject[cryptotest.AADKeeperKeyIDCall, cryptotest.AADKeeperKeyIDReturn]{
+		Stub:  s.OnKeyID.MethodStub,
+		Reset: s.ResetCalls,
+		Call: func() {
+			_ = aadKeeperStubKeyID(tb, s)
+		},
+		Result: func() cryptotest.AADKeeperKeyIDReturn {
+			got0 := aadKeeperStubKeyID(tb, s)
+			return cryptotest.AADKeeperKeyIDReturn{Result: got0}
+		},
+		Returns: func() cryptotest.AADKeeperKeyIDReturn {
+			want0 := aadKeeperStubKeyIDPins()
+			s.OnKeyID.Returns(want0)
+			return cryptotest.AADKeeperKeyIDReturn{Result: want0}
+		},
+		Override: func(seen func(cryptotest.AADKeeperKeyIDCall)) {
+			s.OnKeyID.Func(func() string {
+				seen(cryptotest.AADKeeperKeyIDCall{})
+				var z0 string
+				return z0
+			})
+		},
+	}
+}
+
+// aadKeeperStubWrapSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Wrap. The subject calls a new double that
+// reports to tb.
+func aadKeeperStubWrapSubject(tb assert.TB) stub.Subject[cryptotest.AADKeeperWrapCall, cryptotest.AADKeeperWrapReturn] {
+	tb.Helper()
+	s := cryptotest.NewAADKeeperStub(tb)
+	return stub.Subject[cryptotest.AADKeeperWrapCall, cryptotest.AADKeeperWrapReturn]{
+		Stub:  s.OnWrap.MethodStub,
+		Reset: s.ResetCalls,
+		Call: func() {
+			_, _ = aadKeeperStubWrap(tb, s)
+		},
+		Arguments: func(tb assert.TB, c cryptotest.AADKeeperWrapCall) {
+			tb.Helper()
+			a0, a1 := aadKeeperStubWrapArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.Dek, a1, "the call records Dek")
+		},
+		Result: func() cryptotest.AADKeeperWrapReturn {
+			got0, got1 := aadKeeperStubWrap(tb, s)
+			return cryptotest.AADKeeperWrapReturn{Result: got0, Err: got1}
+		},
+		Returns: func() cryptotest.AADKeeperWrapReturn {
+			want0, want1 := aadKeeperStubWrapPins()
+			s.OnWrap.Returns(want0, want1)
+			return cryptotest.AADKeeperWrapReturn{Result: want0, Err: want1}
+		},
+		Override: func(seen func(cryptotest.AADKeeperWrapCall)) {
+			s.OnWrap.Func(func(p0 context.Context, p1 []byte) ([]byte, error) {
+				seen(cryptotest.AADKeeperWrapCall{Ctx: p0, Dek: p1})
+				var z0 []byte
+				var z1 error
+				return z0, z1
+			})
+		},
+		Fails: func() error {
+			_, r1 := aadKeeperStubWrap(tb, s)
+			return r1
+		},
+	}
+}
+
+// aadKeeperStubUnwrapSubject returns the subject of [stub.Behaviour] and
+// [stub.ResetBehaviour] for Unwrap. The subject calls a new double that
+// reports to tb.
+func aadKeeperStubUnwrapSubject(
+	tb assert.TB,
+) stub.Subject[cryptotest.AADKeeperUnwrapCall, cryptotest.AADKeeperUnwrapReturn] {
+	tb.Helper()
+	s := cryptotest.NewAADKeeperStub(tb)
+	return stub.Subject[cryptotest.AADKeeperUnwrapCall, cryptotest.AADKeeperUnwrapReturn]{
+		Stub:  s.OnUnwrap.MethodStub,
+		Reset: s.ResetCalls,
+		Call: func() {
+			_, _ = aadKeeperStubUnwrap(tb, s)
+		},
+		Arguments: func(tb assert.TB, c cryptotest.AADKeeperUnwrapCall) {
+			tb.Helper()
+			a0, a1 := aadKeeperStubUnwrapArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.Wrapped, a1, "the call records Wrapped")
+		},
+		Result: func() cryptotest.AADKeeperUnwrapReturn {
+			got0, got1 := aadKeeperStubUnwrap(tb, s)
+			return cryptotest.AADKeeperUnwrapReturn{Result: got0, Err: got1}
+		},
+		Returns: func() cryptotest.AADKeeperUnwrapReturn {
+			want0, want1 := aadKeeperStubUnwrapPins()
+			s.OnUnwrap.Returns(want0, want1)
+			return cryptotest.AADKeeperUnwrapReturn{Result: want0, Err: want1}
+		},
+		Override: func(seen func(cryptotest.AADKeeperUnwrapCall)) {
+			s.OnUnwrap.Func(func(p0 context.Context, p1 []byte) ([]byte, error) {
+				seen(cryptotest.AADKeeperUnwrapCall{Ctx: p0, Wrapped: p1})
+				var z0 []byte
+				var z1 error
+				return z0, z1
+			})
+		},
+		Fails: func() error {
+			_, r1 := aadKeeperStubUnwrap(tb, s)
+			return r1
+		},
+	}
+}
+
+// aadKeeperStubInstance is the instance of a cryptotest.AADKeeperStub that
+// the checks of the constructors and the options drive.
+type aadKeeperStubInstance = stub.Instance[cryptotest.AADKeeperWrapAADCall]
+
+// aadKeeperStubInstanceOf returns the instance of s. The options apply to
+// the whole double, so the checks call WrapAAD alone.
+func aadKeeperStubInstanceOf(tb assert.TB, s *cryptotest.AADKeeperStub) aadKeeperStubInstance {
+	tb.Helper()
+	return aadKeeperStubInstance{
+		Stub: s.OnWrapAAD.MethodStub,
+		Call: func() {
+			_, _ = aadKeeperStubWrapAAD(tb, s)
+		},
+	}
+}
+
+// TestAADKeeperStub checks the methods, the constructors and the options
+// of the double AADKeeperStub.
+func TestAADKeeperStub(t *testing.T) {
 	t.Parallel()
 
-	t.Run("Returns", func(t *testing.T) {
+	t.Run("WrapAAD", func(t *testing.T) {
+		t.Parallel()
+		stub.Behaviour(t, "WrapAAD", aadKeeperStubWrapAADSubject)
+	})
+
+	t.Run("UnwrapAAD", func(t *testing.T) {
+		t.Parallel()
+		stub.Behaviour(t, "UnwrapAAD", aadKeeperStubUnwrapAADSubject)
+	})
+
+	t.Run("KeyID", func(t *testing.T) {
+		t.Parallel()
+		stub.Behaviour(t, "KeyID", aadKeeperStubKeyIDSubject)
+	})
+
+	t.Run("Wrap", func(t *testing.T) {
+		t.Parallel()
+		stub.Behaviour(t, "Wrap", aadKeeperStubWrapSubject)
+	})
+
+	t.Run("Unwrap", func(t *testing.T) {
+		t.Parallel()
+		stub.Behaviour(t, "Unwrap", aadKeeperStubUnwrapSubject)
+	})
+
+	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("sets the results of each call of GenerateKey", func(t *testing.T) {
+		t.Run("WrapAAD", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewKeyGeneratorStub(t)
-			want0, want1, want2 := keyGeneratorStubGenerateKeyPins()
-			s.OnGenerateKey.Returns(want0, want1, want2)
-			got0, got1, got2 := keyGeneratorStubGenerateKey(t, s)
-			expect.Equal(t, got0, want0, "GenerateKey returns the Plaintext that Returns sets")
-			expect.Equal(t, got1, want1, "GenerateKey returns the Wrapped that Returns sets")
-			expect.ErrorIs(t, got2, want2, "GenerateKey returns the error that Returns sets")
+			stub.ResetBehaviour(t, "WrapAAD", aadKeeperStubWrapAADSubject)
 		})
 
-		t.Run("configures GenerateKey for strict mode", func(t *testing.T) {
+		t.Run("UnwrapAAD", func(t *testing.T) {
 			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewKeyGeneratorStub(r)
-			s.OnGenerateKey.Strict()
-			var want0 []byte
-			var want1 []byte
-			var want2 error
-			s.OnGenerateKey.Returns(want0, want1, want2)
-			_, _, _ = keyGeneratorStubGenerateKey(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of GenerateKey")
+			stub.ResetBehaviour(t, "UnwrapAAD", aadKeeperStubUnwrapAADSubject)
+		})
+
+		t.Run("KeyID", func(t *testing.T) {
+			t.Parallel()
+			stub.ResetBehaviour(t, "KeyID", aadKeeperStubKeyIDSubject)
+		})
+
+		t.Run("Wrap", func(t *testing.T) {
+			t.Parallel()
+			stub.ResetBehaviour(t, "Wrap", aadKeeperStubWrapSubject)
+		})
+
+		t.Run("Unwrap", func(t *testing.T) {
+			t.Parallel()
+			stub.ResetBehaviour(t, "Unwrap", aadKeeperStubUnwrapSubject)
 		})
 	})
 
-	t.Run("Func", func(t *testing.T) {
+	t.Run("AADKeeperStubStrict", func(t *testing.T) {
+		t.Parallel()
+		stub.StrictBehaviour(t, func(tb assert.TB) aadKeeperStubInstance {
+			return aadKeeperStubInstanceOf(tb, cryptotest.NewAADKeeperStub(tb, cryptotest.AADKeeperStubStrict()))
+		})
+	})
+
+	t.Run("AADKeeperStubDelegateTo", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("passes the arguments of each call of GenerateKey to the function", func(t *testing.T) {
+		t.Run("passes WrapAAD to the implementation", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewKeyGeneratorStub(t)
-			var got0 context.Context
-			var got1 int
-			s.OnGenerateKey.Func(func(p0 context.Context, p1 int) ([]byte, []byte, error) {
-				got0, got1 = p0, p1
+			inner := cryptotest.NewAADKeeperStub(t)
+			s := cryptotest.NewAADKeeperStub(t, cryptotest.AADKeeperStubDelegateTo(inner))
+			_, _ = aadKeeperStubWrapAAD(t, s)
+			inner.OnWrapAAD.AssertCalledOnce(t, "WrapAAD calls the implementation")
+		})
+
+		t.Run("fails WrapAAD with the error of the implementation", func(t *testing.T) {
+			t.Parallel()
+			want := errors.New("WrapAAD-delegate")
+			inner := cryptotest.NewAADKeeperStub(t)
+			inner.OnWrapAAD.Faults(want, 1)
+			s := cryptotest.NewAADKeeperStub(t, cryptotest.AADKeeperStubDelegateTo(inner))
+			_, r1 := aadKeeperStubWrapAAD(t, s)
+			assert.ErrorIs(t, r1, want, "WrapAAD fails with the error of the implementation")
+		})
+
+		t.Run("passes UnwrapAAD to the implementation", func(t *testing.T) {
+			t.Parallel()
+			inner := cryptotest.NewAADKeeperStub(t)
+			s := cryptotest.NewAADKeeperStub(t, cryptotest.AADKeeperStubDelegateTo(inner))
+			_, _ = aadKeeperStubUnwrapAAD(t, s)
+			inner.OnUnwrapAAD.AssertCalledOnce(t, "UnwrapAAD calls the implementation")
+		})
+
+		t.Run("fails UnwrapAAD with the error of the implementation", func(t *testing.T) {
+			t.Parallel()
+			want := errors.New("UnwrapAAD-delegate")
+			inner := cryptotest.NewAADKeeperStub(t)
+			inner.OnUnwrapAAD.Faults(want, 1)
+			s := cryptotest.NewAADKeeperStub(t, cryptotest.AADKeeperStubDelegateTo(inner))
+			_, r1 := aadKeeperStubUnwrapAAD(t, s)
+			assert.ErrorIs(t, r1, want, "UnwrapAAD fails with the error of the implementation")
+		})
+
+		t.Run("passes KeyID to the implementation", func(t *testing.T) {
+			t.Parallel()
+			inner := cryptotest.NewAADKeeperStub(t)
+			s := cryptotest.NewAADKeeperStub(t, cryptotest.AADKeeperStubDelegateTo(inner))
+			_ = aadKeeperStubKeyID(t, s)
+			inner.OnKeyID.AssertCalledOnce(t, "KeyID calls the implementation")
+		})
+
+		t.Run("passes Wrap to the implementation", func(t *testing.T) {
+			t.Parallel()
+			inner := cryptotest.NewAADKeeperStub(t)
+			s := cryptotest.NewAADKeeperStub(t, cryptotest.AADKeeperStubDelegateTo(inner))
+			_, _ = aadKeeperStubWrap(t, s)
+			inner.OnWrap.AssertCalledOnce(t, "Wrap calls the implementation")
+		})
+
+		t.Run("fails Wrap with the error of the implementation", func(t *testing.T) {
+			t.Parallel()
+			want := errors.New("Wrap-delegate")
+			inner := cryptotest.NewAADKeeperStub(t)
+			inner.OnWrap.Faults(want, 1)
+			s := cryptotest.NewAADKeeperStub(t, cryptotest.AADKeeperStubDelegateTo(inner))
+			_, r1 := aadKeeperStubWrap(t, s)
+			assert.ErrorIs(t, r1, want, "Wrap fails with the error of the implementation")
+		})
+
+		t.Run("passes Unwrap to the implementation", func(t *testing.T) {
+			t.Parallel()
+			inner := cryptotest.NewAADKeeperStub(t)
+			s := cryptotest.NewAADKeeperStub(t, cryptotest.AADKeeperStubDelegateTo(inner))
+			_, _ = aadKeeperStubUnwrap(t, s)
+			inner.OnUnwrap.AssertCalledOnce(t, "Unwrap calls the implementation")
+		})
+
+		t.Run("fails Unwrap with the error of the implementation", func(t *testing.T) {
+			t.Parallel()
+			want := errors.New("Unwrap-delegate")
+			inner := cryptotest.NewAADKeeperStub(t)
+			inner.OnUnwrap.Faults(want, 1)
+			s := cryptotest.NewAADKeeperStub(t, cryptotest.AADKeeperStubDelegateTo(inner))
+			_, r1 := aadKeeperStubUnwrap(t, s)
+			assert.ErrorIs(t, r1, want, "Unwrap fails with the error of the implementation")
+		})
+	})
+
+	t.Run("AADKeeperStubWithClock", func(t *testing.T) {
+		t.Parallel()
+		stub.ClockBehaviour(t, func(tb assert.TB, clk assert.Clock) aadKeeperStubInstance {
+			return aadKeeperStubInstanceOf(tb, cryptotest.NewAADKeeperStub(tb, cryptotest.AADKeeperStubWithClock(clk)))
+		})
+	})
+
+	t.Run("AADKeeperStubWithRandSource", func(t *testing.T) {
+		t.Parallel()
+		stub.RandSourceBehaviour(t, func(tb assert.TB, src rand.Source) aadKeeperStubInstance {
+			return aadKeeperStubInstanceOf(
+				tb,
+				cryptotest.NewAADKeeperStub(tb, cryptotest.AADKeeperStubWithRandSource(src)),
+			)
+		})
+	})
+
+	t.Run("AADKeeperStubBenchMode", func(t *testing.T) {
+		t.Parallel()
+		stub.BenchModeBehaviour(t, func(tb assert.TB) aadKeeperStubInstance {
+			return aadKeeperStubInstanceOf(tb, cryptotest.NewAADKeeperStub(tb, cryptotest.AADKeeperStubBenchMode()))
+		})
+	})
+
+	t.Run("AADKeeperStubWithLatency", func(t *testing.T) {
+		t.Parallel()
+		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) aadKeeperStubInstance {
+			return aadKeeperStubInstanceOf(
+				tb,
+				cryptotest.NewAADKeeperStub(
+					tb,
+					cryptotest.AADKeeperStubWithClock(clk),
+					cryptotest.AADKeeperStubWithLatency(d),
+				),
+			)
+		})
+	})
+
+	t.Run("AADKeeperStubFailing", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("fails WrapAAD with its error", func(t *testing.T) {
+			t.Parallel()
+			want := errors.New("WrapAAD-failing")
+			s := cryptotest.NewAADKeeperStub(t, cryptotest.AADKeeperStubFailing(want))
+			_, r1 := aadKeeperStubWrapAAD(t, s)
+			assert.ErrorIs(t, r1, want, "WrapAAD fails with the error of AADKeeperStubFailing")
+		})
+
+		t.Run("fails UnwrapAAD with its error", func(t *testing.T) {
+			t.Parallel()
+			want := errors.New("UnwrapAAD-failing")
+			s := cryptotest.NewAADKeeperStub(t, cryptotest.AADKeeperStubFailing(want))
+			_, r1 := aadKeeperStubUnwrapAAD(t, s)
+			assert.ErrorIs(t, r1, want, "UnwrapAAD fails with the error of AADKeeperStubFailing")
+		})
+
+		t.Run("fails Wrap with its error", func(t *testing.T) {
+			t.Parallel()
+			want := errors.New("Wrap-failing")
+			s := cryptotest.NewAADKeeperStub(t, cryptotest.AADKeeperStubFailing(want))
+			_, r1 := aadKeeperStubWrap(t, s)
+			assert.ErrorIs(t, r1, want, "Wrap fails with the error of AADKeeperStubFailing")
+		})
+
+		t.Run("fails Unwrap with its error", func(t *testing.T) {
+			t.Parallel()
+			want := errors.New("Unwrap-failing")
+			s := cryptotest.NewAADKeeperStub(t, cryptotest.AADKeeperStubFailing(want))
+			_, r1 := aadKeeperStubUnwrap(t, s)
+			assert.ErrorIs(t, r1, want, "Unwrap fails with the error of AADKeeperStubFailing")
+		})
+	})
+
+	t.Run("WithAADKeeperWrapAAD", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("sets the function of WrapAAD", func(t *testing.T) {
+			t.Parallel()
+			called := false
+			s := cryptotest.NewAADKeeperStub(
+				t,
+				cryptotest.WithAADKeeperWrapAAD(func(_ context.Context, _, _ []byte) ([]byte, error) {
+					called = true
+					var z0 []byte
+					var z1 error
+					return z0, z1
+				}),
+			)
+			_, _ = aadKeeperStubWrapAAD(t, s)
+			assert.True(t, called, "WithAADKeeperWrapAAD sets the function of WrapAAD")
+		})
+	})
+
+	t.Run("WithAADKeeperUnwrapAAD", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("sets the function of UnwrapAAD", func(t *testing.T) {
+			t.Parallel()
+			called := false
+			s := cryptotest.NewAADKeeperStub(
+				t,
+				cryptotest.WithAADKeeperUnwrapAAD(func(_ context.Context, _, _ []byte) ([]byte, error) {
+					called = true
+					var z0 []byte
+					var z1 error
+					return z0, z1
+				}),
+			)
+			_, _ = aadKeeperStubUnwrapAAD(t, s)
+			assert.True(t, called, "WithAADKeeperUnwrapAAD sets the function of UnwrapAAD")
+		})
+	})
+
+	t.Run("WithAADKeeperKeyID", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("sets the function of KeyID", func(t *testing.T) {
+			t.Parallel()
+			called := false
+			s := cryptotest.NewAADKeeperStub(t, cryptotest.WithAADKeeperKeyID(func() string {
+				called = true
+				var z0 string
+				return z0
+			}))
+			_ = aadKeeperStubKeyID(t, s)
+			assert.True(t, called, "WithAADKeeperKeyID sets the function of KeyID")
+		})
+	})
+
+	t.Run("WithAADKeeperWrap", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("sets the function of Wrap", func(t *testing.T) {
+			t.Parallel()
+			called := false
+			s := cryptotest.NewAADKeeperStub(
+				t,
+				cryptotest.WithAADKeeperWrap(func(_ context.Context, _ []byte) ([]byte, error) {
+					called = true
+					var z0 []byte
+					var z1 error
+					return z0, z1
+				}),
+			)
+			_, _ = aadKeeperStubWrap(t, s)
+			assert.True(t, called, "WithAADKeeperWrap sets the function of Wrap")
+		})
+	})
+
+	t.Run("WithAADKeeperUnwrap", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("sets the function of Unwrap", func(t *testing.T) {
+			t.Parallel()
+			called := false
+			s := cryptotest.NewAADKeeperStub(
+				t,
+				cryptotest.WithAADKeeperUnwrap(func(_ context.Context, _ []byte) ([]byte, error) {
+					called = true
+					var z0 []byte
+					var z1 error
+					return z0, z1
+				}),
+			)
+			_, _ = aadKeeperStubUnwrap(t, s)
+			assert.True(t, called, "WithAADKeeperUnwrap sets the function of Unwrap")
+		})
+	})
+}
+
+// aadKeyGeneratorStubGenerateKeyAADArgs returns the samples of the
+// arguments of GenerateKeyAAD.
+func aadKeyGeneratorStubGenerateKeyAADArgs(tb assert.TB) (context.Context, int, []byte) {
+	tb.Helper()
+	a0 := assert.Context(tb)
+	var a1 int
+	var a2 []byte
+	a1 = 42
+	a2 = []byte{1}
+	return a0, a1, a2
+}
+
+// aadKeyGeneratorStubGenerateKeyAAD calls GenerateKeyAAD of s with the
+// samples of its arguments.
+func aadKeyGeneratorStubGenerateKeyAAD(tb assert.TB, s *cryptotest.AADKeyGeneratorStub) ([]byte, []byte, error) {
+	tb.Helper()
+	a0, a1, a2 := aadKeyGeneratorStubGenerateKeyAADArgs(tb)
+	return s.GenerateKeyAAD(a0, a1, a2)
+}
+
+// aadKeyGeneratorStubGenerateKeyAADPins returns the samples of the results
+// of GenerateKeyAAD, with a new error as its error result.
+func aadKeyGeneratorStubGenerateKeyAADPins() ([]byte, []byte, error) {
+	var want0 []byte
+	var want1 []byte
+	want2 := errors.New("GenerateKeyAAD-returns")
+	want0 = []byte{1}
+	want1 = []byte{1}
+	return want0, want1, want2
+}
+
+// aadKeyGeneratorStubWrapAADArgs returns the samples of the arguments of
+// WrapAAD.
+func aadKeyGeneratorStubWrapAADArgs(tb assert.TB) (context.Context, []byte, []byte) {
+	tb.Helper()
+	a0 := assert.Context(tb)
+	var a1 []byte
+	var a2 []byte
+	a1 = []byte{1}
+	a2 = []byte{1}
+	return a0, a1, a2
+}
+
+// aadKeyGeneratorStubWrapAAD calls WrapAAD of s with the samples of its
+// arguments.
+func aadKeyGeneratorStubWrapAAD(tb assert.TB, s *cryptotest.AADKeyGeneratorStub) ([]byte, error) {
+	tb.Helper()
+	a0, a1, a2 := aadKeyGeneratorStubWrapAADArgs(tb)
+	return s.WrapAAD(a0, a1, a2)
+}
+
+// aadKeyGeneratorStubWrapAADPins returns the samples of the results of
+// WrapAAD, with a new error as its error result.
+func aadKeyGeneratorStubWrapAADPins() ([]byte, error) {
+	var want0 []byte
+	want1 := errors.New("WrapAAD-returns")
+	want0 = []byte{1}
+	return want0, want1
+}
+
+// aadKeyGeneratorStubUnwrapAADArgs returns the samples of the arguments of
+// UnwrapAAD.
+func aadKeyGeneratorStubUnwrapAADArgs(tb assert.TB) (context.Context, []byte, []byte) {
+	tb.Helper()
+	a0 := assert.Context(tb)
+	var a1 []byte
+	var a2 []byte
+	a1 = []byte{1}
+	a2 = []byte{1}
+	return a0, a1, a2
+}
+
+// aadKeyGeneratorStubUnwrapAAD calls UnwrapAAD of s with the samples of
+// its arguments.
+func aadKeyGeneratorStubUnwrapAAD(tb assert.TB, s *cryptotest.AADKeyGeneratorStub) ([]byte, error) {
+	tb.Helper()
+	a0, a1, a2 := aadKeyGeneratorStubUnwrapAADArgs(tb)
+	return s.UnwrapAAD(a0, a1, a2)
+}
+
+// aadKeyGeneratorStubUnwrapAADPins returns the samples of the results of
+// UnwrapAAD, with a new error as its error result.
+func aadKeyGeneratorStubUnwrapAADPins() ([]byte, error) {
+	var want0 []byte
+	want1 := errors.New("UnwrapAAD-returns")
+	want0 = []byte{1}
+	return want0, want1
+}
+
+// aadKeyGeneratorStubKeyID calls KeyID of s with the samples of its
+// arguments.
+func aadKeyGeneratorStubKeyID(tb assert.TB, s *cryptotest.AADKeyGeneratorStub) string {
+	tb.Helper()
+	return s.KeyID()
+}
+
+// aadKeyGeneratorStubKeyIDPins returns the samples of the results of
+// KeyID.
+func aadKeyGeneratorStubKeyIDPins() string {
+	var want0 string
+	want0 = "KeyID-a"
+	return want0
+}
+
+// aadKeyGeneratorStubWrapArgs returns the samples of the arguments of
+// Wrap.
+func aadKeyGeneratorStubWrapArgs(tb assert.TB) (context.Context, []byte) {
+	tb.Helper()
+	a0 := assert.Context(tb)
+	var a1 []byte
+	a1 = []byte{1}
+	return a0, a1
+}
+
+// aadKeyGeneratorStubWrap calls Wrap of s with the samples of its
+// arguments.
+func aadKeyGeneratorStubWrap(tb assert.TB, s *cryptotest.AADKeyGeneratorStub) ([]byte, error) {
+	tb.Helper()
+	a0, a1 := aadKeyGeneratorStubWrapArgs(tb)
+	return s.Wrap(a0, a1)
+}
+
+// aadKeyGeneratorStubWrapPins returns the samples of the results of Wrap,
+// with a new error as its error result.
+func aadKeyGeneratorStubWrapPins() ([]byte, error) {
+	var want0 []byte
+	want1 := errors.New("Wrap-returns")
+	want0 = []byte{1}
+	return want0, want1
+}
+
+// aadKeyGeneratorStubUnwrapArgs returns the samples of the arguments of
+// Unwrap.
+func aadKeyGeneratorStubUnwrapArgs(tb assert.TB) (context.Context, []byte) {
+	tb.Helper()
+	a0 := assert.Context(tb)
+	var a1 []byte
+	a1 = []byte{1}
+	return a0, a1
+}
+
+// aadKeyGeneratorStubUnwrap calls Unwrap of s with the samples of its
+// arguments.
+func aadKeyGeneratorStubUnwrap(tb assert.TB, s *cryptotest.AADKeyGeneratorStub) ([]byte, error) {
+	tb.Helper()
+	a0, a1 := aadKeyGeneratorStubUnwrapArgs(tb)
+	return s.Unwrap(a0, a1)
+}
+
+// aadKeyGeneratorStubUnwrapPins returns the samples of the results of
+// Unwrap, with a new error as its error result.
+func aadKeyGeneratorStubUnwrapPins() ([]byte, error) {
+	var want0 []byte
+	want1 := errors.New("Unwrap-returns")
+	want0 = []byte{1}
+	return want0, want1
+}
+
+// aadKeyGeneratorStubGenerateKeyAADSubject returns the subject of
+// [stub.Behaviour] and [stub.ResetBehaviour] for GenerateKeyAAD. The
+// subject calls a new double that reports to tb.
+func aadKeyGeneratorStubGenerateKeyAADSubject(
+	tb assert.TB,
+) stub.Subject[cryptotest.AADKeyGeneratorGenerateKeyAADCall, cryptotest.AADKeyGeneratorGenerateKeyAADReturn] {
+	tb.Helper()
+	s := cryptotest.NewAADKeyGeneratorStub(tb)
+	return stub.Subject[cryptotest.AADKeyGeneratorGenerateKeyAADCall, cryptotest.AADKeyGeneratorGenerateKeyAADReturn]{
+		Stub:  s.OnGenerateKeyAAD.MethodStub,
+		Reset: s.ResetCalls,
+		Call: func() {
+			_, _, _ = aadKeyGeneratorStubGenerateKeyAAD(tb, s)
+		},
+		Arguments: func(tb assert.TB, c cryptotest.AADKeyGeneratorGenerateKeyAADCall) {
+			tb.Helper()
+			a0, a1, a2 := aadKeyGeneratorStubGenerateKeyAADArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.Size, a1, "the call records Size")
+			expect.Equal(tb, c.Aad, a2, "the call records Aad")
+		},
+		Result: func() cryptotest.AADKeyGeneratorGenerateKeyAADReturn {
+			got0, got1, got2 := aadKeyGeneratorStubGenerateKeyAAD(tb, s)
+			return cryptotest.AADKeyGeneratorGenerateKeyAADReturn{Plaintext: got0, Wrapped: got1, Err: got2}
+		},
+		Returns: func() cryptotest.AADKeyGeneratorGenerateKeyAADReturn {
+			want0, want1, want2 := aadKeyGeneratorStubGenerateKeyAADPins()
+			s.OnGenerateKeyAAD.Returns(want0, want1, want2)
+			return cryptotest.AADKeyGeneratorGenerateKeyAADReturn{Plaintext: want0, Wrapped: want1, Err: want2}
+		},
+		Override: func(seen func(cryptotest.AADKeyGeneratorGenerateKeyAADCall)) {
+			s.OnGenerateKeyAAD.Func(func(p0 context.Context, p1 int, p2 []byte) ([]byte, []byte, error) {
+				seen(cryptotest.AADKeyGeneratorGenerateKeyAADCall{Ctx: p0, Size: p1, Aad: p2})
 				var z0 []byte
 				var z1 []byte
 				var z2 error
 				return z0, z1, z2
 			})
-			_, _, _ = keyGeneratorStubGenerateKey(t, s)
-			a0, a1 := keyGeneratorStubGenerateKeyArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives Size")
-		})
-	})
+		},
+		Fails: func() error {
+			_, _, err := aadKeyGeneratorStubGenerateKeyAAD(tb, s)
+			return err
+		},
+	}
 }
 
-// TestKeyGeneratorKeyIDStub checks the methods of KeyGeneratorKeyIDStub,
-// which configures KeyID.
-func TestKeyGeneratorKeyIDStub(t *testing.T) {
-	t.Parallel()
-
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("sets the results of each call of KeyID", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewKeyGeneratorStub(t)
-			want0 := keyGeneratorStubKeyIDPins()
-			s.OnKeyID.Returns(want0)
-			got0 := keyGeneratorStubKeyID(t, s)
-			assert.Equal(t, got0, want0, "KeyID returns the Result that Returns sets")
-		})
-
-		t.Run("configures KeyID for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewKeyGeneratorStub(r)
-			s.OnKeyID.Strict()
-			var want0 string
-			s.OnKeyID.Returns(want0)
-			_ = keyGeneratorStubKeyID(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of KeyID")
-		})
-	})
+// aadKeyGeneratorStubWrapAADSubject returns the subject of
+// [stub.Behaviour] and [stub.ResetBehaviour] for WrapAAD. The subject
+// calls a new double that reports to tb.
+func aadKeyGeneratorStubWrapAADSubject(
+	tb assert.TB,
+) stub.Subject[cryptotest.AADKeyGeneratorWrapAADCall, cryptotest.AADKeyGeneratorWrapAADReturn] {
+	tb.Helper()
+	s := cryptotest.NewAADKeyGeneratorStub(tb)
+	return stub.Subject[cryptotest.AADKeyGeneratorWrapAADCall, cryptotest.AADKeyGeneratorWrapAADReturn]{
+		Stub:  s.OnWrapAAD.MethodStub,
+		Reset: s.ResetCalls,
+		Call: func() {
+			_, _ = aadKeyGeneratorStubWrapAAD(tb, s)
+		},
+		Arguments: func(tb assert.TB, c cryptotest.AADKeyGeneratorWrapAADCall) {
+			tb.Helper()
+			a0, a1, a2 := aadKeyGeneratorStubWrapAADArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.Dek, a1, "the call records Dek")
+			expect.Equal(tb, c.Aad, a2, "the call records Aad")
+		},
+		Result: func() cryptotest.AADKeyGeneratorWrapAADReturn {
+			got0, got1 := aadKeyGeneratorStubWrapAAD(tb, s)
+			return cryptotest.AADKeyGeneratorWrapAADReturn{Result: got0, Err: got1}
+		},
+		Returns: func() cryptotest.AADKeyGeneratorWrapAADReturn {
+			want0, want1 := aadKeyGeneratorStubWrapAADPins()
+			s.OnWrapAAD.Returns(want0, want1)
+			return cryptotest.AADKeyGeneratorWrapAADReturn{Result: want0, Err: want1}
+		},
+		Override: func(seen func(cryptotest.AADKeyGeneratorWrapAADCall)) {
+			s.OnWrapAAD.Func(func(p0 context.Context, p1, p2 []byte) ([]byte, error) {
+				seen(cryptotest.AADKeyGeneratorWrapAADCall{Ctx: p0, Dek: p1, Aad: p2})
+				var z0 []byte
+				var z1 error
+				return z0, z1
+			})
+		},
+		Fails: func() error {
+			_, r1 := aadKeyGeneratorStubWrapAAD(tb, s)
+			return r1
+		},
+	}
 }
 
-// TestKeyGeneratorWrapStub checks the methods of KeyGeneratorWrapStub,
-// which configures Wrap.
-func TestKeyGeneratorWrapStub(t *testing.T) {
-	t.Parallel()
+// aadKeyGeneratorStubUnwrapAADSubject returns the subject of
+// [stub.Behaviour] and [stub.ResetBehaviour] for UnwrapAAD. The subject
+// calls a new double that reports to tb.
+func aadKeyGeneratorStubUnwrapAADSubject(
+	tb assert.TB,
+) stub.Subject[cryptotest.AADKeyGeneratorUnwrapAADCall, cryptotest.AADKeyGeneratorUnwrapAADReturn] {
+	tb.Helper()
+	s := cryptotest.NewAADKeyGeneratorStub(tb)
+	return stub.Subject[cryptotest.AADKeyGeneratorUnwrapAADCall, cryptotest.AADKeyGeneratorUnwrapAADReturn]{
+		Stub:  s.OnUnwrapAAD.MethodStub,
+		Reset: s.ResetCalls,
+		Call: func() {
+			_, _ = aadKeyGeneratorStubUnwrapAAD(tb, s)
+		},
+		Arguments: func(tb assert.TB, c cryptotest.AADKeyGeneratorUnwrapAADCall) {
+			tb.Helper()
+			a0, a1, a2 := aadKeyGeneratorStubUnwrapAADArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.Wrapped, a1, "the call records Wrapped")
+			expect.Equal(tb, c.Aad, a2, "the call records Aad")
+		},
+		Result: func() cryptotest.AADKeyGeneratorUnwrapAADReturn {
+			got0, got1 := aadKeyGeneratorStubUnwrapAAD(tb, s)
+			return cryptotest.AADKeyGeneratorUnwrapAADReturn{Result: got0, Err: got1}
+		},
+		Returns: func() cryptotest.AADKeyGeneratorUnwrapAADReturn {
+			want0, want1 := aadKeyGeneratorStubUnwrapAADPins()
+			s.OnUnwrapAAD.Returns(want0, want1)
+			return cryptotest.AADKeyGeneratorUnwrapAADReturn{Result: want0, Err: want1}
+		},
+		Override: func(seen func(cryptotest.AADKeyGeneratorUnwrapAADCall)) {
+			s.OnUnwrapAAD.Func(func(p0 context.Context, p1, p2 []byte) ([]byte, error) {
+				seen(cryptotest.AADKeyGeneratorUnwrapAADCall{Ctx: p0, Wrapped: p1, Aad: p2})
+				var z0 []byte
+				var z1 error
+				return z0, z1
+			})
+		},
+		Fails: func() error {
+			_, r1 := aadKeyGeneratorStubUnwrapAAD(tb, s)
+			return r1
+		},
+	}
+}
 
-	t.Run("Returns", func(t *testing.T) {
-		t.Parallel()
+// aadKeyGeneratorStubKeyIDSubject returns the subject of [stub.Behaviour]
+// and [stub.ResetBehaviour] for KeyID. The subject calls a new double that
+// reports to tb.
+func aadKeyGeneratorStubKeyIDSubject(
+	tb assert.TB,
+) stub.Subject[cryptotest.AADKeyGeneratorKeyIDCall, cryptotest.AADKeyGeneratorKeyIDReturn] {
+	tb.Helper()
+	s := cryptotest.NewAADKeyGeneratorStub(tb)
+	return stub.Subject[cryptotest.AADKeyGeneratorKeyIDCall, cryptotest.AADKeyGeneratorKeyIDReturn]{
+		Stub:  s.OnKeyID.MethodStub,
+		Reset: s.ResetCalls,
+		Call: func() {
+			_ = aadKeyGeneratorStubKeyID(tb, s)
+		},
+		Result: func() cryptotest.AADKeyGeneratorKeyIDReturn {
+			got0 := aadKeyGeneratorStubKeyID(tb, s)
+			return cryptotest.AADKeyGeneratorKeyIDReturn{Result: got0}
+		},
+		Returns: func() cryptotest.AADKeyGeneratorKeyIDReturn {
+			want0 := aadKeyGeneratorStubKeyIDPins()
+			s.OnKeyID.Returns(want0)
+			return cryptotest.AADKeyGeneratorKeyIDReturn{Result: want0}
+		},
+		Override: func(seen func(cryptotest.AADKeyGeneratorKeyIDCall)) {
+			s.OnKeyID.Func(func() string {
+				seen(cryptotest.AADKeyGeneratorKeyIDCall{})
+				var z0 string
+				return z0
+			})
+		},
+	}
+}
 
-		t.Run("sets the results of each call of Wrap", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewKeyGeneratorStub(t)
-			want0, want1 := keyGeneratorStubWrapPins()
+// aadKeyGeneratorStubWrapSubject returns the subject of [stub.Behaviour]
+// and [stub.ResetBehaviour] for Wrap. The subject calls a new double that
+// reports to tb.
+func aadKeyGeneratorStubWrapSubject(
+	tb assert.TB,
+) stub.Subject[cryptotest.AADKeyGeneratorWrapCall, cryptotest.AADKeyGeneratorWrapReturn] {
+	tb.Helper()
+	s := cryptotest.NewAADKeyGeneratorStub(tb)
+	return stub.Subject[cryptotest.AADKeyGeneratorWrapCall, cryptotest.AADKeyGeneratorWrapReturn]{
+		Stub:  s.OnWrap.MethodStub,
+		Reset: s.ResetCalls,
+		Call: func() {
+			_, _ = aadKeyGeneratorStubWrap(tb, s)
+		},
+		Arguments: func(tb assert.TB, c cryptotest.AADKeyGeneratorWrapCall) {
+			tb.Helper()
+			a0, a1 := aadKeyGeneratorStubWrapArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.Dek, a1, "the call records Dek")
+		},
+		Result: func() cryptotest.AADKeyGeneratorWrapReturn {
+			got0, got1 := aadKeyGeneratorStubWrap(tb, s)
+			return cryptotest.AADKeyGeneratorWrapReturn{Result: got0, Err: got1}
+		},
+		Returns: func() cryptotest.AADKeyGeneratorWrapReturn {
+			want0, want1 := aadKeyGeneratorStubWrapPins()
 			s.OnWrap.Returns(want0, want1)
-			got0, got1 := keyGeneratorStubWrap(t, s)
-			expect.Equal(t, got0, want0, "Wrap returns the Result that Returns sets")
-			expect.ErrorIs(t, got1, want1, "Wrap returns the error that Returns sets")
-		})
-
-		t.Run("configures Wrap for strict mode", func(t *testing.T) {
-			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewKeyGeneratorStub(r)
-			s.OnWrap.Strict()
-			var want0 []byte
-			var want1 error
-			s.OnWrap.Returns(want0, want1)
-			_, _ = keyGeneratorStubWrap(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Wrap")
-		})
-	})
-
-	t.Run("Func", func(t *testing.T) {
-		t.Parallel()
-
-		t.Run("passes the arguments of each call of Wrap to the function", func(t *testing.T) {
-			t.Parallel()
-			s := cryptotest.NewKeyGeneratorStub(t)
-			var got0 context.Context
-			var got1 []byte
+			return cryptotest.AADKeyGeneratorWrapReturn{Result: want0, Err: want1}
+		},
+		Override: func(seen func(cryptotest.AADKeyGeneratorWrapCall)) {
 			s.OnWrap.Func(func(p0 context.Context, p1 []byte) ([]byte, error) {
-				got0, got1 = p0, p1
+				seen(cryptotest.AADKeyGeneratorWrapCall{Ctx: p0, Dek: p1})
 				var z0 []byte
 				var z1 error
 				return z0, z1
 			})
-			_, _ = keyGeneratorStubWrap(t, s)
-			a0, a1 := keyGeneratorStubWrapArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives Dek")
-		})
-	})
+		},
+		Fails: func() error {
+			_, r1 := aadKeyGeneratorStubWrap(tb, s)
+			return r1
+		},
+	}
 }
 
-// TestKeyGeneratorUnwrapStub checks the methods of KeyGeneratorUnwrapStub,
-// which configures Unwrap.
-func TestKeyGeneratorUnwrapStub(t *testing.T) {
+// aadKeyGeneratorStubUnwrapSubject returns the subject of [stub.Behaviour]
+// and [stub.ResetBehaviour] for Unwrap. The subject calls a new double
+// that reports to tb.
+func aadKeyGeneratorStubUnwrapSubject(
+	tb assert.TB,
+) stub.Subject[cryptotest.AADKeyGeneratorUnwrapCall, cryptotest.AADKeyGeneratorUnwrapReturn] {
+	tb.Helper()
+	s := cryptotest.NewAADKeyGeneratorStub(tb)
+	return stub.Subject[cryptotest.AADKeyGeneratorUnwrapCall, cryptotest.AADKeyGeneratorUnwrapReturn]{
+		Stub:  s.OnUnwrap.MethodStub,
+		Reset: s.ResetCalls,
+		Call: func() {
+			_, _ = aadKeyGeneratorStubUnwrap(tb, s)
+		},
+		Arguments: func(tb assert.TB, c cryptotest.AADKeyGeneratorUnwrapCall) {
+			tb.Helper()
+			a0, a1 := aadKeyGeneratorStubUnwrapArgs(tb)
+			expect.Equal(tb, c.Ctx, a0, "the call records Ctx", expect.ByIdentity())
+			expect.Equal(tb, c.Wrapped, a1, "the call records Wrapped")
+		},
+		Result: func() cryptotest.AADKeyGeneratorUnwrapReturn {
+			got0, got1 := aadKeyGeneratorStubUnwrap(tb, s)
+			return cryptotest.AADKeyGeneratorUnwrapReturn{Result: got0, Err: got1}
+		},
+		Returns: func() cryptotest.AADKeyGeneratorUnwrapReturn {
+			want0, want1 := aadKeyGeneratorStubUnwrapPins()
+			s.OnUnwrap.Returns(want0, want1)
+			return cryptotest.AADKeyGeneratorUnwrapReturn{Result: want0, Err: want1}
+		},
+		Override: func(seen func(cryptotest.AADKeyGeneratorUnwrapCall)) {
+			s.OnUnwrap.Func(func(p0 context.Context, p1 []byte) ([]byte, error) {
+				seen(cryptotest.AADKeyGeneratorUnwrapCall{Ctx: p0, Wrapped: p1})
+				var z0 []byte
+				var z1 error
+				return z0, z1
+			})
+		},
+		Fails: func() error {
+			_, r1 := aadKeyGeneratorStubUnwrap(tb, s)
+			return r1
+		},
+	}
+}
+
+// aadKeyGeneratorStubInstance is the instance of a
+// cryptotest.AADKeyGeneratorStub that the checks of the constructors and
+// the options drive.
+type aadKeyGeneratorStubInstance = stub.Instance[cryptotest.AADKeyGeneratorGenerateKeyAADCall]
+
+// aadKeyGeneratorStubInstanceOf returns the instance of s. The options
+// apply to the whole double, so the checks call GenerateKeyAAD alone.
+func aadKeyGeneratorStubInstanceOf(tb assert.TB, s *cryptotest.AADKeyGeneratorStub) aadKeyGeneratorStubInstance {
+	tb.Helper()
+	return aadKeyGeneratorStubInstance{
+		Stub: s.OnGenerateKeyAAD.MethodStub,
+		Call: func() {
+			_, _, _ = aadKeyGeneratorStubGenerateKeyAAD(tb, s)
+		},
+	}
+}
+
+// TestAADKeyGeneratorStub checks the methods, the constructors and the
+// options of the double AADKeyGeneratorStub.
+func TestAADKeyGeneratorStub(t *testing.T) {
 	t.Parallel()
 
-	t.Run("Returns", func(t *testing.T) {
+	t.Run("GenerateKeyAAD", func(t *testing.T) {
+		t.Parallel()
+		stub.Behaviour(t, "GenerateKeyAAD", aadKeyGeneratorStubGenerateKeyAADSubject)
+	})
+
+	t.Run("WrapAAD", func(t *testing.T) {
+		t.Parallel()
+		stub.Behaviour(t, "WrapAAD", aadKeyGeneratorStubWrapAADSubject)
+	})
+
+	t.Run("UnwrapAAD", func(t *testing.T) {
+		t.Parallel()
+		stub.Behaviour(t, "UnwrapAAD", aadKeyGeneratorStubUnwrapAADSubject)
+	})
+
+	t.Run("KeyID", func(t *testing.T) {
+		t.Parallel()
+		stub.Behaviour(t, "KeyID", aadKeyGeneratorStubKeyIDSubject)
+	})
+
+	t.Run("Wrap", func(t *testing.T) {
+		t.Parallel()
+		stub.Behaviour(t, "Wrap", aadKeyGeneratorStubWrapSubject)
+	})
+
+	t.Run("Unwrap", func(t *testing.T) {
+		t.Parallel()
+		stub.Behaviour(t, "Unwrap", aadKeyGeneratorStubUnwrapSubject)
+	})
+
+	t.Run("ResetCalls", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("sets the results of each call of Unwrap", func(t *testing.T) {
+		t.Run("GenerateKeyAAD", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewKeyGeneratorStub(t)
-			want0, want1 := keyGeneratorStubUnwrapPins()
-			s.OnUnwrap.Returns(want0, want1)
-			got0, got1 := keyGeneratorStubUnwrap(t, s)
-			expect.Equal(t, got0, want0, "Unwrap returns the Result that Returns sets")
-			expect.ErrorIs(t, got1, want1, "Unwrap returns the error that Returns sets")
+			stub.ResetBehaviour(t, "GenerateKeyAAD", aadKeyGeneratorStubGenerateKeyAADSubject)
 		})
 
-		t.Run("configures Unwrap for strict mode", func(t *testing.T) {
+		t.Run("WrapAAD", func(t *testing.T) {
 			t.Parallel()
-			r := assert.NewRecorder()
-			s := cryptotest.NewKeyGeneratorStub(r)
-			s.OnUnwrap.Strict()
-			var want0 []byte
-			var want1 error
-			s.OnUnwrap.Returns(want0, want1)
-			_, _ = keyGeneratorStubUnwrap(t, s)
-			assert.False(t, r.Failed(), "strict mode accepts the call of Unwrap")
+			stub.ResetBehaviour(t, "WrapAAD", aadKeyGeneratorStubWrapAADSubject)
+		})
+
+		t.Run("UnwrapAAD", func(t *testing.T) {
+			t.Parallel()
+			stub.ResetBehaviour(t, "UnwrapAAD", aadKeyGeneratorStubUnwrapAADSubject)
+		})
+
+		t.Run("KeyID", func(t *testing.T) {
+			t.Parallel()
+			stub.ResetBehaviour(t, "KeyID", aadKeyGeneratorStubKeyIDSubject)
+		})
+
+		t.Run("Wrap", func(t *testing.T) {
+			t.Parallel()
+			stub.ResetBehaviour(t, "Wrap", aadKeyGeneratorStubWrapSubject)
+		})
+
+		t.Run("Unwrap", func(t *testing.T) {
+			t.Parallel()
+			stub.ResetBehaviour(t, "Unwrap", aadKeyGeneratorStubUnwrapSubject)
 		})
 	})
 
-	t.Run("Func", func(t *testing.T) {
+	t.Run("AADKeyGeneratorStubStrict", func(t *testing.T) {
+		t.Parallel()
+		stub.StrictBehaviour(t, func(tb assert.TB) aadKeyGeneratorStubInstance {
+			return aadKeyGeneratorStubInstanceOf(
+				tb,
+				cryptotest.NewAADKeyGeneratorStub(tb, cryptotest.AADKeyGeneratorStubStrict()),
+			)
+		})
+	})
+
+	t.Run("AADKeyGeneratorStubDelegateTo", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("passes the arguments of each call of Unwrap to the function", func(t *testing.T) {
+		t.Run("passes GenerateKeyAAD to the implementation", func(t *testing.T) {
 			t.Parallel()
-			s := cryptotest.NewKeyGeneratorStub(t)
-			var got0 context.Context
-			var got1 []byte
-			s.OnUnwrap.Func(func(p0 context.Context, p1 []byte) ([]byte, error) {
-				got0, got1 = p0, p1
-				var z0 []byte
-				var z1 error
-				return z0, z1
-			})
-			_, _ = keyGeneratorStubUnwrap(t, s)
-			a0, a1 := keyGeneratorStubUnwrapArgs(t)
-			expect.Equal(t, got0, a0, "the function receives Ctx", expect.ByIdentity())
-			expect.Equal(t, got1, a1, "the function receives Wrapped")
+			inner := cryptotest.NewAADKeyGeneratorStub(t)
+			s := cryptotest.NewAADKeyGeneratorStub(t, cryptotest.AADKeyGeneratorStubDelegateTo(inner))
+			_, _, _ = aadKeyGeneratorStubGenerateKeyAAD(t, s)
+			inner.OnGenerateKeyAAD.AssertCalledOnce(t, "GenerateKeyAAD calls the implementation")
+		})
+
+		t.Run("fails GenerateKeyAAD with the error of the implementation", func(t *testing.T) {
+			t.Parallel()
+			want := errors.New("GenerateKeyAAD-delegate")
+			inner := cryptotest.NewAADKeyGeneratorStub(t)
+			inner.OnGenerateKeyAAD.Faults(want, 1)
+			s := cryptotest.NewAADKeyGeneratorStub(t, cryptotest.AADKeyGeneratorStubDelegateTo(inner))
+			_, _, err := aadKeyGeneratorStubGenerateKeyAAD(t, s)
+			assert.ErrorIs(t, err, want, "GenerateKeyAAD fails with the error of the implementation")
+		})
+
+		t.Run("passes WrapAAD to the implementation", func(t *testing.T) {
+			t.Parallel()
+			inner := cryptotest.NewAADKeyGeneratorStub(t)
+			s := cryptotest.NewAADKeyGeneratorStub(t, cryptotest.AADKeyGeneratorStubDelegateTo(inner))
+			_, _ = aadKeyGeneratorStubWrapAAD(t, s)
+			inner.OnWrapAAD.AssertCalledOnce(t, "WrapAAD calls the implementation")
+		})
+
+		t.Run("fails WrapAAD with the error of the implementation", func(t *testing.T) {
+			t.Parallel()
+			want := errors.New("WrapAAD-delegate")
+			inner := cryptotest.NewAADKeyGeneratorStub(t)
+			inner.OnWrapAAD.Faults(want, 1)
+			s := cryptotest.NewAADKeyGeneratorStub(t, cryptotest.AADKeyGeneratorStubDelegateTo(inner))
+			_, r1 := aadKeyGeneratorStubWrapAAD(t, s)
+			assert.ErrorIs(t, r1, want, "WrapAAD fails with the error of the implementation")
+		})
+
+		t.Run("passes UnwrapAAD to the implementation", func(t *testing.T) {
+			t.Parallel()
+			inner := cryptotest.NewAADKeyGeneratorStub(t)
+			s := cryptotest.NewAADKeyGeneratorStub(t, cryptotest.AADKeyGeneratorStubDelegateTo(inner))
+			_, _ = aadKeyGeneratorStubUnwrapAAD(t, s)
+			inner.OnUnwrapAAD.AssertCalledOnce(t, "UnwrapAAD calls the implementation")
+		})
+
+		t.Run("fails UnwrapAAD with the error of the implementation", func(t *testing.T) {
+			t.Parallel()
+			want := errors.New("UnwrapAAD-delegate")
+			inner := cryptotest.NewAADKeyGeneratorStub(t)
+			inner.OnUnwrapAAD.Faults(want, 1)
+			s := cryptotest.NewAADKeyGeneratorStub(t, cryptotest.AADKeyGeneratorStubDelegateTo(inner))
+			_, r1 := aadKeyGeneratorStubUnwrapAAD(t, s)
+			assert.ErrorIs(t, r1, want, "UnwrapAAD fails with the error of the implementation")
+		})
+
+		t.Run("passes KeyID to the implementation", func(t *testing.T) {
+			t.Parallel()
+			inner := cryptotest.NewAADKeyGeneratorStub(t)
+			s := cryptotest.NewAADKeyGeneratorStub(t, cryptotest.AADKeyGeneratorStubDelegateTo(inner))
+			_ = aadKeyGeneratorStubKeyID(t, s)
+			inner.OnKeyID.AssertCalledOnce(t, "KeyID calls the implementation")
+		})
+
+		t.Run("passes Wrap to the implementation", func(t *testing.T) {
+			t.Parallel()
+			inner := cryptotest.NewAADKeyGeneratorStub(t)
+			s := cryptotest.NewAADKeyGeneratorStub(t, cryptotest.AADKeyGeneratorStubDelegateTo(inner))
+			_, _ = aadKeyGeneratorStubWrap(t, s)
+			inner.OnWrap.AssertCalledOnce(t, "Wrap calls the implementation")
+		})
+
+		t.Run("fails Wrap with the error of the implementation", func(t *testing.T) {
+			t.Parallel()
+			want := errors.New("Wrap-delegate")
+			inner := cryptotest.NewAADKeyGeneratorStub(t)
+			inner.OnWrap.Faults(want, 1)
+			s := cryptotest.NewAADKeyGeneratorStub(t, cryptotest.AADKeyGeneratorStubDelegateTo(inner))
+			_, r1 := aadKeyGeneratorStubWrap(t, s)
+			assert.ErrorIs(t, r1, want, "Wrap fails with the error of the implementation")
+		})
+
+		t.Run("passes Unwrap to the implementation", func(t *testing.T) {
+			t.Parallel()
+			inner := cryptotest.NewAADKeyGeneratorStub(t)
+			s := cryptotest.NewAADKeyGeneratorStub(t, cryptotest.AADKeyGeneratorStubDelegateTo(inner))
+			_, _ = aadKeyGeneratorStubUnwrap(t, s)
+			inner.OnUnwrap.AssertCalledOnce(t, "Unwrap calls the implementation")
+		})
+
+		t.Run("fails Unwrap with the error of the implementation", func(t *testing.T) {
+			t.Parallel()
+			want := errors.New("Unwrap-delegate")
+			inner := cryptotest.NewAADKeyGeneratorStub(t)
+			inner.OnUnwrap.Faults(want, 1)
+			s := cryptotest.NewAADKeyGeneratorStub(t, cryptotest.AADKeyGeneratorStubDelegateTo(inner))
+			_, r1 := aadKeyGeneratorStubUnwrap(t, s)
+			assert.ErrorIs(t, r1, want, "Unwrap fails with the error of the implementation")
+		})
+	})
+
+	t.Run("AADKeyGeneratorStubWithClock", func(t *testing.T) {
+		t.Parallel()
+		stub.ClockBehaviour(t, func(tb assert.TB, clk assert.Clock) aadKeyGeneratorStubInstance {
+			return aadKeyGeneratorStubInstanceOf(
+				tb,
+				cryptotest.NewAADKeyGeneratorStub(tb, cryptotest.AADKeyGeneratorStubWithClock(clk)),
+			)
+		})
+	})
+
+	t.Run("AADKeyGeneratorStubWithRandSource", func(t *testing.T) {
+		t.Parallel()
+		stub.RandSourceBehaviour(t, func(tb assert.TB, src rand.Source) aadKeyGeneratorStubInstance {
+			return aadKeyGeneratorStubInstanceOf(
+				tb,
+				cryptotest.NewAADKeyGeneratorStub(tb, cryptotest.AADKeyGeneratorStubWithRandSource(src)),
+			)
+		})
+	})
+
+	t.Run("AADKeyGeneratorStubBenchMode", func(t *testing.T) {
+		t.Parallel()
+		stub.BenchModeBehaviour(t, func(tb assert.TB) aadKeyGeneratorStubInstance {
+			return aadKeyGeneratorStubInstanceOf(
+				tb,
+				cryptotest.NewAADKeyGeneratorStub(tb, cryptotest.AADKeyGeneratorStubBenchMode()),
+			)
+		})
+	})
+
+	t.Run("AADKeyGeneratorStubWithLatency", func(t *testing.T) {
+		t.Parallel()
+		stub.LatencyBehaviour(t, func(tb assert.TB, d time.Duration, clk assert.Clock) aadKeyGeneratorStubInstance {
+			return aadKeyGeneratorStubInstanceOf(
+				tb,
+				cryptotest.NewAADKeyGeneratorStub(
+					tb,
+					cryptotest.AADKeyGeneratorStubWithClock(clk),
+					cryptotest.AADKeyGeneratorStubWithLatency(d),
+				),
+			)
+		})
+	})
+
+	t.Run("AADKeyGeneratorStubFailing", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("fails GenerateKeyAAD with its error", func(t *testing.T) {
+			t.Parallel()
+			want := errors.New("GenerateKeyAAD-failing")
+			s := cryptotest.NewAADKeyGeneratorStub(t, cryptotest.AADKeyGeneratorStubFailing(want))
+			_, _, err := aadKeyGeneratorStubGenerateKeyAAD(t, s)
+			assert.ErrorIs(t, err, want, "GenerateKeyAAD fails with the error of AADKeyGeneratorStubFailing")
+		})
+
+		t.Run("fails WrapAAD with its error", func(t *testing.T) {
+			t.Parallel()
+			want := errors.New("WrapAAD-failing")
+			s := cryptotest.NewAADKeyGeneratorStub(t, cryptotest.AADKeyGeneratorStubFailing(want))
+			_, r1 := aadKeyGeneratorStubWrapAAD(t, s)
+			assert.ErrorIs(t, r1, want, "WrapAAD fails with the error of AADKeyGeneratorStubFailing")
+		})
+
+		t.Run("fails UnwrapAAD with its error", func(t *testing.T) {
+			t.Parallel()
+			want := errors.New("UnwrapAAD-failing")
+			s := cryptotest.NewAADKeyGeneratorStub(t, cryptotest.AADKeyGeneratorStubFailing(want))
+			_, r1 := aadKeyGeneratorStubUnwrapAAD(t, s)
+			assert.ErrorIs(t, r1, want, "UnwrapAAD fails with the error of AADKeyGeneratorStubFailing")
+		})
+
+		t.Run("fails Wrap with its error", func(t *testing.T) {
+			t.Parallel()
+			want := errors.New("Wrap-failing")
+			s := cryptotest.NewAADKeyGeneratorStub(t, cryptotest.AADKeyGeneratorStubFailing(want))
+			_, r1 := aadKeyGeneratorStubWrap(t, s)
+			assert.ErrorIs(t, r1, want, "Wrap fails with the error of AADKeyGeneratorStubFailing")
+		})
+
+		t.Run("fails Unwrap with its error", func(t *testing.T) {
+			t.Parallel()
+			want := errors.New("Unwrap-failing")
+			s := cryptotest.NewAADKeyGeneratorStub(t, cryptotest.AADKeyGeneratorStubFailing(want))
+			_, r1 := aadKeyGeneratorStubUnwrap(t, s)
+			assert.ErrorIs(t, r1, want, "Unwrap fails with the error of AADKeyGeneratorStubFailing")
+		})
+	})
+
+	t.Run("WithAADKeyGeneratorGenerateKeyAAD", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("sets the function of GenerateKeyAAD", func(t *testing.T) {
+			t.Parallel()
+			called := false
+			s := cryptotest.NewAADKeyGeneratorStub(
+				t,
+				cryptotest.WithAADKeyGeneratorGenerateKeyAAD(
+					func(_ context.Context, _ int, _ []byte) ([]byte, []byte, error) {
+						called = true
+						var z0 []byte
+						var z1 []byte
+						var z2 error
+						return z0, z1, z2
+					},
+				),
+			)
+			_, _, _ = aadKeyGeneratorStubGenerateKeyAAD(t, s)
+			assert.True(t, called, "WithAADKeyGeneratorGenerateKeyAAD sets the function of GenerateKeyAAD")
+		})
+	})
+
+	t.Run("WithAADKeyGeneratorWrapAAD", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("sets the function of WrapAAD", func(t *testing.T) {
+			t.Parallel()
+			called := false
+			s := cryptotest.NewAADKeyGeneratorStub(
+				t,
+				cryptotest.WithAADKeyGeneratorWrapAAD(func(_ context.Context, _, _ []byte) ([]byte, error) {
+					called = true
+					var z0 []byte
+					var z1 error
+					return z0, z1
+				}),
+			)
+			_, _ = aadKeyGeneratorStubWrapAAD(t, s)
+			assert.True(t, called, "WithAADKeyGeneratorWrapAAD sets the function of WrapAAD")
+		})
+	})
+
+	t.Run("WithAADKeyGeneratorUnwrapAAD", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("sets the function of UnwrapAAD", func(t *testing.T) {
+			t.Parallel()
+			called := false
+			s := cryptotest.NewAADKeyGeneratorStub(
+				t,
+				cryptotest.WithAADKeyGeneratorUnwrapAAD(func(_ context.Context, _, _ []byte) ([]byte, error) {
+					called = true
+					var z0 []byte
+					var z1 error
+					return z0, z1
+				}),
+			)
+			_, _ = aadKeyGeneratorStubUnwrapAAD(t, s)
+			assert.True(t, called, "WithAADKeyGeneratorUnwrapAAD sets the function of UnwrapAAD")
+		})
+	})
+
+	t.Run("WithAADKeyGeneratorKeyID", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("sets the function of KeyID", func(t *testing.T) {
+			t.Parallel()
+			called := false
+			s := cryptotest.NewAADKeyGeneratorStub(t, cryptotest.WithAADKeyGeneratorKeyID(func() string {
+				called = true
+				var z0 string
+				return z0
+			}))
+			_ = aadKeyGeneratorStubKeyID(t, s)
+			assert.True(t, called, "WithAADKeyGeneratorKeyID sets the function of KeyID")
+		})
+	})
+
+	t.Run("WithAADKeyGeneratorWrap", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("sets the function of Wrap", func(t *testing.T) {
+			t.Parallel()
+			called := false
+			s := cryptotest.NewAADKeyGeneratorStub(
+				t,
+				cryptotest.WithAADKeyGeneratorWrap(func(_ context.Context, _ []byte) ([]byte, error) {
+					called = true
+					var z0 []byte
+					var z1 error
+					return z0, z1
+				}),
+			)
+			_, _ = aadKeyGeneratorStubWrap(t, s)
+			assert.True(t, called, "WithAADKeyGeneratorWrap sets the function of Wrap")
+		})
+	})
+
+	t.Run("WithAADKeyGeneratorUnwrap", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("sets the function of Unwrap", func(t *testing.T) {
+			t.Parallel()
+			called := false
+			s := cryptotest.NewAADKeyGeneratorStub(
+				t,
+				cryptotest.WithAADKeyGeneratorUnwrap(func(_ context.Context, _ []byte) ([]byte, error) {
+					called = true
+					var z0 []byte
+					var z1 error
+					return z0, z1
+				}),
+			)
+			_, _ = aadKeyGeneratorStubUnwrap(t, s)
+			assert.True(t, called, "WithAADKeyGeneratorUnwrap sets the function of Unwrap")
 		})
 	})
 }
 
-// dokimi:provenance sha256:eafb77516c7d598ec785cedd2a556fbb1b9523955686b3d12af220ae2b15a9e1
+// dokimi:provenance sha256:03c3b7bd7efd076f5b61c60b5c2d73ab7f84e813596d2b6381dd010771fc4677

@@ -235,21 +235,6 @@ func NewKeeperStub(tb assert.TB, opts ...KeeperStubOption) *KeeperStub {
 	return s
 }
 
-// NewKeeperStubDelayed returns a double whose methods sleep d on clk
-// before they return. It applies opts after the clock and the latency.
-func NewKeeperStubDelayed(tb assert.TB, d time.Duration, clk assert.Clock, opts ...KeeperStubOption) *KeeperStub {
-	return NewKeeperStub(tb, append([]KeeperStubOption{
-		KeeperStubWithClock(clk),
-		KeeperStubWithLatency(d),
-	}, opts...)...)
-}
-
-// NewKeeperStubFailing returns a double on which each call of a method
-// that can fail fails with err. It applies opts after the failure.
-func NewKeeperStubFailing(tb assert.TB, err error, opts ...KeeperStubOption) *KeeperStub {
-	return NewKeeperStub(tb, append([]KeeperStubOption{KeeperStubFailing(err)}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *KeeperStub) ResetCalls() {
@@ -614,26 +599,6 @@ func NewDestroyerStub(tb assert.TB, opts ...DestroyerStubOption) *DestroyerStub 
 	}
 	s.group.Bind(tb)
 	return s
-}
-
-// NewDestroyerStubDelayed returns a double whose methods sleep d on clk
-// before they return. It applies opts after the clock and the latency.
-func NewDestroyerStubDelayed(
-	tb assert.TB,
-	d time.Duration,
-	clk assert.Clock,
-	opts ...DestroyerStubOption,
-) *DestroyerStub {
-	return NewDestroyerStub(tb, append([]DestroyerStubOption{
-		DestroyerStubWithClock(clk),
-		DestroyerStubWithLatency(d),
-	}, opts...)...)
-}
-
-// NewDestroyerStubFailing returns a double on which each call of a method
-// that can fail fails with err. It applies opts after the failure.
-func NewDestroyerStubFailing(tb assert.TB, err error, opts ...DestroyerStubOption) *DestroyerStub {
-	return NewDestroyerStub(tb, append([]DestroyerStubOption{DestroyerStubFailing(err)}, opts...)...)
 }
 
 // ResetCalls clears the recorded calls, the counters of the faults and the
@@ -1049,26 +1014,6 @@ func NewKeyGeneratorStub(tb assert.TB, opts ...KeyGeneratorStubOption) *KeyGener
 	return s
 }
 
-// NewKeyGeneratorStubDelayed returns a double whose methods sleep d on clk
-// before they return. It applies opts after the clock and the latency.
-func NewKeyGeneratorStubDelayed(
-	tb assert.TB,
-	d time.Duration,
-	clk assert.Clock,
-	opts ...KeyGeneratorStubOption,
-) *KeyGeneratorStub {
-	return NewKeyGeneratorStub(tb, append([]KeyGeneratorStubOption{
-		KeyGeneratorStubWithClock(clk),
-		KeyGeneratorStubWithLatency(d),
-	}, opts...)...)
-}
-
-// NewKeyGeneratorStubFailing returns a double on which each call of a
-// method that can fail fails with err. It applies opts after the failure.
-func NewKeyGeneratorStubFailing(tb assert.TB, err error, opts ...KeyGeneratorStubOption) *KeyGeneratorStub {
-	return NewKeyGeneratorStub(tb, append([]KeyGeneratorStubOption{KeyGeneratorStubFailing(err)}, opts...)...)
-}
-
 // ResetCalls clears the recorded calls, the counters of the faults and the
 // expected counts. It keeps the functions, the fixed results and the faults.
 func (s *KeyGeneratorStub) ResetCalls() {
@@ -1194,4 +1139,1097 @@ func (s *KeyGeneratorStub) Unwrap(ctx context.Context, wrapped []byte) ([]byte, 
 	return r.Result, r.Err
 }
 
-// dokimi:provenance sha256:6a7ed122f9464992fad448e60801281cabe50a10fc59698392fc58aba18e945f
+// AADKeeperWrapAADCall records one call of AADKeeper.WrapAAD.
+type AADKeeperWrapAADCall struct {
+	Ctx    context.Context
+	Dek    []byte
+	Aad    []byte
+	Result []byte
+	Err    error
+}
+
+// AADKeeperUnwrapAADCall records one call of AADKeeper.UnwrapAAD.
+type AADKeeperUnwrapAADCall struct {
+	Ctx     context.Context
+	Wrapped []byte
+	Aad     []byte
+	Result  []byte
+	Err     error
+}
+
+// AADKeeperKeyIDCall records one call of AADKeeper.KeyID.
+type AADKeeperKeyIDCall struct {
+	Result string
+}
+
+// AADKeeperWrapCall records one call of AADKeeper.Wrap.
+type AADKeeperWrapCall struct {
+	Ctx    context.Context
+	Dek    []byte
+	Result []byte
+	Err    error
+}
+
+// AADKeeperUnwrapCall records one call of AADKeeper.Unwrap.
+type AADKeeperUnwrapCall struct {
+	Ctx     context.Context
+	Wrapped []byte
+	Result  []byte
+	Err     error
+}
+
+// AADKeeperWrapAADStub configures WrapAAD and records its calls. A fault
+// armed through it takes precedence over the function and the fixed
+// results.
+type AADKeeperWrapAADStub struct {
+	*stub.MethodStub[AADKeeperWrapAADCall]
+
+	fn       func(context.Context, []byte, []byte) ([]byte, error)
+	fallback *AADKeeperWrapAADReturn
+}
+
+// AADKeeperWrapAADReturn contains the fixed results of WrapAAD.
+type AADKeeperWrapAADReturn struct {
+	Result []byte
+	Err    error
+}
+
+// Returns sets the results of every call of WrapAAD. A function and an
+// injected fault take precedence over them.
+func (s *AADKeeperWrapAADStub) Returns(result []byte, err error) *AADKeeperWrapAADStub {
+	s.fallback = &AADKeeperWrapAADReturn{Result: result, Err: err}
+	return s
+}
+
+// Func sets the function that computes the results of WrapAAD from its
+// arguments. An injected fault takes precedence over it.
+func (s *AADKeeperWrapAADStub) Func(fn func(context.Context, []byte, []byte) ([]byte, error)) *AADKeeperWrapAADStub {
+	s.fn = fn
+	return s
+}
+
+// AADKeeperUnwrapAADStub configures UnwrapAAD and records its calls. A
+// fault armed through it takes precedence over the function and the fixed
+// results.
+type AADKeeperUnwrapAADStub struct {
+	*stub.MethodStub[AADKeeperUnwrapAADCall]
+
+	fn       func(context.Context, []byte, []byte) ([]byte, error)
+	fallback *AADKeeperUnwrapAADReturn
+}
+
+// AADKeeperUnwrapAADReturn contains the fixed results of UnwrapAAD.
+type AADKeeperUnwrapAADReturn struct {
+	Result []byte
+	Err    error
+}
+
+// Returns sets the results of every call of UnwrapAAD. A function and an
+// injected fault take precedence over them.
+func (s *AADKeeperUnwrapAADStub) Returns(result []byte, err error) *AADKeeperUnwrapAADStub {
+	s.fallback = &AADKeeperUnwrapAADReturn{Result: result, Err: err}
+	return s
+}
+
+// Func sets the function that computes the results of UnwrapAAD from its
+// arguments. An injected fault takes precedence over it.
+func (s *AADKeeperUnwrapAADStub) Func(
+	fn func(context.Context, []byte, []byte) ([]byte, error),
+) *AADKeeperUnwrapAADStub {
+	s.fn = fn
+	return s
+}
+
+// AADKeeperKeyIDStub configures KeyID and records its calls. KeyID returns
+// no error, so a fault armed through it fails the test.
+type AADKeeperKeyIDStub struct {
+	*stub.MethodStub[AADKeeperKeyIDCall]
+
+	fn       func() string
+	fallback *AADKeeperKeyIDReturn
+}
+
+// AADKeeperKeyIDReturn contains the fixed results of KeyID.
+type AADKeeperKeyIDReturn struct {
+	Result string
+}
+
+// Returns sets the results of every call of KeyID. A function takes
+// precedence over them.
+func (s *AADKeeperKeyIDStub) Returns(result string) *AADKeeperKeyIDStub {
+	s.fallback = &AADKeeperKeyIDReturn{Result: result}
+	return s
+}
+
+// Func sets the function that computes the results of KeyID from its
+// arguments.
+func (s *AADKeeperKeyIDStub) Func(fn func() string) *AADKeeperKeyIDStub {
+	s.fn = fn
+	return s
+}
+
+// AADKeeperWrapStub configures Wrap and records its calls. A fault armed
+// through it takes precedence over the function and the fixed results.
+type AADKeeperWrapStub struct {
+	*stub.MethodStub[AADKeeperWrapCall]
+
+	fn       func(context.Context, []byte) ([]byte, error)
+	fallback *AADKeeperWrapReturn
+}
+
+// AADKeeperWrapReturn contains the fixed results of Wrap.
+type AADKeeperWrapReturn struct {
+	Result []byte
+	Err    error
+}
+
+// Returns sets the results of every call of Wrap. A function and an
+// injected fault take precedence over them.
+func (s *AADKeeperWrapStub) Returns(result []byte, err error) *AADKeeperWrapStub {
+	s.fallback = &AADKeeperWrapReturn{Result: result, Err: err}
+	return s
+}
+
+// Func sets the function that computes the results of Wrap from its
+// arguments. An injected fault takes precedence over it.
+func (s *AADKeeperWrapStub) Func(fn func(context.Context, []byte) ([]byte, error)) *AADKeeperWrapStub {
+	s.fn = fn
+	return s
+}
+
+// AADKeeperUnwrapStub configures Unwrap and records its calls. A fault
+// armed through it takes precedence over the function and the fixed
+// results.
+type AADKeeperUnwrapStub struct {
+	*stub.MethodStub[AADKeeperUnwrapCall]
+
+	fn       func(context.Context, []byte) ([]byte, error)
+	fallback *AADKeeperUnwrapReturn
+}
+
+// AADKeeperUnwrapReturn contains the fixed results of Unwrap.
+type AADKeeperUnwrapReturn struct {
+	Result []byte
+	Err    error
+}
+
+// Returns sets the results of every call of Unwrap. A function and an
+// injected fault take precedence over them.
+func (s *AADKeeperUnwrapStub) Returns(result []byte, err error) *AADKeeperUnwrapStub {
+	s.fallback = &AADKeeperUnwrapReturn{Result: result, Err: err}
+	return s
+}
+
+// Func sets the function that computes the results of Unwrap from its
+// arguments. An injected fault takes precedence over it.
+func (s *AADKeeperUnwrapStub) Func(fn func(context.Context, []byte) ([]byte, error)) *AADKeeperUnwrapStub {
+	s.fn = fn
+	return s
+}
+
+// The reference to stub.CompatV1 fails the build against another major
+// version of the runtime of doubles.
+var _ = stub.CompatV1
+
+// AADKeeperStubOption configures a [AADKeeperStub] at its construction.
+type AADKeeperStubOption func(*AADKeeperStub)
+
+// AADKeeperStubStrict returns the option that makes an unconfigured method
+// fail the test instead of returning its zero value.
+func AADKeeperStubStrict() AADKeeperStubOption {
+	return func(s *AADKeeperStub) { s.strict = true }
+}
+
+// AADKeeperStubDelegateTo returns the option that passes each call to
+// impl. The double still records the call.
+func AADKeeperStubDelegateTo(impl crypto.AADKeeper) AADKeeperStubOption {
+	return func(s *AADKeeperStub) {
+		s.OnWrapAAD.Func(impl.WrapAAD)
+		s.OnUnwrapAAD.Func(impl.UnwrapAAD)
+		s.OnKeyID.Func(impl.KeyID)
+		s.OnWrap.Func(impl.Wrap)
+		s.OnUnwrap.Func(impl.Unwrap)
+	}
+}
+
+// AADKeeperStubWithClock returns the option that sets the clock of the
+// double to clk. The double takes the latency, the windows of the faults
+// and the instants of the calls from clk. A latency on a controlled clock
+// costs no real time.
+func AADKeeperStubWithClock(clk assert.Clock) AADKeeperStubOption {
+	return func(s *AADKeeperStub) { s.group.SetClock(clk) }
+}
+
+// AADKeeperStubWithRandSource returns the option that sets the random
+// source of the probabilistic faults to src. A seeded source repeats the
+// faults of a run.
+func AADKeeperStubWithRandSource(src rand.Source) AADKeeperStubOption {
+	return func(s *AADKeeperStub) { s.group.SetRandSource(src) }
+}
+
+// AADKeeperStubBenchMode returns the option that turns the recording of
+// calls off. The methods still return their results.
+func AADKeeperStubBenchMode() AADKeeperStubOption {
+	return func(s *AADKeeperStub) { s.group.BenchMode() }
+}
+
+// AADKeeperStubWithLatency returns the option that makes every method
+// sleep d before it returns. Without AADKeeperStubWithClock, d passes in
+// real time.
+func AADKeeperStubWithLatency(d time.Duration) AADKeeperStubOption {
+	return func(s *AADKeeperStub) { s.group.SetLatency(d) }
+}
+
+// AADKeeperStubFailing returns the option that arms err on each method
+// that can fail. Each call of such a method then fails with err.
+func AADKeeperStubFailing(err error) AADKeeperStubOption {
+	return func(s *AADKeeperStub) {
+		s.OnWrapAAD.Faults(err, 1)
+		s.OnUnwrapAAD.Faults(err, 1)
+		s.OnWrap.Faults(err, 1)
+		s.OnUnwrap.Faults(err, 1)
+	}
+}
+
+// WithAADKeeperWrapAAD returns the option that sets the function of
+// WrapAAD.
+func WithAADKeeperWrapAAD(fn func(context.Context, []byte, []byte) ([]byte, error)) AADKeeperStubOption {
+	return func(s *AADKeeperStub) { s.OnWrapAAD.Func(fn) }
+}
+
+// WithAADKeeperUnwrapAAD returns the option that sets the function of
+// UnwrapAAD.
+func WithAADKeeperUnwrapAAD(fn func(context.Context, []byte, []byte) ([]byte, error)) AADKeeperStubOption {
+	return func(s *AADKeeperStub) { s.OnUnwrapAAD.Func(fn) }
+}
+
+// WithAADKeeperKeyID returns the option that sets the function of KeyID.
+func WithAADKeeperKeyID(fn func() string) AADKeeperStubOption {
+	return func(s *AADKeeperStub) { s.OnKeyID.Func(fn) }
+}
+
+// WithAADKeeperWrap returns the option that sets the function of Wrap.
+func WithAADKeeperWrap(fn func(context.Context, []byte) ([]byte, error)) AADKeeperStubOption {
+	return func(s *AADKeeperStub) { s.OnWrap.Func(fn) }
+}
+
+// WithAADKeeperUnwrap returns the option that sets the function of Unwrap.
+func WithAADKeeperUnwrap(fn func(context.Context, []byte) ([]byte, error)) AADKeeperStubOption {
+	return func(s *AADKeeperStub) { s.OnUnwrap.Func(fn) }
+}
+
+// AADKeeperStub is a recording test double of AADKeeper. Each field
+// On<Method> configures its method. An unconfigured method records the
+// call and returns the zero values of its results.
+type AADKeeperStub struct {
+	OnWrapAAD   *AADKeeperWrapAADStub
+	OnUnwrapAAD *AADKeeperUnwrapAADStub
+	// OnKeyID configures KeyID, which Keeper declares.
+	OnKeyID *AADKeeperKeyIDStub
+	// OnWrap configures Wrap, which Keeper declares.
+	OnWrap *AADKeeperWrapStub
+	// OnUnwrap configures Unwrap, which Keeper declares.
+	OnUnwrap *AADKeeperUnwrapStub
+
+	// group contains the stub of each method.
+	group  *stub.Group
+	strict bool
+}
+
+// The compiler checks that AADKeeperStub implements AADKeeper.
+var _ crypto.AADKeeper = (*AADKeeperStub)(nil)
+
+// NewAADKeeperStub returns a double of AADKeeper that reports its failures
+// to tb and applies opts. The double checks the expected counts of calls
+// at the end of the test. With a nil tb, the double reports nothing.
+func NewAADKeeperStub(tb assert.TB, opts ...AADKeeperStubOption) *AADKeeperStub {
+	s := &AADKeeperStub{
+		OnWrapAAD: &AADKeeperWrapAADStub{
+			MethodStub: stub.NewMethodStub[AADKeeperWrapAADCall](tb, "AADKeeper.WrapAAD"),
+		},
+		OnUnwrapAAD: &AADKeeperUnwrapAADStub{
+			MethodStub: stub.NewMethodStub[AADKeeperUnwrapAADCall](tb, "AADKeeper.UnwrapAAD"),
+		},
+		OnKeyID:  &AADKeeperKeyIDStub{MethodStub: stub.NewMethodStub[AADKeeperKeyIDCall](tb, "AADKeeper.KeyID")},
+		OnWrap:   &AADKeeperWrapStub{MethodStub: stub.NewMethodStub[AADKeeperWrapCall](tb, "AADKeeper.Wrap")},
+		OnUnwrap: &AADKeeperUnwrapStub{MethodStub: stub.NewMethodStub[AADKeeperUnwrapCall](tb, "AADKeeper.Unwrap")},
+	}
+	s.group = stub.NewGroup(
+		s.OnWrapAAD.MethodStub,
+		s.OnUnwrapAAD.MethodStub,
+		s.OnKeyID.MethodStub,
+		s.OnWrap.MethodStub,
+		s.OnUnwrap.MethodStub,
+	)
+	for _, opt := range opts {
+		opt(s)
+	}
+	if s.strict {
+		s.group.StrictAll()
+	}
+	s.group.Bind(tb)
+	return s
+}
+
+// ResetCalls clears the recorded calls, the counters of the faults and the
+// expected counts. It keeps the functions, the fixed results and the faults.
+func (s *AADKeeperStub) ResetCalls() {
+	s.group.Reset()
+}
+
+// invoke returns a call of the function of Func with the arguments, and nil
+// where no function is set.
+func (s *AADKeeperWrapAADStub) invoke(ctx context.Context, dek, aad []byte) func() AADKeeperWrapAADReturn {
+	if s.fn == nil {
+		return nil
+	}
+	return func() AADKeeperWrapAADReturn {
+		r0, r1 := s.fn(ctx, dek, aad)
+		return AADKeeperWrapAADReturn{Result: r0, Err: r1}
+	}
+}
+
+// WrapAAD records the call. An armed fault comes first, then the function
+// of Func, then the results of Returns, and then the zero values.
+func (s *AADKeeperStub) WrapAAD(ctx context.Context, dek, aad []byte) ([]byte, error) {
+	call := AADKeeperWrapAADCall{Ctx: ctx, Dek: dek, Aad: aad}
+	r := stub.Answer(s.OnWrapAAD.MethodStub, call, stub.Arms[AADKeeperWrapAADCall, AADKeeperWrapAADReturn]{
+		Invoke:   s.OnWrapAAD.invoke(ctx, dek, aad),
+		Fallback: s.OnWrapAAD.fallback,
+		Fault:    func(err error) AADKeeperWrapAADReturn { return AADKeeperWrapAADReturn{Err: err} },
+		Stamp: func(c AADKeeperWrapAADCall, r AADKeeperWrapAADReturn) AADKeeperWrapAADCall {
+			c.Result = r.Result
+			c.Err = r.Err
+			return c
+		},
+	})
+	return r.Result, r.Err
+}
+
+// invoke returns a call of the function of Func with the arguments, and nil
+// where no function is set.
+func (s *AADKeeperUnwrapAADStub) invoke(ctx context.Context, wrapped, aad []byte) func() AADKeeperUnwrapAADReturn {
+	if s.fn == nil {
+		return nil
+	}
+	return func() AADKeeperUnwrapAADReturn {
+		r0, r1 := s.fn(ctx, wrapped, aad)
+		return AADKeeperUnwrapAADReturn{Result: r0, Err: r1}
+	}
+}
+
+// UnwrapAAD records the call. An armed fault comes first, then the
+// function of Func, then the results of Returns, and then the zero values.
+func (s *AADKeeperStub) UnwrapAAD(ctx context.Context, wrapped, aad []byte) ([]byte, error) {
+	call := AADKeeperUnwrapAADCall{Ctx: ctx, Wrapped: wrapped, Aad: aad}
+	r := stub.Answer(s.OnUnwrapAAD.MethodStub, call, stub.Arms[AADKeeperUnwrapAADCall, AADKeeperUnwrapAADReturn]{
+		Invoke:   s.OnUnwrapAAD.invoke(ctx, wrapped, aad),
+		Fallback: s.OnUnwrapAAD.fallback,
+		Fault:    func(err error) AADKeeperUnwrapAADReturn { return AADKeeperUnwrapAADReturn{Err: err} },
+		Stamp: func(c AADKeeperUnwrapAADCall, r AADKeeperUnwrapAADReturn) AADKeeperUnwrapAADCall {
+			c.Result = r.Result
+			c.Err = r.Err
+			return c
+		},
+	})
+	return r.Result, r.Err
+}
+
+// invoke returns a call of the function of Func with the arguments, and nil
+// where no function is set.
+func (s *AADKeeperKeyIDStub) invoke() func() AADKeeperKeyIDReturn {
+	if s.fn == nil {
+		return nil
+	}
+	return func() AADKeeperKeyIDReturn {
+		r0 := s.fn()
+		return AADKeeperKeyIDReturn{Result: r0}
+	}
+}
+
+// KeyID records the call. An armed fault comes first, then the function of
+// Func, then the results of Returns, and then the zero values.
+func (s *AADKeeperStub) KeyID() string {
+	call := AADKeeperKeyIDCall{}
+	r := stub.Answer(s.OnKeyID.MethodStub, call, stub.Arms[AADKeeperKeyIDCall, AADKeeperKeyIDReturn]{
+		Invoke:   s.OnKeyID.invoke(),
+		Fallback: s.OnKeyID.fallback,
+		Stamp: func(c AADKeeperKeyIDCall, r AADKeeperKeyIDReturn) AADKeeperKeyIDCall {
+			c.Result = r.Result
+			return c
+		},
+	})
+	return r.Result
+}
+
+// invoke returns a call of the function of Func with the arguments, and nil
+// where no function is set.
+func (s *AADKeeperWrapStub) invoke(ctx context.Context, dek []byte) func() AADKeeperWrapReturn {
+	if s.fn == nil {
+		return nil
+	}
+	return func() AADKeeperWrapReturn {
+		r0, r1 := s.fn(ctx, dek)
+		return AADKeeperWrapReturn{Result: r0, Err: r1}
+	}
+}
+
+// Wrap records the call. An armed fault comes first, then the function of
+// Func, then the results of Returns, and then the zero values.
+func (s *AADKeeperStub) Wrap(ctx context.Context, dek []byte) ([]byte, error) {
+	call := AADKeeperWrapCall{Ctx: ctx, Dek: dek}
+	r := stub.Answer(s.OnWrap.MethodStub, call, stub.Arms[AADKeeperWrapCall, AADKeeperWrapReturn]{
+		Invoke:   s.OnWrap.invoke(ctx, dek),
+		Fallback: s.OnWrap.fallback,
+		Fault:    func(err error) AADKeeperWrapReturn { return AADKeeperWrapReturn{Err: err} },
+		Stamp: func(c AADKeeperWrapCall, r AADKeeperWrapReturn) AADKeeperWrapCall {
+			c.Result = r.Result
+			c.Err = r.Err
+			return c
+		},
+	})
+	return r.Result, r.Err
+}
+
+// invoke returns a call of the function of Func with the arguments, and nil
+// where no function is set.
+func (s *AADKeeperUnwrapStub) invoke(ctx context.Context, wrapped []byte) func() AADKeeperUnwrapReturn {
+	if s.fn == nil {
+		return nil
+	}
+	return func() AADKeeperUnwrapReturn {
+		r0, r1 := s.fn(ctx, wrapped)
+		return AADKeeperUnwrapReturn{Result: r0, Err: r1}
+	}
+}
+
+// Unwrap records the call. An armed fault comes first, then the function
+// of Func, then the results of Returns, and then the zero values.
+func (s *AADKeeperStub) Unwrap(ctx context.Context, wrapped []byte) ([]byte, error) {
+	call := AADKeeperUnwrapCall{Ctx: ctx, Wrapped: wrapped}
+	r := stub.Answer(s.OnUnwrap.MethodStub, call, stub.Arms[AADKeeperUnwrapCall, AADKeeperUnwrapReturn]{
+		Invoke:   s.OnUnwrap.invoke(ctx, wrapped),
+		Fallback: s.OnUnwrap.fallback,
+		Fault:    func(err error) AADKeeperUnwrapReturn { return AADKeeperUnwrapReturn{Err: err} },
+		Stamp: func(c AADKeeperUnwrapCall, r AADKeeperUnwrapReturn) AADKeeperUnwrapCall {
+			c.Result = r.Result
+			c.Err = r.Err
+			return c
+		},
+	})
+	return r.Result, r.Err
+}
+
+// AADKeyGeneratorGenerateKeyAADCall records one call of
+// AADKeyGenerator.GenerateKeyAAD.
+type AADKeyGeneratorGenerateKeyAADCall struct {
+	Ctx       context.Context
+	Size      int
+	Aad       []byte
+	Plaintext []byte
+	Wrapped   []byte
+	Err       error
+}
+
+// AADKeyGeneratorWrapAADCall records one call of AADKeyGenerator.WrapAAD.
+type AADKeyGeneratorWrapAADCall struct {
+	Ctx    context.Context
+	Dek    []byte
+	Aad    []byte
+	Result []byte
+	Err    error
+}
+
+// AADKeyGeneratorUnwrapAADCall records one call of
+// AADKeyGenerator.UnwrapAAD.
+type AADKeyGeneratorUnwrapAADCall struct {
+	Ctx     context.Context
+	Wrapped []byte
+	Aad     []byte
+	Result  []byte
+	Err     error
+}
+
+// AADKeyGeneratorKeyIDCall records one call of AADKeyGenerator.KeyID.
+type AADKeyGeneratorKeyIDCall struct {
+	Result string
+}
+
+// AADKeyGeneratorWrapCall records one call of AADKeyGenerator.Wrap.
+type AADKeyGeneratorWrapCall struct {
+	Ctx    context.Context
+	Dek    []byte
+	Result []byte
+	Err    error
+}
+
+// AADKeyGeneratorUnwrapCall records one call of AADKeyGenerator.Unwrap.
+type AADKeyGeneratorUnwrapCall struct {
+	Ctx     context.Context
+	Wrapped []byte
+	Result  []byte
+	Err     error
+}
+
+// AADKeyGeneratorGenerateKeyAADStub configures GenerateKeyAAD and records
+// its calls. A fault armed through it takes precedence over the function
+// and the fixed results.
+type AADKeyGeneratorGenerateKeyAADStub struct {
+	*stub.MethodStub[AADKeyGeneratorGenerateKeyAADCall]
+
+	fn       func(context.Context, int, []byte) ([]byte, []byte, error)
+	fallback *AADKeyGeneratorGenerateKeyAADReturn
+}
+
+// AADKeyGeneratorGenerateKeyAADReturn contains the fixed results of
+// GenerateKeyAAD.
+type AADKeyGeneratorGenerateKeyAADReturn struct {
+	Plaintext []byte
+	Wrapped   []byte
+	Err       error
+}
+
+// Returns sets the results of every call of GenerateKeyAAD. A function and
+// an injected fault take precedence over them.
+func (s *AADKeyGeneratorGenerateKeyAADStub) Returns(
+	plaintext, wrapped []byte,
+	err error,
+) *AADKeyGeneratorGenerateKeyAADStub {
+	s.fallback = &AADKeyGeneratorGenerateKeyAADReturn{Plaintext: plaintext, Wrapped: wrapped, Err: err}
+	return s
+}
+
+// Func sets the function that computes the results of GenerateKeyAAD from
+// its arguments. An injected fault takes precedence over it.
+func (s *AADKeyGeneratorGenerateKeyAADStub) Func(
+	fn func(context.Context, int, []byte) ([]byte, []byte, error),
+) *AADKeyGeneratorGenerateKeyAADStub {
+	s.fn = fn
+	return s
+}
+
+// AADKeyGeneratorWrapAADStub configures WrapAAD and records its calls. A
+// fault armed through it takes precedence over the function and the fixed
+// results.
+type AADKeyGeneratorWrapAADStub struct {
+	*stub.MethodStub[AADKeyGeneratorWrapAADCall]
+
+	fn       func(context.Context, []byte, []byte) ([]byte, error)
+	fallback *AADKeyGeneratorWrapAADReturn
+}
+
+// AADKeyGeneratorWrapAADReturn contains the fixed results of WrapAAD.
+type AADKeyGeneratorWrapAADReturn struct {
+	Result []byte
+	Err    error
+}
+
+// Returns sets the results of every call of WrapAAD. A function and an
+// injected fault take precedence over them.
+func (s *AADKeyGeneratorWrapAADStub) Returns(result []byte, err error) *AADKeyGeneratorWrapAADStub {
+	s.fallback = &AADKeyGeneratorWrapAADReturn{Result: result, Err: err}
+	return s
+}
+
+// Func sets the function that computes the results of WrapAAD from its
+// arguments. An injected fault takes precedence over it.
+func (s *AADKeyGeneratorWrapAADStub) Func(
+	fn func(context.Context, []byte, []byte) ([]byte, error),
+) *AADKeyGeneratorWrapAADStub {
+	s.fn = fn
+	return s
+}
+
+// AADKeyGeneratorUnwrapAADStub configures UnwrapAAD and records its calls.
+// A fault armed through it takes precedence over the function and the
+// fixed results.
+type AADKeyGeneratorUnwrapAADStub struct {
+	*stub.MethodStub[AADKeyGeneratorUnwrapAADCall]
+
+	fn       func(context.Context, []byte, []byte) ([]byte, error)
+	fallback *AADKeyGeneratorUnwrapAADReturn
+}
+
+// AADKeyGeneratorUnwrapAADReturn contains the fixed results of UnwrapAAD.
+type AADKeyGeneratorUnwrapAADReturn struct {
+	Result []byte
+	Err    error
+}
+
+// Returns sets the results of every call of UnwrapAAD. A function and an
+// injected fault take precedence over them.
+func (s *AADKeyGeneratorUnwrapAADStub) Returns(result []byte, err error) *AADKeyGeneratorUnwrapAADStub {
+	s.fallback = &AADKeyGeneratorUnwrapAADReturn{Result: result, Err: err}
+	return s
+}
+
+// Func sets the function that computes the results of UnwrapAAD from its
+// arguments. An injected fault takes precedence over it.
+func (s *AADKeyGeneratorUnwrapAADStub) Func(
+	fn func(context.Context, []byte, []byte) ([]byte, error),
+) *AADKeyGeneratorUnwrapAADStub {
+	s.fn = fn
+	return s
+}
+
+// AADKeyGeneratorKeyIDStub configures KeyID and records its calls. KeyID
+// returns no error, so a fault armed through it fails the test.
+type AADKeyGeneratorKeyIDStub struct {
+	*stub.MethodStub[AADKeyGeneratorKeyIDCall]
+
+	fn       func() string
+	fallback *AADKeyGeneratorKeyIDReturn
+}
+
+// AADKeyGeneratorKeyIDReturn contains the fixed results of KeyID.
+type AADKeyGeneratorKeyIDReturn struct {
+	Result string
+}
+
+// Returns sets the results of every call of KeyID. A function takes
+// precedence over them.
+func (s *AADKeyGeneratorKeyIDStub) Returns(result string) *AADKeyGeneratorKeyIDStub {
+	s.fallback = &AADKeyGeneratorKeyIDReturn{Result: result}
+	return s
+}
+
+// Func sets the function that computes the results of KeyID from its
+// arguments.
+func (s *AADKeyGeneratorKeyIDStub) Func(fn func() string) *AADKeyGeneratorKeyIDStub {
+	s.fn = fn
+	return s
+}
+
+// AADKeyGeneratorWrapStub configures Wrap and records its calls. A fault
+// armed through it takes precedence over the function and the fixed
+// results.
+type AADKeyGeneratorWrapStub struct {
+	*stub.MethodStub[AADKeyGeneratorWrapCall]
+
+	fn       func(context.Context, []byte) ([]byte, error)
+	fallback *AADKeyGeneratorWrapReturn
+}
+
+// AADKeyGeneratorWrapReturn contains the fixed results of Wrap.
+type AADKeyGeneratorWrapReturn struct {
+	Result []byte
+	Err    error
+}
+
+// Returns sets the results of every call of Wrap. A function and an
+// injected fault take precedence over them.
+func (s *AADKeyGeneratorWrapStub) Returns(result []byte, err error) *AADKeyGeneratorWrapStub {
+	s.fallback = &AADKeyGeneratorWrapReturn{Result: result, Err: err}
+	return s
+}
+
+// Func sets the function that computes the results of Wrap from its
+// arguments. An injected fault takes precedence over it.
+func (s *AADKeyGeneratorWrapStub) Func(fn func(context.Context, []byte) ([]byte, error)) *AADKeyGeneratorWrapStub {
+	s.fn = fn
+	return s
+}
+
+// AADKeyGeneratorUnwrapStub configures Unwrap and records its calls. A
+// fault armed through it takes precedence over the function and the fixed
+// results.
+type AADKeyGeneratorUnwrapStub struct {
+	*stub.MethodStub[AADKeyGeneratorUnwrapCall]
+
+	fn       func(context.Context, []byte) ([]byte, error)
+	fallback *AADKeyGeneratorUnwrapReturn
+}
+
+// AADKeyGeneratorUnwrapReturn contains the fixed results of Unwrap.
+type AADKeyGeneratorUnwrapReturn struct {
+	Result []byte
+	Err    error
+}
+
+// Returns sets the results of every call of Unwrap. A function and an
+// injected fault take precedence over them.
+func (s *AADKeyGeneratorUnwrapStub) Returns(result []byte, err error) *AADKeyGeneratorUnwrapStub {
+	s.fallback = &AADKeyGeneratorUnwrapReturn{Result: result, Err: err}
+	return s
+}
+
+// Func sets the function that computes the results of Unwrap from its
+// arguments. An injected fault takes precedence over it.
+func (s *AADKeyGeneratorUnwrapStub) Func(fn func(context.Context, []byte) ([]byte, error)) *AADKeyGeneratorUnwrapStub {
+	s.fn = fn
+	return s
+}
+
+// The reference to stub.CompatV1 fails the build against another major
+// version of the runtime of doubles.
+var _ = stub.CompatV1
+
+// AADKeyGeneratorStubOption configures a [AADKeyGeneratorStub] at its
+// construction.
+type AADKeyGeneratorStubOption func(*AADKeyGeneratorStub)
+
+// AADKeyGeneratorStubStrict returns the option that makes an unconfigured
+// method fail the test instead of returning its zero value.
+func AADKeyGeneratorStubStrict() AADKeyGeneratorStubOption {
+	return func(s *AADKeyGeneratorStub) { s.strict = true }
+}
+
+// AADKeyGeneratorStubDelegateTo returns the option that passes each call
+// to impl. The double still records the call.
+func AADKeyGeneratorStubDelegateTo(impl crypto.AADKeyGenerator) AADKeyGeneratorStubOption {
+	return func(s *AADKeyGeneratorStub) {
+		s.OnGenerateKeyAAD.Func(impl.GenerateKeyAAD)
+		s.OnWrapAAD.Func(impl.WrapAAD)
+		s.OnUnwrapAAD.Func(impl.UnwrapAAD)
+		s.OnKeyID.Func(impl.KeyID)
+		s.OnWrap.Func(impl.Wrap)
+		s.OnUnwrap.Func(impl.Unwrap)
+	}
+}
+
+// AADKeyGeneratorStubWithClock returns the option that sets the clock of
+// the double to clk. The double takes the latency, the windows of the
+// faults and the instants of the calls from clk. A latency on a controlled
+// clock costs no real time.
+func AADKeyGeneratorStubWithClock(clk assert.Clock) AADKeyGeneratorStubOption {
+	return func(s *AADKeyGeneratorStub) { s.group.SetClock(clk) }
+}
+
+// AADKeyGeneratorStubWithRandSource returns the option that sets the
+// random source of the probabilistic faults to src. A seeded source
+// repeats the faults of a run.
+func AADKeyGeneratorStubWithRandSource(src rand.Source) AADKeyGeneratorStubOption {
+	return func(s *AADKeyGeneratorStub) { s.group.SetRandSource(src) }
+}
+
+// AADKeyGeneratorStubBenchMode returns the option that turns the recording
+// of calls off. The methods still return their results.
+func AADKeyGeneratorStubBenchMode() AADKeyGeneratorStubOption {
+	return func(s *AADKeyGeneratorStub) { s.group.BenchMode() }
+}
+
+// AADKeyGeneratorStubWithLatency returns the option that makes every
+// method sleep d before it returns. Without AADKeyGeneratorStubWithClock,
+// d passes in real time.
+func AADKeyGeneratorStubWithLatency(d time.Duration) AADKeyGeneratorStubOption {
+	return func(s *AADKeyGeneratorStub) { s.group.SetLatency(d) }
+}
+
+// AADKeyGeneratorStubFailing returns the option that arms err on each
+// method that can fail. Each call of such a method then fails with err.
+func AADKeyGeneratorStubFailing(err error) AADKeyGeneratorStubOption {
+	return func(s *AADKeyGeneratorStub) {
+		s.OnGenerateKeyAAD.Faults(err, 1)
+		s.OnWrapAAD.Faults(err, 1)
+		s.OnUnwrapAAD.Faults(err, 1)
+		s.OnWrap.Faults(err, 1)
+		s.OnUnwrap.Faults(err, 1)
+	}
+}
+
+// WithAADKeyGeneratorGenerateKeyAAD returns the option that sets the
+// function of GenerateKeyAAD.
+func WithAADKeyGeneratorGenerateKeyAAD(
+	fn func(context.Context, int, []byte) ([]byte, []byte, error),
+) AADKeyGeneratorStubOption {
+	return func(s *AADKeyGeneratorStub) { s.OnGenerateKeyAAD.Func(fn) }
+}
+
+// WithAADKeyGeneratorWrapAAD returns the option that sets the function of
+// WrapAAD.
+func WithAADKeyGeneratorWrapAAD(fn func(context.Context, []byte, []byte) ([]byte, error)) AADKeyGeneratorStubOption {
+	return func(s *AADKeyGeneratorStub) { s.OnWrapAAD.Func(fn) }
+}
+
+// WithAADKeyGeneratorUnwrapAAD returns the option that sets the function
+// of UnwrapAAD.
+func WithAADKeyGeneratorUnwrapAAD(fn func(context.Context, []byte, []byte) ([]byte, error)) AADKeyGeneratorStubOption {
+	return func(s *AADKeyGeneratorStub) { s.OnUnwrapAAD.Func(fn) }
+}
+
+// WithAADKeyGeneratorKeyID returns the option that sets the function of
+// KeyID.
+func WithAADKeyGeneratorKeyID(fn func() string) AADKeyGeneratorStubOption {
+	return func(s *AADKeyGeneratorStub) { s.OnKeyID.Func(fn) }
+}
+
+// WithAADKeyGeneratorWrap returns the option that sets the function of
+// Wrap.
+func WithAADKeyGeneratorWrap(fn func(context.Context, []byte) ([]byte, error)) AADKeyGeneratorStubOption {
+	return func(s *AADKeyGeneratorStub) { s.OnWrap.Func(fn) }
+}
+
+// WithAADKeyGeneratorUnwrap returns the option that sets the function of
+// Unwrap.
+func WithAADKeyGeneratorUnwrap(fn func(context.Context, []byte) ([]byte, error)) AADKeyGeneratorStubOption {
+	return func(s *AADKeyGeneratorStub) { s.OnUnwrap.Func(fn) }
+}
+
+// AADKeyGeneratorStub is a recording test double of AADKeyGenerator. Each
+// field On<Method> configures its method. An unconfigured method records
+// the call and returns the zero values of its results.
+type AADKeyGeneratorStub struct {
+	OnGenerateKeyAAD *AADKeyGeneratorGenerateKeyAADStub
+	// OnWrapAAD configures WrapAAD, which AADKeeper declares.
+	OnWrapAAD *AADKeyGeneratorWrapAADStub
+	// OnUnwrapAAD configures UnwrapAAD, which AADKeeper declares.
+	OnUnwrapAAD *AADKeyGeneratorUnwrapAADStub
+	// OnKeyID configures KeyID, which Keeper declares.
+	OnKeyID *AADKeyGeneratorKeyIDStub
+	// OnWrap configures Wrap, which Keeper declares.
+	OnWrap *AADKeyGeneratorWrapStub
+	// OnUnwrap configures Unwrap, which Keeper declares.
+	OnUnwrap *AADKeyGeneratorUnwrapStub
+
+	// group contains the stub of each method.
+	group  *stub.Group
+	strict bool
+}
+
+// The compiler checks that AADKeyGeneratorStub implements AADKeyGenerator.
+var _ crypto.AADKeyGenerator = (*AADKeyGeneratorStub)(nil)
+
+// NewAADKeyGeneratorStub returns a double of AADKeyGenerator that reports
+// its failures to tb and applies opts. The double checks the expected
+// counts of calls at the end of the test. With a nil tb, the double
+// reports nothing.
+func NewAADKeyGeneratorStub(tb assert.TB, opts ...AADKeyGeneratorStubOption) *AADKeyGeneratorStub {
+	s := &AADKeyGeneratorStub{
+		OnGenerateKeyAAD: &AADKeyGeneratorGenerateKeyAADStub{
+			MethodStub: stub.NewMethodStub[AADKeyGeneratorGenerateKeyAADCall](tb, "AADKeyGenerator.GenerateKeyAAD"),
+		},
+		OnWrapAAD: &AADKeyGeneratorWrapAADStub{
+			MethodStub: stub.NewMethodStub[AADKeyGeneratorWrapAADCall](tb, "AADKeyGenerator.WrapAAD"),
+		},
+		OnUnwrapAAD: &AADKeyGeneratorUnwrapAADStub{
+			MethodStub: stub.NewMethodStub[AADKeyGeneratorUnwrapAADCall](tb, "AADKeyGenerator.UnwrapAAD"),
+		},
+		OnKeyID: &AADKeyGeneratorKeyIDStub{
+			MethodStub: stub.NewMethodStub[AADKeyGeneratorKeyIDCall](tb, "AADKeyGenerator.KeyID"),
+		},
+		OnWrap: &AADKeyGeneratorWrapStub{
+			MethodStub: stub.NewMethodStub[AADKeyGeneratorWrapCall](tb, "AADKeyGenerator.Wrap"),
+		},
+		OnUnwrap: &AADKeyGeneratorUnwrapStub{
+			MethodStub: stub.NewMethodStub[AADKeyGeneratorUnwrapCall](tb, "AADKeyGenerator.Unwrap"),
+		},
+	}
+	s.group = stub.NewGroup(
+		s.OnGenerateKeyAAD.MethodStub,
+		s.OnWrapAAD.MethodStub,
+		s.OnUnwrapAAD.MethodStub,
+		s.OnKeyID.MethodStub,
+		s.OnWrap.MethodStub,
+		s.OnUnwrap.MethodStub,
+	)
+	for _, opt := range opts {
+		opt(s)
+	}
+	if s.strict {
+		s.group.StrictAll()
+	}
+	s.group.Bind(tb)
+	return s
+}
+
+// ResetCalls clears the recorded calls, the counters of the faults and the
+// expected counts. It keeps the functions, the fixed results and the faults.
+func (s *AADKeyGeneratorStub) ResetCalls() {
+	s.group.Reset()
+}
+
+// invoke returns a call of the function of Func with the arguments, and nil
+// where no function is set.
+func (s *AADKeyGeneratorGenerateKeyAADStub) invoke(
+	ctx context.Context,
+	size int,
+	aad []byte,
+) func() AADKeyGeneratorGenerateKeyAADReturn {
+	if s.fn == nil {
+		return nil
+	}
+	return func() AADKeyGeneratorGenerateKeyAADReturn {
+		plaintext, wrapped, err := s.fn(ctx, size, aad)
+		return AADKeyGeneratorGenerateKeyAADReturn{Plaintext: plaintext, Wrapped: wrapped, Err: err}
+	}
+}
+
+// GenerateKeyAAD records the call. An armed fault comes first, then the
+// function of Func, then the results of Returns, and then the zero values.
+func (s *AADKeyGeneratorStub) GenerateKeyAAD(
+	ctx context.Context,
+	size int,
+	aad []byte,
+) (plaintext, wrapped []byte, err error) {
+	call := AADKeyGeneratorGenerateKeyAADCall{Ctx: ctx, Size: size, Aad: aad}
+	r := stub.Answer(
+		s.OnGenerateKeyAAD.MethodStub,
+		call,
+		stub.Arms[AADKeyGeneratorGenerateKeyAADCall, AADKeyGeneratorGenerateKeyAADReturn]{
+			Invoke:   s.OnGenerateKeyAAD.invoke(ctx, size, aad),
+			Fallback: s.OnGenerateKeyAAD.fallback,
+			Fault: func(err error) AADKeyGeneratorGenerateKeyAADReturn {
+				return AADKeyGeneratorGenerateKeyAADReturn{Err: err}
+			},
+			Stamp: func(c AADKeyGeneratorGenerateKeyAADCall, r AADKeyGeneratorGenerateKeyAADReturn) AADKeyGeneratorGenerateKeyAADCall {
+				c.Plaintext = r.Plaintext
+				c.Wrapped = r.Wrapped
+				c.Err = r.Err
+				return c
+			},
+		},
+	)
+	return r.Plaintext, r.Wrapped, r.Err
+}
+
+// invoke returns a call of the function of Func with the arguments, and nil
+// where no function is set.
+func (s *AADKeyGeneratorWrapAADStub) invoke(ctx context.Context, dek, aad []byte) func() AADKeyGeneratorWrapAADReturn {
+	if s.fn == nil {
+		return nil
+	}
+	return func() AADKeyGeneratorWrapAADReturn {
+		r0, r1 := s.fn(ctx, dek, aad)
+		return AADKeyGeneratorWrapAADReturn{Result: r0, Err: r1}
+	}
+}
+
+// WrapAAD records the call. An armed fault comes first, then the function
+// of Func, then the results of Returns, and then the zero values.
+func (s *AADKeyGeneratorStub) WrapAAD(ctx context.Context, dek, aad []byte) ([]byte, error) {
+	call := AADKeyGeneratorWrapAADCall{Ctx: ctx, Dek: dek, Aad: aad}
+	r := stub.Answer(s.OnWrapAAD.MethodStub, call, stub.Arms[AADKeyGeneratorWrapAADCall, AADKeyGeneratorWrapAADReturn]{
+		Invoke:   s.OnWrapAAD.invoke(ctx, dek, aad),
+		Fallback: s.OnWrapAAD.fallback,
+		Fault:    func(err error) AADKeyGeneratorWrapAADReturn { return AADKeyGeneratorWrapAADReturn{Err: err} },
+		Stamp: func(c AADKeyGeneratorWrapAADCall, r AADKeyGeneratorWrapAADReturn) AADKeyGeneratorWrapAADCall {
+			c.Result = r.Result
+			c.Err = r.Err
+			return c
+		},
+	})
+	return r.Result, r.Err
+}
+
+// invoke returns a call of the function of Func with the arguments, and nil
+// where no function is set.
+func (s *AADKeyGeneratorUnwrapAADStub) invoke(
+	ctx context.Context,
+	wrapped, aad []byte,
+) func() AADKeyGeneratorUnwrapAADReturn {
+	if s.fn == nil {
+		return nil
+	}
+	return func() AADKeyGeneratorUnwrapAADReturn {
+		r0, r1 := s.fn(ctx, wrapped, aad)
+		return AADKeyGeneratorUnwrapAADReturn{Result: r0, Err: r1}
+	}
+}
+
+// UnwrapAAD records the call. An armed fault comes first, then the
+// function of Func, then the results of Returns, and then the zero values.
+func (s *AADKeyGeneratorStub) UnwrapAAD(ctx context.Context, wrapped, aad []byte) ([]byte, error) {
+	call := AADKeyGeneratorUnwrapAADCall{Ctx: ctx, Wrapped: wrapped, Aad: aad}
+	r := stub.Answer(
+		s.OnUnwrapAAD.MethodStub,
+		call,
+		stub.Arms[AADKeyGeneratorUnwrapAADCall, AADKeyGeneratorUnwrapAADReturn]{
+			Invoke:   s.OnUnwrapAAD.invoke(ctx, wrapped, aad),
+			Fallback: s.OnUnwrapAAD.fallback,
+			Fault:    func(err error) AADKeyGeneratorUnwrapAADReturn { return AADKeyGeneratorUnwrapAADReturn{Err: err} },
+			Stamp: func(c AADKeyGeneratorUnwrapAADCall, r AADKeyGeneratorUnwrapAADReturn) AADKeyGeneratorUnwrapAADCall {
+				c.Result = r.Result
+				c.Err = r.Err
+				return c
+			},
+		},
+	)
+	return r.Result, r.Err
+}
+
+// invoke returns a call of the function of Func with the arguments, and nil
+// where no function is set.
+func (s *AADKeyGeneratorKeyIDStub) invoke() func() AADKeyGeneratorKeyIDReturn {
+	if s.fn == nil {
+		return nil
+	}
+	return func() AADKeyGeneratorKeyIDReturn {
+		r0 := s.fn()
+		return AADKeyGeneratorKeyIDReturn{Result: r0}
+	}
+}
+
+// KeyID records the call. An armed fault comes first, then the function of
+// Func, then the results of Returns, and then the zero values.
+func (s *AADKeyGeneratorStub) KeyID() string {
+	call := AADKeyGeneratorKeyIDCall{}
+	r := stub.Answer(s.OnKeyID.MethodStub, call, stub.Arms[AADKeyGeneratorKeyIDCall, AADKeyGeneratorKeyIDReturn]{
+		Invoke:   s.OnKeyID.invoke(),
+		Fallback: s.OnKeyID.fallback,
+		Stamp: func(c AADKeyGeneratorKeyIDCall, r AADKeyGeneratorKeyIDReturn) AADKeyGeneratorKeyIDCall {
+			c.Result = r.Result
+			return c
+		},
+	})
+	return r.Result
+}
+
+// invoke returns a call of the function of Func with the arguments, and nil
+// where no function is set.
+func (s *AADKeyGeneratorWrapStub) invoke(ctx context.Context, dek []byte) func() AADKeyGeneratorWrapReturn {
+	if s.fn == nil {
+		return nil
+	}
+	return func() AADKeyGeneratorWrapReturn {
+		r0, r1 := s.fn(ctx, dek)
+		return AADKeyGeneratorWrapReturn{Result: r0, Err: r1}
+	}
+}
+
+// Wrap records the call. An armed fault comes first, then the function of
+// Func, then the results of Returns, and then the zero values.
+func (s *AADKeyGeneratorStub) Wrap(ctx context.Context, dek []byte) ([]byte, error) {
+	call := AADKeyGeneratorWrapCall{Ctx: ctx, Dek: dek}
+	r := stub.Answer(s.OnWrap.MethodStub, call, stub.Arms[AADKeyGeneratorWrapCall, AADKeyGeneratorWrapReturn]{
+		Invoke:   s.OnWrap.invoke(ctx, dek),
+		Fallback: s.OnWrap.fallback,
+		Fault:    func(err error) AADKeyGeneratorWrapReturn { return AADKeyGeneratorWrapReturn{Err: err} },
+		Stamp: func(c AADKeyGeneratorWrapCall, r AADKeyGeneratorWrapReturn) AADKeyGeneratorWrapCall {
+			c.Result = r.Result
+			c.Err = r.Err
+			return c
+		},
+	})
+	return r.Result, r.Err
+}
+
+// invoke returns a call of the function of Func with the arguments, and nil
+// where no function is set.
+func (s *AADKeyGeneratorUnwrapStub) invoke(ctx context.Context, wrapped []byte) func() AADKeyGeneratorUnwrapReturn {
+	if s.fn == nil {
+		return nil
+	}
+	return func() AADKeyGeneratorUnwrapReturn {
+		r0, r1 := s.fn(ctx, wrapped)
+		return AADKeyGeneratorUnwrapReturn{Result: r0, Err: r1}
+	}
+}
+
+// Unwrap records the call. An armed fault comes first, then the function
+// of Func, then the results of Returns, and then the zero values.
+func (s *AADKeyGeneratorStub) Unwrap(ctx context.Context, wrapped []byte) ([]byte, error) {
+	call := AADKeyGeneratorUnwrapCall{Ctx: ctx, Wrapped: wrapped}
+	r := stub.Answer(s.OnUnwrap.MethodStub, call, stub.Arms[AADKeyGeneratorUnwrapCall, AADKeyGeneratorUnwrapReturn]{
+		Invoke:   s.OnUnwrap.invoke(ctx, wrapped),
+		Fallback: s.OnUnwrap.fallback,
+		Fault:    func(err error) AADKeyGeneratorUnwrapReturn { return AADKeyGeneratorUnwrapReturn{Err: err} },
+		Stamp: func(c AADKeyGeneratorUnwrapCall, r AADKeyGeneratorUnwrapReturn) AADKeyGeneratorUnwrapCall {
+			c.Result = r.Result
+			c.Err = r.Err
+			return c
+		},
+	})
+	return r.Result, r.Err
+}
+
+// dokimi:provenance sha256:2dd1c9765ffee56096a60177fabaf8799f6efc2c4dd8cd277aeb6559b9749709

@@ -52,7 +52,9 @@
 //   - A unit of erasure, such as a stream, a subject or a period, has its
 //     own data key from [GenerateKey], stored wrapped as one object.
 //     Deleting that object erases the unit. A copy of the object in a
-//     backup can be read until the backup expires.
+//     backup can be read until the backup expires. [GenerateKeyAAD] binds
+//     associated data, such as the name of the object, to the wrapped
+//     copy, so a copy at the place of another object does not unwrap.
 //   - [Destroyer.Destroy] destroys a wrapping key. That erases every data
 //     key wrapped under it, backups included, once the destruction is
 //     irreversible.
@@ -93,9 +95,10 @@
 //
 // A decorator that wraps a [Keeper], for example to add tracing,
 // implements UnwrapKeeper() Keeper and returns the Keeper it wraps.
-// [AsDestroyer], [AsKeyGenerator], [AsAADKeeper] and [AsKeyCreator] follow
-// UnwrapKeeper to find a capability behind any number of decorators, and
-// [GenerateKey] uses AsKeyGenerator. The method is not named Unwrap,
+// [AsDestroyer], [AsKeyGenerator], [AsAADKeeper], [AsAADKeyGenerator] and
+// [AsKeyCreator] follow UnwrapKeeper to find a capability behind any number
+// of decorators. [GenerateKey] uses AsKeyGenerator, and GenerateKeyAAD uses
+// AsAADKeyGenerator and AsAADKeeper. The method is not named Unwrap,
 // because [Keeper.Unwrap] unwraps a data key.
 //
 // # Allocation contract

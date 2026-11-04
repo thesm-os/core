@@ -139,6 +139,9 @@ type KeyGenerator interface {
 // encryption context. A caller that relies on the binding finds the
 // capability with [AsAADKeeper] when it is wired, and fails at once when
 // the Keeper has none.
+//
+//dokimi:stub
+//dokimi:out path=../coretest/cryptotest/
 type AADKeeper interface {
 	Keeper
 
@@ -152,6 +155,30 @@ type AADKeeper interface {
 	// corrupted in any position returns an error and never a wrong key.
 	// Unwrap on the same value behaves as UnwrapAAD with empty aad.
 	UnwrapAAD(ctx context.Context, wrapped, aad []byte) ([]byte, error)
+}
+
+// AADKeyGenerator is the optional capability of a custodian that generates
+// a data key internally and binds associated data to its wrapped copy, as
+// AWS KMS binds an encryption context in GenerateDataKey. The data key
+// comes from the entropy source of the custodian, as for [KeyGenerator].
+//
+// A custodian that binds associated data on a wrap and does not generate
+// keys with it, such as the Transit engine of HashiCorp Vault, implements
+// [AADKeeper] alone. [GenerateKeyAAD] then reads the data key from the
+// random source of the caller.
+//
+//dokimi:stub
+//dokimi:out path=../coretest/cryptotest/
+type AADKeyGenerator interface {
+	AADKeeper
+
+	// GenerateKeyAAD returns a fresh data key of size bytes, both in the
+	// clear and wrapped under the key of this Keeper with aad bound to the
+	// wrapped copy. UnwrapAAD with the same aad unwraps it. Callers that
+	// only encrypt should zero plaintext as soon as the payload is sealed.
+	//
+	// A non-positive size is an error.
+	GenerateKeyAAD(ctx context.Context, size int, aad []byte) (plaintext, wrapped []byte, err error)
 }
 
 // KeyCreator is the optional capability of a custodian that creates
@@ -234,6 +261,17 @@ func AsAADKeeper(k Keeper) (AADKeeper, bool) {
 	return find[AADKeeper](k)
 }
 
+// AsAADKeyGenerator returns the first [AADKeyGenerator] in the chain that
+// starts at k and follows each decorator's UnwrapKeeper() Keeper, and
+// reports whether it found one. It follows the rules of [AsDestroyer].
+//
+// # Allocation contract
+//
+// Zero alloc.
+func AsAADKeyGenerator(k Keeper) (AADKeyGenerator, bool) {
+	return find[AADKeyGenerator](k)
+}
+
 // AsKeyCreator returns the first [KeyCreator] in the chain that starts at
 // k and follows each decorator's UnwrapKeeper() Keeper, and reports
 // whether it found one. It follows the rules of [AsDestroyer].
@@ -304,6 +342,61 @@ func GenerateKey(ctx context.Context, k Keeper, r rand.Rand, size int) (plaintex
 	}
 
 	wrapped, err = k.Wrap(ctx, plaintext)
+	if err != nil {
+		clear(plaintext)
+
+		return nil, nil, err
+	}
+
+	return plaintext, wrapped, nil
+}
+
+// GenerateKeyAAD returns a fresh data key of size bytes, in the clear and
+// wrapped under k with aad bound to the wrapped copy. UnwrapAAD of the
+// [AADKeeper] of k with the same aad unwraps the copy.
+//
+// When [AsAADKeyGenerator] finds an [AADKeyGenerator] in k, the custodian
+// generates the key and r is not read. Otherwise GenerateKeyAAD reads size
+// bytes from r and wraps them with [AADKeeper.WrapAAD] of the AADKeeper that
+// [AsAADKeeper] finds in k. A caller gets the stronger path whenever the
+// custodian offers it, as with [GenerateKey]. Callers that only encrypt
+// should zero plaintext as soon as the payload is sealed.
+//
+// Returns [ErrAADUnsupported] for a k without an AADKeeper, also with empty
+// aad, because the wrapped copy unwraps through UnwrapAAD. Returns
+// [ErrKeySize] for a non-positive size on the r path, and the custodian's
+// own error on the AADKeyGenerator path. An error from r or from WrapAAD is
+// returned as it is. No key material accompanies an error, because
+// GenerateKeyAAD zeroes the bytes it read before it returns.
+//
+// # Allocation contract
+//
+// On the r path, one allocation for plaintext plus whatever WrapAAD
+// allocates. On the AADKeyGenerator path, whatever the custodian allocates.
+func GenerateKeyAAD(ctx context.Context, k Keeper, r rand.Rand, size int, aad []byte) (
+	plaintext, wrapped []byte, err error,
+) {
+	if g, ok := AsAADKeyGenerator(k); ok {
+		return g.GenerateKeyAAD(ctx, size, aad)
+	}
+
+	a, ok := AsAADKeeper(k)
+	if !ok {
+		return nil, nil, ErrAADUnsupported
+	}
+
+	if size <= 0 {
+		return nil, nil, ErrKeySize
+	}
+
+	plaintext = make([]byte, size)
+	if _, err = r.Read(plaintext); err != nil {
+		clear(plaintext)
+
+		return nil, nil, err
+	}
+
+	wrapped, err = a.WrapAAD(ctx, plaintext, aad)
 	if err != nil {
 		clear(plaintext)
 

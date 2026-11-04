@@ -32,6 +32,7 @@ func TestErrDigestSize(t *testing.T) {
 		{"ErrAlgorithmSize", crypto.ErrAlgorithmSize},
 		{"ErrKeyID", crypto.ErrKeyID},
 		{"ErrKeyDestroyed", crypto.ErrKeyDestroyed},
+		{"ErrAADUnsupported", crypto.ErrAADUnsupported},
 		{"ErrXOFSqueezing", crypto.ErrXOFSqueezing},
 		{"ErrChunkSize", crypto.ErrChunkSize},
 		{"ErrChunkHeader", crypto.ErrChunkHeader},
@@ -108,6 +109,7 @@ func TestErrDigestZero(t *testing.T) {
 		{"ErrAlgorithmSize", crypto.ErrAlgorithmSize},
 		{"ErrKeyID", crypto.ErrKeyID},
 		{"ErrKeyDestroyed", crypto.ErrKeyDestroyed},
+		{"ErrAADUnsupported", crypto.ErrAADUnsupported},
 		{"ErrXOFSqueezing", crypto.ErrXOFSqueezing},
 		{"ErrChunkSize", crypto.ErrChunkSize},
 		{"ErrChunkHeader", crypto.ErrChunkHeader},
@@ -184,6 +186,7 @@ func TestErrDigestText(t *testing.T) {
 		{"ErrAlgorithmSize", crypto.ErrAlgorithmSize},
 		{"ErrKeyID", crypto.ErrKeyID},
 		{"ErrKeyDestroyed", crypto.ErrKeyDestroyed},
+		{"ErrAADUnsupported", crypto.ErrAADUnsupported},
 		{"ErrXOFSqueezing", crypto.ErrXOFSqueezing},
 		{"ErrChunkSize", crypto.ErrChunkSize},
 		{"ErrChunkHeader", crypto.ErrChunkHeader},
@@ -260,6 +263,7 @@ func TestErrKeySize(t *testing.T) {
 		{"ErrAlgorithmSize", crypto.ErrAlgorithmSize},
 		{"ErrKeyID", crypto.ErrKeyID},
 		{"ErrKeyDestroyed", crypto.ErrKeyDestroyed},
+		{"ErrAADUnsupported", crypto.ErrAADUnsupported},
 		{"ErrXOFSqueezing", crypto.ErrXOFSqueezing},
 		{"ErrChunkSize", crypto.ErrChunkSize},
 		{"ErrChunkHeader", crypto.ErrChunkHeader},
@@ -336,6 +340,7 @@ func TestErrCiphertextShort(t *testing.T) {
 		{"ErrAlgorithmSize", crypto.ErrAlgorithmSize},
 		{"ErrKeyID", crypto.ErrKeyID},
 		{"ErrKeyDestroyed", crypto.ErrKeyDestroyed},
+		{"ErrAADUnsupported", crypto.ErrAADUnsupported},
 		{"ErrXOFSqueezing", crypto.ErrXOFSqueezing},
 		{"ErrChunkSize", crypto.ErrChunkSize},
 		{"ErrChunkHeader", crypto.ErrChunkHeader},
@@ -417,6 +422,7 @@ func TestErrEnvelopeVersion(t *testing.T) {
 		{"ErrAlgorithmSize", crypto.ErrAlgorithmSize},
 		{"ErrKeyID", crypto.ErrKeyID},
 		{"ErrKeyDestroyed", crypto.ErrKeyDestroyed},
+		{"ErrAADUnsupported", crypto.ErrAADUnsupported},
 		{"ErrXOFSqueezing", crypto.ErrXOFSqueezing},
 		{"ErrChunkSize", crypto.ErrChunkSize},
 		{"ErrChunkHeader", crypto.ErrChunkHeader},
@@ -498,6 +504,7 @@ func TestErrAlgorithmMismatch(t *testing.T) {
 		{"ErrAlgorithmSize", crypto.ErrAlgorithmSize},
 		{"ErrKeyID", crypto.ErrKeyID},
 		{"ErrKeyDestroyed", crypto.ErrKeyDestroyed},
+		{"ErrAADUnsupported", crypto.ErrAADUnsupported},
 		{"ErrXOFSqueezing", crypto.ErrXOFSqueezing},
 		{"ErrChunkSize", crypto.ErrChunkSize},
 		{"ErrChunkHeader", crypto.ErrChunkHeader},
@@ -579,6 +586,7 @@ func TestErrAlgorithmSize(t *testing.T) {
 		{"ErrAlgorithmMismatch", crypto.ErrAlgorithmMismatch},
 		{"ErrKeyID", crypto.ErrKeyID},
 		{"ErrKeyDestroyed", crypto.ErrKeyDestroyed},
+		{"ErrAADUnsupported", crypto.ErrAADUnsupported},
 		{"ErrXOFSqueezing", crypto.ErrXOFSqueezing},
 		{"ErrChunkSize", crypto.ErrChunkSize},
 		{"ErrChunkHeader", crypto.ErrChunkHeader},
@@ -655,6 +663,7 @@ func TestErrKeyID(t *testing.T) {
 		{"ErrAlgorithmMismatch", crypto.ErrAlgorithmMismatch},
 		{"ErrAlgorithmSize", crypto.ErrAlgorithmSize},
 		{"ErrKeyDestroyed", crypto.ErrKeyDestroyed},
+		{"ErrAADUnsupported", crypto.ErrAADUnsupported},
 		{"ErrXOFSqueezing", crypto.ErrXOFSqueezing},
 		{"ErrChunkSize", crypto.ErrChunkSize},
 		{"ErrChunkHeader", crypto.ErrChunkHeader},
@@ -731,6 +740,7 @@ func TestErrKeyDestroyed(t *testing.T) {
 		{"ErrAlgorithmMismatch", crypto.ErrAlgorithmMismatch},
 		{"ErrAlgorithmSize", crypto.ErrAlgorithmSize},
 		{"ErrKeyID", crypto.ErrKeyID},
+		{"ErrAADUnsupported", crypto.ErrAADUnsupported},
 		{"ErrXOFSqueezing", crypto.ErrXOFSqueezing},
 		{"ErrChunkSize", crypto.ErrChunkSize},
 		{"ErrChunkHeader", crypto.ErrChunkHeader},
@@ -788,6 +798,88 @@ func TestErrKeyDestroyed(t *testing.T) {
 	})
 }
 
+// TestErrAADUnsupported checks the sentinel error ErrAADUnsupported. A
+// caller matches it with errors.Is and reads its message, so it has a
+// message and an identity of its own.
+func TestErrAADUnsupported(t *testing.T) {
+	t.Parallel()
+
+	others := []struct {
+		name string
+		err  error
+	}{
+		{"ErrDigestSize", crypto.ErrDigestSize},
+		{"ErrDigestZero", crypto.ErrDigestZero},
+		{"ErrDigestText", crypto.ErrDigestText},
+		{"ErrKeySize", crypto.ErrKeySize},
+		{"ErrCiphertextShort", crypto.ErrCiphertextShort},
+		{"ErrEnvelopeVersion", crypto.ErrEnvelopeVersion},
+		{"ErrAlgorithmMismatch", crypto.ErrAlgorithmMismatch},
+		{"ErrAlgorithmSize", crypto.ErrAlgorithmSize},
+		{"ErrKeyID", crypto.ErrKeyID},
+		{"ErrKeyDestroyed", crypto.ErrKeyDestroyed},
+		{"ErrXOFSqueezing", crypto.ErrXOFSqueezing},
+		{"ErrChunkSize", crypto.ErrChunkSize},
+		{"ErrChunkHeader", crypto.ErrChunkHeader},
+	}
+
+	t.Run("Error", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns a message", func(t *testing.T) {
+			t.Parallel()
+			assert.NotNil(t, crypto.ErrAADUnsupported, "ErrAADUnsupported is assigned")
+			assert.NotEqual(t, crypto.ErrAADUnsupported.Error(), "", "ErrAADUnsupported has a message")
+		})
+
+		t.Run("opens the message with the package prefix", func(t *testing.T) {
+			t.Parallel()
+			assert.HasPrefix(
+				t,
+				crypto.ErrAADUnsupported.Error(),
+				"crypto: ",
+				"the message of ErrAADUnsupported opens with the package prefix",
+			)
+		})
+
+		t.Run("returns a message of its own", func(t *testing.T) {
+			t.Parallel()
+			for _, other := range others {
+				expect.NotEqual(
+					t,
+					crypto.ErrAADUnsupported.Error(),
+					other.err.Error(),
+					"ErrAADUnsupported has the message of "+other.name,
+				)
+			}
+		})
+
+		t.Run("opens with the message of no other sentinel", func(t *testing.T) {
+			t.Parallel()
+			for _, other := range others {
+				expect.False(t, strings.HasPrefix(crypto.ErrAADUnsupported.Error(), other.err.Error()),
+					"the message of ErrAADUnsupported opens with the message of "+other.name)
+			}
+		})
+	})
+
+	t.Run("errors.Is", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("matches no other sentinel of the package", func(t *testing.T) {
+			t.Parallel()
+			for _, other := range others {
+				expect.ErrorIsNot(
+					t,
+					crypto.ErrAADUnsupported,
+					other.err,
+					"ErrAADUnsupported does not match "+other.name,
+				)
+			}
+		})
+	})
+}
+
 // TestErrXOFSqueezing checks the sentinel error ErrXOFSqueezing. A caller
 // matches it with errors.Is and reads its message, so it has a message and
 // an identity of its own.
@@ -808,6 +900,7 @@ func TestErrXOFSqueezing(t *testing.T) {
 		{"ErrAlgorithmSize", crypto.ErrAlgorithmSize},
 		{"ErrKeyID", crypto.ErrKeyID},
 		{"ErrKeyDestroyed", crypto.ErrKeyDestroyed},
+		{"ErrAADUnsupported", crypto.ErrAADUnsupported},
 		{"ErrChunkSize", crypto.ErrChunkSize},
 		{"ErrChunkHeader", crypto.ErrChunkHeader},
 	}
@@ -884,6 +977,7 @@ func TestErrChunkSize(t *testing.T) {
 		{"ErrAlgorithmSize", crypto.ErrAlgorithmSize},
 		{"ErrKeyID", crypto.ErrKeyID},
 		{"ErrKeyDestroyed", crypto.ErrKeyDestroyed},
+		{"ErrAADUnsupported", crypto.ErrAADUnsupported},
 		{"ErrXOFSqueezing", crypto.ErrXOFSqueezing},
 		{"ErrChunkHeader", crypto.ErrChunkHeader},
 	}
@@ -960,6 +1054,7 @@ func TestErrChunkHeader(t *testing.T) {
 		{"ErrAlgorithmSize", crypto.ErrAlgorithmSize},
 		{"ErrKeyID", crypto.ErrKeyID},
 		{"ErrKeyDestroyed", crypto.ErrKeyDestroyed},
+		{"ErrAADUnsupported", crypto.ErrAADUnsupported},
 		{"ErrXOFSqueezing", crypto.ErrXOFSqueezing},
 		{"ErrChunkSize", crypto.ErrChunkSize},
 	}
@@ -1016,4 +1111,4 @@ func TestErrChunkHeader(t *testing.T) {
 	})
 }
 
-// dokimi:provenance sha256:d8aafb1536bbffaf360f1125e13070a1091fbf080715a73941445111206ea985
+// dokimi:provenance sha256:84f7e68db323c3295e9ed668fb8cab20232296dad938afa9d8fb9e7f034ad009

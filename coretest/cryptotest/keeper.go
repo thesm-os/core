@@ -215,6 +215,39 @@ func AssertAADKeeperContract(tb assert.TB, k crypto.AADKeeper) {
 		"UnwrapAAD with empty aad returns the data key that Wrap wrapped")
 }
 
+// AssertAADKeyGeneratorContract asserts the [crypto.AADKeyGenerator]
+// capability:
+//
+//   - Two calls of GenerateKeyAAD with one aad return different data keys.
+//   - GenerateKeyAAD returns a data key of the requested size.
+//   - UnwrapAAD with the same aad returns the data key of the wrapped copy.
+//   - The wrapped copy fails to unwrap through UnwrapAAD with other aad or
+//     empty aad, and through Unwrap.
+//
+// The calls take the context of tb.
+func AssertAADKeyGeneratorContract(tb assert.TB, g crypto.AADKeyGenerator) {
+	tb.Helper()
+
+	ctx := assert.Context(tb)
+	plaintext, wrapped, err := g.GenerateKeyAAD(ctx, 32, aadBound)
+	assert.NoError(tb, err, "GenerateKeyAAD generates a data key")
+	other, _, err := g.GenerateKeyAAD(ctx, 32, aadBound)
+	assert.NoError(tb, err, "GenerateKeyAAD generates a second data key")
+	assert.NotEqual(tb, other, plaintext, "two calls of GenerateKeyAAD return different data keys")
+	assert.Length(tb, plaintext, 32, "GenerateKeyAAD returns a data key of the requested size")
+
+	got, err := g.UnwrapAAD(ctx, wrapped, aadBound)
+	assert.NoError(tb, err, "the wrapped copy unwraps with the same aad")
+	assert.Equal(tb, got, plaintext, "the wrapped copy unwraps to the plaintext of GenerateKeyAAD")
+
+	_, err = g.UnwrapAAD(ctx, wrapped, aadOther)
+	assert.HasError(tb, err, "the wrapped copy does not unwrap with other aad")
+	_, err = g.UnwrapAAD(ctx, wrapped, nil)
+	assert.HasError(tb, err, "the wrapped copy does not unwrap with empty aad")
+	_, err = g.Unwrap(ctx, wrapped)
+	assert.HasError(tb, err, "the wrapped copy does not unwrap through Unwrap")
+}
+
 // AssertKeyCreatorContract asserts the [crypto.KeyCreator] contract:
 //
 //   - A created Keeper passes every check of the suite of Keeper. A Keeper
@@ -310,6 +343,11 @@ func assertCapabilitiesOf(t *testing.T, c crypto.KeyCreator, k crypto.Keeper) {
 	if _, ok := crypto.AsAADKeeper(c); ok {
 		_, has := crypto.AsAADKeeper(k)
 		assert.True(t, has, "a Keeper of the KeyCreator of an AADKeeper is an AADKeeper")
+	}
+
+	if _, ok := crypto.AsAADKeyGenerator(c); ok {
+		_, has := crypto.AsAADKeyGenerator(k)
+		assert.True(t, has, "a Keeper of the KeyCreator of an AADKeyGenerator is an AADKeyGenerator")
 	}
 
 	_, has := crypto.AsKeyCreator(k)
@@ -438,10 +476,10 @@ func keeperRestoresTheLastByte(h *KeeperHandle) crypto.Keeper {
 
 // keeperUnwrapsNoMaterial returns the planted defect of
 // KeeperRefusesTruncatedMaterial: a Keeper whose Unwrap of no bytes returns an
-// empty data key.
+// empty data key under a context that has not ended.
 func keeperUnwrapsNoMaterial(h *KeeperHandle) crypto.Keeper {
 	return keeperUnwrapDefect(h, func(ctx context.Context, sound stdlibKeeper, wrapped []byte) ([]byte, error) {
-		if len(wrapped) == 0 {
+		if len(wrapped) == 0 && ctx.Err() == nil {
 			return []byte{}, nil
 		}
 

@@ -56,7 +56,7 @@ const keySeparator = "/"
 
 // Keeper is an in-process [crypto.Keeper] over one root key of a shared
 // key table. It also implements [crypto.Destroyer], [crypto.KeyGenerator],
-// [crypto.AADKeeper] and [crypto.KeyCreator].
+// [crypto.AADKeeper], [crypto.AADKeyGenerator] and [crypto.KeyCreator].
 //
 // # Concurrency
 //
@@ -76,11 +76,12 @@ type Keeper struct {
 // capabilities. A caller type-asserts for these at wiring time, so a
 // method dropped by a refactor fails the build and not the assertion.
 var (
-	_ crypto.Keeper       = (*Keeper)(nil)
-	_ crypto.Destroyer    = (*Keeper)(nil)
-	_ crypto.KeyGenerator = (*Keeper)(nil)
-	_ crypto.AADKeeper    = (*Keeper)(nil)
-	_ crypto.KeyCreator   = (*Keeper)(nil)
+	_ crypto.Keeper          = (*Keeper)(nil)
+	_ crypto.Destroyer       = (*Keeper)(nil)
+	_ crypto.KeyGenerator    = (*Keeper)(nil)
+	_ crypto.AADKeeper       = (*Keeper)(nil)
+	_ crypto.AADKeyGenerator = (*Keeper)(nil)
+	_ crypto.KeyCreator      = (*Keeper)(nil)
 )
 
 // New returns a Keeper wrapping data keys under rootKey, identified by
@@ -95,9 +96,10 @@ var (
 // zero its own copy immediately afterwards. The cipher is AES-256-GCM
 // from [aesgcm.NewRandomNonce], which generates every nonce inside the
 // standard library's FIPS 140-3 module, so New also succeeds in FIPS
-// 140-only mode. r supplies the data keys of [Keeper.GenerateKey] and the
-// root keys of [Keeper.CreateKey], and must be a cryptographically secure
-// source. c supplies the time that [Keeper.Destroy] returns.
+// 140-only mode. r supplies the data keys of [Keeper.GenerateKey] and
+// [Keeper.GenerateKeyAAD]. It also supplies the root keys of
+// [Keeper.CreateKey], and it must be a cryptographically secure source. c
+// supplies the time that [Keeper.Destroy] returns.
 func New(keyID string, rootKey []byte, r rand.Rand, c clock.Clock) (*Keeper, error) {
 	if keyID == "" {
 		return nil, crypto.ErrKeyID
@@ -176,25 +178,44 @@ func (k *Keeper) UnwrapAAD(ctx context.Context, wrapped, aad []byte) ([]byte, er
 }
 
 // GenerateKey generates a fresh data key of size bytes and returns it
-// both in the clear and wrapped. The data key is read from the source
-// given to [New].
+// both in the clear and wrapped. It is [Keeper.GenerateKeyAAD] with empty
+// aad, so [Keeper.Unwrap] unwraps the wrapped copy.
 //
 // A non-positive size returns [crypto.ErrKeySize]. Callers that only
 // encrypt should zero plaintext once the payload is sealed.
 func (k *Keeper) GenerateKey(ctx context.Context, size int) (plaintext, wrapped []byte, err error) {
+	return k.GenerateKeyAAD(ctx, size, nil)
+}
+
+// GenerateKeyAAD generates a fresh data key of size bytes and returns it
+// both in the clear and wrapped. It reads the data key from the source
+// given to [New] and wraps it with [Keeper.WrapAAD], which binds aad to the
+// wrapped copy. [Keeper.UnwrapAAD] with the same aad unwraps the copy.
+//
+// A non-positive size returns [crypto.ErrKeySize]. GenerateKeyAAD also
+// returns the error of the source, the error of ctx when ctx has ended
+// before the wrap, and [crypto.ErrKeyDestroyed] after the key is destroyed.
+// It zeroes the data key before it returns an error, so no key material
+// accompanies an error. Callers that only encrypt should zero plaintext once
+// the payload is sealed.
+func (k *Keeper) GenerateKeyAAD(ctx context.Context, size int, aad []byte) (plaintext, wrapped []byte, err error) {
 	if size <= 0 {
 		return nil, nil, crypto.ErrKeySize
 	}
 
-	// Reading before the destroyed check is harmless: the key material
-	// is discarded if Wrap then fails.
+	// A read before the check of a destroyed key is harmless, because a
+	// failed wrap zeroes the data key.
 	dek := make([]byte, size)
 	if _, err = k.ring.rand.Read(dek); err != nil {
+		clear(dek)
+
 		return nil, nil, err
 	}
 
-	wrapped, err = k.Wrap(ctx, dek)
+	wrapped, err = k.WrapAAD(ctx, dek, aad)
 	if err != nil {
+		clear(dek)
+
 		return nil, nil, err
 	}
 

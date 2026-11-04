@@ -108,6 +108,16 @@ var (
 	// irreversible, an administrator of the custodian can cancel it.
 	ErrKeyDestroyed = errs.WithClass(errors.New("crypto: wrapping key destroyed"), errs.Denied)
 
+	// ErrAADUnsupported is returned by [GenerateKeyAAD] for a [Keeper]
+	// without an [AADKeeper]. The wrapped copy of GenerateKeyAAD unwraps only
+	// through UnwrapAAD, so a Keeper that does not bind associated data
+	// cannot return one.
+	//
+	// Classifies as Unsupported: the Keeper is narrower than the call, and a
+	// retry fails in the same way.
+	ErrAADUnsupported = errs.WithClass(errors.New("crypto: the keeper does not bind associated data"),
+		errs.Unsupported)
+
 	// ErrXOFSqueezing is returned by [XOFStream.Write] once Read has
 	// been called. The sponge absorbs and then squeezes, and the phases
 	// do not interleave. Resuming absorption would produce output

@@ -146,6 +146,32 @@ func TestKeeper(t *testing.T) {
 		})
 	})
 
+	t.Run("AssertAADKeyGeneratorContract", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("passes for a local keeper", func(t *testing.T) {
+			t.Parallel()
+			cryptotest.AssertAADKeyGeneratorContract(t, newLocal(t))
+		})
+
+		t.Run("fails for a custodian that binds no aad to a generated key", func(t *testing.T) {
+			t.Parallel()
+			local := newLocal(t)
+			unbound := func(ctx context.Context, size int, _ []byte) ([]byte, []byte, error) {
+				return local.GenerateKeyAAD(ctx, size, nil)
+			}
+			g := cryptotest.NewAADKeyGeneratorStub(t, cryptotest.AADKeyGeneratorStubDelegateTo(local),
+				cryptotest.WithAADKeyGeneratorGenerateKeyAAD(unbound))
+			got := assert.Rejects(t, "a custodian that binds no aad to a generated key fails the contract",
+				func(tb assert.TB) {
+					cryptotest.AssertAADKeyGeneratorContract(tb, g)
+				})
+			assert.Length(t, got, 1, "the contract fails once")
+			assert.Equal(t, got[0].Contract, "the wrapped copy unwraps with the same aad",
+				"the contract fails at the UnwrapAAD with the same aad")
+		})
+	})
+
 	t.Run("AssertKeyCreatorContract", func(t *testing.T) {
 		t.Parallel()
 

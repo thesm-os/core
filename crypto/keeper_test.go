@@ -22,6 +22,7 @@ import (
 	"go.thesmos.sh/core/coretest/cryptotest"
 	"go.thesmos.sh/core/crypto"
 	"go.thesmos.sh/core/crypto/localkey"
+	"go.thesmos.sh/core/errs"
 	"go.thesmos.sh/core/rand"
 	"go.thesmos.sh/core/rand/constant"
 	randcrypto "go.thesmos.sh/core/rand/crypto"
@@ -29,6 +30,9 @@ import (
 
 // wrappedKey is the wrapped key that the Keepers of the tests return.
 var wrappedKey = []byte("wrapped")
+
+// tenantAAD is the associated data that the cases of GenerateKeyAAD bind.
+var tenantAAD = []byte("tenant-a")
 
 // decorated wraps a Keeper and returns it from UnwrapKeeper, as a
 // tracing decorator does.
@@ -61,6 +65,21 @@ func (staticKeeper) Wrap(context.Context, []byte) ([]byte, error) { return wrapp
 
 // Unwrap returns wrapped unchanged.
 func (staticKeeper) Unwrap(_ context.Context, wrapped []byte) ([]byte, error) { return wrapped, nil }
+
+// staticAADKeeper wraps every data key into wrappedKey with any associated
+// data and allocates nothing, so a measurement of GenerateKeyAAD counts
+// GenerateKeyAAD alone.
+type staticAADKeeper struct{ staticKeeper }
+
+// WrapAAD returns wrappedKey.
+func (staticAADKeeper) WrapAAD(context.Context, []byte, []byte) ([]byte, error) {
+	return wrappedKey, nil
+}
+
+// UnwrapAAD returns wrapped unchanged.
+func (staticAADKeeper) UnwrapAAD(_ context.Context, wrapped, _ []byte) ([]byte, error) {
+	return wrapped, nil
+}
 
 // leakySource writes 0x01 into every byte of p, keeps p, and returns one
 // byte less than len(p) with an error, as a source that fails in the
@@ -160,6 +179,31 @@ func TestKeeper(t *testing.T) {
 		t.Run("reports false for a decorator without UnwrapKeeper", func(t *testing.T) {
 			t.Parallel()
 			_, ok := crypto.AsAADKeeper(opaque{newLocalKeeper(t)})
+			assert.False(t, ok, "a decorator without UnwrapKeeper must end the chain")
+		})
+	})
+
+	t.Run("AsAADKeyGenerator", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns the AADKeyGenerator behind two decorators", func(t *testing.T) {
+			t.Parallel()
+			g := cryptotest.NewAADKeyGeneratorStub(t)
+			got, ok := crypto.AsAADKeyGenerator(decorated{decorated{g}})
+			assert.True(t, ok, "an AADKeyGenerator behind decorators must be found")
+			assert.Equal(t, got, crypto.AADKeyGenerator(g), "the wrapped AADKeyGenerator must be returned",
+				assert.ByIdentity())
+		})
+
+		t.Run("reports false for an AADKeeper that cannot generate", func(t *testing.T) {
+			t.Parallel()
+			_, ok := crypto.AsAADKeyGenerator(decorated{cryptotest.NewAADKeeperStub(t)})
+			assert.False(t, ok, "an AADKeeper without the capability must not report it")
+		})
+
+		t.Run("reports false for a decorator without UnwrapKeeper", func(t *testing.T) {
+			t.Parallel()
+			_, ok := crypto.AsAADKeyGenerator(opaque{cryptotest.NewAADKeyGeneratorStub(t)})
 			assert.False(t, ok, "a decorator without UnwrapKeeper must end the chain")
 		})
 	})
@@ -313,6 +357,164 @@ func TestKeeper(t *testing.T) {
 			assert.Equal(t, seen, make([]byte, 8), "the drawn key must be zeroed before GenerateKey returns")
 		})
 	})
+
+	t.Run("GenerateKeyAAD", func(t *testing.T) {
+		t.Parallel()
+
+		// The cases of the generator path pass a nil source, which panics
+		// on the first read, so a call that returns proves that the path
+		// reads no source.
+		t.Run("returns the key of the generator of the custodian", func(t *testing.T) {
+			t.Parallel()
+			g := cryptotest.NewAADKeyGeneratorStub(t)
+			g.OnGenerateKeyAAD.Returns([]byte("plain"), wrappedKey, nil)
+
+			plain, wrapped, err := crypto.GenerateKeyAAD(t.Context(), g, nil, 5, tenantAAD)
+			assert.NoError(t, err, "GenerateKeyAAD must succeed")
+			expect.Equal(t, plain, []byte("plain"), "the plaintext of the custodian must be returned")
+			expect.Equal(t, wrapped, wrappedKey, "the wrapped key of the custodian must be returned")
+		})
+
+		t.Run("passes the associated data to the generator of the custodian", func(t *testing.T) {
+			t.Parallel()
+			g := cryptotest.NewAADKeyGeneratorStub(t)
+			var seen []byte
+			g.OnGenerateKeyAAD.Func(func(_ context.Context, _ int, aad []byte) ([]byte, []byte, error) {
+				seen = bytes.Clone(aad)
+
+				return []byte("plain"), wrappedKey, nil
+			})
+
+			_, _, err := crypto.GenerateKeyAAD(t.Context(), g, nil, 5, tenantAAD)
+			assert.NoError(t, err, "GenerateKeyAAD must succeed")
+			assert.Equal(t, seen, tenantAAD, "the custodian must receive the associated data")
+		})
+
+		t.Run("returns the key of a generator behind a decorator", func(t *testing.T) {
+			t.Parallel()
+			g := cryptotest.NewAADKeyGeneratorStub(t)
+			g.OnGenerateKeyAAD.Returns([]byte("plain"), wrappedKey, nil)
+
+			plain, _, err := crypto.GenerateKeyAAD(t.Context(), decorated{g}, nil, 5, tenantAAD)
+			assert.NoError(t, err, "GenerateKeyAAD must succeed")
+			assert.Equal(t, plain, []byte("plain"), "the plaintext of the decorated custodian must be returned")
+		})
+
+		t.Run("wraps a key read from the source with WrapAAD for a custodian that cannot generate", func(t *testing.T) {
+			t.Parallel()
+			k := cryptotest.NewAADKeeperStub(t)
+			var seen, seenAAD []byte
+			k.OnWrapAAD.Func(func(_ context.Context, dek, aad []byte) ([]byte, error) {
+				seen, seenAAD = bytes.Clone(dek), bytes.Clone(aad)
+
+				return wrappedKey, nil
+			})
+
+			plain, wrapped, err := crypto.GenerateKeyAAD(t.Context(), decorated{k}, constant.New(0x0101010101010101), 8,
+				tenantAAD)
+			assert.NoError(t, err, "GenerateKeyAAD must succeed")
+			expect.Equal(t, plain, bytes.Repeat([]byte{0x01}, 8), "the plaintext must be the bytes of the source")
+			expect.Equal(t, seen, plain, "WrapAAD must receive the plaintext")
+			expect.Equal(t, seenAAD, tenantAAD, "WrapAAD must receive the associated data")
+			expect.Equal(t, wrapped, wrappedKey, "the output of WrapAAD must be returned")
+		})
+
+		tests := []struct {
+			name    string
+			giveAAD []byte
+		}{
+			{name: "returns ErrAADUnsupported for a Keeper without an AADKeeper", giveAAD: tenantAAD},
+			{name: "returns ErrAADUnsupported with empty aad for a Keeper without an AADKeeper", giveAAD: nil},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				_, _, err := crypto.GenerateKeyAAD(t.Context(), decorated{cryptotest.NewKeeperStub(t)}, nil, 8,
+					tt.giveAAD)
+				assert.ErrorIs(t, err, crypto.ErrAADUnsupported, "a Keeper without an AADKeeper must be refused")
+			})
+		}
+
+		t.Run("returns an error of class Unsupported for a Keeper without an AADKeeper", func(t *testing.T) {
+			t.Parallel()
+			_, _, err := crypto.GenerateKeyAAD(t.Context(), cryptotest.NewKeeperStub(t), nil, 8, tenantAAD)
+			assert.Equal(t, errs.Classify(err), errs.Unsupported, "ErrAADUnsupported must classify as Unsupported")
+		})
+
+		t.Run("returns ErrKeySize for a size that is not positive", func(t *testing.T) {
+			t.Parallel()
+			k := cryptotest.NewAADKeeperStub(t)
+			prop.ErrorIs(t, func(size int) error {
+				_, _, err := crypto.GenerateKeyAAD(t.Context(), k, randcrypto.New(), size, tenantAAD)
+
+				return err
+			}, crypto.ErrKeySize, "GenerateKeyAAD must refuse a size that is not positive",
+				prop.Using(prop.Integer(math.MinInt, 0)), prop.Example(0), prop.Example(-1))
+		})
+
+		t.Run("returns the error of the source", func(t *testing.T) {
+			t.Parallel()
+			failing := randcrypto.NewWithReader(iotest.ErrReader(io.ErrUnexpectedEOF))
+			_, _, err := crypto.GenerateKeyAAD(t.Context(), cryptotest.NewAADKeeperStub(t), failing, 8, tenantAAD)
+			assert.ErrorIs(t, err, io.ErrUnexpectedEOF, "the failure of the source must be returned")
+		})
+
+		t.Run("returns no key with the error of the source", func(t *testing.T) {
+			t.Parallel()
+			failing := randcrypto.NewWithReader(iotest.ErrReader(io.ErrUnexpectedEOF))
+			plain, wrapped, err := crypto.GenerateKeyAAD(t.Context(), cryptotest.NewAADKeeperStub(t), failing, 8,
+				tenantAAD)
+			assert.HasError(t, err, "the test must read from a source that fails")
+			expect.Nil(t, plain, "no plaintext may accompany an error")
+			expect.Nil(t, wrapped, "no wrapped key may accompany an error")
+		})
+
+		t.Run("zeroes the bytes that the source wrote when the source fails", func(t *testing.T) {
+			t.Parallel()
+			source := &leakySource{}
+			r := randcrypto.NewWithReader(source)
+			_, _, err := crypto.GenerateKeyAAD(t.Context(), cryptotest.NewAADKeeperStub(t), r, 8, tenantAAD)
+			assert.HasError(t, err, "the test must read from a source that fails")
+			assert.Equal(t, source.seen, make([]byte, 8),
+				"the bytes of the source must be zeroed before GenerateKeyAAD returns")
+		})
+
+		t.Run("returns the error of WrapAAD", func(t *testing.T) {
+			t.Parallel()
+			errWrap := errors.New("custodian unavailable")
+			k := cryptotest.NewAADKeeperStub(t)
+			k.OnWrapAAD.Returns(nil, errWrap)
+
+			_, _, err := crypto.GenerateKeyAAD(t.Context(), k, constant.New(0x0101010101010101), 8, tenantAAD)
+			assert.ErrorIs(t, err, errWrap, "the failure of the custodian must be returned")
+		})
+
+		t.Run("returns no key with the error of WrapAAD", func(t *testing.T) {
+			t.Parallel()
+			k := cryptotest.NewAADKeeperStub(t)
+			k.OnWrapAAD.Returns(wrappedKey, errors.New("custodian unavailable"))
+
+			plain, wrapped, err := crypto.GenerateKeyAAD(t.Context(), k, constant.New(0x0101010101010101), 8, tenantAAD)
+			assert.HasError(t, err, "the test must wrap with a custodian that fails")
+			expect.Nil(t, plain, "no plaintext may accompany an error")
+			expect.Nil(t, wrapped, "no wrapped key may accompany an error")
+		})
+
+		t.Run("zeroes the drawn key when WrapAAD fails", func(t *testing.T) {
+			t.Parallel()
+			k := cryptotest.NewAADKeeperStub(t)
+			var seen []byte
+			k.OnWrapAAD.Func(func(_ context.Context, dek, _ []byte) ([]byte, error) {
+				seen = dek
+
+				return nil, errors.New("custodian unavailable")
+			})
+
+			_, _, err := crypto.GenerateKeyAAD(t.Context(), k, constant.New(0x0101010101010101), 8, tenantAAD)
+			assert.HasError(t, err, "the test must wrap with a custodian that fails")
+			assert.Equal(t, seen, make([]byte, 8), "the drawn key must be zeroed before GenerateKeyAAD returns")
+		})
+	})
 }
 
 // TestKeeperAllocs checks the allocation contract of the As functions
@@ -333,6 +535,7 @@ func TestKeeperAllocs(t *testing.T) {
 		{name: "AsDestroyer", find: func() bool { _, ok := crypto.AsDestroyer(destroyer); return ok }},
 		{name: "AsKeyGenerator", find: func() bool { _, ok := crypto.AsKeyGenerator(generator); return ok }},
 		{name: "AsAADKeeper", find: func() bool { _, ok := crypto.AsAADKeeper(local); return ok }},
+		{name: "AsAADKeyGenerator", find: func() bool { _, ok := crypto.AsAADKeyGenerator(local); return ok }},
 		{name: "AsKeyCreator", find: func() bool { _, ok := crypto.AsKeyCreator(local); return ok }},
 	}
 	for _, tt := range tests {
@@ -352,6 +555,19 @@ func TestKeeperAllocs(t *testing.T) {
 		expect.MaxAllocs(t, func() { plain, _, err = crypto.GenerateKey(t.Context(), staticKeeper{}, r, 32) }, 1,
 			"the source path must allocate only the plaintext")
 		assert.NoError(t, err, "the test must measure a GenerateKey that succeeds")
+		assert.Length(t, plain, 32, "the test must measure a key of 32 bytes")
+	})
+
+	t.Run("GenerateKeyAAD", func(t *testing.T) {
+		// A conversion of constant.Rand to the interface allocates, so it
+		// happens once, outside the measured call.
+		var r rand.Rand = constant.New(0x0101010101010101)
+		var plain []byte
+		var err error
+		expect.MaxAllocs(t, func() {
+			plain, _, err = crypto.GenerateKeyAAD(t.Context(), staticAADKeeper{}, r, 32, tenantAAD)
+		}, 1, "the source path must allocate only the plaintext")
+		assert.NoError(t, err, "the test must measure a GenerateKeyAAD that succeeds")
 		assert.Length(t, plain, 32, "the test must measure a key of 32 bytes")
 	})
 }
@@ -403,6 +619,19 @@ func BenchmarkKeeper(b *testing.B) {
 		assert.True(b, ok, "the benchmark must measure a search that finds the capability")
 	})
 
+	b.Run("AsAADKeyGenerator", func(b *testing.B) {
+		var ok bool
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			_, ok = crypto.AsAADKeyGenerator(local)
+		}
+
+		assert.True(b, ok, "the benchmark must measure a search that finds the capability")
+	})
+
 	b.Run("AsKeyCreator", func(b *testing.B) {
 		var ok bool
 
@@ -429,11 +658,25 @@ func BenchmarkKeeper(b *testing.B) {
 
 		assert.NoError(b, err, "the benchmark must measure a GenerateKey that succeeds")
 	})
+
+	b.Run("GenerateKeyAAD", func(b *testing.B) {
+		var r rand.Rand = constant.New(0x0101010101010101)
+		var err error
+
+		c := bench.Start(b).MaxAllocs(1)
+		defer c.End()
+
+		for c.Loop() {
+			_, _, err = crypto.GenerateKeyAAD(b.Context(), staticAADKeeper{}, r, 32, tenantAAD)
+		}
+
+		assert.NoError(b, err, "the benchmark must measure a GenerateKeyAAD that succeeds")
+	})
 }
 
-// newLocalKeeper returns a localkey Keeper, which implements AADKeeper
-// and KeyCreator, under a root key of zero bytes and a fake clock. It
-// fails tb when localkey refuses the key.
+// newLocalKeeper returns a localkey Keeper, which implements AADKeeper,
+// AADKeyGenerator and KeyCreator, under a root key of zero bytes and a fake
+// clock. It fails tb when localkey refuses the key.
 func newLocalKeeper(tb testing.TB) *localkey.Keeper {
 	tb.Helper()
 

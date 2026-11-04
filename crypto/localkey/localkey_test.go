@@ -85,6 +85,21 @@ func (s *keepingSource) Read(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// leakySource writes 0x01 into every byte of p, keeps p, and returns one
+// byte less than len(p) with an error, as a source that fails in the
+// middle of a read does. It is not safe for concurrent use.
+type leakySource struct{ seen []byte }
+
+// Read fills p, keeps it in s.seen, and fails one byte short of len(p).
+func (s *leakySource) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = 0x01
+	}
+	s.seen = p
+
+	return len(p) - 1, io.ErrUnexpectedEOF
+}
+
 // TestKeeperConformsToKeeper applies the checks of the suite of crypto.Keeper
 // to a Keeper of the root key. The second instance of a check is another
 // Keeper of the same root key.
@@ -115,6 +130,14 @@ func TestAADKeeperContract(t *testing.T) {
 	t.Parallel()
 
 	cryptotest.AssertAADKeeperContract(t, mustNew(t, testKeyID, rootKey))
+}
+
+// TestAADKeyGeneratorContract runs the contract suite of
+// crypto.AADKeyGenerator.
+func TestAADKeyGeneratorContract(t *testing.T) {
+	t.Parallel()
+
+	cryptotest.AssertAADKeyGeneratorContract(t, mustNew(t, testKeyID, rootKey))
 }
 
 // TestKeyCreatorContract runs the contract suite of crypto.KeyCreator.
@@ -333,6 +356,125 @@ func TestKeeper(t *testing.T) {
 			assert.NoError(t, err, "Destroy must succeed")
 			_, _, err = keeper.GenerateKey(t.Context(), 32)
 			assert.ErrorIs(t, err, crypto.ErrKeyDestroyed, "a destroyed Keeper must not generate keys")
+		})
+
+		t.Run("zeroes the bytes that the source wrote when the source fails", func(t *testing.T) {
+			t.Parallel()
+			source := &leakySource{}
+			keeper, err := localkey.New(testKeyID, rootKey, randcrypto.NewWithReader(source), fake.New(origin))
+			assert.NoError(t, err, "New must accept a root key of RootKeySize bytes")
+			_, _, err = keeper.GenerateKey(t.Context(), 32)
+			assert.HasError(t, err, "the test must read from a source that fails")
+			assert.Equal(t, source.seen, make([]byte, 32),
+				"the bytes of the source must be zeroed before GenerateKey returns")
+		})
+
+		t.Run("zeroes the data key when the wrap fails", func(t *testing.T) {
+			t.Parallel()
+			source := &keepingSource{}
+			keeper, err := localkey.New(testKeyID, rootKey, randcrypto.NewWithReader(source), fake.New(origin))
+			assert.NoError(t, err, "New must accept a root key of RootKeySize bytes")
+			_, err = keeper.Destroy(t.Context(), testKeyID)
+			assert.NoError(t, err, "Destroy must succeed")
+			_, _, err = keeper.GenerateKey(t.Context(), 32)
+			assert.HasError(t, err, "the test must wrap under a destroyed key")
+			assert.Equal(t, source.seen, make([]byte, 32), "the data key must be zeroed before GenerateKey returns")
+		})
+	})
+
+	t.Run("GenerateKeyAAD", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns a data key of size bytes", func(t *testing.T) {
+			t.Parallel()
+			keeper := mustNew(t, testKeyID, rootKey)
+			prop.Equal(t, func(n int) int {
+				plaintext, _, _ := keeper.GenerateKeyAAD(t.Context(), n, []byte("aad"))
+
+				return len(plaintext)
+			}, func(n int) int { return n }, "the data key must have the requested size",
+				prop.Using(prop.Integer(1, 128)), prop.Example(16), prop.Example(32), prop.Example(64))
+		})
+
+		t.Run("returns a wrapped key that UnwrapAAD opens with the same aad", func(t *testing.T) {
+			t.Parallel()
+			keeper := mustNew(t, testKeyID, rootKey)
+			prop.ForAll(t, "UnwrapAAD must open the wrapped key of GenerateKeyAAD", func(c *prop.Case) {
+				aad := c.Draw(prop.Bytes(prop.MaxSize(64)), "aad")
+				size := c.Draw(prop.Integer(1, 128), "size")
+				plaintext, wrapped, err := keeper.GenerateKeyAAD(c.Context(), size, aad)
+				assert.NoError(c, err, "GenerateKeyAAD must succeed")
+				got, err := keeper.UnwrapAAD(c.Context(), wrapped, aad)
+				assert.NoError(c, err, "UnwrapAAD with the same aad must open the wrapped key")
+				assert.Equal(c, got, plaintext, "UnwrapAAD must return the data key")
+			})
+		})
+
+		t.Run("returns the error of a context that ended", func(t *testing.T) {
+			t.Parallel()
+			keeper := mustNew(t, testKeyID, rootKey)
+			assert.HonoursCancellation(t, func(ctx context.Context) error {
+				_, _, err := keeper.GenerateKeyAAD(ctx, 32, []byte("aad"))
+
+				return err
+			}, "GenerateKeyAAD must return the error of a context that ended")
+		})
+
+		t.Run("returns ErrKeySize for a size that is not positive", func(t *testing.T) {
+			t.Parallel()
+			keeper := mustNew(t, testKeyID, rootKey)
+			prop.ErrorIs(t, func(n int) error {
+				_, _, err := keeper.GenerateKeyAAD(t.Context(), n, []byte("aad"))
+
+				return err
+			}, crypto.ErrKeySize, "a size that is not positive must be refused",
+				prop.Using(prop.Integer(math.MinInt, 0)), prop.Example(0), prop.Example(-1))
+		})
+
+		t.Run("returns the error of the source", func(t *testing.T) {
+			t.Parallel()
+			_, _, err := failingKeeper(t).GenerateKeyAAD(t.Context(), 32, []byte("aad"))
+			assert.ErrorIs(t, err, io.ErrUnexpectedEOF, "GenerateKeyAAD must return the failure of the source")
+		})
+
+		t.Run("returns no key with the error of the source", func(t *testing.T) {
+			t.Parallel()
+			plaintext, wrapped, err := failingKeeper(t).GenerateKeyAAD(t.Context(), 32, []byte("aad"))
+			assert.HasError(t, err, "the test must read from a source that fails")
+			expect.Nil(t, plaintext, "no data key may accompany an error")
+			expect.Nil(t, wrapped, "no wrapped key may accompany an error")
+		})
+
+		t.Run("returns ErrKeyDestroyed after Destroy", func(t *testing.T) {
+			t.Parallel()
+			keeper := mustNew(t, testKeyID, rootKey)
+			_, err := keeper.Destroy(t.Context(), testKeyID)
+			assert.NoError(t, err, "Destroy must succeed")
+			_, _, err = keeper.GenerateKeyAAD(t.Context(), 32, []byte("aad"))
+			assert.ErrorIs(t, err, crypto.ErrKeyDestroyed, "a destroyed Keeper must not generate keys")
+		})
+
+		t.Run("zeroes the bytes that the source wrote when the source fails", func(t *testing.T) {
+			t.Parallel()
+			source := &leakySource{}
+			keeper, err := localkey.New(testKeyID, rootKey, randcrypto.NewWithReader(source), fake.New(origin))
+			assert.NoError(t, err, "New must accept a root key of RootKeySize bytes")
+			_, _, err = keeper.GenerateKeyAAD(t.Context(), 32, []byte("aad"))
+			assert.HasError(t, err, "the test must read from a source that fails")
+			assert.Equal(t, source.seen, make([]byte, 32),
+				"the bytes of the source must be zeroed before GenerateKeyAAD returns")
+		})
+
+		t.Run("zeroes the data key when the wrap fails", func(t *testing.T) {
+			t.Parallel()
+			source := &keepingSource{}
+			keeper, err := localkey.New(testKeyID, rootKey, randcrypto.NewWithReader(source), fake.New(origin))
+			assert.NoError(t, err, "New must accept a root key of RootKeySize bytes")
+			_, err = keeper.Destroy(t.Context(), testKeyID)
+			assert.NoError(t, err, "Destroy must succeed")
+			_, _, err = keeper.GenerateKeyAAD(t.Context(), 32, []byte("aad"))
+			assert.HasError(t, err, "the test must wrap under a destroyed key")
+			assert.Equal(t, source.seen, make([]byte, 32), "the data key must be zeroed before GenerateKeyAAD returns")
 		})
 	})
 
