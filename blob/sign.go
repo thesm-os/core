@@ -125,6 +125,7 @@ func (r SignedRequest) LogValue() slog.Value {
 // The same requirements as [Store].
 //
 //dokimi:stub
+//dokimi:suite
 //dokimi:out path=../coretest/blobtest/
 type GetSigner interface {
 	// SignGet returns a GET of the object under key that the backend serves
@@ -194,6 +195,7 @@ func AsGetSigner(s Store) (GetSigner, bool) {
 // The same requirements as [Store].
 //
 //dokimi:stub
+//dokimi:suite
 //dokimi:out path=../coretest/blobtest/
 type CreateSigner interface {
 	// SignCreate returns a PUT that creates the object under key until

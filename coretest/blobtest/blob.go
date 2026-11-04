@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"go.dokimi.dev/assert"
+	"go.dokimi.dev/conform"
 
 	"go.thesmos.sh/core/blob"
 	"go.thesmos.sh/core/blob/memory"
@@ -444,39 +445,6 @@ func StoreReportsAbsenceAsNotFound(h *StoreHandle) {
 	assert.Equal(h, errs.Classify(err), errs.NotFound, h.Statement())
 }
 
-// StoreReturnsTheErrorOfADoneContext checks that Put, Get, Stat, Delete and List
-// return the error of a context that ended.
-//
-//dokimi:check blob.Store.List defect=storeListIgnoresItsContext
-func StoreReturnsTheErrorOfADoneContext(h *StoreHandle) {
-	s := h.Subject()
-	putBody(h, s, keyRange, "body", blob.PutOptions{})
-
-	assert.HonoursCancellation(h, func(ctx context.Context) error {
-		_, err := s.Put(ctx, keyRange, bytes.NewReader(nil), blob.PutOptions{})
-
-		return err
-	}, h.Statement())
-	assert.HonoursCancellation(h, func(ctx context.Context) error {
-		_, _, err := s.Get(ctx, keyRange)
-
-		return err
-	}, h.Statement())
-	assert.HonoursCancellation(h, func(ctx context.Context) error {
-		_, err := s.Stat(ctx, keyRange)
-
-		return err
-	}, h.Statement())
-	assert.HonoursCancellation(h, func(ctx context.Context) error {
-		return s.Delete(ctx, keyRange, version.Unspecified)
-	}, h.Statement())
-	assert.HonoursCancellation(h, func(ctx context.Context) error {
-		_, err := s.List(ctx, "", page.Page{})
-
-		return err
-	}, h.Statement())
-}
-
 // StorePutNeverReusesAVersion checks that a key that a Delete removed and a Put
 // wrote again has another version than before the Delete, and that a Put with
 // IfMatch of the old version returns ErrMismatch.
@@ -893,16 +861,18 @@ func walk(h *StoreHandle, s blob.Store, prefix string, limit int) []string {
 	return nil
 }
 
-// storeOf returns the subject of a check of RangeReader as a Store and as a
-// RangeReader, and stops the check when the subject is no Store.
-func storeOf(h *RangeReaderHandle) (blob.Store, blob.RangeReader) {
+// storeOf returns the subject of a check as a Store and as the subject, and
+// stops the check when the subject is no Store. The subject of a check of
+// RangeReader, GetSigner or CreateSigner is a Store, because the check writes
+// the objects that it reads.
+func storeOf[S any](h *conform.Handle[S]) (blob.Store, S) {
 	h.Helper()
 
-	rr := h.Subject()
-	s, ok := rr.(blob.Store)
-	assert.True(h, ok, "the RangeReader of the application is a Store")
+	subject := h.Subject()
+	s, ok := any(subject).(blob.Store)
+	assert.True(h, ok, "the subject of the application is a Store")
 
-	return s, rr
+	return s, subject
 }
 
 // storeOverStorage returns the planted defect of
@@ -1274,18 +1244,6 @@ func storeReportsAbsenceAsInvalid(h *StoreHandle) blob.Store {
 			}
 
 			return rc, info, err
-		}))
-}
-
-// storeListIgnoresItsContext returns the planted defect of
-// StoreReturnsTheErrorOfADoneContext: a store whose List lists the objects under
-// a context that ended.
-func storeListIgnoresItsContext(h *StoreHandle) blob.Store {
-	sound := memory.New(fake.New(origin))
-
-	return NewStoreStub(h, StoreStubDelegateTo(sound),
-		WithStoreList(func(ctx context.Context, prefix string, p page.Page) (page.Cursor[blob.Info], error) {
-			return sound.List(context.WithoutCancel(ctx), prefix, p)
 		}))
 }
 

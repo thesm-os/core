@@ -20,10 +20,12 @@ import (
 	"go.dokimi.dev/assert/bench"
 	"go.dokimi.dev/assert/expect"
 	"go.dokimi.dev/assert/prop"
+	"go.dokimi.dev/conform"
 
 	"go.thesmos.sh/core/blob"
 	"go.thesmos.sh/core/blob/memory"
 	"go.thesmos.sh/core/clock/fake"
+	"go.thesmos.sh/core/coretest/blobtest"
 	"go.thesmos.sh/core/errs"
 )
 
@@ -44,6 +46,10 @@ const (
 	imagePNG    = "image/png"
 	octetStream = "application/octet-stream"
 	lifetime    = time.Hour
+
+	// clientTimeout is the timeout of a request of a conformance test to the
+	// httptest server of a served Server.
+	clientTimeout = 5 * time.Second
 )
 
 // Allocation counts of the signing methods of a Server.
@@ -102,6 +108,82 @@ func (r *cutReader) Read(p []byte) (int, error) {
 	r.data = r.data[n:]
 
 	return n, nil
+}
+
+// served is a Server that an httptest server serves, with the Backend of the
+// conformance tests of its signers.
+type served struct {
+	*memory.Server
+
+	backend blobtest.Backend
+}
+
+// newServed returns a Server over an empty store with a fake clock at the Unix
+// epoch. An httptest server serves it at serverPath until the test of tb ends.
+func newServed(tb assert.TB) *served {
+	tb.Helper()
+
+	ts := httptest.NewUnstartedServer(nil)
+	assert.Cleanup(tb, ts.Close)
+
+	clk := fake.New(time.Unix(0, 0).UTC())
+	base := url.URL{Scheme: "http", Host: ts.Listener.Addr().String(), Path: serverPath}
+	srv, err := memory.NewServer(memory.New(clk), &base)
+	assert.NoError(tb, err, "NewServer must take the URL of an httptest server")
+
+	ts.Config.Handler = srv
+	ts.Start()
+
+	client := ts.Client()
+	client.Timeout = clientTimeout
+
+	return &served{Server: srv, backend: clockBackend{client: client, clock: clk}}
+}
+
+// newGetSigner returns a served Server, the subject of the conformance test of
+// blob.GetSigner.
+func newGetSigner(h *blobtest.GetSignerHandle) *served {
+	return newServed(h)
+}
+
+// newCreateSigner returns a served Server, the subject of the conformance test
+// of blob.CreateSigner.
+func newCreateSigner(h *blobtest.CreateSignerHandle) *served {
+	return newServed(h)
+}
+
+// clockBackend is the Backend of a served Server.
+type clockBackend struct {
+	client *http.Client
+	clock  *fake.Clock
+}
+
+// Do sends req with the client of the httptest server.
+func (b clockBackend) Do(req *http.Request) (*http.Response, error) {
+	return b.client.Do(req)
+}
+
+// Time returns the time of the fake clock of the store.
+func (b clockBackend) Time() time.Time {
+	return b.clock.Time()
+}
+
+// SignDelay returns 0, because the fake clock of the store does not move
+// between a read of the check and a read of the store.
+func (clockBackend) SignDelay() time.Duration {
+	return 0
+}
+
+// Elapse advances the fake clock of the store by d. It returns the error of
+// ctx when ctx has ended before the call.
+func (b clockBackend) Elapse(ctx context.Context, d time.Duration) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	b.clock.Advance(d)
+
+	return nil
 }
 
 func TestServer(t *testing.T) {
@@ -822,4 +904,27 @@ func setQuery(r *http.Request, name, value string) {
 	q := r.URL.Query()
 	q.Set(name, value)
 	r.URL.RawQuery = q.Encode()
+}
+
+// getSignerOptions returns the door of the Backend of a served Server, for the
+// conformance test of blob.GetSigner.
+func getSignerOptions() []blobtest.GetSignerOption {
+	return []blobtest.GetSignerOption{conform.Supplies(conform.Supply(backendOf[blob.GetSigner]))}
+}
+
+// createSignerOptions returns the door of the Backend of a served Server, for
+// the conformance test of blob.CreateSigner.
+func createSignerOptions() []blobtest.CreateSignerOption {
+	return []blobtest.CreateSignerOption{conform.Supplies(conform.Supply(backendOf[blob.CreateSigner]))}
+}
+
+// backendOf returns the Backend of the served Server s, and stops the check of
+// h when s is no served Server.
+func backendOf[S any](h *conform.Handle[S], s S) blobtest.Backend {
+	h.Helper()
+
+	srv, ok := any(s).(*served)
+	assert.True(h, ok, "the subject must be a served Server")
+
+	return srv.backend
 }

@@ -99,6 +99,9 @@ var (
 // allocates each escaped element of the key. SignCreate also allocates its
 // Header: the map, its group of entries and the list of its values. A pool
 // keeps the buffers of the frames.
+//
+//dokimi:subject blob.GetSigner new=newGetSigner options=getSignerOptions
+//dokimi:subject blob.CreateSigner new=newCreateSigner options=createSignerOptions
 type Server struct {
 	*Store
 
