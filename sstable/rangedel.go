@@ -13,8 +13,9 @@ import (
 	"go.thesmos.sh/core/pool"
 )
 
-// rangeIters are the cursors of fragments that [RangeDeleteIter.Close]
-// returned, with their buffers.
+// rangeIters are the cursors of fragments that Open takes to read the first
+// fragment partition of a table, with their buffers. Open closes its cursor
+// before it puts the cursor back, and keeps a copy of the start that it read.
 var rangeIters = pool.NewPool(func() *RangeDeleteIter { return new(RangeDeleteIter) })
 
 // RangeDeleter receives the fragments of range tombstones in the order of a
@@ -63,25 +64,38 @@ type RangeDeleter interface {
 //
 // A move off either end leaves the cursor on no position, and Next and Prev
 // report false there. The start and the end of the current position are
-// valid until the next move.
+// valid until the next move, Reset or Close of the cursor.
+//
+// A cursor of Reader.RangeDeletes is open. [RangeDeleteIter.Close] closes it,
+// and [RangeDeleteIter.Reset] sets it on a Reader again with the buffers that
+// it grew. The caller keeps the cursor after Close, and no call of the
+// package uses it again. The zero RangeDeleteIter is a closed cursor. A move
+// of a closed cursor reports false, and Err then returns [ErrClosed]. Close
+// of a closed cursor does not change the cursor. A copy of a cursor shares
+// its reference to a partition, so go vet reports a copy.
 //
 // # Concurrency
 //
-// A cursor is for one goroutine. Cursors of one [Reader] can move at once.
+// A cursor is for one goroutine. That goroutine calls its moves, its Reset
+// and its Close. Cursors of one [Reader] can move at once.
 //
 // # Allocation contract
 //
-// The moves, Start, End, Seq, Err and Close do not allocate once the buffers
-// of the cursor have grown to the largest fragment partition.
-// Reader.RangeDeletes takes the cursor from a pool, which allocates one when
-// it is empty. A move through a [BlockCache] allocates the copy of a
-// partition that the cache does not contain, and a move through a
-// [LendingCache] takes a [Block] from a pool in place of that copy.
+// Reset, the moves, Start, End, Seq, Err and Close do not allocate once the
+// buffers of the cursor have grown to the largest fragment partition. Reset
+// keeps the buffers, so a kept cursor reads without an allocation once its
+// buffers have grown. Reader.RangeDeletes allocates the cursor. A move
+// through a [BlockCache] allocates the copy of a partition that the cache
+// does not contain, and a move through a [LendingCache] takes a [Block] from
+// a pool in place of that copy.
 type RangeDeleteIter struct {
+	// _ makes go vet report a copy of the cursor.
+	_ noCopy
+
 	// err is the error that exhausted the cursor.
 	err error
 
-	// r is the Reader of the cursor, or nil after Close.
+	// r is the Reader of the cursor, or nil for a closed cursor.
 	r *Reader
 
 	// lent is the fragment partition of c when a LendingCache lent it or
@@ -121,6 +135,27 @@ type RangeDeleteIter struct {
 	i int
 }
 
+// Reset sets the cursor on the fragments of the table of r and leaves it on
+// no position. It first releases the reference of the cursor to a fragment
+// partition of a [LendingCache] and discards the error of Err. The cursor
+// keeps its buffers. A nil r leaves the cursor closed.
+//
+// # Allocation contract
+//
+// Zero-alloc.
+func (it *RangeDeleteIter) Reset(r *Reader) {
+	it.release()
+	if r == nil {
+		return
+	}
+	it.r, it.c.suffix, it.part = r, r.suffix, -1
+	if r.fragTop != nil {
+		it.top.init(r.fragTop)
+	} else {
+		it.c.init(r.frags)
+	}
+}
+
 // First moves to the first position and reports whether it exists. It reads
 // the first fragment partition under ctx.
 //
@@ -132,6 +167,7 @@ type RangeDeleteIter struct {
 //     the cursor, and Err returns [ErrCorrupt].
 //   - An error of the File exhausts the cursor, and Err returns an error that
 //     wraps it.
+//   - A closed cursor reports false, and Err returns [ErrClosed].
 //
 // # Allocation contract
 //
@@ -139,7 +175,7 @@ type RangeDeleteIter struct {
 func (it *RangeDeleteIter) First(ctx context.Context) bool {
 	it.err = nil
 
-	return it.moveTo(ctx, 0, 0)
+	return !it.closed() && it.moveTo(ctx, 0, 0)
 }
 
 // Last moves to the last position and reports whether it exists. It reads
@@ -152,7 +188,7 @@ func (it *RangeDeleteIter) First(ctx context.Context) bool {
 func (it *RangeDeleteIter) Last(ctx context.Context) bool {
 	it.err = nil
 
-	return it.moveTo(ctx, it.top.count-1, -1)
+	return !it.closed() && it.moveTo(ctx, it.top.count-1, -1)
 }
 
 // SeekGE moves to the first position of the first fragment whose end is
@@ -172,6 +208,9 @@ func (it *RangeDeleteIter) Last(ctx context.Context) bool {
 // Zero-alloc once the buffers of the cursor have room for the partition.
 func (it *RangeDeleteIter) SeekGE(ctx context.Context, key []byte) bool {
 	it.err, it.c.valid = nil, false
+	if it.closed() {
+		return false
+	}
 	user := key[:max(len(key)-it.c.suffix, 0)]
 	if it.r.fragTop != nil {
 		lo, hi := 0, it.top.count
@@ -222,6 +261,9 @@ func (it *RangeDeleteIter) SeekGE(ctx context.Context, key []byte) bool {
 // for key.
 func (it *RangeDeleteIter) SeekLT(ctx context.Context, key []byte) bool {
 	it.err, it.c.valid = nil, false
+	if it.closed() {
+		return false
+	}
 	w := it.c.suffix
 	user := key[:max(len(key)-w, 0)]
 	p := 0
@@ -268,6 +310,9 @@ func (it *RangeDeleteIter) SeekLT(ctx context.Context, key []byte) bool {
 // Zero-alloc once the buffers of the cursor have room for the partition.
 func (it *RangeDeleteIter) Next(ctx context.Context) bool {
 	if !it.c.valid {
+		// A closed cursor is on no position, and closed sets its ErrClosed.
+		it.closed()
+
 		return false
 	}
 	it.i++
@@ -291,6 +336,9 @@ func (it *RangeDeleteIter) Next(ctx context.Context) bool {
 // Zero-alloc once the buffers of the cursor have room for the partition.
 func (it *RangeDeleteIter) Prev(ctx context.Context) bool {
 	if !it.c.valid {
+		// A closed cursor is on no position, and closed sets its ErrClosed.
+		it.closed()
+
 		return false
 	}
 	it.i--
@@ -361,18 +409,25 @@ func (it *RangeDeleteIter) Err() error {
 }
 
 // Close releases the reference of the cursor to a fragment partition of a
-// [LendingCache], and returns the cursor and its buffers to the pool of
-// cursors. The cursor is unusable after Close, because a later
-// [Reader.RangeDeletes] can take it from the pool. A second Close before
-// such a RangeDeletes leaves the pool unchanged.
+// [LendingCache]. The cursor is then closed and keeps its buffers for the
+// next [RangeDeleteIter.Reset]. A move of a closed cursor reports false, and
+// Err then returns [ErrClosed]. Close of a closed cursor does not change the
+// cursor.
 //
 // # Allocation contract
 //
 // Zero-alloc.
 func (it *RangeDeleteIter) Close() {
-	if it.r == nil {
-		return
+	if it.r != nil {
+		it.release()
 	}
+}
+
+// release releases the reference of the cursor to a fragment partition of a
+// LendingCache, and leaves the cursor closed and on no position. It keeps the
+// buffers of the cursor and drops its error. release of a closed cursor
+// drops its error, because a closed cursor keeps no reference.
+func (it *RangeDeleteIter) release() {
 	if it.lent != nil {
 		it.lent.Release()
 	}
@@ -385,7 +440,19 @@ func (it *RangeDeleteIter) Close() {
 		c:     blockCursor{key: it.c.key[:0]},
 		check: blockCursor{key: it.check.key[:0]},
 	}
-	rangeIters.Put(it)
+}
+
+// closed reports whether the cursor is closed, and sets err to ErrClosed for
+// a closed cursor. Each move calls it before it reads the Reader of the
+// cursor, so a move of a closed cursor reports false. Next and Prev of an
+// open cursor on a position do not call it.
+func (it *RangeDeleteIter) closed() bool {
+	if it.r != nil {
+		return false
+	}
+	it.err = ErrClosed
+
+	return true
 }
 
 // moveTo moves to the position i of the fragment partition of the top-level

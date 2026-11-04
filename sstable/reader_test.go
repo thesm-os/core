@@ -1813,6 +1813,16 @@ func TestReader(t *testing.T) {
 			})
 		})
 
+		t.Run("returns a cursor other than a closed cursor", func(t *testing.T) {
+			t.Parallel()
+			r := openTable(t, writeTable(t, settings[0].opts, nil, goldenDeletes...), sstable.ReaderOptions{})
+			closed := r.RangeDeletes()
+			closed.Close()
+			it := r.RangeDeletes()
+			defer it.Close()
+			assert.NotEqual(t, it, closed, "RangeDeletes returns a new cursor after a Close", assert.ByIdentity())
+		})
+
 		t.Run("returns a cursor without positions for a table without fragments", func(t *testing.T) {
 			t.Parallel()
 			it := openTable(t, writeTable(t, settings[1].opts, goldenTable()), sstable.ReaderOptions{}).RangeDeletes()
@@ -2703,6 +2713,16 @@ func TestReader(t *testing.T) {
 			expect.Nil(t, it.Key(), "the new cursor has no key")
 			expect.False(t, it.Next(t.Context()), "the new cursor has no next entry")
 		})
+
+		t.Run("returns a cursor other than a closed cursor", func(t *testing.T) {
+			t.Parallel()
+			r := openTable(t, writeTable(t, settings[0].opts, goldenTable()), sstable.ReaderOptions{})
+			closed := r.NewIter(sstable.IterOptions{})
+			assert.NoError(t, closed.Close(), "Close returns nil for a cursor without an error")
+			it := r.NewIter(sstable.IterOptions{})
+			defer it.Close()
+			assert.NotEqual(t, it, closed, "NewIter returns a new cursor after a Close", assert.ByIdentity())
+		})
 	})
 }
 
@@ -2718,6 +2738,46 @@ func TestReaderAllocs(t *testing.T) {
 	data := writeTable(t, settings[3].opts, goldenTable())
 	parts := writeTable(t, settings[6].opts, goldenTable())
 	dst := make([]byte, 0, 256)
+
+	t.Run("Open", func(t *testing.T) {
+		// Open allocates the Reader, the blocks that it keeps, the keys of the
+		// summary and the keys that its own block cursors decode. It takes the
+		// cursors that read the first data block and the first fragment
+		// partition from the pools of the package.
+		for _, tt := range []struct {
+			name       string
+			data       []byte
+			wantAllocs uint64
+		}{
+			{name: "of a table", data: data, wantAllocs: 7},
+			{
+				name: "of a table with fragment partitions", data: writeTable(t, partsOfOne, goldenTable(), goldenDeletes...),
+				wantAllocs: 12,
+			},
+		} {
+			t.Run(tt.name, func(t *testing.T) {
+				file, size := sstable.File(bytesFile(tt.data)), int64(len(tt.data))
+				var r *sstable.Reader
+				var err error
+				expect.MaxAllocs(t, func() { r, err = sstable.Open(t.Context(), file, size, sstable.ReaderOptions{}) },
+					tt.wantAllocs, "Open takes its cursors from the pools of the package")
+				expect.NoError(t, err, "the test measures an Open of a valid table")
+				expect.NotNil(t, r, "the test measures an Open that returns a Reader")
+			})
+		}
+
+		t.Run("returns its cursors to the pools without the Reader", func(t *testing.T) {
+			// After one collection the pools still contain the cursors that the
+			// last Open returned, so the Reader is gone only when the cursors
+			// drop it.
+			reader := func() weak.Pointer[sstable.Reader] {
+				return weak.Make(openTable(t, writeTable(t, partsOfOne, goldenTable(), goldenDeletes...),
+					sstable.ReaderOptions{}))
+			}()
+			runtime.GC()
+			assert.Nil(t, reader.Value(), "the cursors in the pools do not keep the Reader")
+		})
+	})
 
 	t.Run("Footprint", func(t *testing.T) {
 		r := openTable(t, data, sstable.ReaderOptions{})
@@ -2850,50 +2910,10 @@ func TestReaderAllocs(t *testing.T) {
 	})
 
 	t.Run("RangeDeletes", func(t *testing.T) {
-		for _, tt := range []struct {
-			name string
-			opts sstable.WriterOptions
-		}{
-			{name: "of a table", opts: settings[7].opts},
-			{name: "of a table with fragment partitions", opts: partsOfOne},
-		} {
-			t.Run(tt.name, func(t *testing.T) {
-				r := openTable(t, writeTable(t, tt.opts, goldenTable(), goldenDeletes...), sstable.ReaderOptions{})
-				key := []byte("key 017")
-				var seqs uint64
-				// The collections empty the pool of the cursors that earlier tests
-				// closed, so a cursor that Close does not return allocates in the
-				// count.
-				runtime.GC()
-				runtime.GC()
-				expect.MaxAllocs(t, func() {
-					it := r.RangeDeletes()
-					for ok := it.SeekGE(t.Context(), key); ok && bytes.Compare(it.Start(), key) <= 0; ok = it.Next(t.Context()) {
-						seqs += it.Seq()
-					}
-					it.Close()
-				}, 0, "RangeDeletes takes a cursor of the pool, and its moves do not allocate")
-				expect.NotEqual(t, seqs, uint64(0), "the test measures the fragments of a key")
-			})
-		}
-
-		t.Run("takes the cursor that Open of a table with fragment partitions returns to the pool", func(t *testing.T) {
-			// The collections of each setup empty the pool of the cursors, and
-			// Open then returns the cursor that read its first fragment partition.
-			fragments := writeTable(t, partsOfOne, goldenTable(), goldenDeletes...)
-			var ok bool
-			expect.MaxAllocsWithSetup(t, func() *sstable.Reader {
-				runtime.GC()
-				runtime.GC()
-
-				return openTable(t, fragments, sstable.ReaderOptions{})
-			}, func(r *sstable.Reader) {
-				it := r.RangeDeletes()
-				ok = it.First(t.Context())
-				it.Close()
-			}, 0, "RangeDeletes takes the cursor that Open read the first fragment partition with")
-			expect.True(t, ok, "the test measures a First that finds a fragment")
-		})
+		r := openTable(t, writeTable(t, settings[7].opts, goldenTable(), goldenDeletes...), sstable.ReaderOptions{})
+		var it *sstable.RangeDeleteIter
+		expect.MaxAllocs(t, func() { it = r.RangeDeletes() }, 1, "RangeDeletes allocates the cursor")
+		expect.NotNil(t, it, "the test measures a new cursor")
 	})
 
 	t.Run("Check", func(t *testing.T) {
@@ -2941,10 +2961,9 @@ func TestReaderAllocs(t *testing.T) {
 
 	t.Run("NewIter", func(t *testing.T) {
 		r := openTable(t, data, sstable.ReaderOptions{})
-		var err error
-		expect.MaxAllocs(t, func() { err = r.NewIter(sstable.IterOptions{}).Close() }, 0,
-			"NewIter takes a cursor of the pool")
-		expect.NoError(t, err, "the test measures a Close that succeeds")
+		var it *sstable.Iter
+		expect.MaxAllocs(t, func() { it = r.NewIter(sstable.IterOptions{}) }, 1, "NewIter allocates the cursor")
+		expect.NotNil(t, it, "the test measures a new cursor")
 	})
 }
 
@@ -2955,6 +2974,38 @@ func BenchmarkReader(b *testing.B) {
 	lp := newLayout(b, settings[6].opts, goldenTable())
 	data := l.data
 	dst := make([]byte, 0, 256)
+
+	b.Run("Open", func(b *testing.B) {
+		// Open allocates the Reader, the blocks that it keeps, the keys of the
+		// summary and the keys that its own block cursors decode.
+		for _, tt := range []struct {
+			name       string
+			data       []byte
+			wantAllocs uint64
+		}{
+			{name: "of a table", data: data, wantAllocs: 7},
+			{
+				name: "of a table with fragment partitions", data: writeTable(b, partsOfOne, goldenTable(), goldenDeletes...),
+				wantAllocs: 12,
+			},
+		} {
+			b.Run(tt.name, func(b *testing.B) {
+				file, size := sstable.File(bytesFile(tt.data)), int64(len(tt.data))
+				var r *sstable.Reader
+				var err error
+
+				c := bench.Start(b).MaxAllocs(tt.wantAllocs)
+				defer c.End()
+
+				for c.Loop() {
+					r, err = sstable.Open(b.Context(), file, size, sstable.ReaderOptions{})
+				}
+
+				assert.NoError(b, err, "the benchmark measures Opens of a valid table")
+				assert.NotNil(b, r, "the benchmark measures Opens that return a Reader")
+			})
+		}
+	})
 
 	b.Run("Get", func(b *testing.B) {
 		// Each lending cache has room for every block and every partition of
@@ -3090,36 +3141,32 @@ func BenchmarkReader(b *testing.B) {
 		}
 	})
 
-	b.Run("RangeDeletes", func(b *testing.B) {
-		for _, tt := range []struct {
-			name string
-			opts sstable.WriterOptions
-		}{
-			{name: "of a table", opts: settings[7].opts},
-			{name: "of a table with fragment partitions", opts: partsOfOne},
-		} {
-			b.Run(tt.name, func(b *testing.B) {
-				// The key is in the fragment from key 015 up to key 020 at the
-				// sequences 9 and 7.
-				r := openTable(b, writeTable(b, tt.opts, goldenTable(), goldenDeletes...), sstable.ReaderOptions{})
-				key := []byte("key 017")
-				var seqs uint64
+	b.Run("NewIter", func(b *testing.B) {
+		r := openTable(b, data, sstable.ReaderOptions{})
+		var it *sstable.Iter
 
-				c := bench.Start(b).MaxAllocs(0)
-				defer c.End()
+		c := bench.Start(b).MaxAllocs(1)
+		defer c.End()
 
-				for c.Loop() {
-					seqs = 0
-					it := r.RangeDeletes()
-					for ok := it.SeekGE(b.Context(), key); ok && bytes.Compare(it.Start(), key) <= 0; ok = it.Next(b.Context()) {
-						seqs += it.Seq()
-					}
-					it.Close()
-				}
-
-				assert.Equal(b, seqs, uint64(16), "the benchmark measures the two sequences of the fragment of the key")
-			})
+		for c.Loop() {
+			it = r.NewIter(sstable.IterOptions{})
 		}
+
+		assert.NotNil(b, it, "the benchmark measures new cursors")
+	})
+
+	b.Run("RangeDeletes", func(b *testing.B) {
+		r := openTable(b, writeTable(b, settings[7].opts, goldenTable(), goldenDeletes...), sstable.ReaderOptions{})
+		var it *sstable.RangeDeleteIter
+
+		c := bench.Start(b).MaxAllocs(1)
+		defer c.End()
+
+		for c.Loop() {
+			it = r.RangeDeletes()
+		}
+
+		assert.NotNil(b, it, "the benchmark measures new cursors")
 	})
 
 	b.Run("Check", func(b *testing.B) {
@@ -3230,6 +3277,12 @@ func BenchmarkReader(b *testing.B) {
 // the reads is linearizable when every read returns what the entries return.
 // The filter decides MayContain of a key that the table does not contain, so
 // the spec takes that answer from a Reader without a cache.
+//
+// Each client keeps a cursor. A read of a cursor takes a new cursor of
+// NewIter, or sets the kept cursor of its client with Reset, as the case
+// draws. It closes the cursor, and closes it a second time when the case
+// draws that, while the other clients open and move their cursors. A second
+// Close that returns an error adds the error to the text of the read.
 func readSteps(c *prop.Case, cache sstable.BlockCache) {
 	es := c.Draw(entries, "entries")
 	data := writeTable(c, c.Draw(prop.SampledFrom(settings...), "setting").opts, es)
@@ -3243,6 +3296,7 @@ func readSteps(c *prop.Case, cache sstable.BlockCache) {
 		admitted[string(key)] = may
 	}
 	key, seq, bound := prop.SampledFrom(keys...), prop.Integer[uint64](0, 6), prop.Optional(prop.SampledFrom(keys...))
+	cursors := make([]sstable.Iter, readers+1)
 
 	// seek returns the read of the cursor move name, which reads seekReads
 	// entries from its target on or back.
@@ -3250,13 +3304,21 @@ func readSteps(c *prop.Case, cache sstable.BlockCache) {
 		return stateful.Action[struct{}]{
 			Name: name,
 			Input: func(c *prop.Case, _ struct{}) any {
-				return []any{c.Draw(key, "key"), c.Draw(seq, "seq"), c.Draw(prop.Boolean(), "no fill")}
+				return []any{
+					c.Draw(key, "key"), c.Draw(seq, "seq"), c.Draw(prop.Boolean(), "no fill"),
+					c.Draw(prop.Boolean(), "kept"), c.Draw(prop.Boolean(), "closed twice"),
+				}
 			},
 			Run: func(c *prop.Case, client int, in any) {
 				args := in.([]any)
 				call := c.History().Invoke(client, name, args)
-				k, s := args[0].([]byte), args[1].(uint64)
-				it := r.NewIter(sstable.IterOptions{NoFill: args[2].(bool)})
+				k, s, opts := args[0].([]byte), args[1].(uint64), sstable.IterOptions{NoFill: args[2].(bool)}
+				it := &cursors[client]
+				if args[3].(bool) {
+					it.Reset(r, opts)
+				} else {
+					it = r.NewIter(opts)
+				}
 				ok := name == moveSeekGE && it.SeekGE(c.Context(), k, s) ||
 					name == moveSeekLT && it.SeekLT(c.Context(), k, s)
 				var text []byte
@@ -3270,6 +3332,11 @@ func readSteps(c *prop.Case, cache sstable.BlockCache) {
 				}
 				if err := it.Close(); err != nil {
 					text = fmt.Append(text, err)
+				}
+				if args[4].(bool) {
+					if err := it.Close(); err != nil {
+						text = fmt.Append(text, err)
+					}
 				}
 				call.OK(string(text))
 			},

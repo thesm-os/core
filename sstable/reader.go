@@ -276,12 +276,12 @@ type tableFilter struct {
 //
 // [Open] allocates the Reader, the blocks and the top-level indexes that the
 // Reader keeps, and the keys of the summary. Get, [Reader.MayContain],
-// [Reader.MayContainPrefix], [Reader.Span], NewIter and RangeDeletes do not
-// allocate once the pools of cursors have a cursor whose buffers have grown
-// to the largest block and the largest partition. A read through a
-// [BlockCache] allocates the copy of each block or partition that it adds. A
-// read through a [LendingCache] takes a [Block] from a pool in place of that
-// copy.
+// [Reader.MayContainPrefix] and [Reader.Span] do not allocate once the pools
+// of cursors have a cursor whose buffers have grown to the largest block and
+// the largest partition. NewIter and RangeDeletes allocate the cursor. A read
+// through a [BlockCache] allocates the copy of each block or partition that
+// it adds. A read through a [LendingCache] takes a [Block] from a pool in
+// place of that copy.
 type Reader struct {
 	// f contains the table.
 	f File
@@ -504,7 +504,9 @@ func Open(ctx context.Context, file File, size int64, opts ReaderOptions) (*Read
 			return nil, err
 		}
 	}
-	it := rd.NewIter(IterOptions{})
+	it := iters.Get()
+	defer iters.Put(it)
+	it.Reset(rd, IterOptions{})
 	if it.First(ctx) {
 		rd.summary.SmallestKey, rd.summary.SmallestSeq = append([]byte{}, it.Key()...), it.Seq()
 	}
@@ -586,11 +588,14 @@ func (r *Reader) Span(ctx context.Context, lower, upper []byte) (Span, error) {
 		return Span{}, nil
 	}
 	if r.partitioned {
-		it := r.NewIter(IterOptions{})
+		it := iters.Get()
+		it.Reset(r, IterOptions{})
 		var s Span
 		s, it.err = it.span(ctx, lower, upper)
+		err := it.Close()
+		iters.Put(it)
 
-		return s, it.Close()
+		return s, err
 	}
 
 	// Every entry of the index is a restart point, so the number of a restart
@@ -732,7 +737,8 @@ func (r *Reader) Get(ctx context.Context, key []byte, seq uint64, dst []byte) ([
 
 	// The lookup ends before the seek when the filter partition refuses key
 	// or fails. Close returns the error of the cursor.
-	it := r.NewIter(IterOptions{})
+	it := iters.Get()
+	it.Reset(r, IterOptions{})
 	may := true
 	if r.partitioned && r.keys.ok {
 		may, it.err = it.mayContain(ctx, r.keys.index, user)
@@ -742,53 +748,47 @@ func (r *Reader) Get(ctx context.Context, key []byte, seq uint64, dst []byte) ([
 	if ok {
 		dst, found = append(dst, it.Value()...), it.Seq()
 	}
-	if err := it.Close(); err != nil {
+	err := it.Close()
+	iters.Put(it)
+	if err != nil {
 		return dst, 0, false, err
 	}
 
 	return dst, found, ok, nil
 }
 
-// NewIter returns a cursor over the entries of the table from the pool of
-// cursors, under opts. The cursor is on no entry until [Iter.First],
-// [Iter.Last], [Iter.SeekGE] or [Iter.SeekLT] moves it. The caller returns
-// the cursor to the pool with [Iter.Close].
+// NewIter returns a new cursor over the entries of the table under opts. The
+// cursor is on no entry until [Iter.First], [Iter.Last], [Iter.SeekGE] or
+// [Iter.SeekLT] moves it. The caller keeps the cursor after [Iter.Close], and
+// [Iter.Reset] sets it on a Reader again.
 //
 // # Allocation contract
 //
-// Zero-alloc when the pool has a cursor. Otherwise NewIter allocates one.
+// NewIter allocates the cursor. The moves of the cursor allocate its buffers
+// until they have grown to the largest block and the largest partition that
+// it reads.
 func (r *Reader) NewIter(opts IterOptions) *Iter {
-	it := iters.Get()
-	it.r, it.noFill, it.readAhead = r, opts.NoFill, opts.ReadAhead
-	it.top.suffix, it.index.suffix, it.data.suffix = r.suffix, r.suffix, r.suffix
-	if r.partitioned {
-		it.top.init(r.index)
-	} else {
-		it.index.init(r.index)
-	}
+	it := new(Iter)
+	it.Reset(r, opts)
 
 	return it
 }
 
-// RangeDeletes returns a cursor over the fragments of the range tombstones
-// of the table, from the pool of cursors of fragments. The cursor is on no
-// position until a move. A table without fragments returns a cursor without
-// positions. The cursor of a table with fragment partitions reads them
-// through the cache of r. The caller returns the cursor to the pool with
-// [RangeDeleteIter.Close].
+// RangeDeletes returns a new cursor over the fragments of the range
+// tombstones of the table. The cursor is on no position until a move. A
+// table without fragments returns a cursor without positions. The cursor of
+// a table with fragment partitions reads them through the cache of r. The
+// caller keeps the cursor after [RangeDeleteIter.Close], and
+// [RangeDeleteIter.Reset] sets it on a Reader again.
 //
 // # Allocation contract
 //
-// Zero-alloc when the pool has a cursor. Otherwise RangeDeletes allocates
-// one.
+// RangeDeletes allocates the cursor. The moves of the cursor allocate its
+// buffers until they have grown to the largest fragment partition that it
+// reads.
 func (r *Reader) RangeDeletes() *RangeDeleteIter {
-	it := rangeIters.Get()
-	it.r, it.c.suffix, it.part = r, r.suffix, -1
-	if r.fragTop != nil {
-		it.top.init(r.fragTop)
-	} else {
-		it.c.init(r.frags)
-	}
+	it := new(RangeDeleteIter)
+	it.Reset(r)
 
 	return it
 }
@@ -881,11 +881,14 @@ func (r *Reader) mayContain(ctx context.Context, f *tableFilter, key []byte, suf
 	if !r.partitioned {
 		return f.fuse.MayContain(xxh3.Hash(key)), nil
 	}
-	it := r.NewIter(IterOptions{})
+	it := iters.Get()
+	it.Reset(r, IterOptions{})
 	var may bool
 	may, it.err = it.mayContain(ctx, f.index, key)
+	err := it.Close()
+	iters.Put(it)
 
-	return may, it.Close()
+	return may, err
 }
 
 // firstPartition returns the offset of the first partition of a table in
@@ -955,8 +958,12 @@ func (r *Reader) summarizeParts(ctx context.Context) error {
 	if !ok {
 		return ErrCorrupt
 	}
-	it := r.RangeDeletes()
-	defer it.Close()
+	it := rangeIters.Get()
+	it.Reset(r)
+	defer func() {
+		it.Close()
+		rangeIters.Put(it)
+	}()
 	if !it.First(ctx) {
 		return cmp.Or(it.Err(), ErrCorrupt) //nolint:wrapcheck // cmp.Or returns the error of the cursor or ErrCorrupt
 	}

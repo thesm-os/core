@@ -29,9 +29,9 @@ var (
 	ErrOrder = errs.WithClass(errors.New("sstable: the entry does not follow the previous entry"), errs.Invalid)
 
 	// ErrClosed reports a call of Writer.Add, Writer.AddRangeDelete or
-	// [Writer.Close] after Close wrote the table. It classifies as
-	// errs.Invalid.
-	ErrClosed = errs.WithClass(errors.New("sstable: the writer is closed"), errs.Invalid)
+	// [Writer.Close] after Close wrote the table, and a move of a closed
+	// [Iter] or [RangeDeleteIter]. It classifies as errs.Invalid.
+	ErrClosed = errs.WithClass(errors.New("sstable: the writer or the cursor is closed"), errs.Invalid)
 
 	// ErrTooLarge is returned by Writer.Add for a key that could bring the
 	// index of the table past 2^32 - 1 bytes, and by Writer.AddRangeDelete

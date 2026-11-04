@@ -169,6 +169,20 @@
 // the cache returns, so the Readers of two tables with one identity read the
 // blocks of each other.
 //
+// # Cursors
+//
+// [Reader.NewIter] returns a new [Iter], and [Reader.RangeDeletes] returns a
+// new [RangeDeleteIter]. The caller keeps a cursor after its Close.
+// [Iter.Reset] and [RangeDeleteIter.Reset] set a kept cursor on a Reader again
+// with the buffers that it grew, so a read through a kept cursor does not
+// allocate. The zero value of each cursor is a closed cursor. Close releases
+// the references of a cursor to the blocks of a LendingCache, and a second
+// Close does not change the cursor. A move of a closed cursor reports false,
+// and its Err then returns [ErrClosed]. [Open], [Reader.Get],
+// [Reader.MayContain], [Reader.MayContainPrefix] and [Reader.Span] take their
+// cursors from pools of the package, and close each cursor before they put it
+// back.
+//
 // # Merges
 //
 // A [Source] is a cursor over a sorted run of entries that moves in both
@@ -202,15 +216,18 @@
 //     [WriterOptions], and the next table grows them again.
 //   - [Fragmenter.Add] and [Fragmenter.Flush] do not allocate once the
 //     buffers of the tombstones that overlap have room.
-//   - Reader.Get, Reader.MayContain, Reader.MayContainPrefix, Reader.Span,
-//     Reader.NewIter, Reader.RangeDeletes, Iter.Close and the moves of an
-//     Iter, a RangeDeleteIter and a Merger do not allocate once the pooled
-//     cursors have grown to the largest block and the largest partition. A
-//     read through a [BlockCache] allocates a copy of each block or
-//     partition that the cache does not contain, apart from the reads of a
-//     cursor with NoFill. A read through a LendingCache copies such a block
-//     into a Block from the pool, which allocates only when the pool of its
-//     class is empty.
+//   - Reader.Get, Reader.MayContain, Reader.MayContainPrefix and Reader.Span
+//     do not allocate once the pooled cursors have grown to the largest
+//     block and the largest partition. Reset, Close and the moves of an Iter
+//     or a RangeDeleteIter do not allocate once the buffers of the cursor
+//     have grown in the same way. The moves of a Merger do not allocate
+//     beyond the moves of its sources once its heap has grown.
+//     Reader.NewIter and Reader.RangeDeletes allocate the cursor. A read
+//     through a [BlockCache] allocates a copy of each block or partition that
+//     the cache does not contain, apart from the reads of a cursor with
+//     NoFill. A read through a LendingCache copies such a block into a Block
+//     from the pool, which allocates only when the pool of its class is
+//     empty.
 //   - Reader.Check of a table whose blocks pass their checks does not
 //     allocate once its pooled state has grown to the largest block and the
 //     largest partition, apart from what the function of the caller

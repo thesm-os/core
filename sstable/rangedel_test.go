@@ -49,6 +49,129 @@ var partsOfOne = fragmentLayouts[1].opts
 func TestRangeDeleteIter(t *testing.T) {
 	t.Parallel()
 
+	// moves are the six moves of a cursor of fragments, with probes of the
+	// golden fragments.
+	moves := []struct {
+		name     string
+		giveMove func(ctx context.Context, it *sstable.RangeDeleteIter) bool
+	}{
+		{
+			name:     moveFirst,
+			giveMove: func(ctx context.Context, it *sstable.RangeDeleteIter) bool { return it.First(ctx) },
+		},
+		{
+			name:     moveLast,
+			giveMove: func(ctx context.Context, it *sstable.RangeDeleteIter) bool { return it.Last(ctx) },
+		},
+		{
+			name: moveSeekGE,
+			giveMove: func(ctx context.Context, it *sstable.RangeDeleteIter) bool {
+				return it.SeekGE(ctx, []byte("key 017"))
+			},
+		},
+		{
+			name: moveSeekLT,
+			giveMove: func(ctx context.Context, it *sstable.RangeDeleteIter) bool {
+				return it.SeekLT(ctx, []byte("key 017"))
+			},
+		},
+		{
+			name:     moveNext,
+			giveMove: func(ctx context.Context, it *sstable.RangeDeleteIter) bool { return it.Next(ctx) },
+		},
+		{
+			name:     movePrev,
+			giveMove: func(ctx context.Context, it *sstable.RangeDeleteIter) bool { return it.Prev(ctx) },
+		},
+	}
+
+	for _, tt := range moves {
+		t.Run("sets ErrClosed at "+tt.name+" of the zero value", func(t *testing.T) {
+			t.Parallel()
+			var it sstable.RangeDeleteIter
+			var ok bool
+			expect.FailsAfterClose(t, func() error {
+				it.Close()
+
+				return nil
+			}, func() error {
+				ok = tt.giveMove(t.Context(), &it)
+
+				return it.Err()
+			}, sstable.ErrClosed, tt.name+" of the zero value sets ErrClosed")
+			expect.False(t, ok, tt.name+" of the zero value reports false")
+		})
+	}
+
+	t.Run("Reset", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("yields the fragments of a second Reader", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "a cursor that Reset sets on another Reader yields the fragments of the other table",
+				func(c *prop.Case) {
+					firstOpts := c.Draw(prop.SampledFrom(fragmentLayouts...), "first layout").opts
+					first := openTable(c, writeTable(c, firstOpts, nil, c.Draw(fragments, "first fragments")...),
+						sstable.ReaderOptions{})
+					dels := c.Draw(fragments, "fragments")
+					opts := c.Draw(prop.SampledFrom(fragmentLayouts...), "layout").opts
+					second := openTable(c, writeTable(c, opts, nil, dels...), sstable.ReaderOptions{})
+					it := first.RangeDeletes()
+					defer it.Close()
+					// The cursor reads the last partition of the first table, or is
+					// on no position.
+					if c.Draw(prop.Boolean(), "moved") {
+						it.Last(c.Context())
+					}
+					it.Reset(second)
+					var got []rangeDelete
+					for ok := it.First(c.Context()); ok && len(got) <= len(dels); ok = it.Next(c.Context()) {
+						got = append(got,
+							rangeDelete{start: bytes.Clone(it.Start()), end: bytes.Clone(it.End()), seq: it.Seq()})
+					}
+					assert.NoError(c, it.Err(), "the cursor reads the fragments of the second table")
+					assert.Equal(c, got, dels, "the cursor yields the fragments of the second table",
+						assert.EquateEmpty())
+				})
+		})
+
+		t.Run("discards the error of the cursor", func(t *testing.T) {
+			t.Parallel()
+			it := fragmentCursor(t, partsOfOne, goldenDeletes)
+			defer it.Close()
+			ctx, cancel := context.WithCancel(t.Context())
+			cancel()
+			assert.False(t, it.First(ctx), "First stops at the context before the first partition")
+			it.Reset(openTable(t, writeTable(t, partsOfOne, nil, goldenDeletes...), sstable.ReaderOptions{}))
+			assert.NoError(t, it.Err(), "Reset discards the error that stopped the cursor")
+		})
+
+		t.Run("closes the cursor for a nil Reader", func(t *testing.T) {
+			t.Parallel()
+			it := fragmentCursor(t, settings[0].opts, goldenDeletes)
+			assert.True(t, it.First(t.Context()), "First moves the open cursor to a fragment")
+			assert.FailsAfterClose(t, func() error {
+				it.Reset(nil)
+
+				return nil
+			}, func() error {
+				it.First(t.Context())
+
+				return it.Err()
+			}, sstable.ErrClosed, "First of a cursor that Reset closed sets ErrClosed")
+		})
+
+		t.Run("opens the zero value", func(t *testing.T) {
+			t.Parallel()
+			var it sstable.RangeDeleteIter
+			it.Reset(openTable(t, writeTable(t, partsOfOne, nil, goldenDeletes...), sstable.ReaderOptions{}))
+			defer it.Close()
+			assert.True(t, it.First(t.Context()), "First finds a fragment")
+			assert.Equal(t, rangeDelete{start: it.Start(), end: it.End(), seq: it.Seq()}, goldenDeletes[0],
+				"the zero value that Reset opened moves to the first fragment")
+		})
+	})
+
 	t.Run("First", func(t *testing.T) {
 		t.Parallel()
 
@@ -775,18 +898,6 @@ func TestRangeDeleteIter(t *testing.T) {
 	t.Run("Close", func(t *testing.T) {
 		t.Parallel()
 
-		t.Run("returns the cursor to the pool once for a second Close", func(t *testing.T) {
-			t.Parallel()
-			r := openTable(t, writeTable(t, settings[0].opts, nil, goldenDeletes...), sstable.ReaderOptions{})
-			it := r.RangeDeletes()
-			it.Close()
-			it.Close()
-			first, second := r.RangeDeletes(), r.RangeDeletes()
-			defer first.Close()
-			defer second.Close()
-			assert.NotEqual(t, first, second, "the pool hands out the closed cursor once", assert.ByIdentity())
-		})
-
 		t.Run("releases a lent partition once after a move that stops at its context", func(t *testing.T) {
 			t.Parallel()
 			// A second release of the first partition would return its Block to
@@ -810,6 +921,37 @@ func TestRangeDeleteIter(t *testing.T) {
 			assert.Equal(t, rangeDelete{start: it.Start(), end: it.End(), seq: it.Seq()}, goldenDeletes[0],
 				"the cache lends the bytes of the first partition")
 		})
+
+		t.Run("keeps ErrClosed at a second Close", func(t *testing.T) {
+			t.Parallel()
+			it := fragmentCursor(t, settings[0].opts, goldenDeletes)
+			it.Close()
+			assert.False(t, it.First(t.Context()), "First of the closed cursor reports false")
+			assert.FailsAfterClose(t, func() error {
+				it.Close()
+
+				return nil
+			}, it.Err, sstable.ErrClosed, "the second Close does not change the closed cursor")
+		})
+
+		for _, tt := range moves {
+			t.Run("makes "+tt.name+" set ErrClosed", func(t *testing.T) {
+				t.Parallel()
+				it := fragmentCursor(t, settings[0].opts, goldenDeletes)
+				assert.True(t, it.First(t.Context()), "First moves the open cursor to a fragment")
+				var ok bool
+				expect.FailsAfterClose(t, func() error {
+					it.Close()
+
+					return nil
+				}, func() error {
+					ok = tt.giveMove(t.Context(), it)
+
+					return it.Err()
+				}, sstable.ErrClosed, tt.name+" of a closed cursor sets ErrClosed")
+				expect.False(t, ok, tt.name+" of a closed cursor reports false")
+			})
+		}
 	})
 }
 
@@ -860,15 +1002,38 @@ func TestRangeDeleteIterAllocs(t *testing.T) {
 		// lends again.
 		r := openTable(t, writeTable(t, partsOfOne, nil, goldenDeletes...),
 			sstable.ReaderOptions{Cache: lendingCache(t, 1), CacheID: 1})
+		it := r.RangeDeletes()
+		defer it.Close()
 		runtime.GC()
 		runtime.GC()
 		var ok bool
 		expect.MaxAllocs(t, func() {
-			it := r.RangeDeletes()
+			it.Reset(r)
 			ok = it.First(t.Context()) && it.Last(t.Context())
 			it.Close()
 		}, 2, "a miss of a lending cache allocates the entry of the cache")
 		expect.True(t, ok, "the test measures moves to fragments")
+	})
+
+	t.Run("Reset", func(t *testing.T) {
+		for _, layout := range fragmentLayouts {
+			t.Run(layout.name, func(t *testing.T) {
+				// The key is in the fragment from key 015 up to key 020 at the
+				// sequences 9 and 7.
+				r := openTable(t, writeTable(t, layout.opts, nil, goldenDeletes...), sstable.ReaderOptions{})
+				it := r.RangeDeletes()
+				defer it.Close()
+				var seqs uint64
+				expect.MaxAllocs(t, func() {
+					it.Reset(r)
+					for ok := it.SeekGE(t.Context(), key); ok && bytes.Compare(it.Start(), key) <= 0; ok = it.Next(t.Context()) {
+						seqs += it.Seq()
+					}
+					it.Close()
+				}, 0, "Reset, the moves and Close of a kept cursor do not allocate")
+				expect.NotEqual(t, seqs, uint64(0), "the test measures the fragments of a key")
+			})
+		}
 	})
 }
 
@@ -909,6 +1074,33 @@ func BenchmarkRangeDeleteIter(b *testing.B) {
 			}
 		})
 	}
+
+	b.Run("Reset", func(b *testing.B) {
+		for _, layout := range fragmentLayouts {
+			b.Run(layout.name, func(b *testing.B) {
+				// The key is in the fragment from key 015 up to key 020 at the
+				// sequences 9 and 7.
+				r := openTable(b, writeTable(b, layout.opts, nil, goldenDeletes...), sstable.ReaderOptions{})
+				it := r.RangeDeletes()
+				defer it.Close()
+				var seqs uint64
+
+				c := bench.Start(b).MaxAllocs(0)
+				defer c.End()
+
+				for c.Loop() {
+					seqs = 0
+					it.Reset(r)
+					for ok := it.SeekGE(b.Context(), key); ok && bytes.Compare(it.Start(), key) <= 0; ok = it.Next(b.Context()) {
+						seqs += it.Seq()
+					}
+					it.Close()
+				}
+
+				assert.Equal(b, seqs, uint64(16), "the benchmark measures the two sequences of the fragment of the key")
+			})
+		}
+	})
 }
 
 // warmFragments reads every fragment partition of r through a cursor under

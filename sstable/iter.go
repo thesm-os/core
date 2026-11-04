@@ -17,12 +17,15 @@ import (
 	"go.thesmos.sh/core/pool"
 )
 
-// iters are the cursors that [Iter.Close] returned, with their buffers.
+// iters are the cursors that Open, Get, MayContain, MayContainPrefix and
+// Span take for one call, with their buffers. Each call closes its cursor
+// before it puts the cursor back, and returns no slice of the buffers of the
+// cursor.
 var iters = pool.NewPool(func() *Iter { return new(Iter) })
 
-// IterOptions configure a cursor of [Reader.NewIter]. The zero value adds
-// each block that the cursor reads to the cache of the Reader, and reads
-// each block with a read of its own.
+// IterOptions configure a cursor of [Reader.NewIter] and [Iter.Reset]. The
+// zero value adds each block that the cursor reads to the cache of the
+// Reader, and reads each block with a read of its own.
 type IterOptions struct {
 	// NoFill makes the cursor take the blocks that the cache contains, and
 	// read every other block into a buffer of the cursor without adding it,
@@ -40,6 +43,19 @@ type IterOptions struct {
 	// so ReadAhead suits a scan.
 	ReadAhead int
 }
+
+// noCopy makes go vet report a copy of a cursor. A copy shares the references
+// of the cursor to the blocks of a [LendingCache], so a Close of both copies
+// releases a block twice. A cursor starts with a field of this type. The
+// field takes no bytes.
+type noCopy struct{}
+
+// Lock does nothing. go vet reports a copy of a value whose pointer has the
+// methods Lock and Unlock.
+func (*noCopy) Lock() {}
+
+// Unlock does nothing.
+func (*noCopy) Unlock() {}
 
 // Iter is a cursor over the entries of a table, in the order of [Compare].
 // A move positions the cursor on an entry or exhausts it. A seek searches
@@ -59,10 +75,10 @@ type IterOptions struct {
 // context. Next, Prev and SeekGE ignore the context when they move within
 // the current block.
 //
-// The key and the value of the current entry are valid until the next move
-// of the cursor. A cursor that reads through a [LendingCache] keeps a
-// reference to the [Block] of its current entry. It releases the reference
-// when it moves to another block or closes.
+// The key and the value of the current entry are valid until the next move,
+// Reset or Close of the cursor. A cursor that reads through a [LendingCache]
+// keeps a reference to the [Block] of its current entry. It releases the
+// reference when it moves to another block, resets or closes.
 //
 // A cursor of a table in partitions searches the top-level index of
 // the index for the index partition of its block, and reads the partition
@@ -70,9 +86,18 @@ type IterOptions struct {
 // reference to it when a LendingCache lent it. At the end of a partition,
 // Next and Prev read the partition after it or before it.
 //
+// A cursor of [Reader.NewIter] is open. [Iter.Close] closes it, and
+// [Iter.Reset] sets it on a Reader again with the buffers that it grew. The
+// caller keeps the cursor after Close, and no call of the package uses it
+// again. The zero Iter is a closed cursor. A move of a closed cursor reports
+// false, and Err then returns [ErrClosed]. Close of a closed cursor returns
+// nil and does not change the cursor. A copy of a cursor shares its
+// references, so go vet reports a copy.
+//
 // # Concurrency
 //
-// A cursor is for one goroutine. Cursors of one [Reader] can move at once.
+// A cursor is for one goroutine. That goroutine calls its moves, its Reset
+// and its Close. Cursors of one [Reader] can move at once.
 //
 // # Allocation contract
 //
@@ -83,12 +108,17 @@ type IterOptions struct {
 // allocates only when the pool of its class is empty. A cursor with NoFill
 // does not add a block or a partition. A cursor with ReadAhead allocates the
 // buffer of its reads ahead at its first read of more than one block, and
-// Close releases it. Key, Seq, Value, Err and Close do not allocate.
+// Reset and Close release it. Reset, Key, Seq, Value, Err and Close do not
+// allocate. Reset keeps the other buffers, so a kept cursor reads without an
+// allocation once its buffers have grown.
 type Iter struct {
+	// _ makes go vet report a copy of the cursor.
+	_ noCopy
+
 	// err is the error that exhausted the cursor.
 	err error
 
-	// r is the Reader of the cursor, or nil after Close.
+	// r is the Reader of the cursor, or nil for a closed cursor.
 	r *Reader
 
 	// lent is the block of data when a LendingCache lent it or received it,
@@ -142,6 +172,30 @@ var (
 	_ io.Closer = (*Iter)(nil)
 )
 
+// Reset sets the cursor on the table of r under opts and leaves it on no
+// entry. It first releases the references of the cursor to a block and a
+// partition of a [LendingCache], drops the bytes of its reads ahead and
+// discards the error of Err. A caller that needs that error reads Err or the
+// result of Close before Reset. The cursor keeps its other buffers. A nil r
+// leaves the cursor closed.
+//
+// # Allocation contract
+//
+// Zero-alloc.
+func (it *Iter) Reset(r *Reader, opts IterOptions) {
+	it.release()
+	if r == nil {
+		return
+	}
+	it.r, it.noFill, it.readAhead = r, opts.NoFill, opts.ReadAhead
+	it.top.suffix, it.index.suffix, it.data.suffix = r.suffix, r.suffix, r.suffix
+	if r.partitioned {
+		it.top.init(r.index)
+	} else {
+		it.index.init(r.index)
+	}
+}
+
 // First moves to the first entry and reports whether it exists. It reads the
 // first data block under ctx.
 //
@@ -152,6 +206,7 @@ var (
 //   - A ctx that ended exhausts the cursor, and Err returns the error of ctx.
 //   - An error of the File, such as the error of ctx at the end of a wait,
 //     exhausts the cursor, and Err returns an error that wraps it.
+//   - A closed cursor reports false, and Err returns [ErrClosed].
 //
 // # Allocation contract
 //
@@ -173,6 +228,7 @@ func (it *Iter) First(ctx context.Context) bool {
 //   - A ctx that ended exhausts the cursor, and Err returns the error of ctx.
 //   - An error of the File, such as the error of ctx at the end of a wait,
 //     exhausts the cursor, and Err returns an error that wraps it.
+//   - A closed cursor reports false, and Err returns [ErrClosed].
 //
 // # Allocation contract
 //
@@ -199,6 +255,7 @@ func (it *Iter) Last(ctx context.Context) bool {
 //     returns the error of ctx.
 //   - An error of the File, such as the error of ctx at the end of a wait,
 //     exhausts the cursor, and Err returns an error that wraps it.
+//   - A closed cursor reports false, and Err returns [ErrClosed].
 //
 // # Allocation contract
 //
@@ -228,6 +285,7 @@ func (it *Iter) SeekGE(ctx context.Context, key []byte, seq uint64) bool {
 //   - A ctx that ended exhausts the cursor, and Err returns the error of ctx.
 //   - An error of the File, such as the error of ctx at the end of a wait,
 //     exhausts the cursor, and Err returns an error that wraps it.
+//   - A closed cursor reports false, and Err returns [ErrClosed].
 //
 // # Allocation contract
 //
@@ -256,6 +314,7 @@ func (it *Iter) SeekLT(ctx context.Context, key []byte, seq uint64) bool {
 //     returns the error of ctx.
 //   - An error of the File, such as the error of ctx at the end of a wait,
 //     exhausts the cursor, and Err returns an error that wraps it.
+//   - A closed cursor reports false, and Err returns [ErrClosed].
 //
 // # Allocation contract
 //
@@ -279,6 +338,7 @@ func (it *Iter) Next(ctx context.Context) bool {
 //     Err returns the error of ctx.
 //   - An error of the File, such as the error of ctx at the end of a wait,
 //     exhausts the cursor, and Err returns an error that wraps it.
+//   - A closed cursor reports false, and Err returns [ErrClosed].
 //
 // # Allocation contract
 //
@@ -343,10 +403,11 @@ func (it *Iter) Err() error {
 }
 
 // Close releases the references of the cursor to a block and a partition of
-// a [LendingCache], returns the cursor and its buffers to the pool of
-// cursors, and returns the error of Err. The cursor is unusable after Close,
-// because a later [Reader.NewIter] can take it from the pool. A second Close
-// before such a NewIter returns nil and leaves the pool unchanged.
+// a [LendingCache], drops the bytes of its reads ahead and returns the error
+// of Err. The cursor is then closed and keeps its other buffers for the next
+// [Iter.Reset]. A move of a closed cursor reports false, and Err then returns
+// [ErrClosed]. Close of a closed cursor returns nil and does not change the
+// cursor.
 //
 // # Allocation contract
 //
@@ -355,13 +416,24 @@ func (it *Iter) Close() error {
 	if it.r == nil {
 		return nil
 	}
+	err := it.err
+	it.release()
+
+	return err
+}
+
+// release releases the references of the cursor to a block and a partition
+// of a LendingCache, and leaves the cursor closed and on no entry. It keeps
+// the buffers of the blocks, of the partitions and of the keys, and drops the
+// bytes of the reads ahead and the error. release of a closed cursor drops
+// its error, because a closed cursor keeps no reference.
+func (it *Iter) release() {
 	if it.lent != nil {
 		it.lent.Release()
 	}
 	if it.part != nil {
 		it.part.Release()
 	}
-	err := it.err
 	*it = Iter{
 		top:     blockCursor{key: it.top.key[:0]},
 		index:   blockCursor{key: it.index.key[:0]},
@@ -371,9 +443,19 @@ func (it *Iter) Close() error {
 		partRaw: it.partRaw[:0],
 		partBuf: it.partBuf[:0],
 	}
-	iters.Put(it)
+}
 
-	return err
+// closed reports whether the cursor is closed, and sets err to ErrClosed for
+// a closed cursor. Each move calls it through the moves of the index before
+// it reads the Reader of the cursor, so a move of a closed cursor reports
+// false. A move within the current block of an open cursor does not call it.
+func (it *Iter) closed() bool {
+	if it.r != nil {
+		return false
+	}
+	it.err = ErrClosed
+
+	return true
 }
 
 // forward ends a move whose last step in the data block reported ok. When
@@ -413,8 +495,12 @@ func (it *Iter) backward(ctx context.Context, ok bool) bool {
 // indexFirst moves the index cursor to the entry of the first data block. Of
 // a table in partitions it moves the top-level cursor to its first
 // entry and loads that partition. A move of the top-level cursor that fails
-// leaves the index cursor on no entry, so the next index move fails too.
+// leaves the index cursor on no entry, so the next index move fails too. A
+// closed cursor sets ErrClosed and reports false.
 func (it *Iter) indexFirst(ctx context.Context) bool {
+	if it.closed() {
+		return false
+	}
 	if !it.r.partitioned {
 		return it.index.restart(0)
 	}
@@ -424,8 +510,12 @@ func (it *Iter) indexFirst(ctx context.Context) bool {
 }
 
 // indexLast moves the index cursor to the entry of the last data block,
-// through the last partition of a table in partitions.
+// through the last partition of a table in partitions. A closed cursor sets
+// ErrClosed and reports false.
 func (it *Iter) indexLast(ctx context.Context) bool {
+	if it.closed() {
+		return false
+	}
 	if !it.r.partitioned {
 		return it.index.last()
 	}
@@ -436,8 +526,12 @@ func (it *Iter) indexLast(ctx context.Context) bool {
 
 // indexSeekGE moves the index cursor to the entry of the first data block
 // whose last entry is at or after the entry (key, seq), through the first
-// partition whose last entry is at or after it.
+// partition whose last entry is at or after it. A closed cursor sets
+// ErrClosed and reports false.
 func (it *Iter) indexSeekGE(ctx context.Context, key []byte, seq uint64) bool {
+	if it.closed() {
+		return false
+	}
 	if !it.r.partitioned {
 		return it.index.seekGE(key, seq)
 	}
@@ -448,25 +542,31 @@ func (it *Iter) indexSeekGE(ctx context.Context, key []byte, seq uint64) bool {
 
 // indexNext moves the index cursor to the entry of the next data block. At
 // the end of an index partition it moves the top-level cursor to the next
-// partition, loads it and moves to its first entry.
+// partition, loads it and moves to its first entry. The top-level cursor of
+// a table without partitions is on no entry, so its next reports false. A
+// closed cursor has an index cursor on no entry, so indexNext sets ErrClosed
+// and reports false.
 func (it *Iter) indexNext(ctx context.Context) bool {
 	if it.index.next() {
 		return true
 	}
 
-	return it.r.partitioned && it.index.err == nil && it.top.next() && it.loadPart(ctx, it.top.value) &&
+	return !it.closed() && it.index.err == nil && it.top.next() && it.loadPart(ctx, it.top.value) &&
 		it.index.restart(0)
 }
 
 // indexPrev moves the index cursor to the entry of the data block before the
 // current one. At the start of an index partition it moves the top-level
-// cursor to the partition before, loads it and moves to its last entry.
+// cursor to the partition before, loads it and moves to its last entry. The
+// top-level cursor of a table without partitions is on no entry, so its prev
+// reports false. A closed cursor has an index cursor on no entry, so
+// indexPrev sets ErrClosed and reports false.
 func (it *Iter) indexPrev(ctx context.Context) bool {
 	if it.index.prev() {
 		return true
 	}
 
-	return it.r.partitioned && it.index.err == nil && it.top.prev() && it.loadPart(ctx, it.top.value) &&
+	return !it.closed() && it.index.err == nil && it.top.prev() && it.loadPart(ctx, it.top.value) &&
 		it.index.last()
 }
 
