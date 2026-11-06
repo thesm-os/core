@@ -135,5 +135,6 @@ Start from [`docs/templates/ADR.md`](../templates/ADR.md).
 | [0075](0075-test-code-imports-the-runtime-of-dokimi.md) | Test Code Imports the Runtime of dokimi | Accepted |
 | [0076](0076-fragment-partitions-are-read-through-the-cache.md) | Fragment Partitions Are Read Through the Cache | Accepted |
 | [0077](0077-expiry-checks-take-their-timing-from-the-store.md) | The Checks of an Expiry Take Their Timing from the Store | Accepted |
+| [0078](0078-witness-key-sets-have-parties-and-a-threshold.md) | The Key Sets of a Witness Log Have Parties and a Threshold | Accepted |
 
 [nygard]: https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions

@@ -120,7 +120,7 @@ Start from [`docs/templates/RFC.md`](../templates/RFC.md).
 | [0051](0051-bounded-hot-path-telemetry.md) | Bounded Telemetry on Hot Paths | Accepted, the time of a step of the clock superseded by [RFC-0084](0084-durations-and-peer-instants-of-a-clock.md) |
 | [0052](0052-failover.md) | Failover Between Redundant Dependencies | Accepted |
 | [0053](0053-http-servers-and-clients.md) | HTTP Servers and Clients | Accepted |
-| [0054](0054-checkpoint-witnesses.md) | Checkpoint Witnesses | Accepted |
+| [0054](0054-checkpoint-witnesses.md) | Checkpoint Witnesses | Accepted, the key sets of a log superseded by [ADR-0078](../adr/0078-witness-key-sets-have-parties-and-a-threshold.md) |
 | [0055](0055-party-markers-in-signature-policies.md) | Party Markers in Signature Policies | Accepted |
 | [0056](0056-proofs-from-cached-node-tiles.md) | Proofs from Cached Node Tiles | Accepted |
 | [0057](0057-fixed-size-identifiers.md) | Fixed-Size Identifiers | Accepted |
