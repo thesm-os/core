@@ -19,7 +19,8 @@ import (
 // later commit catches up.
 var (
 	// ErrConfig reports a configuration that NewClient or NewServer
-	// refuses.
+	// refuses, and a Log that Logs returns and that Advance and
+	// add-checkpoint refuse.
 	ErrConfig = errs.WithClass(errors.New("witness: invalid configuration"), errs.Invalid)
 
 	// ErrRequest reports a request that is malformed or that exceeds a
@@ -33,7 +34,7 @@ var (
 	ErrUnknownOrigin = errs.WithClass(errors.New("witness: unknown origin"), errs.NotFound)
 
 	// ErrSignature reports a note with an invalid line of a key of its
-	// log, or without a valid line of every key of one key set.
+	// log, or without the threshold of parties of one key set.
 	ErrSignature = errs.WithClass(errors.New("witness: invalid log signature"), errs.Denied)
 
 	// ErrInconsistent reports a checkpoint that is not consistent with the

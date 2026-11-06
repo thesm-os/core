@@ -75,7 +75,7 @@ func newTestLog(tb testing.TB, origin string) *testLog {
 
 	h := coresha256.New()
 	l := &testLog{
-		log:    witness.Log{Hasher: h, Keys: [][]note.Key{{s.Key()}}},
+		log:    witness.Log{Hasher: h, Keys: []witness.KeySet{{Parties: [][]note.Key{{s.Key()}}}}},
 		origin: checkpoint.Origin(origin),
 		signer: s,
 		leaves: make([]crypto.Digest, treeLeaves),

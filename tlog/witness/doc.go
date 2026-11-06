@@ -29,6 +29,11 @@
 // state, the old size and the consistency proof. A request that fails a
 // check gets the status that the protocol assigns to it.
 //
+// The signatures of a log satisfy its [Log] when one [KeySet] of the log
+// has its threshold of parties. A party counts when every one of its keys
+// has a valid signature line, and one invalid line of a key of the log
+// refuses the note.
+//
 // The server commits each checkpoint to a journal in a [blob.Store] before
 // it cosigns it, so it never cosigns a checkpoint that the journal does not
 // contain:

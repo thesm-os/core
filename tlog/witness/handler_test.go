@@ -315,7 +315,7 @@ func TestHandler(t *testing.T) {
 			f := newFixture(t)
 			f.accepted[l.origin] = witness.Log{
 				Hasher: l.log.Hasher,
-				Keys:   [][]note.Key{{l.signer.Key(), pq.signer.Key()}},
+				Keys:   []witness.KeySet{{Parties: [][]note.Key{{l.signer.Key(), pq.signer.Key()}}}},
 			}
 			s := newServer(t, f.config())
 

@@ -4,6 +4,8 @@
 package witness
 
 import (
+	"bytes"
+	"cmp"
 	"fmt"
 	"sync"
 
@@ -22,36 +24,91 @@ type Log struct {
 	// use. A C2SP log uses SHA-256.
 	Hasher crypto.Hasher
 
-	// Keys are the key sets of the log. A checkpoint needs a valid
-	// signature of every key of one set. A set contains one key for a log
-	// that signs with one algorithm, and one key per algorithm for a
-	// hybrid log. The sets are alternatives, such as the keys before and
-	// after a rotation.
-	Keys [][]note.Key
+	// Keys are the key sets of the log. A checkpoint needs one set that
+	// counts. The sets are alternatives, such as the keys before and after
+	// a rotation, and each set has a threshold of its own.
+	Keys []KeySet
+}
+
+// KeySet is one key set of a [Log]: its parties, and the number of them
+// whose signatures a checkpoint needs.
+//
+// A party counts when every one of its keys has a valid signature line. A
+// party has one key for a log that signs with one algorithm, and one key
+// per algorithm for a hybrid log, so a hybrid party counts only with both
+// algorithms. A log whose checkpoints need the signatures of any k of n
+// custodians lists the n custodians as parties, with the Threshold k.
+//
+// Advance and the add-checkpoint handler refuse a set that lists one
+// public key twice, because the key would count for two parties. Two sets
+// can list one public key.
+type KeySet struct {
+	// Parties are the parties of the set, each with its keys.
+	Parties [][]note.Key
+
+	// Threshold is the number of Parties that must count, from 1 to their
+	// number. Zero requires every party.
+	Threshold int
 }
 
 // check returns nil for a Log with a hasher and at least one key set,
-// whose sets each contain at least one Valid key.
+// whose sets each have a party, a Threshold from 0 to the number of their
+// parties, and parties of Valid keys, with no public key twice in one set.
 //
 // Returns an error that wraps [ErrConfig] for any other Log.
+//
+// # Allocation contract
+//
+// Zero-alloc for a Log that it accepts. It compares the public keys of
+// each set in pairs.
 func (l *Log) check() error {
 	if l.Hasher == nil || len(l.Keys) == 0 {
 		return fmt.Errorf("%w: a log needs a hasher and a key set", ErrConfig)
 	}
 
 	for _, set := range l.Keys {
-		if len(set) == 0 {
-			return fmt.Errorf("%w: a key set of a log without a key", ErrConfig)
+		if len(set.Parties) == 0 || set.Threshold < 0 || set.Threshold > len(set.Parties) {
+			return fmt.Errorf("%w: a key set needs a party, and a threshold from 0 to the number of its parties",
+				ErrConfig)
 		}
 
-		for _, k := range set {
-			if !k.Valid() {
-				return fmt.Errorf("%w: a key of the log %s is not valid", ErrConfig, k.Name)
+		for i, party := range set.Parties {
+			if len(party) == 0 {
+				return fmt.Errorf("%w: a party of a key set without a key", ErrConfig)
+			}
+
+			for j, k := range party {
+				if !k.Valid() {
+					return fmt.Errorf("%w: a key of the log %s is not valid", ErrConfig, k.Name)
+				}
+
+				if listed(set.Parties, i, j, k) {
+					return fmt.Errorf("%w: a key set lists the public key of %s twice", ErrConfig, k.Name)
+				}
 			}
 		}
 	}
 
 	return nil
+}
+
+// listed reports whether a key of the parties before position i of
+// parties, or a key before position j of the party at position i, has the
+// public key of k.
+func listed(parties [][]note.Key, i, j int, k note.Key) bool {
+	for p, party := range parties[:i+1] {
+		if p == i {
+			party = party[:j]
+		}
+
+		for _, o := range party {
+			if bytes.Equal(o.PublicKey, k.PublicKey) {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // lineState is the result of the verification of one signature line: the
@@ -122,16 +179,17 @@ func (r *keyring) verifier(k note.Key) (note.Verifier, error) {
 
 // verifyLog returns nil when the signature lines of n satisfy l: every line
 // whose key name and key ID equal those of a key of l verifies over the
-// text of n, and every key of at least one set of l has such a line.
-// signed-note requires the verification of every line of a known key, so
-// verifyLog verifies them all before it decides.
+// text of n, and one key set of l has its threshold of parties that count.
+// A party counts when every one of its keys has such a line. signed-note
+// requires the verification of every line of a known key, so verifyLog
+// verifies them all before it decides.
 //
 // states contains the result of each line of n, at the index of the line.
 // verifyLog reuses a result that the same Verifier made, and records each
 // result that it makes.
 //
 // Returns an error that wraps [ErrSignature] for an invalid line of a key
-// of l, and for a note without a valid line of every key of one set.
+// of l, and for a note without the threshold of parties of one key set.
 // Returns the error of the keyring for a key that the Resolver does not
 // resolve.
 //
@@ -143,22 +201,30 @@ func (r *keyring) verifyLog(n *note.Note, l *Log, states []lineState) error {
 	satisfied := false
 
 	for _, set := range l.Keys {
-		all := true
+		counted := 0
 
-		for _, k := range set {
-			found, err := r.verifyKey(n, k, states)
-			if err != nil {
-				return err
+		for _, party := range set.Parties {
+			all := true
+
+			for _, k := range party {
+				found, err := r.verifyKey(n, k, states)
+				if err != nil {
+					return err
+				}
+
+				all = all && found
 			}
 
-			all = all && found
+			if all {
+				counted++
+			}
 		}
 
-		satisfied = satisfied || all
+		satisfied = satisfied || counted >= cmp.Or(set.Threshold, len(set.Parties))
 	}
 
 	if !satisfied {
-		return fmt.Errorf("%w: no valid line of every key of one key set of the log", ErrSignature)
+		return fmt.Errorf("%w: no key set of the log with the threshold of its parties", ErrSignature)
 	}
 
 	return nil

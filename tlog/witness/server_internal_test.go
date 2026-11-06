@@ -155,7 +155,7 @@ func newInternalLog(tb testing.TB, origin string) *internalLog {
 
 	h := coresha256.New()
 	l := &internalLog{
-		log:    Log{Hasher: h, Keys: [][]note.Key{{s.Key()}}},
+		log:    Log{Hasher: h, Keys: []KeySet{{Parties: [][]note.Key{{s.Key()}}}}},
 		origin: checkpoint.Origin(origin),
 		signer: s,
 		leaves: make([]crypto.Digest, 64),

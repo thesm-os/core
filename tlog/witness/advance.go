@@ -72,7 +72,8 @@ type Failure struct {
 //     refuses.
 //   - ErrSignature, classified Denied, for a msg without the signatures of
 //     an update's log, and ErrConfig, classified Invalid, for a Log that
-//     Logs returns without a hasher or a key set.
+//     Logs returns without a hasher, without a key set, or with a key set
+//     that [KeySet] does not allow.
 //   - resilience.ErrOpen, classified Transient, while the circuit of a
 //     cosigner is open. The call committed nothing.
 //   - An error that wraps checkpoint.ErrClock, classified Transient, for a
@@ -220,8 +221,9 @@ func (p *pending) distinct() error {
 // update before the next:
 //
 //   - Logs accepts the origin of every update.
-//   - Every line of a key of the log of an update verifies, and every key
-//     of one key set of the log signed. Each line verifies at most once.
+//   - Every line of a key of the log of an update verifies, and one key set
+//     of the log has its threshold of parties. Each line verifies at most
+//     once.
 //   - The old size is at most the size, the root and each proof hash have
 //     the size of the log's digests, and every cosigner signs the text.
 //
