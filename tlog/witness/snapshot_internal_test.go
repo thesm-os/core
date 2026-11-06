@@ -1154,6 +1154,42 @@ func TestSnapshotInternal(t *testing.T) {
 			s.installed(bounded(t), snap, h.Snapshot, int64(len(data)), "a version of another head", nv, h)
 			assert.Equal(t, s.st.snap.name, "", "the state must not take the snapshot")
 		})
+
+		t.Run("keeps the Verifier of a log key that a call asked for since the snapshot before", func(t *testing.T) {
+			t.Parallel()
+			a := newInternalLog(t, "example.com/a")
+			s := newInternalFixture(t, a).server(t)
+			a.advance(t, s, 0, 5, nil)
+
+			before, err := s.keys.verifier(a.signer.Key())
+			assert.NoError(t, err, "the keyring must resolve the key")
+			assert.NoError(t, s.snapshot(bounded(t)), "the first snapshot must install")
+
+			a.advance(t, s, 5, 6, nil)
+			assert.NoError(t, s.snapshot(bounded(t)), "the second snapshot must install")
+
+			got, err := s.keys.verifier(a.signer.Key())
+			assert.NoError(t, err, "the keyring must resolve the key")
+			assert.Equal(t, got, before, "the snapshots must keep the Verifier", assert.ByIdentity())
+		})
+
+		t.Run("drops the Verifier of a log key that no call asked for since the snapshot before", func(t *testing.T) {
+			t.Parallel()
+			a, b := newInternalLog(t, "example.com/a"), newInternalLog(t, "example.com/b")
+			s := newInternalFixture(t, a, b).server(t)
+			a.advance(t, s, 0, 5, nil)
+
+			before, err := s.keys.verifier(a.signer.Key())
+			assert.NoError(t, err, "the keyring must resolve the key")
+			assert.NoError(t, s.snapshot(bounded(t)), "the first snapshot must install")
+
+			b.advance(t, s, 0, 5, nil)
+			assert.NoError(t, s.snapshot(bounded(t)), "the second snapshot must install")
+
+			got, err := s.keys.verifier(a.signer.Key())
+			assert.NoError(t, err, "the keyring must resolve the key")
+			assert.NotEqual(t, got, before, "the second snapshot must drop the Verifier", assert.ByIdentity())
+		})
 	})
 
 	t.Run("snapshotIfDue", func(t *testing.T) {

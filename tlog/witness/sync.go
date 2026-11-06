@@ -157,7 +157,8 @@ func (s *Server) sync(ctx context.Context, own string) (bool, error) {
 
 // applyPlan applies p, the plan of a walk from the head h of version v,
 // to the state of s, when the state still reflects the head of version
-// from. It reports whether it applied p.
+// from. It reports whether it applied p. A plan with a snapshot resets the
+// keyring of s.
 //
 // Returns the error of [state.take], which wraps [ErrJournal], after which
 // the state is unchanged.
@@ -173,6 +174,8 @@ func (s *Server) applyPlan(ctx context.Context, p *plan, h head, v, from version
 		if err := s.st.take(p.snap, h.Snapshot, p.size, p.retired); err != nil {
 			return false, err
 		}
+
+		s.keys.reset()
 	}
 
 	for _, w := range slices.Backward(p.records) {

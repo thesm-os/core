@@ -43,7 +43,9 @@ type ServerConfig struct {
 	// snapshot of a state above 90% of MaxOrigins.
 	Logger *slog.Logger
 
-	// Resolver builds the Verifier of each key of the logs.
+	// Resolver builds the Verifier of each key of the logs. The Server
+	// keeps a Verifier while calls ask for it, and drops a Verifier that
+	// no call asked for between two snapshots that its state takes.
 	Resolver note.Resolver
 
 	// State keeps the journal. The Server writes only the keys of the
@@ -184,7 +186,8 @@ type Server struct {
 	// caller's, or its commit's, until it returns to the pool.
 	pendings *pool.Pool[*pending]
 
-	// keys builds the Verifier of each key of the logs once.
+	// keys builds the Verifier of each key of the logs, and keeps it while
+	// calls ask for it.
 	keys keyring
 
 	// lines is the write of the lines of the latest commit that took one.
@@ -296,7 +299,8 @@ func NewServer(ctx context.Context, cfg *ServerConfig) (*Server, error) {
 		s.targets[i] = string(k.Name) + "+" + hex.EncodeToString(id[:])
 	}
 
-	s.keys.ring.Reset(cfg.Resolver)
+	s.keys.resolver = cfg.Resolver
+	s.keys.reset()
 
 	// The cached objects do not expire, so the cache has no Clock. cache.New
 	// refuses only a Capacity that is not positive, and cacheBytes is

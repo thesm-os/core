@@ -493,9 +493,10 @@ func (s *Server) install(
 
 // installed makes the state of s take snap, the snapshot under name of size
 // bytes that the head of version nv installed in place of the head of
-// version v, when the state reflects the head of version v. It clears the
-// failed repairs, so a GET can repair their records again, and logs a
-// state above 90% of MaxOrigins.
+// version v, when the state reflects the head of version v. A state that
+// takes the snapshot resets the keyring of s. installed clears the failed
+// repairs, so a GET can repair their records again, and logs a state above
+// 90% of MaxOrigins.
 func (s *Server) installed(
 	ctx context.Context, snap *snapshot, name string, size int64, v, nv version.Version, h head,
 ) {
@@ -507,6 +508,7 @@ func (s *Server) installed(
 		//dokimi:mutate-skip ror-true: take refuses no snapshot that build returned, and leaves the state unchanged when it refuses one
 		if s.st.take(snap, name, size, nil) == nil {
 			s.st.head, s.st.version, s.st.synced = h, nv, s.clock.Elapsed()
+			s.keys.reset()
 		}
 	}
 

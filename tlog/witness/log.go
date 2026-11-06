@@ -67,12 +67,23 @@ type lineState struct {
 }
 
 // keyring builds the Verifier of each key of the logs once, and keeps it
-// for the life of the Server.
+// while calls ask for it.
+//
+// The Server resets the keyring each time its state takes a snapshot. A
+// reset drops each Verifier that no call asked for since the reset
+// before, so the keyring keeps the keys that the calls of the last two
+// snapshot intervals verified. A deployment that names the keys of each
+// origin after the origin then keeps the keys of its active origins, and
+// not the keys of every origin that the Server verified.
 //
 // # Concurrency
 //
 // Safe for concurrent use: a mutex guards the [note.Keyring].
 type keyring struct {
+	// resolver is the Resolver of the configuration, which each reset
+	// passes to ring.
+	resolver note.Resolver
+
 	// ring keeps the Verifiers.
 	ring note.Keyring
 
@@ -80,7 +91,21 @@ type keyring struct {
 	mu sync.Mutex
 }
 
-// verifier returns the Verifier of k, which the keyring builds once.
+// reset starts a new load of the ring, which drops each Verifier that no
+// call asked for since the reset before.
+//
+// # Allocation contract
+//
+// Zero-alloc.
+func (r *keyring) reset() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.ring.Reset(r.resolver)
+}
+
+// verifier returns the Verifier of k, which the keyring builds once and
+// keeps while calls ask for it.
 //
 // Returns the errors of [note.Keyring.Verifier].
 func (r *keyring) verifier(k note.Key) (note.Verifier, error) {

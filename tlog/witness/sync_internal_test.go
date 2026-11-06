@@ -728,6 +728,36 @@ func TestSyncInternal(t *testing.T) {
 			expect.False(t, applied, "applyPlan must apply nothing")
 			expect.Equal(t, s.st.version, before, "the state must keep its version")
 		})
+
+		t.Run("drops the Verifier of a log key that no call asked for between two snapshots that it takes",
+			func(t *testing.T) {
+				t.Parallel()
+				b := newInternalLog(t, "example.com/b")
+				f := newInternalFixture(t, l, b)
+				behind := f.server(t)
+				s := f.server(t)
+				l.advance(t, behind, 0, 5, nil)
+
+				before, err := behind.keys.verifier(l.signer.Key())
+				assert.NoError(t, err, "the keyring must resolve the key")
+
+				_, err = s.sync(bounded(t), "")
+				assert.NoError(t, err, "sync must catch up to the head")
+				assert.NoError(t, s.snapshot(bounded(t)), "the first snapshot must install")
+
+				_, err = behind.sync(bounded(t), "")
+				assert.NoError(t, err, "sync must take the first snapshot")
+
+				b.advance(t, s, 0, 5, nil)
+				assert.NoError(t, s.snapshot(bounded(t)), "the second snapshot must install")
+
+				_, err = behind.sync(bounded(t), "")
+				assert.NoError(t, err, "sync must take the second snapshot")
+
+				got, err := behind.keys.verifier(l.signer.Key())
+				assert.NoError(t, err, "the keyring must resolve the key")
+				assert.NotEqual(t, got, before, "the second snapshot must drop the Verifier", assert.ByIdentity())
+			})
 	})
 
 	t.Run("walk", func(t *testing.T) {
