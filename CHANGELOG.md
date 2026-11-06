@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.40.0
+
+### Minor Changes
+
+- 81da74c: **Breaking:** Give each key set of `witness.Log` its parties and a threshold of them in `witness.KeySet`.
+
+### Patch Changes
+
+- f2d6d83: Fix `witness.Server` to drop the Verifier of each log key that no call asked for between two snapshots.
+
 ## 0.39.0
 
 ### Minor Changes
