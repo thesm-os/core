@@ -445,6 +445,25 @@ func TestOption(t *testing.T) {
 			assert.Equal(t, string(got), body, "Fetch must return the body over TLS")
 		})
 
+		t.Run("leaves the configuration of the caller unchanged", func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = io.WriteString(w, body)
+			}))
+			t.Cleanup(srv.Close)
+
+			transport, ok := srv.Client().Transport.(*http.Transport)
+			assert.True(t, ok, "the client of httptest must have an http.Transport")
+
+			shared := &tls.Config{RootCAs: transport.TLSClientConfig.RootCAs, MinVersion: tls.VersionTLS12}
+			c, err := httpclient.New(dependency, required, loopback, httpclient.WithTLS(shared))
+			assert.NoError(t, err, "New must accept the options")
+
+			_, err = fetch(t, c, http.MethodGet, srv.URL, http.NoBody, nil)
+			assert.NoError(t, err, "Fetch must verify the certificate of the server")
+			assert.Empty(t, shared.NextProtos, "the transport must not write the configuration of the caller")
+		})
+
 		t.Run("makes Fetch return an Integrity error for a certificate that fails verification", func(t *testing.T) {
 			t.Parallel()
 			srv := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))

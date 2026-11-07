@@ -143,8 +143,9 @@ func (s series) attrs() []telemetry.Attr {
 //
 // # Allocation contract
 //
-// New allocates the client, its transport and its instruments. A call
-// allocates as the package documentation states.
+// New allocates the client, its transport, the copy of the configuration of
+// [WithTLS] and its instruments. A call allocates as the package
+// documentation states.
 type Client struct {
 	http       *http.Client
 	logger     *slog.Logger
@@ -236,7 +237,7 @@ func New(name string, opts ...Option) (*Client, error) {
 
 	transport := &http.Transport{
 		DialContext:           dial,
-		TLSClientConfig:       s.tls,
+		TLSClientConfig:       s.tls.Clone(),
 		TLSHandshakeTimeout:   max(s.tlsHandshakeTimeout, 0),
 		IdleConnTimeout:       max(s.idleConnTimeout, 0),
 		MaxIdleConnsPerHost:   s.maxIdleConnsPerHost,

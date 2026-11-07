@@ -178,7 +178,9 @@ func WithRetrier(r *resilience.Retrier) Option {
 }
 
 // WithTLS sets the TLS configuration of the connections of the client. The
-// default is the configuration of net/http's Transport.
+// default is the configuration of net/http's Transport. New gives the
+// transport a copy of cfg, because the transport writes its NextProtos, so
+// many clients can share one cfg.
 func WithTLS(cfg *tls.Config) Option {
 	return func(s *settings) { s.tls = cfg }
 }
