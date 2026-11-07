@@ -292,11 +292,14 @@ func BenchmarkFence(b *testing.B) {
 // fencedStore is the reference fenced writer: a toy keyed store
 // whose every write validates its handle's epoch against a durable
 // watermark, atomically under one lock. It exists to be the first
-// subject of epochtest.AssertFencedWriter.
+// subject of epochtest.AssertFencedWriter. A strict store grants each
+// scope to one writer at a time, so it refuses a handle at epoch.Zero
+// once its watermark is above zero.
 type fencedStore struct {
-	mu   sync.Mutex
-	wm   *epoch.Watermark
-	data map[string]string
+	mu     sync.Mutex
+	wm     *epoch.Watermark
+	data   map[string]string
+	strict bool
 }
 
 type fencedHandle struct {
@@ -308,11 +311,21 @@ func (s *fencedStore) open(e epoch.Epoch) fencedHandle {
 	return fencedHandle{s: s, e: e}
 }
 
+// admit applies the fence laws of the store to the epoch of h. The caller
+// holds the lock of the store.
+func (h fencedHandle) admit() error {
+	if h.s.strict && h.e == epoch.Zero && h.s.wm.Current() != epoch.Zero {
+		return epoch.ErrFenced
+	}
+
+	return h.s.wm.Admit(h.e)
+}
+
 func (h fencedHandle) set(k, v string) error {
 	h.s.mu.Lock()
 	defer h.s.mu.Unlock()
 
-	if err := h.s.wm.Admit(h.e); err != nil {
+	if err := h.admit(); err != nil {
 		return err
 	}
 	h.s.data[k] = v
@@ -324,7 +337,7 @@ func (h fencedHandle) clear(k string) error {
 	h.s.mu.Lock()
 	defer h.s.mu.Unlock()
 
-	if err := h.s.wm.Admit(h.e); err != nil {
+	if err := h.admit(); err != nil {
 		return err
 	}
 	delete(h.s.data, k)
@@ -334,10 +347,20 @@ func (h fencedHandle) clear(k string) error {
 
 func TestFencedWriterConformance(t *testing.T) {
 	t.Parallel()
+	epochtest.AssertFencedWriter(t, fencedSystem(false))
+}
 
-	epochtest.AssertFencedWriter(t, epochtest.FencedSystem[fencedHandle]{
+func TestStrictFencedWriterConformance(t *testing.T) {
+	t.Parallel()
+	epochtest.AssertFencedWriter(t, fencedSystem(true))
+}
+
+// fencedSystem returns the fenced writer of the reference store, strict or
+// not, with a store of its own for each scope.
+func fencedSystem(strict bool) epochtest.FencedSystem[fencedHandle] {
+	return epochtest.FencedSystem[fencedHandle]{
 		NewScope: func() epochtest.FencedScope[fencedHandle] {
-			s := &fencedStore{wm: epoch.NewWatermark(0), data: map[string]string{}}
+			s := &fencedStore{wm: epoch.NewWatermark(0), data: map[string]string{}, strict: strict}
 
 			return epochtest.FencedScope[fencedHandle]{
 				Open: func(e epoch.Epoch) (fencedHandle, error) {
@@ -360,5 +383,6 @@ func TestFencedWriterConformance(t *testing.T) {
 			"set":   func(h fencedHandle) error { return h.set("k", "v") },
 			"clear": func(h fencedHandle) error { return h.clear("k") },
 		},
-	})
+		RefusesZero: strict,
+	}
 }

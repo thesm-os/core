@@ -4,7 +4,9 @@
 // Package epochtest holds the conformance suite for the fencing laws
 // of [go.thesmos.sh/core/epoch]: admit-equal, zero-bypass, and
 // rejection without mutation, asserted against a consumer's entire
-// fenced write surface. Hand-rolled; nothing here is generated.
+// fenced write surface. A writer that grants each scope to one writer
+// at a time declares that it refuses epoch.Zero instead of the
+// zero-bypass law. Hand-rolled; nothing here is generated.
 package epochtest
 
 import (
@@ -42,6 +44,11 @@ type FencedScope[H any] struct {
 type FencedSystem[H any] struct {
 	NewScope func() FencedScope[H]
 	Writes   map[string]func(H) error
+
+	// RefusesZero declares a writer that grants each scope to one writer
+	// at a time, so a scope with an authority refuses a handle at
+	// epoch.Zero.
+	RefusesZero bool
 }
 
 // AssertFencedWriter drives every named write through a fenced
@@ -57,6 +64,11 @@ type FencedSystem[H any] struct {
 //     advances the watermark;
 //   - after supersession, a fresh handle at the new epoch succeeds
 //     where the superseded handle fails.
+//
+// A writer that declares [FencedSystem.RefusesZero] replaces the law of
+// epoch.Zero: once the scope has an authority, Open at Zero or a write
+// through its handle returns an error matching epoch.ErrFenced, which
+// classifies as errs.Conflict, and leaves the scope unmutated.
 func AssertFencedWriter[H any](t *testing.T, sys FencedSystem[H]) {
 	t.Helper()
 
@@ -100,6 +112,32 @@ func AssertFencedWriter[H any](t *testing.T, sys FencedSystem[H]) {
 				assert.NoError(t, write(h),
 					"the new authority's writes must be admitted")
 			})
+
+			if sys.RefusesZero {
+				t.Run("zero-epoch handle is refused once the scope has an authority", func(t *testing.T) {
+					var werr error
+
+					assert.Pure(t, scope.Snapshot, func() {
+						h, err := scope.Open(epoch.Zero)
+						if err != nil {
+							werr = err
+
+							return
+						}
+
+						werr = write(h)
+					}, "a refused zero-epoch handle must mutate nothing")
+					assert.ErrorIs(t, werr, epoch.ErrFenced,
+						"Open at Zero or its write must return ErrFenced once the scope has an authority")
+					assert.Equal(t, errs.Classify(werr), errs.Conflict, "the refusal must classify as Conflict")
+
+					cur, err := scope.Open(3)
+					assert.NoError(t, err, "Open at the current epoch must succeed")
+					assert.NoError(t, write(cur), "the refusal must leave the current authority admitted")
+				})
+
+				return
+			}
 
 			t.Run("zero-epoch handle bypasses fencing", func(t *testing.T) {
 				h, err := scope.Open(epoch.Zero)
