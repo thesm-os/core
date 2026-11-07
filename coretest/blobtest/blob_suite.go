@@ -599,7 +599,7 @@ func StoreSuite() conform.Suite[blob.Store] {
 				ID:        StoreChecks.Put.StorePutStoresAValidContentType(),
 				Statement: "Put stores each content type that blob.ValidContentType accepts as given, and Get and Stat return it",
 				Apply:     StorePutStoresAValidContentType,
-				Defect:    storeTrimsTheContentType,
+				Defect:    storeLowercasesTheContentType,
 			},
 			{
 				ID:        StoreChecks.Put.StorePutStoresAnEmptyBody(),
@@ -1384,4 +1384,4 @@ func rangeReaderReadRangeIgnoresCancel(h *RangeReaderHandle) blob.RangeReader {
 	return &rangeReaderReadRangeIgnoresCancelDefect{rangeReaderOverEmbedded: h.Fresh()}
 }
 
-// dokimi:provenance sha256:24e17a9e6250661eb46c24a9b5ad64f5c43799fc2492b12c66c39a57df7e6a9e
+// dokimi:provenance sha256:d58a8dedebd6e0fe87c6f70d72d8cb89e58494cab9a1dcea832274e0279b5491

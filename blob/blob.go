@@ -131,17 +131,21 @@ func ValidKey(key string) bool {
 
 // ValidContentType reports whether contentType can be the content type of
 // an object: at most [MaxContentTypeLen] bytes, each a printable ASCII
-// character from space (0x20) to tilde (0x7E). The empty string is valid
-// and means unspecified.
+// character from space (0x20) to tilde (0x7E), with no space as its first
+// or last byte. The empty string is valid and means unspecified.
 //
 // Every backend of the seam stores a content type that ValidContentType
-// accepts. ValidContentType does not parse the media type.
+// accepts. An HTTP field value has no whitespace at either end (RFC 9110,
+// section 5.5), so a store that sends the content type as a header cannot
+// keep such a space. ValidContentType does not parse the media type.
 //
 // # Allocation contract
 //
 // Zero alloc.
 func ValidContentType(contentType string) bool {
-	if len(contentType) > MaxContentTypeLen {
+	if len(contentType) > MaxContentTypeLen ||
+		strings.HasPrefix(contentType, " ") || strings.HasSuffix(contentType, " ") {
+
 		return false
 	}
 

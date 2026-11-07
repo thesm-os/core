@@ -402,7 +402,7 @@ func StorePutRefusesAnInvalidContentType(h *StoreHandle) {
 // StorePutStoresAValidContentType checks that Put stores each content type that
 // blob.ValidContentType accepts as given, and Get and Stat return it.
 //
-//dokimi:check blob.Store.Put defect=storeTrimsTheContentType
+//dokimi:check blob.Store.Put defect=storeLowercasesTheContentType
 func StorePutStoresAValidContentType(h *StoreHandle) {
 	s := h.Subject()
 	for name, contentType := range validContentTypes() {
@@ -730,6 +730,8 @@ func invalidKeys() map[string]string {
 func invalidContentTypes() map[string]string {
 	return map[string]string{
 		"a content type over MaxContentTypeLen bytes": strings.Repeat("a", blob.MaxContentTypeLen+1),
+		"a leading space":      " text/plain",
+		"a trailing space":     "text/plain ",
 		"a line break":         "text/plain\r\n",
 		"a horizontal tab":     "text/plain;\tcharset=utf-8",
 		"the delete byte":      "text/plain\x7f",
@@ -740,8 +742,12 @@ func invalidContentTypes() map[string]string {
 // validContentTypes returns content types that blob.ValidContentType accepts,
 // each named by the edge of the rule that it tests.
 func validContentTypes() map[string]string {
+	// A content type keeps its space between two other characters, because
+	// no store over HTTP keeps a space at either end.
 	printable := make([]byte, 0, '~'-' '+1)
-	for c := byte(' '); c <= '~'; c++ {
+	printable = append(printable, '!', ' ')
+
+	for c := byte('"'); c <= '~'; c++ {
 		printable = append(printable, c)
 	}
 
@@ -1196,16 +1202,16 @@ func storeAcceptsALineBreak(h *StoreHandle) blob.Store {
 		}))
 }
 
-// storeTrimsTheContentType returns the planted defect of
+// storeLowercasesTheContentType returns the planted defect of
 // StorePutStoresAValidContentType: a store whose Put of keyTypedOK stores the
-// content type without its leading and trailing spaces.
-func storeTrimsTheContentType(h *StoreHandle) blob.Store {
+// content type in lowercase, as a parse of the media type returns it.
+func storeLowercasesTheContentType(h *StoreHandle) blob.Store {
 	sound := memory.New(fake.New(origin))
 
 	return NewStoreStub(h, StoreStubDelegateTo(sound),
 		WithStorePut(func(ctx context.Context, key string, r io.Reader, opts blob.PutOptions) (blob.Info, error) {
 			if key == keyTypedOK {
-				opts.ContentType = strings.TrimSpace(opts.ContentType)
+				opts.ContentType = strings.ToLower(opts.ContentType)
 			}
 
 			return sound.Put(ctx, key, r, opts)

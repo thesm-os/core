@@ -43,8 +43,9 @@ var (
 	keys = prop.StringMatching(keyInner + `{0,20}` + keyEdge + `(/` + keyEdge + keyInner + `{0,20}){0,4}`)
 
 	// printable generates content types of printable ASCII characters
-	// within MaxContentTypeLen bytes.
-	printable = prop.String(prop.Alphabet(printableASCII()), prop.MaxSize(blob.MaxContentTypeLen))
+	// within MaxContentTypeLen bytes, without a space at either end.
+	printable = prop.String(prop.Alphabet(printableASCII()), prop.MaxSize(blob.MaxContentTypeLen)).
+			Filter(func(s string) bool { return !strings.HasPrefix(s, " ") && !strings.HasSuffix(s, " ") })
 )
 
 // decorated wraps a store and returns it from Unwrap, as a tracing
@@ -180,8 +181,22 @@ func TestValidContentType(t *testing.T) {
 	t.Run("reports true for printable ASCII within MaxContentTypeLen bytes", func(t *testing.T) {
 		t.Parallel()
 		prop.True(t, blob.ValidContentType, "printable ASCII within the bound must be a valid content type",
-			prop.Using(printable), prop.Example(""), prop.Example("text/plain; charset=utf-8"), prop.Example(" ~"),
+			prop.Using(printable), prop.Example(""), prop.Example("text/plain; charset=utf-8"), prop.Example("! ~"),
 			prop.Example(strings.Repeat("a", blob.MaxContentTypeLen)))
+	})
+
+	t.Run("reports false for a space at the start or at the end", func(t *testing.T) {
+		t.Parallel()
+		prop.ForAll(t, "a space at either end must make the content type invalid", func(c *prop.Case) {
+			body := c.Draw(prop.String(prop.Alphabet(printableASCII()), prop.MaxSize(20)), "body")
+
+			contentType := body + " "
+			if c.Draw(prop.Boolean(), "leading") {
+				contentType = " " + body
+			}
+
+			assert.False(c, blob.ValidContentType(contentType), "a space at either end must be refused")
+		})
 	})
 
 	t.Run("reports false for a content type over MaxContentTypeLen bytes", func(t *testing.T) {
