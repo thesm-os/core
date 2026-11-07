@@ -4,7 +4,7 @@ title: A Content Type Is Bounded
 status: Accepted
 date: 2026-09-30
 supersedes: none
-superseded-by: none
+superseded-by: ADR-0079
 ---
 
 <!--
@@ -17,6 +17,10 @@ superseded-by: none
 ## Status
 
 Accepted
+
+[ADR-0079](0079-a-content-type-has-no-space-at-either-end.md) supersedes
+the bytes of a content type. The bound of 255 bytes and the other
+decisions remain in force.
 
 ## Context
 

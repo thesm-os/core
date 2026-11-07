@@ -7,7 +7,7 @@ created: 2026-08-05
 updated: 2026-08-05
 discussion: none
 supersedes: none
-superseded-by: none
+superseded-by: ADR-0081
 produces-adr: none
 ---
 

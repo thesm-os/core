@@ -92,7 +92,7 @@ Start from [`docs/templates/RFC.md`](../templates/RFC.md).
 | [0023](0023-resilience-primitives.md) | Resilience Primitives | Accepted |
 | [0024](0024-request-coalescing.md) | Request Coalescing | Accepted |
 | [0025](0025-fixed-point-decimals.md) | Fixed-Point Decimals | Accepted |
-| [0026](0026-ordering-and-fencing.md) | Ordering and Fencing | Accepted |
+| [0026](0026-ordering-and-fencing.md) | Ordering and Fencing | Accepted, the law of Zero of `coretest/epochtest` superseded by [ADR-0081](../adr/0081-a-fenced-writer-may-refuse-epoch-zero.md) |
 | [0027](0027-content-addressed-storage.md) | Content-Addressed Storage | Accepted |
 | [0028](0028-named-object-storage.md) | Named Object Storage | Accepted |
 | [0029](0029-domain-separated-tree-hashing.md) | Domain-Separated Tree Hashing | Accepted |

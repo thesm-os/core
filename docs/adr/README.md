@@ -99,7 +99,7 @@ Start from [`docs/templates/ADR.md`](../templates/ADR.md).
 | [0039](0039-emit-methods-do-not-panic.md) | Emit Methods Do Not Panic | Accepted |
 | [0040](0040-an-event-count-is-awaited-with-a-context.md) | An Event Count Is Awaited With a Context | Accepted |
 | [0041](0041-a-custodian-creates-wrapping-keys.md) | A Custodian Creates Wrapping Keys | Accepted |
-| [0042](0042-a-content-type-is-bounded.md) | A Content Type Is Bounded | Accepted |
+| [0042](0042-a-content-type-is-bounded.md) | A Content Type Is Bounded | Accepted, the bytes of a content type superseded by [0079](0079-a-content-type-has-no-space-at-either-end.md) |
 | [0043](0043-core-structs-have-canonical-codecs.md) | Core Structs Have Canonical kanon Codecs | Accepted |
 | [0044](0044-a-blob-reader-may-fail-after-removal.md) | A Blob Reader May Fail Once Its Version Is Removed | Accepted |
 | [0045](0045-core-ships-io-built-on-the-standard-library.md) | Core Ships IO Built on the Standard Library | Accepted |
@@ -136,5 +136,8 @@ Start from [`docs/templates/ADR.md`](../templates/ADR.md).
 | [0076](0076-fragment-partitions-are-read-through-the-cache.md) | Fragment Partitions Are Read Through the Cache | Accepted |
 | [0077](0077-expiry-checks-take-their-timing-from-the-store.md) | The Checks of an Expiry Take Their Timing from the Store | Accepted |
 | [0078](0078-witness-key-sets-have-parties-and-a-threshold.md) | The Key Sets of a Witness Log Have Parties and a Threshold | Accepted |
+| [0079](0079-a-content-type-has-no-space-at-either-end.md) | A Content Type Has No Space at Either End | Accepted |
+| [0080](0080-a-custodian-refuses-an-empty-data-key.md) | A Custodian Refuses an Empty Data Key | Accepted |
+| [0081](0081-a-fenced-writer-may-refuse-epoch-zero.md) | A Fenced Writer May Refuse Epoch Zero | Accepted |
 
 [nygard]: https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions
