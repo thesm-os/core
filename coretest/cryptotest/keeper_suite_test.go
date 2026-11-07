@@ -84,8 +84,8 @@ func TestKeeperSuite(t *testing.T) {
 		)
 		assert.Equal(
 			t,
-			string(cryptotest.KeeperChecks.Wrap.KeeperRoundTripsAnEmptyKey()),
-			"Keeper.Wrap/keeper-round-trips-an-empty-key",
+			string(cryptotest.KeeperChecks.Wrap.KeeperRefusesAnEmptyKey()),
+			"Keeper.Wrap/keeper-refuses-an-empty-key",
 			"the identity of the check joins the callable and the segment of the check",
 		)
 		assert.Equal(
@@ -194,4 +194,4 @@ func BenchmarkKeeperSuite(b *testing.B) {
 	})
 }
 
-// dokimi:provenance sha256:e7cc3e053c3007fb501bebd143ac326beb57a15869841b21f857bf654bdfcc42
+// dokimi:provenance sha256:86cc4e10bf6d03f15123bf3d7a11696bed6489f558b1d7eac29fdd269f16a7c4

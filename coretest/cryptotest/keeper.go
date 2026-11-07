@@ -98,17 +98,16 @@ func KeeperNamesItsKey(h *KeeperHandle) {
 	assert.Deterministic(h, func(k crypto.Keeper) (string, error) { return k.KeyID(), nil }, k, h.Statement())
 }
 
-// KeeperRoundTripsAnEmptyKey checks that Unwrap returns an empty data key for
-// the Wrap of an empty data key.
+// KeeperRefusesAnEmptyKey checks that Wrap of a nil and of an empty data key
+// returns an error that wraps crypto.ErrKeySize.
 //
-//dokimi:check Keeper.Wrap defect=keeperRefusesAnEmptyKey
-func KeeperRoundTripsAnEmptyKey(h *KeeperHandle) {
+//dokimi:check Keeper.Wrap defect=keeperWrapsAnEmptyKey
+func KeeperRefusesAnEmptyKey(h *KeeperHandle) {
 	k := h.Subject()
-	wrapped, err := k.Wrap(h.Context(), nil)
-	assert.NoError(h, err, h.Statement())
-	got, err := k.Unwrap(h.Context(), wrapped)
-	assert.NoError(h, err, h.Statement())
-	assert.Empty(h, got, h.Statement())
+	_, err := k.Wrap(h.Context(), nil)
+	assert.ErrorIs(h, err, crypto.ErrKeySize, h.Statement())
+	_, err = k.Wrap(h.Context(), []byte{})
+	assert.ErrorIs(h, err, crypto.ErrKeySize, h.Statement())
 }
 
 // KeeperUnwrapsUnderASecondInstance checks that a second instance over the same
@@ -187,6 +186,8 @@ func AssertKeyGeneratorContract(tb assert.TB, g crypto.KeyGenerator) {
 //   - It fails to unwrap through UnwrapAAD with other aad or empty aad, and
 //     through Unwrap.
 //   - Material of Wrap unwraps through UnwrapAAD with empty aad.
+//   - WrapAAD returns an error that wraps [crypto.ErrKeySize] for an empty
+//     data key.
 //
 // The calls take the context of tb.
 func AssertAADKeeperContract(tb assert.TB, k crypto.AADKeeper) {
@@ -213,6 +214,9 @@ func AssertAADKeeperContract(tb assert.TB, k crypto.AADKeeper) {
 	assert.RoundTrip(tb, func(dek []byte) ([]byte, error) { return k.Wrap(ctx, dek) },
 		func(w []byte) ([]byte, error) { return k.UnwrapAAD(ctx, w, nil) }, keeperDataKey,
 		"UnwrapAAD with empty aad returns the data key that Wrap wrapped")
+
+	_, err = k.WrapAAD(ctx, nil, aadBound)
+	assert.ErrorIs(tb, err, crypto.ErrKeySize, "WrapAAD returns ErrKeySize for an empty data key")
 }
 
 // AssertAADKeyGeneratorContract asserts the [crypto.AADKeyGenerator]
@@ -375,11 +379,16 @@ type stdlibKeeper struct {
 // KeyID returns keeperSoundKeyID.
 func (stdlibKeeper) KeyID() string { return keeperSoundKeyID }
 
-// Wrap seals dek under a nonce that the AEAD draws, and returns the error of
-// ctx when ctx has ended before the call.
+// Wrap seals dek under a nonce that the AEAD draws. It returns the error of
+// ctx when ctx has ended before the call, and crypto.ErrKeySize for an empty
+// dek.
 func (k stdlibKeeper) Wrap(ctx context.Context, dek []byte) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+
+	if len(dek) == 0 {
+		return nil, crypto.ErrKeySize
 	}
 
 	//nolint:gosec // G407: the AEAD of GCM with random nonces draws the nonce of each Seal
@@ -494,19 +503,24 @@ func keeperHasNoKeyID(h *KeeperHandle) crypto.Keeper {
 		WithKeeperKeyID(func() string { return "" }))
 }
 
-// keeperRefusesAnEmptyKey returns the planted defect of
-// KeeperRoundTripsAnEmptyKey: a Keeper whose Wrap of an empty data key returns
-// crypto.ErrKeySize.
-func keeperRefusesAnEmptyKey(h *KeeperHandle) crypto.Keeper {
+// keeperWrapsAnEmptyKey returns the planted defect of KeeperRefusesAnEmptyKey:
+// a Keeper whose Wrap seals an empty data key, as AES-GCM seals an empty
+// plaintext.
+func keeperWrapsAnEmptyKey(h *KeeperHandle) crypto.Keeper {
 	sound := newStdlibKeeper(h, aeadSoundKey)
 
 	return NewKeeperStub(h, KeeperStubDelegateTo(sound),
 		WithKeeperWrap(func(ctx context.Context, dek []byte) ([]byte, error) {
-			if len(dek) == 0 {
-				return nil, crypto.ErrKeySize
+			if len(dek) != 0 {
+				return sound.Wrap(ctx, dek)
 			}
 
-			return sound.Wrap(ctx, dek)
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+
+			//nolint:gosec // G407: the AEAD of GCM with random nonces draws the nonce of each Seal
+			return sound.aead.Seal(nil, nil, dek, nil), nil
 		}))
 }
 

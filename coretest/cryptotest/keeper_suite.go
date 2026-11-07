@@ -67,10 +67,11 @@ type keeperWrap struct {
 	conform.Callable[crypto.Keeper]
 }
 
-// KeeperRoundTripsAnEmptyKey returns the identity of the check that Unwrap
-// returns an empty data key for the Wrap of an empty data key.
-func (c keeperWrap) KeeperRoundTripsAnEmptyKey() conform.ID[crypto.Keeper] {
-	return c.Check("keeper-round-trips-an-empty-key")
+// KeeperRefusesAnEmptyKey returns the identity of the check that Wrap of a
+// nil and of an empty data key returns an error that wraps
+// crypto.ErrKeySize.
+func (c keeperWrap) KeeperRefusesAnEmptyKey() conform.ID[crypto.Keeper] {
+	return c.Check("keeper-refuses-an-empty-key")
 }
 
 // KeeperWrapsNonDeterministically returns the identity of the check that
@@ -290,10 +291,10 @@ func KeeperSuite() conform.Suite[crypto.Keeper] {
 				Defect:    keeperHasNoKeyID,
 			},
 			{
-				ID:        KeeperChecks.Wrap.KeeperRoundTripsAnEmptyKey(),
-				Statement: "Unwrap returns an empty data key for the Wrap of an empty data key",
-				Apply:     KeeperRoundTripsAnEmptyKey,
-				Defect:    keeperRefusesAnEmptyKey,
+				ID:        KeeperChecks.Wrap.KeeperRefusesAnEmptyKey(),
+				Statement: "Wrap of a nil and of an empty data key returns an error that wraps crypto.ErrKeySize",
+				Apply:     KeeperRefusesAnEmptyKey,
+				Defect:    keeperWrapsAnEmptyKey,
 			},
 			{
 				ID:        KeeperChecks.Wrap.KeeperWrapsNonDeterministically(),
@@ -578,4 +579,4 @@ func keeperUnwrapIgnoresCancel(h *KeeperHandle) crypto.Keeper {
 	return &keeperUnwrapIgnoresCancelDefect{keeperOverEmbedded: h.Fresh()}
 }
 
-// dokimi:provenance sha256:de03533eaa66f1b1fd1207ae21491a3c52dcb12a3a232efeb2c4f224f86283b6
+// dokimi:provenance sha256:34e0c64ff2540bf02dfe051c877b54f84c16930f646b81df1bdae95d189aeb27

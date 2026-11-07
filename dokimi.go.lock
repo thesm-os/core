@@ -216,7 +216,7 @@ go.thesmos.sh/core/crypto	keeper.unwrap/smoke	smoke	check	-
 go.thesmos.sh/core/crypto	keeper.unwrap/smoke#generated	smoke	check	-
 go.thesmos.sh/core/crypto	keeper.wrap/cancel	cancel	check	-
 go.thesmos.sh/core/crypto	keeper.wrap/cancel#generated	cancel	check	-
-go.thesmos.sh/core/crypto	keeper.wrap/keeper-round-trips-an-empty-key	keeper-round-trips-an-empty-key	authored	-
+go.thesmos.sh/core/crypto	keeper.wrap/keeper-refuses-an-empty-key	keeper-refuses-an-empty-key	authored	-
 go.thesmos.sh/core/crypto	keeper.wrap/keeper-wraps-non-deterministically	keeper-wraps-non-deterministically	authored	-
 go.thesmos.sh/core/crypto	keeper.wrap/smoke	smoke	check	-
 go.thesmos.sh/core/crypto	keeper.wrap/smoke#generated	smoke	check	-

@@ -144,6 +144,25 @@ func TestKeeper(t *testing.T) {
 			assert.Equal(t, got[0].Contract, "material that WrapAAD bound to one aad does not unwrap with another",
 				"the contract fails at the UnwrapAAD with another aad")
 		})
+
+		t.Run("fails for a custodian that wraps an empty data key", func(t *testing.T) {
+			t.Parallel()
+			local := newLocal(t)
+			k := cryptotest.NewAADKeeperStub(t, cryptotest.AADKeeperStubDelegateTo(local),
+				cryptotest.WithAADKeeperWrapAAD(func(ctx context.Context, dek, aad []byte) ([]byte, error) {
+					if len(dek) == 0 {
+						return local.WrapAAD(ctx, []byte("a data key of the wrong size"), aad)
+					}
+
+					return local.WrapAAD(ctx, dek, aad)
+				}))
+			got := assert.Rejects(t, "a custodian that wraps an empty data key fails the contract", func(tb assert.TB) {
+				cryptotest.AssertAADKeeperContract(tb, k)
+			})
+			assert.Length(t, got, 1, "the contract fails once")
+			assert.Equal(t, got[0].Contract, "WrapAAD returns ErrKeySize for an empty data key",
+				"the contract fails at the WrapAAD of an empty data key")
+		})
 	})
 
 	t.Run("AssertAADKeyGeneratorContract", func(t *testing.T) {

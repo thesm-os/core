@@ -133,10 +133,15 @@ func (k *Keeper) Wrap(ctx context.Context, dek []byte) ([]byte, error) {
 // nonce for each call, so wrapping one data key twice produces
 // different bytes. Random nonces are safe for at most 2^32 wraps under
 // one root key. Returns the error of ctx when ctx has ended before the
-// call, and [crypto.ErrKeyDestroyed] after the key is destroyed.
+// call, [crypto.ErrKeySize] for an empty dek, and [crypto.ErrKeyDestroyed]
+// after the key is destroyed.
 func (k *Keeper) WrapAAD(ctx context.Context, dek, aad []byte) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+
+	if len(dek) == 0 {
+		return nil, crypto.ErrKeySize
 	}
 
 	a, err := k.cipher()

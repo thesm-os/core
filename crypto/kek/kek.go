@@ -197,9 +197,9 @@ func (k *Keeper) KeyID() string { return k.keyID }
 // wrapping key from the KEK and a salt read from r at its first Wrap,
 // and derives a new one after every 2^30 wraps.
 //
-// Returns the error of ctx when ctx has ended before the call, the error
-// of r when a derivation reads a salt, and [ErrClosed] after
-// [Keeper.Close].
+// Returns the error of ctx when ctx has ended before the call,
+// [crypto.ErrKeySize] for an empty dek, the error of r when a derivation
+// reads a salt, and [ErrClosed] after [Keeper.Close].
 //
 // # Allocation contract
 //
@@ -208,6 +208,10 @@ func (k *Keeper) KeyID() string { return k.keyID }
 func (k *Keeper) Wrap(ctx context.Context, dek []byte) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+
+	if len(dek) == 0 {
+		return nil, crypto.ErrKeySize
 	}
 
 	k.mu.RLock()

@@ -432,6 +432,16 @@ func TestKeeper(t *testing.T) {
 			assert.Length(t, sealed, wrappedDEKSize, "a wrapped DEK must be a salt and an envelope")
 		})
 
+		t.Run("returns ErrKeySize for an empty DEK", func(t *testing.T) {
+			t.Parallel()
+			k, _ := mustGenerate(t, newParent(t), randcrypto.New(), keyIDA)
+
+			_, err := k.Wrap(t.Context(), nil)
+			expect.ErrorIs(t, err, crypto.ErrKeySize, "Wrap must refuse a nil DEK")
+			_, err = k.Wrap(t.Context(), []byte{})
+			expect.ErrorIs(t, err, crypto.ErrKeySize, "Wrap must refuse a DEK of no bytes")
+		})
+
 		t.Run("binds the key ID into every wrapped DEK", func(t *testing.T) {
 			t.Parallel()
 			parent := newParent(t)

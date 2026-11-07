@@ -37,8 +37,9 @@ var (
 	ErrDigestText = errs.WithClass(errors.New("crypto: digest text must be lowercase hexadecimal"), errs.Invalid)
 
 	// ErrKeySize is returned when a key's length does not match any
-	// size the algorithm accepts, and when a requested key size is not
-	// positive. Classifies as Invalid.
+	// size the algorithm accepts, when a requested key size is not
+	// positive, and by Keeper.Wrap and AADKeeper.WrapAAD for an empty
+	// data key. Classifies as Invalid.
 	ErrKeySize = errs.WithClass(errors.New("crypto: key length does not match the algorithm"), errs.Invalid)
 
 	// ErrCiphertextShort is returned by [Open], [AppendOpen], and

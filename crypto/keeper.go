@@ -51,6 +51,10 @@ type Keeper interface {
 	// the same data key must produce different bytes. Otherwise a
 	// holder of two wrapped keys could tell whether the underlying
 	// data keys are equal without unwrapping either.
+	//
+	// Wrap returns an error that wraps [ErrKeySize] for an empty data
+	// key, because no key-wrap algorithm and no hosted custodian wraps
+	// one.
 	Wrap(ctx context.Context, dek []byte) ([]byte, error)
 
 	// Unwrap decrypts a data key. Material wrapped under a different
@@ -147,7 +151,8 @@ type AADKeeper interface {
 
 	// WrapAAD encrypts a data key and binds aad to the result. Wrap on
 	// the same value behaves as WrapAAD with empty aad. Implementations
-	// must not wrap deterministically, as for Wrap.
+	// must not wrap deterministically, as for Wrap, and return an error
+	// that wraps [ErrKeySize] for an empty data key.
 	WrapAAD(ctx context.Context, dek, aad []byte) ([]byte, error)
 
 	// UnwrapAAD decrypts a data key that WrapAAD wrapped with the same

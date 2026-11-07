@@ -211,6 +211,16 @@ func TestKeeper(t *testing.T) {
 				return err
 			}, "Wrap must return the error of a context that ended")
 		})
+
+		t.Run("returns ErrKeySize for an empty data key", func(t *testing.T) {
+			t.Parallel()
+			keeper := mustNew(t, testKeyID, rootKey)
+
+			_, err := keeper.Wrap(t.Context(), nil)
+			expect.ErrorIs(t, err, crypto.ErrKeySize, "Wrap must refuse a nil data key")
+			_, err = keeper.Wrap(t.Context(), []byte{})
+			expect.ErrorIs(t, err, crypto.ErrKeySize, "Wrap must refuse a data key of no bytes")
+		})
 	})
 
 	t.Run("WrapAAD", func(t *testing.T) {
@@ -224,6 +234,16 @@ func TestKeeper(t *testing.T) {
 
 				return err
 			}, "WrapAAD must return the error of a context that ended")
+		})
+
+		t.Run("returns ErrKeySize for an empty data key", func(t *testing.T) {
+			t.Parallel()
+			keeper := mustNew(t, testKeyID, rootKey)
+
+			_, err := keeper.WrapAAD(t.Context(), nil, []byte("aad"))
+			expect.ErrorIs(t, err, crypto.ErrKeySize, "WrapAAD must refuse a nil data key")
+			_, err = keeper.WrapAAD(t.Context(), []byte{}, []byte("aad"))
+			expect.ErrorIs(t, err, crypto.ErrKeySize, "WrapAAD must refuse a data key of no bytes")
 		})
 	})
 
