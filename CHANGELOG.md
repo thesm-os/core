@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.41.0
+
+### Minor Changes
+
+- 4e3e25d: Add `epochtest.FencedSystem.RefusesZero` to check a writer that refuses a handle at `epoch.Zero` once a scope has an authority.
+- b718af5: **Breaking:** Make `Keeper.Wrap` and `AADKeeper.WrapAAD` return `crypto.ErrKeySize` for an empty data key, in `localkey`, `kek` and the checks of `cryptotest`.
+- 5d0fe72: **Breaking:** Make `blob.ValidContentType` refuse a content type whose first or last byte is a space.
+
+### Patch Changes
+
+- 7ebcaf9: Fix `httpclient.New` to give its transport a copy of the configuration of `WithTLS`.
+
 ## 0.40.0
 
 ### Minor Changes
