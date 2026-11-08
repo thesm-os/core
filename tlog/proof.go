@@ -257,12 +257,13 @@ func (p *Proof) unmarshal(text []byte, f ProofFormat) error {
 
 	line, rest, _ = bytes.Cut(rest, []byte{lineEnd})
 	if encoded, found := bytes.CutPrefix(line, []byte(extraPrefix)); found {
-		extra, err := strictBase64.AppendDecode(p.Extra, encoded)
+		// UnmarshalFormat empties the part of the extra data that the decode
+		// of a refused line leaves.
+		p.Extra, err = strictBase64.AppendDecode(p.Extra, encoded)
 		if err != nil {
 			return fmt.Errorf("%w: the extra line is not canonical base64", ErrProofText)
 		}
 
-		p.Extra = extra
 		line, rest, _ = bytes.Cut(rest, []byte{lineEnd})
 	}
 

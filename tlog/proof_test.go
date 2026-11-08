@@ -742,16 +742,16 @@ func proof384(tb testing.TB) (tlog.Proof, tlog.ProofFormat, []byte) {
 	tb.Helper()
 
 	p := example(tb)
-	text := sha384Header + "\nextra " + exampleExtra + "\nindex " + strconv.Itoa(exampleIndex) + "\n"
+	text := []byte(sha384Header + "\nextra " + exampleExtra + "\nindex " + strconv.Itoa(exampleIndex) + "\n")
 	h := coresha512.New384()
 	for i := range p.Hashes {
 		p.Hashes[i] = h.Hash(p.Hashes[i].Bytes())
-		text += base64.StdEncoding.EncodeToString(p.Hashes[i].Bytes()) + "\n"
+		text = append(base64.StdEncoding.AppendEncode(text, p.Hashes[i].Bytes()), '\n')
 	}
 
 	f := tlog.ProofFormat{Header: sha384Header, Size: crypto.DigestSize384}
 
-	return p, f, []byte(text + "\n" + exampleCheckpoint)
+	return p, f, append(text, "\n"+exampleCheckpoint...)
 }
 
 // proofsOf generates proofs whose hashes have size bytes: any index, extra
