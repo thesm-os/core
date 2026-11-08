@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.41.1
+
+### Patch Changes
+
+- 74038c5: Fix `sstable.Merger.Close` and `Merger.Reset` to clear the keys of their sources from the memory of the heap.
+
 ## 0.41.0
 
 ### Minor Changes
