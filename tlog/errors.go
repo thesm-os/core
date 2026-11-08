@@ -46,7 +46,9 @@ var (
 	ErrBundle = errs.WithClass(errors.New("tlog: malformed entry bundle"), errs.Integrity)
 
 	// ErrProofText is returned by [Proof.AppendText] and
-	// [Proof.UnmarshalText] for a proof that is not a C2SP tlog-proof. It
+	// [Proof.UnmarshalText] for a proof that is not a C2SP tlog-proof, and by
+	// [Proof.AppendFormat] and [Proof.UnmarshalFormat] for a proof that is not
+	// a text of its [ProofFormat] or for a ProofFormat that is not valid. It
 	// classifies as errs.Invalid.
 	ErrProofText = errs.WithClass(errors.New("tlog: malformed tlog-proof"), errs.Invalid)
 

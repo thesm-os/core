@@ -4,8 +4,10 @@
 package tlog_test
 
 import (
+	"cmp"
 	"encoding/base64"
 	"math"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -52,8 +54,17 @@ const (
 
 // The parts of the texts of the cases of a proof.
 const (
-	// proofHeader is the first line of every proof.
-	proofHeader = "c2sp.org/tlog-proof@v1\n"
+	// c2spHeader is the header line of C2SP tlog-proof v1, and proofHeader
+	// that line with its newline.
+	c2spHeader  = "c2sp.org/tlog-proof@v1"
+	proofHeader = c2spHeader + "\n"
+
+	// sha256Header, sha384Header and sha512Header are the header lines of
+	// formats of SHA-256, SHA-384 and SHA-512 hashes that C2SP does not
+	// define.
+	sha256Header = "example.org/tlog-proof-sha256@v1"
+	sha384Header = "example.org/tlog-proof-sha384@v1"
+	sha512Header = "example.org/tlog-proof-sha512@v1"
 
 	// shortCheckpoint is a checkpoint of the cases that a proof copies
 	// verbatim.
@@ -75,27 +86,31 @@ var exampleHashes = []string{
 	"AHCioX9nLjsrse6YhjRRmk1WUEirVOLLRoOQ6vfO5vk=",
 }
 
-// proofs generates proofs: any index, extra data of any length, up to 64
-// hashes of 32 bytes, and a checkpoint of any bytes that ends with a
-// newline. A proof without extra data has a nil Extra, as UnmarshalText
-// returns it into a new Proof.
-var proofs = prop.Composite(func(c *prop.Case) tlog.Proof {
-	var p tlog.Proof
-	p.Index = c.Draw(prop.Integer[uint64](0, math.MaxUint64), "index")
+// proofs generates the proofs of C2SP tlog-proof v1, whose hashes have 32
+// bytes.
+var proofs = proofsOf(crypto.DigestSize256)
 
-	if extra := c.Draw(prop.Bytes(), "extra"); len(extra) > 0 {
-		p.Extra = extra
-	}
+// formats are the formats of the round trip of AppendFormat: C2SP
+// tlog-proof v1 and a format of each size of a digest.
+var formats = []tlog.ProofFormat{
+	{},
+	{Header: sha256Header},
+	{Header: sha384Header, Size: crypto.DigestSize384},
+	{Header: sha512Header, Size: crypto.DigestSize512},
+}
 
-	for range c.Draw(prop.Integer(0, 64), "hashes") {
-		d, err := crypto.DigestFromBytes(c.Draw(prop.Bytes(prop.MinSize(32), prop.MaxSize(32)), "hash"))
-		assert.NoError(c, err, "32 bytes must be a digest")
-		p.Hashes = append(p.Hashes, d)
-	}
+// formatted is a proof and the format of its text.
+type formatted struct {
+	format tlog.ProofFormat
+	proof  tlog.Proof
+}
 
-	p.Checkpoint = append(c.Draw(prop.Bytes(), "checkpoint"), '\n')
+// formattedProofs generates a format of formats and a proof whose hashes have
+// the size of the format.
+var formattedProofs = prop.Composite(func(c *prop.Case) formatted {
+	f := c.Draw(prop.SampledFrom(formats...), "format")
 
-	return p
+	return formatted{format: f, proof: c.Draw(proofsOf(cmp.Or(f.Size, crypto.DigestSize256)), "proof")}
 })
 
 func TestProof(t *testing.T) {
@@ -160,6 +175,95 @@ func TestProof(t *testing.T) {
 				expect.ErrorIs(t, err, tlog.ErrProofText, "AppendText must refuse the proof")
 				expect.Equal(t, errs.Classify(err), errs.Invalid, "ErrProofText must classify as Invalid")
 				expect.Equal(t, string(got), "kept", "AppendText must return dst unchanged")
+			})
+		}
+	})
+
+	t.Run("AppendFormat", func(t *testing.T) {
+		t.Parallel()
+
+		sha256 := example(t).Hashes[0]
+		sha384 := coresha512.New384().Hash([]byte("a SHA-384 digest"))
+		sha512 := coresha512.New512().Hash([]byte("a SHA-512 digest"))
+		tests := []struct {
+			name       string
+			giveFormat tlog.ProofFormat
+			giveHash   crypto.Digest
+			wantHeader string
+		}{
+			{name: "writes the header line of C2SP for the zero format", giveHash: sha256, wantHeader: c2spHeader},
+			{
+				name:       "writes the header line of C2SP for that header line with 32 bytes",
+				giveFormat: tlog.ProofFormat{Header: c2spHeader, Size: crypto.DigestSize256},
+				giveHash:   sha256,
+				wantHeader: c2spHeader,
+			},
+			{
+				name:       "writes hashes of 32 bytes for a header line without a size",
+				giveFormat: tlog.ProofFormat{Header: sha256Header},
+				giveHash:   sha256,
+				wantHeader: sha256Header,
+			},
+			{
+				name:       "writes the hashes of a format of SHA-384",
+				giveFormat: tlog.ProofFormat{Header: sha384Header, Size: crypto.DigestSize384},
+				giveHash:   sha384,
+				wantHeader: sha384Header,
+			},
+			{
+				name:       "writes the hashes of a format of SHA-512",
+				giveFormat: tlog.ProofFormat{Header: sha512Header, Size: crypto.DigestSize512},
+				giveHash:   sha512,
+				wantHeader: sha512Header,
+			},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				p := tlog.Proof{Index: 7, Hashes: []crypto.Digest{tt.giveHash}, Checkpoint: []byte(shortCheckpoint)}
+				got, err := p.AppendFormat([]byte("kept"), tt.giveFormat)
+				assert.NoError(t, err, "AppendFormat must accept a proof of its format")
+				line := base64.StdEncoding.EncodeToString(tt.giveHash.Bytes())
+				want := "kept" + tt.wantHeader + "\nindex 7\n" + line + "\n\n" + shortCheckpoint
+				assert.Equal(t, string(got), want,
+					"AppendFormat must write the header line and the hashes of the format")
+			})
+		}
+
+		refusals := []struct {
+			name       string
+			giveFormat tlog.ProofFormat
+			giveHashes []crypto.Digest
+		}{
+			{
+				name:       "returns ErrProofText for a hash of another size than the format",
+				giveFormat: tlog.ProofFormat{Header: sha384Header, Size: crypto.DigestSize384},
+				giveHashes: []crypto.Digest{sha256},
+			},
+			{
+				name:       "returns ErrProofText for a size that is not the size of a digest",
+				giveFormat: tlog.ProofFormat{Header: sha384Header, Size: 40},
+			},
+			{
+				name:       "returns ErrProofText for a header line with a newline",
+				giveFormat: tlog.ProofFormat{Header: "example.org/tlog\nproof"},
+			},
+			{
+				name:       "returns ErrProofText for the header line of C2SP with 48 bytes",
+				giveFormat: tlog.ProofFormat{Header: c2spHeader, Size: crypto.DigestSize384},
+			},
+			{
+				name:       "returns ErrProofText for 48 bytes without a header line",
+				giveFormat: tlog.ProofFormat{Size: crypto.DigestSize384},
+			},
+		}
+		for _, tt := range refusals {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				p := tlog.Proof{Hashes: tt.giveHashes, Checkpoint: []byte(shortCheckpoint)}
+				got, err := p.AppendFormat([]byte("kept"), tt.giveFormat)
+				expect.ErrorIs(t, err, tlog.ErrProofText, "AppendFormat must refuse the proof")
+				expect.Equal(t, string(got), "kept", "AppendFormat must return dst unchanged")
 			})
 		}
 	})
@@ -306,6 +410,117 @@ func TestProof(t *testing.T) {
 		}
 	})
 
+	t.Run("UnmarshalFormat", func(t *testing.T) {
+		t.Parallel()
+
+		f384 := tlog.ProofFormat{Header: sha384Header, Size: crypto.DigestSize384}
+		f512 := tlog.ProofFormat{Header: sha512Header, Size: crypto.DigestSize512}
+		sha384 := coresha512.New384().Hash([]byte("a SHA-384 digest"))
+		line384 := base64.StdEncoding.EncodeToString(sha384.Bytes())
+
+		t.Run("sets p to the proof of a format of SHA-384", func(t *testing.T) {
+			t.Parallel()
+			var p tlog.Proof
+			text := sha384Header + "\nindex 7\n" + line384 + "\n\n" + shortCheckpoint
+			assert.NoError(t, p.UnmarshalFormat([]byte(text), f384), "UnmarshalFormat must accept a text of its format")
+			expect.Equal(t, p.Index, uint64(7), "UnmarshalFormat must set the index")
+			expect.Equal(t, p.Hashes, []crypto.Digest{sha384}, "UnmarshalFormat must set the hashes")
+			expect.Equal(t, string(p.Checkpoint), shortCheckpoint, "UnmarshalFormat must set the checkpoint")
+		})
+
+		t.Run("sets p to the proof of the example for the zero format", func(t *testing.T) {
+			t.Parallel()
+			var p tlog.Proof
+			assert.NoError(t, p.UnmarshalFormat([]byte(exampleProof), tlog.ProofFormat{}),
+				"UnmarshalFormat must accept the example")
+			expect.Equal(t, p.Hashes, example(t).Hashes, "UnmarshalFormat must set the hashes of the example")
+		})
+
+		t.Run("empties p after an error of the format", func(t *testing.T) {
+			t.Parallel()
+			p := example(t)
+			hashes := cap(p.Hashes)
+
+			assert.ErrorIs(t, p.UnmarshalFormat([]byte(exampleProof), tlog.ProofFormat{Size: 40}), tlog.ErrProofText,
+				"UnmarshalFormat must refuse a format of 40 bytes")
+			expect.Empty(t, p.Extra, "p must have no extra data after an error")
+			expect.Empty(t, p.Hashes, "p must have no hashes after an error")
+			expect.Empty(t, p.Checkpoint, "p must have no checkpoint after an error")
+			expect.Equal(t, p.Index, uint64(0), "p must have the index 0 after an error")
+			expect.Equal(t, cap(p.Hashes), hashes, "p must keep the memory of its hashes after an error")
+		})
+
+		// A line of the length of the base64 of 48 bytes decodes to 46, 47 or
+		// 48 bytes, and a line of the length of the base64 of 64 bytes to 64,
+		// 65 or 66 bytes.
+		tests := []struct {
+			name       string
+			giveFormat tlog.ProofFormat
+			giveText   string
+		}{
+			{
+				name:       "returns ErrProofText for the header line of another format",
+				giveFormat: f384,
+				giveText:   proofHeader + "index 7\n" + line384 + "\n\n" + shortCheckpoint,
+			},
+			{
+				name:       "returns ErrProofText for a hash line of 32 bytes in a format of 48 bytes",
+				giveFormat: f384,
+				giveText:   sha384Header + "\nindex 7\n" + hashLine + "\n\n" + shortCheckpoint,
+			},
+			{
+				name:       "returns ErrProofText for a hash line of 47 bytes in a format of 48 bytes",
+				giveFormat: f384,
+				giveText: sha384Header + "\nindex 7\n" + base64.StdEncoding.EncodeToString(make([]byte, 47)) + "\n\n" +
+					shortCheckpoint,
+			},
+			{
+				name:       "returns ErrProofText for a hash line of 65 bytes in a format of 64 bytes",
+				giveFormat: f512,
+				giveText: sha512Header + "\nindex 7\n" + base64.StdEncoding.EncodeToString(make([]byte, 65)) + "\n\n" +
+					shortCheckpoint,
+			},
+			{
+				name:       "returns ErrProofText for a hash line of 66 bytes in a format of 64 bytes",
+				giveFormat: f512,
+				giveText: sha512Header + "\nindex 7\n" + base64.StdEncoding.EncodeToString(make([]byte, 66)) + "\n\n" +
+					shortCheckpoint,
+			},
+			{
+				// Decode writes the 48 bytes of the first 16 groups of the line
+				// before it refuses the 17th group.
+				name:       "returns ErrProofText for a hash line whose 17th group is not base64 in a format of 64 bytes",
+				giveFormat: f512,
+				giveText: sha512Header + "\nindex 7\n" + base64.StdEncoding.EncodeToString(make([]byte, 48)) + "!!!!" +
+					base64.StdEncoding.EncodeToString(make([]byte, 15)) + "\n\n" + shortCheckpoint,
+			},
+			{
+				name:       "returns ErrProofText for a size that is not the size of a digest",
+				giveFormat: tlog.ProofFormat{Header: sha384Header, Size: 40},
+				giveText:   sha384Header + "\nindex 7\n\n" + shortCheckpoint,
+			},
+			{
+				name:       "returns ErrProofText for a header line with a newline",
+				giveFormat: tlog.ProofFormat{Header: sha384Header + "\nindex 7"},
+				giveText:   sha384Header + "\nindex 7\n\n" + shortCheckpoint,
+			},
+			{
+				name:       "returns ErrProofText for the header line of C2SP with 48 bytes",
+				giveFormat: tlog.ProofFormat{Header: c2spHeader, Size: crypto.DigestSize384},
+				giveText:   proofHeader + "index 7\n" + line384 + "\n\n" + shortCheckpoint,
+			},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				var p tlog.Proof
+				err := p.UnmarshalFormat([]byte(tt.giveText), tt.giveFormat)
+				expect.ErrorIs(t, err, tlog.ErrProofText, "UnmarshalFormat must refuse the text")
+				expect.Equal(t, errs.Classify(err), errs.Invalid, "ErrProofText must classify as Invalid")
+			})
+		}
+	})
+
 	t.Run("round-trips every proof through its text", func(t *testing.T) {
 		t.Parallel()
 		prop.RoundTrip(t,
@@ -317,6 +532,27 @@ func TestProof(t *testing.T) {
 				return p, err
 			},
 			"the text of a proof must parse to the proof", prop.Using(proofs))
+	})
+
+	t.Run("round-trips every proof of every format through its text", func(t *testing.T) {
+		t.Parallel()
+		prop.RoundTrip(t,
+			func(v formatted) ([]byte, error) { return v.proof.AppendFormat(nil, v.format) },
+			func(text []byte) (formatted, error) {
+				// A reader of more than one format takes the format of the first
+				// line of the text.
+				header, _, _ := strings.Cut(string(text), "\n")
+				var v formatted
+				for _, f := range formats {
+					if cmp.Or(f.Header, c2spHeader) == header {
+						v.format = f
+					}
+				}
+				err := v.proof.UnmarshalFormat(text, v.format)
+
+				return v, err
+			},
+			"the text of a proof must parse to the proof under its format", prop.Using(formattedProofs))
 	})
 }
 
@@ -340,6 +576,22 @@ func TestProofAllocs(t *testing.T) {
 		})
 	})
 
+	t.Run("AppendFormat", func(t *testing.T) {
+		t.Run("into a buffer with room", func(t *testing.T) {
+			p, f, text := proof384(t)
+			buf := make([]byte, 0, len(text))
+
+			var (
+				got []byte
+				err error
+			)
+			expect.MaxAllocs(t, func() { got, err = p.AppendFormat(buf[:0], f) }, 0,
+				"AppendFormat must not allocate into a buffer with room")
+			assert.NoError(t, err, "the test must measure a proof that AppendFormat accepts")
+			assert.Equal(t, string(got), string(text), "the test must measure the text of the proof")
+		})
+	})
+
 	t.Run("UnmarshalText", func(t *testing.T) {
 		t.Run("into a Proof with room", func(t *testing.T) {
 			text := []byte(exampleProof)
@@ -352,6 +604,21 @@ func TestProofAllocs(t *testing.T) {
 				"UnmarshalText must not allocate into a Proof with room")
 			assert.NoError(t, err, "the test must measure a text that UnmarshalText accepts")
 			assert.Equal(t, p.Index, uint64(exampleIndex), "the test must measure the example")
+		})
+	})
+
+	t.Run("UnmarshalFormat", func(t *testing.T) {
+		t.Run("into a Proof with room", func(t *testing.T) {
+			want, f, text := proof384(t)
+
+			var p tlog.Proof
+			assert.NoError(t, p.UnmarshalFormat(text, f), "UnmarshalFormat must accept the text")
+
+			var err error
+			expect.MaxAllocs(t, func() { err = p.UnmarshalFormat(text, f) }, 0,
+				"UnmarshalFormat must not allocate into a Proof with room")
+			assert.NoError(t, err, "the test must measure a text that UnmarshalFormat accepts")
+			assert.Equal(t, p.Hashes, want.Hashes, "the test must measure the hashes of the proof")
 		})
 	})
 }
@@ -381,6 +648,28 @@ func BenchmarkProof(b *testing.B) {
 		})
 	})
 
+	b.Run("AppendFormat", func(b *testing.B) {
+		b.Run("into a buffer with room", func(b *testing.B) {
+			p, f, text := proof384(b)
+			buf := make([]byte, 0, len(text))
+
+			var (
+				got []byte
+				err error
+			)
+
+			c := bench.Start(b).MaxAllocs(0)
+			defer c.End()
+
+			for c.Loop() {
+				got, err = p.AppendFormat(buf[:0], f)
+			}
+
+			assert.NoError(b, err, "the benchmark must measure a proof that AppendFormat accepts")
+			assert.Equal(b, string(got), string(text), "the benchmark must measure the text of the proof")
+		})
+	})
+
 	b.Run("UnmarshalText", func(b *testing.B) {
 		b.Run("into a Proof with room", func(b *testing.B) {
 			text := []byte(exampleProof)
@@ -399,6 +688,27 @@ func BenchmarkProof(b *testing.B) {
 
 			assert.NoError(b, err, "the benchmark must measure a text that UnmarshalText accepts")
 			assert.Equal(b, p.Index, uint64(exampleIndex), "the benchmark must measure the example")
+		})
+	})
+
+	b.Run("UnmarshalFormat", func(b *testing.B) {
+		b.Run("into a Proof with room", func(b *testing.B) {
+			want, f, text := proof384(b)
+
+			var p tlog.Proof
+			assert.NoError(b, p.UnmarshalFormat(text, f), "UnmarshalFormat must accept the text")
+
+			var err error
+
+			c := bench.Start(b).MaxAllocs(0)
+			defer c.End()
+
+			for c.Loop() {
+				err = p.UnmarshalFormat(text, f)
+			}
+
+			assert.NoError(b, err, "the benchmark must measure a text that UnmarshalFormat accepts")
+			assert.Equal(b, p.Hashes, want.Hashes, "the benchmark must measure the hashes of the proof")
 		})
 	})
 }
@@ -423,4 +733,48 @@ func example(tb testing.TB) tlog.Proof {
 	}
 
 	return p
+}
+
+// proof384 returns the proof of the example with a SHA-384 hash of each of
+// its hashes in their place, the format of SHA-384 hashes, and the text of
+// that proof, which it builds with the base64 of the standard library.
+func proof384(tb testing.TB) (tlog.Proof, tlog.ProofFormat, []byte) {
+	tb.Helper()
+
+	p := example(tb)
+	text := sha384Header + "\nextra " + exampleExtra + "\nindex " + strconv.Itoa(exampleIndex) + "\n"
+	h := coresha512.New384()
+	for i := range p.Hashes {
+		p.Hashes[i] = h.Hash(p.Hashes[i].Bytes())
+		text += base64.StdEncoding.EncodeToString(p.Hashes[i].Bytes()) + "\n"
+	}
+
+	f := tlog.ProofFormat{Header: sha384Header, Size: crypto.DigestSize384}
+
+	return p, f, []byte(text + "\n" + exampleCheckpoint)
+}
+
+// proofsOf generates proofs whose hashes have size bytes: any index, extra
+// data of any length, up to 64 hashes, and a checkpoint of any bytes that ends
+// with a newline. A proof without extra data has a nil Extra, as
+// UnmarshalText returns it into a new Proof.
+func proofsOf(size int) prop.Generator[tlog.Proof] {
+	return prop.Composite(func(c *prop.Case) tlog.Proof {
+		var p tlog.Proof
+		p.Index = c.Draw(prop.Integer[uint64](0, math.MaxUint64), "index")
+
+		if extra := c.Draw(prop.Bytes(), "extra"); len(extra) > 0 {
+			p.Extra = extra
+		}
+
+		for range c.Draw(prop.Integer(0, 64), "hashes") {
+			d, err := crypto.DigestFromBytes(c.Draw(prop.Bytes(prop.MinSize(size), prop.MaxSize(size)), "hash"))
+			assert.NoError(c, err, "the bytes of a hash must be a digest")
+			p.Hashes = append(p.Hashes, d)
+		}
+
+		p.Checkpoint = append(c.Draw(prop.Bytes(), "checkpoint"), '\n')
+
+		return p
+	})
 }

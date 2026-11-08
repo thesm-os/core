@@ -141,5 +141,6 @@ Start from [`docs/templates/ADR.md`](../templates/ADR.md).
 | [0081](0081-a-fenced-writer-may-refuse-epoch-zero.md) | A Fenced Writer May Refuse Epoch Zero | Accepted |
 | [0082](0082-an-hlc-clock-reads-its-time-from-a-physical-clock.md) | An HLC Clock Reads Its Time from a Physical Clock | Accepted |
 | [0083](0083-a-table-records-the-range-of-its-versions.md) | A Table Records the Range of Its Versions | Accepted |
+| [0084](0084-the-text-of-a-proof-has-the-format-of-its-log.md) | The Text of a Proof Has the Format of Its Log | Accepted |
 
 [nygard]: https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions

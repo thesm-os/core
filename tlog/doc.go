@@ -83,7 +83,9 @@
 // A [Proof] is the C2SP tlog-proof of one record: its inclusion proof under
 // a signed checkpoint, which a party verifies offline. [Proof.AppendText]
 // and [Proof.UnmarshalText] write and parse its text, and kanon generates
-// its codec in a kanon record.
+// its codec in a kanon record. [Proof.AppendFormat] and
+// [Proof.UnmarshalFormat] write and parse the text of a [ProofFormat], so a
+// log whose tree hashes with SHA-384 or SHA-512 has a text of its proofs.
 //
 // # Write order
 //
@@ -118,9 +120,10 @@
 // Every error classifies under [go.thesmos.sh/core/errs.Classify]. A
 // proof, a tile or a leaf that does not verify is [ErrProof], an index or
 // size outside the tree is [ErrRange], and tile data of the wrong length
-// is [ErrTileSize]. A text or a Proof that is not a C2SP tlog-proof is
-// [ErrProofText]. [NewProver] returns [ErrConfig] for an invalid
-// [ProverConfig]. Errors from a [TileReader] keep their class.
+// is [ErrTileSize]. A text or a Proof that is not a text of its format is
+// [ErrProofText], and so is a ProofFormat that is not valid. [NewProver]
+// returns [ErrConfig] for an invalid [ProverConfig]. Errors from a
+// [TileReader] keep their class.
 //
 // [VerifyInclusion] and [VerifyTaggedInclusion] return [ErrProof] for a
 // proof hash whose size differs from the leaf's. The content of a proof
@@ -136,9 +139,10 @@
 // nothing once the Update has grown, and [TaggedTree.Reset] into a
 // reused TaggedTree allocates nothing once the tree has grown.
 // [Builder.Reset] allocates only what ReadTiles allocates, unless the
-// digests of its hasher need a larger state. [Proof.AppendText] into a
-// buffer with room and [Proof.UnmarshalText] into a Proof with room do not
-// allocate. The prove functions borrow their tile buffers from a
+// digests of its hasher need a larger state. [Proof.AppendText] and
+// [Proof.AppendFormat] into a buffer with room, and [Proof.UnmarshalText]
+// and [Proof.UnmarshalFormat] into a Proof with room, do not allocate. The
+// prove functions borrow their tile buffers from a
 // pool, and a [TileVerifier] allocates the buffer of each tile that it
 // keeps once. A [Prover] allocates nothing for a proof whose node tiles its
 // cache contains, and three objects for each tile that a proof reads.
