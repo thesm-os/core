@@ -81,10 +81,12 @@ const (
 	placedVersion = 3
 	// partitionedFlag is the flag of the block of places of a table with
 	// partitions, fragmentPartsFlag the flag of a table with fragment
-	// partitions, and suffixFlag the flag of a table with versions.
+	// partitions, suffixFlag the flag of a table with versions, and
+	// rangeFlag the flag of a table with the range of its versions.
 	partitionedFlag   = 1
 	fragmentPartsFlag = 2
 	suffixFlag        = 4
+	rangeFlag         = 8
 )
 
 // The names of the extractions of prefixes of the cases.

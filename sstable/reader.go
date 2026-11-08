@@ -343,9 +343,10 @@ type Reader struct {
 // part, and compares the CRC32C of each with the CRC32C that the footer or
 // the block of places states for it. It reads the first entry of the first
 // data block for the smallest key of the summary, and the last entry of the
-// index for the largest key. Of a table with fragment partitions it reads
-// the first partition for the start of the first fragment. It does not add
-// a block or a partition that it reads to the cache.
+// index for the largest key. The block of places gives the range of the
+// versions of the summary. Of a table with fragment partitions it reads the
+// first partition for the start of the first fragment. It does not add a
+// block or a partition that it reads to the cache.
 //
 // Error modes:
 //
@@ -355,11 +356,12 @@ type Reader struct {
 //   - A part that does not end at the trailer before the part after it, or
 //     before the footer, returns ErrCorrupt. So does a place of a missing
 //     part with an offset or a CRC32C.
-//   - A block of places with a flag other than bits 0, 1 and 2, or with a
+//   - A block of places with a flag other than bits 0, 1, 2 and 3, or with a
 //     field that does not decode, returns ErrCorrupt. So does a block of
 //     places with bit 1 of fragment partitions without bit 0 or without a
-//     place of the fragments, a width of versions of 0, or a byte after its
-//     last field.
+//     place of the fragments, bit 3 of the range of versions without bit 2,
+//     a width of versions of 0, a version longer than the width, a lowest
+//     version after the highest version, or a byte after its last field.
 //   - A table whose width of versions differs from the SuffixBytes of opts
 //     returns [ErrSuffix].
 //   - An index block, a filter block, a top-level index, a block of
@@ -375,8 +377,8 @@ type Reader struct {
 // # Allocation contract
 //
 // Allocates the Reader, the footer, the block of places and its name of the
-// extraction, the parts that the Reader keeps and the keys of the summary,
-// and a cursor of each kind that it uses when the pool has none.
+// extraction, the parts that the Reader keeps, the keys and the versions of
+// the summary, and a cursor of each kind that it uses when the pool has none.
 func Open(ctx context.Context, file File, size int64, opts ReaderOptions) (*Reader, error) {
 	if size < minTableSize {
 		return nil, ErrCorrupt
@@ -433,6 +435,7 @@ func Open(ctx context.Context, file File, size int64, opts ReaderOptions) (*Read
 		summary: Summary{
 			//nolint:gosec // G115: a Writer counts its entries in an int64
 			Entries: int64(be.Uint64(f[40:])), Size: size, MinSeq: be.Uint64(f[48:]), MaxSeq: be.Uint64(f[56:]),
+			MinVersion: p.minVersion, MaxVersion: p.maxVersion,
 		},
 	}
 
@@ -534,10 +537,10 @@ func (r *Reader) Summary() Summary {
 // the capacity of the index block or of the top-level index of the index, of
 // each filter block or top-level index of a filter that the Reader keeps, of
 // the block of fragments or the top-level index of the fragment partitions,
-// and of the four keys of the summary. The buffers do not change after
-// [Open], so every call returns the same value. Footprint does not count the
-// blocks and the partitions of a [BlockCache] or the cursors of the pools
-// that every Reader shares.
+// and of the four keys and the two versions of the summary. The buffers do
+// not change after [Open], so every call returns the same value. Footprint
+// does not count the blocks and the partitions of a [BlockCache] or the
+// cursors of the pools that every Reader shares.
 //
 // # Allocation contract
 //
@@ -545,8 +548,9 @@ func (r *Reader) Summary() Summary {
 func (r *Reader) Footprint() int {
 	s := &r.summary
 	n := cap(r.index) + r.keys.size + r.prefixes.size + cap(r.frags) + cap(r.fragTop)
+	n += cap(s.SmallestKey) + cap(s.LargestKey) + cap(s.RangeDeleteStart) + cap(s.RangeDeleteEnd)
 
-	return n + cap(s.SmallestKey) + cap(s.LargestKey) + cap(s.RangeDeleteStart) + cap(s.RangeDeleteEnd)
+	return n + cap(s.MinVersion) + cap(s.MaxVersion)
 }
 
 // Span returns the data blocks of the table that can contain an entry whose

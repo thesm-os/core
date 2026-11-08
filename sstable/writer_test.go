@@ -523,12 +523,8 @@ func TestWriter(t *testing.T) {
 					giveEntries: pinned,
 				},
 				{
-					name: "returns the size of a table in partitions with versions and a fragment partition",
-					giveOpts: sstable.WriterOptions{
-						BlockSize: 1, RestartInterval: 1, PartitionSize: 1, SuffixBytes: versionBytes,
-					},
-					giveEntries: pinned,
-					giveDeletes: pinnedPartition,
+					name:     "returns the size of a table of no entries with versions",
+					giveOpts: sstable.WriterOptions{SuffixBytes: versionBytes},
 				},
 			}
 			for _, tt := range tests {
@@ -540,6 +536,31 @@ func TestWriter(t *testing.T) {
 						"MaxSize returns the size of the table")
 				})
 			}
+
+			t.Run("exceeds a table whose lowest version is empty by the width of the versions", func(t *testing.T) {
+				t.Parallel()
+				// The empty start of the fragment is its version, and the bound
+				// counts a version of the full width for it.
+				opts := sstable.WriterOptions{
+					BlockSize: 1, RestartInterval: 1, PartitionSize: 1, SuffixBytes: versionBytes,
+				}
+				bound, err := opts.MaxSize(countsOf(pinned, pinnedPartition...))
+				assert.NoError(t, err, "MaxSize accepts the options")
+				size := int64(len(writeTable(t, opts, pinned, pinnedPartition...)))
+				assert.Equal(t, bound, size+versionBytes, "MaxSize exceeds the size of the table by the width")
+			})
+
+			t.Run("exceeds a table of fragments with versions by a byte", func(t *testing.T) {
+				t.Parallel()
+				// The block of fragments of a table without entries is at the
+				// offset 0, whose varint takes one of the two bytes that the bound
+				// counts for it.
+				opts := sstable.WriterOptions{BlockSize: 1, RestartInterval: 1, SuffixBytes: versionBytes}
+				bound, err := opts.MaxSize(countsOf(nil, pinnedDeletes...))
+				assert.NoError(t, err, "MaxSize accepts the options")
+				size := int64(len(writeTable(t, opts, nil, pinnedDeletes...)))
+				assert.Equal(t, bound, size+1, "MaxSize exceeds the size of the table by a byte")
+			})
 
 			// The fragments of each case start at the end of the fragment before
 			// them, and the bound of the ends counts each start of one byte as an
@@ -1273,6 +1294,113 @@ func TestWriter(t *testing.T) {
 			expect.Equal(t, places[len(places)-1], byte(versionBytes), "the width follows the name")
 		})
 
+		t.Run("records the range of the versions after the width", func(t *testing.T) {
+			t.Parallel()
+			es := []entry{
+				{key: binary.BigEndian.AppendUint64([]byte("a"), 7), seq: 1},
+				{key: binary.BigEndian.AppendUint64([]byte("b"), 2), seq: 1},
+				{key: binary.BigEndian.AppendUint64([]byte("c"), 9), seq: 1},
+			}
+			l := newLayout(t, sstable.WriterOptions{SuffixBytes: versionBytes}, es)
+			places := l.data[l.places.off : l.places.off+l.places.n]
+			flags, _ := binary.Uvarint(places)
+			expect.Equal(t, flags, uint64(suffixFlag|rangeFlag),
+				"the block of places has the flags of the versions and of their range")
+			tail := slices.Concat([]byte{versionBytes, versionBytes}, binary.BigEndian.AppendUint64(nil, 2),
+				[]byte{versionBytes}, binary.BigEndian.AppendUint64(nil, 9))
+			expect.HasSuffix(t, places, string(tail),
+				"the width, the lowest version and the highest version end the block of places")
+		})
+
+		t.Run("returns the range of the versions of the table", func(t *testing.T) {
+			t.Parallel()
+			prop.ForAll(t, "the summary has the lowest and the highest version of the table", func(c *prop.Case) {
+				es, dels := c.Draw(versionedEntries, "entries"), c.Draw(versionedFragments, "fragments")
+				w, err := sstable.NewWriter(discardSink{}, c.Draw(prop.SampledFrom(versionedSettings...), "setting"))
+				assert.NoError(c, err, "NewWriter accepts the options")
+				versions := make([][]byte, 0, len(es)+len(dels))
+				for _, e := range es {
+					assert.NoError(c, w.Add(c.Context(), e.key, e.seq, e.value), "Add adds the entry")
+					versions = append(versions, e.key[len(e.key)-versionBytes:])
+				}
+				for _, d := range dels {
+					assert.NoError(c, w.AddRangeDelete(c.Context(), d.start, d.end, d.seq),
+						"AddRangeDelete adds the fragment")
+					versions = append(versions, d.start[len(d.start)-versionBytes:])
+				}
+				sum, err := w.Close(c.Context())
+				assert.NoError(c, err, "Close writes the table")
+				if len(versions) == 0 {
+					assert.Nil(c, sum.MinVersion, "a table without entries and fragments has no lowest version")
+					assert.Nil(c, sum.MaxVersion, "a table without entries and fragments has no highest version")
+
+					return
+				}
+				assert.Equal(c, sum.MinVersion, slices.MinFunc(versions, bytes.Compare),
+					"MinVersion is the lowest version of the table")
+				assert.Equal(c, sum.MaxVersion, slices.MaxFunc(versions, bytes.Compare),
+					"MaxVersion is the highest version of the table")
+			})
+		})
+
+		// The versions of each case follow the order of CompareWithSuffix: a key
+		// of fewer bytes than the width is a version as a whole, and the
+		// versions of one key fall.
+		ranges := []struct {
+			name        string
+			giveEntries []entry
+			giveDeletes []rangeDelete
+			wantMin     []byte
+			wantMax     []byte
+		}{
+			{
+				name:        "returns a key shorter than the width as a version",
+				giveEntries: []entry{{key: []byte("b"), seq: 1}, {key: []byte("a"), seq: 1}},
+				wantMin:     []byte("a"),
+				wantMax:     []byte("b"),
+			},
+			{
+				name:        "returns the empty version of an empty key as an empty slice",
+				giveEntries: []entry{{key: []byte("b"), seq: 1}, {key: []byte{}, seq: 1}},
+				wantMin:     []byte{},
+				wantMax:     []byte("b"),
+			},
+			{
+				name:        "returns one version at both ends of the range of a table of one entry",
+				giveEntries: []entry{{key: binary.BigEndian.AppendUint64([]byte("a"), 4), seq: 1}},
+				wantMin:     binary.BigEndian.AppendUint64(nil, 4),
+				wantMax:     binary.BigEndian.AppendUint64(nil, 4),
+			},
+			{
+				name: "returns the range of the versions of the fragments of a table without entries",
+				giveDeletes: []rangeDelete{
+					{start: binary.BigEndian.AppendUint64([]byte("a"), 5), end: []byte("b"), seq: 1},
+					{start: binary.BigEndian.AppendUint64([]byte("a"), 3), end: []byte("b"), seq: 1},
+				},
+				wantMin: binary.BigEndian.AppendUint64(nil, 3),
+				wantMax: binary.BigEndian.AppendUint64(nil, 5),
+			},
+			{name: "returns no range for an empty table"},
+		}
+		for _, tt := range ranges {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				w, err := sstable.NewWriter(discardSink{}, sstable.WriterOptions{SuffixBytes: versionBytes})
+				assert.NoError(t, err, "NewWriter accepts the options")
+				for _, e := range tt.giveEntries {
+					assert.NoError(t, w.Add(t.Context(), e.key, e.seq, e.value), "Add adds the entry")
+				}
+				for _, d := range tt.giveDeletes {
+					assert.NoError(t, w.AddRangeDelete(t.Context(), d.start, d.end, d.seq),
+						"AddRangeDelete adds the fragment")
+				}
+				sum, err := w.Close(t.Context())
+				assert.NoError(t, err, "Close writes the table")
+				expect.Equal(t, sum.MinVersion, tt.wantMin, "MinVersion is the lowest version of the table")
+				expect.Equal(t, sum.MaxVersion, tt.wantMax, "MaxVersion is the highest version of the table")
+			})
+		}
+
 		t.Run("writes the fragments of a table in partitions into fragment partitions", func(t *testing.T) {
 			t.Parallel()
 			l := newLayout(t, partsOfOne, nil, goldenDeletes...)
@@ -1492,7 +1620,7 @@ func TestWriter(t *testing.T) {
 
 		t.Run("releases the buffers of a Writer above MaxRetained", func(t *testing.T) {
 			t.Parallel()
-			opts := settings[3].opts
+			opts := versionedSettings[0]
 			opts.MaxRetained = 1
 			w := filledWriter(t, discardSink{}, opts)
 			_, err := w.Close(t.Context())
@@ -1549,12 +1677,12 @@ func TestWriter(t *testing.T) {
 
 		t.Run("returns the capacity of every buffer in bytes", func(t *testing.T) {
 			t.Parallel()
-			// The Writer has every buffer: the partitions of both filters and the
-			// fragments.
-			opts := settings[8].opts
+			// The Writer has every buffer: the partitions of both filters, the
+			// fragments and the range of the versions.
+			opts := versionedSettings[1]
 			opts.Compression = sstable.SnappyCompression
 			w := filledWriter(t, discardSink{}, opts)
-			for _, d := range goldenDeletes {
+			for _, d := range versionedGoldenDeletes {
 				assert.NoError(t, w.AddRangeDelete(t.Context(), d.start, d.end, d.seq),
 					"AddRangeDelete adds the fragment")
 			}
@@ -1605,9 +1733,14 @@ func TestWriter(t *testing.T) {
 			t.Parallel()
 			prop.ForAll(t, "a Writer after Reset writes what a new Writer writes", func(c *prop.Case) {
 				opts := c.Draw(prop.SampledFrom(settings...), "setting").opts
+				es, dels, ropts := entries, fragments, sstable.ReaderOptions{}
+				if c.Draw(prop.Boolean(), "versions") {
+					opts = c.Draw(prop.SampledFrom(versionedSettings...), "setting with versions")
+					es, dels, ropts.SuffixBytes = versionedEntries, versionedFragments, versionBytes
+				}
 				opts.MaxRetained = c.Draw(prop.SampledFrom(0, 1, 1<<30), "max retained")
-				first, second := c.Draw(entries, "first entries"), c.Draw(entries, "second entries")
-				firstDels, secondDels := c.Draw(fragments, "first fragments"), c.Draw(fragments, "second fragments")
+				first, second := c.Draw(es, "first entries"), c.Draw(es, "second entries")
+				firstDels, secondDels := c.Draw(dels, "first fragments"), c.Draw(dels, "second fragments")
 				w, err := sstable.NewWriter(discardSink{}, opts)
 				assert.NoError(c, err, "NewWriter accepts the options")
 				for _, e := range first[:c.Draw(prop.Integer(0, len(first)), "first added")] {
@@ -1637,7 +1770,7 @@ func TestWriter(t *testing.T) {
 				assert.NoError(c, err, "Close writes the second table")
 				assert.Equal(c, buf.Bytes(), writeTable(c, opts, second, secondDels...),
 					"the Writer writes the bytes of a new Writer")
-				assert.Equal(c, sum, openTable(c, buf.Bytes(), sstable.ReaderOptions{}).Summary(),
+				assert.Equal(c, sum, openTable(c, buf.Bytes(), ropts).Summary(),
 					"Close returns the summary of the second table")
 			})
 		})
@@ -1749,9 +1882,29 @@ func TestWriterAllocs(t *testing.T) {
 			})
 		}
 
+		t.Run("does not allocate once its buffers have room in a table with versions", func(t *testing.T) {
+			w, err := sstable.NewWriter(discardSink{}, sstable.WriterOptions{SuffixBytes: versionBytes})
+			assert.NoError(t, err, "NewWriter accepts the options")
+			// Each key has a higher version than the key before it, so each Add
+			// copies its version as the highest one.
+			key := make([]byte, 16)
+			i := uint64(0)
+			add := func() {
+				binary.BigEndian.PutUint64(key, i)
+				binary.BigEndian.PutUint64(key[8:], i)
+				err = w.Add(t.Context(), key, 1, value)
+				i++
+			}
+			for range warmEntries {
+				add()
+			}
+			expect.MaxAllocs(t, add, 0, "Add does not allocate once its buffers have room")
+			assert.NoError(t, err, "the test measures Adds that succeed")
+		})
+
 		// The first Add copies its key for the summary and grows the empty
 		// buffers of the entry and the block. With a filter it also grows
-		// the hashes.
+		// the hashes, and with versions the lowest and the highest version.
 		tests := []struct {
 			name     string
 			giveOpts sstable.WriterOptions
@@ -1762,6 +1915,11 @@ func TestWriterAllocs(t *testing.T) {
 				name:     "allocates seven times for the first entry with a filter",
 				giveOpts: sstable.WriterOptions{FilterBits: 8},
 				want:     7,
+			},
+			{
+				name:     "allocates eight times for the first entry with versions",
+				giveOpts: sstable.WriterOptions{SuffixBytes: versionBytes},
+				want:     8,
 			},
 		}
 		for _, tt := range tests {
@@ -1781,22 +1939,45 @@ func TestWriterAllocs(t *testing.T) {
 	})
 
 	t.Run("AddRangeDelete", func(t *testing.T) {
-		w, err := sstable.NewWriter(discardSink{}, sstable.WriterOptions{})
-		assert.NoError(t, err, "NewWriter accepts the zero options")
-		// Each fragment ends before the start of the next one.
-		start, end := make([]byte, 16), make([]byte, 16)
-		i := uint64(0)
-		add := func() {
-			binary.BigEndian.PutUint64(start[8:], 2*i)
-			binary.BigEndian.PutUint64(end[8:], 2*i+1)
-			err = w.AddRangeDelete(t.Context(), start, end, 1)
-			i++
-		}
-		for range warmEntries {
-			add()
-		}
-		expect.MaxAllocs(t, add, 0, "AddRangeDelete does not allocate once its buffers have room")
-		assert.NoError(t, err, "the test measures calls that succeed")
+		t.Run("does not allocate once its buffers have room", func(t *testing.T) {
+			w, err := sstable.NewWriter(discardSink{}, sstable.WriterOptions{})
+			assert.NoError(t, err, "NewWriter accepts the zero options")
+			// Each fragment ends before the start of the next one.
+			start, end := make([]byte, 16), make([]byte, 16)
+			i := uint64(0)
+			add := func() {
+				binary.BigEndian.PutUint64(start[8:], 2*i)
+				binary.BigEndian.PutUint64(end[8:], 2*i+1)
+				err = w.AddRangeDelete(t.Context(), start, end, 1)
+				i++
+			}
+			for range warmEntries {
+				add()
+			}
+			expect.MaxAllocs(t, add, 0, "AddRangeDelete does not allocate once its buffers have room")
+			assert.NoError(t, err, "the test measures calls that succeed")
+		})
+
+		t.Run("does not allocate once its buffers have room in a table with versions", func(t *testing.T) {
+			w, err := sstable.NewWriter(discardSink{}, sstable.WriterOptions{SuffixBytes: versionBytes})
+			assert.NoError(t, err, "NewWriter accepts the options")
+			// Each fragment ends before the start of the next one, and has a
+			// higher version than the fragment before it.
+			start, end := make([]byte, 16), make([]byte, 8)
+			i := uint64(0)
+			add := func() {
+				binary.BigEndian.PutUint64(start, 2*i)
+				binary.BigEndian.PutUint64(start[8:], i)
+				binary.BigEndian.PutUint64(end, 2*i+1)
+				err = w.AddRangeDelete(t.Context(), start, end, 1)
+				i++
+			}
+			for range warmEntries {
+				add()
+			}
+			expect.MaxAllocs(t, add, 0, "AddRangeDelete does not allocate once its buffers have room")
+			assert.NoError(t, err, "the test measures calls that succeed")
+		})
 	})
 
 	t.Run("Footprint", func(t *testing.T) {
@@ -1856,6 +2037,30 @@ func TestWriterAllocs(t *testing.T) {
 			}, 4, "a table after Reset allocates the copies of the bounds of its entries and its fragments")
 			assert.NoError(t, err, "the test measures tables that the Writer writes")
 			assert.Equal(t, sum.RangeDeletes, int64(len(goldenDeletes)), "the test measures tables of every fragment")
+		})
+
+		t.Run("reuses the buffers for a table with versions", func(t *testing.T) {
+			var buf bufferSink
+			opts := versionedSettings[1]
+			w, err := sstable.NewWriter(&buf, opts)
+			assert.NoError(t, err, "NewWriter accepts the options")
+			es := goldenTableOf(opts)
+			var sum sstable.Summary
+			expect.MaxAllocs(t, func() {
+				buf.Reset()
+				w.Reset(&buf)
+				for _, e := range es {
+					err = cmp.Or(err, w.Add(t.Context(), e.key, e.seq, e.value))
+				}
+				for _, d := range versionedGoldenDeletes {
+					err = cmp.Or(err, w.AddRangeDelete(t.Context(), d.start, d.end, d.seq))
+				}
+				var closeErr error
+				sum, closeErr = w.Close(t.Context())
+				err = cmp.Or(err, closeErr)
+			}, 6, "a table after Reset allocates the copies of the bounds of its entries, its fragments and its versions")
+			assert.NoError(t, err, "the test measures tables that the Writer writes")
+			assert.NotNil(t, sum.MaxVersion, "the test measures tables with a range of versions")
 		})
 	})
 }
@@ -2151,13 +2356,13 @@ func randomBytes(n int, seed uint64) []byte {
 }
 
 // filledWriter returns a Writer onto sink under opts, after an Add of every
-// entry of the golden table.
+// entry of the golden table, with versions under a SuffixBytes.
 func filledWriter(tb testing.TB, sink sstable.Sink, opts sstable.WriterOptions) *sstable.Writer {
 	tb.Helper()
 
 	w, err := sstable.NewWriter(sink, opts)
 	assert.NoError(tb, err, "NewWriter accepts the options")
-	for _, e := range goldenTable() {
+	for _, e := range goldenTableOf(opts) {
 		assert.NoError(tb, w.Add(tb.Context(), e.key, e.seq, e.value), "Add adds the entry")
 	}
 

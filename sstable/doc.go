@@ -97,10 +97,10 @@
 // A table with fragments, with a filter of prefixes or with versions has
 // format version 3. Its footer states a block of places in place of the
 // filter. That block states the places of the filter, of the fragments and of
-// the filter of prefixes, and the width of the versions. The place of the
-// fragments is the block of fragments, or the top-level index of the
-// fragment partitions. A table of version 3 has the index and the filter of
-// version 1, or of version 2 in partitions.
+// the filter of prefixes, the width of the versions and the range of the
+// versions. The place of the fragments is the block of fragments, or the
+// top-level index of the fragment partitions. A table of version 3 has the
+// index and the filter of version 1, or of version 2 in partitions.
 //
 // # Versions
 //
@@ -117,7 +117,9 @@
 // the fragment, and its end has no version. A Fragmenter of the same width
 // splits tombstones at their starts without their versions. A table records
 // its width, and [Open] returns [ErrSuffix] for a table whose width differs
-// from the SuffixBytes of [ReaderOptions]. A [Merger] with the same
+// from the SuffixBytes of [ReaderOptions]. A table with an entry or a
+// fragment also records its lowest and its highest version. [Writer.Close]
+// and [Reader.Summary] return both in the [Summary]. A [Merger] with the same
 // SuffixBytes merges the sources in the same order.
 //
 // # Checks

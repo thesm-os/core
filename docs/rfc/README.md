@@ -147,7 +147,7 @@ Start from [`docs/templates/RFC.md`](../templates/RFC.md).
 | [0078](0078-range-tombstones-and-prefix-filters.md) | Range Tombstones and Prefix Filters of a Table | Accepted, alternative K superseded by [ADR-0076](../adr/0076-fragment-partitions-are-read-through-the-cache.md), the pool of cursors of fragments superseded by [RFC-0087](0087-cursors-that-a-caller-keeps.md) |
 | [0079](0079-pinned-partitions-in-a-block-cache.md) | Pinned Partitions in a Block Cache | Accepted |
 | [0080](0080-test-generation-with-dokimi.md) | Test Generation with dokimi | Accepted |
-| [0081](0081-fragment-partitions-version-suffixes-and-checks.md) | Fragment Partitions, Version Suffixes and Checks of a Table | Accepted |
+| [0081](0081-fragment-partitions-version-suffixes-and-checks.md) | Fragment Partitions, Version Suffixes and Checks of a Table | Accepted, the end of the block of places at the width of the versions superseded by [ADR-0083](../adr/0083-a-table-records-the-range-of-its-versions.md) |
 | [0082](0082-signed-requests-on-named-object-storage.md) | Signed Requests on Named Object Storage | Accepted, the timing of the checks of an expiry superseded by [ADR-0077](../adr/0077-expiry-checks-take-their-timing-from-the-store.md) |
 | [0083](0083-calls-beyond-a-quorum.md) | Calls Beyond a Quorum | Accepted |
 | [0084](0084-durations-and-peer-instants-of-a-clock.md) | Durations and Peer Instants of a Clock | Accepted |

@@ -57,6 +57,10 @@ const (
 	// end with versions. The width of the versions follows the name of the
 	// extractor as a varint.
 	suffixFlag = 4
+	// rangeFlag is the flag of the block of places of a table that records
+	// the range of its versions. The lowest and the highest version follow
+	// the width, each as the varint of its length and its bytes.
+	rangeFlag = 8
 	// magic is the number at the end of a table. It is the first 8 bytes of
 	// the SHA-256 of go.thesmos.sh/core/sstable.
 	magic = 0xf65ba2ce515d9bd3
@@ -260,7 +264,9 @@ type WriterOptions struct {
 // and an entry of the top-level index of the fragments for each. The ends of
 // those entries count at most RangeDeleteBytes bytes together. A SuffixBytes
 // above 0 gives the table a block of places with the varint of the width. A
-// count above 2^48 makes MaxSize return math.MaxInt64.
+// table with such a width and an entry or a fragment records its lowest and
+// its highest version, which count SuffixBytes bytes each with the varint of
+// that length. A count above 2^48 makes MaxSize return math.MaxInt64.
 //
 // Error modes:
 //
@@ -410,7 +416,8 @@ func (o WriterOptions) MaxSize(c Counts) (int64, error) {
 	// takes the bytes of the varint of the largest filter, and the length of
 	// the block of fragments the bytes of the varint of its bound. A missing
 	// part has an offset and a length of one byte each. The width of the
-	// versions follows the name as a varint.
+	// versions follows the name as a varint, and the range of the versions
+	// of a table with an entry or a fragment follows the width.
 	if o.Prefix != nil || deletes != 0 || o.SuffixBytes != 0 {
 		name := uint64(0)
 		if o.Prefix != nil {
@@ -436,8 +443,14 @@ func (o WriterOptions) MaxSize(c Counts) (int64, error) {
 			// The place states the top-level index of the fragment partitions.
 			tops += 2
 		}
+		// A table without versions has the width 0, whose varint and range
+		// take no bytes.
 		//nolint:gosec // G115: check refuses a negative SuffixBytes, and Len64 returns at most 64
-		size += uint64(bits.Len64(uint64(o.SuffixBytes))+6) / 7
+		width, widthLen := uint64(o.SuffixBytes), uint64(bits.Len64(uint64(o.SuffixBytes))+6)/7
+		size += widthLen
+		if n != 0 || deletes != 0 {
+			size += 2 * (widthLen + width)
+		}
 	}
 
 	// The offset of each partition and of each part of the block of places,
@@ -483,15 +496,25 @@ func (o WriterOptions) check() error {
 }
 
 // Summary describes the entries, the fragments of range tombstones, the size
-// and the range of keys and sequences of a table. For a table of no entries
-// and no fragments, every field except Size is zero or nil. Summary keeps the
-// bounds of the entries apart from the bounds of the fragments, and an engine
-// places a table by both pairs.
+// and the range of keys, versions and sequences of a table. For a table of
+// no entries and no fragments, every field except Size is zero or nil.
+// Summary keeps the bounds of the entries apart from the bounds of the
+// fragments, and an engine places a table by both pairs.
+//
+// The version of an entry of a table with the SuffixBytes of [WriterOptions]
+// is the last SuffixBytes bytes of its key, and the version of a fragment the
+// last SuffixBytes bytes of its start. A key or a start of fewer bytes is a
+// version as a whole, so the empty key has the empty version. MinVersion and
+// MaxVersion are nil for a table whose block of places has no range of
+// versions, such as a table without versions or without entries and
+// fragments.
 type Summary struct {
 	SmallestKey      []byte // the key of the first entry
 	LargestKey       []byte // the key of the last entry
 	RangeDeleteStart []byte // the start of the first fragment
 	RangeDeleteEnd   []byte // the end of the last fragment, which the fragment excludes
+	MinVersion       []byte // the lowest version of any entry or fragment, in the order of bytes.Compare
+	MaxVersion       []byte // the highest version of any entry or fragment, in the order of bytes.Compare
 	Entries          int64  // the number of entries
 	RangeDeletes     int64  // the number of the entries of the block of fragments, one for each sequence of a fragment
 	Size             int64  // the bytes of the table
@@ -522,27 +545,33 @@ type blockPlace struct {
 // places is the block of places of a table of format version 3: whether the
 // index and the filters are partitioned, whether the fragments are, the
 // places of the filter, of the fragments and of the filter of prefixes, the
-// name of the extractor of the prefixes, and the width of the versions of
-// the keys. A part that the table does not have has the zero place, and a
-// table without a filter of prefixes has an empty name. Every block has at
-// least one byte, so a Reader takes a length of 0 for a missing part. The
-// place of the fragments states the block of fragments, or the top-level
-// index of the fragment partitions when fragmentParts is true. A table
-// without versions has the width 0.
+// name of the extractor of the prefixes, the width of the versions of the
+// keys and the range of the versions. A part that the table does not have
+// has the zero place, and a table without a filter of prefixes has an empty
+// name. Every block has at least one byte, so a Reader takes a length of 0
+// for a missing part. The place of the fragments states the block of
+// fragments, or the top-level index of the fragment partitions when
+// fragmentParts is true. A table without versions has the width 0. ranged
+// reports a range of versions from minVersion to maxVersion, which a table
+// with versions and an entry or a fragment has.
 type places struct {
 	name                      string
+	minVersion, maxVersion    []byte
 	filter, fragments, prefix blockPlace
 	suffix                    uint64
 	partitioned               bool
 	fragmentParts             bool
+	ranged                    bool
 }
 
 // append appends the encoding of p to dst and returns the extended slice:
 // the flags as a varint, each place as its offset and its length as varints
 // and its CRC32C as a uint32, then the length of the name as a varint and the
 // name. The flags have bit 0 for a table in partitions, bit 1 for fragment
-// partitions and bit 2 for versions. A width of versions above 0 follows the
-// name as a varint.
+// partitions, bit 2 for versions and bit 3 for a range of versions. A width
+// of versions above 0 follows the name as a varint. The lowest and the
+// highest version of a range follow the width, each as its length as a
+// varint and its bytes.
 func (p *places) append(dst []byte) []byte {
 	flags := uint64(0)
 	if p.partitioned {
@@ -554,6 +583,9 @@ func (p *places) append(dst []byte) []byte {
 	if p.suffix != 0 {
 		flags |= suffixFlag
 	}
+	if p.ranged {
+		flags |= rangeFlag
+	}
 	dst = binary.AppendUvarint(dst, flags)
 	for _, b := range [...]blockPlace{p.filter, p.fragments, p.prefix} {
 		dst = binary.BigEndian.AppendUint32(binary.AppendUvarint(binary.AppendUvarint(dst, b.off), b.n), b.crc)
@@ -563,21 +595,31 @@ func (p *places) append(dst []byte) []byte {
 	if p.suffix != 0 {
 		dst = binary.AppendUvarint(dst, p.suffix)
 	}
+	if p.ranged {
+		dst = append(binary.AppendUvarint(dst, uint64(len(p.minVersion))), p.minVersion...)
+		dst = append(binary.AppendUvarint(dst, uint64(len(p.maxVersion))), p.maxVersion...)
+	}
 
 	return dst
 }
 
 // decode decodes the block of places b into p. It reports false for a block
 // whose fields do not decode, or with a flag other than partitionedFlag,
-// fragmentPartsFlag and suffixFlag. It also reports false for
+// fragmentPartsFlag, suffixFlag and rangeFlag. It also reports false for
 // fragmentPartsFlag without partitionedFlag or without a place of the
-// fragments, for a width of versions of 0 under suffixFlag, and for a byte
-// after the last field. decode allocates the name.
+// fragments, for rangeFlag without suffixFlag, for a width of versions of 0
+// under suffixFlag, for a version longer than the width, for a lowest
+// version after the highest version, and for a byte after the last field.
+// decode allocates the name and the copies of the two versions.
 func (p *places) decode(b []byte) bool {
 	// When the varint of the flags fails, Uvarint returns the flags 0, and
 	// the place of the filter decodes the same bytes and fails too.
 	flags, n := binary.Uvarint(b)
-	if flags&^(partitionedFlag|fragmentPartsFlag|suffixFlag) != 0 {
+	if flags&^(partitionedFlag|fragmentPartsFlag|suffixFlag|rangeFlag) != 0 {
+		return false
+	}
+	p.ranged = flags&rangeFlag != 0
+	if p.ranged && flags&suffixFlag == 0 {
 		return false
 	}
 	p.partitioned, p.fragmentParts = flags&partitionedFlag != 0, flags&fragmentPartsFlag != 0
@@ -614,6 +656,20 @@ func (p *places) decode(b []byte) bool {
 			return false
 		}
 		b = b[n:]
+	}
+	if p.ranged {
+		for _, dst := range [...]*[]byte{&p.minVersion, &p.maxVersion} {
+			length, n := binary.Uvarint(b)
+			//nolint:gosec // G115: n is at most len(b)
+			if n <= 0 || length > p.suffix || length > uint64(len(b)-n) {
+				return false
+			}
+			//nolint:gosec // G115: length is at most len(b)-n
+			*dst, b = append([]byte{}, b[n:n+int(length)]...), b[n+int(length):]
+		}
+		if bytes.Compare(p.minVersion, p.maxVersion) > 0 {
+			return false
+		}
 	}
 
 	return len(b) == 0
@@ -674,13 +730,15 @@ type filterBuild struct {
 // of its key, and the first [Writer.AddRangeDelete] a copy of its start. Add
 // and AddRangeDelete otherwise allocate only to grow the buffers of the
 // current block, the index, the hashes of the filters and the fragments, so
-// they do not allocate once those have room. Close allocates the encoding of
-// the filter, the scratch of its builder, the growth of the buffer of the
-// table for the filter and the index, and the largest key and the end of the
-// last fragment of the summary. [Writer.Reset] keeps every buffer for the
-// next table while [Writer.Footprint] is within the MaxRetained of
-// [WriterOptions], so a Writer that writes many tables of one size allocates
-// the keys of each summary once its buffers have grown. A table after a
+// they do not allocate once those have room. With versions, the first Add
+// or AddRangeDelete also allocates the buffers of the range of the versions.
+// Close allocates the encoding of the filter, the scratch of its builder, the
+// growth of the buffer of the table for the filter and the index, and the
+// largest key, the end of the last fragment and the two versions of the
+// summary. [Writer.Reset] keeps every buffer for the next table while
+// [Writer.Footprint] is within the MaxRetained of [WriterOptions], so a
+// Writer that writes many tables of one size allocates the keys and the
+// versions of each summary once its buffers have grown. A table after a
 // release of the buffers allocates their growth again.
 type Writer struct {
 	// w receives the bytes of the table.
@@ -753,6 +811,11 @@ type Writer struct {
 	// smallest is the key of the first entry, and fragStart the start of the
 	// first fragment. Both are copies for the summary.
 	smallest, fragStart []byte
+
+	// minVersion and maxVersion are the lowest and the highest version of
+	// the entries and the fragments of a table with versions, in the order
+	// of bytes.Compare. Close copies them for the summary.
+	minVersion, maxVersion []byte
 
 	// keys is the filter of the keys of the table, and prefixes the filter of
 	// their prefixes.
@@ -853,7 +916,8 @@ func NewWriter(w Sink, opts WriterOptions) (*Writer, error) {
 // partition to PartitionSize bytes ends that partition. With a Prefix, a
 // distinct key whose prefix differs from the prefix before it adds a hash to
 // the filter of prefixes, and ends a full partition of it. Add passes key
-// without its version to Prefix.
+// without its version to Prefix, and widens the range of the versions of the
+// table to the version of key.
 //
 // Error modes:
 //
@@ -876,10 +940,11 @@ func NewWriter(w Sink, opts WriterOptions) (*Writer, error) {
 // # Allocation contract
 //
 // Zero-alloc when the buffers of the current block, the index, the hashes
-// of the filters and the partitions have room, apart from what Prefix
-// allocates. Otherwise Add allocates their growth, and an end of a filter
-// partition can grow the scratch of the builder of the filter. The first Add
-// also allocates a copy of its key for the summary.
+// of the filters, the partitions and the range of the versions have room,
+// apart from what Prefix allocates. Otherwise Add allocates their growth,
+// and an end of a filter partition can grow the scratch of the builder of
+// the filter. The first Add also allocates a copy of its key for the
+// summary.
 func (w *Writer) Add(ctx context.Context, key []byte, seq uint64, value []byte) error {
 	if w.err != nil {
 		return w.err
@@ -957,6 +1022,10 @@ func (w *Writer) Add(ctx context.Context, key []byte, seq uint64, value []byte) 
 		w.prefixLast, w.prefixed = append(w.prefixLast[:0], prefix...), true
 	}
 	w.minSeq, w.maxSeq = min(w.minSeq, seq), max(w.maxSeq, seq)
+	//dokimi:mutate-skip ror-true: a key of the width 0 has an empty version, which leaves the range empty, so the check changes only the time
+	if w.suffix != 0 {
+		w.widen(key[len(user):])
+	}
 
 	w.cur = binary.BigEndian.AppendUint64(append(w.cur[:0], key...), seq)
 	shared := 0
@@ -992,7 +1061,8 @@ func (w *Writer) Add(ctx context.Context, key []byte, seq uint64, value []byte) 
 // fragments. AddRangeDelete copies start and end, and keeps the fragments in
 // the block of fragments, which Close writes. A table with a fragment has
 // format version 3. The sequence counts toward the lowest and the highest
-// sequence of the table.
+// sequence of the table, and the version of start toward the range of the
+// versions.
 //
 // With the SuffixBytes of the options, start ends with the version of the
 // fragment, and end has no version. The positions of one fragment have one
@@ -1019,9 +1089,9 @@ func (w *Writer) Add(ctx context.Context, key []byte, seq uint64, value []byte) 
 //
 // # Allocation contract
 //
-// Zero-alloc when the buffers of the fragments and of the fragment
-// partitions have room. The first AddRangeDelete also allocates a copy of
-// its start for the summary.
+// Zero-alloc when the buffers of the fragments, of the fragment partitions
+// and of the range of the versions have room. The first AddRangeDelete also
+// allocates a copy of its start for the summary.
 func (w *Writer) AddRangeDelete(_ context.Context, start, end []byte, seq uint64) error {
 	if w.err != nil {
 		return w.err
@@ -1052,6 +1122,10 @@ func (w *Writer) AddRangeDelete(_ context.Context, start, end []byte, seq uint64
 	}
 	if w.partitionSize != 0 && !same && len(w.frags) >= w.partitionSize {
 		w.finishFragmentPartition()
+	}
+	//dokimi:mutate-skip ror-true: a start of the width 0 has an empty version, which leaves the range empty, so the check changes only the time
+	if w.suffix != 0 {
+		w.widen(start[len(user):])
 	}
 	if w.entries == 0 && w.fragCount == 0 {
 		w.minSeq, w.maxSeq = seq, seq
@@ -1115,9 +1189,10 @@ func (w *Writer) AddRangeDelete(_ context.Context, start, end []byte, seq uint64
 //     fields state the top-level index of the index, and its filter fields
 //     the top-level index of the filter.
 //
-// A table with a Prefix or with a fragment of [Writer.AddRangeDelete] has
-// format version 3. It has the index and the filter of version 1, or of
-// version 2 with a PartitionSize, and the parts of version 3 among them.
+// A table with a Prefix, with a fragment of [Writer.AddRangeDelete] or with
+// versions has format version 3. It has the index and the filter of version
+// 1, or of version 2 with a PartitionSize, and the parts of version 3 among
+// them.
 //
 //   - Without partitions, the data blocks are followed by the block of
 //     fragments, the filter block, the prefix filter block, the index block
@@ -1133,11 +1208,16 @@ func (w *Writer) AddRangeDelete(_ context.Context, start, end []byte, seq uint64
 //   - The filter of prefixes has the layout of the filter of the keys over
 //     the distinct prefixes. Its top-level index has the last prefix of each
 //     partition with the sequence 0.
-//   - The block of places has the flags as a varint, with bit 0 set for a
-//     table in partitions. Then the places of the filter, the block of
-//     fragments and the filter of prefixes follow, each as the offset and
-//     the length as varints and the CRC32C as a uint32, or three zeros. Then
-//     the length of the name of the Prefix as a varint and the name follow.
+//   - The block of places has the flags as a varint. Bit 0 is set for a
+//     table in partitions, bit 1 for fragment partitions, bit 2 for versions
+//     and bit 3 for a range of versions. Then the places of the filter, the
+//     block of fragments and the filter of prefixes follow, each as the
+//     offset and the length as varints and the CRC32C as a uint32, or three
+//     zeros. Then the length of the name of the Prefix as a varint and the
+//     name follow. With versions, the width follows the name as a varint.
+//     A table with versions and an entry or a fragment sets bit 3, and its
+//     lowest and its highest version follow the width, each as its length
+//     as a varint and its bytes.
 //   - The footer has the layout of version 1 with the version 3. Its index
 //     fields state the index block or the top-level index of the index, and
 //     its filter fields the block of places.
@@ -1155,8 +1235,8 @@ func (w *Writer) AddRangeDelete(_ context.Context, start, end []byte, seq uint64
 //
 // Allocates the encoding of the filter, the scratch of its builder, the
 // growth of the buffer of the table for the filter, the index and the
-// partitions, and the largest key and the end of the last fragment of the
-// summary.
+// partitions, and the largest key, the end of the last fragment and the two
+// versions of the summary.
 func (w *Writer) Close(ctx context.Context) (Summary, error) {
 	if w.err != nil {
 		return Summary{}, w.err
@@ -1197,6 +1277,8 @@ func (w *Writer) Close(ctx context.Context) (Summary, error) {
 		}
 		//nolint:gosec // G115: NewWriter refuses a negative SuffixBytes
 		p.suffix = uint64(w.suffix)
+		p.ranged = w.suffix != 0 && (w.entries != 0 || w.fragCount != 0)
+		p.minVersion, p.maxVersion = w.minVersion, w.maxVersion
 		start := len(w.out)
 		w.out = p.append(w.out)
 		version, filter = placedVersion, w.sealPlace(size, start)
@@ -1239,6 +1321,9 @@ func (w *Writer) Close(ctx context.Context) (Summary, error) {
 	if w.fragCount != 0 {
 		sum.RangeDeleteEnd = append([]byte{}, w.fragEnd...)
 	}
+	if p.ranged {
+		sum.MinVersion, sum.MaxVersion = append([]byte{}, w.minVersion...), append([]byte{}, w.maxVersion...)
+	}
 	w.retain()
 
 	return sum, nil
@@ -1254,13 +1339,15 @@ func (w *Writer) Close(ctx context.Context) (Summary, error) {
 // MaxRetained of 0, and releases them otherwise. A Writer that kept its
 // buffers after a table writes a table of no more entries and fragments and
 // no longer keys, values and fragments without growing them. The [Summary]
-// that Close returned before remains valid, because its keys are copies.
+// that Close returned before remains valid, because its keys and its
+// versions are copies.
 //
 // # Allocation contract
 //
 // Zero-alloc. A table that a Writer writes after Reset allocates the copies
-// of its smallest key, its largest key and the bounds of its fragments, and
-// the growth of a buffer that the table needs.
+// of its smallest key, its largest key, the bounds of its fragments and the
+// two versions of its range, and the growth of a buffer that the table
+// needs.
 func (w *Writer) Reset(dst Sink) {
 	w.retain()
 	*w = Writer{
@@ -1287,6 +1374,8 @@ func (w *Writer) Reset(dst Sink) {
 		fragEnd:         w.fragEnd[:0],
 		fragParts:       w.fragParts[:0],
 		fragMeta:        w.fragMeta[:0],
+		minVersion:      w.minVersion[:0],
+		maxVersion:      w.maxVersion[:0],
 		blockSize:       w.blockSize,
 		restartInterval: w.restartInterval,
 		filterBits:      w.filterBits,
@@ -1301,11 +1390,11 @@ func (w *Writer) Reset(dst Sink) {
 // Footprint returns the bytes of memory that the buffers of w take: the
 // capacity of the buffers of the current block, of its keys, of the
 // compressed block, of the index, of the hashes and the partitions of the
-// filters, of the last prefix and of the fragments and their partitions, and
-// the scratch of the filter builder that [filter.FuseBuilder.Footprint]
-// returns. It does not count the smallest key and the start of the first
-// fragment, because Close returns them in the [Summary]. A new Writer and a
-// Writer that released its buffers return 0.
+// filters, of the last prefix, of the fragments and their partitions and of
+// the range of the versions, and the scratch of the filter builder that
+// [filter.FuseBuilder.Footprint] returns. It does not count the smallest key
+// and the start of the first fragment, because Close returns them in the
+// [Summary]. A new Writer and a Writer that released its buffers return 0.
 //
 // # Allocation contract
 //
@@ -1314,7 +1403,7 @@ func (w *Writer) Footprint() int {
 	n := cap(w.out) + cap(w.last) + cap(w.cur) + cap(w.scratch) + cap(w.index) + cap(w.prefixLast)
 	n += cap(w.keys.parts) + cap(w.keys.meta) + cap(w.prefixes.parts) + cap(w.prefixes.meta)
 	n += cap(w.indexParts) + cap(w.indexMeta) + cap(w.frags) + cap(w.fragLast) + cap(w.fragEnd)
-	n += cap(w.fragParts) + cap(w.fragMeta)
+	n += cap(w.fragParts) + cap(w.fragMeta) + cap(w.minVersion) + cap(w.maxVersion)
 	n += 4 * (cap(w.restarts) + cap(w.indexRestarts) + cap(w.fragRestarts))
 
 	return n + 8*(cap(w.keys.hashes)+cap(w.prefixes.hashes)) + w.builder.Footprint()
@@ -1332,7 +1421,27 @@ func (w *Writer) retain() {
 	w.keys, w.prefixes, w.prefixLast = filterBuild{}, filterBuild{}, nil
 	w.frags, w.fragRestarts, w.fragLast, w.fragEnd = nil, nil, nil, nil
 	w.fragParts, w.fragMeta = nil, nil
+	w.minVersion, w.maxVersion = nil, nil
 	w.builder = filter.FuseBuilder{}
+}
+
+// widen widens the range of the versions of the table to version, in the
+// order of bytes.Compare. The first entry or fragment of a table sets both
+// ends of the range. The lowest version is at or below the highest one, so
+// a version above the highest one needs one comparison. widen copies version
+// into the buffers of the range, so it allocates only to grow them.
+func (w *Writer) widen(version []byte) {
+	switch {
+	case w.entries == 0 && w.fragCount == 0:
+		w.minVersion = append(w.minVersion[:0], version...)
+		w.maxVersion = append(w.maxVersion[:0], version...)
+	//dokimi:mutate-skip ror-boundary: a version equal to the highest one is copied over the same bytes
+	case bytes.Compare(version, w.maxVersion) > 0:
+		w.maxVersion = append(w.maxVersion[:0], version...)
+	//dokimi:mutate-skip ror-boundary: a version equal to the lowest one is copied over the same bytes
+	case bytes.Compare(version, w.minVersion) < 0:
+		w.minVersion = append(w.minVersion[:0], version...)
+	}
 }
 
 // finishBlock ends the current data block, which out contains from its first

@@ -497,7 +497,18 @@ func TestReader(t *testing.T) {
 			{
 				name:       "returns ErrCorrupt for a block of places with an unknown flag",
 				giveOpts:   settings[7].opts,
-				giveChange: func(l *layout) { l.data[l.places.off] = suffixFlag << 1 },
+				giveChange: func(l *layout) { l.data[l.places.off] = rangeFlag << 1 },
+			},
+			{
+				name:     "returns ErrCorrupt for a block of places with the flag of the range of versions alone",
+				giveOpts: settings[7].opts,
+				giveChange: func(l *layout) {
+					// A name of two bytes less leaves two empty versions after it.
+					end := l.places.off + l.places.n
+					l.data[l.places.off] = rangeFlag
+					l.data[end-len(firstSix)-1] -= 2
+					l.data[end-2], l.data[end-1] = 0, 0
+				},
 			},
 			{
 				name:       "returns ErrCorrupt for a block of places with fragment partitions without partitions",
@@ -793,9 +804,10 @@ func TestReader(t *testing.T) {
 			assert.ErrorIs(t, err, sstable.ErrCorrupt, "Open refuses the changed table")
 		})
 
-		// Each case changes the golden table with versions without partitions,
-		// whose block of places ends with the name of goldenPrefix and the
-		// width of the versions in one byte.
+		// Each case changes a table with versions without entries and
+		// fragments, which has no range of versions. Its block of places ends
+		// with the name of goldenPrefix and the width of the versions in one
+		// byte.
 		widths := []struct {
 			name       string
 			giveChange func(l *layout)
@@ -819,8 +831,7 @@ func TestReader(t *testing.T) {
 		for _, tt := range widths {
 			t.Run(tt.name, func(t *testing.T) {
 				t.Parallel()
-				opts := versionedSettings[0]
-				l := newLayout(t, opts, goldenTableOf(opts), versionedGoldenDeletes...)
+				l := newLayout(t, versionedSettings[0], nil)
 				tt.giveChange(l)
 				l.seal()
 				_, err := sstable.Open(t.Context(), bytesFile(l.data), int64(len(l.data)),
@@ -828,6 +839,72 @@ func TestReader(t *testing.T) {
 				assert.ErrorIs(t, err, sstable.ErrCorrupt, "Open refuses the changed table")
 			})
 		}
+
+		// Each case writes the 18 bytes that follow the width of the versions
+		// in the block of places of the golden table with versions without
+		// partitions. In that table they contain the lowest and the highest
+		// version, each of versionBytes bytes after a varint of its length.
+		ranges := []struct {
+			name     string
+			giveTail []byte
+		}{
+			{
+				name:     "returns ErrCorrupt for a lowest version longer than the width",
+				giveTail: slices.Concat([]byte{9}, make([]byte, 9), []byte{7}, bytes.Repeat([]byte{0xff}, 7)),
+			},
+			{
+				name:     "returns ErrCorrupt for a highest version longer than the width",
+				giveTail: slices.Concat([]byte{7}, make([]byte, 7), []byte{9}, bytes.Repeat([]byte{0xff}, 9)),
+			},
+			{
+				name: "returns ErrCorrupt for a lowest version after the highest version",
+				giveTail: slices.Concat([]byte{versionBytes}, bytes.Repeat([]byte{0xff}, versionBytes),
+					[]byte{versionBytes}, make([]byte, versionBytes)),
+			},
+			{
+				name: "returns ErrCorrupt for a block of places with a byte after the highest version",
+				giveTail: slices.Concat([]byte{versionBytes}, make([]byte, versionBytes), []byte{7},
+					bytes.Repeat([]byte{0xff}, 8)),
+			},
+		}
+		for _, tt := range ranges {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				opts := versionedSettings[0]
+				l := newLayout(t, opts, goldenTableOf(opts), versionedGoldenDeletes...)
+				copy(l.data[l.places.off+l.places.n-len(tt.giveTail):], tt.giveTail)
+				l.seal()
+				_, err := sstable.Open(t.Context(), bytesFile(l.data), int64(len(l.data)),
+					sstable.ReaderOptions{Prefix: goldenPrefix, SuffixBytes: versionBytes})
+				assert.ErrorIs(t, err, sstable.ErrCorrupt, "Open refuses the changed table")
+			})
+		}
+
+		t.Run("returns ErrCorrupt for a block of places whose range ends at the width", func(t *testing.T) {
+			t.Parallel()
+			// A table without entries and fragments has no range after its
+			// width.
+			l := newLayout(t, versionedSettings[0], nil)
+			l.data[l.places.off] = suffixFlag | rangeFlag
+			l.seal()
+			_, err := sstable.Open(t.Context(), bytesFile(l.data), int64(len(l.data)),
+				sstable.ReaderOptions{Prefix: goldenPrefix, SuffixBytes: versionBytes})
+			assert.ErrorIs(t, err, sstable.ErrCorrupt, "Open refuses the changed table")
+		})
+
+		t.Run("returns ErrCorrupt for a version that passes the end of the block of places", func(t *testing.T) {
+			t.Parallel()
+			// The versions a and b of keys of one byte take two bytes each at
+			// the end of the block of places. A length of 2 of the highest one
+			// passes its end by a byte.
+			opts := sstable.WriterOptions{SuffixBytes: versionBytes}
+			l := newLayout(t, opts, []entry{{key: []byte("b"), seq: 1}, {key: []byte("a"), seq: 1}})
+			l.data[l.places.off+l.places.n-2] = 2
+			l.seal()
+			_, err := sstable.Open(t.Context(), bytesFile(l.data), int64(len(l.data)),
+				sstable.ReaderOptions{SuffixBytes: versionBytes})
+			assert.ErrorIs(t, err, sstable.ErrCorrupt, "Open refuses the changed table")
+		})
 
 		suffixes := []struct {
 			name       string
@@ -862,13 +939,12 @@ func TestReader(t *testing.T) {
 
 		t.Run("returns ErrSuffix for a Reader of the width -1 of a table of the width 2^64 - 1", func(t *testing.T) {
 			t.Parallel()
-			// The block of places of the golden table with versions without
-			// partitions ends with the name of goldenPrefix and the width in one
+			// The block of places of a table with versions without entries and
+			// fragments ends with the name of goldenPrefix and the width in one
 			// byte. The case writes a name of 4 bytes and the varint of 10 bytes
 			// of 2^64 - 1 in their place, the width that a conversion of -1 to
 			// uint64 gives.
-			opts := versionedSettings[0]
-			l := newLayout(t, opts, goldenTableOf(opts), versionedGoldenDeletes...)
+			l := newLayout(t, versionedSettings[0], nil)
 			tail := l.data[l.places.off+l.places.n-len(firstSix)-2 : l.places.off+l.places.n]
 			binary.AppendUvarint(append(tail[:0], 4, 'f', 'i', 'r', 's'), math.MaxUint64)
 			l.seal()
@@ -997,21 +1073,61 @@ func TestReader(t *testing.T) {
 		t.Run("returns the summary that Close returned", func(t *testing.T) {
 			t.Parallel()
 			prop.ForAll(t, "the Reader returns the summary of the Writer", func(c *prop.Case) {
+				opts := c.Draw(prop.SampledFrom(settings...), "setting").opts
+				es, dels, ropts := entries, fragments, sstable.ReaderOptions{}
+				if c.Draw(prop.Boolean(), "versions") {
+					opts = c.Draw(prop.SampledFrom(versionedSettings...), "setting with versions")
+					es, dels, ropts.SuffixBytes = versionedEntries, versionedFragments, versionBytes
+				}
 				var buf bufferSink
-				w, err := sstable.NewWriter(&buf, c.Draw(prop.SampledFrom(settings...), "setting").opts)
+				w, err := sstable.NewWriter(&buf, opts)
 				assert.NoError(c, err, "NewWriter accepts the options")
-				for _, e := range c.Draw(entries, "entries") {
+				for _, e := range c.Draw(es, "entries") {
 					assert.NoError(c, w.Add(c.Context(), e.key, e.seq, e.value), "Add adds the entry")
 				}
-				for _, d := range c.Draw(fragments, "fragments") {
+				for _, d := range c.Draw(dels, "fragments") {
 					assert.NoError(c, w.AddRangeDelete(c.Context(), d.start, d.end, d.seq),
 						"AddRangeDelete adds the fragment")
 				}
 				want, err := w.Close(c.Context())
 				assert.NoError(c, err, "Close writes the table")
-				assert.Equal(c, openTable(c, buf.Bytes(), sstable.ReaderOptions{}).Summary(), want,
+				assert.Equal(c, openTable(c, buf.Bytes(), ropts).Summary(), want,
 					"the Reader returns the summary of the Writer")
 			})
+		})
+
+		t.Run("returns the empty version of an empty key as an empty slice", func(t *testing.T) {
+			t.Parallel()
+			// A key of fewer bytes than the width is a version as a whole.
+			opts := sstable.WriterOptions{SuffixBytes: versionBytes}
+			data := writeTable(t, opts, []entry{{key: []byte("b"), seq: 1}, {key: []byte{}, seq: 1}})
+			s := openTable(t, data, sstable.ReaderOptions{SuffixBytes: versionBytes}).Summary()
+			expect.Equal(t, s.MinVersion, []byte{}, "MinVersion is the empty version")
+			expect.Equal(t, s.MaxVersion, []byte("b"), "MaxVersion is the version of the key b")
+		})
+
+		t.Run("returns no range of versions for a table without the flag of the range", func(t *testing.T) {
+			t.Parallel()
+			// The fixture is the golden table with versions without partitions,
+			// whose block of places ends at the width of the versions.
+			old := []byte(files.Read(t, filepath.Join("testdata", "prefixes-versions-without-range.sst")))
+			opts := versionedSettings[0]
+			var buf bufferSink
+			w, err := sstable.NewWriter(&buf, opts)
+			assert.NoError(t, err, "NewWriter accepts the options")
+			for _, e := range goldenTableOf(opts) {
+				assert.NoError(t, w.Add(t.Context(), e.key, e.seq, e.value), "Add adds the entry")
+			}
+			for _, d := range versionedGoldenDeletes {
+				assert.NoError(t, w.AddRangeDelete(t.Context(), d.start, d.end, d.seq),
+					"AddRangeDelete adds the fragment")
+			}
+			want, err := w.Close(t.Context())
+			assert.NoError(t, err, "Close writes the table")
+			want.MinVersion, want.MaxVersion, want.Size = nil, nil, int64(len(old))
+			r := openTable(t, old, sstable.ReaderOptions{Prefix: goldenPrefix, SuffixBytes: versionBytes})
+			assert.Equal(t, r.Summary(), want,
+				"the Reader returns the summary of the table without a range of versions")
 		})
 	})
 
@@ -1023,18 +1139,24 @@ func TestReader(t *testing.T) {
 			prop.ForAll(t, "Footprint returns the bytes of the blocks that the Reader keeps and the summary keys",
 				func(c *prop.Case) {
 					opts := c.Draw(prop.SampledFrom(settings...), "setting").opts
-					l := newLayout(c, opts, c.Draw(entries, "entries"), c.Draw(fragments, "fragments")...)
+					es, dels, width := entries, fragments, 0
+					if c.Draw(prop.Boolean(), "versions") {
+						opts = c.Draw(prop.SampledFrom(versionedSettings...), "setting with versions")
+						es, dels, width = versionedEntries, versionedFragments, versionBytes
+					}
+					l := newLayout(c, opts, c.Draw(es, "entries"), c.Draw(dels, "fragments")...)
 					var prefix sstable.PrefixExtractor
 					if c.Draw(prop.Boolean(), "reader of the extraction") {
 						prefix = opts.Prefix
 					}
-					r := openTable(c, l.data, sstable.ReaderOptions{Prefix: prefix})
+					r := openTable(c, l.data, sstable.ReaderOptions{Prefix: prefix, SuffixBytes: width})
 					want := l.index.n + l.filter.n + l.fragments.n
 					if prefix != nil {
 						want += l.prefix.n
 					}
 					s := r.Summary()
 					want += cap(s.SmallestKey) + cap(s.LargestKey) + cap(s.RangeDeleteStart) + cap(s.RangeDeleteEnd)
+					want += cap(s.MinVersion) + cap(s.MaxVersion)
 					assert.Equal(c, r.Footprint(), want,
 						"Footprint adds the lengths of the blocks that the Reader keeps to the capacity of the keys")
 				})
