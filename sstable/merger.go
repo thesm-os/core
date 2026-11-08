@@ -94,13 +94,17 @@ type mergeItem struct {
 }
 
 // Reset replaces the sources of m with sources and leaves m on no entry. m
-// keeps sources and the memory of its heap. Reset does not close the sources
-// that it replaces.
+// keeps sources and the memory of its heap. Reset clears every item of that
+// memory, so m keeps no key of the sources that it replaces. Reset does not
+// close the sources that it replaces.
 //
 // # Allocation contract
 //
 // Zero-alloc.
 func (m *Merger) Reset(sources []Source) {
+	// The array beyond the length of the heap keeps the items of the
+	// sources that left it, with their keys.
+	clear(m.heap[:cap(m.heap)])
 	m.sources, m.heap, m.err = sources, m.heap[:0], nil
 }
 
@@ -108,7 +112,8 @@ func (m *Merger) Reset(sources []Source) {
 // the sources, and returns their errors joined with errors.Join. A source
 // without a Close method has nothing to release, such as the cursor of a
 // memtable. Close then removes the sources from m and leaves m on no entry.
-// m keeps the memory of its heap, so a Reset gives it new sources.
+// m keeps the memory of its heap, so a Reset gives it new sources. Close
+// clears every item of that memory, so m keeps no key of the sources.
 //
 // # Allocation contract
 //
@@ -121,6 +126,10 @@ func (m *Merger) Close() error {
 			err = errors.Join(err, c.Close())
 		}
 	}
+
+	// The array beyond the length of the heap keeps the items of the
+	// sources that left it, with their keys.
+	clear(m.heap[:cap(m.heap)])
 	m.sources, m.heap, m.err = nil, m.heap[:0], nil
 
 	return err

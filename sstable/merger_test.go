@@ -9,8 +9,10 @@ import (
 	"errors"
 	"io"
 	"math"
+	"runtime"
 	"slices"
 	"testing"
+	"weak"
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/bench"
@@ -254,8 +256,40 @@ func TestMerger(t *testing.T) {
 		prop.ForAll(t, mergeContract, mergeSteps)
 	})
 
+	// keyAfter puts m on the entry of one source, whose key has 32 bytes,
+	// moves m with step, ends the merge with end, and returns a weak pointer
+	// to the key. No variable of the caller refers to the key or to the
+	// source afterwards.
+	keyAfter := func(t *testing.T, m *sstable.Merger, step, end func(*sstable.Merger)) weak.Pointer[byte] {
+		t.Helper()
+
+		key := bytes.Repeat([]byte("k"), 32)
+		m.Reset([]sstable.Source{&sliceSource{es: []entry{{key: key, seq: 1}}}})
+		assert.True(t, m.First(t.Context()), "the merge has an entry")
+		step(m)
+		end(m)
+
+		return weak.Make(&key[0])
+	}
+
+	// stay leaves the merge on its entry, and exhaust moves it past its last
+	// entry, which empties the heap.
+	stay := func(*sstable.Merger) {}
+	exhaust := func(m *sstable.Merger) { assert.False(t, m.Next(t.Context()), "the merge has no second entry") }
+
 	t.Run("Reset", func(t *testing.T) {
 		t.Parallel()
+
+		t.Run("keeps no key of the sources that it replaces", func(t *testing.T) {
+			t.Parallel()
+			var m sstable.Merger
+			key := keyAfter(t, &m, stay, func(m *sstable.Merger) { m.Reset(nil) })
+
+			runtime.GC()
+			runtime.GC()
+			assert.Nil(t, key.Value(), "Reset must drop the keys of the sources that it replaces")
+			runtime.KeepAlive(&m)
+		})
 
 		t.Run("replaces the sources", func(t *testing.T) {
 			t.Parallel()
@@ -282,6 +316,30 @@ func TestMerger(t *testing.T) {
 
 	t.Run("Close", func(t *testing.T) {
 		t.Parallel()
+
+		closeMerge := func(m *sstable.Merger) { assert.NoError(t, m.Close(), "Close closes the source") }
+
+		t.Run("keeps no key of a source on an entry", func(t *testing.T) {
+			t.Parallel()
+			var m sstable.Merger
+			key := keyAfter(t, &m, stay, closeMerge)
+
+			runtime.GC()
+			runtime.GC()
+			assert.Nil(t, key.Value(), "Close must drop the key of a source on an entry")
+			runtime.KeepAlive(&m)
+		})
+
+		t.Run("keeps no key of a source that the merge exhausted", func(t *testing.T) {
+			t.Parallel()
+			var m sstable.Merger
+			key := keyAfter(t, &m, exhaust, closeMerge)
+
+			runtime.GC()
+			runtime.GC()
+			assert.Nil(t, key.Value(), "Close must drop the key of a source that left the heap")
+			runtime.KeepAlive(&m)
+		})
 
 		t.Run("closes every source once", func(t *testing.T) {
 			t.Parallel()
