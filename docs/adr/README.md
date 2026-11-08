@@ -139,5 +139,6 @@ Start from [`docs/templates/ADR.md`](../templates/ADR.md).
 | [0079](0079-a-content-type-has-no-space-at-either-end.md) | A Content Type Has No Space at Either End | Accepted |
 | [0080](0080-a-custodian-refuses-an-empty-data-key.md) | A Custodian Refuses an Empty Data Key | Accepted |
 | [0081](0081-a-fenced-writer-may-refuse-epoch-zero.md) | A Fenced Writer May Refuse Epoch Zero | Accepted |
+| [0082](0082-an-hlc-clock-reads-its-time-from-a-physical-clock.md) | An HLC Clock Reads Its Time from a Physical Clock | Accepted |
 
 [nygard]: https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions

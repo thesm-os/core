@@ -14,12 +14,17 @@ import (
 	"go.dokimi.dev/assert/expect"
 
 	"go.thesmos.sh/core/clock"
+	"go.thesmos.sh/core/clock/fake"
 	"go.thesmos.sh/core/clock/hlc"
+	"go.thesmos.sh/core/coretest/clocktest"
 	"go.thesmos.sh/core/errs"
 )
 
 // maxOffset is the max offset of the clocks of the cases of Update.
 const maxOffset = time.Second
+
+// origin is the time of the fake clocks under the clocks of NewOver.
+var origin = time.Date(2026, time.November, 8, 0, 0, 0, 0, time.UTC)
 
 // newClock returns a Clock of node 0 on the system clock. The conformance test
 // of the package runs the suite of clock.Clock on it.
@@ -79,6 +84,15 @@ func TestClock(t *testing.T) {
 			expect.Equal(t, got.Wall, int64(101), "Now moves the wall forward by 1 ns after the last Logical")
 			expect.Equal(t, got.Logical, uint32(1), "Now starts Logical at 1 on the next wall")
 		})
+
+		t.Run("returns the wall of the physical clock of NewOver", func(t *testing.T) {
+			t.Parallel()
+			f := fake.New(origin)
+			c := hlc.NewOver(clock.NodeID(1), maxOffset, f)
+			f.Advance(time.Second)
+			assert.Equal(t, c.Now().Wall, origin.Add(time.Second).UnixNano(),
+				"Now takes the wall of the physical clock")
+		})
 	})
 
 	t.Run("Elapsed", func(t *testing.T) {
@@ -108,6 +122,14 @@ func TestClock(t *testing.T) {
 			wall.Add(-int64(time.Hour))
 			assert.InRange(t, c.Elapsed(), float64(before), math.MaxInt64,
 				"Elapsed must not follow a step back of the source")
+		})
+
+		t.Run("returns the Elapsed of the physical clock of NewOver", func(t *testing.T) {
+			t.Parallel()
+			f := fake.New(origin)
+			c := hlc.NewOver(clock.NodeID(1), maxOffset, f)
+			f.Advance(3 * time.Second)
+			assert.Equal(t, c.Elapsed(), 3*time.Second, "Elapsed returns the Elapsed of the physical clock")
 		})
 	})
 
@@ -245,6 +267,24 @@ func TestClock(t *testing.T) {
 			assert.NoError(t, err, "a negative max offset must merge a peer at the source")
 			assert.Equal(t, got.Logical, uint32(5), "Update returns the Logical of the peer plus 1")
 		})
+
+		t.Run("returns ErrOffset for a peer beyond the max offset of a physical clock", func(t *testing.T) {
+			t.Parallel()
+			c := hlc.NewOver(clock.NodeID(1), maxOffset, fake.New(origin))
+			_, err := c.Update(clock.Instant{Wall: origin.Add(maxOffset).UnixNano() + 1, Logical: 1, Node: 99})
+			assert.ErrorIs(t, err, clock.ErrOffset, "Update compares the peer with the wall of the physical clock")
+		})
+	})
+
+	t.Run("NewOver", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns a Clock that passes the suite of clock.Clock over a fake Clock", func(t *testing.T) {
+			t.Parallel()
+			clocktest.RunClockSuite(t, func() *hlc.Clock {
+				return hlc.NewOver(clock.NodeID(1), clock.DefaultMaxOffset, fake.New(origin))
+			})
+		})
 	})
 }
 
@@ -254,6 +294,13 @@ func TestClock(t *testing.T) {
 func TestClockAllocs(t *testing.T) {
 	c := hlc.NewWithSource(clock.NodeID(1), maxOffset, func() int64 { return 100 })
 	peer := clock.Instant{Wall: 101 + int64(maxOffset), Logical: 1, Node: 99}
+
+	t.Run("Now", func(t *testing.T) {
+		over := hlc.NewOver(clock.NodeID(1), maxOffset, fake.New(origin))
+		var got clock.Instant
+		expect.MaxAllocs(t, func() { got = over.Now() }, 0, "a Now over a fake physical clock must not allocate")
+		assert.Equal(t, got.Wall, origin.UnixNano(), "the test must measure a Now over the fake clock")
+	})
 
 	t.Run("Update", func(t *testing.T) {
 		var err error

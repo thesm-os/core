@@ -11,16 +11,42 @@ import (
 	"go.thesmos.sh/core/clock"
 )
 
-// Clock implements [clock.Clock] using the system wall clock with
-// Hybrid Logical Clock semantics.
+// Physical is the physical clock of a [Clock]: the wall time that
+// [Clock.Now] and [Clock.Update] merge, the durations of [Clock.Elapsed]
+// and the timers of [Clock.NewTimer]. Every [clock.Clock] is a Physical, so
+// a [go.thesmos.sh/core/clock/fake.Clock] can supply the virtual time of a
+// test.
+//
+// # Concurrency
+//
+// The methods of a Physical must be safe for concurrent use, because the
+// methods of a Clock call them without a lock.
+type Physical interface {
+	// Time returns the wall time.
+	Time() time.Time
+
+	// Elapsed returns the time since an origin that the physical clock
+	// fixes once. Elapsed never decreases, and a step of the wall time
+	// does not change it.
+	Elapsed() time.Duration
+
+	// NewTimer returns a Timer that sends its tick once Elapsed has
+	// advanced by at least d.
+	NewTimer(d time.Duration) clock.Timer
+}
+
+// Clock implements [clock.Clock] with Hybrid Logical Clock semantics over a
+// [Physical] clock: the system clock of [New], the source of
+// [NewWithSource], or the physical clock of [NewOver].
 //
 // Clock is safe for concurrent use by multiple goroutines.
 //
 // # Allocation contract
 //
 // [Clock.Now], [Clock.Time], [Clock.Elapsed] and [Clock.Update] are
-// zero-allocation. [Clock.NewTimer] allocates the wrapper struct and the
-// underlying [time.Timer].
+// zero-allocation when the methods of the physical clock are. [Clock.NewTimer]
+// allocates the Timer of the physical clock: for New and NewWithSource the
+// wrapper struct and the underlying [time.Timer].
 //
 //dokimi:subject clock.Clock new=newClock
 //dokimi:budget Clock.Now allocs=0
@@ -28,12 +54,9 @@ import (
 //dokimi:budget Clock.Elapsed allocs=0
 //dokimi:budget Clock.Update allocs=0
 type Clock struct {
-	// origin is the time of the construction of the clock. It carries the
-	// monotonic reading of [time.Now], which Elapsed measures from.
-	origin time.Time
-
-	nowFn func() int64
-	wall  int64
+	// physical is the physical clock that the Clock reads.
+	physical Physical
+	wall     int64
 
 	// maxOffset is the furthest ahead of the physical time that Update
 	// adopts the wall of a peer. It is not negative.
@@ -47,46 +70,66 @@ type Clock struct {
 // Compile-time interface check.
 var _ clock.Clock = (*Clock)(nil)
 
-// New returns a production HLC [clock.Clock] tagged with node. Wall
-// time is read from [time.Now]. [Clock.Update] refuses a peer instant
-// whose wall is more than maxOffset ahead of the wall time, and a
-// maxOffset below zero counts as zero. [clock.DefaultMaxOffset] is
-// the max offset of a deployment whose clocks NTP keeps within 500 ms
-// of each other.
-func New(node clock.NodeID, maxOffset time.Duration) *Clock {
-	return NewWithSource(node, maxOffset, nowUnixNano)
-}
-
-// NewWithSource returns an HLC [clock.Clock] that reads wall time
-// from source instead of [time.Now], with the max offset of [New].
-// Enables unit tests that exercise specific HLC branches (wall
-// advance vs logical increment, peer-ahead vs local-ahead) without
-// depending on real-clock cadence. [Clock.Elapsed] reads the
-// monotonic time of the system and not source.
-//
-// source must return monotonically non-decreasing values; HLC's
-// logical counter is what guarantees strict monotonicity even when
-// source repeats a value across calls.
-func NewWithSource(node clock.NodeID, maxOffset time.Duration, source func() int64) *Clock {
-	return &Clock{origin: time.Now(), node: node, nowFn: source, maxOffset: max(maxOffset, 0)}
-}
-
-// nowUnixNano is the default wall-time source. Pulled out as a
-// package-level function so the Clock struct does not capture an
-// inline closure on every construction.
-func nowUnixNano() int64 { return time.Now().UnixNano() }
-
-// Now returns the next HLC [clock.Instant]. If the wall-time source
-// has advanced past the last issued wall, the new wall is adopted
-// and the logical counter resets to 1; otherwise the logical
-// counter increments. After Logical 2^32 - 1 the wall moves forward
-// by a nanosecond and Logical starts again at 1.
+// New returns a production HLC [clock.Clock] tagged with node over the
+// system clock. Wall time is read from [time.Now], and [Clock.Elapsed]
+// reads the monotonic time of the system since the call of New.
+// [Clock.Update] refuses a peer instant whose wall is more than maxOffset
+// ahead of the wall time, and a maxOffset below zero counts as zero.
+// [clock.DefaultMaxOffset] is the max offset of a deployment whose clocks
+// NTP keeps within 500 ms of each other.
 //
 // # Allocation contract
 //
-// Zero alloc.
+// Allocates the Clock and its system clock.
+func New(node clock.NodeID, maxOffset time.Duration) *Clock {
+	return NewOver(node, maxOffset, system{origin: time.Now()})
+}
+
+// NewWithSource returns an HLC [clock.Clock] tagged with node that reads
+// its wall time from source in place of [time.Now], with the max offset of
+// [New]. A unit test of the merge sets the wall time of each call through
+// source. [Clock.Elapsed] reads the monotonic time of the system since the
+// call of NewWithSource, and [Clock.NewTimer] returns a timer of the
+// system. A test that needs every time from its own clock uses [NewOver].
+//
+// source returns the Unix time in nanoseconds and must not decrease. The
+// logical counter keeps the instants strictly increasing when source
+// repeats a value.
+//
+// # Allocation contract
+//
+// Allocates the Clock and its physical clock.
+func NewWithSource(node clock.NodeID, maxOffset time.Duration, source func() int64) *Clock {
+	return NewOver(node, maxOffset, sourced{origin: time.Now(), wall: source})
+}
+
+// NewOver returns an HLC [clock.Clock] tagged with node over physical,
+// with the max offset of [New]. [Clock.Now] and [Clock.Update] merge the
+// Unix time of physical in nanoseconds, [Clock.Elapsed] returns the Elapsed
+// of physical, and [Clock.NewTimer] returns its Timer. The Clock reads every
+// time from physical, so two Clocks over equal physical clocks that read
+// nothing from the system return equal instants and durations. A
+// simulation runs each Clock over the clock of its host this way, and a
+// test runs it over a [go.thesmos.sh/core/clock/fake.Clock].
+//
+// # Allocation contract
+//
+// Allocates the Clock.
+func NewOver(node clock.NodeID, maxOffset time.Duration, physical Physical) *Clock {
+	return &Clock{physical: physical, node: node, maxOffset: max(maxOffset, 0)}
+}
+
+// Now returns the next HLC [clock.Instant]. When the wall time of the
+// physical clock is after the last wall of the clock, Now takes that wall
+// and starts Logical at 1. Otherwise it adds 1 to Logical. After Logical
+// 2^32 - 1 the wall moves forward by a nanosecond and Logical starts again
+// at 1.
+//
+// # Allocation contract
+//
+// Zero alloc when the Time of the physical clock does not allocate.
 func (c *Clock) Now() clock.Instant {
-	now := c.nowFn()
+	now := c.physical.Time().UnixNano()
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -101,28 +144,26 @@ func (c *Clock) Now() clock.Instant {
 	return clock.Instant{Wall: c.wall, Logical: c.logical, Node: c.node}
 }
 
-// Time returns the current wall time as a stdlib [time.Time].
-// Equivalent to Now().Time(); offered as a first-class method for
-// the common case where callers only want the stdlib representation.
-//
-// Time advances the HLC state in the same way as Now.
+// Time returns the wall time of [Clock.Now] as a [time.Time], which is
+// Now().Time(). It advances the state of the clock as Now does.
 //
 // # Allocation contract
 //
-// Zero alloc.
+// Zero alloc when the Time of the physical clock does not allocate.
 func (c *Clock) Time() time.Time {
 	return c.Now().Time()
 }
 
-// Elapsed returns the time since [New] or [NewWithSource] constructed
-// the clock. It reads the monotonic time of the system, which a step
-// of the wall clock does not change, and it takes no lock.
+// Elapsed returns the Elapsed of the physical clock: for [New] and
+// [NewWithSource] the time since the constructor ran, on the monotonic
+// time of the system. A step of the wall clock does not change it, and it
+// takes no lock.
 //
 // # Allocation contract
 //
-// Zero alloc.
+// Zero alloc when the Elapsed of the physical clock does not allocate.
 func (c *Clock) Elapsed() time.Duration {
-	return time.Since(c.origin)
+	return c.physical.Elapsed()
 }
 
 // Update merges an observed peer instant into the local clock and
@@ -132,25 +173,25 @@ func (c *Clock) Elapsed() time.Duration {
 // "Logical Physical Clocks":
 //
 //	newWall = max(local.Wall, observed.Wall, physical)
-//	newLogical depends on which input wins:
-//	  - physical strictly wins  → reset to 1 (fresh tick)
-//	  - local and observed tied → max(both logicals) + 1
-//	  - local wins              → local.Logical + 1
-//	  - observed wins           → observed.Logical + 1
+//	newLogical follows the walls that equal newWall:
+//	  - neither local nor observed → 1
+//	  - both local and observed    → max(local.Logical, observed.Logical) + 1
+//	  - local alone                → local.Logical + 1
+//	  - observed alone             → observed.Logical + 1
 //
 // A Logical of 2^32 - 1 moves the wall forward by a nanosecond and
 // starts Logical again at 1, as in [Clock.Now].
 //
-// Error modes: an observed wall more than the max offset of [New]
-// ahead of the physical time returns [clock.ErrOffset], classified
-// [go.thesmos.sh/core/errs.Integrity], with the zero Instant, and the
-// clock is unchanged.
+// Error modes: an observed wall more than the max offset ahead of the
+// physical time returns [clock.ErrOffset] and the zero Instant, and leaves
+// the clock unchanged. ErrOffset classifies as
+// [go.thesmos.sh/core/errs.Integrity].
 //
 // # Allocation contract
 //
-// Zero alloc.
+// Zero alloc when the Time of the physical clock does not allocate.
 func (c *Clock) Update(observed clock.Instant) (clock.Instant, error) {
-	now := c.nowFn()
+	now := c.physical.Time().UnixNano()
 
 	// limit is the latest peer wall that the clock merges: the physical
 	// time plus the max offset, or the largest wall when the sum does not
@@ -174,16 +215,16 @@ func (c *Clock) Update(observed clock.Instant) (clock.Instant, error) {
 
 	switch {
 	case !localMax && !observedMax:
-		// Physical clock advanced past both — fresh tick.
+		// The physical time is after both walls, so Logical starts at 1.
 		c.wall = newWall
 		c.logical = 1
 	case localMax && observedMax:
-		// Tied — take the higher logical and step.
+		// The two walls are equal, so the larger Logical steps.
 		c.step(max(c.logical, observed.Logical))
 	case localMax:
 		c.step(c.logical)
 	default:
-		// observedMax
+		// The wall of the peer is the largest.
 		c.wall = newWall
 		c.step(observed.Logical)
 	}
@@ -204,3 +245,41 @@ func (c *Clock) step(logical uint32) {
 
 	c.logical = logical + 1
 }
+
+// system is the physical clock of [New]: the wall time of [time.Now], the
+// monotonic time of the system since origin, and the timers of
+// [time.NewTimer]. origin is a reading of time.Now with its monotonic
+// reading. system is safe for concurrent use, and its Time and Elapsed do
+// not allocate.
+type system struct {
+	origin time.Time
+}
+
+var _ Physical = system{}
+
+// Time returns [time.Now].
+func (system) Time() time.Time { return time.Now() }
+
+// Elapsed returns the time since origin on the monotonic clock of the
+// system.
+func (s system) Elapsed() time.Duration { return time.Since(s.origin) }
+
+// NewTimer returns a [clock.Timer] over [time.NewTimer] of d. It allocates
+// the wrapper struct and the underlying time.Timer.
+func (system) NewTimer(d time.Duration) clock.Timer { return &timer{t: time.NewTimer(d)} }
+
+// sourced is the physical clock of [NewWithSource]: the wall time of a
+// source in nanoseconds since the Unix epoch, and the durations and the
+// timers of the system. It is safe for concurrent use when the source is,
+// and its Time does not allocate.
+type sourced struct {
+	system
+
+	// wall is the source of the wall time.
+	wall func() int64
+}
+
+var _ Physical = sourced{}
+
+// Time returns the time of the source.
+func (s sourced) Time() time.Time { return time.Unix(0, s.wall()) }

@@ -11,6 +11,7 @@ import (
 	"go.dokimi.dev/assert"
 
 	"go.thesmos.sh/core/clock"
+	"go.thesmos.sh/core/clock/fake"
 	"go.thesmos.sh/core/clock/hlc"
 	"go.thesmos.sh/core/coretest/clocktest"
 )
@@ -37,6 +38,19 @@ func TestTimer(t *testing.T) {
 
 				return nil
 			}, "the Timer of 10 ms sends its tick within a second")
+		})
+
+		t.Run("returns a Timer that waits on the physical clock of NewOver", func(t *testing.T) {
+			t.Parallel()
+			f := fake.New(origin)
+			tm := hlc.NewOver(0, clock.DefaultMaxOffset, f).NewTimer(time.Second)
+			assert.Equal(t, f.Waiters(), 1, "the Timer of NewOver waits on the physical clock")
+			f.Advance(time.Second)
+			assert.CompletesWithin(t, time.Second, func(context.Context) error {
+				<-tm.C()
+
+				return nil
+			}, "the Timer sends its tick once the physical clock has advanced by its duration")
 		})
 	})
 

@@ -43,7 +43,7 @@
 // # Provided implementations
 //
 //   - go.thesmos.sh/core/clock/hlc: the production HLC clock built on
-//     [time.Now].
+//     [time.Now], and the HLC clock over a physical clock of the caller.
 //   - go.thesmos.sh/core/clock/fake: a deterministic virtual-time clock
 //     for tests. It is also a [UTCSource] whose error a test sets.
 //   - go.thesmos.sh/core/clock/kernel: a [UTCSource] over the Linux

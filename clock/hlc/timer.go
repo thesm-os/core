@@ -12,34 +12,31 @@ import (
 // Compile-time interface check.
 var _ clock.Timer = (*timer)(nil)
 
-// NewTimer creates a [clock.Timer] that fires after at least d has
-// elapsed, using the standard-library [time.NewTimer] under the
-// hood. Production callers (event loops, dispatchers) read from the
-// returned Timer's channel to drive timer-fired wakes; routing
-// through this method instead of calling [time.NewTimer] directly
-// is what lets test runs swap in a virtual-time clock for
-// fast-forward determinism.
+// NewTimer returns the [clock.Timer] of the physical clock, which sends
+// its tick once [Clock.Elapsed] has advanced by at least d. For [New] and
+// [NewWithSource] it is a timer of [time.NewTimer]. A caller such as an
+// event loop waits on the channel of the Timer in place of a [time.Timer],
+// so a test can run the caller on a virtual clock.
 //
 // # Allocation contract
 //
-// Cold path. Allocates the wrapper struct and the underlying
-// [time.Timer].
-func (*Clock) NewTimer(d time.Duration) clock.Timer {
-	return &timer{t: time.NewTimer(d)}
+// Cold path. Allocates the Timer of the physical clock: for New and
+// NewWithSource the wrapper struct and the underlying [time.Timer].
+func (c *Clock) NewTimer(d time.Duration) clock.Timer {
+	return c.physical.NewTimer(d)
 }
 
-// timer wraps a standard-library [time.Timer] to satisfy
-// [clock.Timer]. Pure pass-through — every method delegates to the
-// embedded [time.Timer].
+// timer is a [clock.Timer] over a [time.Timer]. Each method calls the
+// method of the same name of the time.Timer.
 type timer struct {
 	t *time.Timer
 }
 
-// C returns the underlying timer's tick channel.
+// C returns the channel of the time.Timer.
 func (s *timer) C() <-chan time.Time { return s.t.C }
 
-// Reset reschedules the underlying timer to fire after d.
+// Reset calls Reset of the time.Timer with d.
 func (s *timer) Reset(d time.Duration) bool { return s.t.Reset(d) }
 
-// Stop prevents the underlying timer from firing.
+// Stop calls Stop of the time.Timer.
 func (s *timer) Stop() bool { return s.t.Stop() }
