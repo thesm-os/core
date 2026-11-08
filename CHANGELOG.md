@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.42.0
+
+### Minor Changes
+
+- a0211ba: Add `hlc.NewOver` and `hlc.Physical` to run an HLC clock over a physical clock that supplies its wall time, its durations and its timers.
+- 9af4942: Add `Summary.MinVersion` and `Summary.MaxVersion` to record the lowest and the highest version of a table with versions in its block of places.
+
 ## 0.41.1
 
 ### Patch Changes
