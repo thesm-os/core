@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.44.0
+
+### Minor Changes
+
+- f9fb70a: Add `telemetry.ContextWithSpan` and `telemetry.SpanFromContext`, and check that the context of `Tracer.Start` has its span.
+
 ## 0.43.0
 
 ### Minor Changes
