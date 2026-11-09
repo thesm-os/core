@@ -72,9 +72,6 @@ type recordingSpan struct {
 
 var _ telemetry.Span = (*recordingSpan)(nil)
 
-// spanKey is the key of the span in the context that Start returns.
-type spanKey struct{}
-
 // Tracer returns a tracer whose spans r keeps once they end. The name of
 // the tracer does not change its spans.
 //
@@ -85,14 +82,14 @@ func (r *Recorder) Tracer(telemetry.InstrumentName) telemetry.Tracer {
 	return tracer{r: r}
 }
 
-// Start starts a span of name, and returns a context with the span. The
-// span has the kind and a copy of the links that opts set, and a parent:
-// the remote parent that opts set, or else the span of ctx. The span
+// Start starts a span of name, and returns a context with the span, which
+// [telemetry.ContextWithSpan] keeps. The span has the kind and a copy of the
+// links that opts set, and a parent: the remote parent that opts set, or
+// else the span that [telemetry.SpanFromContext] returns for ctx. The span
 // continues the trace of its parent, and a span without a parent starts a
-// new trace. The identity of
-// the span derives from the number of the span in the Recorder, so the
-// identities of a test do not change from one run to the next. Start
-// returns a nil ctx unchanged.
+// new trace. The identity of the span derives from the number of the span
+// in the Recorder, so the identities of a test do not change from one run
+// to the next. Start returns a nil ctx unchanged.
 //
 // # Allocation contract
 //
@@ -104,10 +101,8 @@ func (t tracer) Start(
 	opts ...telemetry.SpanOption,
 ) (context.Context, telemetry.Span) {
 	parent, remote := telemetry.RemoteParent(opts)
-	if !remote && ctx != nil {
-		if p, ok := ctx.Value(spanKey{}).(*recordingSpan); ok {
-			parent = p.span.Context
-		}
+	if p, ok := telemetry.SpanFromContext(ctx); ok && !remote {
+		parent = p.SpanContext()
 	}
 
 	t.r.mu.Lock()
@@ -145,7 +140,7 @@ func (t tracer) Start(
 		return nil, s
 	}
 
-	return context.WithValue(ctx, spanKey{}, s), s
+	return telemetry.ContextWithSpan(ctx, s), s
 }
 
 // End ends s with err, and gives s to the Recorder. A second End does

@@ -3,6 +3,8 @@
 
 package telemetry
 
+import "context"
+
 // TraceID identifies a distributed trace — one logical request
 // spanning multiple processes. Opaque string; implementations
 // choose the format (W3C 32-hex, UUID, etc.). The empty string
@@ -129,4 +131,40 @@ type Span interface {
 	// stamping the trace and span IDs onto external signals (log
 	// records, audit headers) for cross-signal correlation.
 	SpanContext() SpanContext
+}
+
+// spanKey is the key of the span of a context.
+type spanKey struct{}
+
+// SpanFromContext returns the span of ctx or of an ancestor of ctx, which
+// the latest [ContextWithSpan] set. It reports false for a context without a
+// span and for a nil ctx.
+//
+// # Allocation contract
+//
+// Zero alloc.
+func SpanFromContext(ctx context.Context) (Span, bool) {
+	if ctx == nil {
+		return nil, false
+	}
+
+	s, ok := ctx.Value(spanKey{}).(Span)
+
+	return s, ok
+}
+
+// ContextWithSpan returns a child of ctx whose span is s, and a child of
+// [context.Background] for a nil ctx. [Tracer.Start] returns such a context,
+// and a function that receives it reads s with [SpanFromContext], such as to
+// inject the [SpanContext] of s through a [Propagator].
+//
+// # Allocation contract
+//
+// Allocates the context.
+func ContextWithSpan(ctx context.Context, s Span) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	return context.WithValue(ctx, spanKey{}, s)
 }

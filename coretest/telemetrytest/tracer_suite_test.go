@@ -96,6 +96,12 @@ func TestTracerSuite(t *testing.T) {
 		)
 		assert.Equal(
 			t,
+			string(telemetrytest.TracerChecks.Start.TracerStartReturnsAContextWithItsSpan()),
+			"Tracer.Start/tracer-start-returns-a-context-with-its-span",
+			"the identity of the check joins the callable and the segment of the check",
+		)
+		assert.Equal(
+			t,
 			string(telemetrytest.TracerChecks.Start.TracerStartReturnsNonNilResults()),
 			"Tracer.Start/tracer-start-returns-non-nil-results",
 			"the identity of the check joins the callable and the segment of the check",
@@ -146,4 +152,4 @@ func BenchmarkTracerSuite(b *testing.B) {
 	})
 }
 
-// dokimi:provenance sha256:be8c7480cc2e1da4133e46ee2e5337369febcd5bdbd581a76bbf0272723437b6
+// dokimi:provenance sha256:b349830437fea99ea785afd2a2d7ee05794a51b5d9b1c717a04441a462808c3a

@@ -9,6 +9,7 @@ import (
 
 	"go.dokimi.dev/assert"
 	"go.dokimi.dev/assert/expect"
+	"go.dokimi.dev/conform"
 
 	"go.thesmos.sh/core/coretest/telemetrytest"
 	"go.thesmos.sh/core/telemetry"
@@ -27,7 +28,9 @@ const (
 func TestTracerConformsToTracer(t *testing.T) {
 	t.Parallel()
 
-	telemetrytest.RunTracerSuite(t, func() telemetry.Tracer { return noop.New().Tracer(tracerName) })
+	excuse := conform.Excuse(telemetrytest.TracerChecks.Start.TracerStartReturnsAContextWithItsSpan(),
+		"the span of a no-op tracer has the zero SpanContext, which the context of Start does not keep")
+	telemetrytest.RunTracerSuite(t, func() telemetry.Tracer { return noop.New().Tracer(tracerName) }, excuse)
 }
 
 // TestSpanConformsToSpan applies the checks of the suite of telemetry.Span to

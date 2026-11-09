@@ -56,6 +56,22 @@ func TracerStartAppliesItsOptions(h *TracerHandle) {
 	}, h.Statement())
 }
 
+// TracerStartReturnsAContextWithItsSpan checks that the context of Start has
+// the span of Start, for a span whose SpanContext is not zero.
+//
+//dokimi:check Tracer.Start defect=tracerStartDropsItsSpan
+func TracerStartReturnsAContextWithItsSpan(h *TracerHandle) {
+	ctx, span := h.Subject().Start(h.Context(), tracerStartName)
+	defer span.End(nil)
+	if span.SpanContext() == (telemetry.SpanContext{}) {
+		return
+	}
+
+	got, ok := telemetry.SpanFromContext(ctx)
+	assert.True(h, ok, h.Statement())
+	assert.Equal(h, got.SpanContext(), span.SpanContext(), h.Statement())
+}
+
 // TracerStartAcceptsANilContext checks that Start of a nil context returns
 // without a panic.
 //
@@ -94,6 +110,21 @@ func tracerStartReturnsANilContext(h *TracerHandle) telemetry.Tracer {
 			_, span := sound.Start(ctx, name, opts...)
 
 			return nil, span
+		},
+	))
+}
+
+// tracerStartDropsItsSpan returns the planted defect of
+// TracerStartReturnsAContextWithItsSpan: a Tracer whose Start returns the
+// context that it receives with the span of a Recorder.
+func tracerStartDropsItsSpan(h *TracerHandle) telemetry.Tracer {
+	recording := NewRecorder().Tracer(tracerSoundName)
+
+	return NewTracerStub(h, TracerStubDelegateTo(recording), WithTracerStart(
+		func(ctx context.Context, name telemetry.SpanName, opts ...telemetry.SpanOption) (context.Context, telemetry.Span) {
+			_, span := recording.Start(ctx, name, opts...)
+
+			return ctx, span
 		},
 	))
 }

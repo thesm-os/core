@@ -18,7 +18,9 @@ type tracer struct{}
 var _ telemetry.Tracer = tracer{}
 
 // Start returns the input context unchanged plus a no-op
-// [telemetry.Span]. Span options are evaluated to honour any
+// [telemetry.Span]. The span has the zero [telemetry.SpanContext], so the
+// contract of [telemetry.Tracer.Start] does not ask for it in the context,
+// and Start allocates nothing. Span options are evaluated to honour any
 // caller-side side effects but their resolved kind is discarded
 // (the no-op span carries [telemetry.SpanKindUnspecified] in its
 // returned [telemetry.SpanContext]).

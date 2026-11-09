@@ -57,6 +57,13 @@ func (c tracerStart) TracerStartAppliesItsOptions() conform.ID[telemetry.Tracer]
 	return c.Check("tracer-start-applies-its-options")
 }
 
+// TracerStartReturnsAContextWithItsSpan returns the identity of the check
+// that the context of Start has the span of Start, for a span whose
+// SpanContext is not zero.
+func (c tracerStart) TracerStartReturnsAContextWithItsSpan() conform.ID[telemetry.Tracer] {
+	return c.Check("tracer-start-returns-a-context-with-its-span")
+}
+
 // TracerStartReturnsNonNilResults returns the identity of the check that
 // Start returns a context and a span that are not nil.
 func (c tracerStart) TracerStartReturnsNonNilResults() conform.ID[telemetry.Tracer] {
@@ -88,6 +95,12 @@ func TracerSuite() conform.Suite[telemetry.Tracer] {
 				Statement: "Start with a span kind option and a link option and End of its span return without a panic",
 				Apply:     TracerStartAppliesItsOptions,
 				Defect:    tracerStartPanicsForAnOption,
+			},
+			{
+				ID:        TracerChecks.Start.TracerStartReturnsAContextWithItsSpan(),
+				Statement: "the context of Start has the span of Start, for a span whose SpanContext is not zero",
+				Apply:     TracerStartReturnsAContextWithItsSpan,
+				Defect:    tracerStartDropsItsSpan,
 			},
 			{
 				ID:        TracerChecks.Start.TracerStartReturnsNonNilResults(),
@@ -220,4 +233,4 @@ func newTracerOver(_ *TracerHandle, spend func()) telemetry.Tracer {
 	return tracerOver{spend: spend}
 }
 
-// dokimi:provenance sha256:5cfd7ff72ec44d9ec8c0ebcd2c0e8c6da7b0c34ac70f7f9c1c5ce33c8c53b31d
+// dokimi:provenance sha256:0da439e1c36d5eb31fee313458a8405c9772b3ffa141835b9965c8dbd08b43d8

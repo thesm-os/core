@@ -31,7 +31,10 @@ type Tracer interface {
 	// Start begins a new span as a child of the span carried in
 	// ctx (or as a root span if ctx carries no span). Returns a
 	// derived context carrying the new span and the span handle
-	// itself.
+	// itself. [SpanFromContext] of the returned context returns the
+	// returned span, unless the span has the zero [SpanContext], as
+	// the span of a no-op tracer has. Start keeps the span with
+	// [ContextWithSpan].
 	//
 	// Callers MUST call [Span.End] when the operation completes,
 	// typically via defer:

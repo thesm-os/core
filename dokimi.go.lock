@@ -442,4 +442,5 @@ go.thesmos.sh/core/telemetry	tracer.start/cancel	cancel	refused	-
 go.thesmos.sh/core/telemetry	tracer.start/tracer-second-start-returns-a-span	tracer-second-start-returns-a-span	authored	-
 go.thesmos.sh/core/telemetry	tracer.start/tracer-start-accepts-a-nil-context	tracer-start-accepts-a-nil-context	authored	-
 go.thesmos.sh/core/telemetry	tracer.start/tracer-start-applies-its-options	tracer-start-applies-its-options	authored	-
+go.thesmos.sh/core/telemetry	tracer.start/tracer-start-returns-a-context-with-its-span	tracer-start-returns-a-context-with-its-span	authored	-
 go.thesmos.sh/core/telemetry	tracer.start/tracer-start-returns-non-nil-results	tracer-start-returns-non-nil-results	authored	-
