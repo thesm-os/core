@@ -155,6 +155,98 @@ func TestRecorder(t *testing.T) {
 		})
 	})
 
+	t.Run("Value", func(t *testing.T) {
+		t.Parallel()
+
+		sum := telemetry.InstrumentSpec{Name: gaugeName, Aggregation: telemetry.GaugeAggregationSum}
+
+		t.Run("returns the sum of the unreleased gauges of a series of a sum gauge", func(t *testing.T) {
+			t.Parallel()
+			r := telemetrytest.NewRecorder()
+			a, b := r.Gauge(sum).With([]telemetry.Attr{region}), r.Gauge(sum).With([]telemetry.Attr{region})
+			a.Set(t.Context(), 3)
+			b.Set(t.Context(), 4)
+			got, ok := r.Value(gaugeName, region)
+			expect.True(t, ok, "Value must find the series of both gauges")
+			expect.Equal(t, got, 7.0, "Value must add the values of both gauges")
+			a.Release()
+			got, _ = r.Value(gaugeName, region)
+			expect.Equal(t, got, 4.0, "Value must not add the value of the released gauge")
+			b.Add(t.Context(), -4)
+			got, _ = r.Value(gaugeName, region)
+			expect.Equal(t, got, 0.0, "Value must return the value of the gauge after its Add")
+		})
+
+		t.Run("adds the gauge of a Recorder method to the series of the empty attribute set", func(t *testing.T) {
+			t.Parallel()
+			r := telemetrytest.NewRecorder()
+			g := r.Gauge(sum)
+			g.With(nil).Set(t.Context(), 2)
+			g.Set(t.Context(), 5)
+			got, ok := r.Value(gaugeName)
+			expect.True(t, ok, "Value must find the series of the empty attribute set")
+			expect.Equal(t, got, 7.0, "Value must add the gauge of the Recorder method to the gauge of With")
+		})
+
+		t.Run("returns the last value of a series of a gauge without the sum aggregation", func(t *testing.T) {
+			t.Parallel()
+			r := telemetrytest.NewRecorder()
+			spec := telemetry.InstrumentSpec{Name: gaugeName, Aggregation: telemetry.GaugeAggregationMax}
+			a, b := r.Gauge(spec).With([]telemetry.Attr{region}), r.Gauge(spec).With([]telemetry.Attr{region})
+			a.Set(t.Context(), 3)
+			b.Set(t.Context(), 4)
+			a.Set(t.Context(), 1)
+			got, ok := r.Value(gaugeName, region)
+			expect.True(t, ok, "Value must find the series of both gauges")
+			expect.Equal(t, got, 1.0, "Value must return the last value that the series kept")
+		})
+
+		t.Run("returns the last value of a series of a counter with the sum aggregation", func(t *testing.T) {
+			t.Parallel()
+			r := telemetrytest.NewRecorder()
+			c := r.Counter(telemetry.InstrumentSpec{Name: counterName, Aggregation: telemetry.GaugeAggregationSum})
+			c.Add(t.Context(), 1)
+			c.Add(t.Context(), 2)
+			got, ok := r.Value(counterName)
+			expect.True(t, ok, "Value must find the series of the counter")
+			expect.Equal(t, got, 2.0, "Value must ignore the aggregation of a counter")
+		})
+
+		t.Run("returns 0 for a series without a value", func(t *testing.T) {
+			t.Parallel()
+			r := telemetrytest.NewRecorder()
+			r.Histogram(telemetry.InstrumentSpec{Name: histogramName}).With([]telemetry.Attr{region})
+			got, ok := r.Value(histogramName, region)
+			expect.True(t, ok, "Value must find the series that With bound")
+			expect.Equal(t, got, 0.0, "Value must return 0 for a series that kept no value")
+		})
+
+		t.Run("finds the series of the attribute set in any order", func(t *testing.T) {
+			t.Parallel()
+			r := telemetrytest.NewRecorder()
+			r.Gauge(sum).With([]telemetry.Attr{region, tier}).Set(t.Context(), 6)
+			got, ok := r.Value(gaugeName, tier, region)
+			expect.True(t, ok, "Value must find the series of the attributes in another order")
+			expect.Equal(t, got, 6.0, "Value must return the value of the gauge of the series")
+		})
+
+		t.Run("reports false for a name without an instrument", func(t *testing.T) {
+			t.Parallel()
+			r := telemetrytest.NewRecorder()
+			r.Gauge(sum).Set(t.Context(), 1)
+			_, ok := r.Value(counterName)
+			assert.False(t, ok, "Value must report false for a name without an instrument")
+		})
+
+		t.Run("reports false for an attribute set without a series", func(t *testing.T) {
+			t.Parallel()
+			r := telemetrytest.NewRecorder()
+			r.Gauge(sum).With([]telemetry.Attr{region}).Set(t.Context(), 1)
+			_, ok := r.Value(gaugeName, tier)
+			assert.False(t, ok, "Value must report false for an attribute set without a series")
+		})
+	})
+
 	t.Run("Series", func(t *testing.T) {
 		t.Parallel()
 

@@ -18,7 +18,7 @@ import (
 // emits: the spec of each instrument, every value of each series of an
 // instrument, and every span that ends. A test passes a Recorder as the
 // Reporter of the package, and reads the signals with [Recorder.Specs],
-// [Recorder.Values], [Recorder.Series], [Recorder.Bound],
+// [Recorder.Values], [Recorder.Value], [Recorder.Series], [Recorder.Bound],
 // [Recorder.Bindings] and [Recorder.Spans].
 //
 // # Instruments and series
@@ -39,6 +39,11 @@ import (
 //     Gauge after the call. Set replaces the value, and Add changes it. Each
 //     Gauge that With returns has a value of its own, which starts at 0.
 //   - [telemetry.Histogram.Record] keeps its value.
+//
+// [Recorder.Value] returns the value of a series. A series of a gauge with
+// [telemetry.GaugeAggregationSum] has the sum of the values of its gauges
+// that Release has not ended, as the contract of [telemetry.Gauge] states.
+// Any other series has the last value that it kept.
 //
 // An instrument keeps no value after its Release. [Recorder.Bound] counts
 // the instruments of a series that With returned and that Release has not
@@ -79,11 +84,23 @@ type Recorder struct {
 
 var _ telemetry.Reporter = (*Recorder)(nil)
 
-// instrument is one instrument of a [Recorder]: its spec, and its series
-// in the order of their first binding.
+// kind is the kind of an instrument of a [Recorder]: the method of the
+// Recorder that constructed its name first.
+type kind uint8
+
+// The kinds of the instruments of a [Recorder].
+const (
+	counterKind kind = iota
+	gaugeKind
+	histogramKind
+)
+
+// instrument is one instrument of a [Recorder]: its spec, its kind, and its
+// series in the order of their first binding.
 type instrument struct {
 	series []*series
 	spec   telemetry.InstrumentSpec
+	kind   kind
 }
 
 // series is one attribute set of an instrument and the values that its
@@ -93,6 +110,12 @@ type series struct {
 	attrs  []telemetry.Attr
 	values []float64
 
+	// gauges are the gauges of a series of a sum gauge that Release has not
+	// ended, in the order in which they joined the series. A gauge of With
+	// joins at With, and a gauge of a Recorder method at its first emit.
+	// The series of any other instrument has none.
+	gauges []*bound
+
 	// live is the number of the instruments of the series that With
 	// returned and that Release has not ended.
 	live int
@@ -100,6 +123,10 @@ type series struct {
 	// bindings is the number of the instruments of the series that With
 	// returned. It includes each instrument that Release ended.
 	bindings int
+
+	// sum reports whether the series belongs to a gauge with
+	// [telemetry.GaugeAggregationSum], whose value is the sum of gauges.
+	sum bool
 }
 
 // bound is the state of one instrument value that a [Recorder] returns:
@@ -154,7 +181,7 @@ func NewRecorder() *Recorder {
 // Counter allocates the state of the counter, and the instrument for a
 // new name.
 func (r *Recorder) Counter(spec telemetry.InstrumentSpec) telemetry.Counter {
-	return counter{r.unbound(spec)}
+	return counter{r.unbound(spec, counterKind)}
 }
 
 // Gauge returns the gauge of spec.Name, which emits into the series of
@@ -164,7 +191,7 @@ func (r *Recorder) Counter(spec telemetry.InstrumentSpec) telemetry.Counter {
 //
 // As [Recorder.Counter].
 func (r *Recorder) Gauge(spec telemetry.InstrumentSpec) telemetry.Gauge {
-	return gauge{r.unbound(spec)}
+	return gauge{r.unbound(spec, gaugeKind)}
 }
 
 // Histogram returns the histogram of spec.Name, which emits into the
@@ -174,7 +201,7 @@ func (r *Recorder) Gauge(spec telemetry.InstrumentSpec) telemetry.Gauge {
 //
 // As [Recorder.Counter].
 func (r *Recorder) Histogram(spec telemetry.InstrumentSpec) telemetry.Histogram {
-	return histogram{r.unbound(spec)}
+	return histogram{r.unbound(spec, histogramKind)}
 }
 
 // Specs returns the spec of each instrument, in the order of the first
@@ -214,6 +241,47 @@ func (r *Recorder) Values(name telemetry.InstrumentName, attrs ...telemetry.Attr
 	}
 
 	return nil
+}
+
+// Value returns the value of the series of the instrument name with the
+// attribute set attrs. The order of attrs does not matter. The value of a
+// series of a gauge with [telemetry.GaugeAggregationSum] is the sum of the
+// values of its gauges that Release has not ended. The value of any other
+// series is the last value that it kept, or 0 before its first emit. Value
+// reports false for a name or an attribute set without a series.
+//
+// A test reads the value of a series that two gauges share:
+//
+//	got, ok := rec.Value(overdueName, kindAttr)
+//
+// # Allocation contract
+//
+// Value allocates a sorted copy of attrs.
+func (r *Recorder) Value(name telemetry.InstrumentName, attrs ...telemetry.Attr) (float64, bool) {
+	want := sortedAttrs(attrs)
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	s := r.findSeries(name, want)
+	if s == nil {
+		return 0, false
+	}
+
+	if s.sum {
+		var v float64
+		for _, g := range s.gauges {
+			v += g.value
+		}
+
+		return v, true
+	}
+
+	if len(s.values) == 0 {
+		return 0, true
+	}
+
+	return s.values[len(s.values)-1], true
 }
 
 // Series returns the attribute set of each series of the instrument name,
@@ -311,9 +379,9 @@ func (r *Recorder) Spans() []Span {
 }
 
 // unbound returns the state of an instrument that a Recorder method
-// returns for spec: the instrument of spec.Name, which unbound creates for
-// a new name.
-func (r *Recorder) unbound(spec telemetry.InstrumentSpec) *bound {
+// returns for spec: the instrument of spec.Name, which unbound creates with
+// the kind k for a new name.
+func (r *Recorder) unbound(spec telemetry.InstrumentSpec, k kind) *bound {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -323,7 +391,7 @@ func (r *Recorder) unbound(spec telemetry.InstrumentSpec) *bound {
 		}
 	}
 
-	in := &instrument{spec: spec}
+	in := &instrument{spec: spec, kind: k}
 	r.instruments = append(r.instruments, in)
 
 	return &bound{r: r, in: in}
@@ -414,7 +482,12 @@ func (b *bound) with(attrs []telemetry.Attr) *bound {
 	s.live++
 	s.bindings++
 
-	return &bound{r: b.r, in: b.in, series: s, fromWith: true}
+	nb := &bound{r: b.r, in: b.in, series: s, fromWith: true}
+	if s.sum {
+		s.gauges = append(s.gauges, nb)
+	}
+
+	return nb
 }
 
 // emit keeps a value in the series of b, unless Release ended b. The
@@ -436,25 +509,32 @@ func (b *bound) emit(v float64, add bool) {
 
 	if b.series == nil {
 		b.series = b.in.seriesOf(nil)
+		if b.series.sum {
+			b.series.gauges = append(b.series.gauges, b)
+		}
 	}
 
 	b.series.values = append(b.series.values, v)
 }
 
 // release ends b when With returned it, so b keeps no value after it. The
-// first release of b takes b from the count of its series.
+// first release of b takes b from the count of its series and from the
+// gauges whose values the series adds.
 func (b *bound) release() {
 	b.r.mu.Lock()
 	defer b.r.mu.Unlock()
 
 	if b.fromWith && !b.released {
 		b.series.live--
+		b.series.gauges = slices.DeleteFunc(b.series.gauges, func(g *bound) bool { return g == b })
 		b.released = true
 	}
 }
 
 // seriesOf returns the series of the sorted attribute set attrs, which it
-// creates for a new set. The caller holds the mutex of the recorder.
+// creates for a new set. A new series of a gauge with
+// [telemetry.GaugeAggregationSum] adds the values of its gauges. The caller
+// holds the mutex of the recorder.
 func (in *instrument) seriesOf(attrs []telemetry.Attr) *series {
 	for _, s := range in.series {
 		if slices.EqualFunc(s.attrs, attrs, sameAttr) {
@@ -462,7 +542,10 @@ func (in *instrument) seriesOf(attrs []telemetry.Attr) *series {
 		}
 	}
 
-	s := &series{attrs: attrs}
+	s := &series{
+		attrs: attrs,
+		sum:   in.kind == gaugeKind && in.spec.Aggregation == telemetry.GaugeAggregationSum,
+	}
 	in.series = append(in.series, s)
 
 	return s
