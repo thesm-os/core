@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.46.0
+
+### Minor Changes
+
+- 97d256d: Add `telemetrytest.Recorder.Value` to return the value of a series, which for a sum gauge is the sum of its unreleased gauges.
+
 ## 0.45.0
 
 ### Minor Changes
