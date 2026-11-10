@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package resilience implements the mechanisms that bound the calls to a
-// dependency: circuit breaking, concurrency limiting, retry with jittered
-// backoff, and rate limiting.
+// dependency: circuit breaking, concurrency limiting, mutual exclusion, retry
+// with jittered backoff, and rate limiting.
 //
 // Each mechanism reads time through [go.thesmos.sh/core/clock.Clock], and
 // the retrier reads randomness through [go.thesmos.sh/core/rand.Rand]. A
@@ -17,6 +17,10 @@
 //   - [Bulkhead] bounds the calls in flight to one dependency. At the same
 //     arrival rate, a dependency ten times slower has ten times as many
 //     calls in flight, and each of them occupies a goroutine.
+//   - [Lock] lets one caller at a time into a critical section that waits on
+//     a dependency. A wait for it ends at the end of the context of its
+//     caller or of its owner. The waiters behind a call that hangs then
+//     return at the failure of the disk whose context is the owner.
 //   - [Retrier] retries a call, bounded by an attempt count and a budget.
 //     The budget stops the retries of every caller from adding load to a
 //     dependency that fails for all of them. [Do] waits each backoff on the

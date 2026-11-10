@@ -143,5 +143,6 @@ Start from [`docs/templates/ADR.md`](../templates/ADR.md).
 | [0083](0083-a-table-records-the-range-of-its-versions.md) | A Table Records the Range of Its Versions | Accepted |
 | [0084](0084-the-text-of-a-proof-has-the-format-of-its-log.md) | The Text of a Proof Has the Format of Its Log | Accepted |
 | [0085](0085-a-context-has-the-span-of-its-tracer.md) | A Context Has the Span of Its Tracer | Accepted |
+| [0086](0086-a-lock-ends-its-waits-at-the-end-of-a-context.md) | A Lock Ends Its Waits at the End of a Context | Accepted |
 
 [nygard]: https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions
