@@ -49,6 +49,10 @@ const (
 	// [Policy.QuorumRule] collects on the stack.
 	stackRules = 32
 
+	// stackCounts is the number of counts of groups, and of the members of
+	// one group, that [Policy.MinWitnesses] keeps on the stack.
+	stackCounts = 32
+
 	// logChildren is the number of children that a log adds at most to the
 	// rules of a [Verifier]: its leaf in the log rule of its origin, and
 	// the log rule and the quorum under the root of its origin.
@@ -428,6 +432,67 @@ func (p *Policy) QuorumRule(rules *sign.Rules, keys *note.Keyring) (sign.Rule, e
 	}
 
 	return p.quorumRule(rules, keys)
+}
+
+// MinWitnesses returns the least number of witnesses whose cosignatures
+// satisfy the quorum of p: 0 for [QuorumNone], 1 for a quorum of one
+// witness, and for a group the sum of the Threshold smallest numbers of its
+// members. A name is a member of one group at most, so the members of a
+// group need distinct witnesses. A policy writes a witness that cosigns
+// with the keys of two algorithms as a group "all" of two witness lines, and
+// MinWitnesses counts such a witness twice.
+//
+// Returns [ErrPolicy], classified [errs.Invalid], for a Policy that is not
+// Valid.
+//
+// # Allocation contract
+//
+// Zero-alloc for a quorum that is one of the first 32 groups, whose groups
+// have up to 32 members each. A larger policy allocates the counts.
+func (p *Policy) MinWitnesses() (int, error) {
+	if err := p.validate().err(); err != nil {
+		return 0, err
+	}
+
+	if p.Quorum == QuorumNone {
+		return 0, nil
+	}
+
+	// The quorum of a Valid policy is a witness when no group has its name.
+	q := slices.IndexFunc(p.Groups, func(g Group) bool { return g.Name == p.Quorum })
+	if q == -1 {
+		return 1, nil
+	}
+
+	// A group lists only witnesses and the groups before it, so one pass in
+	// the order of the file knows the count of each member of a group.
+	var groupStack, memberStack [stackCounts]int
+
+	counts := groupStack[:0]
+
+	for i, g := range p.Groups[:q+1] {
+		members := memberStack[:0]
+
+		for _, m := range g.Members {
+			n := 1
+			if j := slices.IndexFunc(p.Groups[:i], func(h Group) bool { return h.Name == m }); j != -1 {
+				n = counts[j]
+			}
+
+			members = append(members, n)
+		}
+
+		slices.Sort(members)
+
+		sum := 0
+		for _, n := range members[:g.Threshold] {
+			sum += n
+		}
+
+		counts = append(counts, sum)
+	}
+
+	return counts[q], nil
 }
 
 // quorumRule is QuorumRule for a Valid policy whose quorum is not

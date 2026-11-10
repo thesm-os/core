@@ -971,6 +971,82 @@ func TestPolicy(t *testing.T) {
 			assert.ErrorIs(t, err, note.ErrUnknownType, "QuorumRule must return the error for the key of Y3")
 		})
 	})
+
+	t.Run("MinWitnesses", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns 3 for the example of tlog-policy", func(t *testing.T) {
+			t.Parallel()
+			got, err := examplePolicy(t).MinWitnesses()
+			assert.NoError(t, err, "MinWitnesses must accept the example")
+			assert.Equal(t, got, 3, "the example needs two X witnesses and one Y witness")
+		})
+
+		// Each case defines the witnesses of giveWitnesses before the lines of
+		// giveLines.
+		tests := []struct {
+			name          string
+			giveWitnesses []checkpoint.PolicyName
+			giveLines     string
+			want          int
+		}{
+			{name: "returns 0 for the quorum none", giveLines: "quorum none\n", want: 0},
+			{
+				name:          "returns 1 for a quorum of one witness",
+				giveWitnesses: []checkpoint.PolicyName{"w1"},
+				giveLines:     "quorum w1\n",
+				want:          1,
+			},
+			{
+				name:          "returns the threshold of a group of witnesses",
+				giveWitnesses: []checkpoint.PolicyName{"w1", "w2", "w3"},
+				giveLines:     "group g 2 w1 w2 w3\nquorum g\n",
+				want:          2,
+			},
+			{
+				name:          "returns the sum of the members of a group of all its groups",
+				giveWitnesses: []checkpoint.PolicyName{"w1", "w2", "w3", "w4"},
+				giveLines:     "group a any w1 w2\ngroup b all w3 w4\ngroup q all a b\nquorum q\n",
+				want:          3,
+			},
+			{
+				name:          "returns the sum of two members of a group of three groups",
+				giveWitnesses: []checkpoint.PolicyName{"w1", "w2", "w3", "w4", "w5", "w6"},
+				giveLines: "group p1 all w1 w2\ngroup p2 all w3 w4\ngroup p3 all w5 w6\ngroup q 2 p1 p2 p3\n" +
+					"quorum q\n",
+				want: 4,
+			},
+			{
+				name:          "returns the sum of the smallest members of a group",
+				giveWitnesses: []checkpoint.PolicyName{"w1", "w2", "w3", "w4", "w5"},
+				giveLines:     "group big all w1 w2 w3\ngroup q 2 big w4 w5\nquorum q\n",
+				want:          2,
+			},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				var s strings.Builder
+				for _, n := range tt.giveWitnesses {
+					s.WriteString("witness " + string(n) + " ")
+					s.WriteString(witness(t, note.Name("example.com/"+string(n))).Key().String())
+					s.WriteString("\n")
+				}
+				s.WriteString(tt.giveLines)
+				got, err := mustParsePolicy(t, []byte(s.String())).MinWitnesses()
+				assert.NoError(t, err, "MinWitnesses must accept a valid policy")
+				assert.Equal(t, got, tt.want, "MinWitnesses must return the least number of witnesses")
+			})
+		}
+
+		t.Run("returns ErrPolicy for a Policy that is not Valid", func(t *testing.T) {
+			t.Parallel()
+			got, err := changed(t, func(p *checkpoint.Policy) { p.Quorum = "missing" }).MinWitnesses()
+			assert.ErrorIs(t, err, checkpoint.ErrPolicy, "MinWitnesses must refuse a policy that is not valid")
+			expect.Equal(t, errs.Classify(err), errs.Invalid, "ErrPolicy must classify as Invalid")
+			expect.Equal(t, got, 0, "MinWitnesses must return 0 with its error")
+		})
+	})
 }
 
 // TestPolicyAllocs checks the allocation contract of each function and
@@ -1104,6 +1180,16 @@ func TestPolicyAllocs(t *testing.T) {
 			_, err = p.QuorumRule(&rules, &keys)
 		}, 0, "QuorumRule must not allocate into the memory of the rules before")
 		assert.NoError(t, err, "the test must measure a quorum that QuorumRule builds")
+	})
+
+	t.Run("MinWitnesses", func(t *testing.T) {
+		var (
+			got int
+			err error
+		)
+		expect.MaxAllocs(t, func() { got, err = p.MinWitnesses() }, 0, "MinWitnesses must not allocate")
+		assert.NoError(t, err, "the test must measure a policy that MinWitnesses accepts")
+		assert.Equal(t, got, 3, "the test must measure the quorum of the example")
 	})
 }
 
@@ -1304,6 +1390,23 @@ func BenchmarkPolicy(b *testing.B) {
 		}
 
 		assert.NoError(b, err, "the benchmark must measure a quorum that QuorumRule builds")
+	})
+
+	b.Run("MinWitnesses", func(b *testing.B) {
+		var (
+			got int
+			err error
+		)
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			got, err = p.MinWitnesses()
+		}
+
+		assert.NoError(b, err, "the benchmark must measure a policy that MinWitnesses accepts")
+		assert.Equal(b, got, 3, "the benchmark must measure the quorum of the example")
 	})
 }
 
