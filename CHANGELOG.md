@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.47.0
+
+### Minor Changes
+
+- 467ef77: Add `resilience.Lock`, a mutual exclusion lock whose waits end at the end of the context of the caller or of its owner.
+
 ## 0.46.0
 
 ### Minor Changes
