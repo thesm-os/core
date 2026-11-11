@@ -32,6 +32,23 @@ const (
 	opUnlock = "unlock"
 )
 
+// section is the last section of a Close that a case passes to Finally. It
+// counts its runs, and records a run that found the lock free.
+type section struct {
+	l    *resilience.Lock
+	runs atomic.Int32
+	free atomic.Bool
+}
+
+// run counts a run of s, and records whether the lock was free during the
+// run. TryLock takes a free lock, and the case then fails on free.
+func (s *section) run() {
+	s.runs.Add(1)
+	if s.l.TryLock() {
+		s.free.Store(true)
+	}
+}
+
 func TestLock(t *testing.T) {
 	t.Parallel()
 
@@ -223,6 +240,153 @@ func TestLock(t *testing.T) {
 			assert.True(t, l.TryLock(), "Unlock of a free lock must leave it free")
 			assert.False(t, l.TryLock(), "Unlock of a free lock must not let a second caller take it")
 		})
+
+		t.Run("runs the section that Finally marked", func(t *testing.T) {
+			t.Parallel()
+			owner, fail := context.WithCancelCause(t.Context())
+			l := resilience.NewLock(owner)
+			assert.True(t, l.TryLock(), "the case must take the lock")
+			fail(errDisk)
+			s := &section{l: l}
+			assert.False(t, l.Finally(s.run), "Finally must leave the section to the caller that has the lock")
+
+			l.Unlock()
+			expect.Equal(t, s.runs.Load(), 1, "Unlock must run the marked section once")
+			expect.False(t, s.free.Load(), "Unlock must run the marked section under the lock")
+			expect.True(t, l.TryLock(), "Unlock must free the lock after the section")
+		})
+	})
+
+	t.Run("Finally", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("runs f at once on a free lock", func(t *testing.T) {
+			t.Parallel()
+			l := resilience.NewLock(t.Context())
+			s := &section{l: l}
+			expect.True(t, l.Finally(s.run), "Finally must report that f ran")
+			expect.Equal(t, s.runs.Load(), 1, "Finally must run f once")
+			expect.False(t, s.free.Load(), "Finally must run f under the lock")
+			expect.True(t, l.TryLock(), "Finally must free the lock after f")
+		})
+
+		t.Run("runs f after the caller that has the lock frees it", func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				l := resilience.NewLock(t.Context())
+				assert.True(t, l.TryLock(), "the case must take the lock")
+				s := &section{l: l}
+				got := startFinally(l, s.run)
+				synctest.Wait()
+				assert.Empty(t, got, "Finally must wait while another caller has the lock")
+				assert.Equal(t, s.runs.Load(), 0, "Finally must not run f while another caller has the lock")
+
+				l.Unlock()
+				synctest.Wait()
+				expect.True(t, <-got, "Finally must report that f ran")
+				expect.Equal(t, s.runs.Load(), 1, "Finally must run f once")
+				expect.False(t, s.free.Load(), "Finally must run f under the lock")
+				expect.True(t, l.TryLock(), "Finally must free the lock after f")
+			})
+		})
+
+		t.Run("returns false when the owner ends during the wait", func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				owner, fail := context.WithCancelCause(t.Context())
+				l := resilience.NewLock(owner)
+				assert.True(t, l.TryLock(), "the case must take the lock")
+				s := &section{l: l}
+				got := startFinally(l, s.run)
+				synctest.Wait()
+
+				fail(errDisk)
+				synctest.Wait()
+				expect.False(t, <-got, "Finally must return at the end of the owner")
+				expect.Equal(t, s.runs.Load(), 0, "Finally must leave f to the caller that has the lock")
+				l.Unlock()
+			})
+		})
+
+		t.Run("returns false once the owner ended while another caller has the lock", func(t *testing.T) {
+			t.Parallel()
+			owner, fail := context.WithCancelCause(t.Context())
+			l := resilience.NewLock(owner)
+			assert.True(t, l.TryLock(), "the case must take the lock")
+			fail(errDisk)
+			s := &section{l: l}
+			expect.False(t, l.Finally(s.run), "Finally must not wait once the owner ended")
+			expect.Equal(t, s.runs.Load(), 0, "Finally must leave f to the caller that has the lock")
+		})
+
+		t.Run("runs f at once on a free lock after the owner ended", func(t *testing.T) {
+			t.Parallel()
+			owner, fail := context.WithCancelCause(t.Context())
+			fail(errDisk)
+			l := resilience.NewLock(owner)
+			s := &section{l: l}
+			expect.True(t, l.Finally(s.run), "Finally must report that f ran")
+			expect.Equal(t, s.runs.Load(), 1, "Finally must run f once")
+			expect.False(t, s.free.Load(), "Finally must run f under the lock")
+			expect.True(t, l.TryLock(), "Finally must free the lock after f")
+		})
+
+		t.Run("does not run f while another section is marked", func(t *testing.T) {
+			t.Parallel()
+			owner, fail := context.WithCancelCause(t.Context())
+			l := resilience.NewLock(owner)
+			assert.True(t, l.TryLock(), "the case must take the lock")
+			fail(errDisk)
+			first, second := &section{l: l}, &section{l: l}
+			assert.False(t, l.Finally(first.run), "the first Finally must mark its section")
+
+			expect.False(t, l.Finally(second.run), "Finally must not mark f while another section is marked")
+			l.Unlock()
+			expect.Equal(t, first.runs.Load(), 1, "Unlock must run the section that the first Finally marked")
+			expect.Equal(t, second.runs.Load(), 0, "Finally must not run f while another section is marked")
+		})
+
+		// The caller that has the lock frees it while the owner ends and
+		// Finally runs, so the trials cover the orders of the three calls.
+		t.Run("runs f once when the caller frees the lock as the owner ends", func(t *testing.T) {
+			t.Parallel()
+			const trials = 200
+
+			for range trials {
+				owner, fail := context.WithCancelCause(t.Context())
+				l := resilience.NewLock(owner)
+				assert.True(t, l.TryLock(), "the case must take the lock")
+				s := &section{l: l}
+
+				var (
+					ran    atomic.Bool
+					before atomic.Int32
+				)
+				outcomes := history.Concurrently(3, patience, func(client int) (any, error) {
+					switch client {
+					case 0:
+						l.Unlock()
+					case 1:
+						fail(errDisk)
+					default:
+						ran.Store(l.Finally(s.run))
+						before.Store(s.runs.Load())
+					}
+
+					return client, nil
+				})
+				for _, o := range outcomes {
+					assert.True(t, o.Finished, "every call must return")
+				}
+
+				assert.Equal(t, s.runs.Load(), 1, "f must run once")
+				assert.False(t, s.free.Load(), "f must run under the lock")
+				if ran.Load() {
+					assert.Equal(t, before.Load(), 1, "Finally must report true only after f ran")
+				}
+				assert.True(t, l.TryLock(), "the lock must be free once f ran")
+			}
+		})
 	})
 }
 
@@ -324,6 +488,16 @@ func BenchmarkLock(b *testing.B) {
 func startLock(ctx context.Context, l *resilience.Lock) <-chan error {
 	got := make(chan error, 1)
 	go func() { got <- l.Lock(ctx) }()
+
+	return got
+}
+
+// startFinally calls l.Finally(f) on a goroutine of its own, and returns the
+// channel that receives its result. A case inside a bubble reads the channel
+// after synctest.Wait.
+func startFinally(l *resilience.Lock, f func()) <-chan bool {
+	got := make(chan bool, 1)
+	go func() { got <- l.Finally(f) }()
 
 	return got
 }
