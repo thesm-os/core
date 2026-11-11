@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.48.0
+
+### Minor Changes
+
+- f1e1b3a: Add `resilience.Lock.Finally` to run the last section of a Close under the lock without a wait for a call that hangs.
+
+### Patch Changes
+
+- 4595646: Update core to Go 1.27.4 for the fix of the `net/http` vulnerability GO-2026-6859.
+
 ## 0.47.0
 
 ### Minor Changes
