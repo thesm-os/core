@@ -7,6 +7,7 @@ import (
 	"context"
 	"runtime"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"go.dokimi.dev/assert"
@@ -297,6 +298,79 @@ func TestBulkhead(t *testing.T) {
 		})
 	})
 
+	t.Run("SetLimit", func(t *testing.T) {
+		t.Parallel()
+
+		tests := []struct {
+			name string
+			give int
+		}{
+			{name: "returns ErrConfig for a limit of zero", give: 0},
+			{name: "returns ErrConfig for a negative limit", give: -1},
+		}
+		for _, tt := range tests {
+			t.Run(tt.name, func(t *testing.T) {
+				t.Parallel()
+				b := newBulkhead(t, resilience.BulkheadConfig{Clock: fake.New(originUTC), Limit: 1})
+
+				err := b.SetLimit(tt.give)
+				expect.ErrorIs(t, err, resilience.ErrConfig, "SetLimit must refuse the limit")
+				expect.Equal(t, errs.Classify(err), errs.Invalid, "ErrConfig must classify as Invalid")
+				acquireAll(t, b, 1)
+				_, err = b.Acquire(bounded(t))
+				expect.ErrorIs(t, err, resilience.ErrFull, "a refused SetLimit must leave the limit unchanged")
+			})
+		}
+
+		t.Run("refuses new calls until the calls in flight end below a lower limit", func(t *testing.T) {
+			t.Parallel()
+			b := newBulkhead(t, resilience.BulkheadConfig{Clock: fake.New(originUTC), Limit: 2})
+			releases := acquireAll(t, b, 2)
+			assert.NoError(t, b.SetLimit(1), "SetLimit must accept a positive limit")
+
+			releases[0]()
+			_, err := b.Acquire(bounded(t))
+			assert.ErrorIs(t, err, resilience.ErrFull, "a call in flight at the lower limit must refuse a new call")
+			releases[1]()
+			next, err := b.Acquire(bounded(t))
+			assert.NoError(t, err, "a call must start once the calls in flight are below the lower limit")
+			next()
+		})
+
+		t.Run("admits callers up to a higher limit at once", func(t *testing.T) {
+			t.Parallel()
+			b := newBulkhead(t, resilience.BulkheadConfig{Clock: fake.New(originUTC), Limit: 1})
+			acquireAll(t, b, 1)
+			assert.NoError(t, b.SetLimit(3), "SetLimit must accept a positive limit")
+
+			acquireAll(t, b, 2)
+			_, err := b.Acquire(bounded(t))
+			assert.ErrorIs(t, err, resilience.ErrFull, "the higher limit must bound the calls in flight")
+		})
+
+		t.Run("passes the permits of a higher limit to the waiting callers in order", func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				b := newBulkhead(t, resilience.BulkheadConfig{Clock: fake.New(originUTC), Limit: 1, Queue: 2})
+				acquireAll(t, b, 1)
+				first := startAcquire(t.Context(), b)
+				synctest.Wait()
+				second := startAcquire(t.Context(), b)
+				synctest.Wait()
+
+				assert.NoError(t, b.SetLimit(2), "SetLimit must accept a positive limit")
+				synctest.Wait()
+				assert.Length(t, first, 1, "the first waiting caller must take the permit of the higher limit")
+				assert.Empty(t, second, "the second waiting caller must keep its place in the queue")
+				assert.NoError(t, <-first, "the first waiting caller must take a permit")
+
+				assert.NoError(t, b.SetLimit(3), "SetLimit must accept a positive limit")
+				synctest.Wait()
+				assert.NoError(t, <-second, "the second waiting caller must take the next permit")
+			})
+		})
+	})
+
 	t.Run("InFlight", func(t *testing.T) {
 		t.Parallel()
 
@@ -309,6 +383,15 @@ func TestBulkhead(t *testing.T) {
 			}
 
 			assert.Equal(t, b.InFlight(), 0, "the releases must return every permit")
+		})
+
+		t.Run("returns the calls in flight above a lower limit", func(t *testing.T) {
+			t.Parallel()
+			b := newBulkhead(t, resilience.BulkheadConfig{Clock: fake.New(originUTC), Limit: 3})
+			acquireAll(t, b, 3)
+			assert.NoError(t, b.SetLimit(1), "SetLimit must accept a positive limit")
+
+			assert.Equal(t, b.InFlight(), 3, "a lower limit must keep the permits that callers have taken")
 		})
 	})
 }
@@ -442,6 +525,19 @@ func newBulkhead(tb testing.TB, cfg resilience.BulkheadConfig) *resilience.Bulkh
 	assert.NoError(tb, err, "NewBulkhead must accept the config")
 
 	return b
+}
+
+// startAcquire calls b.Acquire(ctx) on a goroutine of its own, keeps the
+// permit that it takes, and returns the channel that receives its error. A
+// case inside a bubble reads the channel after synctest.Wait.
+func startAcquire(ctx context.Context, b *resilience.Bulkhead) <-chan error {
+	got := make(chan error, 1)
+	go func() {
+		_, err := b.Acquire(ctx)
+		got <- err
+	}()
+
+	return got
 }
 
 // acquireAll takes n permits of b, and returns their releases, and fails tb

@@ -17,6 +17,8 @@
 //   - [Bulkhead] bounds the calls in flight to one dependency. At the same
 //     arrival rate, a dependency ten times slower has ten times as many
 //     calls in flight, and each of them occupies a goroutine.
+//     [Bulkhead.SetLimit] changes the limit in place, and the calls in
+//     flight keep their permits.
 //   - [Lock] lets one caller at a time into a critical section that waits on
 //     a dependency. A wait for it ends at the end of the context of its
 //     caller or of its owner. The waiters behind a call that hangs then

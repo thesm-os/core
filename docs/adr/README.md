@@ -145,5 +145,6 @@ Start from [`docs/templates/ADR.md`](../templates/ADR.md).
 | [0085](0085-a-context-has-the-span-of-its-tracer.md) | A Context Has the Span of Its Tracer | Accepted |
 | [0086](0086-a-lock-ends-its-waits-at-the-end-of-a-context.md) | A Lock Ends Its Waits at the End of a Context | Accepted |
 | [0087](0087-a-lock-hands-off-the-last-section-of-a-close.md) | A Lock Hands Off the Last Section of a Close | Accepted |
+| [0088](0088-a-bulkhead-changes-its-limit-in-place.md) | A Bulkhead Changes Its Limit in Place | Accepted |
 
 [nygard]: https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions
