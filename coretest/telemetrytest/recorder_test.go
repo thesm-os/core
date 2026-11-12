@@ -4,7 +4,9 @@
 package telemetrytest_test
 
 import (
+	"context"
 	"math"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -244,6 +246,78 @@ func TestRecorder(t *testing.T) {
 			r.Gauge(sum).With([]telemetry.Attr{region}).Set(t.Context(), 1)
 			_, ok := r.Value(gaugeName, tier)
 			assert.False(t, ok, "Value must report false for an attribute set without a series")
+		})
+	})
+
+	t.Run("Observe", func(t *testing.T) {
+		t.Parallel()
+
+		sum := telemetry.InstrumentSpec{Name: gaugeName, Aggregation: telemetry.GaugeAggregationSum}
+
+		t.Run("calls the read function when Value reads the series", func(t *testing.T) {
+			t.Parallel()
+			r := telemetrytest.NewRecorder()
+			r.Observe(sum, []telemetry.Attr{region}, func(context.Context) float64 { return 5 })
+			got, ok := r.Value(gaugeName, region)
+			expect.True(t, ok, "Value must find the series of the observation")
+			expect.Equal(t, got, 5.0, "Value must return the value that the read function returns")
+		})
+
+		t.Run("adds the reads of a sum gauge to the values of its gauges", func(t *testing.T) {
+			t.Parallel()
+			r := telemetrytest.NewRecorder()
+			r.Gauge(sum).With([]telemetry.Attr{region}).Set(t.Context(), 2)
+			r.Observe(sum, []telemetry.Attr{region}, func(context.Context) float64 { return 3 })
+			r.Observe(sum, []telemetry.Attr{region}, func(context.Context) float64 { return 4 })
+			got, _ := r.Value(gaugeName, region)
+			assert.Equal(t, got, 9.0, "Value must add the reads of the observations to the value of the gauge")
+		})
+
+		t.Run("returns the read of the last observation of a gauge without the sum aggregation",
+			func(t *testing.T) {
+				t.Parallel()
+				r := telemetrytest.NewRecorder()
+				spec := telemetry.InstrumentSpec{Name: gaugeName, Aggregation: telemetry.GaugeAggregationMax}
+				r.Gauge(spec).With([]telemetry.Attr{region}).Set(t.Context(), 2)
+				r.Observe(spec, []telemetry.Attr{region}, func(context.Context) float64 { return 3 })
+				r.Observe(spec, []telemetry.Attr{region}, func(context.Context) float64 { return 4 })
+				got, _ := r.Value(gaugeName, region)
+				assert.Equal(t, got, 4.0, "Value must return the read of the last observation")
+			})
+
+		t.Run("counts each observation in Bound", func(t *testing.T) {
+			t.Parallel()
+			r := telemetrytest.NewRecorder()
+			obs := r.Observe(sum, []telemetry.Attr{region}, func(context.Context) float64 { return 1 })
+			expect.Equal(t, r.Bound(gaugeName, region), 1, "Bound must count the observation")
+			obs.Release()
+			expect.Equal(t, r.Bound(gaugeName, region), 0, "Bound must not count the released observation")
+			expect.Equal(t, r.Bindings(gaugeName, region), 1, "Bindings must count the released observation")
+		})
+
+		t.Run("does not call the read function after Release", func(t *testing.T) {
+			t.Parallel()
+			r := telemetrytest.NewRecorder()
+			var calls atomic.Int32
+			obs := r.Observe(sum, []telemetry.Attr{region}, func(context.Context) float64 {
+				calls.Add(1)
+
+				return 1
+			})
+			obs.Release()
+			obs.Release()
+			got, ok := r.Value(gaugeName, region)
+			expect.True(t, ok, "Value must find the series of the released observation")
+			expect.Equal(t, got, 0.0, "a released observation must not add its read to the series")
+			expect.Equal(t, calls.Load(), 0, "Value must not call the read function of a released observation")
+			expect.Equal(t, r.Bound(gaugeName, region), 0, "a second Release must not count below zero")
+		})
+
+		t.Run("keeps the spec of the gauge of an observation", func(t *testing.T) {
+			t.Parallel()
+			r := telemetrytest.NewRecorder()
+			r.Observe(sum, nil, func(context.Context) float64 { return 1 })
+			assert.Equal(t, r.Specs(), []telemetry.InstrumentSpec{sum}, "Specs must return the spec of the observation")
 		})
 	})
 

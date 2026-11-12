@@ -30,6 +30,10 @@
 // path is c.Add(ctx, 1), one method call without a slice to build or
 // attributes to walk.
 //
+// A Reporter that implements [Observer] also reads the value of a gauge at
+// each collection. A library registers the read with [Observer.Observe],
+// and the hot path that changes the value does not call an instrument.
+//
 // # Overflow
 //
 // An adapter that caps the attribute sets of an instrument aggregates

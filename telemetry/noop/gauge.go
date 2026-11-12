@@ -29,3 +29,14 @@ func (g gauge) With([]telemetry.Attr) telemetry.Gauge { return g }
 // Release does nothing, because a no-op gauge keeps no state per
 // attribute set.
 func (gauge) Release() {}
+
+// observation is the no-op [telemetry.Observation] of an observed gauge. It
+// has no state, so its zero value is its only value.
+type observation struct{}
+
+// Compile-time interface check.
+var _ telemetry.Observation = observation{}
+
+// Release does nothing, because the no-op Reporter does not call a read
+// function.
+func (observation) Release() {}

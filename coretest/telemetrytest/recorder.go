@@ -45,10 +45,18 @@ import (
 // that Release has not ended, as the contract of [telemetry.Gauge] states.
 // Any other series has the last value that it kept.
 //
+// A Recorder is also a [telemetry.Observer]. [Recorder.Observe] registers a
+// read function for a series, and Value calls the read functions of the
+// observations of the series that Release has not ended. A series of a sum
+// gauge adds the reads to the values of its gauges. Any other series has the
+// read of its last observation. [Recorder.Values] returns the values of the
+// emits alone, and does not call a read function.
+//
 // An instrument keeps no value after its Release. [Recorder.Bound] counts
-// the instruments of a series that With returned and that Release has not
-// ended, so a test detects a package that does not release what it binds.
-// [Recorder.Bindings] counts every instrument that With returned for a
+// the instruments of a series that With returned and the observations of
+// the series that Release has not ended. A test then detects a package that
+// does not release what it binds. [Recorder.Bindings] counts every
+// instrument that With returned for a series and every observation of the
 // series. A test then counts the bindings of a series, such as one for each
 // start of a component.
 //
@@ -82,7 +90,10 @@ type Recorder struct {
 	mu sync.Mutex
 }
 
-var _ telemetry.Reporter = (*Recorder)(nil)
+var (
+	_ telemetry.Reporter = (*Recorder)(nil)
+	_ telemetry.Observer = (*Recorder)(nil)
+)
 
 // kind is the kind of an instrument of a [Recorder]: the method of the
 // Recorder that constructed its name first.
@@ -116,12 +127,17 @@ type series struct {
 	// The series of any other instrument has none.
 	gauges []*bound
 
+	// observations are the observations of the series that Release has not
+	// ended, in the order of their Observe.
+	observations []*observation
+
 	// live is the number of the instruments of the series that With
-	// returned and that Release has not ended.
+	// returned and of its observations, which Release has not ended.
 	live int
 
 	// bindings is the number of the instruments of the series that With
-	// returned. It includes each instrument that Release ended.
+	// returned and of its observations. It includes each one that Release
+	// ended.
 	bindings int
 
 	// sum reports whether the series belongs to a gauge with
@@ -149,6 +165,18 @@ type bound struct {
 	// fromWith reports whether With returned the instrument, and released
 	// whether Release ended it.
 	fromWith, released bool
+}
+
+// observation is one registration of [Recorder.Observe]: its series, its
+// read function, and whether Release ended it. The fields after r are
+// guarded by the mutex of r.
+type observation struct {
+	r      *Recorder
+	series *series
+	read   func(context.Context) float64
+
+	// released reports whether Release ended the observation.
+	released bool
 }
 
 // counter, gauge and histogram are the instruments of a [Recorder].
@@ -246,9 +274,13 @@ func (r *Recorder) Values(name telemetry.InstrumentName, attrs ...telemetry.Attr
 // Value returns the value of the series of the instrument name with the
 // attribute set attrs. The order of attrs does not matter. The value of a
 // series of a gauge with [telemetry.GaugeAggregationSum] is the sum of the
-// values of its gauges that Release has not ended. The value of any other
-// series is the last value that it kept, or 0 before its first emit. Value
-// reports false for a name or an attribute set without a series.
+// values of its gauges and of the reads of its observations that Release has
+// not ended. The value of any other series is the read of its last
+// observation, or else the last value that it kept, or 0 before its first
+// emit. Value reports false for a name or an attribute set without a series.
+//
+// Value calls each read function with [context.Background], after it
+// unlocked the Recorder, so a read function can call the Recorder.
 //
 // A test reads the value of a series that two gauges share:
 //
@@ -256,32 +288,69 @@ func (r *Recorder) Values(name telemetry.InstrumentName, attrs ...telemetry.Attr
 //
 // # Allocation contract
 //
-// Value allocates a sorted copy of attrs.
+// Value allocates a sorted copy of attrs, and a copy of the observations of
+// the series.
 func (r *Recorder) Value(name telemetry.InstrumentName, attrs ...telemetry.Attr) (float64, bool) {
 	want := sortedAttrs(attrs)
 
 	r.mu.Lock()
-	defer r.mu.Unlock()
-
 	s := r.findSeries(name, want)
 	if s == nil {
+		r.mu.Unlock()
+
 		return 0, false
 	}
 
+	var v float64
 	if s.sum {
-		var v float64
 		for _, g := range s.gauges {
 			v += g.value
 		}
-
-		return v, true
+	} else if len(s.values) != 0 {
+		v = s.values[len(s.values)-1]
 	}
 
-	if len(s.values) == 0 {
-		return 0, true
+	observations := slices.Clone(s.observations)
+	if !s.sum && len(observations) != 0 {
+		v, observations = 0, observations[len(observations)-1:]
+	}
+	r.mu.Unlock()
+
+	ctx := context.Background()
+	for _, o := range observations {
+		v += o.read(ctx)
 	}
 
-	return s.values[len(s.values)-1], true
+	return v, true
+}
+
+// Observe registers read for the series of the gauge of spec.Name with the
+// attribute set attrs, as [telemetry.Observer] states. The order of attrs
+// does not matter. [Recorder.Value] calls read until Release of the result.
+// Observe counts the observation in [Recorder.Bound] and
+// [Recorder.Bindings].
+//
+// # Allocation contract
+//
+// Observe allocates the observation, a sorted copy of attrs, and the
+// instrument and the series of a new name or attribute set.
+func (r *Recorder) Observe(spec telemetry.InstrumentSpec, attrs []telemetry.Attr,
+	read func(ctx context.Context) float64,
+) telemetry.Observation {
+	sorted := sortedAttrs(attrs)
+	in := r.unbound(spec, gaugeKind).in
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	s := in.seriesOf(sorted)
+	s.live++
+	s.bindings++
+
+	o := &observation{r: r, series: s, read: read}
+	s.observations = append(s.observations, o)
+
+	return o
 }
 
 // Series returns the attribute set of each series of the instrument name,
@@ -399,7 +468,7 @@ func (r *Recorder) unbound(spec telemetry.InstrumentSpec, k kind) *bound {
 
 // findSeries returns the series of the instrument name with the sorted
 // attribute set attrs, or nil for a name or an attribute set without a
-// series. The caller holds the mutex of r.
+// series. The caller has locked the mutex of r.
 func (r *Recorder) findSeries(name telemetry.InstrumentName, attrs []telemetry.Attr) *series {
 	for _, in := range r.instruments {
 		if in.spec.Name == name {
@@ -431,6 +500,22 @@ func (c counter) With(attrs []telemetry.Attr) telemetry.Counter {
 // Release ends c when With returned it.
 func (c counter) Release() {
 	c.b.release()
+}
+
+// Release ends the observation o, so [Recorder.Value] no longer calls its
+// read function. A second Release does nothing.
+func (o *observation) Release() {
+	o.r.mu.Lock()
+	defer o.r.mu.Unlock()
+
+	if o.released {
+		return
+	}
+
+	o.released = true
+	o.series.live--
+	o.series.observations = slices.DeleteFunc(o.series.observations,
+		func(other *observation) bool { return other == o })
 }
 
 // Set replaces the value of g with value, and keeps it in the series of g.
@@ -534,7 +619,7 @@ func (b *bound) release() {
 // seriesOf returns the series of the sorted attribute set attrs, which it
 // creates for a new set. A new series of a gauge with
 // [telemetry.GaugeAggregationSum] adds the values of its gauges. The caller
-// holds the mutex of the recorder.
+// has locked the mutex of the recorder.
 func (in *instrument) seriesOf(attrs []telemetry.Attr) *series {
 	for _, s := range in.series {
 		if slices.EqualFunc(s.attrs, attrs, sameAttr) {

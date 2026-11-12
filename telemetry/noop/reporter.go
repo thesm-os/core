@@ -3,16 +3,24 @@
 
 package noop
 
-import "go.thesmos.sh/core/telemetry"
+import (
+	"context"
+
+	"go.thesmos.sh/core/telemetry"
+)
 
 // Reporter is a [telemetry.Reporter] that discards every signal.
-// The zero value is usable. Stateless and safe for concurrent use.
+// The zero value is usable. Stateless and safe for concurrent use. It is
+// also a [telemetry.Observer] that does not call a read function.
 //
 //dokimi:subject telemetry.Reporter new=New
 type Reporter struct{}
 
-// Compile-time interface check.
-var _ telemetry.Reporter = Reporter{}
+// Compile-time interface checks.
+var (
+	_ telemetry.Reporter = Reporter{}
+	_ telemetry.Observer = Reporter{}
+)
 
 // New returns a [Reporter]. Equivalent to the zero-value [Reporter];
 // offered as a constructor for use sites that prefer one.
@@ -40,4 +48,13 @@ func (Reporter) Histogram(telemetry.InstrumentSpec) telemetry.Histogram {
 // span on every [telemetry.Tracer.Start] call.
 func (Reporter) Tracer(telemetry.InstrumentName) telemetry.Tracer {
 	return tracer{}
+}
+
+// Observe returns a no-op [telemetry.Observation], and does not call read.
+func (Reporter) Observe(
+	telemetry.InstrumentSpec,
+	[]telemetry.Attr,
+	func(context.Context) float64,
+) telemetry.Observation {
+	return observation{}
 }
