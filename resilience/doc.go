@@ -37,6 +37,9 @@
 //     [Limiter.SetRate] changes the rate in place, and the bucket keeps
 //     its units. [Limiter.ReturnN] gives back the units of a call that
 //     another limiter refused.
+//   - [Buckets] is a table of token buckets that share one rate and one
+//     burst. A service keeps such a table for the hashes of its principals.
+//     Each bucket takes one word, and a call does not lock or wait.
 //   - [Failover] calls redundant dependencies one after another under
 //     their circuits, such as the time-stamp authorities of a deployment,
 //     until one succeeds. Its error remains retryable while the error of
