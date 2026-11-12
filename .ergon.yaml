@@ -256,7 +256,7 @@ go:
     # golangci-lint custom, and .golangci.yml enables each linter. The local .golangci.yml sets the
     # settings of a plugin under linters.settings.custom.<name>.settings.
     plugins:
-      assertlint: go.dokimi.dev/assert/lint/golangci@v0.1.0
+      assertlint: go.dokimi.dev/assert/lint/golangci@v0.1.1
     # The package that registers the analyzers errorprefix and skipexpiry as module plugins of
     # golangci-lint, as <package>@<version>. errorprefix reports a text of errors.New that does not
     # start with the name of its package, and skipexpiry reports a skipped test whose expiry has
@@ -313,7 +313,7 @@ go:
   # targets.
   generate:
     commands:
-      - [go, run, go.dokimi.dev/dokimi/cmd/dokimi@v0.9.1, run]
+      - [go, run, go.dokimi.dev/dokimi/cmd/dokimi@v0.12.0, run]
       - [go, generate, -run, go tool kanon]
   # audit-go runs govulncheck with args in every module.
   audit:
