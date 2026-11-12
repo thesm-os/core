@@ -117,10 +117,11 @@ func (p Priority) Valid() bool {
 //
 // # Allocation contract
 //
-// [Limiter.AllowN], [Limiter.SetRate] and [Limiter.Burst] do not allocate,
-// and neither does a call of [Limiter.WaitN] or WaitNPriority that does not
-// wait. A call that waits allocates its place in its queue and its channel,
-// and a timer through [clock.Clock.NewTimer] each time it becomes the head.
+// [Limiter.AllowN], [Limiter.ReturnN], [Limiter.SetRate] and [Limiter.Burst]
+// do not allocate, and neither does a call of [Limiter.WaitN] or
+// WaitNPriority that does not wait. A call that waits allocates its place in
+// its queue and its channel, and a timer through [clock.Clock.NewTimer] each
+// time it becomes the head.
 type Limiter struct {
 	clock clock.Clock
 
@@ -248,6 +249,53 @@ func (l *Limiter) AllowN(n int64) bool {
 	defer l.mu.Unlock()
 
 	return l.rate == 0 || n <= l.burst && l.head == nil && l.claim(n) <= 0
+}
+
+// ReturnN gives back n units that [Limiter.AllowN] or
+// [Limiter.WaitNPriority] took and that the caller did not use. A caller
+// gives back the units of a call that another limiter refused. ReturnN moves
+// the time of the bucket back by the exact cost of the units. The bucket
+// keeps at most Burst units, so ReturnN gives back fewer units once the
+// bucket gained units since the call took them. A waiting head computes its
+// wait again, because the units can cover it sooner.
+//
+// ReturnN does not give back units for an n of zero or less or with a Rate of
+// zero. An n above Burst gives back Burst units at most.
+//
+// # Allocation contract
+//
+// Zero alloc.
+func (l *Limiter) ReturnN(n int64) {
+	if n <= 0 {
+		return
+	}
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	if l.rate == 0 {
+		return
+	}
+
+	q, r := l.cost(min(n, l.burst))
+	due, rem := l.due-q, l.dueRem-r
+	if rem < 0 {
+		due, rem = due-1, rem+l.rate
+	}
+
+	// A bucket whose time is before now is full.
+	if now := l.clock.Elapsed(); due < now {
+		due, rem = now, 0
+	}
+
+	l.due, l.dueRem = due, rem
+
+	if l.head != nil {
+		select {
+		case l.head.wake <- struct{}{}:
+		default:
+		}
+	}
 }
 
 // WaitN takes n units at [PriorityNormal], and waits until the Limiter
@@ -446,8 +494,9 @@ func (l *Limiter) Burst() int64 {
 // back, leads to another timer. While w is not the head, it waits on its
 // channel. The end of ctx ends either wait.
 //
-// A wake reports that w became the head, stopped being the head or ended,
-// and a grant to another call can have moved due meanwhile. Each pass of the
+// A wake reports that w became the head, stopped being the head or ended.
+// ReturnN also wakes the head after it gave units back. A grant to another
+// call can have moved due meanwhile. Each pass of the
 // loop ends with a wake, the end of its timer or the end of ctx, and stops
 // its timer. The next pass first returns the result of a call that SetRate
 // ended. It then returns the error of an ended ctx, and otherwise computes

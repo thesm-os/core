@@ -35,7 +35,8 @@
 //     burst, such as the bytes that background jobs read and write. Its
 //     waiting calls take their units in the order of their [Priority].
 //     [Limiter.SetRate] changes the rate in place, and the bucket keeps
-//     its units.
+//     its units. [Limiter.ReturnN] gives back the units of a call that
+//     another limiter refused.
 //   - [Failover] calls redundant dependencies one after another under
 //     their circuits, such as the time-stamp authorities of a deployment,
 //     until one succeeds. Its error remains retryable while the error of
