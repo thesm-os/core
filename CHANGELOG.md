@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.49.0
+
+### Minor Changes
+
+- cd6201a: Add `resilience.Bulkhead.SetLimit` to change the limit of a Bulkhead while calls are in flight.
+- 24fc1bb: Add `resilience.Bulkhead.TryAcquire` and `Release` to take and give back a permit without an allocation.
+- d86bf85: Add `resilience.Limiter.ReturnN` to give back the units that a call took and did not use.
+- 6bbbf36: Add the table of token buckets `resilience.Buckets` with one word for each bucket.
+- 500c7ed: Add `resilience.Group` to run the last section of a Close after the last goroutine of a component without a wait for a goroutine that hangs.
+- 6b2b0dd: Add `telemetry.Observer` to read the value of a gauge at each collection.
+- 3746e93: Add `tsptest.Config.Subject` to write the subject of the authority's certificate.
+- 6b2b0dd: Implement `telemetry.Observer` in the no-op Reporter and in `telemetrytest.Recorder`.
+
+### Patch Changes
+
+- bed1224: Take and free a free `resilience.Lock` with a compare-and-swap instead of a channel operation.
+- 81ffb37: Require `go.dokimi.dev/assert` v0.22.0, `go.dokimi.dev/conform` v0.17.1, `go.dokimi.dev/spec` v0.5.1 and `go.dokimi.dev/stub` v0.3.3.
+
 ## 0.48.0
 
 ### Minor Changes
