@@ -26,6 +26,9 @@
 //     return at the failure of the disk whose context is the owner.
 //     [Lock.Finally] runs the last section of a Close without a wait for
 //     such a call, because the call runs the section in its Unlock.
+//   - [Group] counts the goroutines of a component. Its Finally runs the
+//     last section of a Close once every member has returned. When the
+//     owner has ended, the last member runs the section.
 //   - [Retrier] retries a call, bounded by an attempt count and a budget.
 //     The budget stops the retries of every caller from adding load to a
 //     dependency that fails for all of them. [Do] waits each backoff on the

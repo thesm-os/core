@@ -78,8 +78,9 @@ type Lock struct {
 	state atomic.Int32
 }
 
-// section is a section that a Finally marked for the caller that has the
-// lock. The caller that runs f sets ran before it frees the lock.
+// section is the last section of a Close that a Finally marked for another
+// caller. That caller has a [Lock] or is the last member of a [Group]. The
+// caller that runs f sets ran after f returns.
 type section struct {
 	f   func()
 	ran atomic.Bool
