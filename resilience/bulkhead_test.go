@@ -298,6 +298,62 @@ func TestBulkhead(t *testing.T) {
 		})
 	})
 
+	t.Run("TryAcquire", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("takes a free permit", func(t *testing.T) {
+			t.Parallel()
+			b := newBulkhead(t, resilience.BulkheadConfig{Clock: fake.New(originUTC), Limit: 1})
+			expect.True(t, b.TryAcquire(), "TryAcquire must take a free permit")
+			expect.Equal(t, b.InFlight(), 1, "TryAcquire must count the permit that it took")
+		})
+
+		t.Run("reports false at the limit", func(t *testing.T) {
+			t.Parallel()
+			b := newBulkhead(t, resilience.BulkheadConfig{Clock: fake.New(originUTC), Limit: 1, Queue: 1})
+			acquireAll(t, b, 1)
+			expect.False(t, b.TryAcquire(), "TryAcquire must refuse a caller at the limit")
+			expect.Equal(t, b.Queued(), 0, "TryAcquire must not wait in the queue")
+		})
+	})
+
+	t.Run("Release", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("gives back a permit that TryAcquire took", func(t *testing.T) {
+			t.Parallel()
+			b := newBulkhead(t, resilience.BulkheadConfig{Clock: fake.New(originUTC), Limit: 1})
+			assert.True(t, b.TryAcquire(), "the case must take the permit")
+			b.Release()
+			expect.Equal(t, b.InFlight(), 0, "Release must give the permit back")
+			expect.True(t, b.TryAcquire(), "a caller must take the permit that Release gave back")
+		})
+
+		t.Run("passes the permit to a queued caller", func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				b := newBulkhead(t, resilience.BulkheadConfig{Clock: fake.New(originUTC), Limit: 1, Queue: 1})
+				assert.True(t, b.TryAcquire(), "the case must take the permit")
+				got := startAcquire(t.Context(), b)
+				synctest.Wait()
+
+				b.Release()
+				synctest.Wait()
+				expect.NoError(t, <-got, "the queued caller must take the permit that Release gave back")
+				expect.False(t, b.TryAcquire(), "the queued caller must have the permit")
+			})
+		})
+
+		t.Run("does not change a Bulkhead without a taken permit", func(t *testing.T) {
+			t.Parallel()
+			b := newBulkhead(t, resilience.BulkheadConfig{Clock: fake.New(originUTC), Limit: 1})
+			b.Release()
+			expect.Equal(t, b.InFlight(), 0, "Release must not count a permit below zero")
+			expect.True(t, b.TryAcquire(), "the Bulkhead must have its permit")
+			expect.False(t, b.TryAcquire(), "Release must not add a permit")
+		})
+	})
+
 	t.Run("SetLimit", func(t *testing.T) {
 		t.Parallel()
 
@@ -426,6 +482,17 @@ func TestBulkheadAllocs(t *testing.T) {
 		})
 	})
 
+	t.Run("TryAcquire", func(t *testing.T) {
+		b := newBulkhead(t, resilience.BulkheadConfig{Clock: fake.New(originUTC), Limit: 1})
+
+		var got bool
+		expect.MaxAllocs(t, func() {
+			got = b.TryAcquire()
+			b.Release()
+		}, 0, "TryAcquire and Release must not allocate")
+		assert.True(t, got, "the test must measure a permit that TryAcquire took")
+	})
+
 	t.Run("InFlight", func(t *testing.T) {
 		b := newBulkhead(t, resilience.BulkheadConfig{Clock: fake.New(originUTC), Limit: 2})
 		defer acquireAll(t, b, 1)[0]()
@@ -482,6 +549,22 @@ func BenchmarkBulkhead(b *testing.B) {
 
 			assert.ErrorIs(b, err, resilience.ErrFull, "the benchmark must measure a rejection")
 		})
+	})
+
+	b.Run("TryAcquire", func(b *testing.B) {
+		bh := newBulkhead(b, resilience.BulkheadConfig{Clock: fake.New(originUTC), Limit: 1})
+
+		var got bool
+
+		c := bench.Start(b).MaxAllocs(0)
+		defer c.End()
+
+		for c.Loop() {
+			got = bh.TryAcquire()
+			bh.Release()
+		}
+
+		assert.True(b, got, "the benchmark must measure a permit that TryAcquire took")
 	})
 
 	b.Run("InFlight", func(b *testing.B) {

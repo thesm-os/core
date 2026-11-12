@@ -63,7 +63,8 @@ type BulkheadConfig struct {
 // [Bulkhead.Acquire] allocates the release of a permit that it grants, and
 // nothing for a rejection. A queued caller allocates its place in the queue
 // and its channel. It also allocates a timer through [clock.Clock.NewTimer]
-// when the Wait of the configuration is set.
+// when the Wait of the configuration is set. [Bulkhead.TryAcquire] and
+// [Bulkhead.Release] do not allocate.
 type Bulkhead struct {
 	clock clock.Clock
 
@@ -177,6 +178,53 @@ func (b *Bulkhead) Acquire(ctx context.Context) (func(), error) {
 	}
 }
 
+// TryAcquire takes a free permit without a wait and reports whether it took
+// one. A caller that it refuses does not take a permit and does not join the
+// queue. A free permit goes to a queued caller first, so TryAcquire does not
+// take a permit ahead of a caller that waits. A caller gives the permit back
+// with [Bulkhead.Release]:
+//
+//	if !b.TryAcquire() {
+//	    return resilience.ErrFull
+//	}
+//	defer b.Release()
+//
+// # Allocation contract
+//
+// Zero-alloc.
+func (b *Bulkhead) TryAcquire() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if b.inFlight >= b.limit {
+		return false
+	}
+
+	b.inFlight++
+
+	return true
+}
+
+// Release gives back one permit that TryAcquire took and passes the free
+// permits to the queued callers in the order of their calls. A Release does
+// not change b while no permit is taken. A permit of [Bulkhead.Acquire] goes
+// back through the function that Acquire returns.
+//
+// # Allocation contract
+//
+// Zero-alloc.
+func (b *Bulkhead) Release() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if b.inFlight == 0 {
+		return
+	}
+
+	b.inFlight--
+	b.admit()
+}
+
 // SetLimit changes the Limit of b to limit. It does not free the permits
 // that callers have taken. A lower limit refuses new calls until the calls in
 // flight drop below it. A higher limit passes the permits of the difference
@@ -229,23 +277,9 @@ func (b *Bulkhead) grant() func() {
 
 	return func() {
 		if released.CompareAndSwap(false, true) {
-			b.release()
+			b.Release()
 		}
 	}
-}
-
-// release gives back one permit and passes the free permits to the queued
-// callers. A release does not change b while no permit is taken.
-func (b *Bulkhead) release() {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-
-	if b.inFlight == 0 {
-		return
-	}
-
-	b.inFlight--
-	b.admit()
 }
 
 // leave removes the queued caller of the channel ready from the queue after
