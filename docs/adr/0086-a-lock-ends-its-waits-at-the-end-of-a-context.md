@@ -4,7 +4,7 @@ title: A Lock Ends Its Waits at the End of a Context
 status: Accepted
 date: 2026-11-10
 supersedes: none
-superseded-by: none
+superseded-by: ADR-0090
 ---
 
 <!--

@@ -8,6 +8,21 @@ import (
 	"sync/atomic"
 )
 
+// The states of a [Lock]. The zero state belongs to the zero Lock, which is
+// never free.
+const (
+	// lockFree is the state of a free lock.
+	lockFree int32 = iota + 1
+
+	// lockTaken is the state of a lock that a caller has while no caller
+	// waits.
+	lockTaken
+
+	// lockContended is the state of a lock that a caller has while callers
+	// can wait. The Unlock of a contended lock wakes one waiter.
+	lockContended
+)
+
 // Lock is a mutual exclusion lock whose waits end at the end of a context.
 // It serializes a critical section that waits on a dependency, such as the
 // admission of the writes of a volume to its disk.
@@ -18,8 +33,13 @@ import (
 // behind a call that hangs then return at the failure of the dependency. A
 // [sync.Mutex] keeps its waiters until the caller that has it returns.
 //
-// A wait is a send on a channel. A [testing/synctest] bubble counts it as
-// durable when the bubble created the Lock and the contexts of the wait.
+// The Lock keeps its state in one atomic word. A caller takes a free lock
+// with one compare-and-swap, and the Unlock of a lock without waiters frees
+// it with another. A caller that waits receives a wake on a channel of the
+// Lock, so a [testing/synctest] bubble counts the wait as durable when the
+// bubble created the Lock and the contexts of the wait. The Lock does not
+// order its waiters. A caller that finds the lock free takes it ahead of a
+// caller that waits, as with a [sync.Mutex].
 //
 // [Lock.Finally] runs the last section of a Close under the lock. Once the
 // owner has ended, Finally does not wait for a call that hangs. The caller
@@ -40,10 +60,10 @@ import (
 type Lock struct {
 	owner context.Context //nolint:containedctx // the owner ends every wait of the lock, and Lock returns its cause
 
-	// slot contains a token while a caller has the lock. Its capacity is
-	// one, so Lock takes the lock with a send and Unlock frees it with a
-	// receive.
-	slot chan struct{}
+	// wake receives a value when the Unlock of a contended lock frees it. It
+	// has room for one value, so the channel keeps a wake until a waiter
+	// receives it. A waiter that receives a wake tries the lock again.
+	wake chan struct{}
 
 	// done is the Done channel of the owner.
 	done <-chan struct{}
@@ -52,6 +72,10 @@ type Lock struct {
 	// has the lock. Finally marks a section once the owner has ended. A
 	// caller clears the mark while it has the lock.
 	final atomic.Pointer[section]
+
+	// state is lockFree, lockTaken or lockContended, and zero for the zero
+	// Lock.
+	state atomic.Int32
 }
 
 // section is a section that a Finally marked for the caller that has the
@@ -69,7 +93,10 @@ type section struct {
 // Allocates the Lock and its channel, and the Done channel of owner when
 // owner has none yet.
 func NewLock(owner context.Context) *Lock {
-	return &Lock{owner: owner, slot: make(chan struct{}, 1), done: owner.Done()}
+	l := &Lock{owner: owner, wake: make(chan struct{}, 1), done: owner.Done()}
+	l.state.Store(lockFree)
+
+	return l
 }
 
 // Lock takes the lock, and waits while another caller has it. A caller that
@@ -106,21 +133,11 @@ func (l *Lock) Lock(ctx context.Context) error {
 	default:
 	}
 
-	// A free lock does not lock the channels of the contexts.
-	select {
-	case l.slot <- struct{}{}:
+	if l.state.CompareAndSwap(lockFree, lockTaken) {
 		return nil
-	default:
 	}
 
-	select {
-	case l.slot <- struct{}{}:
-		return nil
-	case <-ctx.Done():
-		return context.Cause(ctx)
-	case <-l.done:
-		return context.Cause(l.owner) //nolint:contextcheck // see above
-	}
+	return l.acquire(ctx)
 }
 
 // TryLock takes the lock when it is free, and reports whether it took it.
@@ -130,12 +147,7 @@ func (l *Lock) Lock(ctx context.Context) error {
 //
 // Zero-alloc.
 func (l *Lock) TryLock() bool {
-	select {
-	case l.slot <- struct{}{}:
-		return true
-	default:
-		return false
-	}
+	return l.state.CompareAndSwap(lockFree, lockTaken)
 }
 
 // Unlock frees the lock for the next caller. Unlock of a free Lock does
@@ -149,10 +161,22 @@ func (l *Lock) TryLock() bool {
 //
 // Zero-alloc. Unlock reads the mark of a section with one atomic load.
 func (l *Lock) Unlock() {
-	select {
-	case <-l.slot:
-	default:
-		return
+	for {
+		s := l.state.Load()
+		if s != lockTaken && s != lockContended {
+			return
+		}
+
+		if l.state.CompareAndSwap(s, lockFree) {
+			if s == lockContended {
+				select {
+				case l.wake <- struct{}{}:
+				default:
+				}
+			}
+
+			break
+		}
 	}
 
 	// Finally marks its section once it found the lock taken, and then tries
@@ -176,7 +200,7 @@ func (l *Lock) Unlock() {
 //	    return errHung
 //	}
 //
-// While the owner lives, Finally takes the lock, and waits while another
+// Before the owner ends, Finally takes the lock, and waits while another
 // caller has it. It runs f and frees the lock. Once the owner has ended,
 // Finally does not wait. It runs f at once when the lock is free. Otherwise
 // it marks f for the caller that has the lock and returns false. That caller
@@ -191,8 +215,8 @@ func (l *Lock) Unlock() {
 //
 // Allocates the mark of f once the owner has ended. f escapes to the heap.
 func (l *Lock) Finally(f func()) bool {
-	// Once the owner has ended, the select below picks the hand-off or a
-	// free lock at random. This check picks the hand-off.
+	// Once the owner has ended, the hand-off runs f under a free lock as the
+	// compare-and-swap below does. This check picks the hand-off.
 	//dokimi:mutate-skip sbr-delete: the hand-off and a free lock both run f under the lock and report true
 	select {
 	case <-l.done:
@@ -200,9 +224,9 @@ func (l *Lock) Finally(f func()) bool {
 	default:
 	}
 
-	select {
-	case l.slot <- struct{}{}:
-	case <-l.done:
+	// The context of the wait never ends, so acquire returns an error only
+	// at the end of the owner.
+	if !l.state.CompareAndSwap(lockFree, lockTaken) && l.acquire(context.Background()) != nil {
 		return l.handOff(f)
 	}
 
@@ -210,6 +234,31 @@ func (l *Lock) Finally(f func()) bool {
 	l.Unlock()
 
 	return true
+}
+
+// acquire takes a lock that the compare-and-swap of its caller found taken,
+// and waits while another caller has it. Each pass swaps the state with
+// lockContended, so the Unlock of the caller that has the lock wakes a
+// waiter. A swap that finds the lock free takes it contended, because other
+// callers can still wait for it. The zero Lock has no channel of wakes, so
+// acquire leaves its state alone and waits for the end of ctx.
+//
+// Error modes, none of which takes the lock: the [context.Cause] of ctx or of
+// the owner when either ends before acquire takes the lock.
+func (l *Lock) acquire(ctx context.Context) error {
+	for {
+		if l.wake != nil && l.state.Swap(lockContended) == lockFree {
+			return nil
+		}
+
+		select {
+		case <-l.wake:
+		case <-ctx.Done():
+			return context.Cause(ctx)
+		case <-l.done:
+			return context.Cause(l.owner) //nolint:contextcheck // Cause only reads the error of the owner
+		}
+	}
 }
 
 // handOff marks f for the caller that has the lock once the owner has

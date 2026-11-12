@@ -141,6 +141,22 @@ func TestLock(t *testing.T) {
 			assert.True(t, l.TryLock(), "Lock must leave the lock free once the owner ended")
 		})
 
+		t.Run("waits on the zero Lock until ctx ends", func(t *testing.T) {
+			t.Parallel()
+			synctest.Test(t, func(t *testing.T) {
+				var l resilience.Lock
+				ctx, cancel := context.WithCancelCause(t.Context())
+				got := startLock(ctx, &l)
+				synctest.Wait()
+				assert.Empty(t, got, "Lock must wait on the zero Lock, which is never free")
+
+				cancel(errCaller)
+				synctest.Wait()
+				assert.ErrorIs(t, <-got, errCaller, "Lock must return the cause of the context of its caller")
+				assert.False(t, l.TryLock(), "the wait must leave the zero Lock never free")
+			})
+		})
+
 		t.Run("returns the cause of ctx before the cause of the owner", func(t *testing.T) {
 			t.Parallel()
 			owner, fail := context.WithCancelCause(t.Context())
@@ -213,6 +229,12 @@ func TestLock(t *testing.T) {
 			assert.False(t, l.TryLock(), "TryLock must not take the lock of another caller")
 		})
 
+		t.Run("reports false for the zero Lock", func(t *testing.T) {
+			t.Parallel()
+			var l resilience.Lock
+			assert.False(t, l.TryLock(), "the zero Lock must never be free")
+		})
+
 		t.Run("takes a free lock after the owner ended", func(t *testing.T) {
 			t.Parallel()
 			owner, fail := context.WithCancelCause(t.Context())
@@ -239,6 +261,13 @@ func TestLock(t *testing.T) {
 			l.Unlock()
 			assert.True(t, l.TryLock(), "Unlock of a free lock must leave it free")
 			assert.False(t, l.TryLock(), "Unlock of a free lock must not let a second caller take it")
+		})
+
+		t.Run("does not change the zero Lock", func(t *testing.T) {
+			t.Parallel()
+			var l resilience.Lock
+			l.Unlock()
+			assert.False(t, l.TryLock(), "Unlock must leave the zero Lock never free")
 		})
 
 		t.Run("runs the section that Finally marked", func(t *testing.T) {
