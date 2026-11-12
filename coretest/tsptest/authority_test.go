@@ -6,10 +6,12 @@ package tsptest_test
 import (
 	"crypto/sha256"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"testing"
 	"time"
 
 	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/expect"
 
 	"go.thesmos.sh/core/clock/fake"
 	"go.thesmos.sh/core/coretest/tsptest"
@@ -91,6 +93,30 @@ func TestAuthority(t *testing.T) {
 
 			assert.True(t, a.Leaf().NotBefore.Equal(origin.Add(-time.Hour)), "the validity must start an hour before")
 			assert.True(t, a.Leaf().NotAfter.Equal(origin.Add(2*time.Hour)), "the validity must last the Config's")
+		})
+
+		t.Run("writes the Subject into the authority's certificate", func(t *testing.T) {
+			t.Parallel()
+			cfg := config()
+			cfg.Subject = &pkix.Name{
+				Country:      []string{"NL"},
+				Organization: []string{"Example TSP"},
+				CommonName:   "TSA 1",
+			}
+			a := authority(t, cfg)
+
+			expect.Equal(t, a.Leaf().Subject.String(), "CN=TSA 1,O=Example TSP,C=NL",
+				"the authority's certificate must have the Subject of the Config")
+			expect.Equal(t, a.Intermediate().Subject.String(), "CN=tsptest intermediate",
+				"the intermediate must keep its subject")
+		})
+
+		t.Run("writes the common name tsptest authority for a nil Subject", func(t *testing.T) {
+			t.Parallel()
+			a := authority(t, config())
+
+			assert.Equal(t, a.Leaf().Subject.String(), "CN=tsptest authority",
+				"the authority's certificate must have the default subject")
 		})
 	})
 

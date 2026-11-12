@@ -121,6 +121,12 @@ type Config struct {
 	// certificates, which starts an hour before its time at New.
 	Clock clock.Clock
 
+	// Subject is the subject of the authority's certificate. A verifier of
+	// qualified timestamps reads its country and its organization. New
+	// writes the common name "tsptest authority" for a nil Subject. The root
+	// and the intermediate keep their subjects.
+	Subject *pkix.Name
+
 	// Policy is the TSAPolicyId of the tokens.
 	Policy x509.OID
 

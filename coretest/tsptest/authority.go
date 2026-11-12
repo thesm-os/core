@@ -153,9 +153,9 @@ type Authority struct {
 // an intermediate that are valid for 3650 days, and the authority's
 // certificate, valid for cfg.Validity, each from an hour before the
 // clock's time. The root and the intermediate sign with ECDSA on P-256.
-// The authority's certificate has the key of cfg.Key, the serial number 3,
-// the subject key identifier 01020304, and the extended key usage of
-// cfg.Usage.
+// The authority's certificate has the subject of cfg.Subject, the key of
+// cfg.Key, the serial number 3, the subject key identifier 01020304, and the
+// extended key usage of cfg.Usage.
 //
 // Error modes: a Config without a Clock or a Policy, or with a Key, a
 // Digest, an ESS or a Usage that is not Valid, returns [ErrConfig],
@@ -363,9 +363,14 @@ func (a *Authority) issue() error {
 		validity = defaultValidity
 	}
 
+	subject := pkix.Name{CommonName: "tsptest authority"}
+	if a.cfg.Subject != nil {
+		subject = *a.cfg.Subject
+	}
+
 	leaf := &x509.Certificate{
 		SerialNumber: big.NewInt(3),
-		Subject:      pkix.Name{CommonName: "tsptest authority"},
+		Subject:      subject,
 		NotBefore:    from,
 		NotAfter:     now.Add(validity),
 		KeyUsage:     x509.KeyUsageDigitalSignature,
