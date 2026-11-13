@@ -405,6 +405,29 @@ func TestQuorumAllocs(t *testing.T) {
 			assert.NoError(t, err, "the test must measure a quorum that is met")
 		})
 	}
+
+	t.Run("with every place taken when a call succeeds", func(t *testing.T) {
+		// Each call returns once the three calls have started, so the worker
+		// of the first success finds every place taken and no element left.
+		items := indices(3)
+
+		var started atomic.Int32
+		await := func(context.Context, int, int) error {
+			started.Add(1)
+			for started.Load() < 3 {
+				runtime.Gosched()
+			}
+
+			return nil
+		}
+
+		var err error
+		expect.MaxAllocs(t, func() {
+			started.Store(0)
+			err = task.Quorum(ctx, 3, 3, items, await)
+		}, quorumAllocs, "a worker without an element left must not wait for a place")
+		assert.NoError(t, err, "the test must measure a quorum that is met")
+	})
 }
 
 // BenchmarkQuorum measures a quorum of two of five witnesses whose calls

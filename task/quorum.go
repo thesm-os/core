@@ -100,8 +100,8 @@ type quorum struct {
 // For any length of items, Quorum allocates the derived context, its
 // cancel function, the state of the call, the channel of the places and
 // one closure that the goroutines share. A call in which a worker waits
-// for a place also allocates the Done channel of the derived context
-// once. Quorum allocates a wrapped error for each failure, and the list
+// for a place while elements remain also allocates the Done channel of the
+// derived context once. Quorum allocates a wrapped error for each failure, and the list
 // of failures grows by [append].
 func Quorum[E any](
 	ctx context.Context,
@@ -146,7 +146,9 @@ func Quorum[E any](
 			q.wg.Done()
 		}()
 
-		for q.place(ctx) {
+		// A worker without an element left returns before it takes a place,
+		// so it does not wait for a place that it cannot use.
+		for q.next.Load() < n && q.place(ctx) {
 			next := q.next.Add(1) - 1
 			if next >= n || ctx.Err() != nil {
 				break
