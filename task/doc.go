@@ -27,6 +27,8 @@
 //   - [Quorum] calls one function for every element of a slice and
 //     returns once k calls have succeeded, for k of n replicas or
 //     witnesses.
+//   - [QuorumRunner] runs the calls of Quorum from state that it keeps
+//     across calls, for a caller that runs one quorum at a time.
 //   - [Every] calls one function repeatedly, with a delay between
 //     calls, until its context ends.
 //   - [Serve] runs functions that last until their context ends, such
@@ -71,8 +73,8 @@
 //
 // # Limits
 //
-// [Each], [Map], [Stream], [Quorum] and [Run] require a limit of at
-// least one and return [ErrLimit] for a smaller one. For CPU-bound work, pass
+// [Each], [Map], [Stream], [Quorum], [QuorumRunner.Run] and [Run] require a
+// limit of at least one and return [ErrLimit] for a smaller one. For CPU-bound work, pass
 // runtime.GOMAXPROCS(0), which follows the cgroup CPU limit on Linux.
 // For calls to a dependency, pass the concurrency that the dependency
 // accepts. [All] takes no limit, because its functions are written at
@@ -91,7 +93,9 @@
 //
 // [Each], [Map], [Stream] and [Quorum] run on a fixed set of worker
 // goroutines that claim elements, so their allocations do not grow
-// with the number of elements. [Group.Go] starts one goroutine per task
+// with the number of elements. A [QuorumRunner] keeps the state of a
+// quorum across calls, so a call of its Run allocates the derived context
+// and its cancel function alone. [Group.Go] starts one goroutine per task
 // and allocates the closure that starts it, and [Serve] starts one
 // goroutine per function. [Every] allocates one timer per wait.
 //
