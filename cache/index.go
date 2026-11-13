@@ -23,13 +23,15 @@ const minSlots = 16
 // the cache's mutex, fills an entry before the atomic store that publishes
 // it, and replaces a removed entry with the tomb by another atomic store.
 // A lookup that loads an entry therefore reads the fields that the writer
-// filled. A writer that needs more slots builds a new index and publishes
+// filled. A writer puts the new entry of a key in the slot of the old entry
+// of the key with one atomic store, so a lookup of the key loads the old
+// entry or the new one. A writer that needs more slots builds a new index and publishes
 // it through the cache's index pointer. No writer changes the old index
 // again, so a lookup that loaded it probes an unchanging table.
 //
 // # Allocation contract
 //
-// find, insert and remove do not allocate. grow allocates the new index
+// find, insert, replace and remove do not allocate. grow allocates the new index
 // and its slots.
 type index[K comparable, V any] struct {
 	// slots contains the entries, a power of two of them.
@@ -108,24 +110,32 @@ func (ix *index[K, V]) insert(e, tomb *entry[K, V]) {
 	ix.live++
 }
 
-// remove replaces e in its slot with tomb. The index contains e, and the
-// caller has locked the mutex. The probe of e's hash passes no nil slot
-// before the slot of e, because no slot returns to nil, so remove finds e
-// within len(slots) slots. The slot remains used, so the probes of other
-// keys still pass it.
-func (ix *index[K, V]) remove(e, tomb *entry[K, V]) {
-	i := e.hash & ix.mask
+// replace stores e in the slot of old with one atomic store. The index
+// contains old, and e is the new entry of the key of old or the tomb. The
+// caller has locked the mutex. The probe of the hash of old passes no nil
+// slot before the slot of old, because no slot returns to nil, so replace
+// finds old within len(slots) slots. replace does not change the counts of
+// the slots.
+func (ix *index[K, V]) replace(old, e *entry[K, V]) {
+	i := old.hash & ix.mask
 	for range len(ix.slots) {
-		if ix.slots[i].Load() == e {
-			ix.slots[i].Store(tomb)
-			ix.live--
+		if ix.slots[i].Load() == old {
+			ix.slots[i].Store(e)
 
 			return
 		}
 
-		//dokimi:mutate-skip aor: a walk of len(slots) steps in either direction visits every slot, so it finds e
+		//dokimi:mutate-skip aor: a walk of len(slots) steps in either direction visits every slot, so it finds old
 		i = (i + 1) & ix.mask
 	}
+}
+
+// remove replaces e in its slot with tomb. The index contains e, and the
+// caller has locked the mutex. The slot remains used, so the probes of
+// other keys still pass it.
+func (ix *index[K, V]) remove(e, tomb *entry[K, V]) {
+	ix.replace(e, tomb)
+	ix.live--
 }
 
 // grow returns a new index with the entries of ix and without its tombs,

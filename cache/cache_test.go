@@ -76,6 +76,10 @@ const (
 	pinDraws = 8
 )
 
+// replacements is the number of Sets of one key while another goroutine
+// gets the key.
+const replacements = 100_000
+
 // origin is the time of the fake clock of every case.
 var origin = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 
@@ -183,6 +187,34 @@ func TestCache(t *testing.T) {
 			v, ok := c.Get("k")
 			assert.True(t, ok, "Get must find the stored key")
 			assert.Equal(t, v, 7, "Get must return the stored value")
+		})
+
+		t.Run("returns a value of a key while Set replaces the entry of the key", func(t *testing.T) {
+			t.Parallel()
+			c, _, _ := newCache(t, 10, nil)
+			c.Set("k", 0, time.Time{})
+
+			var (
+				done   atomic.Bool
+				misses int
+				wg     sync.WaitGroup
+			)
+			wg.Go(func() {
+				defer done.Store(true)
+
+				for i := range replacements {
+					c.Set("k", i, time.Time{})
+				}
+			})
+			wg.Go(func() {
+				for !done.Load() {
+					if _, ok := c.Get("k"); !ok {
+						misses++
+					}
+				}
+			})
+			wg.Wait()
+			assert.Equal(t, misses, 0, "a Get must find the old entry or the new one while Set replaces it")
 		})
 
 		t.Run("reports false for a key that Set never stored", func(t *testing.T) {

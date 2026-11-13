@@ -70,6 +70,20 @@ func TestIndexLayout(t *testing.T) {
 		})
 	})
 
+	t.Run("replace", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("stores the new entry in the slot of the old entry", func(t *testing.T) {
+			t.Parallel()
+			ix := indexOf(t, tomb, 5, 21)
+			e := &entry[uint64, int]{key: 21, hash: 21}
+			ix.replace(ix.slots[6].Load(), e)
+			expect.Equal(t, ix.slots[6].Load(), e, "the slot must contain the new entry", expect.ByIdentity())
+			expect.Equal(t, ix.used, 2, "a replacement must not count a new used slot")
+			expect.Equal(t, ix.live, 2, "a replacement must keep the count of live slots")
+		})
+	})
+
 	t.Run("remove", func(t *testing.T) {
 		t.Parallel()
 

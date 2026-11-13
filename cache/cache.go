@@ -462,8 +462,11 @@ func (c *Cache[K, V]) newEntry(k K, v V, expires time.Time) (*entry[K, V], time.
 // store adds e to the cache in place of the entry of its key, and evicts
 // other entries as Set documents. e is a new entry from newEntry, and now
 // is the time that newEntry read. SetPinned pins e before it calls store,
-// so attach publishes a pinned e and the evictor keeps it until its last
+// so store publishes a pinned e and the evictor keeps it until its last
 // Unpin.
+//
+// store puts e in the slot of the old entry of its key with one atomic
+// store, so a Get of the key that runs meanwhile finds the old entry or e.
 //
 // An e whose cost exceeds the capacity leaves the cache at once. store
 // passes such an e to Evicted when it has no pin. The last Unpin of e
@@ -473,19 +476,30 @@ func (c *Cache[K, V]) store(e *entry[K, V], now time.Time) {
 
 	c.mu.Lock()
 
-	if old := c.index.Load().find(e.key, e.hash, c.tomb); old != nil {
+	ix := c.index.Load()
+	old := ix.find(e.key, e.hash, c.tomb)
+	fits := e.cost <= c.capacity
+
+	switch {
+	case old != nil && fits:
+		ix.replace(old, e)
+		c.unlink(old)
+		c.link(e)
+	case old != nil:
 		c.detach(old)
-		if old.leave() {
-			gone.add(old)
-		}
+	case fits:
+		c.attach(e)
 	}
 
-	if e.cost > c.capacity {
+	if old != nil && old.leave() {
+		gone.add(old)
+	}
+
+	if !fits {
 		if e.leave() {
 			gone.add(e)
 		}
 	} else {
-		c.attach(e)
 		c.evict(now, e, &gone)
 	}
 
@@ -516,10 +530,8 @@ func (c *Cache[K, V]) shrink() {
 }
 
 // attach adds e, an entry whose key the index does not contain, to the
-// index, growing the index first when it is full, and to the queue that
-// admits it: the main queue when the ghost remembers its key, and the
-// small queue otherwise. It adds the cost of e to the total. The caller
-// has locked the mutex.
+// index, growing the index first when it is full, and links it as link
+// does. The caller has locked the mutex.
 func (c *Cache[K, V]) attach(e *entry[K, V]) {
 	ix := c.index.Load()
 	if ix.full() {
@@ -528,7 +540,14 @@ func (c *Cache[K, V]) attach(e *entry[K, V]) {
 	}
 
 	ix.insert(e, c.tomb)
+	c.link(e)
+}
 
+// link adds e to the queue that admits it: the main queue when the ghost
+// remembers its key, and the small queue otherwise. It adds e to the heap
+// of expiry times when e has an expiry time, and adds the cost of e to the
+// total. link does not change the index. The caller has locked the mutex.
+func (c *Cache[K, V]) link(e *entry[K, V]) {
 	if c.ghost.contains(e.hash) {
 		c.main.push(e)
 	} else {
@@ -543,15 +562,20 @@ func (c *Cache[K, V]) attach(e *entry[K, V]) {
 	c.entries.Add(1)
 }
 
-// detach removes e, an entry of the cache, from the index and from its
-// queue, and subtracts its cost from the total. An entry that the evictor
-// set aside is in neither queue, so detach sets its queueID to zero, and
-// restore then skips the entry. detach does not mark e as having left,
-// which the caller does with leave or evict. The caller has locked the
-// mutex.
+// detach removes e, an entry of the cache, from the index and unlinks it
+// as unlink does. detach does not mark e as having left, which the caller
+// does with leave or evict. The caller has locked the mutex.
 func (c *Cache[K, V]) detach(e *entry[K, V]) {
 	c.index.Load().remove(e, c.tomb)
+	c.unlink(e)
+}
 
+// unlink removes e from its queue and from the heap of expiry times, and
+// subtracts its cost from the total. An entry that the evictor set aside
+// is in neither queue, so unlink sets its queueID to zero, and restore then
+// skips the entry. unlink does not change the index. The caller has locked
+// the mutex.
+func (c *Cache[K, V]) unlink(e *entry[K, V]) {
 	switch e.queue {
 	case inSmall:
 		c.small.remove(e)
