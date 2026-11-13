@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.50.0
+
+### Minor Changes
+
+- db8b8fa: Add `task.QuorumRunner` to run quorums from state that it keeps across calls.
+
 ## 0.49.1
 
 ### Patch Changes
