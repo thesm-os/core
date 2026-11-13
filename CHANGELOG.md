@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.49.1
+
+### Patch Changes
+
+- b3c7b0a: Fix `cache.Cache.Get` to find the entry of a key while a `Set` replaces it.
+- 0f6d66e: Return a worker of `task.Quorum` without a wait for a place once every element is claimed.
+
 ## 0.49.0
 
 ### Minor Changes
