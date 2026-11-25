@@ -7,7 +7,7 @@ go 1.27.4
 
 require (
 	go.dokimi.dev/assert v0.23.0
-	go.dokimi.dev/conform v0.18.0
+	go.dokimi.dev/conform v0.18.1
 	go.dokimi.dev/spec v0.5.1
 	go.dokimi.dev/stub v0.3.3
 	go.thesmos.sh/kanon v0.5.0
