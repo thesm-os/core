@@ -4,26 +4,38 @@
 package btree
 
 // removeSeparator removes the separator at index i of in and the child
-// after it in kids, the child array of in, and zeroes the slots that the
-// last separator and the last child leave.
+// after it in kids, the child array of in, with its max end when in keeps
+// max ends, and zeroes the slots that the last separator and the last child
+// leave.
 func removeSeparator[K, V any, C sized](in *inner[K, V], kids *[maxChildren]C, i int) {
 	copy(in.keys[i:], in.keys[i+1:in.n])
 	copy(kids[i+1:], kids[i+2:in.n+1])
+	if ends := in.maxEnds; ends != nil {
+		copy(ends[i+1:], ends[i+2:in.n+1])
+		clear(ends[in.n : in.n+1])
+	}
 	in.n--
 	clear(in.keys[in.n : in.n+1])
 	clear(kids[in.n+1 : in.n+2])
 }
 
 // rotateRight moves the last child of left to the front of right, its
-// right sibling under separator j of p. The separator moves down to right,
-// and the last separator of left moves up in its place. lk and rk are the
-// child arrays of left and right.
+// right sibling under separator j of p, with its max end when the nodes keep
+// max ends. The separator moves down to right, and the last separator of
+// left moves up in its place. lk and rk are the child arrays of left and
+// right.
 func rotateRight[K, V any, C sized](p *inner[K, V], j int, left, right *inner[K, V], lk, rk *[maxChildren]C) {
 	moved := lk[left.n]
 	var zero C
 	lk[left.n] = zero
 	copy(rk[1:right.n+2], rk[:right.n+1])
 	rk[0] = moved
+	if left.maxEnds != nil {
+		end := left.maxEnds[left.n]
+		clear(left.maxEnds[left.n : left.n+1])
+		copy(right.maxEnds[1:right.n+2], right.maxEnds[:right.n+1])
+		right.maxEnds[0] = end
+	}
 	copy(right.keys[1:right.n+1], right.keys[:right.n])
 	right.keys[0] = p.keys[j]
 	right.n++
@@ -35,15 +47,20 @@ func rotateRight[K, V any, C sized](p *inner[K, V], j int, left, right *inner[K,
 }
 
 // rotateLeft moves the first child of right to the end of left, its left
-// sibling under separator j of p. The separator moves down to left, and
-// the first separator of right moves up in its place. lk and rk are the
-// child arrays of left and right.
+// sibling under separator j of p, with its max end when the nodes keep max
+// ends. The separator moves down to left, and the first separator of right
+// moves up in its place. lk and rk are the child arrays of left and right.
 func rotateLeft[K, V any, C sized](p *inner[K, V], j int, left, right *inner[K, V], lk, rk *[maxChildren]C) {
 	moved := rk[0]
 	copy(rk[:], rk[1:right.n+1])
 	var zero C
 	rk[right.n] = zero
 	lk[left.n+1] = moved
+	if right.maxEnds != nil {
+		left.maxEnds[left.n+1] = right.maxEnds[0]
+		copy(right.maxEnds[:], right.maxEnds[1:right.n+1])
+		clear(right.maxEnds[right.n : right.n+1])
+	}
 	left.keys[left.n] = p.keys[j]
 	left.n++
 	p.keys[j] = right.keys[0]
@@ -55,10 +72,14 @@ func rotateLeft[K, V any, C sized](p *inner[K, V], j int, left, right *inner[K, 
 }
 
 // merge appends separator j of p and the separators and children of right
-// to left, its left sibling. The caller removes the separator and right
-// from p. lk and rk are the child arrays of left and right.
+// to left, its left sibling, with the max ends of the children when the
+// nodes keep max ends. The caller removes the separator and right from p.
+// lk and rk are the child arrays of left and right.
 func merge[K, V any, C sized](p *inner[K, V], j int, left, right *inner[K, V], lk, rk *[maxChildren]C) {
 	copy(lk[left.n+1:], rk[:right.n+1])
+	if left.maxEnds != nil {
+		copy(left.maxEnds[left.n+1:], right.maxEnds[:right.n+1])
+	}
 	left.keys[left.n] = p.keys[j]
 	copy(left.keys[left.n+1:], right.keys[:right.n])
 	left.n += right.n + 1
@@ -243,7 +264,13 @@ func (t *tree[K, V, O]) keepAll(in *inner[K, V]) {
 // that the removal empties is the last leaf of its parent, and its
 // separator receives the zero key, which the refill or merge of that leaf
 // then replaces or removes.
+//
+// In a tree that keeps max ends, a max end on path that ends where the
+// removed key ends gets the max end of its child again, so that the tree
+// refers to no key that it removed. A refill or a merge computes the max
+// ends of the children that it changes.
 func (t *tree[K, V, O]) remove(path []step[K, V], l *leaf[K, V], i int) {
+	gone := l.keys[i]
 	l.remove(i)
 	t.len--
 	d := len(path) - 1
@@ -270,9 +297,20 @@ func (t *tree[K, V, O]) remove(path []step[K, V], l *leaf[K, V], i int) {
 	}
 	if l.n < minItems {
 		t.fixLeaf(path[d].n, path[d].i)
+	} else if s := path[d]; s.n.maxEnds != nil {
+		if !t.endsBefore(gone, s.n.maxEnds[s.i]) {
+			s.n.maxEnds[s.i] = t.leafMaxEnd(l)
+		}
 	}
 	for d--; d >= 0 && path[d+1].n.n < minItems; d-- {
 		t.fixInner(path[d].n, path[d].i)
+	}
+	if t.endsBefore != nil {
+		for ; d >= 0; d-- {
+			if s := path[d]; !t.endsBefore(gone, s.n.maxEnds[s.i]) {
+				s.n.maxEnds[s.i] = t.innerMaxEnd(path[d+1].n)
+			}
+		}
 	}
 	if r := t.root; r.n == 0 {
 		if r.leaves != nil {
@@ -287,7 +325,8 @@ func (t *tree[K, V, O]) remove(path []step[K, V], l *leaf[K, V], i int) {
 // fixLeaf refills the underfull leaf at index ci of p with an item of a
 // sibling that has more than minItems, the left sibling first, or merges
 // it with a sibling. It copies a sibling with another ID only when it
-// changes the sibling.
+// changes the sibling. When p keeps max ends, fixLeaf computes the max ends
+// of the leaves that it changes.
 func (t *tree[K, V, O]) fixLeaf(p *inner[K, V], ci int) {
 	c := p.leaves[ci]
 	if ci > 0 && p.leaves[ci-1].n > minItems {
@@ -295,6 +334,9 @@ func (t *tree[K, V, O]) fixLeaf(p *inner[K, V], ci int) {
 		c.insert(0, left.keys[left.n-1], left.vals[left.n-1])
 		left.remove(left.n - 1)
 		p.keys[ci-1] = c.keys[0]
+		if p.maxEnds != nil {
+			p.maxEnds[ci-1], p.maxEnds[ci] = t.leafMaxEnd(left), t.leafMaxEnd(c)
+		}
 
 		return
 	}
@@ -303,6 +345,9 @@ func (t *tree[K, V, O]) fixLeaf(p *inner[K, V], ci int) {
 		c.insert(c.n, right.keys[0], right.vals[0])
 		right.remove(0)
 		p.keys[ci] = right.keys[0]
+		if p.maxEnds != nil {
+			p.maxEnds[ci], p.maxEnds[ci+1] = t.leafMaxEnd(c), t.leafMaxEnd(right)
+		}
 
 		return
 	}
@@ -314,6 +359,9 @@ func (t *tree[K, V, O]) fixLeaf(p *inner[K, V], ci int) {
 	copy(left.keys[left.n:], right.keys[:right.n])
 	copy(left.vals[left.n:], right.vals[:right.n])
 	left.n += right.n
+	if p.maxEnds != nil {
+		p.maxEnds[ci] = t.leafMaxEnd(left)
+	}
 	removeSeparator(p, p.leaves, ci)
 	t.releaseLeaf(right)
 }
@@ -321,7 +369,8 @@ func (t *tree[K, V, O]) fixLeaf(p *inner[K, V], ci int) {
 // fixInner refills the underfull internal node at index ci of p with a
 // child of a sibling that has more than minItems separators, the left
 // sibling first, or merges it with a sibling. It copies a sibling with
-// another ID only when it changes the sibling.
+// another ID only when it changes the sibling. When p keeps max ends,
+// fixInner computes the max ends of the nodes that it changes.
 func (t *tree[K, V, O]) fixInner(p *inner[K, V], ci int) {
 	c := p.inners[ci]
 	if ci > 0 && p.inners[ci-1].n > minItems {
@@ -330,6 +379,9 @@ func (t *tree[K, V, O]) fixInner(p *inner[K, V], ci int) {
 			rotateRight(p, ci-1, left, c, left.leaves, c.leaves)
 		} else {
 			rotateRight(p, ci-1, left, c, left.inners, c.inners)
+		}
+		if p.maxEnds != nil {
+			p.maxEnds[ci-1], p.maxEnds[ci] = t.innerMaxEnd(left), t.innerMaxEnd(c)
 		}
 
 		return
@@ -340,6 +392,9 @@ func (t *tree[K, V, O]) fixInner(p *inner[K, V], ci int) {
 			rotateLeft(p, ci, c, right, c.leaves, right.leaves)
 		} else {
 			rotateLeft(p, ci, c, right, c.inners, right.inners)
+		}
+		if p.maxEnds != nil {
+			p.maxEnds[ci], p.maxEnds[ci+1] = t.innerMaxEnd(c), t.innerMaxEnd(right)
 		}
 
 		return
@@ -353,6 +408,9 @@ func (t *tree[K, V, O]) fixInner(p *inner[K, V], ci int) {
 		merge(p, ci, left, right, left.leaves, right.leaves)
 	} else {
 		merge(p, ci, left, right, left.inners, right.inners)
+	}
+	if p.maxEnds != nil {
+		p.maxEnds[ci] = t.innerMaxEnd(left)
 	}
 	removeSeparator(p, p.inners, ci)
 	t.releaseInner(right)

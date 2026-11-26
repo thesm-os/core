@@ -4,6 +4,7 @@
 package btree
 
 import (
+	"cmp"
 	"slices"
 	"testing"
 
@@ -105,6 +106,25 @@ func TestInsert(t *testing.T) {
 			_, levels := sizes(tr)
 			expect.Equal(t, levels[:2], [][]int{{1}, {splitAt, minItems}}, "the root must split under a new root")
 			expect.NotNil(t, tr.root.inners, "the new root must be above internal nodes")
+		})
+
+		t.Run("moves the max ends of a full internal node that splits at its middle child", func(t *testing.T) {
+			t.Parallel()
+			// Intervals in ascending order fill every leaf but the last, so
+			// after maxItems*maxItems+1 of them the root has maxItems
+			// separators, and the leaf at index splitAt is full. A new
+			// interval in that leaf splits it and then the root at its
+			// middle child.
+			m := NewIntervalMap[int, int](cmp.Compare[int])
+			for k := range maxItems*maxItems + 1 {
+				m.Set(Interval[int]{Start: 2 * k, End: 2*k + 1}, k)
+			}
+			assert.Equal(t, m.t.root.n, maxItems, "the root must be full")
+			start := 2*maxItems*splitAt + 1
+			m.Set(Interval[int]{Start: start, End: 4 * maxItems * maxItems}, start)
+			assert.NoError(t, check(&m.t), "the tree must keep its invariants and its max ends")
+			_, levels := sizes(&m.t)
+			assert.Equal(t, levels, [][]int{{1}, {splitAt, minItems}}, "the root must split at its middle child")
 		})
 
 		t.Run("leaves every leaf full when keys arrive in order", func(t *testing.T) {

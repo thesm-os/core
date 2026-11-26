@@ -4,6 +4,7 @@
 package btree
 
 import (
+	"cmp"
 	"testing"
 
 	"go.dokimi.dev/assert"
@@ -85,6 +86,54 @@ func build(s shape) *ints {
 	root := b.innerOf(s)
 
 	return &ints{root: root, len: root.count}
+}
+
+// intervalsOf returns the tree of an IntervalMap with the shape of tr. Each
+// key k of tr becomes the interval from k to end(k), with the value of k.
+// The internal nodes of the tree keep the max ends of their children.
+func intervalsOf(tr *ints, end func(k int) int) *tree[Interval[int], int, custom[Interval[int]]] {
+	m := NewIntervalMap[int, int](cmp.Compare[int])
+	it := &m.t
+	it.len = tr.len
+	leafOf := func(l *leaf[int, int]) *leaf[Interval[int], int] {
+		c := &leaf[Interval[int], int]{n: l.n}
+		for i, k := range l.keys[:l.n] {
+			c.keys[i], c.vals[i] = Interval[int]{Start: k, End: end(k)}, l.vals[i]
+		}
+
+		return c
+	}
+	var innerOf func(in *inner[int, int]) *inner[Interval[int], int]
+	innerOf = func(in *inner[int, int]) *inner[Interval[int], int] {
+		var c *inner[Interval[int], int]
+		if in.leaves != nil {
+			c = it.newLeafParent()
+		} else {
+			c = it.newInnerParent()
+		}
+		c.n, c.count = in.n, in.count
+		for i, k := range in.keys[:in.n] {
+			c.keys[i] = Interval[int]{Start: k, End: end(k)}
+		}
+		for i := range in.n + 1 {
+			if in.leaves != nil {
+				c.leaves[i] = leafOf(in.leaves[i])
+				c.maxEnds[i] = it.leafMaxEnd(c.leaves[i])
+			} else {
+				c.inners[i] = innerOf(in.inners[i])
+				c.maxEnds[i] = it.innerMaxEnd(c.inners[i])
+			}
+		}
+
+		return c
+	}
+	if tr.root == nil {
+		it.leaf = leafOf(tr.leaf)
+	} else {
+		it.root = innerOf(tr.root)
+	}
+
+	return it
 }
 
 // TestNode is in package btree because nodes, free lists and node IDs are

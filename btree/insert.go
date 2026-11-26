@@ -16,12 +16,17 @@ func atRightEdge[K, V any](path []step[K, V]) bool {
 }
 
 // insertSeparator inserts separator key at index i of in, which has room
-// for it, and child c after it in kids, the child array of in.
-func insertSeparator[K, V any, C sized](in *inner[K, V], kids *[maxChildren]C, i int, key K, c C) {
+// for it, and child c after it in kids, the child array of in. When in keeps
+// max ends, end is the max end of c, and in keeps it at the index of c.
+func insertSeparator[K, V any, C sized](in *inner[K, V], kids *[maxChildren]C, i int, key K, c C, end K) {
 	copy(in.keys[i+1:in.n+1], in.keys[i:in.n])
 	in.keys[i] = key
 	copy(kids[i+2:in.n+2], kids[i+1:in.n+1])
 	kids[i+1] = c
+	if ends := in.maxEnds; ends != nil {
+		copy(ends[i+2:in.n+2], ends[i+1:in.n+1])
+		ends[i+1] = end
+	}
 	in.n++
 }
 
@@ -29,8 +34,9 @@ func insertSeparator[K, V any, C sized](in *inner[K, V], kids *[maxChildren]C, i
 // node p to the empty node r, inserts separator sep at index i and child c
 // after it, recounts both nodes, and returns the separator that moves up to
 // the parent. pk and rk are the child arrays of p and r. p ends with mid
-// separators and r with the rest but one.
-func splitInner[K, V any, C sized](p, r *inner[K, V], pk, rk *[maxChildren]C, i, mid int, sep K, c C) K {
+// separators and r with the rest but one. When p keeps max ends, they move
+// with their children, and end is the max end of c.
+func splitInner[K, V any, C sized](p, r *inner[K, V], pk, rk *[maxChildren]C, i, mid int, sep K, c C, end K) K {
 	up := sep
 	if i < mid {
 		up = p.keys[mid-1]
@@ -38,14 +44,23 @@ func splitInner[K, V any, C sized](p, r *inner[K, V], pk, rk *[maxChildren]C, i,
 		copy(rk[:], pk[mid:])
 		clear(p.keys[mid-1:])
 		clear(pk[mid:])
+		if p.maxEnds != nil {
+			copy(r.maxEnds[:], p.maxEnds[mid:])
+			clear(p.maxEnds[mid:])
+		}
 		p.n = mid - 1
-		insertSeparator(p, pk, i, sep, c)
+		insertSeparator(p, pk, i, sep, c, end)
 	} else if i == mid {
 		r.n = copy(r.keys[:], p.keys[mid:])
 		rk[0] = c
 		copy(rk[1:], pk[mid+1:])
 		clear(p.keys[mid:])
 		clear(pk[mid+1:])
+		if p.maxEnds != nil {
+			r.maxEnds[0] = end
+			copy(r.maxEnds[1:], p.maxEnds[mid+1:])
+			clear(p.maxEnds[mid+1:])
+		}
 		p.n = mid
 	} else {
 		up = p.keys[mid]
@@ -53,8 +68,12 @@ func splitInner[K, V any, C sized](p, r *inner[K, V], pk, rk *[maxChildren]C, i,
 		copy(rk[:], pk[mid+1:])
 		clear(p.keys[mid:])
 		clear(pk[mid+1:])
+		if p.maxEnds != nil {
+			copy(r.maxEnds[:], p.maxEnds[mid+1:])
+			clear(p.maxEnds[mid+1:])
+		}
 		p.n = mid
-		insertSeparator(r, rk, i-mid-1, sep, c)
+		insertSeparator(r, rk, i-mid-1, sep, c, end)
 	}
 	p.count = total(pk[:p.n+1])
 	r.count = total(rk[:r.n+1])
@@ -137,10 +156,21 @@ func (t *tree[K, V, O]) start(key K, val V) {
 // items of a full leaf, and maxItems-1 separators of a full internal node,
 // in the node it splits, because keys that arrive in order never return
 // to that node.
+//
+// In a tree that keeps max ends, key becomes the max end of each child on
+// path whose max end comes before the end of key. A split computes the max
+// ends of the two nodes that it leaves.
 func (t *tree[K, V, O]) insert(path []step[K, V], l *leaf[K, V], i int, key K, val V) {
 	t.len++
 	for _, s := range path {
 		s.n.count++
+	}
+	if t.endsBefore != nil {
+		for _, s := range path {
+			if t.endsBefore(s.n.maxEnds[s.i], key) {
+				s.n.maxEnds[s.i] = key
+			}
+		}
 	}
 	if l.n < maxItems {
 		l.insert(i, key, val)
@@ -160,33 +190,46 @@ func (t *tree[K, V, O]) insert(path []step[K, V], l *leaf[K, V], i int, key K, v
 		root.keys[0], root.n = sep, 1
 		root.leaves[0], root.leaves[1] = l, r
 		root.count = l.n + r.n
+		if root.maxEnds != nil {
+			root.maxEnds[0], root.maxEnds[1] = t.leafMaxEnd(l), t.leafMaxEnd(r)
+		}
 		t.root, t.leaf = root, nil
 
 		return
 	}
 	p, pi := path[d].n, path[d].i
+	var end K
+	if p.maxEnds != nil {
+		p.maxEnds[pi], end = t.leafMaxEnd(l), t.leafMaxEnd(r)
+	}
 	if p.n < maxItems {
-		insertSeparator(p, p.leaves, pi, sep, r)
+		insertSeparator(p, p.leaves, pi, sep, r, end)
 
 		return
 	}
 	right := t.newLeafParent()
-	sep = splitInner(p, right, p.leaves, right.leaves, pi, innerAt, sep, r)
+	sep = splitInner(p, right, p.leaves, right.leaves, pi, innerAt, sep, r, end)
 	for d--; d >= 0; d-- {
 		p, pi = path[d].n, path[d].i
+		if p.maxEnds != nil {
+			p.maxEnds[pi], end = t.innerMaxEnd(path[d+1].n), t.innerMaxEnd(right)
+		}
 		if p.n < maxItems {
-			insertSeparator(p, p.inners, pi, sep, right)
+			insertSeparator(p, p.inners, pi, sep, right, end)
 
 			return
 		}
 		next := t.newInnerParent()
-		sep = splitInner(p, next, p.inners, next.inners, pi, innerAt, sep, right)
+		sep = splitInner(p, next, p.inners, next.inners, pi, innerAt, sep, right, end)
 		right = next
 	}
 	root := t.newInnerParent()
 	root.keys[0], root.n = sep, 1
 	root.inners[0], root.inners[1] = t.root, right
 	root.count = t.root.count + right.count
+	if root.maxEnds != nil {
+		root.maxEnds[0], root.maxEnds[1] = t.innerMaxEnd(t.root), t.innerMaxEnd(right)
+	}
 	t.root = root
 }
 

@@ -14,6 +14,9 @@
 //   - [MapFunc] orders its keys by a function that [NewMapFunc] receives.
 //     Every comparison calls the function.
 //   - [Set] is a set of keys ordered by [cmp.Compare].
+//   - [IntervalMap] maps each [Interval] to a value, with the points of the
+//     intervals ordered by a function that [NewIntervalMap] receives. It
+//     finds the intervals that contain a point or overlap an interval.
 //
 // # Order
 //
@@ -35,6 +38,9 @@
 //   - An internal node contains up to 63 separator keys and 64 children,
 //     and counts the items under it, so [Map.At] and [Map.Rank] run in
 //     O(log n).
+//   - An internal node of an IntervalMap also keeps, for each child, the
+//     interval under the child whose end is the latest, in the allocation of
+//     its child array.
 //   - With no pointer field, a leaf of keys and values without pointers is
 //     an object that the garbage collector marks without scanning.
 //   - A node other than the root and the nodes at the right edge of the
@@ -57,7 +63,8 @@
 //     the subtree is empty.
 //   - A map refers to no key that it removed. A caller may reuse the memory
 //     of a key, such as the bytes of a []byte key of a [MapFunc], once no
-//     map contains the key.
+//     map contains the key. The intervals that the internal nodes of an
+//     IntervalMap keep for their children are keys of the map.
 //
 // # Writes during an iteration
 //
@@ -87,8 +94,8 @@
 // # Allocation contract
 //
 //   - Lookups, [Map.Len], [Map.At] and [Map.Rank] do not allocate.
-//   - A range loop over an iterator does not allocate when the compiler
-//     inlines the iterator into the loop.
+//   - A range loop over an iterator or over a query of an IntervalMap does
+//     not allocate when the compiler inlines the iterator into the loop.
 //   - An insert allocates 1 object for each leaf split and 2 for each
 //     split of an internal node that finds the free list empty. A map whose
 //     size does not change reuses the nodes that its deletes free, and

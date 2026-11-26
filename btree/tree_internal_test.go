@@ -10,6 +10,7 @@ import (
 	"maps"
 	"math/rand/v2"
 	"reflect"
+	"slices"
 	"strconv"
 	"testing"
 
@@ -47,6 +48,34 @@ const (
 	// churnSeed seeds the operations of churn, so every run applies the
 	// same operations.
 	churnSeed = 0x6274726565
+)
+
+// Sizes of the churn of the tree of an IntervalMap.
+const (
+	// intervalOperations is the number of random sets and deletes of the
+	// churn.
+	intervalOperations = 240_000
+
+	// intervalPhase is the number of operations between two switches of the
+	// mix of operations, from 80% sets to 20% and back. A phase of sets grows
+	// the tree to two levels of internal nodes, and the phase after it
+	// shrinks the tree to one leaf.
+	intervalPhase = 20_000
+
+	// ascendingPhase is the index modulo 6 of the phases of sets whose starts
+	// ascend after every start before them, every third phase of sets. Their
+	// sets append at the right edge of the tree.
+	ascendingPhase = 4
+
+	// intervalStarts bounds the starts of the other sets, and intervalSpan
+	// the distance from the start of an interval to its end.
+	intervalStarts = 4_000
+	intervalSpan   = 400
+
+	// intervalCheckEvery is the number of operations between two checks of
+	// the invariants of the tree, after the first intervalCheckEvery
+	// operations, which the churn checks one by one.
+	intervalCheckEvery = 250
 )
 
 // Sizes of the machine of writes.
@@ -88,44 +117,56 @@ type checker[K, V any, O order[K]] struct {
 }
 
 // node checks the subtree of in, or of l when in is nil, and returns its
-// number of items. The keys of the subtree must sort at or after lo and
-// before hi, and its first key must be lo when lo is not nil. A node on the
-// right edge of the tree may have fewer than minItems items or separators,
-// but not none.
-func (c *checker[K, V, O]) node(in *inner[K, V], l *leaf[K, V], depth int, lo, hi *K, edge bool) (int, error) {
+// number of items and, in a tree that keeps max ends, the key of the
+// subtree whose end is the latest. The keys of the subtree must sort at or
+// after lo and before hi, and its first key must be lo when lo is not nil.
+// A node on the right edge of the tree may have fewer than minItems items or
+// separators, but not none.
+func (c *checker[K, V, O]) node(in *inner[K, V], l *leaf[K, V], depth int, lo, hi *K, edge bool) (int, K, error) {
+	var top K
 	if in == nil {
 		if c.leafDepth == -1 {
 			c.leafDepth = depth
 		} else if c.leafDepth != depth {
-			return 0, fmt.Errorf("%w: leaves at depths %d and %d", errInvariant, c.leafDepth, depth)
+			return 0, top, fmt.Errorf("%w: leaves at depths %d and %d", errInvariant, c.leafDepth, depth)
 		}
 		if l.n < 1 || (!edge && l.n < minItems) {
-			return 0, fmt.Errorf("%w: a leaf with %d items", errInvariant, l.n)
+			return 0, top, fmt.Errorf("%w: a leaf with %d items", errInvariant, l.n)
 		}
 		if !zeroFrom(l.keys[:], l.n) || !zeroFrom(l.vals[:], l.n) {
-			return 0, fmt.Errorf("%w: a leaf with a slot past its items that is not zero", errInvariant)
+			return 0, top, fmt.Errorf("%w: a leaf with a slot past its items that is not zero", errInvariant)
 		}
 		// The separator before a subtree is its first key, so it lies in the
 		// leftmost leaf of the subtree.
 		if lo != nil && c.t.order.less(*lo, l.keys[0]) {
-			return 0, fmt.Errorf("%w: a separator that is not the first key of the subtree after it", errInvariant)
+			return 0, top, fmt.Errorf("%w: a separator that is not the first key of the subtree after it", errInvariant)
+		}
+		top = l.keys[0]
+		for _, k := range l.keys[1:l.n] {
+			if c.t.endsBefore != nil && c.t.endsBefore(top, k) {
+				top = k
+			}
 		}
 
-		return l.n, c.order(l.keys[:l.n], lo, hi)
+		return l.n, top, c.order(l.keys[:l.n], lo, hi)
 	}
 	if in.n < 1 || (!edge && in.n < minItems) {
-		return 0, fmt.Errorf("%w: an internal node with %d separators", errInvariant, in.n)
+		return 0, top, fmt.Errorf("%w: an internal node with %d separators", errInvariant, in.n)
 	}
 	if (in.leaves == nil) == (in.inners == nil) {
-		return 0, fmt.Errorf("%w: an internal node without exactly one child array", errInvariant)
+		return 0, top, fmt.Errorf("%w: an internal node without exactly one child array", errInvariant)
+	}
+	if (in.maxEnds == nil) != (c.t.endsBefore == nil) {
+		return 0, top, fmt.Errorf("%w: an internal node whose max ends do not match its tree", errInvariant)
 	}
 	if !zeroFrom(in.keys[:], in.n) ||
-		(in.leaves != nil && !zeroFrom(in.leaves[:], in.n+1)) || (in.inners != nil && !zeroFrom(in.inners[:], in.n+1)) {
+		(in.leaves != nil && !zeroFrom(in.leaves[:], in.n+1)) || (in.inners != nil && !zeroFrom(in.inners[:], in.n+1)) ||
+		(in.maxEnds != nil && !zeroFrom(in.maxEnds[:], in.n+1)) {
 
-		return 0, fmt.Errorf("%w: an internal node with a slot past its children that is not zero", errInvariant)
+		return 0, top, fmt.Errorf("%w: an internal node with a slot past its children that is not zero", errInvariant)
 	}
 	if err := c.order(in.keys[:in.n], lo, hi); err != nil {
-		return 0, err
+		return 0, top, err
 	}
 	sum := 0
 	for j := 0; j <= in.n; j++ {
@@ -137,22 +178,51 @@ func (c *checker[K, V, O]) node(in *inner[K, V], l *leaf[K, V], depth int, lo, h
 			h = &in.keys[j]
 		}
 		var n int
+		var end K
 		var err error
 		if in.leaves != nil {
-			n, err = c.node(nil, in.leaves[j], depth+1, l, h, edge && j == in.n)
+			n, end, err = c.node(nil, in.leaves[j], depth+1, l, h, edge && j == in.n)
 		} else {
-			n, err = c.node(in.inners[j], nil, depth+1, l, h, edge && j == in.n)
+			n, end, err = c.node(in.inners[j], nil, depth+1, l, h, edge && j == in.n)
 		}
 		if err != nil {
-			return 0, err
+			return 0, top, err
+		}
+		if err := c.maxEnd(in, j, end, l, h); err != nil {
+			return 0, top, err
+		}
+		if j == 0 || c.t.endsBefore != nil && c.t.endsBefore(top, end) {
+			top = end
 		}
 		sum += n
 	}
 	if in.count != sum {
-		return 0, fmt.Errorf("%w: an internal node counts %d items and has %d", errInvariant, in.count, sum)
+		return 0, top, fmt.Errorf("%w: an internal node counts %d items and has %d", errInvariant, in.count, sum)
 	}
 
-	return sum, nil
+	return sum, top, nil
+}
+
+// maxEnd returns an error unless the max end of child j of in, in a tree
+// that keeps max ends, ends where end ends, the latest end of the child, and
+// is a key that the tree contains between lo and hi, the separators around
+// the child. The tree then refers to no key that it removed.
+func (c *checker[K, V, O]) maxEnd(in *inner[K, V], j int, end K, lo, hi *K) error {
+	if in.maxEnds == nil {
+		return nil
+	}
+	got := in.maxEnds[j]
+	if c.t.endsBefore(got, end) || c.t.endsBefore(end, got) {
+		return fmt.Errorf("%w: a max end that is not the latest end of its child", errInvariant)
+	}
+	if _, ok := c.t.get(got); !ok {
+		return fmt.Errorf("%w: a max end that is no key of the tree", errInvariant)
+	}
+	if lo != nil && c.t.order.less(got, *lo) || hi != nil && !c.t.order.less(got, *hi) {
+		return fmt.Errorf("%w: a max end that is no key of its child", errInvariant)
+	}
+
+	return nil
 }
 
 // order returns an error unless keys increase strictly, sort at or after
@@ -256,7 +326,9 @@ func (m *mirror[O]) pop(c *prop.Case, remove, peek func() (int, int, bool), outs
 // it, node fill between minItems and maxItems outside the root and the
 // right edge, correct subtree counts and length, the child array of each
 // level, every leaf at the same depth, zero slots past the used ones, and
-// free nodes that are zeroed and on the free list of their kind.
+// free nodes that are zeroed and on the free list of their kind. In a tree
+// that keeps max ends, each max end must end at the latest end of its child
+// and be a key of that child.
 func check[K, V any, O order[K]](t *tree[K, V, O]) error {
 	for _, l := range t.freeLeaves {
 		if l.n != 0 || l.owner != 0 || !zeroFrom(l.keys[:], 0) || !zeroFrom(l.vals[:], 0) {
@@ -265,14 +337,14 @@ func check[K, V any, O order[K]](t *tree[K, V, O]) error {
 	}
 	for _, in := range t.freeLeafParents {
 		if in.inners != nil || in.leaves == nil || !zeroFrom(in.leaves[:], 0) ||
-			in.n != 0 || in.count != 0 || in.owner != 0 || !zeroFrom(in.keys[:], 0) {
+			in.n != 0 || in.count != 0 || in.owner != 0 || !zeroFrom(in.keys[:], 0) || !freeEnds(t, in) {
 
 			return fmt.Errorf("%w: a free parent of leaves that is not zeroed", errInvariant)
 		}
 	}
 	for _, in := range t.freeInnerParents {
 		if in.leaves != nil || in.inners == nil || !zeroFrom(in.inners[:], 0) ||
-			in.n != 0 || in.count != 0 || in.owner != 0 || !zeroFrom(in.keys[:], 0) {
+			in.n != 0 || in.count != 0 || in.owner != 0 || !zeroFrom(in.keys[:], 0) || !freeEnds(t, in) {
 
 			return fmt.Errorf("%w: a free parent of internal nodes that is not zeroed", errInvariant)
 		}
@@ -288,7 +360,7 @@ func check[K, V any, O order[K]](t *tree[K, V, O]) error {
 		return nil
 	}
 	c := checker[K, V, O]{t: t, leafDepth: -1}
-	n, err := c.node(t.root, t.leaf, 0, nil, nil, true)
+	n, _, err := c.node(t.root, t.leaf, 0, nil, nil, true)
 	if err != nil {
 		return err
 	}
@@ -297,6 +369,16 @@ func check[K, V any, O order[K]](t *tree[K, V, O]) error {
 	}
 
 	return nil
+}
+
+// freeEnds reports whether the free internal node in of t has an array of
+// max ends exactly when t keeps max ends, with every slot zero.
+func freeEnds[K, V any, O order[K]](t *tree[K, V, O], in *inner[K, V]) bool {
+	if in.maxEnds == nil {
+		return t.endsBefore == nil
+	}
+
+	return t.endsBefore != nil && zeroFrom(in.maxEnds[:], 0)
 }
 
 // zeroFrom reports whether every element of s from index i on is the zero
@@ -709,6 +791,61 @@ func TestTreeModel(t *testing.T) {
 			t.Parallel()
 			prop.ForAll(t, writeContract, writeSteps)
 		})
+
+	t.Run("the tree of an IntervalMap keeps its max ends through random sets and deletes", func(t *testing.T) {
+		t.Parallel()
+		m := NewIntervalMap[int, int](cmp.Compare[int])
+		tr := &m.t
+		r := rand.New(rand.NewPCG(churnSeed, intervalStarts))
+		model := map[Interval[int]]int{}
+		var present []Interval[int]
+		heights := map[int]bool{}
+		next := intervalStarts
+		//dokimi:lint-skip for-all: a fixed churn of the max ends, which prop.ForAll would run 100 times
+		for op := range intervalOperations {
+			phase := op / intervalPhase
+			sets := 80
+			if phase%2 == 1 {
+				sets = 20
+			}
+			if r.IntN(100) < sets || len(present) == 0 {
+				start := r.IntN(intervalStarts)
+				if phase%6 == ascendingPhase {
+					start, next = next, next+1
+				}
+				iv := Interval[int]{Start: start, End: start + r.IntN(intervalSpan), EndBound: Bound(r.IntN(3))}
+				if iv.EndBound == Unbounded {
+					iv.End = 0
+				}
+				if _, ok := model[iv]; !ok {
+					present = append(present, iv)
+				}
+				tr.set(iv, op)
+				model[iv] = op
+			} else {
+				j := r.IntN(len(present))
+				iv := present[j]
+				present[j] = present[len(present)-1]
+				present = present[:len(present)-1]
+				_, ok := tr.delete(iv)
+				assert.True(t, ok, "delete must find an interval of the model")
+				delete(model, iv)
+			}
+			if op < intervalCheckEvery || op%intervalCheckEvery == 0 {
+				assert.NoError(t, check(tr), "the tree must keep its invariants and its max ends")
+				_, levels := sizes(tr)
+				heights[len(levels)] = true
+			}
+			if op%intervalPhase == intervalPhase-1 {
+				want := slices.SortedFunc(maps.Keys(model), m.cmp.compare)
+				assert.Equal(t, keysOf(tr), want, "the tree must contain the intervals of its model",
+					assert.EquateEmpty())
+			}
+		}
+		expect.True(t, heights[0], "the tree must have shrunk to one leaf")
+		expect.True(t, heights[1], "the tree must have had one level of internal nodes")
+		expect.True(t, heights[2], "the tree must have had two levels of internal nodes")
+	})
 }
 
 // FuzzTreeModel checks the machine of writeSteps on the sequences of writes

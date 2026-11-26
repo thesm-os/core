@@ -35,16 +35,37 @@ func (l *leaf[K, V]) insert(i int, key K, val V) {
 // above the leaves, inners in every level above that. Every separator and
 // child slot past the used ones is zero.
 //
+// In the tree of an [IntervalMap], maxEnds[i] is the key under child i
+// whose end is the latest, and every slot past the used ones is zero. The
+// array shares the allocation of the child array. maxEnds is nil in every
+// other tree.
+//
 // The child arrays come first and the keys next, so the collector scans
 // the child arrays of an internal node whose keys contain no pointers, and
 // nothing after the keys.
 type inner[K, V any] struct {
-	leaves *[maxChildren]*leaf[K, V]
-	inners *[maxChildren]*inner[K, V]
-	keys   [maxItems]K
-	count  int    // items in the subtree
-	owner  uint64 // the ID of the tree that may change the node in place
-	n      int    // separators; the node has n+1 children
+	leaves  *[maxChildren]*leaf[K, V]
+	inners  *[maxChildren]*inner[K, V]
+	maxEnds *[maxChildren]K
+	keys    [maxItems]K
+	count   int    // items in the subtree
+	owner   uint64 // the ID of the tree that may change the node in place
+	n       int    // separators; the node has n+1 children
+}
+
+// leafKids is the child array of an internal node over leaves in the tree of
+// an IntervalMap, with the max ends of the leaves in the same allocation.
+type leafKids[K, V any] struct {
+	leaves  [maxChildren]*leaf[K, V]
+	maxEnds [maxChildren]K
+}
+
+// innerKids is the child array of an internal node over internal nodes in
+// the tree of an IntervalMap, with the max ends of the children in the same
+// allocation.
+type innerKids[K, V any] struct {
+	inners  [maxChildren]*inner[K, V]
+	maxEnds [maxChildren]K
 }
 
 // size returns the number of items under the internal node.
@@ -112,24 +133,36 @@ func (t *tree[K, V, O]) newLeaf() *leaf[K, V] {
 }
 
 // newLeafParent returns an empty internal node with the ID of t and an
-// array of leaves, from its free list when the list has one.
+// array of leaves, from its free list when the list has one. In a tree whose
+// order compares ends, the node also has an array of max ends.
 func (t *tree[K, V, O]) newLeafParent() *inner[K, V] {
 	if in := take(&t.freeLeafParents); in != nil {
 		in.owner = t.owner
 
 		return in
 	}
+	if t.endsBefore != nil {
+		kids := new(leafKids[K, V])
+
+		return &inner[K, V]{leaves: &kids.leaves, maxEnds: &kids.maxEnds, owner: t.owner}
+	}
 
 	return &inner[K, V]{leaves: new([maxChildren]*leaf[K, V]), owner: t.owner}
 }
 
 // newInnerParent returns an empty internal node with the ID of t and an
-// array of internal nodes, from its free list when the list has one.
+// array of internal nodes, from its free list when the list has one. In a
+// tree whose order compares ends, the node also has an array of max ends.
 func (t *tree[K, V, O]) newInnerParent() *inner[K, V] {
 	if in := take(&t.freeInnerParents); in != nil {
 		in.owner = t.owner
 
 		return in
+	}
+	if t.endsBefore != nil {
+		kids := new(innerKids[K, V])
+
+		return &inner[K, V]{inners: &kids.inners, maxEnds: &kids.maxEnds, owner: t.owner}
 	}
 
 	return &inner[K, V]{inners: new([maxChildren]*inner[K, V]), owner: t.owner}
@@ -179,10 +212,13 @@ func (t *tree[K, V, O]) keepLeaf(l *leaf[K, V]) {
 	t.freeLeaves = append(t.freeLeaves, l)
 }
 
-// keepInner zeroes the separators and children of in, and puts it with
-// its child array on the free list of its kind.
+// keepInner zeroes the separators, children and max ends of in, and puts it
+// with its arrays on the free list of its kind.
 func (t *tree[K, V, O]) keepInner(in *inner[K, V]) {
 	clear(in.keys[:in.n])
+	if in.maxEnds != nil {
+		clear(in.maxEnds[:in.n+1])
+	}
 	if in.leaves != nil {
 		clear(in.leaves[:in.n+1])
 		t.freeLeafParents = append(t.freeLeafParents, in)
@@ -228,4 +264,30 @@ func (t *tree[K, V, O]) mutInner(p **inner[K, V]) *inner[K, V] {
 	*p = c
 
 	return c
+}
+
+// leafMaxEnd returns the key of l whose end is the latest, the first of them
+// for a tie, in a tree whose order compares ends. l has at least one item.
+func (t *tree[K, V, O]) leafMaxEnd(l *leaf[K, V]) K {
+	top := l.keys[0]
+	for _, k := range l.keys[1:l.n] {
+		if t.endsBefore(top, k) {
+			top = k
+		}
+	}
+
+	return top
+}
+
+// innerMaxEnd returns the key under in whose end is the latest, from the max
+// ends of its children, in a tree whose order compares ends.
+func (t *tree[K, V, O]) innerMaxEnd(in *inner[K, V]) K {
+	top := in.maxEnds[0]
+	for _, k := range in.maxEnds[1 : in.n+1] {
+		if t.endsBefore(top, k) {
+			top = k
+		}
+	}
+
+	return top
 }

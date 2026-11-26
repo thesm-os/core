@@ -30,9 +30,17 @@ func TestDelete(t *testing.T) {
 	t.Run("remove", func(t *testing.T) {
 		t.Parallel()
 
+		// The ends of the intervals of the trees of an IntervalMap, from the
+		// start k of each interval. Their max ends are the last child of each
+		// node when the ends rise, and the first child when they fall.
+		ends := map[string]func(k int) int{
+			"with intervals whose ends rise with their starts":    func(k int) int { return 2*k + 1 },
+			"with intervals whose ends fall as their starts rise": func(k int) int { return 1<<20 - k },
+		}
+
 		// Each tree has the keys 0, 2, 4 and so on, so the key at index
 		// i in key order is 2i.
-		for name, tc := range map[string]struct {
+		removals := map[string]struct {
 			tree   shape
 			key    int
 			leaves []int
@@ -45,7 +53,10 @@ func TestDelete(t *testing.T) {
 				leavesOf(spare, spare), 2 * spare, []int{spare, lean}, [][]int{{1}},
 			},
 			"gives the separator above the first leaf of an internal node the next key of the leaf": {
-				nodesOf(leavesOf(slices.Repeat([]int{spare}, spare)...), leavesOf(slices.Repeat([]int{spare}, spare)...)),
+				nodesOf(
+					leavesOf(slices.Repeat([]int{spare}, spare)...),
+					leavesOf(slices.Repeat([]int{spare}, spare)...),
+				),
 				2 * spare * spare,
 				slices.Concat(slices.Repeat([]int{spare}, spare), []int{lean}, slices.Repeat([]int{spare}, spare-1)),
 				[][]int{{1}, {minItems, minItems}},
@@ -84,7 +95,10 @@ func TestDelete(t *testing.T) {
 				[][]int{{1}, {minItems, minItems}},
 			},
 			"leaves an internal node of minItems separators alone": {
-				nodesOf(leavesOf(slices.Repeat([]int{lean}, spare+1)...), leavesOf(slices.Repeat([]int{lean}, spare+1)...)),
+				nodesOf(
+					leavesOf(slices.Repeat([]int{lean}, spare+1)...),
+					leavesOf(slices.Repeat([]int{lean}, spare+1)...),
+				),
 				0,
 				slices.Concat([]int{merged}, slices.Repeat([]int{lean}, 2*spare)),
 				[][]int{{1}, {minItems, spare}},
@@ -101,7 +115,16 @@ func TestDelete(t *testing.T) {
 				slices.Concat(slices.Repeat([]int{lean}, spare), []int{merged}, slices.Repeat([]int{lean}, spare-2)),
 				[][]int{{2 * minItems}},
 			},
-		} {
+		}
+		for name, tc := range removals {
+			for order, end := range ends {
+				t.Run(name+" "+order, func(t *testing.T) {
+					t.Parallel()
+					requireIntervalDelete(t, build(tc.tree), tc.key, end)
+				})
+			}
+		}
+		for name, tc := range removals {
 			t.Run(name, func(t *testing.T) {
 				t.Parallel()
 				tr := build(tc.tree)
@@ -152,12 +175,24 @@ func TestDelete(t *testing.T) {
 				)
 				assert.Equal(t, keysOf(tr), want, "the tree must contain the other keys in order")
 			})
+			for order, end := range ends {
+				t.Run(name+" "+order, func(t *testing.T) {
+					t.Parallel()
+					tr := build(nodesOf(nodesOf(slices.Repeat([]shape{leanBottom}, tc.uppers[0])...),
+						nodesOf(slices.Repeat([]shape{leanBottom}, tc.uppers[1])...)))
+					requireIntervalDelete(t, tr, 2*lean*spare*tc.uppers[0], end)
+				})
+			}
 		}
+
+		// rightUpper is a tree whose second upper node can give its first
+		// internal node to the first upper node.
+		rightUpper := nodesOf(nodesOf(slices.Repeat([]shape{leanBottom}, spare)...),
+			nodesOf(slices.Repeat([]shape{leanBottom}, spare+1)...))
 
 		t.Run("moves the first internal node of the right upper node into an underfull one", func(t *testing.T) {
 			t.Parallel()
-			tr := build(nodesOf(nodesOf(slices.Repeat([]shape{leanBottom}, spare)...),
-				nodesOf(slices.Repeat([]shape{leanBottom}, spare+1)...)))
+			tr := build(rightUpper)
 			want := keysOf(tr)[1:]
 			tr.delete(0)
 			assert.NoError(t, check(tr), "the tree must keep its invariants")
@@ -170,6 +205,14 @@ func TestDelete(t *testing.T) {
 			)
 			assert.Equal(t, keysOf(tr), want, "the tree must contain the other keys in order")
 		})
+
+		for order, end := range ends {
+			t.Run("moves the first internal node of the right upper node into an underfull one "+order,
+				func(t *testing.T) {
+					t.Parallel()
+					requireIntervalDelete(t, build(rightUpper), 0, end)
+				})
+		}
 
 		t.Run("puts the leaf that a merge frees on the free list", func(t *testing.T) {
 			t.Parallel()
@@ -425,4 +468,17 @@ func TestDelete(t *testing.T) {
 			})
 		})
 	}
+}
+
+// requireIntervalDelete deletes the interval of key from the tree of an
+// IntervalMap with the shape of tr and the intervals of intervalsOf(tr, end).
+// It fails the test unless the delete finds the interval, and the tree keeps
+// its invariants and its max ends after it.
+func requireIntervalDelete(t *testing.T, tr *ints, key int, end func(k int) int) {
+	t.Helper()
+	it := intervalsOf(tr, end)
+	assert.NoError(t, check(it), "the tree must start with its invariants and its max ends")
+	_, present := it.delete(Interval[int]{Start: key, End: end(key)})
+	assert.True(t, present, "delete must find the interval")
+	assert.NoError(t, check(it), "the tree must keep its invariants and its max ends")
 }

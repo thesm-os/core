@@ -72,9 +72,15 @@ type order[K any] interface {
 // when root and leaf are both nil, and at most one of them is set. The
 // zero tree is an empty tree, ready to use when the zero O is an order.
 type tree[K, V any, O order[K]] struct {
-	order            O
-	root             *inner[K, V] // the root when the tree has internal nodes
-	leaf             *leaf[K, V]  // the root when the tree is one leaf
+	order O
+	root  *inner[K, V] // the root when the tree has internal nodes
+	leaf  *leaf[K, V]  // the root when the tree is one leaf
+
+	// endsBefore reports whether the end of a comes before the end of b. It
+	// is set in the tree of an IntervalMap, whose internal nodes keep the max
+	// ends of their children, and nil in every other tree.
+	endsBefore func(a, b K) bool
+
 	freeLeaves       []*leaf[K, V]
 	freeLeafParents  []*inner[K, V] // free internal nodes over leaves
 	freeInnerParents []*inner[K, V] // free internal nodes over internal nodes
