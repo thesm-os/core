@@ -89,13 +89,12 @@ func TestPinned(t *testing.T) {
 			defer second.Unpin()
 			c.Set("expiring", 1, origin.Add(time.Second))
 			for range 3 {
-				c.Get("first")
 				c.Get("expiring")
 			}
 			clk.Advance(time.Second)
 			first.Unpin()
 			assert.Equal(t, r.got(), []string{"expiring"},
-				"the last Unpin must evict the expired entry before the one with hits")
+				"the last Unpin must evict the expired entry before an entry without hits")
 		})
 
 		t.Run("keeps the cost past the capacity at an Unpin that leaves a pin", func(t *testing.T) {
