@@ -277,6 +277,7 @@ func (c *Clock) AwaitWaiters(n int) {
 			))
 		}
 
+		//dokimi:mutate-skip sbr-delete: the runtime preempts the loop, so the waiters register later without the yield
 		runtime.Gosched()
 	}
 }
