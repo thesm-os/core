@@ -186,6 +186,12 @@ func TestStoreSuite(t *testing.T) {
 		)
 		assert.Equal(
 			t,
+			string(blobtest.StoreChecks.Get.StoreReturnsTheErrorOfADoneContext()),
+			"Store.Get/store-returns-the-error-of-a-done-context",
+			"the identity of the check joins the callable and the segment of the check",
+		)
+		assert.Equal(
+			t,
 			string(blobtest.StoreChecks.Stat.StoreStatDescribesTheObject()),
 			"Store.Stat/store-stat-describes-the-object",
 			"the identity of the check joins the callable and the segment of the check",
@@ -448,4 +454,4 @@ func BenchmarkRangeReaderSuite(b *testing.B) {
 	})
 }
 
-// dokimi:provenance sha256:2e57f73818f117fc287d5486c259fb450c48e01b2a7732b834133290a93394dc
+// dokimi:provenance sha256:f04df57e1e0369a3e2220362aad8000d0c3da49ffffe07e72f2a5d4f3b266943

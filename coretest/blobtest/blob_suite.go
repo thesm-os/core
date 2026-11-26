@@ -182,6 +182,13 @@ func (c storeGet) StoreReportsAbsenceAsNotFound() conform.ID[blob.Store] {
 	return c.Check("store-reports-absence-as-not-found")
 }
 
+// StoreReturnsTheErrorOfADoneContext returns the identity of the check
+// that Get, Stat, Delete and List return the error of a context that
+// ended, for a key that the store contains.
+func (c storeGet) StoreReturnsTheErrorOfADoneContext() conform.ID[blob.Store] {
+	return c.Check("store-returns-the-error-of-a-done-context")
+}
+
 // Smoke returns the identity of the check that Get returns without a panic
 // for derived inputs.
 func (c storeGet) Smoke() conform.ID[blob.Store] {
@@ -636,6 +643,12 @@ func StoreSuite() conform.Suite[blob.Store] {
 				Statement: "Get and Stat of an absent key return an error of class NotFound",
 				Apply:     StoreReportsAbsenceAsNotFound,
 				Defect:    storeReportsAbsenceAsInvalid,
+			},
+			{
+				ID:        StoreChecks.Get.StoreReturnsTheErrorOfADoneContext(),
+				Statement: "Get, Stat, Delete and List return the error of a context that ended, for a key that the store contains",
+				Apply:     StoreReturnsTheErrorOfADoneContext,
+				Defect:    storeIgnoresItsContext,
 			},
 			{
 				ID:        StoreChecks.Stat.StoreStatDescribesTheObject(),
@@ -1384,4 +1397,4 @@ func rangeReaderReadRangeIgnoresCancel(h *RangeReaderHandle) blob.RangeReader {
 	return &rangeReaderReadRangeIgnoresCancelDefect{rangeReaderOverEmbedded: h.Fresh()}
 }
 
-// dokimi:provenance sha256:d58a8dedebd6e0fe87c6f70d72d8cb89e58494cab9a1dcea832274e0279b5491
+// dokimi:provenance sha256:1cbea3315592335c4056a377a79c615390042bd51d421f5de70b5f2e56f8f75d

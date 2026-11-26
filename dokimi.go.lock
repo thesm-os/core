@@ -47,6 +47,7 @@ go.thesmos.sh/core/blob	store.get/store-get-reader-fails-with-err-mismatch	store
 go.thesmos.sh/core/blob	store.get/store-get-reader-returns-the-opened-version	store-get-reader-returns-the-opened-version	authored	-
 go.thesmos.sh/core/blob	store.get/store-get-returns-the-object	store-get-returns-the-object	authored	-
 go.thesmos.sh/core/blob	store.get/store-reports-absence-as-not-found	store-reports-absence-as-not-found	authored	-
+go.thesmos.sh/core/blob	store.get/store-returns-the-error-of-a-done-context	store-returns-the-error-of-a-done-context	authored	-
 go.thesmos.sh/core/blob	store.get/zeroes-on-error	zeroes-on-error	refused	-
 go.thesmos.sh/core/blob	store.list/cancel	cancel	check	-
 go.thesmos.sh/core/blob	store.list/cancel#generated	cancel	check	-
@@ -448,4 +449,4 @@ go.thesmos.sh/core/telemetry	tracer.start/tracer-start-applies-its-options	trace
 go.thesmos.sh/core/telemetry	tracer.start/tracer-start-returns-a-context-with-its-span	tracer-start-returns-a-context-with-its-span	authored	-
 go.thesmos.sh/core/telemetry	tracer.start/tracer-start-returns-non-nil-results	tracer-start-returns-non-nil-results	authored	-
 
-# dokimi:provenance sha256:da115bc0dbda132488e57519ad2eec05ecfd43553722eaa290d9f50c3907879b
+# dokimi:provenance sha256:80753017157856fd184ea54d8d380a77375156a613c72cbec4d3602dbaaf2eb9

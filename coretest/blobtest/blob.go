@@ -72,6 +72,7 @@ const (
 	keyRecreated = "recreated"
 	keyRange     = "k"
 	keyRaced     = "raced"
+	keyDone      = "done"
 
 	prefixIfMatch   = "if-match/"
 	prefixNoneMatch = "none-match/"
@@ -443,6 +444,40 @@ func StoreReportsAbsenceAsNotFound(h *StoreHandle) {
 	assert.Equal(h, errs.Classify(err), errs.NotFound, h.Statement())
 	_, err = s.Stat(h.Context(), keyAbsent)
 	assert.Equal(h, errs.Classify(err), errs.NotFound, h.Statement())
+}
+
+// StoreReturnsTheErrorOfADoneContext checks that Get, Stat, Delete and List
+// return the error of a context that ended, for a key that the store contains.
+//
+//dokimi:check blob.Store.Get defect=storeIgnoresItsContext
+func StoreReturnsTheErrorOfADoneContext(h *StoreHandle) {
+	s := h.Subject()
+	putBody(h, s, keyDone, describedBody, blob.PutOptions{})
+
+	assert.HonoursCancellation(h, func(ctx context.Context) error {
+		rc, _, err := s.Get(ctx, keyDone)
+		if rc != nil {
+			err = errors.Join(err, rc.Close())
+		}
+
+		return err
+	}, h.Statement())
+	assert.HonoursCancellation(h, func(ctx context.Context) error {
+		_, err := s.Stat(ctx, keyDone)
+
+		return err
+	}, h.Statement())
+	assert.HonoursCancellation(h, func(ctx context.Context) error {
+		return s.Delete(ctx, keyDone, version.Unspecified)
+	}, h.Statement())
+	assert.HonoursCancellation(h, func(ctx context.Context) error {
+		cur, err := s.List(ctx, keyDone, page.Page{})
+		if cur != nil {
+			err = errors.Join(err, cur.Close())
+		}
+
+		return err
+	}, h.Statement())
 }
 
 // StorePutNeverReusesAVersion checks that a key that a Delete removed and a Put
@@ -1250,6 +1285,22 @@ func storeReportsAbsenceAsInvalid(h *StoreHandle) blob.Store {
 			}
 
 			return rc, info, err
+		}))
+}
+
+// storeIgnoresItsContext returns the planted defect of
+// StoreReturnsTheErrorOfADoneContext: a store whose Get of keyDone reads under
+// a context that ended.
+func storeIgnoresItsContext(h *StoreHandle) blob.Store {
+	sound := memory.New(fake.New(origin))
+
+	return NewStoreStub(h, StoreStubDelegateTo(sound),
+		WithStoreGet(func(ctx context.Context, key string) (io.ReadCloser, blob.Info, error) {
+			if key == keyDone {
+				ctx = context.WithoutCancel(ctx)
+			}
+
+			return sound.Get(ctx, key)
 		}))
 }
 
