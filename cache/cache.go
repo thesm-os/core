@@ -4,6 +4,7 @@
 package cache
 
 import (
+	"context"
 	"hash/maphash"
 	"sync"
 	"sync/atomic"
@@ -17,8 +18,9 @@ import (
 // 0.
 type Config[K comparable, V any] struct {
 	// Clock reads the time against which entries expire. Set and Expire
-	// read it once per call, and Get and Pin read it only for an entry with
-	// an expiry time. A test passes a fake clock and advances it.
+	// read it once per call. Get, Pin and each lookup of GetOrLoad read it
+	// only for an entry with an expiry time. GetOrLoad reads it once more to
+	// store the value of a load. A test passes a fake clock and advances it.
 	//
 	// A nil Clock makes a cache whose entries do not expire. Its Set panics
 	// for an expiry time other than zero, and its Expire returns 0.
@@ -47,6 +49,24 @@ type Config[K comparable, V any] struct {
 	Capacity int64
 }
 
+// flight is a load of a missing entry that runs, and the callers of
+// [Cache.GetOrLoad] that wait for it. The load writes value and err once,
+// before it closes done, and each waiting caller reads them after done is
+// closed. The mutex of the cache guards waiters.
+type flight[V any] struct {
+	// done is closed once the load has returned.
+	done chan struct{}
+
+	// cancel ends the context of the load.
+	cancel context.CancelFunc
+
+	value V
+	err   error
+
+	// waiters is the number of the callers that wait for the load.
+	waiters int
+}
+
 // Cache is a bounded map whose entries leave by eviction, expiry or
 // removal. It evicts with S3-FIFO, whose queues the package documentation
 // describes, and a lookup that finds its entry takes no lock.
@@ -66,11 +86,12 @@ type Config[K comparable, V any] struct {
 //
 // # Concurrency
 //
-// Safe for concurrent use. Get and Pin take no lock. A hit on an entry that
-// already counts three hits does not write to the entry. One mutex per
-// Cache serializes Set, SetPinned, Delete, Expire, a Get or Pin that finds
-// an expired entry, and the last [Pinned.Unpin] of an entry while the sum
-// of the costs exceeds the capacity. The last Unpin of an entry that the
+// Safe for concurrent use. Get, Pin and a hit of GetOrLoad take no lock. A
+// hit on an entry that already counts three hits does not write to the
+// entry. One mutex per Cache serializes Set, SetPinned, Delete, Expire, a
+// Get or Pin that finds an expired entry, the miss and the store of a
+// GetOrLoad, and the last [Pinned.Unpin] of an entry while the sum of the
+// costs exceeds the capacity. The last Unpin of an entry that the
 // evictor set aside adds the entry to a list of released entries without
 // the lock. The next eviction past the capacity takes that list under the
 // lock. Len and Cost read atomic counters without the lock. Capacity reads
@@ -78,10 +99,12 @@ type Config[K comparable, V any] struct {
 //
 // # Allocation contract
 //
-// Get, Pin, [Pinned.Unpin], Delete, Len, Cost and Capacity do not allocate,
-// for a key whose hash [maphash.Comparable] computes without an allocation:
-// a string, or a value without pointers. Set and SetPinned allocate the
-// entry, and the memory of the index, the ghost and the heap when they grow.
+// Get, Pin, [Pinned.Unpin], Delete, Len, Cost, Capacity and a hit of
+// GetOrLoad do not allocate, for a key whose hash [maphash.Comparable]
+// computes without an allocation: a string, or a value without pointers. A
+// miss of GetOrLoad allocates as [Cache.GetOrLoad] states. Set and SetPinned
+// allocate the entry, and the memory of the index, the ghost and the heap
+// when they grow.
 // In a steady state, the tombs of the entries that left still fill the
 // index. The cache then replaces the index with a new one of 2 objects. An
 // index of n slots takes at least n/4 Sets to fill. A Set, SetPinned or
@@ -106,6 +129,11 @@ type Cache[K comparable, V any] struct {
 	// tomb marks a slot of the index whose entry has left the cache. It is
 	// an entry of its own, so it equals no entry of the cache.
 	tomb *entry[K, V]
+
+	// flights are the loads of GetOrLoad that run, by key. A Set, SetPinned
+	// or Delete of a key takes its load out, so the load does not store its
+	// value. The map is nil until the first load. Guarded by mu.
+	flights map[K]*flight[V]
 
 	// expiry orders the entries that have an expiry time by that time.
 	// Only a writer that has locked mu reads or writes it.
@@ -138,8 +166,8 @@ type Cache[K comparable, V any] struct {
 // New returns an empty Cache over cfg, whose ghost remembers keys up to
 // nine tenths of the capacity.
 //
-// Error modes: a Capacity that is not positive returns [ErrConfig],
-// classified [go.thesmos.sh/core/errs.Invalid].
+// Error modes: a Capacity that is not positive returns [ErrConfig]. It
+// classifies as [go.thesmos.sh/core/errs.Invalid].
 //
 // # Allocation contract
 //
@@ -191,6 +219,88 @@ func (c *Cache[K, V]) Get(k K) (V, bool) {
 	e.touch()
 
 	return e.value, true
+}
+
+// GetOrLoad returns the value of k, and loads a missing value once for the
+// callers that miss k together. A hit returns the value as Get does, and
+// does not call load. The first caller that misses k starts load on a
+// goroutine of its own. Each later caller of k waits for the result of that
+// load, as the callers of golang.org/x/sync/singleflight wait.
+//
+// load receives k and a context with the values of the context of the
+// caller that started the load. That context ends once load returns, or once
+// every caller that waits for the load has stopped waiting. load returns the
+// value of k and the expiry time of its entry, which is the zero time for an
+// entry that does not expire. A load that returns a value stores it as Set
+// does, and each waiting caller receives the value. A load that returns an
+// error does not store a value, and each waiting caller receives the error.
+// The next caller of k then starts a new load.
+//
+// A Set, SetPinned or Delete of k while its load runs discards the value of
+// the load. The waiting callers still receive the value, and the cache keeps
+// the state that the write left.
+//
+// A caller stops waiting when its context ends, and returns the cause of its
+// context. On a miss, a caller whose context ended before the call returns
+// the cause without a load. Each caller of one k passes a load that computes
+// the same value, because a caller can receive the value of a load that
+// another caller passed.
+//
+// Error modes:
+//
+//   - The error of load.
+//   - [ErrLoad] for a nil load on a miss. It classifies as
+//     [go.thesmos.sh/core/errs.Invalid].
+//   - [ErrLoad] for a load that succeeds with an expiry time in a cache
+//     without a [Config.Clock]. The cache does not store the value of such a
+//     load.
+//   - The cause of ctx when ctx ends first.
+//
+// # Panics
+//
+// A load that panics crashes the process from its own goroutine.
+//
+// # Allocation contract
+//
+// A hit allocates nothing, as Get does, when load is a value that the caller
+// made before the call, such as a field. A miss that starts a load allocates
+// 6 objects: the state of the load, its channel, the closure that starts its
+// goroutine, its two contexts and the cancel function of its context. The
+// store of its value allocates as Set does. A miss that waits for a load
+// that runs allocates nothing.
+func (c *Cache[K, V]) GetOrLoad(
+	ctx context.Context, k K, load func(ctx context.Context, k K) (V, time.Time, error),
+) (V, error) {
+	if e := c.find(k); e != nil {
+		e.touch()
+
+		return e.value, nil
+	}
+
+	var zero V
+	if err := context.Cause(ctx); err != nil {
+		return zero, err
+	}
+
+	if load == nil {
+		return zero, ErrLoad
+	}
+
+	f, e := c.join(ctx, k, load)
+	if e != nil {
+		e.touch()
+
+		return e.value, nil
+	}
+
+	select {
+	case <-f.done:
+		return f.value, f.err
+	case <-ctx.Done():
+		c.stopWaiting(k, f)
+
+		return zero, context.Cause(ctx)
+	}
 }
 
 // Pin returns the entry of k, pinned, and reports whether the cache has
@@ -292,6 +402,9 @@ func (c *Cache[K, V]) Delete(k K) bool {
 	h := maphash.Comparable(c.seed, k)
 
 	c.mu.Lock()
+
+	// A load of k that runs must not store its value after the Delete.
+	delete(c.flights, k)
 
 	e := c.index.Load().find(k, h, c.tomb)
 	if e != nil {
@@ -459,22 +572,135 @@ func (c *Cache[K, V]) newEntry(k K, v V, expires time.Time) (*entry[K, V], time.
 	return &entry[K, V]{key: k, value: v, expires: expires, hash: maphash.Comparable(c.seed, k), cost: cost}, now
 }
 
-// store adds e to the cache in place of the entry of its key, and evicts
-// other entries as Set documents. e is a new entry from newEntry, and now
-// is the time that newEntry read. SetPinned pins e before it calls store,
-// so store publishes a pinned e and the evictor keeps it until its last
-// Unpin.
-//
-// store puts e in the slot of the old entry of its key with one atomic
-// store, so a Get of the key that runs meanwhile finds the old entry or e.
-//
-// An e whose cost exceeds the capacity leaves the cache at once. store
-// passes such an e to Evicted when it has no pin. The last Unpin of e
-// passes it otherwise.
+// store adds e to the cache in place of the entry of its key as put does,
+// under the lock, and passes the entries that leave to Evicted after it
+// releases the lock. e is a new entry from newEntry, and now is the time
+// that newEntry read. SetPinned pins e before it calls store, so store
+// publishes a pinned e and the evictor keeps it until its last Unpin.
 func (c *Cache[K, V]) store(e *entry[K, V], now time.Time) {
 	var gone victims[K, V]
 
 	c.mu.Lock()
+	c.put(e, now, &gone)
+	c.mu.Unlock()
+
+	gone.notify(c.evicted)
+}
+
+// join counts the caller as a waiter of the load of k that runs, or of a new
+// load of k that it starts with load. The context of a new load has the
+// values of ctx, and its cancel function ends it. join returns the entry of
+// k instead when a Set or a load stored one after the lookup of the caller
+// missed. join locks the mutex.
+func (c *Cache[K, V]) join(
+	ctx context.Context, k K, load func(ctx context.Context, k K) (V, time.Time, error),
+) (*flight[V], *entry[K, V]) {
+	h := maphash.Comparable(c.seed, k)
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if e := c.index.Load().find(k, h, c.tomb); e != nil && (e.expires.IsZero() || !e.expired(c.clock.Time())) {
+		return nil, e
+	}
+
+	f := c.flights[k]
+	if f == nil {
+		//nolint:gosec // G118: run and stopWaiting call f.cancel. gosec does not follow a field of a generic type.
+		loadCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+		f = &flight[V]{done: make(chan struct{}), cancel: cancel}
+
+		if c.flights == nil {
+			c.flights = make(map[K]*flight[V])
+		}
+
+		c.flights[k] = f
+
+		go c.run(loadCtx, k, f, load)
+	}
+
+	f.waiters++
+
+	return f, nil
+}
+
+// run calls load for k on the goroutine of the load f. run stores the value
+// of a load that succeeds as put does, unless a Set, a SetPinned or a Delete
+// of k took f out of the loads, or every caller stopped waiting. A load that
+// succeeds with an expiry time in a cache without a Clock fails with ErrLoad.
+// run then hands the result to the waiting callers, ends the context of the
+// load, and passes the entries that left to Evicted.
+func (c *Cache[K, V]) run(
+	ctx context.Context, k K, f *flight[V], load func(ctx context.Context, k K) (V, time.Time, error),
+) {
+	v, expires, err := load(ctx, k)
+	if err == nil && c.clock == nil && !expires.IsZero() {
+		err = ErrLoad
+	}
+
+	var (
+		gone victims[K, V]
+		e    *entry[K, V]
+		now  time.Time
+	)
+
+	if err == nil {
+		e, now = c.newEntry(k, v, expires)
+	}
+
+	c.mu.Lock()
+
+	if c.flights[k] == f {
+		delete(c.flights, k)
+
+		if e != nil {
+			c.put(e, now, &gone)
+		}
+	}
+
+	c.mu.Unlock()
+
+	f.value, f.err = v, err
+	close(f.done)
+	f.cancel()
+	gone.notify(c.evicted)
+}
+
+// stopWaiting ends the wait of one caller of the load f of k. The last
+// caller that stops takes f out of the loads, so the next caller of k starts
+// a new load, and it ends the context of f. The value of f then does not go
+// into the cache.
+func (c *Cache[K, V]) stopWaiting(k K, f *flight[V]) {
+	c.mu.Lock()
+
+	f.waiters--
+	last := f.waiters == 0
+
+	if last && c.flights[k] == f {
+		delete(c.flights, k)
+	}
+
+	c.mu.Unlock()
+
+	if last {
+		f.cancel()
+	}
+}
+
+// put adds e to the cache in place of the entry of its key, and evicts other
+// entries as Set documents. It takes a load of the key out of the loads, so
+// the load does not store its value over e. The caller has locked the mutex,
+// and passes the entries that put adds to gone to Evicted after it releases
+// the lock.
+//
+// put puts e in the slot of the old entry of its key with one atomic store,
+// so a Get of the key that runs meanwhile finds the old entry or e.
+//
+// An e whose cost exceeds the capacity leaves the cache at once. put adds
+// such an e to gone when it has no pin. The last Unpin of e passes it to
+// Evicted otherwise.
+func (c *Cache[K, V]) put(e *entry[K, V], now time.Time, gone *victims[K, V]) {
+	delete(c.flights, e.key)
 
 	ix := c.index.Load()
 	old := ix.find(e.key, e.hash, c.tomb)
@@ -500,12 +726,8 @@ func (c *Cache[K, V]) store(e *entry[K, V], now time.Time) {
 			gone.add(e)
 		}
 	} else {
-		c.evict(now, e, &gone)
+		c.evict(now, e, gone)
 	}
-
-	c.mu.Unlock()
-
-	gone.notify(c.evicted)
 }
 
 // shrink evicts down to the capacity as a Set does, and passes the entries

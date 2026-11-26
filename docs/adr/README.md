@@ -151,6 +151,7 @@ Start from [`docs/templates/ADR.md`](../templates/ADR.md).
 | [0091](0091-the-last-member-of-a-group-runs-the-last-section-of-a-close.md) | The Last Member of a Group Runs the Last Section of a Close | Accepted |
 | [0092](0092-a-reporter-reads-a-gauge-at-each-collection.md) | A Reporter Reads a Gauge at Each Collection | Accepted |
 | [0093](0093-a-quorum-runner-keeps-the-state-of-a-quorum-across-calls.md) | A Quorum Runner Keeps the State of a Quorum Across Calls | Accepted |
+| [0094](0094-a-cache-loads-a-missing-entry-once-for-the-callers-that-miss-it.md) | A Cache Loads a Missing Entry Once for the Callers That Miss It | Accepted |
 | [0095](0095-an-interval-map-keeps-the-latest-end-under-each-child.md) | An Interval Map Keeps the Latest End Under Each Child | Accepted |
 
 [nygard]: https://cognitect.com/blog/2011/11/15/documenting-architecture-decisions

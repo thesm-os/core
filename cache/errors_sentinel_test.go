@@ -5,9 +5,11 @@
 package cache_test
 
 import (
+	"strings"
 	"testing"
 
 	"go.dokimi.dev/assert"
+	"go.dokimi.dev/assert/expect"
 	"go.thesmos.sh/core/cache"
 )
 
@@ -16,6 +18,13 @@ import (
 // identity of its own.
 func TestErrConfig(t *testing.T) {
 	t.Parallel()
+
+	others := []struct {
+		name string
+		err  error
+	}{
+		{"ErrLoad", cache.ErrLoad},
+	}
 
 	t.Run("Error", func(t *testing.T) {
 		t.Parallel()
@@ -35,7 +44,98 @@ func TestErrConfig(t *testing.T) {
 				"the message of ErrConfig opens with the package prefix",
 			)
 		})
+
+		t.Run("returns a message of its own", func(t *testing.T) {
+			t.Parallel()
+			for _, other := range others {
+				expect.NotEqual(
+					t,
+					cache.ErrConfig.Error(),
+					other.err.Error(),
+					"ErrConfig has the message of "+other.name,
+				)
+			}
+		})
+
+		t.Run("opens with the message of no other sentinel", func(t *testing.T) {
+			t.Parallel()
+			for _, other := range others {
+				expect.False(t, strings.HasPrefix(cache.ErrConfig.Error(), other.err.Error()),
+					"the message of ErrConfig opens with the message of "+other.name)
+			}
+		})
+	})
+
+	t.Run("errors.Is", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("matches no other sentinel of the package", func(t *testing.T) {
+			t.Parallel()
+			for _, other := range others {
+				expect.ErrorIsNot(t, cache.ErrConfig, other.err, "ErrConfig does not match "+other.name)
+			}
+		})
 	})
 }
 
-// dokimi:provenance sha256:6af24f3f0f0e638e1466cc530ea2b501c35664bb1f771dcd1462f6924918ce87
+// TestErrLoad checks the sentinel error ErrLoad. A caller matches it with
+// errors.Is and reads its message, so it has a message and an identity of
+// its own.
+func TestErrLoad(t *testing.T) {
+	t.Parallel()
+
+	others := []struct {
+		name string
+		err  error
+	}{
+		{"ErrConfig", cache.ErrConfig},
+	}
+
+	t.Run("Error", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("returns a message", func(t *testing.T) {
+			t.Parallel()
+			assert.NotNil(t, cache.ErrLoad, "ErrLoad is assigned")
+			assert.NotEqual(t, cache.ErrLoad.Error(), "", "ErrLoad has a message")
+		})
+
+		t.Run("opens the message with the package prefix", func(t *testing.T) {
+			t.Parallel()
+			assert.HasPrefix(
+				t,
+				cache.ErrLoad.Error(),
+				"cache: ",
+				"the message of ErrLoad opens with the package prefix",
+			)
+		})
+
+		t.Run("returns a message of its own", func(t *testing.T) {
+			t.Parallel()
+			for _, other := range others {
+				expect.NotEqual(t, cache.ErrLoad.Error(), other.err.Error(), "ErrLoad has the message of "+other.name)
+			}
+		})
+
+		t.Run("opens with the message of no other sentinel", func(t *testing.T) {
+			t.Parallel()
+			for _, other := range others {
+				expect.False(t, strings.HasPrefix(cache.ErrLoad.Error(), other.err.Error()),
+					"the message of ErrLoad opens with the message of "+other.name)
+			}
+		})
+	})
+
+	t.Run("errors.Is", func(t *testing.T) {
+		t.Parallel()
+
+		t.Run("matches no other sentinel of the package", func(t *testing.T) {
+			t.Parallel()
+			for _, other := range others {
+				expect.ErrorIsNot(t, cache.ErrLoad, other.err, "ErrLoad does not match "+other.name)
+			}
+		})
+	})
+}
+
+// dokimi:provenance sha256:48c1a94c9ec72a10a7b919b3989ed6cc1bdbf3f9eba8a90b6820f47a9d48bfca

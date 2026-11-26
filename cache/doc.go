@@ -64,6 +64,18 @@
 // its owner calls Expire from a timer of its own, such as
 // [go.thesmos.sh/core/task.Every].
 //
+// # Loads
+//
+// [Cache.GetOrLoad] returns the value of a key, and loads a missing value
+// once for the callers that miss the key together. The first caller starts
+// the load on a goroutine of its own, and every other caller of the key
+// waits for its result. A caller stops waiting at the end of its context.
+// The context of the load ends when the load returns, or once every waiting
+// caller has stopped. A load that returns a value stores it as Set does,
+// and a load that returns an error does not store a value. A Set, SetPinned
+// or Delete of the key while the load runs discards the value of the load,
+// so the cache keeps the state that the write left.
+//
 // # Callbacks
 //
 // [Config.Evicted] receives every entry that leaves the cache, once,
@@ -75,30 +87,33 @@
 //
 // # Concurrency
 //
-// A Cache is safe for concurrent use. Get and Pin take no lock. Set,
-// SetPinned, Delete and Expire take one lock per Cache, and so does a Get
-// or Pin that removes an expired entry. The last Unpin of an entry takes
-// the lock only while the sum of the costs exceeds the capacity. Expire
-// releases the lock after each eight entries that it removes.
+// A Cache is safe for concurrent use. Get, Pin and a hit of GetOrLoad take
+// no lock. Set, SetPinned, Delete, Expire and a miss of GetOrLoad take one
+// lock per Cache, and so does a Get or Pin that removes an expired entry.
+// The last Unpin of an entry takes the lock only while the sum of the costs
+// exceeds the capacity. Expire releases the lock after each eight entries
+// that it removes.
 //
 // # Allocation contract
 //
-// Get, Pin, [Pinned.Unpin], Delete, Len, Cost and Capacity do not allocate
-// for a key whose hash [hash/maphash.Comparable] computes without an
-// allocation, such as a string or a value without pointers. Set and SetPinned allocate
-// the entry, and the memory of the index, the ghost and the expiry heap
-// when they grow. A Set, SetPinned or Unpin that evicts more than eight
-// entries allocates the list of their callbacks. Expire does not allocate.
+// Get, Pin, [Pinned.Unpin], Delete, Len, Cost, Capacity and a hit of
+// GetOrLoad do not allocate for a key whose hash [hash/maphash.Comparable]
+// computes without an allocation, such as a string or a value without
+// pointers. Set and SetPinned allocate the entry, and the memory of the
+// index, the ghost and the expiry heap when they grow. A miss of GetOrLoad
+// that starts a load allocates the load and its goroutine. A Set, SetPinned
+// or Unpin that evicts more than eight entries allocates the list of their
+// callbacks. Expire does not allocate.
 //
 // # Errors
 //
-// [New] returns [ErrConfig], classified
-// [go.thesmos.sh/core/errs.Invalid], for a Config with a Capacity that is
-// not positive.
+// [New] returns [ErrConfig] for a Config with a Capacity that is not
+// positive. [Cache.GetOrLoad] returns [ErrLoad] for a nil load and for a
+// load that succeeds with an expiry time in a cache without a Clock.
 //
 // # Dependency position
 //
-// Imports errors, hash/maphash, sync, sync/atomic and time from the
+// Imports context, errors, hash/maphash, sync, sync/atomic and time from the
 // standard library, and go.thesmos.sh/core/clock and
 // go.thesmos.sh/core/errs from this module.
 //
