@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.51.0
+
+### Minor Changes
+
+- 54ecd9a: Add `blobtest.StoreReturnsTheErrorOfADoneContext` to check that `Get`, `Stat`, `Delete` and `List` of a `blob.Store` return the error of a done context.
+- ecaf907: Add `btree.IntervalMap` to find the intervals that contain a point or overlap an interval.
+- 0c03224: Add `cache.Cache.GetOrLoad` to load a missing entry once for the callers that miss it together.
+
 ## 0.50.0
 
 ### Minor Changes
